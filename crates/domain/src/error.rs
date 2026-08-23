@@ -19,4 +19,6 @@ pub enum DomainError {
     CapacityExceeded { capacity: u16 },
     #[error("时间计算溢出")]
     TimeOverflow,
+    #[error("聚合版本计算溢出")]
+    VersionOverflow,
 }

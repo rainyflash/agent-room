@@ -2,23 +2,55 @@ use crate::{
     DomainError, DomainResult,
     ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId},
     time::{DurationMillis, UtcMillis},
+    version::AggregateVersion,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
-    Registered,
     Active,
     Suspended,
     Retired,
 }
 
 impl AgentStatus {
-    const fn label(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Registered => "registered",
             Self::Active => "active",
             Self::Suspended => "suspended",
             Self::Retired => "retired",
+        }
+    }
+}
+
+impl TryFrom<&str> for AgentStatus {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "active" => Ok(Self::Active),
+            "suspended" => Ok(Self::Suspended),
+            "retired" => Ok(Self::Retired),
+            _ => Err(DomainError::Validation {
+                field: "agent_status",
+                reason: "包含未知状态",
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentVisibility {
+    Public,
+    Unlisted,
+    Private,
+}
+
+impl AgentVisibility {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Unlisted => "unlisted",
+            Self::Private => "private",
         }
     }
 }
@@ -28,6 +60,7 @@ pub struct Agent {
     id: AgentId,
     owner_id: PrincipalId,
     status: AgentStatus,
+    version: AggregateVersion,
 }
 
 impl Agent {
@@ -35,7 +68,22 @@ impl Agent {
         Self {
             id,
             owner_id,
-            status: AgentStatus::Registered,
+            status: AgentStatus::Active,
+            version: AggregateVersion::INITIAL,
+        }
+    }
+
+    pub const fn restore(
+        id: AgentId,
+        owner_id: PrincipalId,
+        status: AgentStatus,
+        version: AggregateVersion,
+    ) -> Self {
+        Self {
+            id,
+            owner_id,
+            status,
+            version,
         }
     }
 
@@ -51,6 +99,14 @@ impl Agent {
         self.status
     }
 
+    pub const fn version(&self) -> AggregateVersion {
+        self.version
+    }
+
+    pub const fn restore_version(&mut self, version: AggregateVersion) {
+        self.version = version;
+    }
+
     /// 激活已登记的 Agent，重复激活保持幂等。
     ///
     /// # Errors
@@ -58,13 +114,13 @@ impl Agent {
     /// 已暂停或退役的 Agent 不能直接激活。
     pub fn activate(&mut self) -> DomainResult<()> {
         match self.status {
-            AgentStatus::Registered | AgentStatus::Active => {
+            AgentStatus::Active => {
                 self.status = AgentStatus::Active;
                 Ok(())
             }
             AgentStatus::Suspended | AgentStatus::Retired => Err(DomainError::InvalidTransition {
                 entity: "agent",
-                from: self.status.label(),
+                from: self.status.as_str(),
                 to: "active",
             }),
         }
@@ -77,13 +133,13 @@ impl Agent {
     /// 已退役 Agent 不能进入暂停状态。
     pub fn suspend(&mut self) -> DomainResult<()> {
         match self.status {
-            AgentStatus::Registered | AgentStatus::Active | AgentStatus::Suspended => {
+            AgentStatus::Active | AgentStatus::Suspended => {
                 self.status = AgentStatus::Suspended;
                 Ok(())
             }
             AgentStatus::Retired => Err(DomainError::InvalidTransition {
                 entity: "agent",
-                from: self.status.label(),
+                from: self.status.as_str(),
                 to: "suspended",
             }),
         }
@@ -102,7 +158,7 @@ pub enum AgentInstanceStatus {
 }
 
 impl AgentInstanceStatus {
-    const fn label(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Offline => "offline",
             Self::Online => "online",
@@ -160,7 +216,7 @@ impl AgentInstance {
         if self.status == AgentInstanceStatus::Revoked {
             return Err(DomainError::InvalidTransition {
                 entity: "agent_instance",
-                from: self.status.label(),
+                from: self.status.as_str(),
                 to: "online",
             });
         }
@@ -179,7 +235,7 @@ impl AgentInstance {
         if self.status != AgentInstanceStatus::Online {
             return Err(DomainError::InvalidTransition {
                 entity: "agent_instance",
-                from: self.status.label(),
+                from: self.status.as_str(),
                 to: "online",
             });
         }

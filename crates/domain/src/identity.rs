@@ -1,18 +1,37 @@
-use crate::{DomainError, DomainResult, ids::PrincipalId};
+use crate::{DomainError, DomainResult, ids::PrincipalId, version::AggregateVersion};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalStatus {
     Active,
     Suspended,
+    Deleting,
     Deleted,
 }
 
 impl PrincipalStatus {
-    const fn label(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
             Self::Suspended => "suspended",
+            Self::Deleting => "deleting",
             Self::Deleted => "deleted",
+        }
+    }
+}
+
+impl TryFrom<&str> for PrincipalStatus {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "active" => Ok(Self::Active),
+            "suspended" => Ok(Self::Suspended),
+            "deleting" => Ok(Self::Deleting),
+            "deleted" => Ok(Self::Deleted),
+            _ => Err(DomainError::Validation {
+                field: "principal_status",
+                reason: "包含未知状态",
+            }),
         }
     }
 }
@@ -21,6 +40,7 @@ impl PrincipalStatus {
 pub struct Principal {
     id: PrincipalId,
     status: PrincipalStatus,
+    version: AggregateVersion,
 }
 
 impl Principal {
@@ -28,6 +48,19 @@ impl Principal {
         Self {
             id,
             status: PrincipalStatus::Active,
+            version: AggregateVersion::INITIAL,
+        }
+    }
+
+    pub const fn restore(
+        id: PrincipalId,
+        status: PrincipalStatus,
+        version: AggregateVersion,
+    ) -> Self {
+        Self {
+            id,
+            status,
+            version,
         }
     }
 
@@ -37,6 +70,14 @@ impl Principal {
 
     pub const fn status(&self) -> PrincipalStatus {
         self.status
+    }
+
+    pub const fn version(&self) -> AggregateVersion {
+        self.version
+    }
+
+    pub const fn restore_version(&mut self, version: AggregateVersion) {
+        self.version = version;
     }
 
     /// 暂停主体，重复暂停保持幂等。
@@ -50,11 +91,19 @@ impl Principal {
                 self.status = PrincipalStatus::Suspended;
                 Ok(())
             }
-            PrincipalStatus::Deleted => Err(DomainError::InvalidTransition {
-                entity: "principal",
-                from: self.status.label(),
-                to: "suspended",
-            }),
+            PrincipalStatus::Deleting | PrincipalStatus::Deleted => {
+                Err(DomainError::InvalidTransition {
+                    entity: "principal",
+                    from: self.status.as_str(),
+                    to: "suspended",
+                })
+            }
+        }
+    }
+
+    pub fn begin_deletion(&mut self) {
+        if self.status != PrincipalStatus::Deleted {
+            self.status = PrincipalStatus::Deleting;
         }
     }
 

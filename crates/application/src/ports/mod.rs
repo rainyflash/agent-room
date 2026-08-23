@@ -9,10 +9,10 @@ mod runtime;
 
 use std::{future::Future, pin::Pin};
 
-pub use agents::AgentRepository;
+pub use agents::{AgentRegistration, AgentRepository};
 pub use audit::{AuditRecord, AuditSink};
 pub use content::ContentStore;
-pub use identity::PrincipalRepository;
+pub use identity::{PrincipalRegistration, PrincipalRepository};
 pub use matrix::{MatrixEvent, MatrixGateway};
 pub use notifications::NotificationSink;
 pub use rooms::RoomDirectory;

@@ -7,5 +7,6 @@ pub mod ids;
 pub mod policy;
 pub mod rooms;
 pub mod time;
+pub mod version;
 
 pub use error::{DomainError, DomainResult};
