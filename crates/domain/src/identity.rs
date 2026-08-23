@@ -76,6 +76,11 @@ impl Principal {
         self.version
     }
 
+    /// 只有活跃主体可以建立或继续使用认证会话。
+    pub const fn allows_authentication(&self) -> bool {
+        matches!(self.status, PrincipalStatus::Active)
+    }
+
     pub const fn restore_version(&mut self, version: AggregateVersion) {
         self.version = version;
     }
@@ -129,5 +134,14 @@ mod tests {
 
         principal.delete();
         assert!(principal.suspend().is_err());
+    }
+
+    #[test]
+    fn 只有活跃主体允许认证() {
+        let mut principal = Principal::new(PrincipalId::from_uuid(Uuid::from_u128(2)));
+        assert!(principal.allows_authentication());
+
+        principal.suspend().expect("主体可暂停");
+        assert!(!principal.allows_authentication());
     }
 }

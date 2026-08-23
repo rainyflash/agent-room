@@ -32,6 +32,8 @@ macro_rules! define_id {
 }
 
 define_id!(PrincipalId);
+define_id!(LoginAttemptId);
+define_id!(WebSessionId);
 define_id!(DeviceId);
 define_id!(AgentId);
 define_id!(AgentInstanceId);

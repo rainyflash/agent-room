@@ -14,7 +14,14 @@ use std::{future::Future, pin::Pin};
 pub use agents::{AgentRegistration, AgentRegistrationTransaction, AgentRepository};
 pub use audit::{AuditRecord, AuditSink};
 pub use content::ContentStore;
-pub use identity::{PrincipalRegistration, PrincipalRepository};
+pub use identity::{
+    IdentityValueError, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
+    OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
+    OidcFailureKind, OidcGateway, OidcResult, PrincipalAccount, PrincipalRegistration,
+    PrincipalRepository, PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath,
+    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
+    VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+};
 pub use matrix::{MatrixEvent, MatrixGateway};
 pub use notifications::NotificationSink;
 pub use outbox::{

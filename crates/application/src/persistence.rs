@@ -6,6 +6,7 @@ pub type RepositoryResult<T> = Result<T, RepositoryError>;
 pub enum RepositoryErrorKind {
     Conflict,
     Constraint,
+    Forbidden,
     NotFound,
     Unavailable,
     CorruptData,
