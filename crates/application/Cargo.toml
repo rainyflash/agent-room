@@ -9,7 +9,9 @@ repository.workspace = true
 [dependencies]
 agent-room-domain.workspace = true
 futures-util.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

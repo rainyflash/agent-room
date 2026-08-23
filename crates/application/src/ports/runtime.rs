@@ -1,7 +1,7 @@
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceId, HandoffId, PrincipalId,
-        RoomCatalogId, RoomInstanceId,
+        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceId, HandoffId, OutboxEventId,
+        PrincipalId, RoomCatalogId, RoomInstanceId,
     },
     time::UtcMillis,
 };
@@ -20,4 +20,5 @@ pub trait IdentifierFactory: Send + Sync {
     fn content_id(&self) -> ContentId;
     fn handoff_id(&self) -> HandoffId;
     fn automation_grant_id(&self) -> AutomationGrantId;
+    fn outbox_event_id(&self) -> OutboxEventId;
 }

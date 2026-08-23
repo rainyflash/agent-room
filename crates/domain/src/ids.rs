@@ -40,3 +40,4 @@ define_id!(RoomInstanceId);
 define_id!(ContentId);
 define_id!(HandoffId);
 define_id!(AutomationGrantId);
+define_id!(OutboxEventId);

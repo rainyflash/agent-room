@@ -6,7 +6,7 @@ use agent_room_domain::{
 
 use crate::persistence::RepositoryResult;
 
-use super::PortFuture;
+use super::{OutboxMessage, PortFuture};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRegistration {
@@ -29,4 +29,13 @@ pub trait AgentRepository: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<Agent>>;
 
     fn save<'a>(&'a self, agent: &'a Agent) -> PortFuture<'a, RepositoryResult<Agent>>;
+}
+
+/// 持久化 Agent 注册及其领域事件的单一事务边界。
+pub trait AgentRegistrationTransaction: Send + Sync {
+    fn create_with_event<'a>(
+        &'a self,
+        registration: &'a AgentRegistration,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<Agent>>;
 }
