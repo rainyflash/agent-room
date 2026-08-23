@@ -4,6 +4,7 @@ members = [
   "apps/control-plane",
   "crates/application",
   "crates/domain",
+  "crates/identity-adapter",
   "crates/postgres-adapter",
   "crates/protocol-conformance",
 ]
@@ -22,18 +23,23 @@ agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
+base64 = "0.22.1"
+chrono = "0.4.45"
 futures-util = "0.3.32"
+getrandom = "0.3.4"
 jsonschema = { version = "0.50.1", default-features = false }
 opentelemetry = { version = "0.32.0", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
+openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 proptest = "1.11.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-opentelemetry = "0.33.0"
