@@ -13,6 +13,7 @@ const MAX_SYNC_TOKEN_LENGTH: usize = 4_096;
 const MAX_EVENT_ID_LENGTH: usize = 512;
 const MAX_ERROR_CODE_LENGTH: usize = 128;
 const MAX_ACTIVITY_SCORE_MILLIS: u32 = 1_000_000;
+const MAX_EVENTS_PER_BATCH: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixMembership {
@@ -190,6 +191,7 @@ impl MatrixProjectionBatch {
             expected_sync_token.as_deref(),
             &next_sync_token,
         )?;
+        validate_event_count(events.len())?;
         Ok(Self {
             consumer_name,
             expected_sync_token,
@@ -241,6 +243,7 @@ impl MatrixProjectionRebuild {
         projected_at: UtcMillis,
     ) -> DomainResult<Self> {
         validate_consumer_and_tokens(&consumer_name, None, &next_sync_token)?;
+        validate_event_count(events.len())?;
         Ok(Self {
             consumer_name,
             next_sync_token,
@@ -564,6 +567,16 @@ fn validate_text(
         return Err(DomainError::Validation {
             field,
             reason: "长度超出允许范围",
+        });
+    }
+    Ok(())
+}
+
+fn validate_event_count(count: usize) -> DomainResult<()> {
+    if count > MAX_EVENTS_PER_BATCH {
+        return Err(DomainError::Validation {
+            field: "events",
+            reason: "单批事件数不能超过 10000",
         });
     }
     Ok(())

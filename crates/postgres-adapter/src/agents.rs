@@ -1,15 +1,17 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{AgentRegistration, AgentRepository, PortFuture},
+    ports::{
+        AgentRegistration, AgentRegistrationTransaction, AgentRepository, OutboxMessage, PortFuture,
+    },
 };
 use agent_room_domain::{
     agents::{Agent, AgentStatus},
     ids::{AgentId, PrincipalId},
     version::AggregateVersion,
 };
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 
-use crate::{PostgresRepositories, error::map_sqlx_error};
+use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_event};
 
 impl AgentRepository for PostgresRepositories {
     fn find(&self, id: AgentId) -> PortFuture<'_, RepositoryResult<Option<Agent>>> {
@@ -39,67 +41,7 @@ impl AgentRepository for PostgresRepositories {
         &'a self,
         registration: &'a AgentRegistration,
     ) -> PortFuture<'a, RepositoryResult<Agent>> {
-        Box::pin(async move {
-            let mut transaction = self
-                .pool
-                .begin()
-                .await
-                .map_err(|error| map_sqlx_error("agent.create.begin", &error))?;
-            let agent = &registration.agent;
-            let avatar_id = registration
-                .avatar_content_id
-                .map(agent_room_domain::ids::ContentId::as_uuid);
-            let registered_at = registration.registered_at.value();
-
-            let insert_agent = sqlx::query(
-                r"INSERT INTO agent_room.agent (
-                    id, matrix_user_id, slug, display_name, description, avatar_content_id,
-                    visibility, lifecycle_state, created_at, updated_at, version
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8,
-                    to_timestamp($9::double precision / 1000.0),
-                    to_timestamp($9::double precision / 1000.0), $10
-                )",
-            )
-            .bind(agent.id().as_uuid())
-            .bind(&registration.matrix_user_id)
-            .bind(&registration.slug)
-            .bind(&registration.display_name)
-            .bind(&registration.description)
-            .bind(avatar_id)
-            .bind(registration.visibility.as_str())
-            .bind(agent.status().as_str())
-            .bind(registered_at)
-            .bind(agent.version().value())
-            .execute(&mut *transaction)
-            .await;
-            if let Err(error) = insert_agent {
-                return rollback_after_error(transaction, "agent.create", &error).await;
-            }
-
-            let insert_ownership = sqlx::query(
-                r"INSERT INTO agent_room.agent_ownership (
-                    principal_id, agent_id, role, granted_by, created_at
-                ) VALUES (
-                    $1, $2, 'owner', $1,
-                    to_timestamp($3::double precision / 1000.0)
-                )",
-            )
-            .bind(agent.owner_id().as_uuid())
-            .bind(agent.id().as_uuid())
-            .bind(registered_at)
-            .execute(&mut *transaction)
-            .await;
-            if let Err(error) = insert_ownership {
-                return rollback_after_error(transaction, "agent.create", &error).await;
-            }
-
-            transaction
-                .commit()
-                .await
-                .map_err(|error| map_sqlx_error("agent.create.commit", &error))?;
-            Ok(agent.clone())
-        })
+        Box::pin(async move { self.create_in_transaction(registration, None).await })
     }
 
     fn save<'a>(&'a self, agent: &'a Agent) -> PortFuture<'a, RepositoryResult<Agent>> {
@@ -136,6 +78,113 @@ impl AgentRepository for PostgresRepositories {
             }
         })
     }
+}
+
+impl AgentRegistrationTransaction for PostgresRepositories {
+    fn create_with_event<'a>(
+        &'a self,
+        registration: &'a AgentRegistration,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<Agent>> {
+        Box::pin(async move { self.create_in_transaction(registration, Some(event)).await })
+    }
+}
+
+impl PostgresRepositories {
+    async fn create_in_transaction(
+        &self,
+        registration: &AgentRegistration,
+        event: Option<&OutboxMessage>,
+    ) -> RepositoryResult<Agent> {
+        if event.is_some_and(|event| {
+            event.aggregate_type() != "agent"
+                || event.aggregate_id() != registration.agent.id().as_uuid()
+                || event.event_type() != "agent.registered.v1"
+        }) {
+            return Err(RepositoryError::new(
+                "agent.create.event_contract",
+                RepositoryErrorKind::Constraint,
+            ));
+        }
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| map_sqlx_error("agent.create.begin", &error))?;
+        let result = async {
+            insert_agent_registration(&mut transaction, registration).await?;
+            if let Some(event) = event {
+                insert_outbox_event(&mut transaction, event).await?;
+            }
+            Ok(())
+        }
+        .await;
+
+        if let Err(error) = result {
+            transaction
+                .rollback()
+                .await
+                .map_err(|rollback| map_sqlx_error("agent.create.rollback", &rollback))?;
+            return Err(error);
+        }
+
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_sqlx_error("agent.create.commit", &error))?;
+        Ok(registration.agent.clone())
+    }
+}
+
+async fn insert_agent_registration(
+    transaction: &mut Transaction<'_, Postgres>,
+    registration: &AgentRegistration,
+) -> RepositoryResult<()> {
+    let agent = &registration.agent;
+    let avatar_id = registration
+        .avatar_content_id
+        .map(agent_room_domain::ids::ContentId::as_uuid);
+    let registered_at = registration.registered_at.value();
+
+    sqlx::query(
+        r"INSERT INTO agent_room.agent (
+            id, matrix_user_id, slug, display_name, description, avatar_content_id,
+            visibility, lifecycle_state, created_at, updated_at, version
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            to_timestamp($9::double precision / 1000.0),
+            to_timestamp($9::double precision / 1000.0), $10
+        )",
+    )
+    .bind(agent.id().as_uuid())
+    .bind(&registration.matrix_user_id)
+    .bind(&registration.slug)
+    .bind(&registration.display_name)
+    .bind(&registration.description)
+    .bind(avatar_id)
+    .bind(registration.visibility.as_str())
+    .bind(agent.status().as_str())
+    .bind(registered_at)
+    .bind(agent.version().value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error("agent.create.agent", &error))?;
+
+    sqlx::query(
+        r"INSERT INTO agent_room.agent_ownership (
+            principal_id, agent_id, role, granted_by, created_at
+        ) VALUES (
+            $1, $2, 'owner', $1,
+            to_timestamp($3::double precision / 1000.0)
+        )",
+    )
+    .bind(agent.owner_id().as_uuid())
+    .bind(agent.id().as_uuid())
+    .bind(registered_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error("agent.create.ownership", &error))?;
+    Ok(())
 }
 
 fn decode_agent(id: AgentId) -> impl FnOnce(sqlx::postgres::PgRow) -> RepositoryResult<Agent> {
@@ -187,19 +236,6 @@ async fn classify_missing_agent(
             RepositoryErrorKind::NotFound
         },
     ))
-}
-
-async fn rollback_after_error(
-    transaction: sqlx::Transaction<'_, sqlx::Postgres>,
-    operation: &'static str,
-    original_error: &sqlx::Error,
-) -> RepositoryResult<Agent> {
-    let mapped = map_sqlx_error(operation, original_error);
-    transaction
-        .rollback()
-        .await
-        .map_err(|error| map_sqlx_error("agent.create.rollback", &error))?;
-    Err(mapped)
 }
 
 fn corrupt_data(operation: &'static str) -> RepositoryError {

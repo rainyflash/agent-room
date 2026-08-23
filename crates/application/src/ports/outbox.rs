@@ -187,6 +187,12 @@ impl OutboxFailure {
         max_attempts: NonZeroU16,
     ) -> DomainResult<Self> {
         validate_event_name("error_code", &error_code)?;
+        if max_attempts.get() > 100 {
+            return Err(DomainError::Validation {
+                field: "max_attempts",
+                reason: "不能超过 100",
+            });
+        }
         if next_attempt_at <= failed_at {
             return Err(DomainError::Validation {
                 field: "next_attempt_at",

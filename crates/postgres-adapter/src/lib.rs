@@ -1,7 +1,9 @@
 mod agents;
 mod error;
 mod migrations;
+mod outbox;
 mod principals;
+mod projections;
 
 use sqlx::PgPool;
 
