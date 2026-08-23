@@ -25,7 +25,7 @@ pub use projections::{
     ActivityScoreMillis, MatrixMembership, MatrixProjectionBatch, MatrixProjectionEvent,
     MatrixProjectionEventKind, MatrixProjectionRebuild, MatrixProjectionStore,
     MembershipProjectionLookup, MembershipReadPlan, ProjectionApplyOutcome, ProjectionCursor,
-    ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport,
+    ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
 };
 pub use rooms::RoomDirectory;
 pub use runtime::{Clock, IdentifierFactory};

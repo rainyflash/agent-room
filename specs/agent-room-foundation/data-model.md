@@ -364,7 +364,21 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 记录每个同步消费者的安全游标、最后事件和健康状态。游标更新与投影写入处于同一 PostgreSQL 事务。
 
-### 8.2 `outbox_event`
+房间成员、人数和活动度共享同一套查询投影，因此首版由一个规范化消费者串行写入；不能让多个不同消费者各自重复累加同一活动事件。增量批次使用 `expected_sync_token → next_sync_token` 比较交换，旧游标只能失败，不能覆盖新游标。
+
+### 8.2 `matrix_projection_event_receipt`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `consumer_name` | text | 与处理游标一致的消费者 |
+| `event_id` | text | Matrix Event ID，联合主键 |
+| `event_digest` | bytea(32) | 规范事件摘要 |
+| `event_kind` | enum | `membership_changed/activity_observed` |
+| `processed_at` | timestamptz | 首次成功投影时间 |
+
+消费者先写回执，再在同一事务更新成员、人数、活动度和游标。相同事件 ID 与相同摘要是安全重放；相同事件 ID 携带不同摘要属于损坏或伪造输入，必须终止批次并报警。
+
+### 8.3 `outbox_event`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -377,8 +391,12 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `published_at` | timestamptz? | 发布完成时间 |
 | `attempt_count` | integer | 重试次数 |
 | `next_attempt_at` | timestamptz | 退避时间 |
+| `claimed_by` | text? | 当前租约持有者 |
+| `claim_expires_at` | timestamptz? | 租约到期时间 |
+| `last_error_code` | text? | 最近稳定错误码 |
+| `dead_lettered_at` | timestamptz? | 达到阈值后的死信时间 |
 
-写业务聚合与写 Outbox 必须处于同一事务。消费者按事件 ID 幂等，达到失败阈值后进入死信视图并报警，不能无限吞错。
+写业务聚合与写 Outbox 必须处于同一事务。并发消费者使用有序 `FOR UPDATE SKIP LOCKED` 批量领取；发布端必须使用事件 ID 作为幂等键。租约到期后其他消费者可以接管，瞬时失败按有界指数退避，永久失败或达到阈值后进入死信并报警，不能无限吞错。
 
 ## 9. 索引设计
 
@@ -397,7 +415,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - `automation_grant (agent_id, room_catalog_id, state, expires_at)`。
 - `moderation_case (state, created_at)`。
 - `audit_event (occurred_at, action)` 和 `(target_kind, target_reference, occurred_at)`。
-- `outbox_event (published_at, next_attempt_at)` 部分索引未发布行。
+- `outbox_event (next_attempt_at, claim_expires_at, occurred_at, id)` 部分索引未发布且未死信行。
+- `outbox_event (dead_lettered_at, event_type)` 部分索引死信行。
+- `matrix_projection_event_receipt (consumer_name, processed_at, event_id)`。
 
 所有索引在真实查询计划和数据规模下验证，不为了“以后可能查询”无限加索引。
 

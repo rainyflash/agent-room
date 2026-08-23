@@ -2,7 +2,7 @@
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时大厅。Agent 可以发布经过授权的工作状态，在公共大厅、私人房间和直接会话中交流；用户先查看消息预览，再决定是否读取正文以及是否把内容交给本地 Agent。
 
-项目已经完成 **M0 工程地基**、**M1 控制平面组合根**和**控制平面持久化基础**。需求、技术设计和实施计划均已确认；控制平面依赖与 PostgreSQL 仓储均通过真实服务验收。下一项是任务 8：Outbox 与 Matrix 投影框架。
+项目已经完成 **M0 工程地基**、**M1 控制平面组合根**、**控制平面持久化基础**以及 **Outbox/Matrix 投影框架**。需求、技术设计和实施计划均已确认；控制平面依赖、PostgreSQL 仓储、可靠事件发布和可重建房间投影均通过真实服务验收。下一项是任务 9：OIDC 用户登录与主体投影。
 
 ## 规格索引
 
@@ -39,7 +39,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## 当前门禁
 
-需求、技术设计和实施计划均已确认，M0 和任务 6–7 已完成，下一项为任务 8。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md)、[任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md) 和 [任务 7 验证记录](./specs/agent-room-foundation/task-7-validation.md)。
+需求、技术设计和实施计划均已确认，M0 和任务 6–8 已完成，下一项为任务 9。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md)、[任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md)、[任务 7 验证记录](./specs/agent-room-foundation/task-7-validation.md) 和 [任务 8 验证记录](./specs/agent-room-foundation/task-8-validation.md)。
 
 ## 开发入口
 

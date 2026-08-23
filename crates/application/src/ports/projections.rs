@@ -15,6 +15,8 @@ const MAX_ERROR_CODE_LENGTH: usize = 128;
 const MAX_ACTIVITY_SCORE_MILLIS: u32 = 1_000_000;
 const MAX_EVENTS_PER_BATCH: usize = 10_000;
 
+pub const ROOM_PROJECTION_CONSUMER: &str = "matrix-room-projection-v1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixMembership {
     Invite,
@@ -322,7 +324,7 @@ impl ProjectionHealthReport {
         error_code: Option<String>,
         observed_at: UtcMillis,
     ) -> DomainResult<Self> {
-        validate_text("consumer_name", &consumer_name, 1, MAX_CONSUMER_NAME_LENGTH)?;
+        validate_consumer_name(&consumer_name)?;
         match (health, error_code.as_deref()) {
             (ProjectionHealth::Healthy, None)
             | (ProjectionHealth::Lagging | ProjectionHealth::Failed, Some(_)) => {}
@@ -550,11 +552,22 @@ fn validate_consumer_and_tokens(
     expected_sync_token: Option<&str>,
     next_sync_token: &str,
 ) -> DomainResult<()> {
-    validate_text("consumer_name", consumer_name, 1, MAX_CONSUMER_NAME_LENGTH)?;
+    validate_consumer_name(consumer_name)?;
     if let Some(token) = expected_sync_token {
         validate_text("expected_sync_token", token, 1, MAX_SYNC_TOKEN_LENGTH)?;
     }
     validate_text("next_sync_token", next_sync_token, 1, MAX_SYNC_TOKEN_LENGTH)
+}
+
+fn validate_consumer_name(consumer_name: &str) -> DomainResult<()> {
+    validate_text("consumer_name", consumer_name, 1, MAX_CONSUMER_NAME_LENGTH)?;
+    if consumer_name != ROOM_PROJECTION_CONSUMER {
+        return Err(DomainError::Validation {
+            field: "consumer_name",
+            reason: "房间查询投影只允许规范化单写消费者",
+        });
+    }
+    Ok(())
 }
 
 fn validate_text(
@@ -587,7 +600,8 @@ mod tests {
     use agent_room_domain::time::{DurationMillis, UtcMillis};
 
     use super::{
-        MembershipProjectionLookup, MembershipReadPlan, ProjectionFreshnessPolicy, ProjectionHealth,
+        MatrixProjectionBatch, MembershipProjectionLookup, MembershipReadPlan,
+        ProjectionFreshnessPolicy, ProjectionHealth,
     };
 
     #[test]
@@ -639,5 +653,18 @@ mod tests {
             policy.plan(now, None),
             MembershipReadPlan::QueryMatrixMissing
         );
+    }
+
+    #[test]
+    fn 房间查询投影拒绝第二个写入消费者() {
+        let batch = MatrixProjectionBatch::new(
+            "rogue-room-projector".to_owned(),
+            None,
+            "sync-1".to_owned(),
+            Vec::new(),
+            UtcMillis::new(1_000).expect("投影时间有效"),
+        );
+
+        assert!(batch.is_err());
     }
 }

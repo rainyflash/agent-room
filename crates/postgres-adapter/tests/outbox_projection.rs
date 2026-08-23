@@ -8,6 +8,7 @@ use agent_room_application::{
         MatrixProjectionRebuild, MatrixProjectionStore, OutboxClaim, OutboxFailure,
         OutboxFailureOutcome, OutboxMessage, OutboxRepository, PrincipalRegistration,
         PrincipalRepository, ProjectionApplyOutcome, ProjectionHealth, ProjectionHealthReport,
+        ROOM_PROJECTION_CONSUMER,
     },
 };
 use agent_room_domain::{
@@ -21,7 +22,7 @@ use serde_json::{Map, Value};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const CONSUMER: &str = "matrix-room-projection-v1";
+const CONSUMER: &str = ROOM_PROJECTION_CONSUMER;
 
 struct TestDatabase {
     migration: PgPool,
