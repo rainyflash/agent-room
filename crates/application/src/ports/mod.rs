@@ -19,7 +19,7 @@ pub use matrix::{MatrixEvent, MatrixGateway};
 pub use notifications::NotificationSink;
 pub use outbox::{
     ClaimedOutboxEvent, OutboxBacklog, OutboxClaim, OutboxFailure, OutboxFailureOutcome,
-    OutboxMessage, OutboxRepository,
+    OutboxMessage, OutboxPublisher, OutboxRepository, PublishFailure, PublishFailureKind,
 };
 pub use projections::{
     ActivityScoreMillis, MatrixMembership, MatrixProjectionBatch, MatrixProjectionEvent,

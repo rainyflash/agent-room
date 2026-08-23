@@ -95,7 +95,7 @@ impl OutboxRepository for PostgresRepositories {
         Box::pin(async move {
             let row = sqlx::query(
                 r"UPDATE agent_room.outbox_event
-                   SET attempt_count = attempt_count + 1,
+                   SET attempt_count = least(attempt_count + 1, 100),
                        last_error_code = $3,
                        next_attempt_at = to_timestamp($4::double precision / 1000.0),
                        dead_lettered_at = CASE

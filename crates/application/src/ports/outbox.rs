@@ -301,6 +301,46 @@ pub trait OutboxRepository: Send + Sync {
     fn backlog(&self, now: UtcMillis) -> PortFuture<'_, RepositoryResult<OutboxBacklog>>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishFailureKind {
+    Transient,
+    Permanent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishFailure {
+    code: String,
+    kind: PublishFailureKind,
+}
+
+impl PublishFailure {
+    /// 创建不泄漏底层错误细节的发布失败。
+    ///
+    /// # Errors
+    ///
+    /// 稳定错误码不符合事件名约束时返回校验错误。
+    pub fn new(code: String, kind: PublishFailureKind) -> DomainResult<Self> {
+        validate_event_name("publish_error_code", &code)?;
+        Ok(Self { code, kind })
+    }
+
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub const fn kind(&self) -> PublishFailureKind {
+        self.kind
+    }
+}
+
+/// 下游发布端必须把 `message.id()` 作为幂等键传递或持久化。
+pub trait OutboxPublisher: Send + Sync {
+    fn publish<'a>(
+        &'a self,
+        message: &'a OutboxMessage,
+    ) -> PortFuture<'a, Result<(), PublishFailure>>;
+}
+
 fn validate_event_name(field: &'static str, value: &str) -> DomainResult<()> {
     validate_bounded_text(field, value, MAX_EVENT_NAME_LENGTH)?;
     if !value
