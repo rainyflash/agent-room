@@ -62,7 +62,13 @@ dev-seed:
 health:
   node tools/run-powershell.mjs tools/dev-infra.ps1 health
 
-control-plane:
+database-migrate:
+  python tools/database.py migrate
+
+database-integration:
+  python tools/database.py test
+
+control-plane: database-migrate
   python tools/control-plane.py run
 
 control-plane-integration:

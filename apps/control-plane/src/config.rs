@@ -91,7 +91,10 @@ impl ControlPlaneConfig {
             port: read_required_u16(source, "AGENT_ROOM_DB_PORT")?,
             database: read_required_text(source, "AGENT_ROOM_DB_NAME")?,
             username: read_required_text(source, "AGENT_ROOM_DB_USER")?,
-            password: SecretValue(read_required_secret(source, "AGENT_ROOM_DB_PASSWORD")?),
+            password: SecretValue(read_required_secret(
+                source,
+                "AGENT_ROOM_DB_RUNTIME_PASSWORD",
+            )?),
             tls_mode: parse_database_tls_mode(&read_required_text(
                 source,
                 "AGENT_ROOM_DB_TLS_MODE",
@@ -278,8 +281,8 @@ mod tests {
             ("AGENT_ROOM_DB_HOST", "127.0.0.1".to_owned()),
             ("AGENT_ROOM_DB_PORT", "55432".to_owned()),
             ("AGENT_ROOM_DB_NAME", "agent_room".to_owned()),
-            ("AGENT_ROOM_DB_USER", "agent_room".to_owned()),
-            ("AGENT_ROOM_DB_PASSWORD", "secret-value".to_owned()),
+            ("AGENT_ROOM_DB_USER", "agent_room_runtime".to_owned()),
+            ("AGENT_ROOM_DB_RUNTIME_PASSWORD", "secret-value".to_owned()),
             ("AGENT_ROOM_DB_TLS_MODE", "disable".to_owned()),
             (
                 "AGENT_ROOM_MATRIX_BASE_URL",

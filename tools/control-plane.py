@@ -32,9 +32,9 @@ def read_environment(path: Path) -> dict[str, str]:
 
 
 def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[str, str]:
-    database_password = values.get("AGENT_ROOM_DB_PASSWORD")
+    database_password = values.get("AGENT_ROOM_DB_RUNTIME_PASSWORD")
     if not database_password:
-        raise RuntimeError(".env.local 缺少 AGENT_ROOM_DB_PASSWORD。")
+        raise RuntimeError(".env.local 缺少 AGENT_ROOM_DB_RUNTIME_PASSWORD。")
 
     environment = os.environ.copy()
     environment.update(
@@ -43,8 +43,8 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
             "AGENT_ROOM_DB_HOST": "127.0.0.1",
             "AGENT_ROOM_DB_PORT": "55432",
             "AGENT_ROOM_DB_NAME": "agent_room",
-            "AGENT_ROOM_DB_USER": "agent_room",
-            "AGENT_ROOM_DB_PASSWORD": database_password,
+            "AGENT_ROOM_DB_USER": "agent_room_runtime",
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD": database_password,
             "AGENT_ROOM_DB_TLS_MODE": "disable",
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (

@@ -62,6 +62,12 @@ function Read-Environment {
 
 function Write-Environment {
   if (Test-Path -LiteralPath $EnvFile) {
+    $current = Read-Environment
+    if (-not $current.ContainsKey('AGENT_ROOM_DB_RUNTIME_PASSWORD')) {
+      $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
+      $runtimePassword = New-RandomSecret
+      Write-Utf8File -Path $EnvFile -Content ("$existing`nAGENT_ROOM_DB_RUNTIME_PASSWORD=$runtimePassword`n")
+    }
     return
   }
 
@@ -70,6 +76,7 @@ function Write-Environment {
     AGENT_ROOM_LOCAL_DIR = Convert-ToComposePath -Path $LocalDirectory
     POSTGRES_BOOTSTRAP_PASSWORD = New-RandomSecret
     AGENT_ROOM_DB_PASSWORD = New-RandomSecret
+    AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
     SYNAPSE_DB_PASSWORD = New-RandomSecret
     KEYCLOAK_DB_PASSWORD = New-RandomSecret
     KEYCLOAK_ADMIN = 'local-admin'

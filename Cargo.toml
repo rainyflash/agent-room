@@ -4,6 +4,7 @@ members = [
   "apps/control-plane",
   "crates/application",
   "crates/domain",
+  "crates/postgres-adapter",
   "crates/protocol-conformance",
 ]
 resolver = "3"
@@ -18,6 +19,7 @@ repository = "https://github.com/agent-room/agent-room"
 [workspace.dependencies]
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
+agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
 futures-util = "0.3.32"
@@ -29,7 +31,7 @@ proptest = "1.11.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring-native-roots"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
