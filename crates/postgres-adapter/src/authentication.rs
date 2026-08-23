@@ -1,0 +1,439 @@
+use agent_room_application::{
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
+    ports::{
+        LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, PortFuture, PrincipalAccount,
+        PrincipalRegistration, PrincipalSuspensionTransaction, SafeReturnPath, SecretDigest,
+        SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
+    },
+};
+use agent_room_domain::{
+    identity::PrincipalStatus,
+    ids::{ContentId, LoginAttemptId, PrincipalId, WebSessionId},
+    time::UtcMillis,
+};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
+use uuid::Uuid;
+
+use crate::{
+    PostgresRepositories,
+    error::map_sqlx_error,
+    principals::{corrupt_data, decode_principal_row},
+};
+
+impl LoginAttemptStore for PostgresRepositories {
+    fn create<'a>(&'a self, attempt: &'a LoginAttempt) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            sqlx::query(
+                r"INSERT INTO agent_room.oidc_login_attempt (
+                    id, browser_secret_digest, state_digest, nonce, pkce_verifier,
+                    return_path, import_display_name, import_locale, created_at, expires_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    to_timestamp($9::double precision / 1000.0),
+                    to_timestamp($10::double precision / 1000.0)
+                )",
+            )
+            .bind(attempt.id.as_uuid())
+            .bind(attempt.browser_secret_digest.as_bytes().as_slice())
+            .bind(attempt.state_digest.as_bytes().as_slice())
+            .bind(attempt.nonce.expose())
+            .bind(attempt.pkce_verifier.expose())
+            .bind(attempt.return_path.as_str())
+            .bind(attempt.profile_import.display_name)
+            .bind(attempt.profile_import.locale)
+            .bind(attempt.created_at.value())
+            .bind(attempt.expires_at.value())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("login_attempt.create", &error))?;
+            Ok(())
+        })
+    }
+
+    fn consume<'a>(
+        &'a self,
+        browser_secret_digest: &'a SecretDigest,
+        state_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<LoginAttempt>>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                r"UPDATE agent_room.oidc_login_attempt
+                   SET consumed_at = to_timestamp($3::double precision / 1000.0)
+                   WHERE browser_secret_digest = $1
+                     AND state_digest = $2
+                     AND consumed_at IS NULL
+                     AND expires_at > to_timestamp($3::double precision / 1000.0)
+                   RETURNING id, nonce, pkce_verifier, return_path,
+                     import_display_name, import_locale,
+                     floor(extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms,
+                     floor(extract(epoch FROM expires_at) * 1000)::bigint AS expires_at_ms",
+            )
+            .bind(browser_secret_digest.as_bytes().as_slice())
+            .bind(state_digest.as_bytes().as_slice())
+            .bind(now.value())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
+
+            row.map(|row| decode_login_attempt(&row, *browser_secret_digest, *state_digest))
+                .transpose()
+        })
+    }
+}
+
+impl LoginCompletionTransaction for PostgresRepositories {
+    fn complete<'a>(
+        &'a self,
+        principal: &'a PrincipalRegistration,
+        session: &'a WebSessionRegistration,
+    ) -> PortFuture<'a, RepositoryResult<StoredWebSession>> {
+        Box::pin(async move {
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error("login.complete", &error))?;
+            insert_principal_if_absent(&mut transaction, principal).await?;
+            let account = lock_account_by_oidc(
+                &mut transaction,
+                &principal.oidc_issuer,
+                &principal.oidc_subject,
+            )
+            .await?;
+            if !account.principal.allows_authentication() {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error("login.complete", &error))?;
+                return Err(RepositoryError::new(
+                    "login.complete",
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+            insert_web_session(&mut transaction, account.principal.id(), session).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error("login.complete", &error))?;
+
+            Ok(StoredWebSession {
+                id: session.id,
+                account,
+                authenticated_at: session.authenticated_at,
+                created_at: session.created_at,
+                expires_at: session.expires_at,
+            })
+        })
+    }
+}
+
+impl WebSessionStore for PostgresRepositories {
+    fn find_active<'a>(
+        &'a self,
+        secret_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                r"SELECT session.id AS session_id, principal.id AS principal_id,
+                     principal.status, principal.version, principal.matrix_user_id,
+                     principal.display_name, principal.avatar_content_id, principal.locale,
+                     floor(extract(epoch FROM session.authenticated_at) * 1000)::bigint
+                       AS authenticated_at_ms,
+                     floor(extract(epoch FROM session.created_at) * 1000)::bigint
+                       AS created_at_ms,
+                     floor(extract(epoch FROM session.expires_at) * 1000)::bigint
+                       AS expires_at_ms
+                   FROM agent_room.web_session AS session
+                   JOIN agent_room.principal AS principal ON principal.id = session.principal_id
+                   WHERE session.secret_digest = $1
+                     AND session.revoked_at IS NULL
+                     AND session.expires_at > to_timestamp($2::double precision / 1000.0)",
+            )
+            .bind(secret_digest.as_bytes().as_slice())
+            .bind(now.value())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("web_session.find_active", &error))?;
+
+            row.map(|row| decode_stored_session(&row)).transpose()
+        })
+    }
+
+    fn revoke<'a>(
+        &'a self,
+        secret_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let result = sqlx::query(
+                r"UPDATE agent_room.web_session
+                   SET revoked_at = to_timestamp($2::double precision / 1000.0)
+                   WHERE secret_digest = $1 AND revoked_at IS NULL",
+            )
+            .bind(secret_digest.as_bytes().as_slice())
+            .bind(now.value())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("web_session.revoke", &error))?;
+            Ok(result.rows_affected() == 1)
+        })
+    }
+}
+
+impl PrincipalSuspensionTransaction for PostgresRepositories {
+    fn suspend(
+        &self,
+        principal_id: PrincipalId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<agent_room_domain::identity::Principal>> {
+        Box::pin(async move {
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error("principal.suspend", &error))?;
+            let row = sqlx::query(
+                "SELECT status, version FROM agent_room.principal WHERE id = $1 FOR UPDATE",
+            )
+            .bind(principal_id.as_uuid())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error("principal.suspend", &error))?
+            .ok_or_else(|| {
+                RepositoryError::new("principal.suspend", RepositoryErrorKind::NotFound)
+            })?;
+            let mut principal = decode_principal_row(&row, principal_id, "principal.suspend")?;
+            if !matches!(
+                principal.status(),
+                PrincipalStatus::Active | PrincipalStatus::Suspended
+            ) {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error("principal.suspend", &error))?;
+                return Err(RepositoryError::new(
+                    "principal.suspend",
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+
+            if principal.status() == PrincipalStatus::Active {
+                principal
+                    .suspend()
+                    .map_err(|_| corrupt_data("principal.suspend"))?;
+                let next_version = principal
+                    .version()
+                    .next()
+                    .map_err(|_| corrupt_data("principal.suspend"))?;
+                sqlx::query(
+                    r"UPDATE agent_room.principal
+                       SET status = 'suspended', version = $2,
+                           updated_at = to_timestamp($3::double precision / 1000.0)
+                       WHERE id = $1",
+                )
+                .bind(principal_id.as_uuid())
+                .bind(next_version.value())
+                .bind(now.value())
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| map_sqlx_error("principal.suspend", &error))?;
+                principal.restore_version(next_version);
+            }
+            sqlx::query(
+                r"UPDATE agent_room.web_session
+                   SET revoked_at = to_timestamp($2::double precision / 1000.0)
+                   WHERE principal_id = $1 AND revoked_at IS NULL",
+            )
+            .bind(principal_id.as_uuid())
+            .bind(now.value())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error("principal.suspend", &error))?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error("principal.suspend", &error))?;
+            Ok(principal)
+        })
+    }
+}
+
+async fn insert_principal_if_absent(
+    transaction: &mut Transaction<'_, Postgres>,
+    registration: &PrincipalRegistration,
+) -> RepositoryResult<()> {
+    let avatar_id = registration.avatar_content_id.map(ContentId::as_uuid);
+    sqlx::query(
+        r"INSERT INTO agent_room.principal (
+            id, oidc_issuer, oidc_subject, matrix_user_id, display_name,
+            avatar_content_id, locale, status, created_at, updated_at, version
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            to_timestamp($9::double precision / 1000.0),
+            to_timestamp($9::double precision / 1000.0), $10
+        ) ON CONFLICT (oidc_issuer, oidc_subject) DO NOTHING",
+    )
+    .bind(registration.principal.id().as_uuid())
+    .bind(&registration.oidc_issuer)
+    .bind(&registration.oidc_subject)
+    .bind(&registration.matrix_user_id)
+    .bind(&registration.display_name)
+    .bind(avatar_id)
+    .bind(&registration.locale)
+    .bind(registration.principal.status().as_str())
+    .bind(registration.registered_at.value())
+    .bind(registration.principal.version().value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error("login.complete", &error))?;
+    Ok(())
+}
+
+async fn lock_account_by_oidc(
+    transaction: &mut Transaction<'_, Postgres>,
+    issuer: &str,
+    subject: &str,
+) -> RepositoryResult<PrincipalAccount> {
+    let row = sqlx::query(
+        r"SELECT id AS principal_id, status, version, matrix_user_id, display_name,
+             avatar_content_id, locale
+           FROM agent_room.principal
+           WHERE oidc_issuer = $1 AND oidc_subject = $2
+           FOR UPDATE",
+    )
+    .bind(issuer)
+    .bind(subject)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error("login.complete", &error))?
+    .ok_or_else(|| RepositoryError::new("login.complete", RepositoryErrorKind::CorruptData))?;
+    decode_principal_account(&row, "login.complete")
+}
+
+async fn insert_web_session(
+    transaction: &mut Transaction<'_, Postgres>,
+    principal_id: PrincipalId,
+    session: &WebSessionRegistration,
+) -> RepositoryResult<()> {
+    sqlx::query(
+        r"INSERT INTO agent_room.web_session (
+            id, principal_id, secret_digest, authenticated_at, created_at, expires_at
+        ) VALUES (
+            $1, $2, $3,
+            to_timestamp($4::double precision / 1000.0),
+            to_timestamp($5::double precision / 1000.0),
+            to_timestamp($6::double precision / 1000.0)
+        )",
+    )
+    .bind(session.id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .bind(session.secret_digest.as_bytes().as_slice())
+    .bind(session.authenticated_at.value())
+    .bind(session.created_at.value())
+    .bind(session.expires_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error("login.complete", &error))?;
+    Ok(())
+}
+
+fn decode_login_attempt(
+    row: &PgRow,
+    browser_secret_digest: SecretDigest,
+    state_digest: SecretDigest,
+) -> RepositoryResult<LoginAttempt> {
+    let id = LoginAttemptId::from_uuid(decode_uuid(row, "id", "login_attempt.consume")?);
+    let nonce = decode_secret(row, "nonce", "login_attempt.consume")?;
+    let pkce_verifier = decode_secret(row, "pkce_verifier", "login_attempt.consume")?;
+    let return_path: String = row
+        .try_get("return_path")
+        .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
+    let return_path =
+        SafeReturnPath::new(return_path).map_err(|_| corrupt_data("login_attempt.consume"))?;
+    Ok(LoginAttempt {
+        id,
+        browser_secret_digest,
+        state_digest,
+        nonce,
+        pkce_verifier,
+        return_path,
+        profile_import: agent_room_application::ports::ProfileImportConsent {
+            display_name: row
+                .try_get("import_display_name")
+                .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?,
+            locale: row
+                .try_get("import_locale")
+                .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?,
+        },
+        created_at: decode_time(row, "created_at_ms", "login_attempt.consume")?,
+        expires_at: decode_time(row, "expires_at_ms", "login_attempt.consume")?,
+    })
+}
+
+fn decode_stored_session(row: &PgRow) -> RepositoryResult<StoredWebSession> {
+    Ok(StoredWebSession {
+        id: WebSessionId::from_uuid(decode_uuid(row, "session_id", "web_session.find_active")?),
+        account: decode_principal_account(row, "web_session.find_active")?,
+        authenticated_at: decode_time(row, "authenticated_at_ms", "web_session.find_active")?,
+        created_at: decode_time(row, "created_at_ms", "web_session.find_active")?,
+        expires_at: decode_time(row, "expires_at_ms", "web_session.find_active")?,
+    })
+}
+
+fn decode_principal_account(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<PrincipalAccount> {
+    let id = PrincipalId::from_uuid(decode_uuid(row, "principal_id", operation)?);
+    let principal = decode_principal_row(row, id, operation)?;
+    let avatar_content_id = row
+        .try_get::<Option<Uuid>, _>("avatar_content_id")
+        .map_err(|error| map_sqlx_error(operation, &error))?
+        .map(ContentId::from_uuid);
+    Ok(PrincipalAccount {
+        principal,
+        matrix_user_id: row
+            .try_get("matrix_user_id")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+        display_name: row
+            .try_get("display_name")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+        avatar_content_id,
+        locale: row
+            .try_get("locale")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+    })
+}
+
+fn decode_secret(
+    row: &PgRow,
+    column: &'static str,
+    operation: &'static str,
+) -> RepositoryResult<SecretValue> {
+    let value: String = row
+        .try_get(column)
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    SecretValue::new(value).map_err(|_| corrupt_data(operation))
+}
+
+fn decode_uuid(
+    row: &PgRow,
+    column: &'static str,
+    operation: &'static str,
+) -> RepositoryResult<Uuid> {
+    row.try_get(column)
+        .map_err(|error| map_sqlx_error(operation, &error))
+}
+
+fn decode_time(
+    row: &PgRow,
+    column: &'static str,
+    operation: &'static str,
+) -> RepositoryResult<UtcMillis> {
+    let value: i64 = row
+        .try_get(column)
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    UtcMillis::new(value).map_err(|_| corrupt_data(operation))
+}

@@ -20,7 +20,8 @@ impl PrincipalRepository for PostgresRepositories {
                 .await
                 .map_err(|error| map_sqlx_error("principal.find", &error))?;
 
-            row.map(decode_principal(id)).transpose()
+            row.map(|row| decode_principal_row(&row, id, "principal.decode"))
+                .transpose()
         })
     }
 
@@ -98,21 +99,20 @@ impl PrincipalRepository for PostgresRepositories {
     }
 }
 
-fn decode_principal(
+pub(crate) fn decode_principal_row(
+    row: &sqlx::postgres::PgRow,
     id: PrincipalId,
-) -> impl FnOnce(sqlx::postgres::PgRow) -> RepositoryResult<Principal> {
-    move |row| {
-        let status: String = row
-            .try_get("status")
-            .map_err(|error| map_sqlx_error("principal.decode", &error))?;
-        let status = PrincipalStatus::try_from(status.as_str())
-            .map_err(|_| corrupt_data("principal.decode"))?;
-        let version = decode_version(&row, "principal.decode")?;
-        Ok(Principal::restore(id, status, version))
-    }
+    operation: &'static str,
+) -> RepositoryResult<Principal> {
+    let status: String = row
+        .try_get("status")
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let status = PrincipalStatus::try_from(status.as_str()).map_err(|_| corrupt_data(operation))?;
+    let version = decode_version(row, operation)?;
+    Ok(Principal::restore(id, status, version))
 }
 
-fn decode_version(
+pub(crate) fn decode_version(
     row: &sqlx::postgres::PgRow,
     operation: &'static str,
 ) -> RepositoryResult<AggregateVersion> {
@@ -142,6 +142,6 @@ async fn classify_missing_principal(
     ))
 }
 
-fn corrupt_data(operation: &'static str) -> RepositoryError {
+pub(crate) fn corrupt_data(operation: &'static str) -> RepositoryError {
     RepositoryError::new(operation, RepositoryErrorKind::CorruptData)
 }

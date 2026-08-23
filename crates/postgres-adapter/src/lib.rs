@@ -1,4 +1,5 @@
 mod agents;
+mod authentication;
 mod error;
 mod migrations;
 mod outbox;
