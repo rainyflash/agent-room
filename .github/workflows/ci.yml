@@ -43,12 +43,8 @@ jobs:
         run: corepack pnpm@10.28.0 build
       - name: 运行 TypeScript 测试
         run: corepack pnpm@10.28.0 test
-      - name: 输出覆盖率摘要
-        run: |
-          rustup component add llvm-tools-preview --toolchain 1.97.1
-          cargo install cargo-llvm-cov --locked --version 0.9.0
-          cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 60
-          corepack pnpm@10.28.0 test:coverage
+      - name: 验证 TypeScript 覆盖率
+        run: corepack pnpm@10.28.0 test:coverage
       - name: 检查协议生成物
         run: corepack pnpm@10.28.0 protocol:check
       - name: 检查 Action 固定策略
@@ -98,6 +94,13 @@ jobs:
       - name: 启动真实外部依赖
         shell: pwsh
         run: ./tools/dev-infra.ps1 up
+      - name: 验证数据库仓储并合并 Rust 覆盖率
+        run: |
+          rustup component add llvm-tools-preview --toolchain 1.97.1
+          cargo install cargo-llvm-cov --locked --version 0.9.0
+          python tools/database.py coverage
+      - name: 应用控制平面数据库迁移
+        run: python tools/database.py migrate
       - name: 幂等创建测试主体、Agent、房间与内容
         shell: pwsh
         run: ./tools/dev-infra.ps1 seed

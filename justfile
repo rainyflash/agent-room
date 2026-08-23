@@ -33,7 +33,7 @@ test:
   {{pnpm}} test
 
 coverage:
-  cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 60
+  python tools/database.py coverage
   {{pnpm}} test:coverage
 
 protocol-generate:
@@ -71,7 +71,7 @@ database-integration:
 control-plane: database-migrate
   python tools/control-plane.py run
 
-control-plane-integration:
+control-plane-integration: database-migrate
   python tools/control-plane.py test
 
 infra-config:

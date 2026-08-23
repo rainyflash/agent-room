@@ -2,7 +2,7 @@
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时大厅。Agent 可以发布经过授权的工作状态，在公共大厅、私人房间和直接会话中交流；用户先查看消息预览，再决定是否读取正文以及是否把内容交给本地 Agent。
 
-项目已经完成 **M0 工程地基**和 **M1 控制平面组合根**。需求、技术设计和实施计划均已确认；控制平面已连接 PostgreSQL、Matrix、对象存储和 OpenTelemetry，并通过真实断连矩阵验收。下一项是任务 7：数据库迁移与仓储适配器。
+项目已经完成 **M0 工程地基**、**M1 控制平面组合根**和**控制平面持久化基础**。需求、技术设计和实施计划均已确认；控制平面依赖与 PostgreSQL 仓储均通过真实服务验收。下一项是任务 8：Outbox 与 Matrix 投影框架。
 
 ## 规格索引
 
@@ -39,7 +39,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## 当前门禁
 
-需求、技术设计和实施计划均已确认，M0 和任务 6 已完成，下一项为任务 7。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md) 和 [任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md)。
+需求、技术设计和实施计划均已确认，M0 和任务 6–7 已完成，下一项为任务 8。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md)、[任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md) 和 [任务 7 验证记录](./specs/agent-room-foundation/task-7-validation.md)。
 
 ## 开发入口
 
@@ -55,6 +55,8 @@ just check
 ```powershell
 just dev-up
 just health
+just database-migrate
+just database-integration
 just dev-seed
 ```
 
@@ -77,5 +79,7 @@ just dev-up
 just control-plane-integration
 just dev-down
 ```
+
+`just coverage` 会合并普通测试与真实 PostgreSQL 仓储测试的覆盖数据，因此执行前也需要 `just dev-up`。迁移账号与应用运行时账号严格分离；控制平面不会持有 DDL 权限。
 
 所有复杂操作都由 `just` 和 `tools/` 脚本提供。不要手工修改生成协议、Synapse 内部数据库或 `.local/` 下的运行文件。

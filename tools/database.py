@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import os
 from pathlib import Path
 import re
@@ -161,7 +162,9 @@ def migrate(values: dict[str, str]) -> None:
     )
 
 
-def test(values: dict[str, str]) -> None:
+def run_in_test_database(
+    values: dict[str, str], commands: list[list[str]]
+) -> None:
     migration_password = required_value(values, "AGENT_ROOM_DB_PASSWORD")
     runtime_password = required_value(values, "AGENT_ROOM_DB_RUNTIME_PASSWORD")
     ensure_runtime_role(runtime_password)
@@ -175,7 +178,16 @@ def test(values: dict[str, str]) -> None:
         "agent_room_runtime", runtime_password, TEST_DATABASE
     )
     try:
-        run(
+        for command in commands:
+            run(command, environment)
+    finally:
+        drop_test_database()
+
+
+def test(values: dict[str, str]) -> None:
+    run_in_test_database(
+        values,
+        [
             [
                 "cargo",
                 "test",
@@ -186,24 +198,63 @@ def test(values: dict[str, str]) -> None:
                 "--",
                 "--ignored",
                 "--test-threads=1",
+            ]
+        ],
+    )
+
+
+def coverage(values: dict[str, str]) -> None:
+    run_in_test_database(
+        values,
+        [
+            ["cargo", "llvm-cov", "clean", "--workspace"],
+            [
+                "cargo",
+                "llvm-cov",
+                "--workspace",
+                "--all-features",
+                "--no-report",
             ],
-            environment,
-        )
-    finally:
-        drop_test_database()
+            [
+                "cargo",
+                "llvm-cov",
+                "--all-features",
+                "-p",
+                "agent-room-postgres-adapter",
+                "--test",
+                "real_database",
+                "--no-report",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+            ],
+            [
+                "cargo",
+                "llvm-cov",
+                "report",
+                "--summary-only",
+                "--fail-under-lines",
+                "60",
+            ],
+        ],
+    )
+
+
+ACTIONS: Final[dict[str, Callable[[dict[str, str]], None]]] = {
+    "migrate": migrate,
+    "test": test,
+    "coverage": coverage,
+}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("migrate", "test"))
+    parser.add_argument("action", choices=tuple(ACTIONS))
     arguments = parser.parse_args()
 
     try:
         values = read_environment(ENV_FILE)
-        if arguments.action == "migrate":
-            migrate(values)
-        else:
-            test(values)
+        ACTIONS[arguments.action](values)
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
         return 1

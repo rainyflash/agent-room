@@ -1,6 +1,6 @@
 # Agent Room 实施计划
 
-> 状态：执行中；M0 工程地基和 M1 任务 6 已完成，下一任务为 7  
+> 状态：执行中；M0 工程地基和 M1 任务 6–7 已完成，下一任务为 8
 > 依赖：[需求规格](./requirements.md)、[总体设计](./design.md)、[协议](./protocol.md)、[数据模型](./data-model.md)、[安全](./security.md)、[UI](./ui-design.md)、[运行设计](./operations.md)  
 > 执行规则：按依赖顺序推进；每完成一个任务同步更新复选框和验证证据
 
@@ -87,7 +87,7 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
 
 任务 6 的端点、断连矩阵、可观测性与质量门禁结果记录在 [任务 6 验证记录](./task-6-validation.md)。
 
-- [ ] 7. 实现控制平面数据库迁移与仓储
+- [x] 7. 实现控制平面数据库迁移与仓储
   - 创建 Principal、Device、Agent、Ownership、Instance、Adapter、Room、Content、Handoff、Grant、Moderation、Audit、Outbox 和 Projection 表。
   - 落实外键、检查约束、部分唯一索引、乐观版本和数据库角色分离。
   - 实现 SQLx 仓储适配器与事务边界，不允许 Handler 直接写 SQL。
@@ -95,6 +95,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - 验证：数据库重建、重复迁移和并发状态转换结果确定且无孤儿外键。
   - _依赖：3、4、6_
   - _需求：1、3、4、7、10、11、12、15_
+
+任务 7 的 Schema、角色隔离、事务、并发和真实 PostgreSQL 验收结果记录在 [任务 7 验证记录](./task-7-validation.md)。
 
 - [ ] 8. 实现 Outbox 与 Matrix 投影框架
   - 业务写入与 Outbox 在同一事务完成。
