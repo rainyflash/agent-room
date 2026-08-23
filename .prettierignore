@@ -1,0 +1,9 @@
+.local
+artifacts
+coverage
+dist
+node_modules
+target
+pnpm-lock.yaml
+packages/protocol-types/src/generated.ts
+specs

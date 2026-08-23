@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.agent.status.v1",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a7",
+  "createdAt": "2026-08-23T12:00:00Z",
+  "actor": {
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+    "provenance": "autonomous_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a8",
+  "signature": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "state": "working",
+  "summary": "正在验证协议夹具",
+  "leaseExpiresAt": "2026-08-23T12:00:30Z"
+}

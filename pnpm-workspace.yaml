@@ -1,0 +1,9 @@
+packages:
+  - 'adapters/*'
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/packages/*'
+
+onlyBuiltDependencies:
+  - '@cyclonedx/cdxgen-plugins-bin'
+  - 'esbuild'

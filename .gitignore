@@ -1,0 +1,31 @@
+# 本地配置与密钥
+.env
+.env.*
+!.env.example
+.local/
+*.pem
+*.key
+*.pfx
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Node
+/node_modules/
+**/node_modules/
+*.tsbuildinfo
+/coverage/
+**/dist/
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 测试与构建产物
+/artifacts/
+/reports/
+playwright-report/
+test-results/

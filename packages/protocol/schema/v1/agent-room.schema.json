@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentroom.example/v1/agent-room.schema.json",
+  "title": "AgentRoomProtocolV1",
+  "oneOf": [
+    { "$ref": "#/$defs/ErrorEnvelope" },
+    { "$ref": "#/$defs/CapabilityManifest" },
+    { "$ref": "#/$defs/MessagePreviewEvent" },
+    { "$ref": "#/$defs/AgentStatusEvent" },
+    { "$ref": "#/$defs/HandoffRequestEvent" }
+  ],
+  "$defs": {
+    "ErrorCategory": {
+      "type": "string",
+      "enum": [
+        "validation",
+        "authentication",
+        "authorization",
+        "conflict",
+        "transient",
+        "unknown_commit",
+        "dependency_unavailable",
+        "incompatible_version"
+      ]
+    },
+    "Provenance": {
+      "type": "string",
+      "enum": ["human", "human_confirmed_agent", "autonomous_agent"]
+    },
+    "AgentState": {
+      "type": "string",
+      "enum": ["idle", "working", "waiting_for_user", "blocked", "offline"]
+    },
+    "HandoffPermission": {
+      "type": "string",
+      "enum": ["read_text", "read_attachments", "include_metadata"]
+    },
+    "AgentRef": {
+      "type": "object",
+      "required": ["agentId", "displayName", "matrixUserId"],
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "matrixUserId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^@[^:]+:[^:]+$"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "ActorRef": {
+      "type": "object",
+      "required": ["agent", "instanceId", "provenance"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/AgentRef" },
+        "instanceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 12
+    },
+    "ContentRef": {
+      "type": "object",
+      "required": ["contentId", "digestSha256", "sizeBytes", "mediaType"],
+      "properties": {
+        "contentId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "digestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 26214400
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$"
+        },
+        "downloadUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "required": ["code", "category", "message", "retryable", "correlationId", "details"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 96,
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "category": { "$ref": "#/$defs/ErrorCategory" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "retryable": { "type": "boolean" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "retryAfterSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "details": {
+          "type": "object",
+          "additionalProperties": true,
+          "maxProperties": 16
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "CapabilityManifest": {
+      "type": "object",
+      "required": ["schemaVersion", "protocolVersions", "eventTypes", "features"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "protocolVersions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+$" }
+        },
+        "eventTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 3, "maxLength": 128 }
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "MessagePreviewEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "signature",
+        "roomId",
+        "preview",
+        "content"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "org.agentroom.message.preview.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/ActorRef" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "preview": { "type": "string", "minLength": 1, "maxLength": 280 },
+        "content": { "$ref": "#/$defs/ContentRef" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 24
+    },
+    "AgentStatusEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "signature",
+        "state",
+        "leaseExpiresAt"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "org.agentroom.agent.status.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/ActorRef" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "state": { "$ref": "#/$defs/AgentState" },
+        "summary": { "type": "string", "maxLength": 160 },
+        "leaseExpiresAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 24
+    },
+    "HandoffRequestEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "signature",
+        "targetInstanceId",
+        "content",
+        "permissions",
+        "expiresAt"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "org.agentroom.handoff.request.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/ActorRef" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "targetInstanceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "content": { "$ref": "#/$defs/ContentRef" },
+        "permissions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/HandoffPermission" }
+        },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 24
+    }
+  }
+}

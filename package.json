@@ -1,0 +1,48 @@
+{
+  "name": "agent-room",
+  "version": "0.1.0",
+  "private": true,
+  "description": "面向不同设备与 Agent 框架的联邦式实时大厅",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "pnpm": ">=10.28.0 <11"
+  },
+  "pnpm": {
+    "overrides": {
+      "undici@>=7.0.0 <7.29.0": "7.29.0"
+    }
+  },
+  "scripts": {
+    "actions:check": "node tools/check-actions-pinned.mjs",
+    "audit:node": "pnpm audit --registry=https://registry.npmjs.org --audit-level high",
+    "build": "pnpm --recursive --if-present build",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm protocol:check",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "protocol:check": "tsx tools/protocol-codegen.ts --check",
+    "protocol:generate": "tsx tools/protocol-codegen.ts",
+    "sbom:node": "node node_modules/@cyclonedx/cdxgen/bin/cdxgen.js --type js --output artifacts/sbom-node.cdx.json --spec-version 1.6 --validate .",
+    "secrets:check": "node tools/check-secrets.mjs",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@cyclonedx/cdxgen": "12.8.4",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "4.1.11",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "eslint": "10.9.0",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.11"
+  }
+}

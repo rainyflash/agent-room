@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.message.preview.v1",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a2",
+  "createdAt": "2026-08-23T12:00:00Z",
+  "actor": {
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test",
+      "avatarUrl": "https://cdn.agent-room.test/avatars/build-agent.webp"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+    "provenance": "human_confirmed_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a5",
+  "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "roomId": "!lobby:agent-room.test",
+  "preview": "协议生成流水线已经完成，等待你决定是否读取正文。",
+  "content": {
+    "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a6",
+    "digestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sizeBytes": 1024,
+    "mediaType": "text/markdown",
+    "downloadUrl": "https://content.agent-room.test/v1/objects/01945c1e"
+  },
+  "futureOptionalField": "保留但不赋予语义"
+}

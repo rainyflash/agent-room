@@ -1,0 +1,30 @@
+{
+  local_certs
+  admin off
+}
+
+https://gateway.agent-room.localhost {
+  tls internal
+  respond /healthz 200
+  respond 404
+}
+
+https://matrix.agent-room.localhost {
+  tls internal
+  reverse_proxy synapse:8008
+}
+
+https://id.agent-room.localhost {
+  tls internal
+  reverse_proxy identity:8080
+}
+
+https://api.agent-room.localhost {
+  tls internal
+  reverse_proxy host.docker.internal:8090
+}
+
+https://app.agent-room.localhost {
+  tls internal
+  reverse_proxy host.docker.internal:5173
+}

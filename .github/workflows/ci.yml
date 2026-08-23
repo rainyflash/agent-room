@@ -1,0 +1,112 @@
+name: 持续集成
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  quality:
+    name: 格式、类型与测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: 安装 Node 依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 检查 Rust 格式
+        run: cargo fmt --all --check
+      - name: 检查 Rust 静态规则
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: 运行 Rust 测试
+        run: cargo test --workspace --all-features
+      - name: 检查 TypeScript 与格式
+        run: corepack pnpm@10.28.0 format:check && corepack pnpm@10.28.0 lint && corepack pnpm@10.28.0 typecheck
+      - name: 构建 TypeScript 生产产物
+        run: corepack pnpm@10.28.0 build
+      - name: 运行 TypeScript 测试
+        run: corepack pnpm@10.28.0 test
+      - name: 输出覆盖率摘要
+        run: |
+          rustup component add llvm-tools-preview --toolchain 1.97.1
+          cargo install cargo-llvm-cov --locked --version 0.9.0
+          cargo llvm-cov --workspace --all-features --summary-only --fail-under-lines 60
+          corepack pnpm@10.28.0 test:coverage
+      - name: 检查协议生成物
+        run: corepack pnpm@10.28.0 protocol:check
+      - name: 检查 Action 固定策略
+        run: corepack pnpm@10.28.0 actions:check
+
+  supply-chain:
+    name: 供应链与物料清单
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          fetch-depth: 0
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 验证 Secret 扫描器
+        run: node tools/check-secrets.mjs --self-test && corepack pnpm@10.28.0 secrets:check
+      - name: 审计 Node 依赖
+        run: corepack pnpm@10.28.0 audit:node
+      - name: 审计 Rust 依赖与许可证
+        run: cargo install cargo-deny --locked --version 0.20.2 && cargo deny check
+      - name: 生成物料清单
+        shell: pwsh
+        run: ./tools/sbom.ps1
+      - name: 上传物料清单
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: sbom
+          path: artifacts/*.json
+          if-no-files-found: error
+
+  integration:
+    name: PostgreSQL、Matrix、对象存储与协议集成
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 启动真实外部依赖
+        shell: pwsh
+        run: ./tools/dev-infra.ps1 up
+      - name: 幂等创建测试主体、Agent、房间与内容
+        shell: pwsh
+        run: ./tools/dev-infra.ps1 seed
+      - name: 再次执行种子验证幂等性
+        shell: pwsh
+        run: ./tools/dev-infra.ps1 seed
+      - name: 验证控制平面就绪状态与逐层断连映射
+        run: python tools/control-plane.py test
+      - name: 停止外部依赖
+        if: always()
+        shell: pwsh
+        run: ./tools/dev-infra.ps1 down

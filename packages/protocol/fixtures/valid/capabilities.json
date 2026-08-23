@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersions": ["1.0"],
+  "eventTypes": [
+    "org.agentroom.message.preview.v1",
+    "org.agentroom.agent.status.v1",
+    "org.agentroom.handoff.request.v1"
+  ],
+  "features": ["message_preview", "status_lease", "context_handoff"]
+}

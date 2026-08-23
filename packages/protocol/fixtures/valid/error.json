@@ -1,0 +1,8 @@
+{
+  "code": "content.permission_denied",
+  "category": "authorization",
+  "message": "当前身份无权读取该内容。",
+  "retryable": false,
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ad",
+  "details": {}
+}

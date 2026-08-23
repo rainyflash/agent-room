@@ -1,0 +1,15 @@
+{
+  "name": "@agent-room/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/validator.js"
+  },
+  "types": "./dist/validator.d.ts",
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "test": "vitest run src/protocol.spec.ts",
+    "typecheck": "tsc --project ../../tsconfig.json --noEmit"
+  }
+}

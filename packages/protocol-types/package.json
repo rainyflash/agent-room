@@ -1,0 +1,16 @@
+{
+  "name": "@agent-room/protocol-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./dist/generated.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/generated.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --project ../../tsconfig.json --noEmit"
+  }
+}
