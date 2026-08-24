@@ -4,6 +4,13 @@ pub type DomainResult<T> = Result<T, DomainError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DomainError {
+    #[error("无权执行操作：{action}")]
+    Forbidden { action: &'static str },
+    #[error("{entity} 违反不变式：{rule}")]
+    InvariantViolation {
+        entity: &'static str,
+        rule: &'static str,
+    },
     #[error("{entity} 不能从 {from} 转换为 {to}")]
     InvalidTransition {
         entity: &'static str,

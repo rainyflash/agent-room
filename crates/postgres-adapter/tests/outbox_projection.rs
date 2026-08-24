@@ -493,7 +493,8 @@ fn agent_registration(
     display_name: &str,
 ) -> AgentRegistration {
     AgentRegistration {
-        agent: Agent::register(agent_id, principal_id),
+        agent: Agent::register(agent_id),
+        owner_id: principal_id,
         matrix_user_id: format!("@agent-{agent_id}:matrix.agent-room.localhost"),
         slug: format!("agent-{agent_id}"),
         display_name: display_name.to_owned(),

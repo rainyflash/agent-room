@@ -139,7 +139,8 @@ async fn 仓储执行真实读写并拒绝并发覆盖() {
 
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let agent_registration = AgentRegistration {
-        agent: Agent::register(agent_id, principal_id),
+        agent: Agent::register(agent_id),
+        owner_id: principal_id,
         matrix_user_id: format!("@agent-{agent_id}:matrix.agent-room.localhost"),
         slug: format!("agent-{agent_id}"),
         display_name: "仓储测试 Agent".to_owned(),
@@ -169,7 +170,8 @@ async fn 事务失败会回滚且外键拒绝孤儿记录() {
     let missing_owner = PrincipalId::from_uuid(Uuid::now_v7());
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let registration = AgentRegistration {
-        agent: Agent::register(agent_id, missing_owner),
+        agent: Agent::register(agent_id),
+        owner_id: missing_owner,
         matrix_user_id: format!("@rollback-{agent_id}:matrix.agent-room.localhost"),
         slug: format!("rollback-{agent_id}"),
         display_name: "回滚测试 Agent".to_owned(),

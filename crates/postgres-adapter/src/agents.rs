@@ -6,7 +6,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     agents::{Agent, AgentStatus},
-    ids::{AgentId, PrincipalId},
+    ids::AgentId,
     version::AggregateVersion,
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -17,16 +17,9 @@ impl AgentRepository for PostgresRepositories {
     fn find(&self, id: AgentId) -> PortFuture<'_, RepositoryResult<Option<Agent>>> {
         Box::pin(async move {
             let row = sqlx::query(
-                r"SELECT a.lifecycle_state, a.version, ownership.principal_id
-                  FROM agent_room.agent AS a
-                  JOIN LATERAL (
-                      SELECT principal_id
-                      FROM agent_room.agent_ownership
-                      WHERE agent_id = a.id
-                      ORDER BY (revoked_at IS NULL) DESC, created_at, principal_id
-                      LIMIT 1
-                  ) AS ownership ON true
-                  WHERE a.id = $1",
+                r"SELECT lifecycle_state, version
+                  FROM agent_room.agent
+                  WHERE id = $1",
             )
             .bind(id.as_uuid())
             .fetch_optional(&self.pool)
@@ -67,12 +60,7 @@ impl AgentRepository for PostgresRepositories {
             match row {
                 Some(row) => {
                     let version = decode_version(&row, "agent.save")?;
-                    Ok(Agent::restore(
-                        agent.id(),
-                        agent.owner_id(),
-                        agent.status(),
-                        version,
-                    ))
+                    Ok(Agent::restore(agent.id(), agent.status(), version))
                 }
                 None => Err(classify_missing_agent(&self.pool, agent.id()).await?),
             }
@@ -178,7 +166,7 @@ async fn insert_agent_registration(
             to_timestamp($3::double precision / 1000.0)
         )",
     )
-    .bind(agent.owner_id().as_uuid())
+    .bind(registration.owner_id.as_uuid())
     .bind(agent.id().as_uuid())
     .bind(registered_at)
     .execute(&mut **transaction)
@@ -194,17 +182,9 @@ fn decode_agent(id: AgentId) -> impl FnOnce(sqlx::postgres::PgRow) -> Repository
             .map_err(|error| map_sqlx_error("agent.decode", &error))?;
         let status =
             AgentStatus::try_from(status.as_str()).map_err(|_| corrupt_data("agent.decode"))?;
-        let owner_id: uuid::Uuid = row
-            .try_get("principal_id")
-            .map_err(|error| map_sqlx_error("agent.decode", &error))?;
         let version = decode_version(&row, "agent.decode")?;
 
-        Ok(Agent::restore(
-            id,
-            PrincipalId::from_uuid(owner_id),
-            status,
-            version,
-        ))
+        Ok(Agent::restore(id, status, version))
     }
 }
 

@@ -39,6 +39,7 @@ define_id!(DeviceTokenFamilyId);
 define_id!(DeviceAccessTokenId);
 define_id!(DeviceRefreshTokenId);
 define_id!(AgentId);
+define_id!(AdapterBindingId);
 define_id!(AgentInstanceId);
 define_id!(RoomCatalogId);
 define_id!(RoomInstanceId);

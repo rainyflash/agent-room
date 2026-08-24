@@ -1,6 +1,6 @@
 use agent_room_domain::{
     agents::{Agent, AgentVisibility},
-    ids::{AgentId, ContentId},
+    ids::{AgentId, ContentId, PrincipalId},
     time::UtcMillis,
 };
 
@@ -11,6 +11,7 @@ use super::{OutboxMessage, PortFuture};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRegistration {
     pub agent: Agent,
+    pub owner_id: PrincipalId,
     pub matrix_user_id: String,
     pub slug: String,
     pub display_name: String,
