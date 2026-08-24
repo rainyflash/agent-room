@@ -96,6 +96,12 @@ dependencies = [
  "agent-room-application",
  "agent-room-domain",
  "agent-room-identity-adapter",
+ "base64 0.22.1",
+ "chrono",
+ "jsonschema",
+ "serde",
+ "serde_jcs",
+ "serde_json",
  "tokio",
  "uuid",
 ]

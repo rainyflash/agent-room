@@ -3,3 +3,4 @@ pub mod ipc;
 pub mod ports;
 pub mod reconnect;
 pub mod session;
+pub mod status;

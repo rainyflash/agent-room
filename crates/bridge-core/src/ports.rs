@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use agent_room_application::{
     devices::{DeviceCredentials, DeviceRequestProof},
-    ports::{DeviceSignature, PortFuture, SecretValue},
+    ports::{
+        DeviceSignature, MatrixEventId, MatrixResult, MatrixRoomId, MatrixStateEvent, PortFuture,
+        SecretValue,
+    },
 };
 use agent_room_domain::{
     devices::{DevicePlatform, DevicePublicSigningKey},
@@ -143,4 +146,18 @@ pub trait ControlPlaneDeviceGateway: Send + Sync {
         &self,
         request: RefreshBridgeDevice,
     ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>>;
+}
+
+/// 将状态发布用例与完整 Matrix 会话能力隔离开的最小端口。
+pub trait AgentStatusStatePublisher: Send + Sync {
+    fn publish<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>>;
+}
+
+pub trait StatusEventIdentifierFactory: Send + Sync {
+    fn event_id(&self) -> uuid::Uuid;
+    fn correlation_id(&self) -> uuid::Uuid;
 }
