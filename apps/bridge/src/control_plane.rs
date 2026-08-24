@@ -39,8 +39,10 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::{Uuid, Version};
 
+mod content;
 mod lobbies;
 
+pub use content::ReqwestControlPlaneContentGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
 
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";

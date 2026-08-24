@@ -4,7 +4,7 @@ use agent_room_bridge_core::ipc::{
     FoundationIpcScopePolicy, IpcHandshakeAgreement, IpcHandshakeFailureKind,
     IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion,
 };
-use agent_room_bridge_core::messages::MessageTimelineQueryRepository;
+use agent_room_bridge_core::messages::{MessageTimelineQueryRepository, OpenMessageContentService};
 use agent_room_bridge_ipc::{
     IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcErrorCategory, IpcFrame, IpcFrameCodec,
     IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
@@ -68,6 +68,7 @@ impl FoundationBridgeIpcRequestHandler {
         status_reader: Arc<dyn BridgeStatusReader>,
         agent_runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
         previews: Arc<dyn MessageTimelineQueryRepository>,
+        content: Arc<OpenMessageContentService>,
     ) -> Self {
         Self {
             status_reader: status_reader.clone(),
@@ -75,6 +76,7 @@ impl FoundationBridgeIpcRequestHandler {
                 status_reader,
                 agent_runtime_reader,
                 previews,
+                content,
             )),
         }
     }
@@ -104,8 +106,10 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::PublishStatus(request) => {
                     self.agent_runtime()?.publish_status(request).await
                 }
+                IpcMethod::OpenContent(request) => {
+                    self.agent_runtime()?.open_content(request).await
+                }
                 IpcMethod::GetPresence(_)
-                | IpcMethod::OpenContent(_)
                 | IpcMethod::SendMessage(_)
                 | IpcMethod::ConsumeHandoff(_)
                 | IpcMethod::DeclineHandoff(_) => Err(agent_runtime_unavailable()),
@@ -655,8 +659,11 @@ mod tests {
     use agent_room_bridge_core::{
         agent_identity::BridgeAgentIdentity,
         messages::{
+            DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
+            MessageContentReadGateway, MessageContentReadRequest, MessageContentSourceQuery,
             MessagePreviewPage, MessagePreviewQuery, MessageTimelineQueryFailure,
-            MessageTimelineQueryRepository, ProjectedMessagePreview,
+            MessageTimelineQueryRepository, OpenMessageContentDependencies,
+            OpenMessageContentService, ProjectedMessageActor, ProjectedMessagePreview,
         },
         ports::{
             AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
@@ -669,13 +676,18 @@ mod tests {
     };
     use agent_room_bridge_ipc::{
         IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMethod,
-        IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
-        IpcWorkStatus, create_challenge_proof,
+        IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSharedSecret,
+        IpcVersion, IpcWorkStatus, create_challenge_proof,
     };
     use agent_room_domain::{
         agent_status::AgentStatusVisibility,
+        content::{ContentByteLength, ContentMediaType, Sha256Digest},
         devices::DevicePublicSigningKey,
-        ids::{AgentId, AgentInstanceId},
+        ids::{AgentId, AgentInstanceId, ContentId, MessageId},
+        messages::{
+            MessageContentReference, MessagePreview, MessageProvenance, MessageRiskFlag,
+            MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
+        },
         time::{DurationMillis, UtcMillis},
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -727,10 +739,59 @@ mod tests {
 
         fn find_content_source<'a>(
             &'a self,
-            _query: &'a agent_room_bridge_core::messages::MessageContentSourceQuery,
+            _query: &'a MessageContentSourceQuery,
         ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>
         {
             Box::pin(async { Ok(None) })
+        }
+    }
+
+    struct 固定正文投影(ProjectedMessagePreview);
+
+    impl MessageTimelineQueryRepository for 固定正文投影 {
+        fn list_previews<'a>(
+            &'a self,
+            _query: &'a MessagePreviewQuery,
+        ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>> {
+            Box::pin(async { Ok(MessagePreviewPage::new(Vec::new(), None)) })
+        }
+
+        fn find_content_source<'a>(
+            &'a self,
+            query: &'a MessageContentSourceQuery,
+        ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>
+        {
+            Box::pin(async move {
+                Ok((query.room_id() == &self.0.room_id
+                    && query.content_id() == self.0.content.content_id())
+                .then(|| self.0.clone()))
+            })
+        }
+    }
+
+    struct 拒绝正文网关;
+
+    impl MessageContentReadGateway for 拒绝正文网关 {
+        fn open<'a>(
+            &'a self,
+            _request: &'a MessageContentReadRequest,
+        ) -> PortFuture<'a, Result<DownloadedMessageContent, MessageContentReadFailure>> {
+            Box::pin(async {
+                Err(MessageContentReadFailure::new(
+                    MessageContentReadFailureKind::NotFound,
+                ))
+            })
+        }
+    }
+
+    struct 固定正文网关(DownloadedMessageContent);
+
+    impl MessageContentReadGateway for 固定正文网关 {
+        fn open<'a>(
+            &'a self,
+            _request: &'a MessageContentReadRequest,
+        ) -> PortFuture<'a, Result<DownloadedMessageContent, MessageContentReadFailure>> {
+            Box::pin(async { Ok(self.0.clone()) })
         }
     }
 
@@ -796,6 +857,7 @@ mod tests {
                 ["self.read", "previews.read"],
             ))),
             previews.clone(),
+            空正文服务(previews.clone()),
         );
 
         let summary = handler
@@ -855,6 +917,7 @@ mod tests {
             AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
             HostAgentState::Available,
         ));
+        let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
@@ -866,7 +929,8 @@ mod tests {
                 )
                 .with_status(status),
             )),
-            Arc::new(记录预览查询::default()),
+            previews.clone(),
+            空正文服务(previews),
         );
 
         let response = handler
@@ -893,6 +957,62 @@ mod tests {
         assert!(events[0].content().get("progress").is_none());
     }
 
+    #[tokio::test]
+    async fn 正文打开只使用当前大厅的已验证投影并返回完整来源() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let content_id = ContentId::from_uuid(
+            Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a5").expect("正文标识有效"),
+        );
+        let digest = Sha256Digest::from_bytes([
+            0xd6, 0x61, 0xc3, 0xd9, 0x6d, 0x53, 0xeb, 0xc0, 0xca, 0x8a, 0x55, 0xaa, 0xe2, 0x4b,
+            0x5d, 0xf4, 0xa4, 0xd1, 0xbf, 0x28, 0xd3, 0x73, 0x37, 0xb9, 0x82, 0xfe, 0x8e, 0xbf,
+            0x54, 0x84, 0x6e, 0xeb,
+        ]);
+        let source = 测试正文投影(room_id.clone(), content_id, digest);
+        let projections = Arc::new(固定正文投影(source));
+        let content = Arc::new(OpenMessageContentService::new(
+            OpenMessageContentDependencies {
+                projections: projections.clone(),
+                content: Arc::new(固定正文网关(DownloadedMessageContent {
+                    bytes: Arc::from("正文".as_bytes()),
+                    digest,
+                    byte_length: ContentByteLength::new(6).expect("正文长度有效"),
+                    media_type: ContentMediaType::new("text/plain").expect("媒体类型有效"),
+                })),
+            },
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                测试_agent_身份(),
+                "DEVICE-1",
+                room_id.clone(),
+                ["content.read"],
+            ))),
+            projections,
+            content,
+        );
+
+        let response = handler
+            .dispatch(IpcMethod::OpenContent(IpcOpenContentRequest {
+                content_id: content_id.to_string(),
+            }))
+            .await
+            .expect("当前大厅正文可打开");
+
+        assert!(matches!(
+            response,
+            IpcResponse::OpenedContent { content }
+                if content.body == "正文"
+                    && content.source_room_id == room_id.as_str()
+                    && content.source_event_id == "$message:matrix.test"
+                    && content.content.media_type == "text/plain"
+                    && content.content.digest_sha256
+                        == "d661c3d96d53ebc0ca8a55aae24b5df4a4d1bf28d37337b982fe8ebf54846eeb"
+                    && content.risk_flags == ["external_link"]
+        ));
+    }
+
     fn 测试_agent_身份() -> BridgeAgentIdentity {
         BridgeAgentIdentity::new(
             AgentId::from_uuid(
@@ -905,6 +1025,52 @@ mod tests {
             ),
         )
         .expect("Agent 身份有效")
+    }
+
+    fn 测试正文投影(
+        room_id: MatrixRoomId,
+        content_id: ContentId,
+        digest: Sha256Digest,
+    ) -> ProjectedMessagePreview {
+        let media_type = ContentMediaType::new("text/plain").expect("媒体类型有效");
+        ProjectedMessagePreview {
+            event_id: MatrixEventId::new("$message:matrix.test").expect("事件标识有效"),
+            transaction_id: None,
+            room_id,
+            message_id: MessageId::from_uuid(
+                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a6").expect("消息标识有效"),
+            ),
+            created_at: UtcMillis::new(1_000).expect("消息时间有效"),
+            origin_server_timestamp: Some(1_000),
+            actor: ProjectedMessageActor::new(
+                测试_agent_身份(),
+                MessageProvenance::AutonomousAgent,
+            ),
+            preview: MessagePreview::new(
+                MessageTitle::new("标题").expect("标题有效"),
+                MessageSummary::new("摘要").expect("摘要有效"),
+                media_type,
+                None,
+                MessageSensitivity::Normal,
+                MessageRiskFlags::new([
+                    MessageRiskFlag::new("external_link").expect("风险标签有效")
+                ])
+                .expect("风险标签集合有效"),
+            ),
+            content: MessageContentReference::new(content_id, digest, 6).expect("正文引用有效"),
+            relation: None,
+        }
+    }
+
+    fn 空正文服务(
+        projections: Arc<dyn MessageTimelineQueryRepository>,
+    ) -> Arc<OpenMessageContentService> {
+        Arc::new(OpenMessageContentService::new(
+            OpenMessageContentDependencies {
+                projections,
+                content: Arc::new(拒绝正文网关),
+            },
+        ))
     }
 
     #[tokio::test]

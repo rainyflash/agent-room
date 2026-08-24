@@ -33,7 +33,8 @@ use agent_room_bridge_core::{
     messages::{
         MessageAuthenticationFailureKind, MessageProjectionStoreFailureKind,
         MessageStoreFailureKind, MessageSyncDependencies, MessageSyncFailure,
-        MessageSyncFailureKind, MessageSyncService,
+        MessageSyncFailureKind, MessageSyncService, OpenMessageContentDependencies,
+        OpenMessageContentService,
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
@@ -87,15 +88,20 @@ use crate::{
 };
 use agent_room_bridge::control_plane::{
     ControlPlaneHttpConfig, ReqwestAgentInstanceVerificationGateway,
-    ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneDeviceGateway,
-    ReqwestControlPlaneLobbyEntryGateway,
+    ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneContentGateway,
+    ReqwestControlPlaneDeviceGateway, ReqwestControlPlaneLobbyEntryGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
 };
 
 const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 3] = ["self.read", "previews.read", "status.publish"];
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 4] = [
+    "self.read",
+    "previews.read",
+    "content.read",
+    "status.publish",
+];
 const STATUS_LEASE_LIFETIME_MILLIS: u64 = 300_000;
 const STATUS_RENEWAL_INTERVAL_MILLIS: u64 = 120_000;
 const STATUS_RENEWAL_JITTER_MILLIS: u64 = 15_000;
@@ -127,6 +133,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
             status.clone(),
             runtime.state.clone(),
             runtime.previews.clone(),
+            runtime.content.clone(),
         )),
         None => Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
     };
@@ -168,11 +175,18 @@ struct AgentSessionRuntime {
     matrix: Arc<MatrixSdkClientFactory>,
     messages: Arc<MessageSyncService>,
     previews: Arc<SqliteMessageTimelineRepository>,
+    content: Arc<OpenMessageContentService>,
     state: Arc<BridgeAgentRuntimeState>,
     status_policy: AgentStatusLeasePolicy,
     sync_timeout: DurationMillis,
     initial_session: Option<AgentOnlineSession>,
     reconnect_policy: ReconnectPolicy,
+}
+
+struct AgentMessageServices {
+    sync: Arc<MessageSyncService>,
+    projections: Arc<SqliteMessageTimelineRepository>,
+    content: Arc<OpenMessageContentService>,
 }
 
 struct AgentOnlineSession {
@@ -401,30 +415,7 @@ async fn compose_agent_session_runtime(
         ReqwestControlPlaneLobbyEntryGateway::new(&http, device_session.clone())
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     )));
-    let verification = Arc::new(
-        ReqwestAgentInstanceVerificationGateway::new(&http, device_session)
-            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
-    );
-    let projections = Arc::new(
-        SqliteMessageTimelineRepository::open(paths.message_database())
-            .await
-            .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
-    );
-    let submissions = Arc::new(
-        SqliteMessageSubmissionRepository::open(paths.message_database())
-            .await
-            .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
-    );
-    let messages = Arc::new(MessageSyncService::new(MessageSyncDependencies {
-        authenticator: Arc::new(AgentInstanceMessageAuthenticator::new(
-            AgentInstanceMessageAuthenticatorDependencies {
-                verification,
-                signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
-            },
-        )),
-        projections: projections.clone(),
-        submissions,
-    }));
+    let message_services = compose_agent_message_services(&http, paths, device_session).await?;
     let state = Arc::new(BridgeAgentRuntimeState::new());
     let lobby_config = AgentLobbySessionConfig::new(
         lobby_catalog_id,
@@ -450,8 +441,9 @@ async fn compose_agent_session_runtime(
         lobby,
         lobby_config,
         matrix,
-        messages,
-        previews: projections,
+        messages: message_services.sync,
+        previews: message_services.projections,
+        content: message_services.content,
         state,
         status_policy,
         sync_timeout,
@@ -461,6 +453,51 @@ async fn compose_agent_session_runtime(
             domain_duration(config.reconnect_maximum_delay)?,
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    })
+}
+
+async fn compose_agent_message_services(
+    http: &ControlPlaneHttpConfig,
+    paths: &BridgeRuntimePaths,
+    device_session: Arc<BridgeSessionService>,
+) -> Result<AgentMessageServices, BridgeRuntimeError> {
+    let verification = Arc::new(
+        ReqwestAgentInstanceVerificationGateway::new(http, device_session.clone())
+            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
+    let projections = Arc::new(
+        SqliteMessageTimelineRepository::open(paths.message_database())
+            .await
+            .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
+    );
+    let submissions = Arc::new(
+        SqliteMessageSubmissionRepository::open(paths.message_database())
+            .await
+            .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
+    );
+    let content = Arc::new(OpenMessageContentService::new(
+        OpenMessageContentDependencies {
+            projections: projections.clone(),
+            content: Arc::new(
+                ReqwestControlPlaneContentGateway::new(http, device_session)
+                    .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+            ),
+        },
+    ));
+    let sync = Arc::new(MessageSyncService::new(MessageSyncDependencies {
+        authenticator: Arc::new(AgentInstanceMessageAuthenticator::new(
+            AgentInstanceMessageAuthenticatorDependencies {
+                verification,
+                signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+            },
+        )),
+        projections: projections.clone(),
+        submissions,
+    }));
+    Ok(AgentMessageServices {
+        sync,
+        projections,
+        content,
     })
 }
 

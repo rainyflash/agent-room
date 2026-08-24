@@ -4,8 +4,10 @@ use agent_room_application::ports::{MatrixEventId, MatrixFailureKind, MatrixRoom
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessagePreviewQuery, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
-        MessageTimelineQueryRepository, ProjectedMessageActor, ProjectedMessagePreview,
+        MessageContentReadFailureKind, MessagePreviewQuery, MessageTimelineQueryFailure,
+        MessageTimelineQueryFailureKind, MessageTimelineQueryRepository, OpenMessageContentFailure,
+        OpenMessageContentFailureKind, OpenMessageContentRequest, OpenMessageContentService,
+        ProjectedMessageActor, ProjectedMessagePreview,
     },
     status::{
         HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
@@ -15,9 +17,14 @@ use agent_room_bridge_core::{
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcErrorCategory,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcWorkStatus,
+    IpcOpenContentRequest, IpcOpenedContent, IpcPublishStatusRequest, IpcPublishedStatus,
+    IpcResponse, IpcSelfSummary, IpcWorkStatus,
 };
-use agent_room_domain::messages::{MessageProvenance, MessageSensitivity};
+use agent_room_domain::{
+    ids::ContentId,
+    messages::{MessageContentReference, MessageProvenance, MessageSensitivity},
+};
+use uuid::{Uuid, Version};
 
 use super::{BridgeIpcDispatchFailure, BridgeStatusReader, agent_runtime_unavailable};
 use crate::agent_status::AgentStatusPublicationHandle;
@@ -64,6 +71,7 @@ pub(super) struct AgentRuntimeIpcFacade {
     status_reader: Arc<dyn BridgeStatusReader>,
     runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
     previews: Arc<dyn MessageTimelineQueryRepository>,
+    content: Arc<OpenMessageContentService>,
 }
 
 impl AgentRuntimeIpcFacade {
@@ -71,11 +79,13 @@ impl AgentRuntimeIpcFacade {
         status_reader: Arc<dyn BridgeStatusReader>,
         runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
         previews: Arc<dyn MessageTimelineQueryRepository>,
+        content: Arc<OpenMessageContentService>,
     ) -> Self {
         Self {
             status_reader,
             runtime_reader,
             previews,
+            content,
         }
     }
 
@@ -138,6 +148,35 @@ impl AgentRuntimeIpcFacade {
                 room_id: room_id.as_str().to_owned(),
                 status: request.status,
                 lease_expires_at_unix_ms,
+            },
+        })
+    }
+
+    pub(super) async fn open_content(
+        &self,
+        request: IpcOpenContentRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let content_id = parse_content_id(&request.content_id)?;
+        let opened = self
+            .content
+            .open(&OpenMessageContentRequest::new(runtime.room_id, content_id))
+            .await
+            .map_err(map_content_open_failure)?;
+        let source = opened.source();
+        Ok(IpcResponse::OpenedContent {
+            content: IpcOpenedContent {
+                content: ipc_content(source.content, source.preview.content_type().as_str()),
+                source_room_id: source.room_id.as_str().to_owned(),
+                source_event_id: source.event_id.as_str().to_owned(),
+                source_actor: ipc_actor(&source.actor),
+                risk_flags: source
+                    .preview
+                    .risk_flags()
+                    .iter()
+                    .map(|flag| flag.as_str().to_owned())
+                    .collect(),
+                body: opened.body().to_owned(),
             },
         })
     }
@@ -205,12 +244,7 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
         created_at_unix_ms: preview.created_at.value(),
         title: preview.preview.title().as_str().to_owned(),
         summary: preview.preview.summary().as_str().to_owned(),
-        content: IpcContentReference {
-            content_id: preview.content.content_id().to_string(),
-            digest_sha256: encode_hex(preview.content.digest().as_bytes()),
-            media_type: preview.preview.content_type().as_str().to_owned(),
-            size_bytes: preview.content.size_bytes(),
-        },
+        content: ipc_content(preview.content, preview.preview.content_type().as_str()),
         language: preview
             .preview
             .language()
@@ -223,6 +257,24 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
             .map(|flag| flag.as_str().to_owned())
             .collect(),
     }
+}
+
+fn ipc_content(content: MessageContentReference, media_type: &str) -> IpcContentReference {
+    IpcContentReference {
+        content_id: content.content_id().to_string(),
+        digest_sha256: encode_hex(content.digest().as_bytes()),
+        media_type: media_type.to_owned(),
+        size_bytes: content.size_bytes(),
+    }
+}
+
+fn parse_content_id(value: &str) -> Result<ContentId, BridgeIpcDispatchFailure> {
+    let id =
+        Uuid::parse_str(value).map_err(|_| invalid_request("bridge.ipc.content_id_invalid"))?;
+    if id.get_version() != Some(Version::SortRand) || id.to_string() != value {
+        return Err(invalid_request("bridge.ipc.content_id_invalid"));
+    }
+    Ok(ContentId::from_uuid(id))
 }
 
 const fn ipc_provenance(value: MessageProvenance) -> IpcMessageProvenance {
@@ -305,6 +357,70 @@ fn map_status_publication_failure(failure: StatusPublicationFailure) -> BridgeIp
             false,
         ),
     }
+}
+
+fn map_content_open_failure(failure: OpenMessageContentFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        OpenMessageContentFailureKind::Projection => failure.projection_failure().map_or_else(
+            || internal_failure("bridge.message_content_internal"),
+            map_preview_query_failure,
+        ),
+        OpenMessageContentFailureKind::NotFound => {
+            invalid_request("bridge.message_content_not_found")
+        }
+        OpenMessageContentFailureKind::UnsupportedMediaType => {
+            invalid_request("bridge.message_content_type_unsupported")
+        }
+        OpenMessageContentFailureKind::TooLarge => {
+            invalid_request("bridge.message_content_too_large")
+        }
+        OpenMessageContentFailureKind::InvalidEncoding => {
+            invalid_request("bridge.message_content_encoding_invalid")
+        }
+        OpenMessageContentFailureKind::IntegrityMismatch => {
+            internal_failure("bridge.message_content_integrity_failed")
+        }
+        OpenMessageContentFailureKind::Content => failure.content_failure().map_or_else(
+            || internal_failure("bridge.message_content_internal"),
+            map_content_read_failure,
+        ),
+    }
+}
+
+const fn map_content_read_failure(
+    failure: agent_room_bridge_core::messages::MessageContentReadFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MessageContentReadFailureKind::InvalidRequest => {
+            invalid_request("bridge.message_content_request_invalid")
+        }
+        MessageContentReadFailureKind::NotFound => {
+            invalid_request("bridge.message_content_not_found")
+        }
+        MessageContentReadFailureKind::Denied => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_denied",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        MessageContentReadFailureKind::RateLimited => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_rate_limited",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageContentReadFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageContentReadFailureKind::InvalidResponse
+        | MessageContentReadFailureKind::Internal => {
+            internal_failure("bridge.message_content_internal")
+        }
+    }
+}
+
+const fn internal_failure(code: &'static str) -> BridgeIpcDispatchFailure {
+    BridgeIpcDispatchFailure::new(code, IpcErrorCategory::Internal, false)
 }
 
 const fn invalid_request(code: &'static str) -> BridgeIpcDispatchFailure {
