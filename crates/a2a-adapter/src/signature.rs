@@ -518,50 +518,44 @@ mod tests {
     async fn 同源_jwks_中的_ed25519_签名可以验证() {
         let signing_key = SigningKey::from_bytes(&[7; 32]);
         let key_id = "fixture-key";
-        let jku = "https://agent.example/.well-known/jwks.json";
-        let mut raw = fixture_value();
-        let protected = URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&json!({
-                "alg": "EdDSA",
-                "typ": "JOSE",
-                "kid": key_id,
-                "jku": jku,
-            }))
-            .expect("测试头部可序列化"),
-        );
-        let payload = canonical_payload(&raw).expect("测试 Agent Card 可规范化");
-        let encoded_payload = URL_SAFE_NO_PAD.encode(payload);
-        let signing_input = format!("{protected}.{encoded_payload}");
-        let signature = signing_key.sign(signing_input.as_bytes());
-        raw.as_object_mut().expect("测试 Agent Card 是对象").insert(
-            "signatures".to_owned(),
-            json!([{
-                "protected": protected,
-                "signature": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
-            }]),
-        );
+        let raw = signed_fixture(&signing_key, key_id);
         let parsed = AgentCardNormalizer::new(BTreeSet::new())
             .parse(&document(&raw), &source_url())
             .expect("签名 Fixture 的资料结构有效");
-        let jwks = json!({
-            "keys": [{
-                "kty": "OKP",
-                "crv": "Ed25519",
-                "x": URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes()),
-                "kid": key_id,
-                "use": "sig",
-                "key_ops": ["verify"],
-                "alg": "EdDSA"
-            }]
-        });
         let verifier = AgentCardSignatureVerifier::new(Arc::new(FixedDocumentClient {
-            document: document(&jwks),
+            document: document(&jwks(&signing_key, key_id)),
         }));
 
         verifier
             .verify(&parsed, &source_url())
             .await
             .expect("有效签名必须通过");
+    }
+
+    #[tokio::test]
+    async fn 签名后的能力资料被篡改时明确拒绝() {
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let key_id = "fixture-key";
+        let mut raw = signed_fixture(&signing_key, key_id);
+        raw.as_object_mut()
+            .expect("测试 Agent Card 是对象")
+            .insert("name".to_owned(), json!("被篡改的名称"));
+        let parsed = AgentCardNormalizer::default()
+            .parse(&document(&raw), &source_url())
+            .expect("被篡改 Card 的结构仍然有效");
+        let verifier = AgentCardSignatureVerifier::new(Arc::new(FixedDocumentClient {
+            document: document(&jwks(&signing_key, key_id)),
+        }));
+
+        let failure = verifier
+            .verify(&parsed, &source_url())
+            .await
+            .expect_err("签名后的资料被篡改必须拒绝");
+
+        assert_eq!(
+            failure.kind(),
+            AgentCardSignatureFailureKind::InvalidSignature
+        );
     }
 
     #[tokio::test]
@@ -617,6 +611,45 @@ mod tests {
     fn fixture_value() -> Value {
         serde_json::from_str(include_str!("../fixtures/a2a-1.0-agent-card.json"))
             .expect("测试 Fixture 有效")
+    }
+
+    fn signed_fixture(signing_key: &SigningKey, key_id: &str) -> Value {
+        let mut raw = fixture_value();
+        let protected = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "alg": "EdDSA",
+                "typ": "JOSE",
+                "kid": key_id,
+                "jku": "https://agent.example/.well-known/jwks.json",
+            }))
+            .expect("测试头部可序列化"),
+        );
+        let payload = canonical_payload(&raw).expect("测试 Agent Card 可规范化");
+        let encoded_payload = URL_SAFE_NO_PAD.encode(payload);
+        let signing_input = format!("{protected}.{encoded_payload}");
+        let signature = signing_key.sign(signing_input.as_bytes());
+        raw.as_object_mut().expect("测试 Agent Card 是对象").insert(
+            "signatures".to_owned(),
+            json!([{
+                "protected": protected,
+                "signature": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+            }]),
+        );
+        raw
+    }
+
+    fn jwks(signing_key: &SigningKey, key_id: &str) -> Value {
+        json!({
+            "keys": [{
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes()),
+                "kid": key_id,
+                "use": "sig",
+                "key_ops": ["verify"],
+                "alg": "EdDSA"
+            }]
+        })
     }
 
     fn document(value: &Value) -> JsonDocument {

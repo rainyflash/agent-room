@@ -375,14 +375,37 @@ fn parse_max_age_seconds(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::{
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        sync::Arc,
+    };
 
+    use agent_room_application::ports::PortFuture;
+    use agent_room_domain::agent_cards::AgentCardSourceUrl;
     use reqwest::header::HeaderValue;
 
     use super::{
-        NetworkTargetFailureKind, cache_lifetime, is_public_ip, validate_content_length,
-        validate_content_type, validate_resolved_addresses,
+        DnsResolver, HttpsDocumentClient, NetworkTargetFailureKind, NetworkTargetResult,
+        PinnedHttpsClient, PinnedHttpsClientConfiguration, cache_lifetime, is_public_ip,
+        validate_content_length, validate_content_type, validate_resolved_addresses,
     };
+
+    struct FixedResolver {
+        addresses: Vec<SocketAddr>,
+    }
+
+    impl DnsResolver for FixedResolver {
+        fn resolve<'a>(
+            &'a self,
+            host: &'a str,
+            port: u16,
+        ) -> PortFuture<'a, NetworkTargetResult<Vec<SocketAddr>>> {
+            assert_eq!(host, "agent.example");
+            assert_eq!(port, 443);
+            let addresses = self.addresses.clone();
+            Box::pin(async move { Ok(addresses) })
+        }
+    }
 
     #[test]
     fn 只接受公网地址并拒绝混合_dns_答案() {
@@ -408,6 +431,29 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443),
         ];
         let failure = validate_resolved_addresses(&mixed).expect_err("混合 DNS 答案必须整体拒绝");
+        assert_eq!(failure.kind(), NetworkTargetFailureKind::BlockedAddress);
+    }
+
+    #[tokio::test]
+    async fn dns_解析到元数据地址时在建立_http_连接前拒绝() {
+        let client = PinnedHttpsClient::new(
+            Arc::new(FixedResolver {
+                addresses: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+                    443,
+                )],
+            }),
+            PinnedHttpsClientConfiguration::default(),
+        );
+        let source =
+            AgentCardSourceUrl::new("https://agent.example/.well-known/agent-card.json".to_owned())
+                .expect("测试来源有效");
+
+        let failure = client
+            .get_json(&source, 65_536)
+            .await
+            .expect_err("云元数据地址必须在连接前拒绝");
+
         assert_eq!(failure.kind(), NetworkTargetFailureKind::BlockedAddress);
     }
 
