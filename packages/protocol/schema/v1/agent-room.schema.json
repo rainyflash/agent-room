@@ -27,9 +27,13 @@
       "type": "string",
       "enum": ["human", "human_confirmed_agent", "autonomous_agent"]
     },
-    "AgentState": {
+    "AgentStatusVisibility": {
       "type": "string",
-      "enum": ["idle", "working", "waiting_for_user", "blocked", "offline"]
+      "enum": ["coarse", "detailed"]
+    },
+    "AgentWorkStatus": {
+      "type": "string",
+      "enum": ["offline", "idle", "working", "waiting_input", "blocked", "completed"]
     },
     "HandoffPermission": {
       "type": "string",
@@ -214,7 +218,8 @@
         "actor",
         "correlationId",
         "signature",
-        "state",
+        "status",
+        "visibility",
         "leaseExpiresAt"
       ],
       "properties": {
@@ -234,12 +239,41 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_-]+$"
         },
-        "state": { "$ref": "#/$defs/AgentState" },
-        "summary": { "type": "string", "maxLength": 160 },
+        "status": { "$ref": "#/$defs/AgentWorkStatus" },
+        "visibility": { "$ref": "#/$defs/AgentStatusVisibility" },
+        "taskSummary": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "progress": { "type": "number", "minimum": 0, "maximum": 1 },
         "leaseExpiresAt": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": true,
-      "maxProperties": 24
+      "maxProperties": 24,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "visibility": { "const": "coarse" } },
+            "required": ["visibility"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "properties": { "taskSummary": {} },
+                  "required": ["taskSummary"]
+                },
+                {
+                  "properties": { "startedAt": {} },
+                  "required": ["startedAt"]
+                },
+                {
+                  "properties": { "progress": {} },
+                  "required": ["progress"]
+                }
+              ]
+            }
+          }
+        }
+      ]
     },
     "HandoffRequestEvent": {
       "type": "object",

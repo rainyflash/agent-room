@@ -26,20 +26,6 @@ pub struct AgentRef {
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentState {
-    #[serde(rename = "idle")]
-    Idle,
-    #[serde(rename = "working")]
-    Working,
-    #[serde(rename = "waiting_for_user")]
-    WaitingForUser,
-    #[serde(rename = "blocked")]
-    Blocked,
-    #[serde(rename = "offline")]
-    Offline,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStatusEvent {
@@ -49,13 +35,42 @@ pub struct AgentStatusEvent {
     pub event_type: String,
     pub id: String,
     pub lease_expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f64>,
     pub schema_version: String,
     pub signature: String,
-    pub state: AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub started_at: Option<String>,
+    pub status: AgentWorkStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_summary: Option<String>,
+    pub visibility: AgentStatusVisibility,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentStatusVisibility {
+    #[serde(rename = "coarse")]
+    Coarse,
+    #[serde(rename = "detailed")]
+    Detailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentWorkStatus {
+    #[serde(rename = "offline")]
+    Offline,
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "working")]
+    Working,
+    #[serde(rename = "waiting_input")]
+    WaitingInput,
+    #[serde(rename = "blocked")]
+    Blocked,
+    #[serde(rename = "completed")]
+    Completed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

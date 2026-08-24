@@ -48,6 +48,23 @@ describe('协议 Schema', () => {
     expect(validate(overflow).ok).toBe(false);
   });
 
+  test('状态协议接受完整枚举并拒绝粗粒度详情', () => {
+    const fixture = readFixture('valid', 'agent-status.json');
+    if (typeof fixture !== 'object' || fixture === null) {
+      throw new Error('状态夹具必须是对象');
+    }
+
+    expect(validate({ ...fixture, status: 'waiting_input' }).ok).toBe(true);
+    expect(validate({ ...fixture, status: 'completed' }).ok).toBe(true);
+    expect(
+      validate({
+        ...fixture,
+        visibility: 'coarse',
+        taskSummary: '不得随粗粒度状态发布',
+      }).ok,
+    ).toBe(false);
+  });
+
   test('拒绝非 Schema 输入', () => {
     expect(() => createProtocolValidator(null)).toThrow(TypeError);
   });

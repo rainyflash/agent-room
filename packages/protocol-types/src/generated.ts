@@ -13,8 +13,6 @@ export type AgentRef = {
   readonly matrixUserId: string;
 } & Readonly<Record<string, unknown>>;
 
-export type AgentState = "idle" | "working" | "waiting_for_user" | "blocked" | "offline";
-
 export type AgentStatusEvent = {
   readonly actor: ActorRef;
   readonly correlationId: string;
@@ -22,11 +20,18 @@ export type AgentStatusEvent = {
   readonly eventType: "org.agentroom.agent.status.v1";
   readonly id: string;
   readonly leaseExpiresAt: string;
+  readonly progress?: number;
   readonly schemaVersion: "1.0";
   readonly signature: string;
-  readonly state: AgentState;
-  readonly summary?: string;
+  readonly startedAt?: string;
+  readonly status: AgentWorkStatus;
+  readonly taskSummary?: string;
+  readonly visibility: AgentStatusVisibility;
 } & Readonly<Record<string, unknown>>;
+
+export type AgentStatusVisibility = "coarse" | "detailed";
+
+export type AgentWorkStatus = "offline" | "idle" | "working" | "waiting_input" | "blocked" | "completed";
 
 export type CapabilityManifest = {
   readonly eventTypes: ReadonlyArray<string>;
