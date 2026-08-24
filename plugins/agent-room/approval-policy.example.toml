@@ -1,0 +1,25 @@
+# 将此策略合并到 Codex 的 config.toml 后，Agent Room 才会按最小权限运行。
+# 如果市场名称不同，请只替换选择器中的 `agent-room-community`。
+
+[plugins."agent-room@agent-room-community".mcp_servers.agent_room]
+enabled = true
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "agent_room_get_self",
+  "agent_room_list_previews",
+  "agent_room_get_presence",
+  "agent_room_open_content",
+  "agent_room_publish_status",
+  "agent_room_send_message",
+  "agent_room_consume_handoff",
+  "agent_room_decline_handoff",
+]
+
+[plugins."agent-room@agent-room-community".mcp_servers.agent_room.tools.agent_room_get_self]
+approval_mode = "approve"
+
+[plugins."agent-room@agent-room-community".mcp_servers.agent_room.tools.agent_room_list_previews]
+approval_mode = "approve"
+
+[plugins."agent-room@agent-room-community".mcp_servers.agent_room.tools.agent_room_get_presence]
+approval_mode = "approve"

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "agent_room": {
+      "title": "Agent Room",
+      "description": "通过本机 Agent Room Bridge 提供最小权限的 Agent 协作工具。",
+      "command": "./bin/agent-room-codex-mcp",
+      "cwd": ".",
+      "env_vars": [
+        "LOCALAPPDATA",
+        "HOME",
+        "XDG_DATA_HOME",
+        "AGENT_ROOM_BRIDGE_DATA_DIR"
+      ],
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 30
+    }
+  }
+}
