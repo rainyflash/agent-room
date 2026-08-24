@@ -1,4 +1,5 @@
 mod agent_creation;
+mod agent_instances;
 mod agent_memberships;
 mod agents;
 mod authentication;
