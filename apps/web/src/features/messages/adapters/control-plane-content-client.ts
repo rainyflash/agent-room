@@ -36,7 +36,7 @@ export class ControlPlaneContentClient implements ContentGateway {
   constructor({
     baseUrl,
     fetch: fetchImplementation = globalThis.fetch.bind(globalThis),
-    online = () => window.navigator.onLine,
+    online = browserIsOnline,
     timeoutMs = 20_000,
   }: ControlPlaneContentClientOptions) {
     this.#baseUrl = baseUrl;
@@ -106,7 +106,7 @@ export class ControlPlaneContentClient implements ContentGateway {
     Result<{ readonly correlationId?: string; readonly response: Response }, ContentFailure>
   > {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => {
+    const timeout = globalThis.setTimeout(() => {
       controller.abort();
     }, this.#timeoutMs);
     try {
@@ -127,7 +127,7 @@ export class ControlPlaneContentClient implements ContentGateway {
         failure(timedOut ? 'content.timeout' : 'content.offline', timedOut || this.#online()),
       );
     } finally {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
     }
   }
 }
@@ -166,4 +166,13 @@ function failure(
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function browserIsOnline(): boolean {
+  const navigatorValue: unknown = Reflect.get(globalThis, 'navigator');
+  if (typeof navigatorValue !== 'object' || navigatorValue === null) {
+    return true;
+  }
+  const onlineValue: unknown = Reflect.get(navigatorValue, 'onLine');
+  return typeof onlineValue === 'boolean' ? onlineValue : true;
 }
