@@ -16,6 +16,11 @@ import type {
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway } from '@/features/messages/domain/message';
+import type {
+  MessagePublicationRequest,
+  MessagePublisher,
+  PublicationProgressStage,
+} from '@/features/messages/domain/publication';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -41,6 +46,48 @@ const content: ContentGateway = {
 const contentVerifier: ContentVerifier = {
   verify: () => Promise.resolve(err({ code: 'content.invalid_response', retryable: false })),
 };
+
+class FixtureMessagePublisher implements MessagePublisher {
+  publish(
+    request: MessagePublicationRequest,
+    onProgress: (stage: PublicationProgressStage) => void,
+  ) {
+    onProgress('submitting');
+    return Promise.resolve(
+      ok({
+        kind: 'published' as const,
+        matrixEventId: '$fixture-accepted',
+        reused: false,
+        submissionId: request.submissionId,
+      }),
+    );
+  }
+
+  reconcile(submissionId: string) {
+    return Promise.resolve(
+      ok({
+        kind: 'published' as const,
+        matrixEventId: '$fixture-accepted',
+        reused: true,
+        submissionId,
+      }),
+    );
+  }
+
+  resolveIdentity() {
+    return Promise.resolve(
+      ok({
+        agentId: '01990d9e-8400-7000-8000-000000000001',
+        displayName: 'Build Agent',
+        instanceId: '01990d9e-8400-7000-8000-000000000002',
+        matrixUserId: '@build-agent:agent-room.test',
+        provenance: 'human_confirmed_agent' as const,
+        source: 'bridge_agent_instance' as const,
+      }),
+    );
+  }
+}
+
 const services: AppServices = {
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
@@ -50,6 +97,7 @@ const services: AppServices = {
   contentVerifier,
   controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
   lobby,
+  messagePublisher: new FixtureMessagePublisher(),
   messages,
 };
 

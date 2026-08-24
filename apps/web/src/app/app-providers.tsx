@@ -10,6 +10,7 @@ import { BrowserContentVerifier } from '@/features/messages/adapters/browser-con
 import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
+import { WebObserverMessagePublisher } from '@/features/messages/adapters/web-observer-message-publisher';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { SessionProvider } from '@/features/session/ui/session-provider';
@@ -51,6 +52,7 @@ function createRuntime(config: RuntimeConfig) {
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   const content = new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl });
   const contentVerifier = new BrowserContentVerifier();
+  const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -66,6 +68,7 @@ function createRuntime(config: RuntimeConfig) {
     contentVerifier,
     controlPlane,
     lobby,
+    messagePublisher,
     messages,
   };
 

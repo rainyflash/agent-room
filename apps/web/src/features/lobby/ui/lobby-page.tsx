@@ -196,6 +196,7 @@ function ReadyLobby({
       <MessageLayer
         onSelectedMessageChange={onSelectedMessageChange}
         roomId={room.roomId}
+        roomName={room.name}
         selectedMessageId={selectedMessageId}
       />
       {compact ? null : (
