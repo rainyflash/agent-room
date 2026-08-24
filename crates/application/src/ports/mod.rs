@@ -65,7 +65,8 @@ pub use projections::{
 };
 pub use rooms::{
     PublicLobbyDirectoryEntry, RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore,
-    RoomDirectory, RoomDirectoryQuery, RoomReservationClaim, RoomReservationOutcome,
+    RoomDirectory, RoomDirectoryQuery, RoomMembershipGateway, RoomReservationClaim,
+    RoomReservationOutcome,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

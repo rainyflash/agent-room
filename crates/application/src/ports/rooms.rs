@@ -3,14 +3,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId, RoomInstanceId, RoomReservationId},
     rooms::{
-        RoomCatalog, RoomInstance, RoomLanguage, RoomRegion, RoomReservation, RoomReservationState,
+        MatrixRoomReference, RoomCatalog, RoomInstance, RoomLanguage, RoomRegion, RoomReservation,
+        RoomReservationState,
     },
     time::UtcMillis,
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::PortFuture;
+use super::{MatrixResult, PortFuture};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RoomDirectoryQuery {
@@ -99,4 +100,11 @@ pub trait RoomAllocationStore: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<RoomReservation>>;
 
     fn expire_pending(&self, now: UtcMillis, limit: u16) -> PortFuture<'_, RepositoryResult<u16>>;
+}
+
+/// 只暴露大厅加入 Saga 所需的 Matrix 成员能力。
+pub trait RoomMembershipGateway: Send + Sync {
+    fn join<'a>(&'a self, room_id: &'a MatrixRoomReference) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn leave<'a>(&'a self, room_id: &'a MatrixRoomReference) -> PortFuture<'a, MatrixResult<()>>;
 }
