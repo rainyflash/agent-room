@@ -4,10 +4,12 @@ use agent_room_application::ports::{MatrixEventId, MatrixFailureKind, MatrixRoom
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessageContentReadFailureKind, MessagePreviewQuery, MessageTimelineQueryFailure,
+        MessageBody, MessageContentFailureKind, MessageContentReadFailureKind, MessagePreviewQuery,
+        MessagePublicationFailure, MessagePublicationFailureKind, MessagePublicationOutcome,
+        MessagePublicationService, MessageStoreFailureKind, MessageTimelineQueryFailure,
         MessageTimelineQueryFailureKind, MessageTimelineQueryRepository, OpenMessageContentFailure,
         OpenMessageContentFailureKind, OpenMessageContentRequest, OpenMessageContentService,
-        ProjectedMessageActor, ProjectedMessagePreview,
+        ProjectedMessageActor, ProjectedMessagePreview, SendMessageRequest,
     },
     status::{
         HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
@@ -18,11 +20,17 @@ use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcErrorCategory,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcOpenContentRequest, IpcOpenedContent, IpcPublishStatusRequest, IpcPublishedStatus,
-    IpcResponse, IpcSelfSummary, IpcWorkStatus,
+    IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState,
+    IpcWorkStatus,
 };
 use agent_room_domain::{
-    ids::ContentId,
-    messages::{MessageContentReference, MessageProvenance, MessageSensitivity},
+    content::{ContentEncryptionMode, ContentMediaType},
+    ids::{ContentId, MessageId, MessageSubmissionId},
+    messages::{
+        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
+        MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
+        MessageTitle,
+    },
 };
 use uuid::{Uuid, Version};
 
@@ -36,6 +44,7 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     room_id: MatrixRoomId,
     granted_capabilities: Vec<String>,
     status: Option<Arc<AgentStatusPublicationHandle>>,
+    publication: Option<Arc<MessagePublicationService>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -54,11 +63,20 @@ impl BridgeAgentRuntimeSnapshot {
                 .map(str::to_owned)
                 .collect(),
             status: None,
+            publication: None,
         }
     }
 
     pub(crate) fn with_status(mut self, status: Arc<AgentStatusPublicationHandle>) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    pub(crate) fn with_message_publication(
+        mut self,
+        publication: Arc<MessagePublicationService>,
+    ) -> Self {
+        self.publication = Some(publication);
         self
     }
 }
@@ -181,6 +199,78 @@ impl AgentRuntimeIpcFacade {
         })
     }
 
+    pub(super) async fn send_message(
+        &self,
+        request: IpcSendMessageRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
+        let publication = runtime.publication.ok_or_else(agent_runtime_unavailable)?;
+        let submission_id = request
+            .submission_id
+            .as_deref()
+            .map(parse_submission_id)
+            .transpose()?
+            .unwrap_or_else(|| MessageSubmissionId::from_uuid(Uuid::now_v7()));
+        let media_type = ContentMediaType::new(request.media_type)
+            .map_err(|_| invalid_request("bridge.ipc.media_type_invalid"))?;
+        let language = request
+            .language
+            .map(MessageLanguage::new)
+            .transpose()
+            .map_err(|_| invalid_request("bridge.ipc.language_invalid"))?;
+        let risk_flags = request
+            .risk_flags
+            .into_iter()
+            .map(MessageRiskFlag::new)
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(MessageRiskFlags::new)
+            .map_err(|_| invalid_request("bridge.ipc.risk_flags_invalid"))?;
+        let preview = MessagePreview::new(
+            MessageTitle::new(request.title)
+                .map_err(|_| invalid_request("bridge.ipc.message_title_invalid"))?,
+            MessageSummary::new(request.summary)
+                .map_err(|_| invalid_request("bridge.ipc.message_summary_invalid"))?,
+            media_type.clone(),
+            language,
+            message_sensitivity(request.sensitivity),
+            risk_flags,
+        );
+        let body = MessageBody::new(
+            request.body.into_bytes(),
+            media_type,
+            ContentEncryptionMode::ServerSide,
+            None,
+        )
+        .map_err(|_| invalid_request("bridge.ipc.message_body_invalid"))?;
+        let relation = request
+            .reply_to_message_id
+            .as_deref()
+            .map(parse_message_id)
+            .transpose()?
+            .map(MessageRelation::ReplyTo);
+        let intent = SendMessageRequest::new(
+            submission_id,
+            room_id,
+            preview,
+            body,
+            message_provenance(request.provenance),
+            relation,
+        )
+        .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?;
+
+        let outcome = match publication.send(&intent).await {
+            Ok(outcome) => ipc_publication_outcome(outcome),
+            Err(failure) if content_commit_is_unknown(failure) => IpcSentMessage {
+                submission_id: submission_id.to_string(),
+                state: IpcSubmissionState::UnknownCommit,
+                event_id: None,
+            },
+            Err(failure) => return Err(map_message_publication_failure(failure)),
+        };
+        Ok(IpcResponse::SentMessage { message: outcome })
+    }
+
     fn runtime_snapshot(&self) -> Result<BridgeAgentRuntimeSnapshot, BridgeIpcDispatchFailure> {
         self.runtime_reader
             .read_agent_runtime()
@@ -277,6 +367,72 @@ fn parse_content_id(value: &str) -> Result<ContentId, BridgeIpcDispatchFailure> 
     Ok(ContentId::from_uuid(id))
 }
 
+fn parse_submission_id(value: &str) -> Result<MessageSubmissionId, BridgeIpcDispatchFailure> {
+    parse_uuid_v7(value, "bridge.ipc.submission_id_invalid").map(MessageSubmissionId::from_uuid)
+}
+
+fn parse_message_id(value: &str) -> Result<MessageId, BridgeIpcDispatchFailure> {
+    parse_uuid_v7(value, "bridge.ipc.message_id_invalid").map(MessageId::from_uuid)
+}
+
+fn parse_uuid_v7(value: &str, code: &'static str) -> Result<Uuid, BridgeIpcDispatchFailure> {
+    let id = Uuid::parse_str(value).map_err(|_| invalid_request(code))?;
+    if id.get_version() != Some(Version::SortRand) || id.to_string() != value {
+        return Err(invalid_request(code));
+    }
+    Ok(id)
+}
+
+const fn message_provenance(value: IpcMessageProvenance) -> MessageProvenance {
+    match value {
+        IpcMessageProvenance::Human => MessageProvenance::Human,
+        IpcMessageProvenance::HumanConfirmedAgent => MessageProvenance::HumanConfirmedAgent,
+        IpcMessageProvenance::AutonomousAgent => MessageProvenance::AutonomousAgent,
+    }
+}
+
+const fn message_sensitivity(value: IpcMessageSensitivity) -> MessageSensitivity {
+    match value {
+        IpcMessageSensitivity::Normal => MessageSensitivity::Normal,
+        IpcMessageSensitivity::Sensitive => MessageSensitivity::Sensitive,
+        IpcMessageSensitivity::Restricted => MessageSensitivity::Restricted,
+    }
+}
+
+fn ipc_publication_outcome(outcome: MessagePublicationOutcome) -> IpcSentMessage {
+    match outcome {
+        MessagePublicationOutcome::Published {
+            submission_id,
+            event_id,
+            ..
+        } => IpcSentMessage {
+            submission_id: submission_id.to_string(),
+            state: IpcSubmissionState::Submitted,
+            event_id: Some(event_id.as_str().to_owned()),
+        },
+        MessagePublicationOutcome::PendingReconciliation { submission_id, .. } => IpcSentMessage {
+            submission_id: submission_id.to_string(),
+            state: IpcSubmissionState::UnknownCommit,
+            event_id: None,
+        },
+        MessagePublicationOutcome::AcceptedBindingPending {
+            submission_id,
+            event_id,
+        } => IpcSentMessage {
+            submission_id: submission_id.to_string(),
+            state: IpcSubmissionState::BindingPending,
+            event_id: Some(event_id.as_str().to_owned()),
+        },
+    }
+}
+
+fn content_commit_is_unknown(failure: MessagePublicationFailure) -> bool {
+    failure.kind() == MessagePublicationFailureKind::Content
+        && failure
+            .content_failure()
+            .is_some_and(|failure| failure.kind() == MessageContentFailureKind::UnknownCommit)
+}
+
 const fn ipc_provenance(value: MessageProvenance) -> IpcMessageProvenance {
     match value {
         MessageProvenance::Human => IpcMessageProvenance::Human,
@@ -356,6 +512,126 @@ fn map_status_publication_failure(failure: StatusPublicationFailure) -> BridgeIp
             IpcErrorCategory::Internal,
             false,
         ),
+    }
+}
+
+fn map_message_publication_failure(failure: MessagePublicationFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MessagePublicationFailureKind::InvalidIntent => {
+            invalid_request("bridge.message_intent_invalid")
+        }
+        MessagePublicationFailureKind::SigningUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.message_signing_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessagePublicationFailureKind::Serialization => {
+            internal_failure("bridge.message_serialization_failed")
+        }
+        MessagePublicationFailureKind::Store => failure.store_failure().map_or_else(
+            || internal_failure("bridge.message_store_internal"),
+            map_message_store_failure,
+        ),
+        MessagePublicationFailureKind::Content => failure.content_failure().map_or_else(
+            || internal_failure("bridge.message_content_internal"),
+            map_message_content_failure,
+        ),
+        MessagePublicationFailureKind::Matrix => failure.matrix_failure().map_or_else(
+            || internal_failure("bridge.message_matrix_internal"),
+            map_message_matrix_failure,
+        ),
+    }
+}
+
+const fn map_message_store_failure(
+    failure: agent_room_bridge_core::messages::MessageStoreFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MessageStoreFailureKind::Conflict => BridgeIpcDispatchFailure::new(
+            "bridge.message_submission_conflict",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MessageStoreFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.message_store_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageStoreFailureKind::NotFound | MessageStoreFailureKind::Corrupt => {
+            internal_failure("bridge.message_store_internal")
+        }
+    }
+}
+
+const fn map_message_content_failure(
+    failure: agent_room_bridge_core::messages::MessageContentFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MessageContentFailureKind::InvalidRequest => {
+            invalid_request("bridge.message_content_request_invalid")
+        }
+        MessageContentFailureKind::Denied => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_denied",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        MessageContentFailureKind::Conflict => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_conflict",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MessageContentFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageContentFailureKind::UnknownCommit => BridgeIpcDispatchFailure::new(
+            "bridge.message_content_commit_unknown",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageContentFailureKind::Internal => internal_failure("bridge.message_content_internal"),
+    }
+}
+
+const fn map_message_matrix_failure(
+    failure: agent_room_application::ports::MatrixFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MatrixFailureKind::Unauthenticated | MatrixFailureKind::AuthenticationRejected => {
+            BridgeIpcDispatchFailure::new(
+                "bridge.message_matrix_authentication_failed",
+                IpcErrorCategory::Authentication,
+                false,
+            )
+        }
+        MatrixFailureKind::Forbidden => BridgeIpcDispatchFailure::new(
+            "bridge.message_matrix_forbidden",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        MatrixFailureKind::NotFound => invalid_request("bridge.message_matrix_room_not_found"),
+        MatrixFailureKind::Conflict => BridgeIpcDispatchFailure::new(
+            "bridge.message_matrix_conflict",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixFailureKind::RateLimited
+        | MatrixFailureKind::Timeout
+        | MatrixFailureKind::DependencyUnavailable
+        | MatrixFailureKind::UnknownCommit => BridgeIpcDispatchFailure::new(
+            "bridge.message_matrix_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MatrixFailureKind::UnsupportedVersion => BridgeIpcDispatchFailure::new(
+            "bridge.message_matrix_version_unsupported",
+            IpcErrorCategory::IncompatibleVersion,
+            false,
+        ),
+        MatrixFailureKind::InvalidConfiguration
+        | MatrixFailureKind::InvalidResponse
+        | MatrixFailureKind::StaleSyncToken => internal_failure("bridge.message_matrix_internal"),
     }
 }
 

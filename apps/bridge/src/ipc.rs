@@ -109,8 +109,10 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::OpenContent(request) => {
                     self.agent_runtime()?.open_content(request).await
                 }
+                IpcMethod::SendMessage(request) => {
+                    self.agent_runtime()?.send_message(request).await
+                }
                 IpcMethod::GetPresence(_)
-                | IpcMethod::SendMessage(_)
                 | IpcMethod::ConsumeHandoff(_)
                 | IpcMethod::DeclineHandoff(_) => Err(agent_runtime_unavailable()),
             }
@@ -649,8 +651,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agent_room_application::ports::{
-        Clock, DeviceSignature, MatrixEventId, MatrixResult, MatrixRoomId, MatrixStateEvent,
-        PortFuture,
+        Clock, DeviceSignature, MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixResult,
+        MatrixRoomId, MatrixStateEvent, PortFuture,
     };
     use agent_room_bridge_core::ipc::{
         FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeNegotiator, IpcHandshakeOffer,
@@ -659,9 +661,12 @@ mod tests {
     use agent_room_bridge_core::{
         agent_identity::BridgeAgentIdentity,
         messages::{
-            DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
-            MessageContentReadGateway, MessageContentReadRequest, MessageContentSourceQuery,
-            MessagePreviewPage, MessagePreviewQuery, MessageTimelineQueryFailure,
+            DownloadedMessageContent, MessageContentBindRequest, MessageContentFailure,
+            MessageContentGateway, MessageContentReadFailure, MessageContentReadFailureKind,
+            MessageContentReadGateway, MessageContentReadRequest, MessageContentRecord,
+            MessageContentRedactRequest, MessageContentSourceQuery, MessageContentUploadRequest,
+            MessageEventPublisher, MessagePreviewPage, MessagePreviewQuery,
+            MessagePublicationDependencies, MessagePublicationService, MessageTimelineQueryFailure,
             MessageTimelineQueryRepository, OpenMessageContentDependencies,
             OpenMessageContentService, ProjectedMessageActor, ProjectedMessagePreview,
         },
@@ -675,10 +680,12 @@ mod tests {
         },
     };
     use agent_room_bridge_ipc::{
-        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMethod,
-        IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSharedSecret,
+        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMessageProvenance,
+        IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest, IpcPublishStatusRequest,
+        IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState,
         IpcVersion, IpcWorkStatus, create_challenge_proof,
     };
+    use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
     use agent_room_domain::{
         agent_status::AgentStatusVisibility,
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
@@ -840,6 +847,69 @@ mod tests {
 
         fn correlation_id(&self) -> Uuid {
             Uuid::now_v7()
+        }
+    }
+
+    #[derive(Default)]
+    struct 记录消息发布器(Mutex<Vec<MatrixEvent>>);
+
+    impl MessageEventPublisher for 记录消息发布器 {
+        fn publish<'a>(
+            &'a self,
+            _room_id: &'a MatrixRoomId,
+            event: &'a MatrixEvent,
+        ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
+            self.0.lock().expect("消息事件锁可用").push(event.clone());
+            Box::pin(async move {
+                Ok(MatrixAcceptedEvent::new(
+                    event.transaction_id().clone(),
+                    MatrixEventId::new("$sent:matrix.test").expect("事件标识有效"),
+                ))
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct 记录正文写入 {
+        uploads: Mutex<Vec<MessageContentUploadRequest>>,
+        bindings: Mutex<Vec<MessageContentBindRequest>>,
+    }
+
+    impl MessageContentGateway for 记录正文写入 {
+        fn upload<'a>(
+            &'a self,
+            request: &'a MessageContentUploadRequest,
+        ) -> PortFuture<'a, Result<MessageContentRecord, MessageContentFailure>> {
+            self.uploads
+                .lock()
+                .expect("正文上传锁可用")
+                .push(request.clone());
+            Box::pin(async move {
+                Ok(MessageContentRecord {
+                    content_id: ContentId::from_uuid(request.request_id.as_uuid()),
+                    digest: request.digest,
+                    byte_length: request.byte_length,
+                    media_type: request.media_type.clone(),
+                })
+            })
+        }
+
+        fn bind<'a>(
+            &'a self,
+            request: &'a MessageContentBindRequest,
+        ) -> PortFuture<'a, Result<(), MessageContentFailure>> {
+            self.bindings
+                .lock()
+                .expect("正文绑定锁可用")
+                .push(request.clone());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn redact<'a>(
+            &'a self,
+            _request: &'a MessageContentRedactRequest,
+        ) -> PortFuture<'a, Result<(), MessageContentFailure>> {
+            Box::pin(async { Ok(()) })
         }
     }
 
@@ -1011,6 +1081,84 @@ mod tests {
                         == "d661c3d96d53ebc0ca8a55aae24b5df4a4d1bf28d37337b982fe8ebf54846eeb"
                     && content.risk_flags == ["external_link"]
         ));
+    }
+
+    #[tokio::test]
+    async fn 消息发送贯穿正文上传签名发布绑定且相同提交号保持幂等() {
+        let temporary = tempdir().expect("测试目录可创建");
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录消息发布器::default());
+        let content = Arc::new(记录正文写入::default());
+        let submissions = Arc::new(
+            SqliteMessageSubmissionRepository::open(temporary.path().join("messages.sqlite3"))
+                .await
+                .expect("提交仓库可打开"),
+        );
+        let publication = Arc::new(MessagePublicationService::new(
+            MessagePublicationDependencies {
+                identity: identity.clone(),
+                signer: Arc::new(测试签名身份),
+                publisher: publisher.clone(),
+                content: content.clone(),
+                submissions,
+            },
+        ));
+        let previews = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity,
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["message.send"],
+                )
+                .with_message_publication(publication),
+            )),
+            previews.clone(),
+            空正文服务(previews),
+        );
+        let submission_id = Uuid::now_v7().to_string();
+        let request = IpcSendMessageRequest {
+            submission_id: Some(submission_id.clone()),
+            room_id: room_id.as_str().to_owned(),
+            title: "构建完成".to_owned(),
+            summary: "Bridge 已通过完整验证".to_owned(),
+            body: "正文只在用户明确打开时读取。".to_owned(),
+            media_type: "text/markdown".to_owned(),
+            language: Some("zh-CN".to_owned()),
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: vec!["untrusted_instructions".to_owned()],
+            provenance: IpcMessageProvenance::AutonomousAgent,
+            reply_to_message_id: None,
+        };
+
+        for _ in 0..2 {
+            let response = handler
+                .dispatch(IpcMethod::SendMessage(request.clone()))
+                .await
+                .expect("消息可幂等发送");
+            assert!(matches!(
+                response,
+                IpcResponse::SentMessage { message }
+                    if message.submission_id == submission_id
+                        && message.state == IpcSubmissionState::Submitted
+                        && message.event_id.as_deref() == Some("$sent:matrix.test")
+            ));
+        }
+
+        let events = publisher.0.lock().expect("消息事件锁可用");
+        assert_eq!(events.len(), 1);
+        drop(events);
+        let uploads = content.uploads.lock().expect("正文上传锁可用");
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(
+            uploads[0].body.as_ref(),
+            "正文只在用户明确打开时读取。".as_bytes()
+        );
+        drop(uploads);
+        assert_eq!(content.bindings.lock().expect("正文绑定锁可用").len(), 1);
     }
 
     fn 测试_agent_身份() -> BridgeAgentIdentity {

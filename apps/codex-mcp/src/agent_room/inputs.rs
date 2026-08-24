@@ -155,6 +155,8 @@ impl From<MessageProvenanceInput> for IpcMessageProvenance {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SendMessageInput {
+    /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
+    pub submission_id: Option<String>,
     /// Matrix 房间 ID。
     pub room_id: String,
     /// 预览标题，最多 120 个字符。
@@ -181,6 +183,7 @@ pub struct SendMessageInput {
 impl From<SendMessageInput> for IpcSendMessageRequest {
     fn from(input: SendMessageInput) -> Self {
         Self {
+            submission_id: input.submission_id,
             room_id: input.room_id,
             title: input.title,
             summary: input.summary,

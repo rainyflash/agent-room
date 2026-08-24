@@ -31,10 +31,11 @@ use agent_room_bridge_core::{
         AgentLobbySessionService, ControlPlaneLobbyEntryOutcome, JoinedAgentLobby,
     },
     messages::{
-        MessageAuthenticationFailureKind, MessageProjectionStoreFailureKind,
-        MessageStoreFailureKind, MessageSyncDependencies, MessageSyncFailure,
-        MessageSyncFailureKind, MessageSyncService, OpenMessageContentDependencies,
-        OpenMessageContentService,
+        MatrixMessageEventPublisher, MessageAuthenticationFailureKind, MessageContentGateway,
+        MessageProjectionStoreFailureKind, MessagePublicationDependencies,
+        MessagePublicationService, MessageStoreFailureKind, MessageSyncDependencies,
+        MessageSyncFailure, MessageSyncFailureKind, MessageSyncService,
+        OpenMessageContentDependencies, OpenMessageContentService,
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
@@ -90,17 +91,19 @@ use agent_room_bridge::control_plane::{
     ControlPlaneHttpConfig, ReqwestAgentInstanceVerificationGateway,
     ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneContentGateway,
     ReqwestControlPlaneDeviceGateway, ReqwestControlPlaneLobbyEntryGateway,
+    ReqwestControlPlaneMessageContentGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
 };
 
 const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 4] = [
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 5] = [
     "self.read",
     "previews.read",
     "content.read",
     "status.publish",
+    "message.send",
 ];
 const STATUS_LEASE_LIFETIME_MILLIS: u64 = 300_000;
 const STATUS_RENEWAL_INTERVAL_MILLIS: u64 = 120_000;
@@ -176,6 +179,8 @@ struct AgentSessionRuntime {
     messages: Arc<MessageSyncService>,
     previews: Arc<SqliteMessageTimelineRepository>,
     content: Arc<OpenMessageContentService>,
+    outbound_content: Arc<dyn MessageContentGateway>,
+    submissions: Arc<SqliteMessageSubmissionRepository>,
     state: Arc<BridgeAgentRuntimeState>,
     status_policy: AgentStatusLeasePolicy,
     sync_timeout: DurationMillis,
@@ -187,6 +192,8 @@ struct AgentMessageServices {
     sync: Arc<MessageSyncService>,
     projections: Arc<SqliteMessageTimelineRepository>,
     content: Arc<OpenMessageContentService>,
+    outbound_content: Arc<dyn MessageContentGateway>,
+    submissions: Arc<SqliteMessageSubmissionRepository>,
 }
 
 struct AgentOnlineSession {
@@ -195,6 +202,7 @@ struct AgentOnlineSession {
     room_id: MatrixRoomId,
     matrix: Arc<dyn MatrixGateway>,
     status: Arc<AgentStatusPublicationHandle>,
+    publication: Arc<MessagePublicationService>,
     next_batch: Option<MatrixSyncToken>,
 }
 
@@ -221,7 +229,8 @@ impl BridgeAgentRuntimeState {
                 online.room_id.clone(),
                 FOUNDATION_AGENT_CAPABILITIES,
             )
-            .with_status(online.status.clone()),
+            .with_status(online.status.clone())
+            .with_message_publication(online.publication.clone()),
         ));
     }
 
@@ -444,6 +453,8 @@ async fn compose_agent_session_runtime(
         messages: message_services.sync,
         previews: message_services.projections,
         content: message_services.content,
+        outbound_content: message_services.outbound_content,
+        submissions: message_services.submissions,
         state,
         status_policy,
         sync_timeout,
@@ -475,6 +486,10 @@ async fn compose_agent_message_services(
             .await
             .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
     );
+    let outbound_content: Arc<dyn MessageContentGateway> = Arc::new(
+        ReqwestControlPlaneMessageContentGateway::new(http, device_session.clone())
+            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
     let content = Arc::new(OpenMessageContentService::new(
         OpenMessageContentDependencies {
             projections: projections.clone(),
@@ -492,12 +507,14 @@ async fn compose_agent_message_services(
             },
         )),
         projections: projections.clone(),
-        submissions,
+        submissions: submissions.clone(),
     }));
     Ok(AgentMessageServices {
         sync,
         projections,
         content,
+        outbound_content,
+        submissions,
     })
 }
 
@@ -539,7 +556,7 @@ async fn establish_agent_online(
         AgentStatusPublicationService::new(
             AgentStatusPublicationDependencies {
                 identity: registered.identity().clone(),
-                signer,
+                signer: signer.clone(),
                 publisher: Arc::new(MatrixStatusStatePublisher::new(matrix.clone())),
                 identifiers: Arc::new(SystemStatusEventIdentifiers),
                 clock: Arc::new(SystemClock),
@@ -549,12 +566,22 @@ async fn establish_agent_online(
         AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
         HostAgentState::Available,
     ));
+    let publication = Arc::new(MessagePublicationService::new(
+        MessagePublicationDependencies {
+            identity: registered.identity().clone(),
+            signer,
+            publisher: Arc::new(MatrixMessageEventPublisher::new(matrix.clone())),
+            content: runtime.outbound_content.clone(),
+            submissions: runtime.submissions.clone(),
+        },
+    ));
     let mut online = AgentOnlineSession {
         runtime: registered,
         lobby,
         room_id,
         matrix,
         status,
+        publication,
         next_batch: None,
     };
     sync_agent_online(runtime, &mut online, true).await?;

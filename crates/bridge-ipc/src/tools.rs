@@ -175,6 +175,7 @@ impl IpcPublishStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcSendMessageRequest {
+    pub submission_id: Option<String>,
     pub room_id: String,
     pub title: String,
     pub summary: String,
@@ -190,6 +191,9 @@ pub struct IpcSendMessageRequest {
 
 impl IpcSendMessageRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if let Some(submission_id) = &self.submission_id {
+            validate_uuid_v7(submission_id, "bridge.ipc.submission_id_invalid")?;
+        }
         validate_bounded(
             &self.room_id,
             MAX_ROOM_ID_BYTES,
@@ -220,7 +224,7 @@ impl IpcSendMessageRequest {
         )?;
         validate_risk_flags(&self.risk_flags)?;
         if let Some(message_id) = &self.reply_to_message_id {
-            validate_uuid(message_id, "bridge.ipc.message_id_invalid")?;
+            validate_uuid_v7(message_id, "bridge.ipc.message_id_invalid")?;
         }
         Ok(())
     }
@@ -426,6 +430,7 @@ pub enum IpcMessageProvenance {
 pub enum IpcSubmissionState {
     Submitted,
     UnknownCommit,
+    BindingPending,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,6 +487,14 @@ fn validate_uuid(value: &str, code: &'static str) -> Result<(), IpcMethodValidat
     Uuid::parse_str(value)
         .map(|_| ())
         .map_err(|_| failure(code))
+}
+
+fn validate_uuid_v7(value: &str, code: &'static str) -> Result<(), IpcMethodValidationFailure> {
+    let id = Uuid::parse_str(value).map_err(|_| failure(code))?;
+    if id.get_version() != Some(uuid::Version::SortRand) || id.to_string() != value {
+        return Err(failure(code));
+    }
+    Ok(())
 }
 
 fn validate_risk_flags(flags: &[String]) -> Result<(), IpcMethodValidationFailure> {
@@ -562,6 +575,7 @@ mod tests {
         );
 
         let invalid_message = IpcMethod::SendMessage(IpcSendMessageRequest {
+            submission_id: None,
             room_id: "!room:matrix.test".to_owned(),
             title: "发送".to_owned(),
             summary: "受限摘要".to_owned(),
@@ -579,6 +593,27 @@ mod tests {
                 .expect_err("畸形风险标签必须失败")
                 .code(),
             "bridge.ipc.risk_flags_invalid"
+        );
+
+        let invalid_reply = IpcMethod::SendMessage(IpcSendMessageRequest {
+            submission_id: None,
+            room_id: "!room:matrix.test".to_owned(),
+            title: "回复".to_owned(),
+            summary: "回复摘要".to_owned(),
+            body: "正文".to_owned(),
+            media_type: "text/markdown".to_owned(),
+            language: Some("zh-CN".to_owned()),
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: Vec::new(),
+            provenance: IpcMessageProvenance::HumanConfirmedAgent,
+            reply_to_message_id: Some("550e8400-e29b-41d4-a716-446655440000".to_owned()),
+        });
+        assert_eq!(
+            invalid_reply
+                .validate()
+                .expect_err("非 UUIDv7 消息标识必须失败")
+                .code(),
+            "bridge.ipc.message_id_invalid"
         );
     }
 

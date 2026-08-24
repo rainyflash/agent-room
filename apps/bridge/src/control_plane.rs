@@ -41,9 +41,11 @@ use uuid::{Uuid, Version};
 
 mod content;
 mod lobbies;
+mod message_content;
 
 pub use content::ReqwestControlPlaneContentGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
+pub use message_content::ReqwestControlPlaneMessageContentGateway;
 
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";
 const REFRESH_DEVICE_PATH: &str = "auth/devices/refresh";
