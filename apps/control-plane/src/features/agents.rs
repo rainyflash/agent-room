@@ -28,7 +28,7 @@ use axum_extra::extract::CookieJar;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use uuid::{Uuid, Version};
+use uuid::Uuid;
 
 use crate::{
     correlation::CorrelationId,
@@ -36,6 +36,7 @@ use crate::{
     features::{
         authentication::{authenticate_session, no_store, origin_matches},
         devices::authenticate_signed_device_request,
+        resource_ids::parse_uuid_v7,
     },
 };
 
@@ -404,15 +405,6 @@ fn idempotency_uuid(headers: &HeaderMap) -> Result<Uuid, ()> {
         .and_then(|value| value.to_str().ok())
         .ok_or(())?;
     parse_uuid_v7(value)
-}
-
-fn parse_uuid_v7(value: &str) -> Result<Uuid, ()> {
-    let value = Uuid::parse_str(value).map_err(|_| ())?;
-    if value.get_version() == Some(Version::SortRand) {
-        Ok(value)
-    } else {
-        Err(())
-    }
 }
 
 fn decode_bounded(value: &str, maximum_encoded_length: usize) -> Result<Vec<u8>, ()> {

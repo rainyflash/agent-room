@@ -8,7 +8,12 @@ mod shutdown;
 
 use std::{error::Error, fmt, sync::Arc, time::Duration};
 
+use agent_room_a2a_adapter::{
+    AgentCardNormalizer, HttpsDocumentClient, PinnedHttpsClient, PinnedHttpsClientConfiguration,
+    RemoteAgentCardSource, SystemDnsResolver,
+};
 use agent_room_application::{
+    agent_cards::{AgentCardDependencies, AgentCardService},
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     devices::{
@@ -30,6 +35,7 @@ use axum::{Router, middleware, routing::get};
 use tokio::net::TcpListener;
 
 use config::{AuthenticationConfig, ControlPlaneConfig};
+use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
@@ -175,11 +181,17 @@ fn build_identity_router(
     );
     let agents = build_agent_management(
         config,
-        repositories,
+        repositories.clone(),
         secrets.clone(),
-        system_runtime,
+        system_runtime.clone(),
         request_timeout,
     )?;
+    let cards = build_agent_card_management(repositories, system_runtime, request_timeout);
+    let card_state = AgentCardHttpState::new(AgentCardHttpDependencies {
+        cards,
+        devices: devices.clone(),
+        secrets: secrets.clone(),
+    });
     let agent_state = AgentHttpState::new(
         AgentHttpDependencies {
             agents,
@@ -191,7 +203,34 @@ fn build_identity_router(
     );
     Ok(features::authentication::router(state)
         .merge(features::devices::router(device_state))
-        .merge(features::agents::router(agent_state)))
+        .merge(features::agents::router(agent_state))
+        .merge(features::agent_cards::router(card_state)))
+}
+
+fn build_agent_card_management(
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+    request_timeout: Duration,
+) -> Arc<AgentCardService> {
+    let documents: Arc<dyn HttpsDocumentClient> = Arc::new(PinnedHttpsClient::new(
+        Arc::new(SystemDnsResolver),
+        PinnedHttpsClientConfiguration {
+            connect_timeout: request_timeout.min(Duration::from_secs(3)),
+            request_timeout,
+        },
+    ));
+    let source = Arc::new(RemoteAgentCardSource::new(
+        documents,
+        AgentCardNormalizer::default(),
+    ));
+    Arc::new(AgentCardService::new(AgentCardDependencies {
+        agents: repositories.clone(),
+        memberships: repositories.clone(),
+        source,
+        snapshots: repositories,
+        identifiers: system_runtime.clone(),
+        clock: system_runtime,
+    }))
 }
 
 fn build_agent_management(

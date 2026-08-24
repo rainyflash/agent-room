@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use agent_room_application::{
+    agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
     agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
@@ -259,6 +260,57 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "Agent 请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn agent_card(
+        failure: AgentCardManagementFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentCardManagementFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "agent_card.invalid_request",
+                ErrorCategory::Validation,
+                "Agent Card 请求或文档无效。",
+            ),
+            AgentCardManagementFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "agent_card.forbidden",
+                ErrorCategory::Authorization,
+                "无权刷新该 Agent Card。",
+            ),
+            AgentCardManagementFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "agent_card.not_found",
+                ErrorCategory::Validation,
+                "Agent 不存在。",
+            ),
+            AgentCardManagementFailureKind::UntrustedSource => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent_card.untrusted_source",
+                ErrorCategory::Validation,
+                "Agent Card 来源或签名无法信任。",
+            ),
+            AgentCardManagementFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_card.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "Agent Card 依赖暂时不可用。",
+            ),
+            AgentCardManagementFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "agent_card.internal",
+                ErrorCategory::Transient,
+                "Agent Card 服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "Agent Card 请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

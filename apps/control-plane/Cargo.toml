@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agent-room-a2a-adapter.workspace = true
 agent-room-application.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
