@@ -17,6 +17,22 @@ use crate::agent_identity::BridgeAgentIdentity;
 pub struct ProjectedMessageActor {
     identity: BridgeAgentIdentity,
     provenance: MessageProvenance,
+    instance_verification: ProjectedActorInstanceVerification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectedActorInstanceVerification {
+    Active,
+    RevokedAfterEvent,
+}
+
+impl ProjectedActorInstanceVerification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::RevokedAfterEvent => "revoked_after_event",
+        }
+    }
 }
 
 impl ProjectedMessageActor {
@@ -24,7 +40,17 @@ impl ProjectedMessageActor {
         Self {
             identity,
             provenance,
+            instance_verification: ProjectedActorInstanceVerification::Active,
         }
+    }
+
+    #[must_use]
+    pub const fn with_instance_verification(
+        mut self,
+        instance_verification: ProjectedActorInstanceVerification,
+    ) -> Self {
+        self.instance_verification = instance_verification;
+        self
     }
 
     pub const fn identity(&self) -> &BridgeAgentIdentity {
@@ -33,6 +59,10 @@ impl ProjectedMessageActor {
 
     pub const fn provenance(&self) -> MessageProvenance {
         self.provenance
+    }
+
+    pub const fn instance_verification(&self) -> ProjectedActorInstanceVerification {
+        self.instance_verification
     }
 }
 
@@ -85,6 +115,14 @@ impl MessageProjectionMutation {
             Self::Revision(revision) => &revision.room_id,
         }
     }
+
+    pub fn mark_instance_revoked_after_event(&mut self) {
+        let actor = match self {
+            Self::Preview(preview) => &mut preview.actor,
+            Self::Revision(revision) => &mut revision.actor,
+        };
+        actor.instance_verification = ProjectedActorInstanceVerification::RevokedAfterEvent;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +133,9 @@ pub enum MessageSyncIssueReason {
     RoomMismatch,
     UnknownInstance,
     RevokedInstance,
+    AgentInstanceMismatch,
     InvalidSignature,
+    OutsideInstanceValidityWindow,
 }
 
 impl MessageSyncIssueReason {
@@ -107,7 +147,9 @@ impl MessageSyncIssueReason {
             Self::RoomMismatch => "room_mismatch",
             Self::UnknownInstance => "unknown_instance",
             Self::RevokedInstance => "revoked_instance",
+            Self::AgentInstanceMismatch => "agent_instance_mismatch",
             Self::InvalidSignature => "invalid_signature",
+            Self::OutsideInstanceValidityWindow => "outside_instance_validity_window",
         }
     }
 }

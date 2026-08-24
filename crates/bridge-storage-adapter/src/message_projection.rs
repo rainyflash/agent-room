@@ -458,7 +458,8 @@ fn encode_actor(actor: &ProjectedMessageActor) -> String {
         "displayName": identity.display_name(),
         "matrixUserId": identity.matrix_user_id().as_str(),
         "avatarUrl": identity.avatar_url(),
-        "provenance": actor.provenance().as_str()
+        "provenance": actor.provenance().as_str(),
+        "instanceVerification": actor.instance_verification().as_str()
     })
     .to_string()
 }

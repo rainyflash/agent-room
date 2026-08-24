@@ -28,6 +28,6 @@ pub use ports::{
 pub use projection::{
     MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
     MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
-    MessageTimelineGap, MessageTimelineProjectionStore, ProjectedMessageActor,
-    ProjectedMessagePreview, ProjectedMessageRevision,
+    MessageTimelineGap, MessageTimelineProjectionStore, ProjectedActorInstanceVerification,
+    ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
 };

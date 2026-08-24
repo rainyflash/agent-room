@@ -16,11 +16,12 @@ use agent_room_bridge_core::messages::{
     MessageSubmissionFingerprint, MessageSubmissionKind, MessageSubmissionRecord,
     MessageSubmissionRepository, MessageSubmissionState, MessageSyncDependencies,
     MessageSyncFailureKind, MessageSyncIssueReason, MessageSyncService,
-    MessageTimelineProjectionStore,
+    MessageTimelineProjectionStore, ProjectedActorInstanceVerification,
 };
 use agent_room_domain::{
     devices::DevicePublicSigningKey,
-    ids::{AgentInstanceId, MessageSubmissionId},
+    ids::{AgentId, AgentInstanceId, MessageSubmissionId},
+    time::UtcMillis,
 };
 use agent_room_identity_adapter::{Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -34,12 +35,15 @@ const ACTOR_MATRIX_ID: &str = "@agent:matrix.test";
 struct 验签认证器 {
     public_key: DevicePublicSigningKey,
     fail: AtomicBool,
+    historical_revoked: AtomicBool,
 }
 
 impl MessageEventAuthenticator for 验签认证器 {
     fn authenticate<'a>(
         &'a self,
+        _agent_id: AgentId,
         _instance_id: AgentInstanceId,
+        _origin_server_timestamp: UtcMillis,
         canonical_event: &'a [u8],
         signature: &'a DeviceSignature,
     ) -> PortFuture<'a, Result<MessageAuthenticationDecision, MessageAuthenticationFailure>> {
@@ -52,7 +56,11 @@ impl MessageEventAuthenticator for 验签认证器 {
         }
         let decision =
             if Ed25519DeviceProofVerifier.verify(&self.public_key, canonical_event, signature) {
-                MessageAuthenticationDecision::Trusted
+                if self.historical_revoked.load(Ordering::SeqCst) {
+                    MessageAuthenticationDecision::TrustedHistoricalRevoked
+                } else {
+                    MessageAuthenticationDecision::Trusted
+                }
             } else {
                 MessageAuthenticationDecision::InvalidSignature
             };
@@ -160,6 +168,7 @@ impl 测试夹具 {
             authenticator: Arc::new(验签认证器 {
                 public_key,
                 fail: AtomicBool::new(false),
+                historical_revoked: AtomicBool::new(false),
             }),
             projections: Arc::new(记录投影存储::default()),
             submissions: Arc::new(记录对账仓库::default()),
@@ -173,6 +182,55 @@ impl 测试夹具 {
             submissions: self.submissions.clone(),
         })
     }
+}
+
+#[tokio::test]
+async fn 撤销前的可信历史事件进入投影并携带已撤销实例标记() {
+    let fixture = 测试夹具::new();
+    fixture
+        .authenticator
+        .historical_revoked
+        .store(true, Ordering::SeqCst);
+    let event = signed_timeline_event(
+        &fixture.signing_key,
+        "$historical:matrix.test",
+        "org.agentroom.message.preview.v1",
+        preview_payload(
+            Uuid::now_v7(),
+            room_id().as_str(),
+            "2026-08-24T12:00:00.000Z",
+            None,
+        ),
+        None,
+    );
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("historical-sync").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![event],
+            Vec::new(),
+        )],
+    );
+
+    let outcome = fixture
+        .service()
+        .process(&sync)
+        .await
+        .expect("撤销前历史事件可投影");
+
+    assert_eq!(outcome.accepted_events, 1);
+    assert_eq!(outcome.isolated_events, 0);
+    let batches = fixture.projections.batches.lock().expect("投影记录锁可用");
+    let MessageProjectionMutation::Preview(preview) = &batches[0].mutations()[0] else {
+        panic!("历史事件应是预览投影");
+    };
+    assert_eq!(
+        preview.actor.instance_verification(),
+        ProjectedActorInstanceVerification::RevokedAfterEvent
+    );
 }
 
 #[tokio::test]

@@ -6,8 +6,8 @@ use agent_room_bridge_core::{
     messages::{
         MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailureKind,
         MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
-        MessageTimelineProjectionStore, ProjectedMessageActor, ProjectedMessagePreview,
-        ProjectedMessageRevision,
+        MessageTimelineProjectionStore, ProjectedActorInstanceVerification, ProjectedMessageActor,
+        ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
 use agent_room_bridge_storage_adapter::SqliteMessageTimelineRepository;
@@ -44,7 +44,9 @@ async fn 重复同步不制造序号空洞且客户端时间不能改写到达�
             preview_mutation(
                 "$first:matrix.test",
                 first_message_id,
-                owner_actor(),
+                owner_actor().with_instance_verification(
+                    ProjectedActorInstanceVerification::RevokedAfterEvent,
+                ),
                 4_070_908_800_000,
                 "先到但客户端时间更晚",
                 1,
@@ -75,7 +77,7 @@ async fn 重复同步不制造序号空洞且客户端时间不能改写到达�
     store.apply(&batch).await.expect("重复投影成功");
 
     let rows = sqlx::query(
-        "SELECT message_id, sequence, created_at_unix_ms
+        "SELECT message_id, sequence, created_at_unix_ms, actor_json
          FROM message_projection_event
          ORDER BY sequence ASC",
     )
@@ -88,6 +90,9 @@ async fn 重复同步不制造序号空洞且客户端时间不能改写到达�
         first_message_id.to_string()
     );
     assert_eq!(rows[0].get::<i64, _>("sequence"), 1);
+    let actor: serde_json::Value =
+        serde_json::from_str(&rows[0].get::<String, _>("actor_json")).expect("Actor 投影是 JSON");
+    assert_eq!(actor["instanceVerification"], "revoked_after_event");
     assert_eq!(
         rows[0].get::<i64, _>("created_at_unix_ms"),
         4_070_908_800_000

@@ -37,13 +37,17 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageAuthenticationDecision {
     Trusted,
+    TrustedHistoricalRevoked,
     UnknownInstance,
     RevokedInstance,
+    AgentInstanceMismatch,
     InvalidSignature,
+    OutsideInstanceValidityWindow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageAuthenticationFailureKind {
+    Unauthorized,
     Unavailable,
     Internal,
 }
@@ -66,7 +70,9 @@ impl MessageAuthenticationFailure {
 pub trait MessageEventAuthenticator: Send + Sync {
     fn authenticate<'a>(
         &'a self,
+        agent_id: AgentId,
         instance_id: AgentInstanceId,
+        origin_server_timestamp: UtcMillis,
         canonical_event: &'a [u8],
         signature: &'a DeviceSignature,
     ) -> PortFuture<'a, Result<MessageAuthenticationDecision, MessageAuthenticationFailure>>;
@@ -197,20 +203,30 @@ impl MessageSyncService {
                         let decision = self
                             .authenticator
                             .authenticate(
+                                pending.agent_id,
                                 pending.instance_id,
+                                pending.origin_server_timestamp,
                                 &pending.canonical_event,
                                 &pending.signature,
                             )
                             .await
                             .map_err(MessageSyncFailure::authentication)?;
-                        if decision == MessageAuthenticationDecision::Trusted {
-                            mutations.push(pending.mutation);
-                        } else {
-                            issues.push(issue(
-                                room.room_id(),
-                                event,
-                                authentication_issue(decision),
-                            ));
+                        match decision {
+                            MessageAuthenticationDecision::Trusted => {
+                                mutations.push(pending.mutation);
+                            }
+                            MessageAuthenticationDecision::TrustedHistoricalRevoked => {
+                                let mut mutation = pending.mutation;
+                                mutation.mark_instance_revoked_after_event();
+                                mutations.push(mutation);
+                            }
+                            _ => {
+                                issues.push(issue(
+                                    room.room_id(),
+                                    event,
+                                    authentication_issue(decision),
+                                ));
+                            }
                         }
                     }
                     Err(reason) => issues.push(issue(room.room_id(), event, reason)),
@@ -262,7 +278,9 @@ impl MessageSyncService {
 
 struct PendingMessage {
     mutation: MessageProjectionMutation,
+    agent_id: AgentId,
     instance_id: AgentInstanceId,
+    origin_server_timestamp: UtcMillis,
     canonical_event: Vec<u8>,
     signature: DeviceSignature,
 }
@@ -274,6 +292,11 @@ fn parse_pending_message(
     if event.event_id().is_none() || event.sender().is_none() || event.state_key().is_some() {
         return Err(MessageSyncIssueReason::MissingEnvelope);
     }
+    let origin_server_timestamp = event
+        .origin_server_timestamp()
+        .and_then(|timestamp| i64::try_from(timestamp).ok())
+        .and_then(|timestamp| UtcMillis::new(timestamp).ok())
+        .ok_or(MessageSyncIssueReason::MissingEnvelope)?;
     validate_property_limits(event.content())?;
     let (canonical_event, signature) = canonical_and_signature(event.content())?;
     let mutation = match event.event_type().as_str() {
@@ -281,15 +304,17 @@ fn parse_pending_message(
         REVISION_EVENT_TYPE => parse_revision_event(room_id, event)?,
         _ => return Err(MessageSyncIssueReason::InvalidEnvelope),
     };
-    let instance_id = match &mutation {
-        MessageProjectionMutation::Preview(preview) => preview.actor.identity().agent_instance_id(),
-        MessageProjectionMutation::Revision(revision) => {
-            revision.actor.identity().agent_instance_id()
-        }
+    let identity = match &mutation {
+        MessageProjectionMutation::Preview(preview) => preview.actor.identity(),
+        MessageProjectionMutation::Revision(revision) => revision.actor.identity(),
     };
+    let agent_id = identity.agent_id();
+    let instance_id = identity.agent_instance_id();
     Ok(PendingMessage {
         mutation,
+        agent_id,
         instance_id,
+        origin_server_timestamp,
         canonical_event,
         signature,
     })
@@ -606,10 +631,19 @@ fn is_message_event(event: &MatrixTimelineEvent) -> bool {
 
 const fn authentication_issue(decision: MessageAuthenticationDecision) -> MessageSyncIssueReason {
     match decision {
-        MessageAuthenticationDecision::Trusted => MessageSyncIssueReason::InvalidEnvelope,
+        MessageAuthenticationDecision::Trusted
+        | MessageAuthenticationDecision::TrustedHistoricalRevoked => {
+            MessageSyncIssueReason::InvalidEnvelope
+        }
         MessageAuthenticationDecision::UnknownInstance => MessageSyncIssueReason::UnknownInstance,
         MessageAuthenticationDecision::RevokedInstance => MessageSyncIssueReason::RevokedInstance,
+        MessageAuthenticationDecision::AgentInstanceMismatch => {
+            MessageSyncIssueReason::AgentInstanceMismatch
+        }
         MessageAuthenticationDecision::InvalidSignature => MessageSyncIssueReason::InvalidSignature,
+        MessageAuthenticationDecision::OutsideInstanceValidityWindow => {
+            MessageSyncIssueReason::OutsideInstanceValidityWindow
+        }
     }
 }
 
