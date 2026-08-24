@@ -247,10 +247,16 @@ async fn verify_message_flow(scenario: &RoomScenario) -> MessageFlowResult {
     let status = room_delta
         .timeline()
         .iter()
-        .chain(room_delta.state())
+        .rev()
         .find(|event| {
             event.event_type().as_str() == "org.agentroom.agent.status.v1"
                 && event.state_key() == Some("instance-test")
+        })
+        .or_else(|| {
+            room_delta.state().iter().find(|event| {
+                event.event_type().as_str() == "org.agentroom.agent.status.v1"
+                    && event.state_key() == Some("instance-test")
+            })
         })
         .expect("增量同步必须包含最新状态事件");
     assert_eq!(status.content()["revision"], 2);
