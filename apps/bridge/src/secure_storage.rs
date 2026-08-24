@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agent_room_application::ports::{DeviceSignature, SecretValue};
 use agent_room_bridge_core::ports::{
     BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
-    DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
-    StoredBridgeDeviceCredentials,
+    BridgeCredentialState, DeviceCredentialVault, DeviceSigningIdentity,
+    DeviceSigningIdentityStore, StoredBridgeDeviceCredentials,
 };
 use agent_room_domain::{devices::DevicePublicSigningKey, ids::DeviceId, time::UtcMillis};
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
@@ -150,10 +150,12 @@ impl DeviceCredentialVault for OsDeviceCredentialVault {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedDeviceCredentials {
     version: u8,
+    #[serde(default = "ready_credential_state")]
+    state: String,
     device_id: String,
     access_token: String,
     access_token_expires_at_unix_ms: i64,
@@ -161,11 +163,20 @@ struct PersistedDeviceCredentials {
     refresh_token_expires_at_unix_ms: i64,
 }
 
+fn ready_credential_state() -> String {
+    "ready".to_owned()
+}
+
 fn encode_credentials(
     credentials: &StoredBridgeDeviceCredentials,
 ) -> BridgeCredentialResult<String> {
     serde_json::to_string(&PersistedDeviceCredentials {
         version: CREDENTIAL_FORMAT_VERSION,
+        state: match credentials.state {
+            BridgeCredentialState::Ready => "ready",
+            BridgeCredentialState::RefreshPending => "refresh_pending",
+        }
+        .to_owned(),
         device_id: credentials.device_id.to_string(),
         access_token: credentials.access_token.expose().to_owned(),
         access_token_expires_at_unix_ms: credentials.access_token_expires_at.value(),
@@ -185,6 +196,11 @@ fn decode_credentials(serialized: &str) -> BridgeCredentialResult<StoredBridgeDe
         .map(DeviceId::from_uuid)
         .map_err(|_| corrupt())?;
     Ok(StoredBridgeDeviceCredentials {
+        state: match persisted.state.as_str() {
+            "ready" => BridgeCredentialState::Ready,
+            "refresh_pending" => BridgeCredentialState::RefreshPending,
+            _ => return Err(corrupt()),
+        },
         device_id,
         access_token: SecretValue::new(persisted.access_token).map_err(|_| corrupt())?,
         access_token_expires_at: UtcMillis::new(persisted.access_token_expires_at_unix_ms)
@@ -220,8 +236,8 @@ mod tests {
     };
 
     use agent_room_bridge_core::ports::{
-        BridgeCredentialFailureKind, DeviceCredentialVault, DeviceSigningIdentityStore,
-        StoredBridgeDeviceCredentials,
+        BridgeCredentialFailureKind, BridgeCredentialState, DeviceCredentialVault,
+        DeviceSigningIdentityStore, StoredBridgeDeviceCredentials,
     };
     use agent_room_domain::{ids::DeviceId, time::UtcMillis};
     use uuid::Uuid;
@@ -317,6 +333,22 @@ mod tests {
     }
 
     #[test]
+    fn 旧版凭据缺少刷新状态时按可用状态迁移() {
+        let backend = Arc::new(内存安全存储::default());
+        backend
+            .write(
+                DEVICE_CREDENTIALS,
+                r#"{"version":1,"device_id":"00000000-0000-0000-0000-000000000001","access_token":"access-token","access_token_expires_at_unix_ms":2000,"refresh_token":"refresh-token","refresh_token_expires_at_unix_ms":3000}"#,
+            )
+            .expect("旧版测试值可写入");
+        let vault = OsDeviceCredentialVault::new(backend);
+
+        let credentials = vault.load().expect("旧版凭据可迁移").expect("旧版凭据存在");
+
+        assert_eq!(credentials.state, BridgeCredentialState::Ready);
+    }
+
+    #[test]
     #[ignore = "显式运行以验证当前 OS 的真实安全存储"]
     fn 当前操作系统安全存储可写入读取和清理() {
         let service = format!("agent-room-test-{}", Uuid::now_v7());
@@ -338,6 +370,7 @@ mod tests {
 
     fn credentials() -> StoredBridgeDeviceCredentials {
         StoredBridgeDeviceCredentials {
+            state: BridgeCredentialState::Ready,
             device_id: DeviceId::from_uuid(Uuid::from_u128(1)),
             access_token: agent_room_application::ports::SecretValue::new("access-token")
                 .expect("测试 Token 有效"),

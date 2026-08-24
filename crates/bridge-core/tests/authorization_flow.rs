@@ -15,9 +15,9 @@ use agent_room_bridge_core::{
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
-        ControlPlaneDeviceGateway, ControlPlaneDeviceResult, DeviceCredentialVault,
-        DeviceSigningIdentity, DeviceSigningIdentityStore, RegisterBridgeDevice,
-        StoredBridgeDeviceCredentials,
+        BridgeCredentialState, ControlPlaneDeviceGateway, ControlPlaneDeviceResult,
+        DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
+        RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
     },
 };
 use agent_room_domain::{
@@ -112,6 +112,13 @@ impl ControlPlaneDeviceGateway for 测试控制平面 {
             .push(request);
         Box::pin(async { Ok(credentials()) })
     }
+
+    fn refresh(
+        &self,
+        _request: RefreshBridgeDevice,
+    ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+        Box::pin(async { Ok(credentials()) })
+    }
 }
 
 #[derive(Default)]
@@ -179,6 +186,7 @@ async fn 设备授权把_oidc_断言_设备属性和公钥绑定在同一持有�
     assert!(registrations[0].import_display_name);
     assert!(registrations[0].import_locale);
     assert_eq!(stored.device_id, authorized.device_id);
+    assert_eq!(stored.state, BridgeCredentialState::Ready);
     assert_eq!(stored.refresh_token.expose(), "bridge-refresh-token");
 }
 

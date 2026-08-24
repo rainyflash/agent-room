@@ -10,9 +10,10 @@ use agent_room_application::{
 use agent_room_domain::{devices::DevicePlatform, ids::DeviceId, time::UtcMillis};
 
 use crate::ports::{
-    BridgeCredentialFailure, BridgeCredentialFailureKind, ControlPlaneDeviceFailure,
-    ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway, DeviceCredentialVault,
-    DeviceSigningIdentityStore, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
+    BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialState,
+    ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway,
+    DeviceCredentialVault, DeviceSigningIdentityStore, RegisterBridgeDevice,
+    StoredBridgeDeviceCredentials,
 };
 
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
@@ -151,6 +152,7 @@ impl BridgeAuthorizationService {
             .await
             .map_err(map_control_plane_failure)?;
         let stored = StoredBridgeDeviceCredentials {
+            state: BridgeCredentialState::Ready,
             device_id: credentials.device.device_id,
             access_token: credentials.access_token,
             access_token_expires_at: credentials.device.access_token_expires_at,

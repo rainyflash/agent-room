@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_application::{
-    devices::DeviceCredentials,
+    devices::{DeviceCredentials, DeviceRequestProof},
     ports::{DeviceSignature, PortFuture, SecretValue},
 };
 use agent_room_domain::{
@@ -56,11 +56,18 @@ pub trait DeviceSigningIdentityStore: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredBridgeDeviceCredentials {
+    pub state: BridgeCredentialState,
     pub device_id: DeviceId,
     pub access_token: SecretValue,
     pub access_token_expires_at: UtcMillis,
     pub refresh_token: SecretValue,
     pub refresh_token_expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeCredentialState {
+    Ready,
+    RefreshPending,
 }
 
 pub trait DeviceCredentialVault: Send + Sync {
@@ -91,6 +98,12 @@ pub struct RegisterBridgeDevice {
     pub possession_signature: DeviceSignature,
     pub import_display_name: bool,
     pub import_locale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshBridgeDevice {
+    pub refresh_token: SecretValue,
+    pub proof: DeviceRequestProof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,5 +137,10 @@ pub trait ControlPlaneDeviceGateway: Send + Sync {
     fn register(
         &self,
         request: RegisterBridgeDevice,
+    ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>>;
+
+    fn refresh(
+        &self,
+        request: RefreshBridgeDevice,
     ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>>;
 }
