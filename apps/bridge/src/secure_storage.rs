@@ -8,6 +8,10 @@ use agent_room_bridge_core::ports::{
     DeviceSigningIdentityStore, StoredBridgeDeviceCredentials,
 };
 use agent_room_bridge_ipc::IpcSharedSecret;
+use agent_room_bridge_local_adapter::{
+    IPC_INSTALLATION_ID_ACCOUNT as IPC_INSTALLATION_ID,
+    IPC_SHARED_SECRET_ACCOUNT as IPC_SHARED_SECRET,
+};
 use agent_room_bridge_storage_adapter::HandoffStorageKey;
 use agent_room_domain::{devices::DevicePublicSigningKey, ids::DeviceId, time::UtcMillis};
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
@@ -18,8 +22,6 @@ use uuid::Uuid;
 
 const DEVICE_SIGNING_SEED: &str = "device-signing-seed";
 const DEVICE_CREDENTIALS: &str = "device-session-v1";
-const IPC_INSTALLATION_ID: &str = "bridge-ipc-installation-id-v1";
-const IPC_SHARED_SECRET: &str = "bridge-ipc-shared-secret-v1";
 const MATRIX_STORE_PASSPHRASE: &str = "matrix-store-passphrase-v1";
 const HANDOFF_STORAGE_KEY: &str = "handoff-storage-key-v1";
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;

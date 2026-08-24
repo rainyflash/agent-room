@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, future::Future, io, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use agent_room_bridge_core::ipc::{
     FoundationIpcScopePolicy, IpcHandshakeAgreement, IpcHandshakeFailureKind,
@@ -9,6 +9,7 @@ use agent_room_bridge_ipc::{
     IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
     client_offer_from_frame, server_agreement_frame, verify_challenge_proof,
 };
+use agent_room_bridge_local_adapter::LocalIpcEndpoint;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use interprocess::local_socket::{
     ListenerOptions,
@@ -103,49 +104,6 @@ impl BridgeIpcDispatchFailure {
     }
 }
 
-#[derive(Debug, Clone)]
-struct BridgeIpcEndpoint {
-    platform_name: String,
-}
-
-impl BridgeIpcEndpoint {
-    fn from_installation(paths: &BridgeRuntimePaths, installation_id: &IpcInstallationId) -> Self {
-        #[cfg(windows)]
-        let platform_name = {
-            let _ = paths;
-            format!("agent-room-bridge-{}.sock", installation_id.as_str())
-        };
-        #[cfg(unix)]
-        let platform_name = paths
-            .runtime_root()
-            .join(format!("bridge-{}.sock", installation_id.as_str()))
-            .to_string_lossy()
-            .into_owned();
-        #[cfg(not(any(windows, unix)))]
-        let platform_name = {
-            let _ = paths;
-            format!("agent-room-bridge-{}.sock", installation_id.as_str())
-        };
-        Self { platform_name }
-    }
-
-    #[cfg(windows)]
-    fn to_name(&self) -> io::Result<interprocess::local_socket::Name<'_>> {
-        use interprocess::local_socket::{GenericNamespaced, ToNsName as _};
-
-        self.platform_name
-            .as_str()
-            .to_ns_name::<GenericNamespaced>()
-    }
-
-    #[cfg(unix)]
-    fn to_name(&self) -> io::Result<interprocess::local_socket::Name<'_>> {
-        use interprocess::local_socket::{GenericFilePath, ToFsName as _};
-
-        self.platform_name.as_str().to_fs_name::<GenericFilePath>()
-    }
-}
-
 pub(crate) struct BridgeIpcServer {
     listener: Listener,
     installation_id: IpcInstallationId,
@@ -166,7 +124,7 @@ impl BridgeIpcServer {
         shared_secret: IpcSharedSecret,
         request_handler: Arc<dyn BridgeIpcRequestHandler>,
     ) -> BridgeIpcResult<Self> {
-        let endpoint = BridgeIpcEndpoint::from_installation(paths, &installation_id);
+        let endpoint = LocalIpcEndpoint::from_installation(paths.runtime_root(), &installation_id);
         let options = private_listener_options(&endpoint)?;
         let listener = options
             .create_tokio()
@@ -547,7 +505,7 @@ where
 }
 
 #[cfg(windows)]
-fn private_listener_options(endpoint: &BridgeIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
+fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
     use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
     use widestring::U16CString;
@@ -579,7 +537,7 @@ fn private_windows_sddl(session_sid: &str) -> String {
 }
 
 #[cfg(unix)]
-fn private_listener_options(endpoint: &BridgeIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
+fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
     use interprocess::local_socket::ListenerOptionsExt as _;
 
     Ok(ListenerOptions::new()

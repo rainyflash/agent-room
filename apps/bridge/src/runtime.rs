@@ -24,6 +24,7 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
+use agent_room_bridge_local_adapter::DEFAULT_SECURE_STORAGE_SERVICE;
 use agent_room_bridge_storage_adapter::SqliteHandoffStore;
 use agent_room_domain::{
     devices::DevicePlatform,
@@ -54,8 +55,6 @@ use crate::{
 };
 use agent_room_bridge::control_plane::{ControlPlaneHttpConfig, ReqwestControlPlaneDeviceGateway};
 
-const SECURE_STORAGE_SERVICE: &str = "dev.agent-room.bridge";
-
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
@@ -65,7 +64,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         .map_err(BridgeRuntimeError::instance_lock)?;
     let _matrix_store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
         .map_err(BridgeRuntimeError::matrix_store_lock)?;
-    let runtime_secrets = OsBridgeRuntimeSecretVault::system(SECURE_STORAGE_SERVICE)
+    let runtime_secrets = OsBridgeRuntimeSecretVault::system(DEFAULT_SECURE_STORAGE_SERVICE)
         .load_or_create()
         .map_err(BridgeRuntimeError::runtime_secrets)?;
     initialize_matrix_store(&config, &paths, &runtime_secrets).await?;
@@ -115,8 +114,12 @@ async fn initialize_device_session(
         })
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
-    let signing_identities = Arc::new(OsDeviceSigningIdentityStore::system(SECURE_STORAGE_SERVICE));
-    let credentials = Arc::new(OsDeviceCredentialVault::system(SECURE_STORAGE_SERVICE));
+    let signing_identities = Arc::new(OsDeviceSigningIdentityStore::system(
+        DEFAULT_SECURE_STORAGE_SERVICE,
+    ));
+    let credentials = Arc::new(OsDeviceCredentialVault::system(
+        DEFAULT_SECURE_STORAGE_SERVICE,
+    ));
     let secrets = Arc::new(SecureSecretFactory);
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let refresh_lead_time = domain_duration(config.refresh_lead_time)?;

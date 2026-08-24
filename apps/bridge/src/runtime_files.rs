@@ -65,7 +65,6 @@ impl BridgeRuntimePaths {
         &self.handoff_database
     }
 
-    #[cfg(unix)]
     pub(crate) fn runtime_root(&self) -> &Path {
         &self.runtime_root
     }

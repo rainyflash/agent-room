@@ -1,0 +1,18 @@
+[package]
+name = "agent-room-bridge-local-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-bridge-core.workspace = true
+agent-room-bridge-ipc.workspace = true
+base64.workspace = true
+interprocess.workspace = true
+keyring.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

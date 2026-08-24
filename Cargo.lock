@@ -82,6 +82,7 @@ dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
  "agent-room-bridge-ipc",
+ "agent-room-bridge-local-adapter",
  "agent-room-bridge-storage-adapter",
  "agent-room-domain",
  "agent-room-identity-adapter",
@@ -134,6 +135,18 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "agent-room-bridge-local-adapter"
+version = "0.1.0"
+dependencies = [
+ "agent-room-bridge-core",
+ "agent-room-bridge-ipc",
+ "base64 0.22.1",
+ "interprocess",
+ "keyring",
+ "tokio",
 ]
 
 [[package]]
