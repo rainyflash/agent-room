@@ -5,9 +5,9 @@ use agent_room_application::{
     ports::{
         AgentCardSnapshotRepository, AgentCreationClaim, AgentCreationReservation,
         AgentCreationWorkflow, AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
-        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
-        AgentRegistration, AgentRepository, OutboxMessage, PrincipalRegistration,
-        PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
+        AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
+        AgentMembershipTransaction, AgentRegistration, AgentRepository, OutboxMessage,
+        PrincipalRegistration, PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -382,7 +382,7 @@ async fn agent_成员变更只允许_owner_且不能移除最后一个_owner() {
 async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let fixture = prepare_instance_fixture(&database.runtime, &repositories).await;
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 11).await;
     let owner_id = fixture.owner_id;
     let operator_id = fixture.operator_id;
     let owner_device = fixture.owner_device;
@@ -476,6 +476,63 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     .await
     .expect("应能验证实例事件幂等性");
     assert_eq!(event_count, 1);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_实例验签材料保留历史公钥并合并设备失效边界() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 12).await;
+    let registration = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        fixture.agent_id,
+        SecretDigest::from_array([61; 32]),
+        [62; 32],
+        [63; 32],
+    );
+    let stored = register_instance(&repositories, &registration)
+        .await
+        .expect("实例注册成功");
+
+    let active = AgentInstanceVerificationRepository::find_verification_record(
+        &repositories,
+        stored.instance.id(),
+    )
+    .await
+    .expect("活跃验签材料可读取")
+    .expect("实例存在");
+    assert_eq!(active.agent_id, fixture.agent_id);
+    assert_eq!(active.public_signing_key.as_bytes(), &[63; 32]);
+    assert_eq!(active.invalidated_at, None);
+
+    let invalidated_at_ms: i64 = sqlx::query_scalar(
+        r"UPDATE agent_room.device
+          SET trust_state = 'revoked', revoked_at = clock_timestamp()
+          WHERE id = $1
+          RETURNING floor(extract(epoch FROM revoked_at) * 1000)::bigint",
+    )
+    .bind(fixture.owner_device.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("设备可撤销");
+    let historical = AgentInstanceVerificationRepository::find_verification_record(
+        &repositories,
+        stored.instance.id(),
+    )
+    .await
+    .expect("撤销后仍可读取历史公钥")
+    .expect("实例历史仍存在");
+    assert_eq!(historical.public_signing_key, active.public_signing_key);
+    assert_eq!(
+        historical.invalidated_at,
+        Some(UtcMillis::new(invalidated_at_ms).expect("失效时间有效"))
+    );
+    assert!(historical.registered_at <= historical.invalidated_at.expect("已有失效时间"));
 
     database.close().await;
 }
@@ -716,6 +773,7 @@ struct InstanceFixture {
 async fn prepare_instance_fixture(
     pool: &PgPool,
     repositories: &PostgresRepositories,
+    device_key_seed: u8,
 ) -> InstanceFixture {
     let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
     let operator_id = PrincipalId::from_uuid(Uuid::now_v7());
@@ -728,14 +786,12 @@ async fn prepare_instance_fixture(
             .expect("实例成员主体创建应成功");
     }
     let owner_device = DeviceId::from_uuid(Uuid::now_v7());
-    insert_verified_device(pool, owner_device, owner_id, 11).await;
+    insert_verified_device(pool, owner_device, owner_id, device_key_seed).await;
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
-    AgentRepository::create(
-        repositories,
-        &agent_registration(agent_id, owner_id, "instance-agent"),
-    )
-    .await
-    .expect("Agent 创建应成功");
+    let slug = format!("instance-agent-{device_key_seed}");
+    AgentRepository::create(repositories, &agent_registration(agent_id, owner_id, &slug))
+        .await
+        .expect("Agent 创建应成功");
     let grant_operator =
         membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
     AgentMembershipTransaction::apply_change(

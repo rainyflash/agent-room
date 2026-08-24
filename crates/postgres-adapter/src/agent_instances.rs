@@ -1,8 +1,9 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentInstanceRegistration, AgentInstanceRegistrationTransaction, OutboxMessage, PortFuture,
-        SecretDigest, StoredAgentInstanceRegistration,
+        AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
+        AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, OutboxMessage,
+        PortFuture, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -29,6 +30,52 @@ impl AgentInstanceRegistrationTransaction for PostgresRepositories {
         event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<StoredAgentInstanceRegistration>> {
         Box::pin(async move { self.register_agent_instance(registration, event).await })
+    }
+}
+
+impl AgentInstanceVerificationRepository for PostgresRepositories {
+    fn find_verification_record(
+        &self,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceVerificationRecord>>> {
+        Box::pin(async move {
+            let operation = "agent_instance.verification.find";
+            let row = sqlx::query(
+                r"SELECT instance.id, instance.agent_id, instance.public_signing_key,
+                         floor(extract(epoch FROM instance.created_at) * 1000)::bigint
+                             AS registered_at_ms,
+                         floor(extract(epoch FROM (
+                             SELECT min(invalidated_at)
+                             FROM unnest(ARRAY[
+                                 instance.revoked_at,
+                                 device.revoked_at,
+                                 CASE WHEN device.trust_state = 'verified'
+                                     THEN NULL
+                                     ELSE coalesce(device.revoked_at, instance.created_at)
+                                 END,
+                                 CASE WHEN principal.status = 'active'
+                                     THEN NULL ELSE principal.updated_at END,
+                                 CASE WHEN agent.lifecycle_state = 'active'
+                                     THEN NULL ELSE agent.updated_at END,
+                                 CASE WHEN binding.state = 'active'
+                                     THEN NULL ELSE binding.updated_at END
+                             ]) AS invalidations(invalidated_at)
+                         )) * 1000)::bigint AS invalidated_at_ms
+                  FROM agent_room.agent_instance AS instance
+                  JOIN agent_room.device AS device ON device.id = instance.device_id
+                  JOIN agent_room.principal AS principal ON principal.id = device.principal_id
+                  JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
+                  JOIN agent_room.adapter_binding AS binding
+                    ON binding.id = instance.adapter_binding_id
+                  WHERE instance.id = $1",
+            )
+            .bind(instance_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| decode_verification_record(&row, operation))
+                .transpose()
+        })
     }
 }
 
@@ -461,6 +508,25 @@ fn decode_instance(row: &PgRow, operation: &'static str) -> RepositoryResult<Age
         decode_optional_time(row, "lease_expires_at_ms", operation)?,
     )
     .map_err(|_| corrupt_data(operation))
+}
+
+fn decode_verification_record(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<AgentInstanceVerificationRecord> {
+    let instance_id: uuid::Uuid = decode_column(row, "id", operation)?;
+    let agent_id: uuid::Uuid = decode_column(row, "agent_id", operation)?;
+    let signing_key: Vec<u8> = decode_column(row, "public_signing_key", operation)?;
+    let registered_at_ms: i64 = decode_column(row, "registered_at_ms", operation)?;
+    Ok(AgentInstanceVerificationRecord {
+        instance_id: AgentInstanceId::from_uuid(instance_id),
+        agent_id: AgentId::from_uuid(agent_id),
+        public_signing_key: AgentInstancePublicSigningKey::new(signing_key)
+            .map_err(|_| corrupt_data(operation))?,
+        registered_at: agent_room_domain::time::UtcMillis::new(registered_at_ms)
+            .map_err(|_| corrupt_data(operation))?,
+        invalidated_at: decode_optional_time(row, "invalidated_at_ms", operation)?,
+    })
 }
 
 fn ensure_registration_coherence(registration: &AgentInstanceRegistration) -> RepositoryResult<()> {
