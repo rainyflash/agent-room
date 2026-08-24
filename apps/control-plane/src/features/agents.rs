@@ -365,6 +365,9 @@ fn register_instance_request(
     agent_id: AgentId,
     body: RegisterInstanceBody,
 ) -> Result<RegisterAgentInstance, ()> {
+    if !body.configuration.is_empty() {
+        return Err(());
+    }
     let external_subject_hash = body
         .external_subject_hash
         .map(|value| {
@@ -867,7 +870,7 @@ mod tests {
         let body = json!({
             "adapterType": "codex-desktop",
             "capabilityVersion": "2026-08-24",
-            "configuration": { "workspace": "agent-room" },
+            "configuration": {},
             "publicSigningKey": public_key
         })
         .to_string();
@@ -934,6 +937,43 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
+        assert!(
+            agents
+                .registration
+                .lock()
+                .expect("Agent 实例记录锁可用")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn 未注册适配器_schema_时拒绝持久化任意配置() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let body = json!({
+            "adapterType": "codex-desktop",
+            "capabilityVersion": "2026-08-24",
+            "configuration": { "accessToken": "禁止落库" },
+            "publicSigningKey": URL_SAFE_NO_PAD.encode([7_u8; 32])
+        })
+        .to_string();
+        *devices
+            .expected_body
+            .lock()
+            .expect("设备请求正文记录锁可用") = Some(body.clone());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+
+        let response = app
+            .oneshot(instance_request(&body, true))
+            .await
+            .expect("带任意适配器配置的请求可调用");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
         assert!(
             agents
                 .registration
