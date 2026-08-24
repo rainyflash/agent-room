@@ -19,9 +19,11 @@ pub use agent_cards::{
 };
 pub use agents::{
     AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentInstanceRegistration,
-    AgentInstanceRegistrationTransaction, AgentMembershipChange, AgentMembershipRepository,
-    AgentMembershipTransaction, AgentRegistration, AgentRegistrationTransaction, AgentRepository,
-    RegisteredAgent, StoredAgentInstanceRegistration,
+    AgentInstanceRegistrationTransaction, AgentInstanceSignatureVerifier,
+    AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, AgentMembershipChange,
+    AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration,
+    AgentRegistrationTransaction, AgentRepository, RegisteredAgent,
+    StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
 pub use content::{

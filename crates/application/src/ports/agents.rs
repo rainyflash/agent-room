@@ -1,8 +1,11 @@
 use agent_room_domain::{
-    agents::{AdapterBinding, Agent, AgentInstance, AgentMemberships, AgentRole, AgentVisibility},
+    agents::{
+        AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey, AgentMemberships,
+        AgentRole, AgentVisibility,
+    },
     ids::{
-        AgentCreationRequestId, AgentId, AgentInstanceRegistrationRequestId, ContentId, DeviceId,
-        PrincipalId,
+        AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
+        ContentId, DeviceId, PrincipalId,
     },
     time::UtcMillis,
 };
@@ -10,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::persistence::RepositoryResult;
 
-use super::{OutboxMessage, PortFuture, SecretDigest};
+use super::{DeviceSignature, OutboxMessage, PortFuture, SecretDigest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRegistration {
@@ -85,6 +88,15 @@ pub struct StoredAgentInstanceRegistration {
     pub instance: AgentInstance,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentInstanceVerificationRecord {
+    pub instance_id: AgentInstanceId,
+    pub agent_id: AgentId,
+    pub public_signing_key: AgentInstancePublicSigningKey,
+    pub registered_at: UtcMillis,
+    pub invalidated_at: Option<UtcMillis>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentMembershipChange {
     pub agent_id: AgentId,
@@ -147,6 +159,22 @@ pub trait AgentInstanceRegistrationTransaction: Send + Sync {
         registration: &'a AgentInstanceRegistration,
         event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<StoredAgentInstanceRegistration>>;
+}
+
+pub trait AgentInstanceVerificationRepository: Send + Sync {
+    fn find_verification_record(
+        &self,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceVerificationRecord>>>;
+}
+
+pub trait AgentInstanceSignatureVerifier: Send + Sync {
+    fn verify(
+        &self,
+        public_key: &AgentInstancePublicSigningKey,
+        signed_message: &[u8],
+        signature: &DeviceSignature,
+    ) -> bool;
 }
 
 /// 持久化 Agent 注册及其领域事件的单一事务边界。

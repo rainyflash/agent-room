@@ -1,4 +1,5 @@
 pub mod agent_cards;
+pub mod agent_instance_verification;
 pub mod agents;
 pub mod authentication;
 pub mod content;
