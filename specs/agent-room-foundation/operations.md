@@ -76,6 +76,18 @@ flowchart LR
 - 如果旧卷的管理员凭据与当前 `.env.local` 不一致，脚本发出明确警告但保留现有数据并继续健康检查。只有在确认本地数据可丢弃后，开发者才应使用 `just dev-reset` 重建本项目卷；自动化不得擅自删除身份数据。
 - OIDC Provider 不可用时，新登录和近期认证失败；已有未过期会话仅依赖 Agent Room PostgreSQL，仍可按策略继续工作。
 
+### 3.2 Web 会话验收
+
+Web 壳的快速浏览器门禁与真实会话门禁分别为：
+
+```powershell
+just web-browser
+just dev-up
+just web-session-integration
+```
+
+后者会启动或复用控制平面与 Vite，并使用 `.env.local` 中的隔离开发账户完成 Keycloak、控制平面 Cookie、Matrix SSO、增量同步和刷新恢复。测试工具只把密码注入子进程环境，不打印或写入浏览器存储。
+
 ## 4. 单机参考部署
 
 封闭测试可以运行在一台 Linux VPS，但各数据目录和密钥独立：
