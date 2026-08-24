@@ -144,6 +144,38 @@ pub struct IpcHandshakeAgreement {
 }
 
 impl IpcHandshakeAgreement {
+    /// 校验服务端返回的版本与作用域选择。
+    ///
+    /// # Errors
+    ///
+    /// 版本未在客户端提议中、授权为空或包含未申请作用域时返回稳定错误。
+    pub fn from_server_selection(
+        offer: &IpcHandshakeOffer,
+        selected_version: IpcProtocolVersion,
+        granted_scopes: impl IntoIterator<Item = IpcScope>,
+    ) -> IpcHandshakeResult<Self> {
+        if !offer.supported_versions().contains(&selected_version) {
+            return Err(IpcHandshakeFailure::new(
+                "bridge.ipc.accept_version",
+                IpcHandshakeFailureKind::IncompatibleVersion,
+            ));
+        }
+        let granted_scopes = granted_scopes.into_iter().collect::<BTreeSet<_>>();
+        if granted_scopes.is_empty()
+            || granted_scopes.len() > MAX_REQUESTED_SCOPES
+            || !granted_scopes.is_subset(offer.requested_scopes())
+        {
+            return Err(IpcHandshakeFailure::new(
+                "bridge.ipc.accept_scopes",
+                IpcHandshakeFailureKind::ScopeDenied,
+            ));
+        }
+        Ok(Self {
+            selected_version,
+            granted_scopes,
+        })
+    }
+
     pub const fn selected_version(&self) -> IpcProtocolVersion {
         self.selected_version
     }
@@ -233,10 +265,11 @@ where
             ));
         }
 
-        Ok(IpcHandshakeAgreement {
+        IpcHandshakeAgreement::from_server_selection(
+            offer,
             selected_version,
-            granted_scopes: offer.requested_scopes().clone(),
-        })
+            offer.requested_scopes().iter().copied(),
+        )
     }
 }
 
@@ -274,8 +307,8 @@ pub type IpcHandshakeResult<T> = Result<T, IpcHandshakeFailure>;
 #[cfg(test)]
 mod tests {
     use super::{
-        FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeFailureKind, IpcHandshakeNegotiator,
-        IpcHandshakeOffer, IpcProtocolVersion, IpcScope, IpcScopePolicy,
+        FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeAgreement, IpcHandshakeFailureKind,
+        IpcHandshakeNegotiator, IpcHandshakeOffer, IpcProtocolVersion, IpcScope, IpcScopePolicy,
     };
 
     #[test]
@@ -397,5 +430,34 @@ mod tests {
                 .all(|scope| !policy.allows(IpcCallerKind::DiagnosticCli, *scope))
         );
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
+    }
+
+    #[test]
+    fn 客户端拒绝未提议版本与越权作用域() {
+        let offer = IpcHandshakeOffer::new(
+            IpcCallerKind::CodexPlugin,
+            [IpcProtocolVersion::V1_0],
+            [IpcScope::SelfRead],
+        )
+        .expect("握手提议有效");
+
+        let version_failure = IpcHandshakeAgreement::from_server_selection(
+            &offer,
+            IpcProtocolVersion::new(2, 0).expect("测试版本有效"),
+            [IpcScope::SelfRead],
+        )
+        .expect_err("未提议版本必须失败");
+        assert_eq!(
+            version_failure.kind(),
+            IpcHandshakeFailureKind::IncompatibleVersion
+        );
+
+        let scope_failure = IpcHandshakeAgreement::from_server_selection(
+            &offer,
+            IpcProtocolVersion::V1_0,
+            [IpcScope::MessageSend],
+        )
+        .expect_err("未申请作用域必须失败");
+        assert_eq!(scope_failure.kind(), IpcHandshakeFailureKind::ScopeDenied);
     }
 }

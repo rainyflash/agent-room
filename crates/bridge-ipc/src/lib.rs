@@ -1,4 +1,5 @@
 mod authentication;
+mod client;
 mod codec;
 mod tools;
 mod wire;
@@ -7,6 +8,7 @@ pub use authentication::{
     IpcAuthenticationFailure, IpcChallenge, IpcChallengeProof, IpcSharedSecret,
     create_challenge_proof, verify_challenge_proof,
 };
+pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, IpcClientSession};
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcConsumedHandoff, IpcContentReference,

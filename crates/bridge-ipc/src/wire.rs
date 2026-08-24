@@ -27,6 +27,8 @@ pub enum IpcFrame {
         challenge: String,
         #[serde(rename = "selectedVersion")]
         selected_version: IpcVersion,
+        #[serde(rename = "grantedScopes")]
+        granted_scopes: Vec<IpcScopeName>,
     },
     ClientProof {
         #[serde(rename = "challengeId")]

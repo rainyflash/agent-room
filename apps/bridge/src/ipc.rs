@@ -6,7 +6,7 @@ use agent_room_bridge_core::ipc::{
 };
 use agent_room_bridge_ipc::{
     IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcErrorCategory, IpcFrame, IpcFrameCodec,
-    IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcSharedSecret, IpcVersion,
+    IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
     client_offer_from_frame, server_agreement_frame, verify_challenge_proof,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -309,6 +309,12 @@ where
             challenge_id,
             challenge: URL_SAFE_NO_PAD.encode(challenge.as_bytes()),
             selected_version: IpcVersion::from(agreement.selected_version()),
+            granted_scopes: agreement
+                .granted_scopes()
+                .iter()
+                .copied()
+                .map(IpcScopeName::from)
+                .collect(),
         },
     )
     .await
