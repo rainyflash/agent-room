@@ -50,6 +50,21 @@ jobs:
       - name: 检查 Action 固定策略
         run: corepack pnpm@10.28.0 actions:check
 
+  bridge-platforms:
+    name: Bridge 原生编译（${{ matrix.os }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 编译 Bridge 与平台安全存储适配器
+        run: cargo check -p agent-room-bridge --all-targets
+
   supply-chain:
     name: 供应链与物料清单
     runs-on: ubuntu-latest
