@@ -79,6 +79,9 @@ function Write-Environment {
     if (-not $current.ContainsKey('CONTENT_MATRIX_AGENT_ID')) {
       $missingValues.CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     }
+    if (-not $current.ContainsKey('KEYCLOAK_MATRIX_CLIENT_SECRET')) {
+      $missingValues.KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
+    }
     if ($missingValues.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
       $appended = ($missingValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
@@ -98,6 +101,7 @@ function Write-Environment {
     KEYCLOAK_ADMIN = 'local-admin'
     KEYCLOAK_ADMIN_PASSWORD = New-RandomSecret
     KEYCLOAK_CLIENT_SECRET = New-RandomSecret
+    KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
     SYNAPSE_REGISTRATION_SECRET = New-RandomSecret
     SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
     SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
@@ -159,6 +163,22 @@ function Write-KeycloakRealm {
         attributes = @{
           'oauth2.device.authorization.grant.enabled' = 'true'
         }
+      }
+      [ordered]@{
+        clientId = 'agent-room-matrix'
+        name = 'Agent Room Matrix'
+        enabled = $true
+        publicClient = $false
+        secret = $Environment.KEYCLOAK_MATRIX_CLIENT_SECRET
+        protocol = 'openid-connect'
+        standardFlowEnabled = $true
+        implicitFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $false
+        redirectUris = @(
+          'https://matrix.agent-room.localhost/_synapse/client/oidc/callback'
+        )
+        webOrigins = @()
       }
     )
     users = @(
@@ -247,7 +267,7 @@ receive_ephemeral: false
 
   $homeserver = @"
 server_name: "matrix.agent-room.localhost"
-public_baseurl: "http://localhost:18008/"
+public_baseurl: "https://matrix.agent-room.localhost/"
 pid_file: /data/homeserver.pid
 app_service_config_files:
   - /data/agent-room-appservice.yaml
@@ -280,6 +300,24 @@ trusted_key_servers:
   - server_name: "matrix.org"
 suppress_key_server_warning: true
 enable_registration: false
+oidc_providers:
+  - idp_id: agent_room
+    idp_name: "Agent Room"
+    discover: false
+    issuer: "http://127.0.0.1:18080/realms/agent-room"
+    client_id: "agent-room-matrix"
+    client_secret: "$($Environment.KEYCLOAK_MATRIX_CLIENT_SECRET)"
+    authorization_endpoint: "http://127.0.0.1:18080/realms/agent-room/protocol/openid-connect/auth"
+    token_endpoint: "http://identity:8080/realms/agent-room/protocol/openid-connect/token"
+    userinfo_endpoint: "http://identity:8080/realms/agent-room/protocol/openid-connect/userinfo"
+    jwks_uri: "http://identity:8080/realms/agent-room/protocol/openid-connect/certs"
+    skip_verification: true
+    scopes: ["openid", "profile", "email"]
+    enable_registration: true
+    user_mapping_provider:
+      module: "agent_room_oidc_mapping.AgentRoomOidcMappingProvider"
+      config:
+        issuer: "http://127.0.0.1:18080/realms/agent-room"
 rc_login:
   address:
     per_second: 100
@@ -316,7 +354,7 @@ function Invoke-Compose {
   }
 }
 
-function Sync-KeycloakClient {
+function Sync-KeycloakClients {
   $environment = Read-Environment
   $compose = @(
     'compose', '--project-name', $ProjectName, '--env-file', $EnvFile,
@@ -404,6 +442,52 @@ function Sync-KeycloakClient {
     throw '本地 Keycloak 必须至多存在一个 agent-room-bridge 客户端。'
   }
 
+  $matrixClientJson = & docker @compose $admin get clients `
+    --config $adminConfig `
+    --realm 'agent-room' `
+    --query 'clientId=agent-room-matrix'
+  if ($LASTEXITCODE -ne 0) {
+    throw '无法查询本地 Keycloak Matrix 客户端。'
+  }
+  $matrixClients = @(($matrixClientJson -join "`n") | ConvertFrom-Json)
+  $matrixRedirectUris = 'redirectUris=["https://matrix.agent-room.localhost/_synapse/client/oidc/callback"]'
+  if ($matrixClients.Count -eq 0) {
+    & docker @compose $admin create clients `
+      --config $adminConfig `
+      --realm 'agent-room' `
+      --set 'clientId=agent-room-matrix' `
+      --set 'name=Agent Room Matrix' `
+      --set 'enabled=true' `
+      --set 'publicClient=false' `
+      --set "secret=$($environment.KEYCLOAK_MATRIX_CLIENT_SECRET)" `
+      --set 'protocol=openid-connect' `
+      --set 'standardFlowEnabled=true' `
+      --set 'implicitFlowEnabled=false' `
+      --set 'directAccessGrantsEnabled=false' `
+      --set 'serviceAccountsEnabled=false' `
+      --set $matrixRedirectUris | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw '无法创建本地 Keycloak Matrix 客户端。'
+    }
+  } elseif ($matrixClients.Count -eq 1) {
+    & docker @compose $admin update "clients/$($matrixClients[0].id)" `
+      --config $adminConfig `
+      --realm 'agent-room' `
+      --set 'enabled=true' `
+      --set 'publicClient=false' `
+      --set "secret=$($environment.KEYCLOAK_MATRIX_CLIENT_SECRET)" `
+      --set 'standardFlowEnabled=true' `
+      --set 'implicitFlowEnabled=false' `
+      --set 'directAccessGrantsEnabled=false' `
+      --set 'serviceAccountsEnabled=false' `
+      --set $matrixRedirectUris | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw '无法同步本地 Keycloak Matrix 客户端。'
+    }
+  } else {
+    throw '本地 Keycloak 必须至多存在一个 agent-room-matrix 客户端。'
+  }
+
   & docker @compose rm -f $adminConfig | Out-Null
 }
 
@@ -488,7 +572,7 @@ switch ($Action) {
     Prepare-Environment
     Invoke-Compose -Arguments @('config', '--quiet')
     Invoke-Compose -Arguments @('up', '--detach', '--wait', '--wait-timeout', '420')
-    Sync-KeycloakClient
+    Sync-KeycloakClients
     Test-Services
   }
   'down' {

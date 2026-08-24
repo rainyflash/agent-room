@@ -30,8 +30,11 @@ services:
         condition: service_healthy
     ports:
       - '127.0.0.1:18008:8008'
+    environment:
+      PYTHONPATH: /data
     volumes:
       - ${AGENT_ROOM_LOCAL_DIR:?缺少 AGENT_ROOM_LOCAL_DIR}/generated/synapse:/data
+      - ${AGENT_ROOM_ROOT:?缺少 AGENT_ROOM_ROOT}/infra/synapse/agent_room_oidc_mapping.py:/data/agent_room_oidc_mapping.py:ro
     healthcheck:
       test:
         [
@@ -57,6 +60,7 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?缺少 KEYCLOAK_ADMIN}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?缺少 KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: 'true'
+      KC_HOSTNAME: http://127.0.0.1:18080
       KC_HOSTNAME_STRICT: 'false'
     ports:
       - '127.0.0.1:18080:8080'
