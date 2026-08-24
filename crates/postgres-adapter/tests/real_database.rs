@@ -1,23 +1,29 @@
-use std::{borrow::Cow, env};
+use std::{borrow::Cow, collections::BTreeSet, env};
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
-        AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
-        AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
-        OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
-        StoredAgentInstanceRegistration,
+        AgentCardSnapshotRepository, AgentCreationClaim, AgentCreationReservation,
+        AgentCreationWorkflow, AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
+        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
+        AgentRegistration, AgentRepository, OutboxMessage, PrincipalRegistration,
+        PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
+    agent_cards::{
+        AgentCardCapabilities, AgentCardDigest, AgentCardEndpoint, AgentCardProtocolVersion,
+        AgentCardSkill, AgentCardSnapshot, AgentCardSnapshotFields, AgentCardSourceUrl,
+        AgentCardTransport, AgentCardVerificationState, AgentEndpointVerificationState,
+        NormalizedAgentCard, NormalizedAgentCardFields,
+    },
     agents::{
         AdapterBinding, AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
         AgentMatrixDeviceId, AgentRole, AgentVisibility,
     },
     identity::Principal,
     ids::{
-        AdapterBindingId, AgentCreationRequestId, AgentId, AgentInstanceId,
+        AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
         AgentInstanceRegistrationRequestId, DeviceId, OutboxEventId, PrincipalId,
     },
     time::UtcMillis,
@@ -472,6 +478,66 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_card_快照可往返且历史被原子裁剪() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    PrincipalRepository::create(
+        &repositories,
+        &principal_registration(owner_id, "Agent Card Owner"),
+    )
+    .await
+    .expect("Owner 创建应成功");
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    AgentRepository::create(
+        &repositories,
+        &agent_registration(agent_id, owner_id, "agent-card-cache"),
+    )
+    .await
+    .expect("Agent 创建应成功");
+
+    let reference_time = test_time().value();
+    for index in 0_u8..12 {
+        let fetched_at = if index == 0 {
+            reference_time - 91 * 24 * 60 * 60 * 1_000
+        } else {
+            reference_time + i64::from(index)
+        };
+        let snapshot = agent_card_snapshot(agent_id, index, fetched_at);
+        AgentCardSnapshotRepository::save(&repositories, &snapshot)
+            .await
+            .expect("快照保存应成功");
+    }
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.agent_card_snapshot WHERE agent_id = $1",
+    )
+    .bind(agent_id.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("应能读取快照数量");
+    assert_eq!(count, 10);
+    let latest = AgentCardSnapshotRepository::find_latest(&repositories, agent_id)
+        .await
+        .expect("最新快照读取应成功")
+        .expect("最新快照应存在");
+    assert_eq!(latest.digest().as_bytes(), &[11; 32]);
+    assert_eq!(latest.card().name(), "远端测试 Agent");
+    let stored: serde_json::Value = sqlx::query_scalar(
+        "SELECT normalized_card FROM agent_room.agent_card_snapshot WHERE id = $1",
+    )
+    .bind(latest.id().as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("应能检查规范化持久化内容");
+    assert_eq!(stored["schemaVersion"], 1);
+    assert!(stored.get("signatures").is_none());
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 事务失败会回滚且外键拒绝孤儿记录() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -791,6 +857,59 @@ async fn assert_instance_registration_failure(
 
 fn test_time() -> UtcMillis {
     UtcMillis::new(1_700_000_000_000).expect("测试时间戳必须有效")
+}
+
+fn agent_card_snapshot(agent_id: AgentId, seed: u8, fetched_at: i64) -> AgentCardSnapshot {
+    let fetched_at = UtcMillis::new(fetched_at).expect("测试抓取时间有效");
+    let expires_at = UtcMillis::new(fetched_at.value() + 60_000).expect("测试过期时间有效");
+    let capabilities = AgentCardCapabilities::new(true, false, false, Vec::new(), &BTreeSet::new())
+        .expect("测试能力有效");
+    let card = NormalizedAgentCard::new(NormalizedAgentCardFields {
+        name: "远端测试 Agent".to_owned(),
+        description: "仅保存安全规范化资料".to_owned(),
+        provider: None,
+        version: "1.0.0".to_owned(),
+        endpoints: vec![
+            AgentCardEndpoint::new(
+                "https://agent.example/a2a".to_owned(),
+                AgentCardTransport::JsonRpc,
+                AgentCardProtocolVersion::V1_0,
+                None,
+                AgentEndpointVerificationState::Verified,
+            )
+            .expect("测试端点有效"),
+        ],
+        capabilities,
+        security_schemes: Vec::new(),
+        default_input_modes: vec!["text/plain".to_owned()],
+        default_output_modes: vec!["text/plain".to_owned()],
+        skills: vec![
+            AgentCardSkill::new(
+                "chat".to_owned(),
+                "聊天".to_owned(),
+                "公开能力".to_owned(),
+                vec!["chat".to_owned()],
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("测试技能有效"),
+        ],
+    })
+    .expect("测试资料有效");
+    AgentCardSnapshot::new(AgentCardSnapshotFields {
+        id: AgentCardSnapshotId::from_uuid(Uuid::now_v7()),
+        agent_id,
+        source_url: AgentCardSourceUrl::new(
+            "https://agent.example/.well-known/agent-card.json".to_owned(),
+        )
+        .expect("测试来源有效"),
+        digest: AgentCardDigest::from_array([seed; 32]),
+        card,
+        verification: AgentCardVerificationState::Unverified,
+        fetched_at,
+        expires_at,
+    })
+    .expect("测试快照有效")
 }
 
 fn required_url(name: &str) -> String {

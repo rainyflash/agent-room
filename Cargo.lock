@@ -221,6 +221,7 @@ version = "0.1.0"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
+ "serde",
  "serde_json",
  "sqlx",
  "thiserror 2.0.20",

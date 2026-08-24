@@ -1,3 +1,4 @@
+mod agent_cards;
 mod agent_creation;
 mod agent_instances;
 mod agent_memberships;
