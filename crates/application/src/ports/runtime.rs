@@ -3,7 +3,7 @@ use agent_room_domain::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
         HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        WebSessionId,
+        RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -26,6 +26,7 @@ pub trait IdentifierFactory: Send + Sync {
     fn agent_instance_id(&self) -> AgentInstanceId;
     fn room_catalog_id(&self) -> RoomCatalogId;
     fn room_instance_id(&self) -> RoomInstanceId;
+    fn room_reservation_id(&self) -> RoomReservationId;
     fn content_id(&self) -> ContentId;
     fn handoff_id(&self) -> HandoffId;
     fn automation_grant_id(&self) -> AutomationGrantId;

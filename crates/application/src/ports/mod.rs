@@ -63,7 +63,10 @@ pub use projections::{
     MembershipProjectionLookup, MembershipReadPlan, ProjectionApplyOutcome, ProjectionCursor,
     ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
 };
-pub use rooms::RoomDirectory;
+pub use rooms::{
+    PublicLobbyDirectoryEntry, RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore,
+    RoomDirectory, RoomDirectoryQuery, RoomReservationClaim, RoomReservationOutcome,
+};
 pub use runtime::{Clock, IdentifierFactory};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

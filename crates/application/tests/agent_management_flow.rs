@@ -29,7 +29,7 @@ use agent_room_domain::{
         AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
         AgentInstanceRegistrationRequestId, AutomationGrantId, ContentId, DeviceAccessTokenId,
         DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId, HandoffId, LoginAttemptId,
-        OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
+        OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -99,6 +99,10 @@ impl IdentifierFactory for TestIdentifiers {
 
     fn room_instance_id(&self) -> RoomInstanceId {
         RoomInstanceId::from_uuid(Uuid::now_v7())
+    }
+
+    fn room_reservation_id(&self) -> RoomReservationId {
+        RoomReservationId::from_uuid(Uuid::now_v7())
     }
 
     fn content_id(&self) -> ContentId {
