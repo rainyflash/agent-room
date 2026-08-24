@@ -77,6 +77,15 @@ content-integration:
 control-plane: database-migrate
   python tools/control-plane.py run
 
+web:
+  {{pnpm}} --filter @agent-room/web dev
+
+web-browser:
+  {{pnpm}} --filter @agent-room/web test:browser
+
+web-session-integration: database-migrate
+  python tools/web.py
+
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 

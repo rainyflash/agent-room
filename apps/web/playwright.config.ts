@@ -9,19 +9,20 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
   timeout: 30_000,
+  ...(process.env.CI ? { workers: 1 } : {}),
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: 'http://127.0.0.1:14173',
     browserName: 'chromium',
-    channel: 'chrome',
+    ...(process.env.CI ? {} : { channel: 'chrome' as const }),
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
   webServer: {
     command:
-      'corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 127.0.0.1 --port 4173 --strictPort',
+      'corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 127.0.0.1 --port 14173 --strictPort',
     cwd: '../..',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-    url: 'http://127.0.0.1:4173/connect',
+    url: 'http://127.0.0.1:14173/connect',
   },
 });

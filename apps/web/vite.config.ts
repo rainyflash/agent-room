@@ -39,6 +39,12 @@ export default defineConfig({
       '@': new URL('./src', import.meta.url).pathname,
     },
   },
+  server: {
+    allowedHosts: ['app.agent-room.localhost', 'localhost', '127.0.0.1'],
+    host: '0.0.0.0',
+    port: 5_173,
+    strictPort: true,
+  },
   build: {
     reportCompressedSize: true,
     sourcemap: true,

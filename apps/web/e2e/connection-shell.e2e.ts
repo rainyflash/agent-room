@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
     const url = new URL(route.request().url());
     const headers = {
       'access-control-allow-credentials': 'true',
-      'access-control-allow-origin': 'http://127.0.0.1:4173',
+      'access-control-allow-origin': 'http://127.0.0.1:14173',
       'content-type': 'application/json',
     };
     if (url.pathname === '/auth/session') {

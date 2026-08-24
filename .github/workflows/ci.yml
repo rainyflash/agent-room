@@ -65,6 +65,34 @@ jobs:
       - name: 编译 Bridge 与平台安全存储适配器
         run: cargo check -p agent-room-bridge --all-targets
 
+  web-browser:
+    name: Web 真实浏览器验收
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Node 依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 安装 Chromium 与系统依赖
+        run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 验收桌面、移动、离线与深链边界
+        run: corepack pnpm@10.28.0 --filter @agent-room/web test:browser
+      - name: 上传浏览器验收产物
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: task-19-browser-evidence
+          path: |
+            artifacts/browser/task-19/
+            artifacts/playwright/task-19-results/
+          if-no-files-found: warn
+          retention-days: 14
+
   supply-chain:
     name: 供应链与物料清单
     runs-on: ubuntu-latest
@@ -104,8 +132,16 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装 Node 依赖与 Chromium
+        run: |
+          corepack pnpm@10.28.0 install --frozen-lockfile
+          corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
       - name: 启动真实外部依赖
         shell: pwsh
         run: ./tools/dev-infra.ps1 up
@@ -124,6 +160,8 @@ jobs:
         run: ./tools/dev-infra.ps1 seed
       - name: 验证控制平面就绪状态与逐层断连映射
         run: python tools/control-plane.py test
+      - name: 验证 OIDC、Matrix SSO 与浏览器会话恢复
+        run: python tools/web.py
       - name: 停止外部依赖
         if: always()
         shell: pwsh
