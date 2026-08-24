@@ -15,12 +15,14 @@ use agent_room_application::{
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, ContentAccessMode, ContentAccessPolicy, ContentByteStream, ContentEventBinding,
-        ContentLifecycleTransition, ContentRepository, ContentScanFailureKind, ContentScanResult,
-        ContentScanner, ContentStorageKeyFactory, ContentStorageKeyGenerationResult,
-        ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint, MatrixRoomId,
-        ObjectStoreFailure, ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt,
-        OpenedContentObject, PortFuture, PrivateContentObjectStore, ReclaimableContentQuery,
+        Clock, ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
+        ContentAuthorizationRequest, ContentAuthorizationResult, ContentByteStream,
+        ContentEventBinding, ContentLifecycleTransition, ContentMembershipAuthorizer,
+        ContentRepository, ContentScanFailureKind, ContentScanResult, ContentScanner,
+        ContentStorageKeyFactory, ContentStorageKeyGenerationResult, ContentUploadClaim,
+        ContentUploadClaimOutcome, ContentUploadFingerprint, MatrixRoomId, ObjectStoreFailure,
+        ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
+        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery,
     },
 };
 use agent_room_domain::{
@@ -65,6 +67,26 @@ async fn 重复上传声明返回同一内容而冲突声明被拒绝() {
         BeginContentUploadFailure::Repository(error)
             if error.kind() == RepositoryErrorKind::Conflict
     ));
+}
+
+#[tokio::test]
+async fn 非房间成员在生成对象键和写入仓储前被拒绝() {
+    let repository = Arc::new(MemoryContentRepository::default());
+    let service = begin_service_with_authorizer(
+        Arc::clone(&repository),
+        Arc::new(FixedAuthorizer(ContentAuthorizationDecision::Denied)),
+    );
+
+    let failure = service
+        .begin(upload_request(
+            b"unauthorized",
+            ContentEncryptionMode::ClientE2ee,
+        ))
+        .await
+        .expect_err("非成员不能建立上传会话");
+
+    assert!(matches!(failure, BeginContentUploadFailure::Denied));
+    assert_eq!(repository.content_count(), 0);
 }
 
 #[tokio::test]
@@ -217,11 +239,22 @@ async fn 扫描拒绝会关闭访问并进入可回收孤儿态() {
 }
 
 fn begin_service(repository: Arc<MemoryContentRepository>) -> BeginContentUploadService {
+    begin_service_with_authorizer(
+        repository,
+        Arc::new(FixedAuthorizer(ContentAuthorizationDecision::Allowed)),
+    )
+}
+
+fn begin_service_with_authorizer(
+    repository: Arc<MemoryContentRepository>,
+    authorizer: Arc<dyn ContentMembershipAuthorizer>,
+) -> BeginContentUploadService {
     BeginContentUploadService::new(BeginContentUploadDependencies {
         clock: Arc::new(FixedClock),
         identifiers: Arc::new(RandomContentIdentifiers),
         storage_keys: Arc::new(TestStorageKeys),
         repository,
+        authorizer,
     })
 }
 
@@ -284,6 +317,17 @@ struct FixedClock;
 impl Clock for FixedClock {
     fn now(&self) -> UtcMillis {
         time(1_000)
+    }
+}
+
+struct FixedAuthorizer(ContentAuthorizationDecision);
+
+impl ContentMembershipAuthorizer for FixedAuthorizer {
+    fn authorize<'a>(
+        &'a self,
+        _request: &'a ContentAuthorizationRequest,
+    ) -> PortFuture<'a, ContentAuthorizationResult<ContentAuthorizationDecision>> {
+        Box::pin(async move { Ok(self.0) })
     }
 }
 

@@ -14,11 +14,13 @@ use sha2::{Digest, Sha256};
 use crate::{
     persistence::RepositoryError,
     ports::{
-        Clock, ContentAccessMode, ContentAccessPolicy, ContentByteStream,
-        ContentLifecycleTransition, ContentRepository, ContentScanFailure, ContentScanner,
-        ContentStorageKeyFactory, ContentStorageKeyGenerationFailure, ContentUploadClaim,
-        ContentUploadClaimOutcome, ContentUploadFingerprint, IdentifierFactory, MatrixRoomId,
-        ObjectStoreFailure, PrivateContentObjectStore,
+        Clock, ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
+        ContentAuthorizationFailure, ContentAuthorizationRequest, ContentByteStream,
+        ContentLifecycleTransition, ContentMembershipAuthorizer, ContentRepository,
+        ContentScanFailure, ContentScanner, ContentStorageKeyFactory,
+        ContentStorageKeyGenerationFailure, ContentUploadClaim, ContentUploadClaimOutcome,
+        ContentUploadFingerprint, IdentifierFactory, MatrixRoomId, ObjectStoreFailure,
+        PrivateContentObjectStore,
     },
 };
 
@@ -49,6 +51,8 @@ pub enum BeginContentUploadOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BeginContentUploadFailure {
+    Denied,
+    Authorization(ContentAuthorizationFailure),
     Domain(DomainError),
     StorageKey(ContentStorageKeyGenerationFailure),
     Repository(RepositoryError),
@@ -74,6 +78,7 @@ pub struct BeginContentUploadDependencies {
     pub identifiers: Arc<dyn ContentIdentifierFactory>,
     pub storage_keys: Arc<dyn ContentStorageKeyFactory>,
     pub repository: Arc<dyn ContentRepository>,
+    pub authorizer: Arc<dyn ContentMembershipAuthorizer>,
 }
 
 pub struct BeginContentUploadService {
@@ -81,6 +86,7 @@ pub struct BeginContentUploadService {
     identifiers: Arc<dyn ContentIdentifierFactory>,
     storage_keys: Arc<dyn ContentStorageKeyFactory>,
     repository: Arc<dyn ContentRepository>,
+    authorizer: Arc<dyn ContentMembershipAuthorizer>,
 }
 
 impl BeginContentUploadService {
@@ -90,6 +96,7 @@ impl BeginContentUploadService {
             identifiers: dependencies.identifiers,
             storage_keys: dependencies.storage_keys,
             repository: dependencies.repository,
+            authorizer: dependencies.authorizer,
         }
     }
 
@@ -102,6 +109,7 @@ impl BeginContentUploadService {
         &self,
         request: BeginContentUploadRequest,
     ) -> BeginContentUploadResult<BeginContentUploadOutcome> {
+        self.ensure_room_membership(&request).await?;
         let created_at = self.clock.now();
         let content_id = self.identifiers.content_id();
         let storage_key = self
@@ -160,6 +168,26 @@ impl BeginContentUploadService {
                 access_policy,
             },
         })
+    }
+
+    async fn ensure_room_membership(
+        &self,
+        request: &BeginContentUploadRequest,
+    ) -> BeginContentUploadResult<()> {
+        let decision = self
+            .authorizer
+            .authorize(&ContentAuthorizationRequest {
+                principal_id: request.owner_principal_id,
+                owner_principal_id: request.owner_principal_id,
+                matrix_room_id: request.matrix_room_id.clone(),
+                access_mode: ContentAccessMode::RoomMember,
+            })
+            .await
+            .map_err(BeginContentUploadFailure::Authorization)?;
+        match decision {
+            ContentAuthorizationDecision::Allowed => Ok(()),
+            ContentAuthorizationDecision::Denied => Err(BeginContentUploadFailure::Denied),
+        }
     }
 }
 
