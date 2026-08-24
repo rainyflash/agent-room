@@ -5,7 +5,9 @@ import { useAppServices } from '@/app/app-services';
 import { MessageRoomStore } from '@/features/messages/application/message-room-store';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
-import { MessageSignalDock } from '@/features/messages/ui/message-signal-dock';
+import { projectMessageSignals } from '@/features/signals/adapters/message-signal-projector';
+import type { SignalAction } from '@/features/signals/domain/signal';
+import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -24,8 +26,19 @@ export function MessageLayer({
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
+  const projectedSignals = useMemo(
+    () => projectMessageSignals(projectedMessages, 'room'),
+    [projectedMessages],
+  );
   const selectedMessage =
     projectedMessages.find((message) => message.messageId === selectedMessageId) ?? null;
+  const selectedSignalId = selectedMessageId === null ? null : `message:${selectedMessageId}`;
+
+  const handleSignalAction = (action: SignalAction): void => {
+    if (action.kind === 'open_message') {
+      onSelectedMessageChange(action.messageId);
+    }
+  };
 
   useEffect(() => {
     if (selectedMessageId !== null && state.kind === 'ready' && selectedMessage === null) {
@@ -37,11 +50,11 @@ export function MessageLayer({
     <>
       <div className="message-hub">
         {state.kind === 'loading' ? null : (
-          <MessageSignalDock
-            messages={projectedMessages}
+          <SignalDock
+            onAction={handleSignalAction}
             onRetry={store.retry}
-            onSelectMessage={onSelectedMessageChange}
-            selectedMessageId={selectedMessageId}
+            selectedSignalId={selectedSignalId}
+            signals={projectedSignals}
             state={state.kind === 'ready' ? 'ready' : 'failed'}
           />
         )}

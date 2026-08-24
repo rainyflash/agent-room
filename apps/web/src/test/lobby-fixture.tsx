@@ -1,4 +1,4 @@
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
@@ -15,16 +15,17 @@ import type {
 } from '@/features/lobby/domain/lobby';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
-import type { MessageGateway } from '@/features/messages/domain/message';
+import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
 import type {
   MessagePublicationRequest,
   MessagePublisher,
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
-import { err, ok } from '@/shared/result';
+import { ok } from '@/shared/result';
 
 const room = testRoom(200);
+let fixtureRoot: Root | null = null;
 const lobby: LobbyGateway = {
   read: () => ok(room),
   subscribe: () => noop,
@@ -32,19 +33,49 @@ const lobby: LobbyGateway = {
 const messages: MessageGateway = {
   read: () =>
     ok({
-      messages: [],
+      messages: testMessages(room.roomId),
       observedAtUnixMs: Date.now(),
       roomId: room.roomId,
     }),
   subscribe: () => noop,
 };
+const fixtureContent =
+  '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
+const contentReadCounts = { downloads: 0, tickets: 0 };
+Object.defineProperty(window, '__agentRoomFixtureContentReads', {
+  configurable: true,
+  get: () => ({ ...contentReadCounts }),
+});
 const content: ContentGateway = {
-  download: () => Promise.resolve(err({ code: 'content.download_rejected', retryable: false })),
-  issueReadTicket: () =>
-    Promise.resolve(err({ code: 'content.ticket_rejected', retryable: false })),
+  download: () => {
+    contentReadCounts.downloads += 1;
+    return Promise.resolve(
+      ok({
+        bytes: new TextEncoder().encode(fixtureContent),
+        contentDigest: `sha-256=:${'q'.repeat(43)}=:`,
+        contentLength: String(new TextEncoder().encode(fixtureContent).byteLength),
+        mediaType: 'text/markdown',
+      }),
+    );
+  },
+  issueReadTicket: () => {
+    contentReadCounts.tickets += 1;
+    return Promise.resolve(
+      ok({ expiresAtUnixMs: Date.now() + 60_000, ticket: 'fixture-read-ticket' }),
+    );
+  },
 };
 const contentVerifier: ContentVerifier = {
-  verify: () => Promise.resolve(err({ code: 'content.invalid_response', retryable: false })),
+  verify: (downloaded, expected) =>
+    Promise.resolve(
+      ok({
+        bytes: downloaded.bytes,
+        digestSha256: expected.digestSha256,
+        mediaType: expected.mediaType,
+        mode: 'text',
+        text: fixtureContent,
+      }),
+    ),
 };
 
 class FixtureMessagePublisher implements MessagePublisher {
@@ -126,7 +157,8 @@ async function bootstrapFixture(): Promise<void> {
   if (!(root instanceof HTMLElement)) {
     throw new Error('大厅测试根节点不存在。');
   }
-  createRoot(root).render(<LobbyFixture />);
+  fixtureRoot = createRoot(root);
+  fixtureRoot.render(<LobbyFixture />);
 }
 
 function testRoom(agentCount: number): LobbyRoom {
@@ -158,6 +190,65 @@ function testAgent(index: number): LobbyAgent {
   });
 }
 
+function testMessages(roomId: string): readonly RoomMessageSignal[] {
+  return Object.freeze([
+    testMessage(
+      roomId,
+      '01990d9e-8400-7000-8000-000000000011',
+      'Protocol review ready',
+      'Open only when you want to inspect the verified bytes.',
+      Date.now() - 20_000,
+      ['untrusted_instructions'],
+    ),
+    testMessage(
+      roomId,
+      '01990d9e-8400-7000-8000-000000000012',
+      'Build completed',
+      'The current workspace slice passed its local checks.',
+      Date.now() - 50_000,
+      [],
+    ),
+  ]);
+}
+
+function testMessage(
+  roomId: string,
+  messageId: string,
+  title: string,
+  summary: string,
+  serverTimestamp: number,
+  riskFlags: readonly string[],
+): RoomMessageSignal {
+  return Object.freeze({
+    actor: Object.freeze({
+      agentId: '01990d9e-8400-7000-8000-000000000001',
+      displayName: 'Build Agent',
+      instanceId: '01990d9e-8400-7000-8000-000000000002',
+      matrixUserId: '@build-agent:agent-room.test',
+      provenance: 'human_confirmed_agent',
+    }),
+    content: Object.freeze({
+      contentId: '01990d9e-8400-7000-8000-000000000016',
+      digestSha256: 'ab'.repeat(32),
+      mediaType: 'text/markdown',
+      sizeBytes: new TextEncoder().encode(fixtureContent).byteLength,
+    }),
+    edited: false,
+    lifecycle: 'active',
+    matrixEventId: `$fixture-${messageId}`,
+    messageId,
+    preview: Object.freeze({
+      contentType: 'text/markdown',
+      riskFlags: Object.freeze([...riskFlags]),
+      sensitivity: 'normal',
+      summary,
+      title,
+    }),
+    roomId,
+    serverTimestamp,
+  });
+}
+
 function statusAt(index: number): LobbyAgentStatus {
   const statuses: readonly LobbyAgentStatus[] = [
     'working',
@@ -173,6 +264,13 @@ function statusAt(index: number): LobbyAgentStatus {
 
 function noop(): void {
   return undefined;
+}
+
+if (import.meta.hot !== undefined) {
+  import.meta.hot.dispose(() => {
+    fixtureRoot?.unmount();
+    fixtureRoot = null;
+  });
 }
 
 void bootstrapFixture();

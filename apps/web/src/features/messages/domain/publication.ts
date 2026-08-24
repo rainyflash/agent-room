@@ -64,10 +64,7 @@ export type MessagePublicationFailure = {
   readonly retryable: boolean;
 };
 
-export type MessagePublicationResult = Result<
-  MessagePublicationOutcome,
-  MessagePublicationFailure
->;
+export type MessagePublicationResult = Result<MessagePublicationOutcome, MessagePublicationFailure>;
 
 export type MessagePublisher = {
   publish(
@@ -86,10 +83,7 @@ export type PublicationDraftIssue =
   | 'summary_invalid'
   | 'title_invalid';
 
-export type PublicationRequestIssue =
-  | PublicationDraftIssue
-  | 'room_invalid'
-  | 'submission_invalid';
+export type PublicationRequestIssue = PublicationDraftIssue | 'room_invalid' | 'submission_invalid';
 
 const MAX_BODY_BYTES = 25 * 1_024 * 1_024;
 const MAX_RISK_FLAGS = 16;
@@ -167,9 +161,5 @@ function validBoundedText(value: string, maximumCharacters: number): boolean {
     const code = character.codePointAt(0) ?? 0;
     containsControlCharacter ||= code <= 31 || code === 127;
   }
-  return (
-    value.length > 0 &&
-    characterCount <= maximumCharacters &&
-    !containsControlCharacter
-  );
+  return value.length > 0 && characterCount <= maximumCharacters && !containsControlCharacter;
 }

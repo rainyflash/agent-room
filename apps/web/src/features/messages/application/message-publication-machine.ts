@@ -47,9 +47,9 @@ type PublicationWorkerInput = {
 type PublicationWorkerCommand = { readonly type: 'STOP' };
 
 export function createMessagePublicationMachine(publisher: MessagePublisher) {
-  const resolveIdentity = fromPromise<
-    Result<MessagePublisherIdentity, MessagePublicationFailure>
-  >(async () => await publisher.resolveIdentity());
+  const resolveIdentity = fromPromise<Result<MessagePublisherIdentity, MessagePublicationFailure>>(
+    async () => await publisher.resolveIdentity(),
+  );
   const publishMessage = fromCallback<PublicationWorkerCommand, PublicationWorkerInput>(
     ({ input, sendBack }) => {
       let active = true;
@@ -152,9 +152,7 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
         outcome: null,
         progress: null,
         recovery: ({ event }) =>
-          event.type === 'PUBLICATION_RESOLVED' &&
-          !event.result.ok &&
-          event.result.error.retryable
+          event.type === 'PUBLICATION_RESOLVED' && !event.result.ok && event.result.error.retryable
             ? 'publish'
             : 'none',
       }),
@@ -200,8 +198,7 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
             },
             {
               actions: assign({
-                failure: ({ event }) =>
-                  event.output.ok ? unexpectedFailure : event.output.error,
+                failure: ({ event }) => (event.output.ok ? unexpectedFailure : event.output.error),
                 identity: null,
               }),
               target: 'identityUnavailable',
@@ -333,8 +330,7 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
             },
             {
               actions: assign({
-                failure: ({ event }) =>
-                  event.output.ok ? unexpectedFailure : event.output.error,
+                failure: ({ event }) => (event.output.ok ? unexpectedFailure : event.output.error),
                 progress: null,
                 recovery: ({ event }) =>
                   !event.output.ok && event.output.error.retryable ? 'reconcile' : 'none',

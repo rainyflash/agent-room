@@ -1251,9 +1251,14 @@
 }
 
 .message-dock__header {
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.9rem 1rem;
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.message-dock--expanded .message-dock__header {
   border-bottom: 1px solid var(--ar-paper-10);
 }
 
@@ -1281,16 +1286,143 @@
   letter-spacing: -0.015em;
 }
 
-.message-dock__count {
+.message-dock__headline {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.45rem;
+  overflow: hidden;
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ar-paper-72);
+  background: transparent;
+  font-size: 0.68rem;
+  text-align: left;
+}
+
+p.message-dock__headline {
+  margin: 0;
+  cursor: default;
+}
+
+.message-dock__headline:hover,
+.message-dock__headline:focus-visible {
+  color: var(--color-paper);
+  background: var(--ar-paper-10);
+}
+
+.message-dock__headline:focus-visible,
+.message-dock__header-actions button:focus-visible,
+.message-dock__toolbar button:focus-visible {
+  outline: 2px solid var(--color-network);
+  outline-offset: 2px;
+}
+
+.message-dock__headline > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--color-network);
+  stroke-width: 1.7;
+}
+
+.message-dock__headline > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-dock__headline--failed,
+.message-dock__headline--failed > svg {
+  color: var(--color-alert);
+}
+
+.message-dock__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.message-dock__header-actions > span,
+.message-dock__header-actions > button {
   display: grid;
-  min-width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   border: 1px solid var(--ar-paper-18);
-  border-radius: 999px;
+  border-radius: 9px;
   color: var(--ar-paper-72);
+  background: transparent;
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.62rem;
+}
+
+.message-dock__header-actions > button {
+  cursor: pointer;
+}
+
+.message-dock__header-actions > button:hover {
+  color: var(--color-paper);
+  background: var(--ar-paper-10);
+}
+
+.message-dock__header-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.message-dock__toolbar {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.45rem 0.7rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ar-paper-10);
+  scrollbar-width: none;
+}
+
+.message-dock__toolbar > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-right: 0.2rem;
+  color: var(--ar-paper-48);
+}
+
+.message-dock__toolbar button {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.55rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ar-paper-48);
+  background: transparent;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.message-dock__toolbar button:hover,
+.message-dock__toolbar button[aria-pressed='true'] {
+  border-color: var(--ar-paper-18);
+  color: var(--color-paper);
+  background: var(--ar-paper-10);
+}
+
+.message-dock__toolbar .message-dock__freeze {
+  margin-left: auto;
+  color: var(--color-network);
+}
+
+.message-dock__freeze svg {
+  width: 12px;
+  height: 12px;
 }
 
 .message-dock__list {
@@ -1355,6 +1487,12 @@
   letter-spacing: 0.04em;
 }
 
+.message-signal__author > svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
+}
+
 .message-signal__copy {
   display: grid;
   min-width: 0;
@@ -1414,42 +1552,26 @@
   color: var(--color-alert);
 }
 
-.message-dock__empty,
-.message-dock__boundary {
+.message-dock__empty {
   display: grid;
-  min-height: 108px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 76px;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0.75rem;
   padding: 1rem;
   color: var(--ar-paper-48);
 }
 
-.message-dock__empty {
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.message-dock__empty > svg,
-.message-dock__boundary > svg {
+.message-dock__empty > svg {
   width: 18px;
   height: 18px;
   stroke-width: 1.6;
 }
 
-.message-dock__empty p,
-.message-dock__boundary p {
+.message-dock__empty p {
   margin: 0;
   font-size: 0.7rem;
   line-height: 1.45;
-}
-
-.message-dock__boundary button {
-  cursor: pointer;
-  border: 0;
-  color: var(--color-network);
-  background: transparent;
-  font-family: var(--font-mono);
-  font-size: 0.64rem;
 }
 
 .content-inspector {

@@ -11,9 +11,7 @@ import {
 describe('消息发布意图', () => {
   it('按 Unicode 字符和 UTF-8 字节执行协议边界', () => {
     expect(validatePublicationDraft(draft({ title: '界'.repeat(120) }))).toEqual([]);
-    expect(validatePublicationDraft(draft({ title: '界'.repeat(121) }))).toContain(
-      'title_invalid',
-    );
+    expect(validatePublicationDraft(draft({ title: '界'.repeat(121) }))).toContain('title_invalid');
     expect(validatePublicationDraft(draft({ body: '' }))).toContain('body_empty');
   });
 
