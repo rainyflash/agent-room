@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, CircleDashed, LoaderCircle, WifiOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { classNames } from './class-names';
+import { classNames } from './class-names.js';
 
 export type StatusTone = 'active' | 'alert' | 'idle' | 'network' | 'offline';
 

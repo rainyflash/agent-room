@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-import { classNames } from './class-names';
+import { classNames } from './class-names.js';
 
 export type ButtonTone = 'alert' | 'ghost' | 'network' | 'primary' | 'quiet';
 export type ButtonSize = 'compact' | 'default' | 'large';
