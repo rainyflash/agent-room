@@ -4,6 +4,7 @@ pub mod agent_verification;
 pub mod authorization;
 pub mod handoffs;
 pub mod ipc;
+pub mod lobby_session;
 pub mod messages;
 pub mod ports;
 pub mod reconnect;
