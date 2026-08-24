@@ -1,20 +1,27 @@
 use std::sync::Arc;
 
 use agent_room_application::ports::{DeviceSignature, SecretValue};
+use agent_room_bridge_core::ipc::IpcInstallationId;
 use agent_room_bridge_core::ports::{
     BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
     BridgeCredentialState, DeviceCredentialVault, DeviceSigningIdentity,
     DeviceSigningIdentityStore, StoredBridgeDeviceCredentials,
 };
+use agent_room_bridge_ipc::IpcSharedSecret;
 use agent_room_domain::{devices::DevicePublicSigningKey, ids::DeviceId, time::UtcMillis};
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const DEVICE_SIGNING_SEED: &str = "device-signing-seed";
 const DEVICE_CREDENTIALS: &str = "device-session-v1";
+const IPC_INSTALLATION_ID: &str = "bridge-ipc-installation-id-v1";
+const IPC_SHARED_SECRET: &str = "bridge-ipc-shared-secret-v1";
+const MATRIX_STORE_PASSPHRASE: &str = "matrix-store-passphrase-v1";
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
+const RUNTIME_SECRET_BYTES: usize = 32;
 
 trait SecretStoreBackend: Send + Sync {
     fn read(&self, account: &str) -> BridgeCredentialResult<Option<String>>;
@@ -59,6 +66,89 @@ impl SecretStoreBackend for KeyringBackend {
             Err(_) => Err(unavailable()),
         }
     }
+}
+
+pub(crate) struct BridgeRuntimeSecrets {
+    installation_id: IpcInstallationId,
+    ipc_shared_secret: IpcSharedSecret,
+    _matrix_store_passphrase: SecretValue,
+}
+
+impl BridgeRuntimeSecrets {
+    pub(crate) const fn installation_id(&self) -> &IpcInstallationId {
+        &self.installation_id
+    }
+
+    pub(crate) const fn ipc_shared_secret(&self) -> &IpcSharedSecret {
+        &self.ipc_shared_secret
+    }
+}
+
+/// 负责 Bridge 运行时安装身份与持久存储口令的 OS 安全存储适配器。
+///
+/// 它只保存最小秘密，不保存 Matrix 会话正文、宿主路径或可导出的明文配置。
+pub(crate) struct OsBridgeRuntimeSecretVault {
+    backend: Arc<dyn SecretStoreBackend>,
+}
+
+impl OsBridgeRuntimeSecretVault {
+    pub(crate) fn system(service: impl Into<String>) -> Self {
+        Self {
+            backend: Arc::new(KeyringBackend::new(service)),
+        }
+    }
+
+    #[cfg(test)]
+    fn new(backend: Arc<dyn SecretStoreBackend>) -> Self {
+        Self { backend }
+    }
+
+    /// 读取稳定安装身份；首次启动时生成并回读所有运行时秘密。
+    ///
+    /// # Errors
+    ///
+    /// 系统熵、安全存储或持久值校验失败时返回明确凭据错误。
+    pub(crate) fn load_or_create(&self) -> BridgeCredentialResult<BridgeRuntimeSecrets> {
+        let installation_id =
+            self.load_or_create_value(IPC_INSTALLATION_ID, || Ok(Uuid::now_v7().to_string()))?;
+        let shared_secret = self.load_or_create_value(IPC_SHARED_SECRET, random_secret)?;
+        let matrix_store_passphrase =
+            self.load_or_create_value(MATRIX_STORE_PASSPHRASE, random_secret)?;
+
+        Ok(BridgeRuntimeSecrets {
+            installation_id: IpcInstallationId::new(installation_id).map_err(|_| corrupt())?,
+            ipc_shared_secret: IpcSharedSecret::new(decode_runtime_secret(&shared_secret)?),
+            _matrix_store_passphrase: SecretValue::new(matrix_store_passphrase)
+                .map_err(|_| corrupt())?,
+        })
+    }
+
+    fn load_or_create_value(
+        &self,
+        account: &str,
+        create: impl FnOnce() -> BridgeCredentialResult<String>,
+    ) -> BridgeCredentialResult<String> {
+        if let Some(value) = self.backend.read(account)? {
+            return Ok(value);
+        }
+
+        self.backend.write(account, &create()?)?;
+        self.backend.read(account)?.ok_or_else(unavailable)
+    }
+}
+
+fn random_secret() -> BridgeCredentialResult<String> {
+    let mut secret = [0_u8; RUNTIME_SECRET_BYTES];
+    getrandom::fill(&mut secret).map_err(|_| unavailable())?;
+    Ok(URL_SAFE_NO_PAD.encode(secret))
+}
+
+fn decode_runtime_secret(encoded: &str) -> BridgeCredentialResult<[u8; RUNTIME_SECRET_BYTES]> {
+    URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| corrupt())?
+        .try_into()
+        .map_err(|_| corrupt())
 }
 
 pub(crate) struct OsDeviceSigningIdentityStore {
@@ -243,8 +333,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DEVICE_CREDENTIALS, DEVICE_SIGNING_SEED, KeyringBackend, OsDeviceCredentialVault,
-        OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
+        DEVICE_CREDENTIALS, DEVICE_SIGNING_SEED, IPC_INSTALLATION_ID, IPC_SHARED_SECRET,
+        KeyringBackend, MATRIX_STORE_PASSPHRASE, OsBridgeRuntimeSecretVault,
+        OsDeviceCredentialVault, OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
     };
 
     #[derive(Default)]
@@ -297,6 +388,37 @@ mod tests {
                 .expect("存储锁未中毒")
                 .contains_key(DEVICE_SIGNING_SEED)
         );
+    }
+
+    #[test]
+    fn 运行时秘密首次生成后保持稳定且彼此隔离() {
+        let backend = Arc::new(内存安全存储::default());
+        let vault = OsBridgeRuntimeSecretVault::new(backend.clone());
+
+        let first = vault.load_or_create().expect("首次运行时秘密可生成");
+        let second = vault.load_or_create().expect("运行时秘密可恢复");
+
+        assert_eq!(first.installation_id(), second.installation_id());
+        let stored = backend.0.lock().expect("存储锁未中毒");
+        assert!(stored.contains_key(IPC_INSTALLATION_ID));
+        assert!(stored.contains_key(IPC_SHARED_SECRET));
+        assert!(stored.contains_key(MATRIX_STORE_PASSPHRASE));
+        assert_ne!(stored[IPC_SHARED_SECRET], stored[MATRIX_STORE_PASSPHRASE]);
+    }
+
+    #[test]
+    fn 畸形运行时秘密不会被静默替换() {
+        let backend = Arc::new(内存安全存储::default());
+        backend
+            .write(IPC_SHARED_SECRET, "不是合法密钥")
+            .expect("测试值可写入");
+        let vault = OsBridgeRuntimeSecretVault::new(backend);
+
+        let Err(failure) = vault.load_or_create() else {
+            panic!("畸形秘密必须阻止启动");
+        };
+
+        assert_eq!(failure.kind(), BridgeCredentialFailureKind::Corrupt);
     }
 
     #[test]

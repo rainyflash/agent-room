@@ -12,6 +12,8 @@ ignore = [
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
 allow = [
+  # interprocess 及其小型平台辅助依赖使用的 OSI 批准零条款 BSD 许可证。
+  "0BSD",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",

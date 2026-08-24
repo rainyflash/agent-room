@@ -37,6 +37,7 @@ ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
 futures-util = "0.3.32"
 getrandom = "0.3.4"
 hmac = "0.13.0"
+interprocess = { version = "2.4.3", features = ["tokio"] }
 jsonschema = { version = "0.50.1", default-features = false }
 keyring = "4.1.6"
 matrix-sdk = { version = "0.18.0", default-features = false }
@@ -62,6 +63,8 @@ tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 url = "2.5.7"
 uuid = { version = "1.25.0", features = ["serde", "v7"] }
+widestring = "1.2.1"
+win-security-identifier = "0.2.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

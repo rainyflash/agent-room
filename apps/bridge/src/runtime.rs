@@ -1,7 +1,10 @@
 use std::{
     fmt,
     io::{self, Write as _},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +22,7 @@ use agent_room_bridge_core::{
         BridgeSessionFailureKind, BridgeSessionPolicy, BridgeSessionService,
     },
 };
+use agent_room_bridge_ipc::IpcBridgeState;
 use agent_room_domain::{
     devices::DevicePlatform,
     time::{DurationMillis, UtcMillis},
@@ -26,15 +30,22 @@ use agent_room_domain::{
 use agent_room_identity_adapter::{
     DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, SecureSecretFactory,
 };
+use tokio::sync::watch;
 
 use crate::{
     config::BridgeConfig,
     control_plane::{ControlPlaneHttpConfig, ReqwestControlPlaneDeviceGateway},
+    ipc::{
+        BridgeIpcFailure, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
+        BridgeStatusSnapshot,
+    },
     runtime_files::{
         BridgeExclusiveLock, BridgeRuntimeFileFailure, BridgeRuntimeFileFailureKind,
         BridgeRuntimePaths,
     },
-    secure_storage::{OsDeviceCredentialVault, OsDeviceSigningIdentityStore},
+    secure_storage::{
+        OsBridgeRuntimeSecretVault, OsDeviceCredentialVault, OsDeviceSigningIdentityStore,
+    },
 };
 
 const SECURE_STORAGE_SERVICE: &str = "dev.agent-room.bridge";
@@ -48,6 +59,9 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         .map_err(BridgeRuntimeError::instance_lock)?;
     let _matrix_store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
         .map_err(BridgeRuntimeError::matrix_store_lock)?;
+    let runtime_secrets = OsBridgeRuntimeSecretVault::system(SECURE_STORAGE_SERVICE)
+        .load_or_create()
+        .map_err(BridgeRuntimeError::runtime_secrets)?;
     let control_plane = Arc::new(
         ReqwestControlPlaneDeviceGateway::new(&ControlPlaneHttpConfig {
             base_url: config.control_plane_url.clone(),
@@ -80,7 +94,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     );
 
     match session_service.active_session().await {
-        Ok(session) => announce_active_session(&session),
+        Ok(session) => announce_active_session(&session)?,
         Err(error) if error.kind() == BridgeSessionFailureKind::NotAuthorized => {
             let authorization_service =
                 BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
@@ -104,9 +118,100 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
                 )
                 .await
                 .map_err(BridgeRuntimeError::authorization)?;
-            announce_authorized_device(authorized)
+            announce_authorized_device(authorized)?;
         }
-        Err(error) => Err(BridgeRuntimeError::session(error)),
+        Err(error) => return Err(BridgeRuntimeError::session(error)),
+    }
+
+    let status = Arc::new(BridgeRuntimeStatus::new(SystemClock.now().value()));
+    let server = BridgeIpcServer::bind(
+        &paths,
+        runtime_secrets.installation_id().clone(),
+        runtime_secrets.ipc_shared_secret().clone(),
+        status.clone(),
+    )
+    .map_err(BridgeRuntimeError::ipc)?;
+    status.transition(IpcBridgeState::Ready);
+    run_until_shutdown(server, status).await
+}
+
+async fn run_until_shutdown(
+    server: BridgeIpcServer,
+    status: Arc<BridgeRuntimeStatus>,
+) -> Result<(), BridgeRuntimeError> {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let mut server_task = tokio::spawn(server.run(shutdown_receiver));
+
+    tokio::select! {
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|_| BridgeRuntimeError::shutdown_signal())?;
+            status.transition(IpcBridgeState::ShuttingDown);
+            shutdown_sender
+                .send(true)
+                .map_err(|_| BridgeRuntimeError::ipc_stopped_early())?;
+            server_task
+                .await
+                .map_err(|_| BridgeRuntimeError::ipc_task())?
+                .map_err(BridgeRuntimeError::ipc)
+        }
+        completed = &mut server_task => {
+            completed
+                .map_err(|_| BridgeRuntimeError::ipc_task())?
+                .map_err(BridgeRuntimeError::ipc)
+        }
+    }
+}
+
+struct BridgeRuntimeStatus {
+    state: AtomicU8,
+    started_at_unix_ms: i64,
+}
+
+impl BridgeRuntimeStatus {
+    const STARTING: u8 = 0;
+    const READY: u8 = 1;
+    const RECONNECTING: u8 = 2;
+    const OFFLINE: u8 = 3;
+    const SHUTTING_DOWN: u8 = 4;
+
+    const fn new(started_at_unix_ms: i64) -> Self {
+        Self {
+            state: AtomicU8::new(Self::STARTING),
+            started_at_unix_ms,
+        }
+    }
+
+    fn transition(&self, state: IpcBridgeState) {
+        self.state.store(Self::encode(state), Ordering::Release);
+    }
+
+    const fn encode(state: IpcBridgeState) -> u8 {
+        match state {
+            IpcBridgeState::Starting => Self::STARTING,
+            IpcBridgeState::Ready => Self::READY,
+            IpcBridgeState::Reconnecting => Self::RECONNECTING,
+            IpcBridgeState::Offline => Self::OFFLINE,
+            IpcBridgeState::ShuttingDown => Self::SHUTTING_DOWN,
+        }
+    }
+
+    const fn decode(state: u8) -> IpcBridgeState {
+        match state {
+            Self::STARTING => IpcBridgeState::Starting,
+            Self::READY => IpcBridgeState::Ready,
+            Self::RECONNECTING => IpcBridgeState::Reconnecting,
+            Self::SHUTTING_DOWN => IpcBridgeState::ShuttingDown,
+            _ => IpcBridgeState::Offline,
+        }
+    }
+}
+
+impl BridgeStatusReader for BridgeRuntimeStatus {
+    fn read_status(&self) -> BridgeStatusSnapshot {
+        BridgeStatusSnapshot {
+            state: Self::decode(self.state.load(Ordering::Acquire)),
+            started_at_unix_ms: self.started_at_unix_ms,
+        }
     }
 }
 
@@ -209,6 +314,55 @@ impl BridgeRuntimeError {
 
     fn terminal() -> Self {
         Self::new("bridge.terminal_unavailable", "无法写入当前终端")
+    }
+
+    fn shutdown_signal() -> Self {
+        Self::new("bridge.shutdown_signal_failed", "无法监听操作系统关闭信号")
+    }
+
+    fn ipc_stopped_early() -> Self {
+        Self::new("bridge.ipc_stopped_early", "本地 IPC 服务已提前停止")
+    }
+
+    fn ipc_task() -> Self {
+        Self::new("bridge.ipc_task_failed", "本地 IPC 服务任务异常终止")
+    }
+
+    fn runtime_secrets(failure: agent_room_bridge_core::ports::BridgeCredentialFailure) -> Self {
+        match failure.kind() {
+            agent_room_bridge_core::ports::BridgeCredentialFailureKind::Unavailable => Self::new(
+                "bridge.runtime_secrets_unavailable",
+                "Bridge 运行时秘密无法从操作系统安全存储读取",
+            ),
+            agent_room_bridge_core::ports::BridgeCredentialFailureKind::Corrupt => Self::new(
+                "bridge.runtime_secrets_corrupt",
+                "Bridge 运行时秘密已损坏，拒绝静默替换",
+            ),
+        }
+    }
+
+    fn ipc(failure: BridgeIpcFailure) -> Self {
+        let (code, message) = match failure.kind() {
+            BridgeIpcFailureKind::InvalidEndpoint => {
+                ("bridge.ipc_endpoint_invalid", "本地 IPC 端点名称无效")
+            }
+            BridgeIpcFailureKind::AccessControl => (
+                "bridge.ipc_access_control_failed",
+                "无法把本地 IPC 限制到当前登录会话",
+            ),
+            BridgeIpcFailureKind::Bind => ("bridge.ipc_bind_failed", "无法创建本地 IPC 监听器"),
+            BridgeIpcFailureKind::Accept => ("bridge.ipc_accept_failed", "本地 IPC 监听器失效"),
+            BridgeIpcFailureKind::Protocol
+            | BridgeIpcFailureKind::Handshake
+            | BridgeIpcFailureKind::Authentication
+            | BridgeIpcFailureKind::Timeout => ("bridge.ipc_session_failed", "本地 IPC 会话失败"),
+            BridgeIpcFailureKind::Entropy => (
+                "bridge.ipc_entropy_unavailable",
+                "操作系统随机数生成器不可用",
+            ),
+            BridgeIpcFailureKind::Internal => ("bridge.ipc_internal", "本地 IPC 服务发生内部错误"),
+        };
+        Self::new(code, message)
     }
 
     fn runtime_files(failure: BridgeRuntimeFileFailure) -> Self {

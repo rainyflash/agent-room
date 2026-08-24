@@ -1,5 +1,6 @@
 mod config;
 mod control_plane;
+mod ipc;
 mod runtime;
 mod runtime_files;
 mod secure_storage;

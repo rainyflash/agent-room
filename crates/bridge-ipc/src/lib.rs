@@ -8,6 +8,6 @@ pub use authentication::{
 };
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use wire::{
-    IpcCaller, IpcErrorCategory, IpcFrame, IpcMethod, IpcScopeName, IpcVersion,
-    client_offer_from_frame, server_agreement_frame,
+    IpcBridgeState, IpcCaller, IpcErrorCategory, IpcFrame, IpcMethod, IpcResponse, IpcScopeName,
+    IpcVersion, client_offer_from_frame, server_agreement_frame,
 };
