@@ -93,7 +93,7 @@ impl PostgresRepositories {
         }
         .await;
 
-        finish_transaction(transaction, result, operation).await
+        crate::transaction::finish(transaction, result, operation).await
     }
 
     async fn complete_agent_creation(
@@ -154,7 +154,7 @@ impl PostgresRepositories {
         }
         .await;
 
-        finish_transaction(transaction, result, operation).await
+        crate::transaction::finish(transaction, result, operation).await
     }
 }
 
@@ -235,29 +235,6 @@ fn ensure_registration_event_contract(
             "agent_creation.complete.event_contract",
             RepositoryErrorKind::Constraint,
         ))
-    }
-}
-
-async fn finish_transaction<T>(
-    transaction: Transaction<'_, Postgres>,
-    result: RepositoryResult<T>,
-    operation: &'static str,
-) -> RepositoryResult<T> {
-    match result {
-        Ok(value) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|error| map_sqlx_error(operation, &error))?;
-            Ok(value)
-        }
-        Err(error) => {
-            transaction
-                .rollback()
-                .await
-                .map_err(|rollback| map_sqlx_error(operation, &rollback))?;
-            Err(error)
-        }
     }
 }
 

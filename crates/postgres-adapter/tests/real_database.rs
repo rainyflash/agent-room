@@ -3,12 +3,13 @@ use std::{borrow::Cow, env};
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentRegistration,
-        AgentRepository, OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
+        AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentMembershipChange,
+        AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
+        OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
     },
 };
 use agent_room_domain::{
-    agents::{Agent, AgentVisibility},
+    agents::{Agent, AgentRole, AgentVisibility},
     identity::Principal,
     ids::{AgentCreationRequestId, AgentId, OutboxEventId, PrincipalId},
     time::UtcMillis,
@@ -266,6 +267,100 @@ async fn agent_创建请求幂等且篡改请求体会冲突() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_成员变更只允许_owner_且不能移除最后一个_owner() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let operator_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let viewer_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let second_owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    for (id, name) in [
+        (owner_id, "Owner"),
+        (operator_id, "Operator"),
+        (viewer_id, "Viewer"),
+        (second_owner_id, "Second Owner"),
+    ] {
+        PrincipalRepository::create(&repositories, &principal_registration(id, name))
+            .await
+            .expect("成员主体创建应成功");
+    }
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    AgentRepository::create(
+        &repositories,
+        &agent_registration(agent_id, owner_id, "membership-agent"),
+    )
+    .await
+    .expect("Agent 创建应成功");
+
+    let grant_operator =
+        membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
+    AgentMembershipTransaction::apply_change(
+        &repositories,
+        &grant_operator,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect("Owner 应能授予 Operator");
+    let grant_viewer = membership_change(agent_id, owner_id, viewer_id, Some(AgentRole::Viewer));
+    AgentMembershipTransaction::apply_change(
+        &repositories,
+        &grant_viewer,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect("Owner 应能授予 Viewer");
+
+    let unauthorized =
+        membership_change(agent_id, viewer_id, second_owner_id, Some(AgentRole::Owner));
+    let error = AgentMembershipTransaction::apply_change(
+        &repositories,
+        &unauthorized,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect_err("Viewer 不得转移 Agent 所有权");
+    assert_eq!(error.kind(), RepositoryErrorKind::Forbidden);
+
+    let remove_first_owner = membership_change(agent_id, owner_id, owner_id, None);
+    let error = AgentMembershipTransaction::apply_change(
+        &repositories,
+        &remove_first_owner,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect_err("不得移除最后一个 Owner");
+    assert_eq!(error.kind(), RepositoryErrorKind::Constraint);
+
+    let grant_second_owner =
+        membership_change(agent_id, owner_id, second_owner_id, Some(AgentRole::Owner));
+    AgentMembershipTransaction::apply_change(
+        &repositories,
+        &grant_second_owner,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect("可先增加第二位 Owner");
+    AgentMembershipTransaction::apply_change(
+        &repositories,
+        &remove_first_owner,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect("存在第二位 Owner 后可撤销第一位");
+
+    let memberships = AgentMembershipRepository::find_memberships(&repositories, agent_id)
+        .await
+        .expect("成员读取应成功")
+        .expect("Agent 应存在");
+    assert_eq!(memberships.role_of(owner_id), None);
+    assert_eq!(memberships.role_of(operator_id), Some(AgentRole::Operator));
+    assert_eq!(memberships.role_of(second_owner_id), Some(AgentRole::Owner));
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 事务失败会回滚且外键拒绝孤儿记录() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -401,6 +496,33 @@ fn agent_registration(agent_id: AgentId, owner_id: PrincipalId, slug: &str) -> A
         visibility: AgentVisibility::Private,
         registered_at: test_time(),
     }
+}
+
+fn membership_change(
+    agent_id: AgentId,
+    actor_id: PrincipalId,
+    principal_id: PrincipalId,
+    role: Option<AgentRole>,
+) -> AgentMembershipChange {
+    AgentMembershipChange {
+        agent_id,
+        actor_id,
+        principal_id,
+        role,
+        changed_at: test_time(),
+    }
+}
+
+fn membership_event(agent_id: AgentId) -> OutboxMessage {
+    OutboxMessage::new(
+        OutboxEventId::from_uuid(Uuid::now_v7()),
+        "agent".to_owned(),
+        agent_id.as_uuid(),
+        "agent.membership.changed.v1".to_owned(),
+        serde_json::Map::new(),
+        test_time(),
+    )
+    .expect("成员事件有效")
 }
 
 fn test_time() -> UtcMillis {

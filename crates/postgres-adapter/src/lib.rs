@@ -1,4 +1,5 @@
 mod agent_creation;
+mod agent_memberships;
 mod agents;
 mod authentication;
 mod devices;
@@ -7,6 +8,7 @@ mod migrations;
 mod outbox;
 mod principals;
 mod projections;
+mod transaction;
 
 use sqlx::PgPool;
 
