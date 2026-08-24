@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   inspectPublicationRisks,
   type MessagePublicationDraft,
+  type MessagePublicationRequest,
   validatePublicationDraft,
+  validatePublicationRequest,
 } from './publication';
 
 describe('消息发布意图', () => {
@@ -28,6 +30,19 @@ describe('消息发布意图', () => {
 
     expect(inspectPublicationRisks(body)).toEqual(['external_links', 'html_markup']);
     expect(body).toContain('<script>');
+  });
+
+  it('发布请求必须绑定合法房间和 UUIDv7 幂等标识', () => {
+    const valid: MessagePublicationRequest = {
+      ...draft(),
+      roomId: '!room:agent-room.test',
+      submissionId: '01990d9e-8400-7000-8000-000000000003',
+    };
+
+    expect(validatePublicationRequest(valid)).toEqual([]);
+    expect(
+      validatePublicationRequest({ ...valid, roomId: 'room', submissionId: crypto.randomUUID() }),
+    ).toEqual(['room_invalid', 'submission_invalid']);
   });
 });
 

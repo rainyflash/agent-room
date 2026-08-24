@@ -61,7 +61,7 @@ export type MessagePublicationFailureCode =
 export type MessagePublicationFailure = {
   readonly code: MessagePublicationFailureCode;
   readonly correlationId?: string;
-  readonly retry: 'never' | 'same_submission';
+  readonly retryable: boolean;
 };
 
 export type MessagePublicationResult = Result<
@@ -86,6 +86,11 @@ export type PublicationDraftIssue =
   | 'summary_invalid'
   | 'title_invalid';
 
+export type PublicationRequestIssue =
+  | PublicationDraftIssue
+  | 'room_invalid'
+  | 'submission_invalid';
+
 const MAX_BODY_BYTES = 25 * 1_024 * 1_024;
 const MAX_RISK_FLAGS = 16;
 const MAX_RISK_FLAG_LENGTH = 64;
@@ -95,6 +100,8 @@ const languagePattern = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u;
 const riskFlagPattern = /^[a-z][a-z0-9_]*$/u;
 const externalLinkPattern = /\b(?:https?:\/\/|www\.)\S+/iu;
 const htmlMarkupPattern = /<\/?[A-Za-z][^>]{0,256}>/u;
+const matrixRoomIdPattern = /^![^:]+:[^:]+$/u;
+const uuidV7Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export function validatePublicationDraft(
   draft: MessagePublicationDraft,
@@ -137,6 +144,19 @@ export function inspectPublicationRisks(body: string): readonly string[] {
     flags.add('html_markup');
   }
   return Object.freeze([...flags]);
+}
+
+export function validatePublicationRequest(
+  request: MessagePublicationRequest,
+): readonly PublicationRequestIssue[] {
+  const issues = new Set<PublicationRequestIssue>(validatePublicationDraft(request));
+  if (!matrixRoomIdPattern.test(request.roomId) || request.roomId.length > 255) {
+    issues.add('room_invalid');
+  }
+  if (!uuidV7Pattern.test(request.submissionId)) {
+    issues.add('submission_invalid');
+  }
+  return Object.freeze([...issues]);
 }
 
 function validBoundedText(value: string, maximumCharacters: number): boolean {
