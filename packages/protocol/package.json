@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/validator.js"
+    ".": "./dist/index.js"
   },
-  "types": "./dist/validator.d.ts",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
-    "test": "vitest run src/protocol.spec.ts",
+    "test": "vitest run src",
     "typecheck": "tsc --project ../../tsconfig.json --noEmit"
   }
 }
