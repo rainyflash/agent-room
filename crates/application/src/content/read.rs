@@ -163,6 +163,7 @@ impl IssueContentReadTicketService {
 
 pub struct OpenContentRequest {
     pub principal_id: PrincipalId,
+    pub content_id: ContentId,
     pub ticket: ContentReadTicket,
 }
 
@@ -249,6 +250,9 @@ impl OpenContentService {
             .verify(&request.ticket, request.principal_id, now)
             .await
             .map_err(OpenContentFailure::Ticket)?;
+        if claims.content_id != request.content_id {
+            return Err(OpenContentFailure::StaleTicket);
+        }
         let (content, policy) = load_content_and_policy(&*self.repository, claims.content_id)
             .await
             .map_err(map_open_load_failure)?;

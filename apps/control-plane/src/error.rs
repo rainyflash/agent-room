@@ -4,13 +4,23 @@ use agent_room_application::{
     agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
     agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
+    content::{
+        BeginContentUploadFailure, BindContentEventFailure, CompleteContentUploadFailure,
+        IssueContentReadTicketFailure, OpenContentFailure,
+    },
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
+    persistence::{RepositoryError, RepositoryErrorKind},
+    ports::{
+        ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
+        ContentTicketFailure, ContentTicketFailureKind, ObjectStoreFailureKind,
+    },
 };
+use agent_room_domain::content::ContentLifecycleState;
 use agent_room_protocol_conformance::generated::{ErrorCategory, ErrorEnvelope};
 use axum::{
     Json,
     extract::Extension,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 
@@ -52,6 +62,12 @@ impl ApiError {
             "请求无法通过安全校验。",
             correlation_id,
         )
+    }
+
+    fn retry_after_seconds(mut self, seconds: u64) -> Self {
+        self.envelope.retryable = true;
+        self.envelope.retry_after_seconds = Some(seconds);
+        self
     }
 
     pub(crate) fn authentication(
@@ -314,12 +330,331 @@ impl ApiError {
         );
         Self::new(status, code, category, message, correlation_id)
     }
+
+    pub(crate) fn begin_content_upload(
+        failure: BeginContentUploadFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match &failure {
+            BeginContentUploadFailure::Denied => authorization_denied("content.upload.denied"),
+            BeginContentUploadFailure::Authorization(error) => {
+                content_authorization_mapping(error, "content.upload")
+            }
+            BeginContentUploadFailure::Domain(_) => invalid_content("content.upload.invalid"),
+            BeginContentUploadFailure::StorageKey(_) => internal_content("content.upload.internal"),
+            BeginContentUploadFailure::Repository(error) => {
+                repository_mapping(error, "content.upload")
+            }
+        };
+        log_content_failure("begin_upload", &failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
+
+    pub(crate) fn complete_content_upload(
+        failure: CompleteContentUploadFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match &failure {
+            CompleteContentUploadFailure::NotFound => content_not_found(),
+            CompleteContentUploadFailure::Forbidden => {
+                authorization_denied("content.upload.forbidden")
+            }
+            CompleteContentUploadFailure::InvalidState(_) => {
+                content_conflict("content.upload.invalid_state")
+            }
+            CompleteContentUploadFailure::Repository { error, .. } => {
+                repository_mapping(error, "content.upload")
+            }
+            CompleteContentUploadFailure::ObjectStore { error, .. } => {
+                object_store_mapping(error.kind(), "content.upload")
+            }
+            CompleteContentUploadFailure::Scan(error) => match error.kind() {
+                ContentScanFailureKind::Unavailable | ContentScanFailureKind::InvalidResponse => {
+                    dependency_content("content.scan.unavailable")
+                }
+            },
+            CompleteContentUploadFailure::IntegrityMismatch { .. } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "content.upload.integrity_mismatch",
+                ErrorCategory::Validation,
+                "上传正文与声明的摘要或长度不一致。",
+            ),
+            CompleteContentUploadFailure::ScanRejected { .. } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "content.upload.rejected",
+                ErrorCategory::Validation,
+                "上传内容未通过安全扫描。",
+            ),
+        };
+        log_content_failure("complete_upload", &failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
+
+    pub(crate) fn bind_content_event(
+        failure: BindContentEventFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match &failure {
+            BindContentEventFailure::NotFound => content_not_found(),
+            BindContentEventFailure::Forbidden | BindContentEventFailure::Revoked => {
+                authorization_denied("content.binding.forbidden")
+            }
+            BindContentEventFailure::InvalidState(_)
+            | BindContentEventFailure::PolicyMismatch
+            | BindContentEventFailure::EventConflict => {
+                content_conflict("content.binding.conflict")
+            }
+            BindContentEventFailure::Repository(error) => {
+                repository_mapping(error, "content.binding")
+            }
+        };
+        log_content_failure("bind_event", &failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
+
+    pub(crate) fn issue_content_ticket(
+        failure: IssueContentReadTicketFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match &failure {
+            IssueContentReadTicketFailure::NotFound => content_not_found(),
+            IssueContentReadTicketFailure::NotReadable(_) => {
+                content_conflict("content.read.not_readable")
+            }
+            IssueContentReadTicketFailure::EventNotBound => {
+                content_conflict("content.read.event_not_bound")
+            }
+            IssueContentReadTicketFailure::Denied => authorization_denied("content.read.denied"),
+            IssueContentReadTicketFailure::Domain(_) => invalid_content("content.read.invalid"),
+            IssueContentReadTicketFailure::Repository(error) => {
+                repository_mapping(error, "content.read")
+            }
+            IssueContentReadTicketFailure::Authorization(error) => {
+                content_authorization_mapping(error, "content.read")
+            }
+            IssueContentReadTicketFailure::Ticket(error) => ticket_mapping(error, "content.read"),
+        };
+        log_content_failure("issue_read_ticket", &failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
+
+    pub(crate) fn open_content(failure: OpenContentFailure, correlation_id: CorrelationId) -> Self {
+        let mapping = match &failure {
+            OpenContentFailure::Ticket(error) => ticket_mapping(error, "content.open"),
+            OpenContentFailure::NotFound => content_not_found(),
+            OpenContentFailure::NotReadable(state) => unreadable_mapping(*state),
+            OpenContentFailure::StaleTicket => content_conflict("content.open.stale_ticket"),
+            OpenContentFailure::Denied => authorization_denied("content.open.denied"),
+            OpenContentFailure::Repository(error) => repository_mapping(error, "content.open"),
+            OpenContentFailure::Authorization(error) => {
+                content_authorization_mapping(error, "content.open")
+            }
+            OpenContentFailure::RateLimit(_) => {
+                dependency_content("content.rate_limit.unavailable")
+            }
+            OpenContentFailure::RateLimited { retry_at } => {
+                let error = Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "content.rate_limited",
+                    ErrorCategory::Transient,
+                    "内容读取过于频繁，请稍后重试。",
+                    correlation_id,
+                )
+                .retry_after_seconds(seconds_until(*retry_at));
+                log_content_failure("open", &failure, correlation_id);
+                return error;
+            }
+            OpenContentFailure::ObjectStore(error) => {
+                object_store_mapping(error.kind(), "content.open")
+            }
+            OpenContentFailure::ObjectMetadataMismatch => {
+                dependency_content("content.open.corrupt_metadata")
+            }
+        };
+        log_content_failure("open", &failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self.envelope)).into_response()
+        let retry_after_seconds = self.envelope.retry_after_seconds;
+        let mut response = (self.status, Json(self.envelope)).into_response();
+        if let Some(seconds) = retry_after_seconds
+            && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
     }
+}
+
+type ErrorMapping = (StatusCode, &'static str, ErrorCategory, &'static str);
+
+fn from_mapping(mapping: ErrorMapping, correlation_id: CorrelationId) -> ApiError {
+    ApiError::new(mapping.0, mapping.1, mapping.2, mapping.3, correlation_id)
+}
+
+fn invalid_content(code: &'static str) -> ErrorMapping {
+    (
+        StatusCode::BAD_REQUEST,
+        code,
+        ErrorCategory::Validation,
+        "内容请求无效。",
+    )
+}
+
+fn authorization_denied(code: &'static str) -> ErrorMapping {
+    (
+        StatusCode::FORBIDDEN,
+        code,
+        ErrorCategory::Authorization,
+        "当前主体无权执行该内容操作。",
+    )
+}
+
+fn content_not_found() -> ErrorMapping {
+    (
+        StatusCode::NOT_FOUND,
+        "content.not_found",
+        ErrorCategory::Validation,
+        "内容不存在。",
+    )
+}
+
+fn content_conflict(code: &'static str) -> ErrorMapping {
+    (
+        StatusCode::CONFLICT,
+        code,
+        ErrorCategory::Conflict,
+        "内容状态已经变化，请刷新后重试。",
+    )
+}
+
+fn dependency_content(code: &'static str) -> ErrorMapping {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        code,
+        ErrorCategory::DependencyUnavailable,
+        "内容依赖暂时不可用。",
+    )
+}
+
+fn internal_content(code: &'static str) -> ErrorMapping {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        code,
+        ErrorCategory::Transient,
+        "内容服务发生内部错误。",
+    )
+}
+
+fn repository_mapping(error: &RepositoryError, prefix: &'static str) -> ErrorMapping {
+    match error.kind() {
+        RepositoryErrorKind::Conflict => content_conflict(match prefix {
+            "content.upload" => "content.upload.idempotency_conflict",
+            "content.binding" => "content.binding.conflict",
+            _ => "content.repository.conflict",
+        }),
+        RepositoryErrorKind::Forbidden => authorization_denied("content.repository.forbidden"),
+        RepositoryErrorKind::NotFound => content_not_found(),
+        RepositoryErrorKind::Unavailable => dependency_content("content.repository.unavailable"),
+        RepositoryErrorKind::Constraint | RepositoryErrorKind::CorruptData => {
+            internal_content("content.repository.internal")
+        }
+    }
+}
+
+fn content_authorization_mapping(
+    error: &ContentAuthorizationFailure,
+    prefix: &'static str,
+) -> ErrorMapping {
+    match error.kind() {
+        ContentAuthorizationFailureKind::Denied => authorization_denied(match prefix {
+            "content.upload" => "content.upload.denied",
+            "content.open" => "content.open.denied",
+            _ => "content.read.denied",
+        }),
+        ContentAuthorizationFailureKind::StaleProjection
+        | ContentAuthorizationFailureKind::Unavailable => {
+            dependency_content("content.authorization.unavailable")
+        }
+    }
+}
+
+fn ticket_mapping(error: &ContentTicketFailure, prefix: &'static str) -> ErrorMapping {
+    match error.kind() {
+        ContentTicketFailureKind::Invalid | ContentTicketFailureKind::Expired => (
+            StatusCode::UNAUTHORIZED,
+            if prefix == "content.open" {
+                "content.open.invalid_ticket"
+            } else {
+                "content.read.ticket_failure"
+            },
+            ErrorCategory::Authentication,
+            "内容读取票据无效或已过期。",
+        ),
+        ContentTicketFailureKind::AudienceMismatch => {
+            authorization_denied("content.open.ticket_audience_mismatch")
+        }
+        ContentTicketFailureKind::Unavailable => dependency_content("content.ticket.unavailable"),
+    }
+}
+
+fn object_store_mapping(kind: ObjectStoreFailureKind, prefix: &'static str) -> ErrorMapping {
+    match kind {
+        ObjectStoreFailureKind::Rejected => invalid_content(match prefix {
+            "content.upload" => "content.upload.object_rejected",
+            _ => "content.open.object_rejected",
+        }),
+        ObjectStoreFailureKind::NotFound
+        | ObjectStoreFailureKind::CorruptMetadata
+        | ObjectStoreFailureKind::Unavailable => {
+            dependency_content("content.object_store.unavailable")
+        }
+    }
+}
+
+fn unreadable_mapping(state: ContentLifecycleState) -> ErrorMapping {
+    match state {
+        ContentLifecycleState::Uploading | ContentLifecycleState::Active => {
+            content_conflict("content.open.not_readable")
+        }
+        ContentLifecycleState::Orphaned
+        | ContentLifecycleState::Redacted
+        | ContentLifecycleState::Expired
+        | ContentLifecycleState::Deleted => (
+            StatusCode::GONE,
+            "content.open.gone",
+            ErrorCategory::Conflict,
+            "内容已不可读取。",
+        ),
+    }
+}
+
+fn seconds_until(retry_at: agent_room_domain::time::UtcMillis) -> u64 {
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0_i128, |duration| {
+            i128::try_from(duration.as_millis()).unwrap_or(i128::MAX)
+        });
+    let remaining = i128::from(retry_at.value())
+        .saturating_sub(now_millis)
+        .max(1);
+    u64::try_from((remaining.saturating_add(999)) / 1_000).unwrap_or(u64::MAX)
+}
+
+fn log_content_failure(
+    operation: &'static str,
+    failure: &impl std::fmt::Debug,
+    correlation_id: CorrelationId,
+) {
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        operation,
+        failure = ?failure,
+        "内容请求失败"
+    );
 }
 
 pub(crate) async fn not_found(Extension(correlation_id): Extension<CorrelationId>) -> ApiError {

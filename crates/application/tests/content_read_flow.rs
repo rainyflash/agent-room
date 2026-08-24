@@ -65,6 +65,7 @@ async fn 票据签发后权限变化会在真正读取前重新拒绝() {
         .open_service()
         .open(OpenContentRequest {
             principal_id: fixture.principal_id,
+            content_id: fixture.content.id(),
             ticket,
         })
         .await
@@ -83,6 +84,7 @@ async fn 对象正文被篡改时流末尾明确报告摘要不一致() {
         .open_service()
         .open(OpenContentRequest {
             principal_id: fixture.principal_id,
+            content_id: fixture.content.id(),
             ticket,
         })
         .await
@@ -108,6 +110,7 @@ async fn 对象元数据不一致时不会向调用方暴露任何正文() {
         .open_service()
         .open(OpenContentRequest {
             principal_id: fixture.principal_id,
+            content_id: fixture.content.id(),
             ticket,
         })
         .await
@@ -127,6 +130,7 @@ async fn 过期票据在查询内容和对象存储之前被拒绝() {
         .open_service()
         .open(OpenContentRequest {
             principal_id: fixture.principal_id,
+            content_id: fixture.content.id(),
             ticket: ContentReadTicket::new("expired-ticket").expect("票据格式有效"),
         })
         .await
@@ -136,6 +140,30 @@ async fn 过期票据在查询内容和对象存储之前被拒绝() {
         OpenContentFailure::Ticket(error) if error.kind() == ContentTicketFailureKind::Expired
     ));
     assert_eq!(fixture.repository.find_calls(), 0);
+    assert_eq!(fixture.object_store.open_calls(), 0);
+}
+
+#[tokio::test]
+async fn 路径内容与票据内容不一致时不会查询仓储() {
+    let fixture = ReadFixture::new(b"original");
+    let ticket = fixture.issue_ticket().await;
+    let repository_calls_before_open = fixture.repository.find_calls();
+
+    let failure = fixture
+        .open_service()
+        .open(OpenContentRequest {
+            principal_id: fixture.principal_id,
+            content_id: ContentId::from_uuid(Uuid::now_v7()),
+            ticket,
+        })
+        .await
+        .expect_err("路径内容必须与票据声明一致");
+
+    assert_eq!(failure, OpenContentFailure::StaleTicket);
+    assert_eq!(
+        fixture.repository.find_calls(),
+        repository_calls_before_open
+    );
     assert_eq!(fixture.object_store.open_calls(), 0);
 }
 
