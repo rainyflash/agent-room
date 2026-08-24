@@ -81,6 +81,7 @@ pub use projections::{
     ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
 };
 pub use rooms::{
+    AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory,
     PublicLobbyDirectoryEntry, RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore,
     RoomDirectory, RoomDirectoryQuery, RoomMembershipGateway, RoomProvisioningClaim,
     RoomProvisioningClaimOutcome, RoomProvisioningFailureCode, RoomProvisioningGateway,

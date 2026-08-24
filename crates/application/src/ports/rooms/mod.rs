@@ -15,11 +15,42 @@ use super::{MatrixResult, PortFuture};
 
 mod provisioning;
 
+use std::sync::Arc;
+
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
     RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
     RoomProvisioningTarget,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentLobbyAccessRecord {
+    pub agent_id: AgentId,
+    pub agent_instance_id: AgentInstanceId,
+    pub device_id: agent_room_domain::ids::DeviceId,
+    pub matrix_user_id: super::MatrixUserId,
+    pub active: bool,
+}
+
+pub trait AgentLobbyAccessRepository: Send + Sync {
+    fn find_lobby_access(
+        &self,
+        agent_instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>>;
+}
+
+/// 把受控 Matrix 用户绑定为最小房间成员能力，调用方不能选择任意认证方式。
+pub trait AgentRoomMembershipFactory: Send + Sync {
+    /// 绑定一个已由上层授权的 Matrix Agent 用户。
+    ///
+    /// # Errors
+    ///
+    /// 用户不属于受管命名空间或成员适配器配置无效时返回 Matrix 失败。
+    fn bind(
+        &self,
+        matrix_user_id: &super::MatrixUserId,
+    ) -> MatrixResult<Arc<dyn RoomMembershipGateway>>;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RoomDirectoryQuery {

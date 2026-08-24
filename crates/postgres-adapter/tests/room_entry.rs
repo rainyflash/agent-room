@@ -8,9 +8,10 @@ use std::{
 
 use agent_room_application::{
     ports::{
-        Clock, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, PortFuture,
-        RoomAllocationEvidence, RoomAllocationMode, RoomMembershipGateway, RoomProvisioningGateway,
+        AgentLobbyAccessRepository, Clock, MatrixCreateRoom, MatrixEventId, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
+        MatrixRoomKind, PortFuture, RoomAllocationEvidence, RoomAllocationMode,
+        RoomMembershipGateway, RoomProvisioningGateway,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyOutcome, EnterLobbyService, JoinLobbyDependencies,
@@ -21,7 +22,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
+        AgentId, AgentInstanceId, DeviceId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
         RoomProvisioningLeaseId, RoomReservationId,
     },
     rooms::MatrixRoomReference,
@@ -262,6 +263,38 @@ async fn matrix_加入失败会释放新房槽位且绝不留下已加入预约(
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 大厅访问记录绑定实例设备和权威_matrix_身份并反映撤销() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+
+    let active = repositories
+        .find_lobby_access(fixture.instance)
+        .await
+        .expect("访问记录应可查询")
+        .expect("实例应存在");
+    assert_eq!(active.agent_id, fixture.agent);
+    assert_eq!(active.agent_instance_id, fixture.instance);
+    assert_eq!(active.device_id, fixture.device);
+    assert!(active.active);
+
+    sqlx::query("UPDATE agent_room.agent_instance SET revoked_at = now() WHERE id = $1")
+        .bind(fixture.instance.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("实例应可撤销");
+    let revoked = repositories
+        .find_lobby_access(fixture.instance)
+        .await
+        .expect("撤销后仍应可查询")
+        .expect("撤销不会删除实例");
+    assert!(!revoked.active);
+
+    database.close().await;
+}
+
 fn service(pool: PgPool, matrix: Arc<测试Matrix>) -> EnterLobbyService {
     let repositories = Arc::new(PostgresRepositories::new(pool));
     let runtime = Arc::new(测试运行时);
@@ -294,6 +327,7 @@ fn service(pool: PgPool, matrix: Arc<测试Matrix>) -> EnterLobbyService {
 struct Fixture {
     agent: AgentId,
     instance: AgentInstanceId,
+    device: DeviceId,
     catalog: RoomCatalogId,
 }
 
@@ -304,7 +338,7 @@ async fn seed_fixture(pool: &PgPool) -> Fixture {
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
     let suffix = agent_id.as_uuid().simple().to_string();
     let mut transaction = pool.begin().await.expect("测试事务应启动");
-    insert_identity(
+    let device = insert_identity(
         &mut transaction,
         principal_id,
         agent_id,
@@ -330,6 +364,7 @@ async fn seed_fixture(pool: &PgPool) -> Fixture {
     Fixture {
         agent: agent_id,
         instance: agent_instance_id,
+        device,
         catalog: catalog_id,
     }
 }
@@ -340,7 +375,7 @@ async fn insert_identity(
     agent_id: AgentId,
     agent_instance_id: AgentInstanceId,
     suffix: &str,
-) {
+) -> DeviceId {
     sqlx::query(
         r"INSERT INTO agent_room.principal (
               id, oidc_issuer, oidc_subject, matrix_user_id, display_name,
@@ -430,6 +465,7 @@ async fn insert_identity(
     .execute(&mut **transaction)
     .await
     .expect("Agent 实例应创建");
+    DeviceId::from_uuid(device_id)
 }
 
 fn request(fixture: &Fixture) -> JoinLobbyRequest {

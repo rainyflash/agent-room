@@ -121,12 +121,12 @@ impl MatrixApplicationServiceProvisioner {
     ///
     /// 用户不属于受控 Agent 命名空间时拒绝创建，避免 AS token 被滥用于冒充普通用户。
     pub fn room_membership(
-        self: &std::sync::Arc<Self>,
+        &self,
         user_id: MatrixUserId,
     ) -> MatrixResult<MatrixApplicationServiceRoomMembership> {
         self.ensure_managed_user(&user_id, MatrixOperation::Join)?;
         Ok(MatrixApplicationServiceRoomMembership::new(
-            self.clone(),
+            std::sync::Arc::new(self.clone()),
             user_id,
         ))
     }

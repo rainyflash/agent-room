@@ -1,9 +1,10 @@
 use std::{fmt, sync::Arc};
 
 use agent_room_application::ports::{
-    MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-    MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset,
-    MatrixRoomVisibility, MatrixUserId, PortFuture, RoomMembershipGateway, RoomProvisioningGateway,
+    AgentRoomMembershipFactory, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind,
+    MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+    MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture, RoomMembershipGateway,
+    RoomProvisioningGateway,
 };
 use agent_room_domain::rooms::MatrixRoomReference;
 use reqwest::Url;
@@ -76,6 +77,13 @@ impl RoomMembershipGateway for MatrixApplicationServiceRoomMembership {
 
     fn leave<'a>(&'a self, room_id: &'a MatrixRoomReference) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(self.change_membership(room_id, "leave", MatrixOperation::Leave))
+    }
+}
+
+impl AgentRoomMembershipFactory for MatrixApplicationServiceProvisioner {
+    fn bind(&self, matrix_user_id: &MatrixUserId) -> MatrixResult<Arc<dyn RoomMembershipGateway>> {
+        self.room_membership(matrix_user_id.clone())
+            .map(|membership| Arc::new(membership) as Arc<dyn RoomMembershipGateway>)
     }
 }
 
