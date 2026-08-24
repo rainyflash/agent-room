@@ -142,12 +142,16 @@ dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
  "agent-room-domain",
+ "chacha20poly1305",
+ "getrandom 0.3.4",
  "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

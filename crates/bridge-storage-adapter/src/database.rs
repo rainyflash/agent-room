@@ -21,6 +21,26 @@ pub enum SqliteBridgeStorageOpenFailure {
 }
 
 pub(crate) async fn open_pool(path: &Path) -> Result<SqlitePool, SqliteBridgeStorageOpenFailure> {
+    let pool = connect_pool(path).await?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(SqliteBridgeStorageOpenFailure::Migrate)?;
+    Ok(pool)
+}
+
+pub(crate) async fn open_handoff_pool(
+    path: &Path,
+) -> Result<SqlitePool, SqliteBridgeStorageOpenFailure> {
+    let pool = connect_pool(path).await?;
+    sqlx::migrate!("./handoff-migrations")
+        .run(&pool)
+        .await
+        .map_err(SqliteBridgeStorageOpenFailure::Migrate)?;
+    Ok(pool)
+}
+
+async fn connect_pool(path: &Path) -> Result<SqlitePool, SqliteBridgeStorageOpenFailure> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -36,14 +56,9 @@ pub(crate) async fn open_pool(path: &Path) -> Result<SqlitePool, SqliteBridgeSto
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .busy_timeout(BUSY_TIMEOUT);
-    let pool = SqlitePoolOptions::new()
+    SqlitePoolOptions::new()
         .max_connections(MAX_CONNECTIONS)
         .connect_with(options)
         .await
-        .map_err(SqliteBridgeStorageOpenFailure::Connect)?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(SqliteBridgeStorageOpenFailure::Migrate)?;
-    Ok(pool)
+        .map_err(SqliteBridgeStorageOpenFailure::Connect)
 }
