@@ -49,8 +49,8 @@ pub use matrix::{
     MatrixLogin, MatrixOperation, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction,
     MatrixResult, MatrixRetryPolicy, MatrixRoomId, MatrixRoomPreset, MatrixRoomSync,
     MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
-    MatrixUserId, MatrixValueError,
+    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+    MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{

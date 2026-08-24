@@ -5,8 +5,8 @@ use agent_room_application::ports::{
     MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixReceipt,
     MatrixReceiptKind, MatrixResult, MatrixRoomId, MatrixRoomPreset, MatrixRoomVisibility,
-    MatrixSession, MatrixSessionMetadata, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId,
-    PortFuture, SecretValue,
+    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
+    MatrixUserId, PortFuture, SecretValue,
 };
 use matrix_sdk::{
     Client, SessionMeta, SessionTokens,
@@ -291,6 +291,30 @@ impl MatrixGateway for MatrixSdkGateway {
                 event.transaction_id().clone(),
                 event_id,
             ))
+        })
+    }
+
+    fn send_state_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
+        Box::pin(async move {
+            let room = self.room(room_id, MatrixOperation::SendStateEvent)?;
+            let response = room
+                .send_state_event_raw(
+                    event.event_type().as_str(),
+                    event.state_key().as_str(),
+                    event.content().clone(),
+                )
+                .await
+                .map_err(|error| map_sdk_error(MatrixOperation::SendStateEvent, &error))?;
+            MatrixEventId::new(response.event_id.to_string()).map_err(|_| {
+                MatrixFailure::new(
+                    MatrixOperation::SendStateEvent,
+                    MatrixFailureKind::InvalidResponse,
+                )
+            })
         })
     }
 

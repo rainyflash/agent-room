@@ -1,11 +1,12 @@
 use std::fmt;
 
-use agent_room_domain::ids::AgentId;
+use agent_room_domain::ids::{AgentId, AgentInstanceId};
 
 const MAX_MATRIX_ID_LENGTH: usize = 512;
 const MAX_DEVICE_ID_LENGTH: usize = 255;
 const MAX_EVENT_TYPE_LENGTH: usize = 255;
 const MAX_TRANSACTION_ID_LENGTH: usize = 255;
+const MAX_STATE_KEY_LENGTH: usize = 512;
 const MAX_SYNC_TOKEN_LENGTH: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub enum MatrixValueError {
     InvalidDeviceId,
     InvalidEventType,
     InvalidTransactionId,
+    InvalidStateKey,
     InvalidSyncToken,
     InvalidBackfillToken,
 }
@@ -101,6 +103,41 @@ matrix_string_value!(
     InvalidTransactionId,
     valid_transaction_id
 );
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MatrixStateKey(String);
+
+impl MatrixStateKey {
+    pub fn from_agent_instance_id(agent_instance_id: AgentInstanceId) -> Self {
+        Self(agent_instance_id.to_string())
+    }
+
+    /// 从不可信协议输入创建 Matrix 状态键。
+    ///
+    /// # Errors
+    ///
+    /// 状态键过长或包含控制字符时返回错误；空键符合 Matrix 规范。
+    pub fn new(value: impl Into<String>) -> Result<Self, MatrixValueError> {
+        let value = value.into();
+        if !valid_state_key(&value) {
+            return Err(MatrixValueError::InvalidStateKey);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for MatrixStateKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("MatrixStateKey")
+            .field(&self.0)
+            .finish()
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct MatrixSyncToken(String);
@@ -208,6 +245,10 @@ fn valid_transaction_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'~'))
 }
 
+fn valid_state_key(value: &str) -> bool {
+    value.len() <= MAX_STATE_KEY_LENGTH && valid_protocol_text(value)
+}
+
 fn valid_opaque_token(value: &str) -> bool {
     (1..=MAX_SYNC_TOKEN_LENGTH).contains(&value.len()) && valid_protocol_text(value)
 }
@@ -219,10 +260,10 @@ fn valid_protocol_text(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MatrixAgentLocalpart, MatrixEventType, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
-        MatrixUserId,
+        MatrixAgentLocalpart, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
+        MatrixTransactionId, MatrixUserId,
     };
-    use agent_room_domain::ids::AgentId;
+    use agent_room_domain::ids::{AgentId, AgentInstanceId};
     use uuid::Uuid;
 
     #[test]
@@ -240,6 +281,19 @@ mod tests {
         assert!(MatrixTransactionId::new("message_0198.test-1~retry").is_ok());
         assert!(MatrixTransactionId::new("message/escape").is_err());
         assert!(MatrixTransactionId::new("message\r\nheader").is_err());
+    }
+
+    #[test]
+    fn 状态键允许空值并可由实例标识稳定派生() {
+        assert!(MatrixStateKey::new("").is_ok());
+        assert!(MatrixStateKey::new("状态\n键").is_err());
+        assert!(MatrixStateKey::new("x".repeat(513)).is_err());
+
+        let instance_id = AgentInstanceId::from_uuid(Uuid::from_u128(7));
+        assert_eq!(
+            MatrixStateKey::from_agent_instance_id(instance_id).as_str(),
+            instance_id.to_string()
+        );
     }
 
     #[test]

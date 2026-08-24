@@ -7,7 +7,7 @@ use crate::ports::SecretValue;
 
 use super::{
     MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType, MatrixGateway,
-    MatrixRoomId, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
+    MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
 };
 
 const MAX_LOGIN_ID_LENGTH: usize = 512;
@@ -307,6 +307,45 @@ pub struct MatrixEvent {
     event_type: MatrixEventType,
     transaction_id: MatrixTransactionId,
     content: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixStateEvent {
+    event_type: MatrixEventType,
+    state_key: MatrixStateKey,
+    content: Value,
+}
+
+impl MatrixStateEvent {
+    /// 创建依赖状态键覆盖语义的 Matrix State Event。
+    ///
+    /// # Errors
+    ///
+    /// 内容不是对象或序列化后超过 64 KiB 时返回校验错误。
+    pub fn new(
+        event_type: MatrixEventType,
+        state_key: MatrixStateKey,
+        content: Value,
+    ) -> DomainResult<Self> {
+        validate_event_content(&content)?;
+        Ok(Self {
+            event_type,
+            state_key,
+            content,
+        })
+    }
+
+    pub const fn event_type(&self) -> &MatrixEventType {
+        &self.event_type
+    }
+
+    pub const fn state_key(&self) -> &MatrixStateKey {
+        &self.state_key
+    }
+
+    pub const fn content(&self) -> &Value {
+        &self.content
+    }
 }
 
 impl MatrixEvent {
@@ -727,11 +766,12 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MatrixEvent, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncRequest,
-        MatrixTimelineEvent,
+        MatrixEvent, MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch,
+        MatrixSyncRequest, MatrixTimelineEvent,
     };
     use crate::ports::{
-        MatrixEventId, MatrixEventType, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
+        MatrixEventId, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
+        MatrixTransactionId,
     };
 
     #[test]
@@ -744,6 +784,14 @@ mod tests {
                 event_type,
                 transaction_id,
                 json!({ "body": "x".repeat(65_536) }),
+            )
+            .is_err()
+        );
+        assert!(
+            MatrixStateEvent::new(
+                MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效"),
+                MatrixStateKey::new("instance-1").expect("状态键有效"),
+                json!([]),
             )
             .is_err()
         );

@@ -191,6 +191,10 @@ mod tests {
             map_sdk_error(MatrixOperation::Sync, &Error::Timeout).kind(),
             MatrixFailureKind::Timeout
         );
+        assert_eq!(
+            map_sdk_error(MatrixOperation::SendStateEvent, &Error::Timeout).kind(),
+            MatrixFailureKind::Timeout
+        );
     }
 
     fn api_error(status: StatusCode, kind: ErrorKind) -> ApiError {

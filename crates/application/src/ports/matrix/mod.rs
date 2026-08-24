@@ -12,11 +12,12 @@ pub use models::{
     MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
     MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomPreset, MatrixRoomSync,
     MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
+    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
-    MatrixRoomId, MatrixSyncToken, MatrixTransactionId, MatrixUserId, MatrixValueError,
+    MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
+    MatrixValueError,
 };
 
 pub type MatrixResult<T> = Result<T, MatrixFailure>;
@@ -80,6 +81,12 @@ pub trait MatrixGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         event: &'a MatrixEvent,
     ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>>;
+
+    fn send_state_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>>;
 
     fn send_receipt<'a>(
         &'a self,

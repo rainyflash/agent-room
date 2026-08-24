@@ -15,6 +15,7 @@ pub enum MatrixOperation {
     Join,
     Leave,
     SendEvent,
+    SendStateEvent,
     SendReceipt,
     Backfill,
 }
@@ -31,6 +32,7 @@ impl MatrixOperation {
                 | Self::Invite
                 | Self::Join
                 | Self::Leave
+                | Self::SendStateEvent
                 | Self::SendReceipt
                 | Self::Backfill
         )
