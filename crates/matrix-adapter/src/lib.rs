@@ -4,6 +4,7 @@ mod configuration;
 mod error;
 mod mapping;
 mod membership;
+mod provisioning;
 mod sdk;
 
 pub use configuration::{
@@ -11,4 +12,5 @@ pub use configuration::{
     MatrixSdkStoreConfigurationError,
 };
 pub use membership::MatrixRoomMembershipAdapter;
+pub use provisioning::MatrixRoomProvisioningAdapter;
 pub use sdk::MatrixSdkClientFactory;
