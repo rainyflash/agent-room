@@ -97,6 +97,7 @@ dependencies = [
  "agent-room-application",
  "agent-room-domain",
  "agent-room-identity-adapter",
+ "agent-room-protocol-conformance",
  "base64 0.22.1",
  "chrono",
  "jsonschema",

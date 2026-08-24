@@ -1,8 +1,15 @@
+mod incoming;
 mod model;
 mod outgoing;
 mod ports;
+mod projection;
 mod wire;
 
+pub use incoming::{
+    MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,
+    MessageEventAuthenticator, MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind,
+    MessageSyncOutcome, MessageSyncService,
+};
 pub use model::{
     EditMessageRequest, MessageBody, MessageRequestError, RedactMessageRequest, SendMessageRequest,
 };
@@ -17,4 +24,10 @@ pub use ports::{
     MessageStoreFailureKind, MessageSubmissionClaim, MessageSubmissionClaimOutcome,
     MessageSubmissionFingerprint, MessageSubmissionKind, MessageSubmissionRecord,
     MessageSubmissionRepository, MessageSubmissionState,
+};
+pub use projection::{
+    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
+    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
+    MessageTimelineGap, MessageTimelineProjectionStore, ProjectedMessageActor,
+    ProjectedMessagePreview, ProjectedMessageRevision,
 };

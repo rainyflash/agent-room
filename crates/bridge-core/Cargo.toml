@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 agent-room-application.workspace = true
 agent-room-domain.workspace = true
+agent-room-protocol-conformance.workspace = true
 base64.workspace = true
 chrono.workspace = true
 serde.workspace = true
