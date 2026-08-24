@@ -22,6 +22,11 @@ test('信号坞默认单行，正文必须经显式点击才读取并保持惰�
 
   const inspector = page.getByRole('complementary', { name: 'Protocol review ready' });
   await expect(inspector).toContainText('Only preview metadata is loaded');
+  await expect(inspector).toContainText('!builders:agent-room.test');
+  await expect(inspector).toContainText(
+    'Matrix sender matched · Agent instance signature not reverified in Web',
+  );
+  await expect(inspector).not.toContainText('Agent instance signature verified');
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
 
   await inspector.getByRole('button', { name: 'Open full content' }).click();

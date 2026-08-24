@@ -246,6 +246,7 @@ function testMessage(
     }),
     roomId,
     serverTimestamp,
+    signatureStatus: 'matrix_sender_matched',
   });
 }
 

@@ -1641,6 +1641,63 @@ p.message-dock__headline {
   font-size: 0.59rem;
 }
 
+.content-inspector__trust {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 0.8rem;
+  padding: 0.65rem 1.25rem;
+  margin: 0;
+  border-bottom: 1px solid var(--ar-ink-09);
+  background: var(--ar-ink-04);
+}
+
+.content-inspector__trust > div {
+  min-width: 0;
+}
+
+.content-inspector__trust dt {
+  color: var(--ar-ink-48);
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.content-inspector__trust dd {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0;
+  color: var(--ar-ink-72);
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.content-inspector__trust dd > svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.content-inspector__trust dd[data-signature-status='instance_verified'] {
+  color: color-mix(in srgb, var(--color-signal) 58%, var(--color-ink));
+}
+
+.content-inspector__trust dd[data-signature-status='matrix_sender_matched'],
+.content-inspector__trust dd[data-signature-status='revoked_after_event'] {
+  color: color-mix(in srgb, var(--color-alert) 72%, var(--color-ink));
+}
+
+.content-inspector__trust code {
+  display: block;
+  overflow: hidden;
+  font-size: 0.59rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .content-inspector__preview {
   padding: 1.05rem 1.25rem;
   border-bottom: 1px solid var(--ar-ink-09);
@@ -2654,6 +2711,11 @@ p.message-dock__headline {
 
   .content-inspector__preview dl {
     grid-template-columns: 1fr;
+  }
+
+  .content-inspector__trust {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
   }
 
   .content-inspector__consent {

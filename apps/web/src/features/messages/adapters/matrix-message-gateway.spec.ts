@@ -66,8 +66,23 @@ describe('MatrixMessageGateway', () => {
       mediaType: 'text/markdown',
       sizeBytes: 1_024,
     });
+    expect(result.value.messages[0]?.signatureStatus).toBe('matrix_sender_matched');
     expect(Object.isFrozen(result.value)).toBe(true);
     expect(Object.isFrozen(result.value.messages)).toBe(true);
+  });
+
+  it('拒绝让未受信载荷自行宣称实例签名已经验证', () => {
+    const event = previewEvent({ eventId: '$self-asserted' });
+    event.content = { ...messageContent(), signatureStatus: 'instance_verified' };
+    const gateway = new MatrixMessageGateway(source({ kind: 'ready', room: snapshot([event]) }));
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.messages[0]?.signatureStatus).toBe('matrix_sender_matched');
   });
 
   it('收敛先到达的编辑并让撤回成为终态', () => {

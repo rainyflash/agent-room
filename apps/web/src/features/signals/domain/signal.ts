@@ -1,4 +1,8 @@
-import type { MessageLifecycle, MessageProvenance } from '@/features/messages/domain/message';
+import type {
+  MessageLifecycle,
+  MessageProvenance,
+  MessageSignatureStatus,
+} from '@/features/messages/domain/message';
 
 export const signalKinds = [
   'room_message',
@@ -34,6 +38,7 @@ export type SignalProjection = {
   readonly lifecycle: MessageLifecycle;
   readonly occurredAtUnixMs: number;
   readonly riskFlags: readonly string[];
+  readonly signatureStatus: MessageSignatureStatus | null;
   readonly signalId: string;
   readonly summary: string | null;
   readonly title: string | null;

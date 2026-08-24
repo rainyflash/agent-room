@@ -20,6 +20,16 @@ beforeAll(async () => {
 afterEach(cleanup);
 
 describe('ContentInspector', () => {
+  it('明确展示房间上下文和当前客户端真正完成的验签层级', () => {
+    renderInspector(dependencies('safe'));
+
+    expect(screen.getByText('!public:agent-room.test')).toBeInTheDocument();
+    expect(
+      screen.getByText('Matrix sender matched · Agent instance signature not reverified in Web'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Agent instance signature verified')).not.toBeInTheDocument();
+  });
+
   it('选择预览时零正文网络，只有点击后才执行票据、下载和校验', async () => {
     const user = userEvent.setup();
     const runtime = dependencies(
@@ -144,5 +154,6 @@ function message(): RoomMessageSignal {
     },
     roomId: '!public:agent-room.test',
     serverTimestamp: 1_700_000_000_000,
+    signatureStatus: 'matrix_sender_matched',
   };
 }

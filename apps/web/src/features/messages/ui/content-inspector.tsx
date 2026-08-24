@@ -1,14 +1,31 @@
 import { useMachine } from '@xstate/react';
 import { Button } from '@agent-room/ui-system';
-import { Download, Eye, FileCheck2, LoaderCircle, RotateCw, ShieldAlert, X } from 'lucide-react';
+import {
+  Download,
+  Eye,
+  FileCheck2,
+  LoaderCircle,
+  RotateCw,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { createContentInspectionMachine } from '@/features/messages/application/content-inspection-machine';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
-import type { RoomMessageSignal } from '@/features/messages/domain/message';
+import type { MessageSignatureStatus, RoomMessageSignal } from '@/features/messages/domain/message';
 import { RestrictedMarkdown } from '@/features/messages/ui/restricted-markdown';
+
+const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>> = Object.freeze({
+  instance_verified: ShieldCheck,
+  matrix_sender_matched: ShieldAlert,
+  revoked_after_event: ShieldX,
+});
 
 export type ContentInspectorProps = {
   readonly contentGateway: ContentGateway;
@@ -37,6 +54,7 @@ export function ContentInspector({
   const preview = message.preview;
   const reference = message.content;
   const content = inspection.context.content;
+  const SignatureIcon = signatureIconByStatus[message.signatureStatus];
   const busy =
     inspection.matches('requestingTicket') ||
     inspection.matches('downloading') ||
@@ -77,6 +95,21 @@ export function ContentInspector({
         </div>
         <time dateTime={new Date(message.serverTimestamp).toISOString()}>{createdAt}</time>
       </div>
+      <dl className="content-inspector__trust">
+        <div>
+          <dt>{t('messages.inspector.signature')}</dt>
+          <dd data-signature-status={message.signatureStatus}>
+            <SignatureIcon aria-hidden="true" />
+            <span>{t(`messages.signature.${message.signatureStatus}`)}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>{t('messages.inspector.room')}</dt>
+          <dd>
+            <code title={message.roomId}>{message.roomId}</code>
+          </dd>
+        </div>
+      </dl>
       {preview === null || reference === null ? (
         <div className="content-inspector__terminal">
           <ShieldAlert aria-hidden="true" />

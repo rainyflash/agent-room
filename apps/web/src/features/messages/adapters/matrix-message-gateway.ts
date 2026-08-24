@@ -17,6 +17,7 @@ import {
   type MessageReadResult,
   type MessageRelation,
   type MessageRoomProjection,
+  type MessageSignatureStatus,
   type RoomMessageSignal,
 } from '@/features/messages/domain/message';
 import { err, ok } from '@/shared/result';
@@ -160,6 +161,7 @@ type MutableMessage = {
   relation?: MessageRelation;
   roomId: string;
   serverTimestamp: number;
+  signatureStatus: MessageSignatureStatus;
 };
 
 type ParsedRevision = {
@@ -275,6 +277,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
     ...(parsed.data.relation === undefined ? {} : { relation: parsed.data.relation }),
     roomId,
     serverTimestamp: event.serverTimestamp,
+    signatureStatus: 'matrix_sender_matched',
   };
 }
 
@@ -364,6 +367,7 @@ function freezeMessage(message: MutableMessage): RoomMessageSignal {
     ...(message.relation === undefined ? {} : { relation: message.relation }),
     roomId: message.roomId,
     serverTimestamp: message.serverTimestamp,
+    signatureStatus: message.signatureStatus,
   });
 }
 

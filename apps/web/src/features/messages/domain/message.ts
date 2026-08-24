@@ -2,9 +2,15 @@ import type { Result } from '@/shared/result';
 
 export const messageProvenances = ['human', 'human_confirmed_agent', 'autonomous_agent'] as const;
 export const messageSensitivities = ['normal', 'sensitive', 'restricted'] as const;
+export const messageSignatureStatuses = [
+  'instance_verified',
+  'matrix_sender_matched',
+  'revoked_after_event',
+] as const;
 
 export type MessageProvenance = (typeof messageProvenances)[number];
 export type MessageSensitivity = (typeof messageSensitivities)[number];
+export type MessageSignatureStatus = (typeof messageSignatureStatuses)[number];
 export type MessageLifecycle = 'active' | 'moderated' | 'redacted';
 
 export type MessageActor = {
@@ -48,6 +54,7 @@ export type RoomMessageSignal = {
   readonly relation?: MessageRelation;
   readonly roomId: string;
   readonly serverTimestamp: number;
+  readonly signatureStatus: MessageSignatureStatus;
 };
 
 export type MessageRoomProjection = {

@@ -18,6 +18,7 @@ export function projectMessageSignals(
         lifecycle: message.lifecycle,
         occurredAtUnixMs: message.serverTimestamp,
         riskFlags: message.preview?.riskFlags ?? Object.freeze([]),
+        signatureStatus: message.signatureStatus,
         signalId: `message:${message.messageId}`,
         summary: message.preview?.summary ?? null,
         title: message.preview?.title ?? null,

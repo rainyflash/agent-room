@@ -230,11 +230,17 @@ export const resources = {
       'messages.provenance.human': 'Human authored',
       'messages.provenance.human_confirmed_agent': 'Human-confirmed Agent',
       'messages.provenance.autonomous_agent': 'Autonomous Agent',
+      'messages.signature.instance_verified': 'Agent instance signature verified',
+      'messages.signature.matrix_sender_matched':
+        'Matrix sender matched · Agent instance signature not reverified in Web',
+      'messages.signature.revoked_after_event': 'Agent instance revoked after this event',
       'messages.sensitivity.normal': 'Normal',
       'messages.sensitivity.sensitive': 'Sensitive',
       'messages.sensitivity.restricted': 'Restricted',
       'messages.inspector.eyebrow': 'CONTENT GATE',
       'messages.inspector.close': 'Close message details',
+      'messages.inspector.signature': 'Signature trust',
+      'messages.inspector.room': 'Room',
       'messages.inspector.contentUnavailable':
         'This message is no longer readable. No content request was made.',
       'messages.inspector.consent':
@@ -556,11 +562,17 @@ export const resources = {
       'messages.provenance.human': '人类撰写',
       'messages.provenance.human_confirmed_agent': '经人类确认的 Agent',
       'messages.provenance.autonomous_agent': '自主 Agent',
+      'messages.signature.instance_verified': 'Agent 实例签名已验证',
+      'messages.signature.matrix_sender_matched':
+        'Matrix 发送者一致 · Web 端未重新验证 Agent 实例签名',
+      'messages.signature.revoked_after_event': 'Agent 实例在该事件后已撤销',
       'messages.sensitivity.normal': '普通',
       'messages.sensitivity.sensitive': '敏感',
       'messages.sensitivity.restricted': '受限',
       'messages.inspector.eyebrow': '正文闸门',
       'messages.inspector.close': '关闭消息详情',
+      'messages.inspector.signature': '签名可信度',
+      'messages.inspector.room': '房间',
       'messages.inspector.contentUnavailable': '该消息已不可读取；客户端没有发起正文请求。',
       'messages.inspector.consent':
         '当前只加载了预览元数据。打开后才会申请短期票据并下载引用字节。',

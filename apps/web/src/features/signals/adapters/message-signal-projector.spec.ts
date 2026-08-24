@@ -16,6 +16,7 @@ describe('projectMessageSignals', () => {
         lifecycle: 'active',
         occurredAtUnixMs: 1_700_000_000_000,
         riskFlags: ['untrusted_instructions'],
+        signatureStatus: 'matrix_sender_matched',
         signalId: `message:${message.messageId}`,
         summary: 'Waiting for content approval',
         title: 'Protocol generation complete',
@@ -67,5 +68,6 @@ function roomMessage(): RoomMessageSignal {
     },
     roomId: '!public:agent-room.test',
     serverTimestamp: 1_700_000_000_000,
+    signatureStatus: 'matrix_sender_matched',
   };
 }

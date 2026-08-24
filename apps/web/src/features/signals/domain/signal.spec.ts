@@ -46,6 +46,7 @@ function signal(
     lifecycle: 'active',
     occurredAtUnixMs,
     riskFlags,
+    signatureStatus: null,
     signalId: `${kind}-${String(occurredAtUnixMs)}-${riskFlags.join('-')}${suffix.length === 0 ? '' : `-${suffix}`}`,
     summary: 'Summary',
     title: 'Title',

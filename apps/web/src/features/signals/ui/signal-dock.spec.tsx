@@ -126,6 +126,7 @@ function signal(kind: SignalKind, title: string): SignalProjection {
     lifecycle: 'active',
     occurredAtUnixMs: 1_700_000_000_000,
     riskFlags: [],
+    signatureStatus: kind === 'room_message' ? 'matrix_sender_matched' : null,
     signalId: kind,
     summary: 'Signal summary',
     title,
