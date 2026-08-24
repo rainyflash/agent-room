@@ -148,7 +148,6 @@ export class MatrixWebGateway implements MatrixGateway {
             ...(this.#localStorage === undefined ? {} : { localStorage: this.#localStorage }),
           });
     try {
-      await store.startup();
       const session = sessionResult.value;
       const refreshClient = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
       const client = sdk.createClient({
@@ -177,6 +176,7 @@ export class MatrixWebGateway implements MatrixGateway {
         },
         userId: session.userId,
       });
+      await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());
       if (!whoAmI.success || whoAmI.data.user_id !== expectedUserId) {
         await discardMatrixClient(client);
