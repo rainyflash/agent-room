@@ -32,25 +32,45 @@ def read_environment(path: Path) -> dict[str, str]:
 
 
 def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[str, str]:
-    database_password = values.get("AGENT_ROOM_DB_RUNTIME_PASSWORD")
-    if not database_password:
-        raise RuntimeError(".env.local 缺少 AGENT_ROOM_DB_RUNTIME_PASSWORD。")
+    required_secrets = {
+        "AGENT_ROOM_DB_RUNTIME_PASSWORD": values.get(
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD"
+        ),
+        "KEYCLOAK_CLIENT_SECRET": values.get("KEYCLOAK_CLIENT_SECRET"),
+    }
+    missing = [name for name, value in required_secrets.items() if not value]
+    if missing:
+        raise RuntimeError(f".env.local 缺少 {', '.join(missing)}。")
 
     environment = os.environ.copy()
     environment.update(
         {
-            "AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:3000",
+            "AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:8090",
             "AGENT_ROOM_DB_HOST": "127.0.0.1",
             "AGENT_ROOM_DB_PORT": "55432",
             "AGENT_ROOM_DB_NAME": "agent_room",
             "AGENT_ROOM_DB_USER": "agent_room_runtime",
-            "AGENT_ROOM_DB_RUNTIME_PASSWORD": database_password,
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD": required_secrets[
+                "AGENT_ROOM_DB_RUNTIME_PASSWORD"
+            ],
             "AGENT_ROOM_DB_TLS_MODE": "disable",
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
                 "http://127.0.0.1:19333/cluster/status"
             ),
             "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS": "2000",
+            "AGENT_ROOM_OIDC_ISSUER_URL": (
+                "http://127.0.0.1:18080/realms/agent-room"
+            ),
+            "AGENT_ROOM_OIDC_CLIENT_ID": "agent-room-web",
+            "AGENT_ROOM_OIDC_CLIENT_SECRET": required_secrets[
+                "KEYCLOAK_CLIENT_SECRET"
+            ],
+            "AGENT_ROOM_OIDC_REDIRECT_URL": (
+                "https://api.agent-room.localhost/auth/oidc/callback"
+            ),
+            "AGENT_ROOM_FRONTEND_ORIGIN": "https://app.agent-room.localhost",
+            "AGENT_ROOM_MATRIX_SERVER_NAME": "matrix.agent-room.localhost",
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS": "5000",
             "AGENT_ROOM_LOG_FILTER": (
                 "agent_room_control_plane=info,sqlx=warn"

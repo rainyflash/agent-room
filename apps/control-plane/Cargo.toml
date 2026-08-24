@@ -8,8 +8,12 @@ repository.workspace = true
 
 [dependencies]
 agent-room-application.workspace = true
+agent-room-domain.workspace = true
+agent-room-identity-adapter.workspace = true
+agent-room-postgres-adapter.workspace = true
 agent-room-protocol-conformance.workspace = true
 axum.workspace = true
+axum-extra.workspace = true
 futures-util.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
@@ -19,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-opentelemetry.workspace = true

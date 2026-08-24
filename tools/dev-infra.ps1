@@ -119,7 +119,10 @@ function Write-KeycloakRealm {
         secret = $Environment.KEYCLOAK_CLIENT_SECRET
         standardFlowEnabled = $true
         directAccessGrantsEnabled = $false
-        redirectUris = @('https://app.agent-room.localhost/*', 'http://localhost:5173/*')
+        redirectUris = @(
+          'https://api.agent-room.localhost/auth/oidc/callback',
+          'http://127.0.0.1:8090/auth/oidc/callback'
+        )
         webOrigins = @('https://app.agent-room.localhost', 'http://localhost:5173')
         attributes = @{ 'pkce.code.challenge.method' = 'S256' }
       }

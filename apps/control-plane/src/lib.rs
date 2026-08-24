@@ -3,17 +3,27 @@ mod correlation;
 mod error;
 mod features;
 mod observability;
+mod runtime;
 mod shutdown;
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error, fmt, sync::Arc, time::Duration};
 
-use agent_room_application::health::ReadinessService;
+use agent_room_application::{
+    authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
+    health::ReadinessService,
+    ports::SecretValue,
+};
+use agent_room_domain::time::DurationMillis;
+use agent_room_identity_adapter::{DiscoveredOidcGateway, OidcAdapterConfig, SecureSecretFactory};
+use agent_room_postgres_adapter::PostgresRepositories;
 use axum::{Router, middleware, routing::get};
 use tokio::net::TcpListener;
 
-use config::ControlPlaneConfig;
+use config::{AuthenticationConfig, ControlPlaneConfig};
+use features::authentication::AuthenticationHttpState;
 use features::health::HealthRuntime;
 use observability::Observability;
+use runtime::SystemRuntime;
 
 pub(crate) const SERVICE_NAME: &str = "agent-room-control-plane";
 pub(crate) const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,7 +61,19 @@ pub async fn run() -> Result<(), StartupError> {
             ));
         }
     };
-    let app = build_router(runtime.readiness.clone());
+    let authentication_routes = match build_authentication_router(
+        &config.authentication,
+        config.dependencies.timeout,
+        &runtime,
+    ) {
+        Ok(router) => router,
+        Err(error) => {
+            runtime.shutdown().await;
+            observability.shutdown();
+            return Err(error);
+        }
+    };
+    let app = build_router(runtime.readiness.clone(), authentication_routes);
 
     tracing::info!(
         service = SERVICE_NAME,
@@ -73,7 +95,7 @@ pub async fn run() -> Result<(), StartupError> {
     })
 }
 
-fn build_router(readiness: Arc<ReadinessService>) -> Router {
+fn build_router(readiness: Arc<ReadinessService>, authentication_routes: Router) -> Router {
     Router::new()
         .route("/health/live", get(features::health::live))
         .route("/health/ready", get(features::health::ready))
@@ -81,7 +103,87 @@ fn build_router(readiness: Arc<ReadinessService>) -> Router {
         .fallback(error::not_found)
         .method_not_allowed_fallback(error::method_not_allowed)
         .with_state(AppState { readiness })
+        .merge(authentication_routes)
         .layer(middleware::from_fn(correlation::attach))
+}
+
+fn build_authentication_router(
+    config: &AuthenticationConfig,
+    request_timeout: Duration,
+    runtime: &HealthRuntime,
+) -> Result<Router, StartupError> {
+    let client_secret =
+        SecretValue::new(config.client_secret.expose().to_owned()).map_err(|_| {
+            StartupError::new(
+                "startup.invalid_authentication_config",
+                "OIDC 客户端密钥无效".to_owned(),
+            )
+        })?;
+    let oidc = Arc::new(
+        DiscoveredOidcGateway::new(OidcAdapterConfig {
+            issuer_url: config.issuer_url.to_string(),
+            client_id: config.client_id.clone(),
+            client_secret,
+            redirect_url: config.redirect_url.to_string(),
+            request_timeout,
+        })
+        .map_err(|error| {
+            StartupError::new("startup.invalid_authentication_config", error.to_string())
+        })?,
+    );
+    let policy = AuthenticationPolicy::new(
+        domain_duration(config.login_attempt_ttl)?,
+        domain_duration(config.web_session_ttl)?,
+        domain_duration(config.recent_authentication_window)?,
+        domain_duration(config.allowed_clock_skew)?,
+        config.matrix_server_name.clone(),
+    )
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_authentication_config",
+            "Matrix 服务名无效".to_owned(),
+        )
+    })?;
+    let repositories = Arc::new(PostgresRepositories::new(runtime.pool().clone()));
+    let system_runtime = Arc::new(SystemRuntime);
+    let service = Arc::new(AuthenticationService::new(
+        AuthenticationDependencies {
+            oidc,
+            login_attempts: repositories.clone(),
+            login_completion: repositories.clone(),
+            sessions: repositories.clone(),
+            suspensions: repositories,
+            secrets: Arc::new(SecureSecretFactory),
+            identifiers: system_runtime.clone(),
+            clock: system_runtime,
+        },
+        policy,
+    ));
+    let state = AuthenticationHttpState::new(
+        service,
+        config.frontend_origin.clone(),
+        config.login_attempt_ttl,
+        config.web_session_ttl,
+    )
+    .map_err(|error| {
+        StartupError::new("startup.invalid_authentication_config", error.to_string())
+    })?;
+    Ok(features::authentication::router(state))
+}
+
+fn domain_duration(duration: Duration) -> Result<DurationMillis, StartupError> {
+    let milliseconds = u64::try_from(duration.as_millis()).map_err(|_| {
+        StartupError::new(
+            "startup.invalid_authentication_config",
+            "认证时限超出范围".to_owned(),
+        )
+    })?;
+    DurationMillis::new(milliseconds).map_err(|_| {
+        StartupError::new(
+            "startup.invalid_authentication_config",
+            "认证时限必须大于零".to_owned(),
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -155,7 +257,7 @@ mod tests {
             probe(DependencyKind::ObjectStore, Ok(())),
         ])
         .expect("测试探针配置有效");
-        build_router(Arc::new(readiness))
+        build_router(Arc::new(readiness), axum::Router::new())
     }
 
     async fn body_json(response: axum::response::Response) -> Value {
@@ -281,7 +383,7 @@ mod real_dependency_tests {
 
     async fn ready_response(config: &DependencyConfig) -> (StatusCode, Value) {
         let runtime = HealthRuntime::initialize(config).expect("真实依赖探针可初始化");
-        let response = build_router(runtime.readiness.clone())
+        let response = build_router(runtime.readiness.clone(), axum::Router::new())
             .oneshot(
                 Request::builder()
                     .uri("/health/ready")

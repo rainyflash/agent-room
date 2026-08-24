@@ -69,6 +69,10 @@ impl HealthRuntime {
     pub(crate) async fn shutdown(&self) {
         self.pool.close().await;
     }
+
+    pub(crate) const fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
 fn create_pool(config: &DatabaseConfig, timeout: std::time::Duration) -> PgPool {

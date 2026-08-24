@@ -26,8 +26,12 @@ name = "agent-room-control-plane"
 version = "0.1.0"
 dependencies = [
  "agent-room-application",
+ "agent-room-domain",
+ "agent-room-identity-adapter",
+ "agent-room-postgres-adapter",
  "agent-room-protocol-conformance",
  "axum",
+ "axum-extra",
  "futures-util",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -37,6 +41,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tower",
  "tracing",
@@ -249,6 +254,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-extra"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be44683b41ccb9ab2d23a5230015c9c3c55be97a25e4428366de8873103f7970"
+dependencies = [
+ "axum",
+ "axum-core",
+ "bytes",
+ "cookie",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "mime",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,6 +471,17 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "cookie"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+dependencies = [
+ "percent-encoding",
+ "time",
+ "version_check",
+]
 
 [[package]]
 name = "core-foundation"

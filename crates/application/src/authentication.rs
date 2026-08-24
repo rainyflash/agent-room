@@ -190,28 +190,28 @@ pub struct AuthenticationService {
     policy: AuthenticationPolicy,
 }
 
+pub struct AuthenticationDependencies {
+    pub oidc: Arc<dyn OidcGateway>,
+    pub login_attempts: Arc<dyn LoginAttemptStore>,
+    pub login_completion: Arc<dyn LoginCompletionTransaction>,
+    pub sessions: Arc<dyn WebSessionStore>,
+    pub suspensions: Arc<dyn PrincipalSuspensionTransaction>,
+    pub secrets: Arc<dyn SecretFactory>,
+    pub identifiers: Arc<dyn IdentifierFactory>,
+    pub clock: Arc<dyn Clock>,
+}
+
 impl AuthenticationService {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        oidc: Arc<dyn OidcGateway>,
-        login_attempts: Arc<dyn LoginAttemptStore>,
-        login_completion: Arc<dyn LoginCompletionTransaction>,
-        sessions: Arc<dyn WebSessionStore>,
-        suspensions: Arc<dyn PrincipalSuspensionTransaction>,
-        secrets: Arc<dyn SecretFactory>,
-        identifiers: Arc<dyn IdentifierFactory>,
-        clock: Arc<dyn Clock>,
-        policy: AuthenticationPolicy,
-    ) -> Self {
+    pub fn new(dependencies: AuthenticationDependencies, policy: AuthenticationPolicy) -> Self {
         Self {
-            oidc,
-            login_attempts,
-            login_completion,
-            sessions,
-            suspensions,
-            secrets,
-            identifiers,
-            clock,
+            oidc: dependencies.oidc,
+            login_attempts: dependencies.login_attempts,
+            login_completion: dependencies.login_completion,
+            sessions: dependencies.sessions,
+            suspensions: dependencies.suspensions,
+            secrets: dependencies.secrets,
+            identifiers: dependencies.identifiers,
+            clock: dependencies.clock,
             policy,
         }
     }

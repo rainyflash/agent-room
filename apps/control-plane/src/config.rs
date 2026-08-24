@@ -5,6 +5,10 @@ use url::Url;
 
 const DEFAULT_DEPENDENCY_TIMEOUT_MILLIS: u64 = 2_000;
 const DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS: u64 = 5_000;
+const DEFAULT_LOGIN_ATTEMPT_TTL_MILLIS: u64 = 10 * 60 * 1_000;
+const DEFAULT_WEB_SESSION_TTL_MILLIS: u64 = 8 * 60 * 60 * 1_000;
+const DEFAULT_RECENT_AUTHENTICATION_MILLIS: u64 = 5 * 60 * 1_000;
+const DEFAULT_CLOCK_SKEW_MILLIS: u64 = 60 * 1_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
@@ -69,9 +73,24 @@ pub(crate) struct ObservabilityConfig {
 }
 
 #[derive(Clone)]
+pub(crate) struct AuthenticationConfig {
+    pub(crate) issuer_url: Url,
+    pub(crate) client_id: String,
+    pub(crate) client_secret: SecretValue,
+    pub(crate) redirect_url: Url,
+    pub(crate) frontend_origin: Url,
+    pub(crate) matrix_server_name: String,
+    pub(crate) login_attempt_ttl: Duration,
+    pub(crate) web_session_ttl: Duration,
+    pub(crate) recent_authentication_window: Duration,
+    pub(crate) allowed_clock_skew: Duration,
+}
+
+#[derive(Clone)]
 pub(crate) struct ControlPlaneConfig {
     pub(crate) bind_address: SocketAddr,
     pub(crate) dependencies: DependencyConfig,
+    pub(crate) authentication: AuthenticationConfig,
     pub(crate) observability: ObservabilityConfig,
 }
 
@@ -81,12 +100,33 @@ impl ControlPlaneConfig {
     }
 
     fn from_source(source: &impl EnvironmentSource) -> Result<Self, ConfigError> {
-        let bind_address = read_optional(source, "AGENT_ROOM_BIND_ADDRESS")
-            .unwrap_or_else(|| "127.0.0.1:3000".to_owned())
-            .parse::<SocketAddr>()
-            .map_err(|_| ConfigError::invalid("AGENT_ROOM_BIND_ADDRESS", "必须是 IP:端口"))?;
+        Ok(Self {
+            bind_address: read_bind_address(source)?,
+            dependencies: read_dependency_config(source)?,
+            authentication: read_authentication_config(source)?,
+            observability: read_observability_config(source)?,
+        })
+    }
+}
 
-        let database = DatabaseConfig {
+fn read_bind_address(source: &impl EnvironmentSource) -> Result<SocketAddr, ConfigError> {
+    read_optional(source, "AGENT_ROOM_BIND_ADDRESS")
+        .unwrap_or_else(|| "127.0.0.1:8090".to_owned())
+        .parse::<SocketAddr>()
+        .map_err(|_| ConfigError::invalid("AGENT_ROOM_BIND_ADDRESS", "必须是 IP:端口"))
+}
+
+fn read_dependency_config(
+    source: &impl EnvironmentSource,
+) -> Result<DependencyConfig, ConfigError> {
+    let timeout = read_bounded_duration(
+        source,
+        "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS",
+        DEFAULT_DEPENDENCY_TIMEOUT_MILLIS,
+        100..=30_000,
+    )?;
+    Ok(DependencyConfig {
+        database: DatabaseConfig {
             host: read_required_text(source, "AGENT_ROOM_DB_HOST")?,
             port: read_required_u16(source, "AGENT_ROOM_DB_PORT")?,
             database: read_required_text(source, "AGENT_ROOM_DB_NAME")?,
@@ -99,60 +139,86 @@ impl ControlPlaneConfig {
                 source,
                 "AGENT_ROOM_DB_TLS_MODE",
             )?)?,
-        };
+        },
+        matrix_base_url: parse_http_url(
+            "AGENT_ROOM_MATRIX_BASE_URL",
+            &read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
+        )?,
+        object_store_health_url: parse_http_url(
+            "AGENT_ROOM_OBJECT_STORE_HEALTH_URL",
+            &read_required_text(source, "AGENT_ROOM_OBJECT_STORE_HEALTH_URL")?,
+        )?,
+        timeout,
+    })
+}
 
-        let dependency_timeout_millis = read_optional_u64(
+fn read_authentication_config(
+    source: &impl EnvironmentSource,
+) -> Result<AuthenticationConfig, ConfigError> {
+    Ok(AuthenticationConfig {
+        issuer_url: parse_http_url(
+            "AGENT_ROOM_OIDC_ISSUER_URL",
+            &read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,
+        )?,
+        client_id: read_required_text(source, "AGENT_ROOM_OIDC_CLIENT_ID")?,
+        client_secret: SecretValue(read_required_secret(
             source,
-            "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS",
-            DEFAULT_DEPENDENCY_TIMEOUT_MILLIS,
-        )?;
-        if !(100..=30_000).contains(&dependency_timeout_millis) {
-            return Err(ConfigError::invalid(
-                "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS",
-                "必须介于 100 与 30000 毫秒",
-            ));
-        }
+            "AGENT_ROOM_OIDC_CLIENT_SECRET",
+        )?),
+        redirect_url: parse_http_url(
+            "AGENT_ROOM_OIDC_REDIRECT_URL",
+            &read_required_text(source, "AGENT_ROOM_OIDC_REDIRECT_URL")?,
+        )?,
+        frontend_origin: parse_origin(
+            "AGENT_ROOM_FRONTEND_ORIGIN",
+            &read_required_text(source, "AGENT_ROOM_FRONTEND_ORIGIN")?,
+        )?,
+        matrix_server_name: read_required_text(source, "AGENT_ROOM_MATRIX_SERVER_NAME")?,
+        login_attempt_ttl: read_bounded_duration(
+            source,
+            "AGENT_ROOM_LOGIN_ATTEMPT_TTL_MS",
+            DEFAULT_LOGIN_ATTEMPT_TTL_MILLIS,
+            60_000..=30 * 60 * 1_000,
+        )?,
+        web_session_ttl: read_bounded_duration(
+            source,
+            "AGENT_ROOM_WEB_SESSION_TTL_MS",
+            DEFAULT_WEB_SESSION_TTL_MILLIS,
+            5 * 60 * 1_000..=30 * 24 * 60 * 60 * 1_000,
+        )?,
+        recent_authentication_window: read_bounded_duration(
+            source,
+            "AGENT_ROOM_RECENT_AUTHENTICATION_MS",
+            DEFAULT_RECENT_AUTHENTICATION_MILLIS,
+            60_000..=60 * 60 * 1_000,
+        )?,
+        allowed_clock_skew: read_bounded_duration(
+            source,
+            "AGENT_ROOM_ALLOWED_CLOCK_SKEW_MS",
+            DEFAULT_CLOCK_SKEW_MILLIS,
+            1_000..=5 * 60 * 1_000,
+        )?,
+    })
+}
 
-        let log_filter = read_optional(source, "AGENT_ROOM_LOG_FILTER").unwrap_or_else(|| {
-            "agent_room_control_plane=info,tower_http=info,sqlx=warn".to_owned()
-        });
-        validate_text("AGENT_ROOM_LOG_FILTER", &log_filter)?;
-
-        let export_timeout_millis = read_optional_u64(
+fn read_observability_config(
+    source: &impl EnvironmentSource,
+) -> Result<ObservabilityConfig, ConfigError> {
+    let log_filter = read_optional(source, "AGENT_ROOM_LOG_FILTER")
+        .unwrap_or_else(|| "agent_room_control_plane=info,tower_http=info,sqlx=warn".to_owned());
+    validate_text("AGENT_ROOM_LOG_FILTER", &log_filter)?;
+    Ok(ObservabilityConfig {
+        log_filter,
+        otlp_traces_endpoint: read_optional(source, "AGENT_ROOM_OTLP_TRACES_ENDPOINT")
+            .map(|value| parse_http_url("AGENT_ROOM_OTLP_TRACES_ENDPOINT", &value))
+            .transpose()?,
+        export_timeout: read_bounded_duration(
             source,
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS",
             DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS,
-        )?;
-        if !(100..=30_000).contains(&export_timeout_millis) {
-            return Err(ConfigError::invalid(
-                "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS",
-                "必须介于 100 与 30000 毫秒",
-            ));
-        }
-
-        Ok(Self {
-            bind_address,
-            dependencies: DependencyConfig {
-                database,
-                matrix_base_url: parse_http_url(
-                    "AGENT_ROOM_MATRIX_BASE_URL",
-                    &read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
-                )?,
-                object_store_health_url: parse_http_url(
-                    "AGENT_ROOM_OBJECT_STORE_HEALTH_URL",
-                    &read_required_text(source, "AGENT_ROOM_OBJECT_STORE_HEALTH_URL")?,
-                )?,
-                timeout: Duration::from_millis(dependency_timeout_millis),
-            },
-            observability: ObservabilityConfig {
-                log_filter,
-                otlp_traces_endpoint: read_optional(source, "AGENT_ROOM_OTLP_TRACES_ENDPOINT")
-                    .map(|value| parse_http_url("AGENT_ROOM_OTLP_TRACES_ENDPOINT", &value))
-                    .transpose()?,
-                export_timeout: Duration::from_millis(export_timeout_millis),
-            },
-        })
-    }
+            100..=30_000,
+        )?,
+    })
 }
 
 fn read_optional(source: &impl EnvironmentSource, name: &'static str) -> Option<String> {
@@ -206,6 +272,19 @@ fn read_optional_u64(
     })
 }
 
+fn read_bounded_duration(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+    default: u64,
+    range: std::ops::RangeInclusive<u64>,
+) -> Result<Duration, ConfigError> {
+    let value = read_optional_u64(source, name, default)?;
+    if !range.contains(&value) {
+        return Err(ConfigError::invalid(name, "超出允许的安全范围"));
+    }
+    Ok(Duration::from_millis(value))
+}
+
 fn validate_text(name: &'static str, value: &str) -> Result<(), ConfigError> {
     if value.is_empty() || value.len() > MAX_TEXT_LENGTH || value.chars().any(char::is_control) {
         return Err(ConfigError::invalid(name, "包含空值、控制字符或长度超限"));
@@ -240,6 +319,14 @@ fn parse_http_url(name: &'static str, value: &str) -> Result<Url, ConfigError> {
             name,
             "必须是无用户信息、查询参数和片段的 HTTP(S) URL",
         ));
+    }
+    Ok(url)
+}
+
+fn parse_origin(name: &'static str, value: &str) -> Result<Url, ConfigError> {
+    let url = parse_http_url(name, value)?;
+    if url.path() != "/" {
+        return Err(ConfigError::invalid(name, "必须是无路径的 HTTP(S) Origin"));
     }
     Ok(url)
 }
@@ -291,6 +378,27 @@ mod tests {
             (
                 "AGENT_ROOM_OBJECT_STORE_HEALTH_URL",
                 "http://127.0.0.1:19333/cluster/status".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_OIDC_ISSUER_URL",
+                "http://127.0.0.1:18080/realms/agent-room".to_owned(),
+            ),
+            ("AGENT_ROOM_OIDC_CLIENT_ID", "agent-room-web".to_owned()),
+            (
+                "AGENT_ROOM_OIDC_CLIENT_SECRET",
+                "local-client-secret".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_OIDC_REDIRECT_URL",
+                "https://api.agent-room.localhost/auth/oidc/callback".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_FRONTEND_ORIGIN",
+                "https://app.agent-room.localhost".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_MATRIX_SERVER_NAME",
+                "matrix.agent-room.localhost".to_owned(),
             ),
         ]))
     }

@@ -20,9 +20,11 @@ repository = "https://github.com/agent-room/agent-room"
 [workspace.dependencies]
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
+agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
+axum-extra = { version = "0.12.6", features = ["cookie"] }
 base64 = "0.22.1"
 chrono = "0.4.45"
 futures-util = "0.3.32"
@@ -39,6 +41,7 @@ serde_json = "1.0.151"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"
+time = "0.3.55"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
