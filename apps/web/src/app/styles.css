@@ -918,9 +918,8 @@
   border: 1px solid var(--ar-ink-18);
   border-radius: 10px;
   color: var(--color-ink);
-  background: color-mix(in srgb, var(--color-paper) 96%, transparent);
+  background: var(--color-paper);
   box-shadow: 0 24px 70px color-mix(in srgb, black 34%, transparent);
-  backdrop-filter: blur(22px);
 }
 
 .agent-inspector__header {
@@ -1523,7 +1522,7 @@
 
   .list-roster {
     width: calc(100% - 2rem);
-    padding: 96px 0 88px;
+    padding: 96px 0 32px;
   }
 
   .list-roster__header {

@@ -193,6 +193,9 @@ function aggregateAgent(
   return [
     Object.freeze({
       agentId,
+      ...(event.actor.agent.avatarUrl === undefined
+        ? {}
+        : { avatarUrl: event.actor.agent.avatarUrl }),
       displayName: event.actor.agent.displayName,
       instanceIds: Object.freeze(
         candidates.map((candidate) => candidate.event.actor.instanceId).toSorted(),

@@ -61,6 +61,24 @@ describe('大厅场景投影', () => {
     expect(sceneDetailForZoom(1.18)).toBe('near');
   });
 
+  it('主题区共享同一世界坐标系且互不重叠', () => {
+    const projection = projectLobbyScene(room([]), null);
+    const pairs = projection.zones.flatMap((zone, index) =>
+      projection.zones.slice(index + 1).map((other) => [zone, other] as const),
+    );
+
+    expect(pairs.every(([left, right]) => !boundsOverlap(left, right))).toBe(true);
+    expect(
+      projection.zones.every(
+        (zone) =>
+          zone.x >= 0 &&
+          zone.y >= 0 &&
+          zone.x + zone.width <= projection.world.width &&
+          zone.y + zone.height <= projection.world.height,
+      ),
+    ).toBe(true);
+  });
+
   it('方向导航优先前进方向并在边界稳定停留', () => {
     const base = agent(0);
     const nodes = [
@@ -110,4 +128,21 @@ function statusAt(index: number): LobbyAgentStatus {
     'completed',
   ];
   return statuses[index % statuses.length] ?? 'offline';
+}
+
+function boundsOverlap(
+  left: { readonly height: number; readonly width: number; readonly x: number; readonly y: number },
+  right: {
+    readonly height: number;
+    readonly width: number;
+    readonly x: number;
+    readonly y: number;
+  },
+): boolean {
+  return !(
+    left.x + left.width <= right.x ||
+    right.x + right.width <= left.x ||
+    left.y + left.height <= right.y ||
+    right.y + right.height <= left.y
+  );
 }

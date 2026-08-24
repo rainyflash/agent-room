@@ -30,7 +30,12 @@ describe('MatrixLobbyGateway', () => {
   it('按 Agent 聚合多实例，并让需要关注的有效状态取得代表权', () => {
     const room = snapshot([
       statusState({ instanceSuffix: '1', status: 'working', summary: '正在构建索引' }),
-      statusState({ instanceSuffix: '2', status: 'blocked', summary: '等待仓库权限' }),
+      statusState({
+        avatarUrl: 'https://media.agent-room.test/build-agent.png',
+        instanceSuffix: '2',
+        status: 'blocked',
+        summary: '等待仓库权限',
+      }),
     ]);
     const gateway = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW);
 
@@ -49,6 +54,7 @@ describe('MatrixLobbyGateway', () => {
     expect(result.value.agents).toEqual([
       {
         agentId: AGENT_ID,
+        avatarUrl: 'https://media.agent-room.test/build-agent.png',
         displayName: '构建助手',
         instanceIds: [
           '01990d9e-8400-7000-8000-000000000011',
@@ -158,6 +164,7 @@ function statusState(options: StatusOptions): MatrixLobbyStateEvent & { content:
 }
 
 type StatusOptions = {
+  readonly avatarUrl?: string;
   readonly createdAt?: string;
   readonly instanceSuffix: string;
   readonly leaseExpiresAt?: string;
@@ -171,6 +178,7 @@ function statusContent(options: StatusOptions) {
     actor: {
       agent: {
         agentId: AGENT_ID,
+        ...(options.avatarUrl === undefined ? {} : { avatarUrl: options.avatarUrl }),
         displayName: '构建助手',
         matrixUserId: MATRIX_USER_ID,
       },

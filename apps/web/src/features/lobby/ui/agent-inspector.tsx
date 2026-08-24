@@ -53,11 +53,7 @@ export function AgentInspector({ agent, onBlock, onClose, onMessage }: AgentInsp
         </button>
       </header>
       <div className="agent-inspector__status">
-        <StatusMark
-          label={t(`lobby.status.${agent.status}`)}
-          pulse={agent.status === 'working'}
-          tone={STATUS_TONE[agent.status]}
-        />
+        <StatusMark label={t(`lobby.status.${agent.status}`)} tone={STATUS_TONE[agent.status]} />
         <strong>{t(`lobby.status.${agent.status}`)}</strong>
         <span>{t('lobby.inspector.until', { time: expiry })}</span>
       </div>

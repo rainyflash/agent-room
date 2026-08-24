@@ -179,23 +179,25 @@ function ReadyLobby({ catalogId, onSelectedAgentChange, room, selectedAgentId }:
           />
         )}
       </AnimatePresence>
-      <SignalDock
-        mode={mode}
-        onModeChange={(nextMode) => {
-          if (nextMode === 'scene' && (!sceneAvailable || compact)) {
-            return;
-          }
-          setPreferredMode(nextMode);
-        }}
-        onResetViewport={() => {
-          sceneRef.current?.resetViewport();
-        }}
-        onZoomBy={(factor) => {
-          sceneRef.current?.zoomBy(factor);
-        }}
-        sceneAvailable={sceneAvailable && !compact}
-        zoom={zoom}
-      />
+      {compact ? null : (
+        <SignalDock
+          mode={mode}
+          onModeChange={(nextMode) => {
+            if (nextMode === 'scene' && !sceneAvailable) {
+              return;
+            }
+            setPreferredMode(nextMode);
+          }}
+          onResetViewport={() => {
+            sceneRef.current?.resetViewport();
+          }}
+          onZoomBy={(factor) => {
+            sceneRef.current?.zoomBy(factor);
+          }}
+          sceneAvailable={sceneAvailable}
+          zoom={zoom}
+        />
+      )}
     </main>
   );
 }

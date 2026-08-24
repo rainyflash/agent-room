@@ -46,9 +46,9 @@ export type LobbyViewport = LobbyBounds & {
 const WORLD: LobbyWorld = Object.freeze({ height: 1_500, width: 2_600 });
 
 const ZONES: Readonly<Record<LobbyZoneId, LobbyZoneProjection>> = Object.freeze({
-  active: Object.freeze({ height: 1_040, id: 'active', width: 1_500, x: 120, y: 120 }),
-  attention: Object.freeze({ height: 960, id: 'attention', width: 940, x: 1_540, y: 120 }),
-  available: Object.freeze({ height: 380, id: 'available', width: 1_800, x: 580, y: 1_000 }),
+  active: Object.freeze({ height: 800, id: 'active', width: 1_500, x: 80, y: 120 }),
+  attention: Object.freeze({ height: 800, id: 'attention', width: 880, x: 1_640, y: 120 }),
+  available: Object.freeze({ height: 400, id: 'available', width: 1_720, x: 400, y: 980 }),
 });
 
 const ZONE_BY_STATUS: Readonly<Record<LobbyAgentStatus, LobbyZoneId>> = Object.freeze({
@@ -113,11 +113,17 @@ function layoutZone(
   if (agents.length === 0) {
     return [];
   }
-  const aspectRatio = zone.width / zone.height;
+  const contentBounds = {
+    height: Math.max(1, zone.height - 82),
+    width: Math.max(1, zone.width - 36),
+    x: zone.x + 18,
+    y: zone.y + 62,
+  };
+  const aspectRatio = contentBounds.width / contentBounds.height;
   const columns = Math.max(1, Math.ceil(Math.sqrt(agents.length * aspectRatio)));
   const rows = Math.ceil(agents.length / columns);
-  const cellWidth = zone.width / columns;
-  const cellHeight = zone.height / rows;
+  const cellWidth = contentBounds.width / columns;
+  const cellHeight = contentBounds.height / rows;
   const radius = clamp(Math.min(cellWidth, cellHeight) * 0.24, 18, 34);
   const jitterLimit = Math.min(cellWidth, cellHeight) * 0.08;
 
@@ -130,8 +136,8 @@ function layoutZone(
     return Object.freeze({
       ...agent,
       radius,
-      x: zone.x + (column + 0.5) * cellWidth + jitterX,
-      y: zone.y + (row + 0.5) * cellHeight + jitterY,
+      x: contentBounds.x + (column + 0.5) * cellWidth + jitterX,
+      y: contentBounds.y + (row + 0.5) * cellHeight + jitterY,
       zoneId: zone.id,
     });
   });

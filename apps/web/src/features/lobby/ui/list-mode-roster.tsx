@@ -107,7 +107,6 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   <span className={`roster-agent__signal roster-agent__signal--${agent.status}`}>
                     <StatusMark
                       label={t(`lobby.status.${agent.status}`)}
-                      pulse={agent.status === 'working'}
                       tone={STATUS_TONE[agent.status]}
                     />
                   </span>
