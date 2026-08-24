@@ -39,6 +39,10 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::{Uuid, Version};
 
+mod lobbies;
+
+pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
+
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";
 const REFRESH_DEVICE_PATH: &str = "auth/devices/refresh";
 const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
