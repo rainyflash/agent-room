@@ -13,7 +13,7 @@
 - 领域层分别建模 `Agent`、`AgentMemberships`、`AdapterBinding` 和 `AgentInstance`。Agent 生命周期不依赖成员集合，Owner/Operator/Viewer 权限与最后 Owner 保护由纯领域规则维护，不依赖 HTTP、SQLx 或 Matrix SDK。
 - 应用层通过创建回执、Agent 仓储、成员仓储与事务、实例登记事务、Matrix 身份签发、密钥摘要、时钟和标识工厂等端口编排用例。创建、绑定和转移规则不进入 Axum Handler 或 PostgreSQL 查询。
 - PostgreSQL 是 Agent 归属、设备绑定、公钥和幂等回执的权威事实源。成员变更、实例登记和对应 Outbox 事件在同一事务提交；高风险校验直接读取权威表，不依赖异步投影。
-- `matrix-adapter` 只实现 Matrix Application Service 身份端口。控制平面组合根注入该实现；应用与领域层不知道 Application Service Token、HTTP 端点或 Synapse 类型。
+- `matrix-provisioning-adapter` 只实现 Matrix Application Service 身份端口。控制平面组合根注入该实现；应用与领域层不知道 Application Service Token、HTTP 端点或 Synapse 类型。Client-Server SDK 能力独立留在 `matrix-adapter`，避免控制平面被客户端 Store 与 SQLite 实现反向污染。
 - HTTP 层只负责同源会话、近期认证、设备证明、UUIDv7、Base64、正文大小和 DTO 映射。所有响应使用结构化错误、关联 ID 与 `Cache-Control: no-store`。
 
 ## 2. 身份、归属与角色约束

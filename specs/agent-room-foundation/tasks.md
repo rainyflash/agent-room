@@ -153,7 +153,7 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
 
 任务 12 的独立 Agent Matrix User、Owner/Operator/Viewer 约束、实例与设备绑定、幂等登记、Application Service 安全边界和真实服务验收记录在 [任务 12 验证记录](./task-12-validation.md)。
 
-- [ ] 13. 实现 Bridge 守护进程基础
+- [x] 13. 实现 Bridge 守护进程基础
   - 建立单实例进程、配置、Matrix SDK 持久 Store、优雅关闭和自动重连。
   - Windows 使用用户 ACL 命名管道，macOS/Linux 使用 `0600` Unix Socket。
   - 实现 IPC 握手、版本协商、调用方作用域和结构化错误。
@@ -161,6 +161,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - 验证：第二进程、错误用户 IPC、Store 锁冲突、休眠恢复和网络切换均有确定行为。
   - _依赖：2、3、10、11、12_
   - _需求：1、2、8、11、12、15_
+
+任务 13 的私有认证 IPC、单实例与 Store 锁、加密 Matrix Store、设备会话续期、故障恢复和跨进程验收记录在 [任务 13 验证记录](./task-13-validation.md)。
 
 - [ ] 14. 实现 Agent Card 与通用 A2A 资料适配
   - 拉取、校验、规范化并缓存 A2A Agent Card 的安全字段。

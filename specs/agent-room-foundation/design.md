@@ -224,7 +224,8 @@ agent-room/
 ├── crates/
 │   ├── domain/                 # 纯领域模型
 │   ├── application/            # 用例和端口
-│   ├── matrix-adapter/         # Matrix 客户端/应用服务适配
+│   ├── matrix-adapter/         # Matrix Client-Server SDK 适配
+│   ├── matrix-provisioning-adapter/ # Matrix Application Service 身份签发适配
 │   ├── postgres-adapter/       # SQLx 仓储与投影
 │   ├── content-adapter/        # S3/本地对象存储
 │   ├── identity-adapter/       # OIDC/JWT/设备授权
