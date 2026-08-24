@@ -68,6 +68,9 @@ database-migrate:
 database-integration:
   python tools/database.py test
 
+object-store-integration:
+  python tools/object_store.py
+
 control-plane: database-migrate
   python tools/control-plane.py run
 
