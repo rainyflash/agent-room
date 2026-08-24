@@ -12,7 +12,7 @@ pub use lifecycle::{
     BindContentEventRequest, BindContentEventResult, BindContentEventService,
     CleanupContentDependencies, CleanupContentFailure, CleanupContentItemFailure,
     CleanupContentItemFailureCause, CleanupContentOutcome, CleanupContentPolicy,
-    CleanupContentService, ContentCleanupStage,
+    CleanupContentResult, CleanupContentService, ContentCleanupStage, ContentCleanupUseCases,
 };
 pub use read::{
     ContentReadTicketLifetime, IssueContentReadTicketDependencies, IssueContentReadTicketFailure,

@@ -12,7 +12,7 @@ use crate::{
     ports::{
         Clock, ContentAccessPolicy, ContentEventBinding, ContentLifecycleTransition,
         ContentRepository, MatrixEventId, MatrixRoomId, ObjectStoreFailure, ObjectStoreFailureKind,
-        PrivateContentObjectStore, ReclaimableContentQuery,
+        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery,
     },
 };
 
@@ -194,6 +194,11 @@ pub enum CleanupContentFailure {
 
 pub type CleanupContentResult<T> = Result<T, CleanupContentFailure>;
 
+/// 后台执行器依赖的内容回收能力边界。
+pub trait ContentCleanupUseCases: Send + Sync {
+    fn run_cleanup(&self) -> PortFuture<'_, CleanupContentResult<CleanupContentOutcome>>;
+}
+
 pub struct CleanupContentDependencies {
     pub clock: Arc<dyn Clock>,
     pub repository: Arc<dyn ContentRepository>,
@@ -320,6 +325,12 @@ impl CleanupContentService {
                     CleanupContentItemFailureCause::Repository(error),
                 )
             })
+    }
+}
+
+impl ContentCleanupUseCases for CleanupContentService {
+    fn run_cleanup(&self) -> PortFuture<'_, CleanupContentResult<CleanupContentOutcome>> {
+        Box::pin(self.run())
     }
 }
 
