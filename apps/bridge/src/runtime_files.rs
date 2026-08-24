@@ -17,6 +17,8 @@ pub(crate) struct BridgeRuntimePaths {
     data_root: PathBuf,
     runtime_root: PathBuf,
     matrix_store_root: PathBuf,
+    message_root: PathBuf,
+    message_database: PathBuf,
     handoff_root: PathBuf,
     handoff_database: PathBuf,
     instance_lock: PathBuf,
@@ -26,9 +28,12 @@ pub(crate) struct BridgeRuntimePaths {
 impl BridgeRuntimePaths {
     pub(crate) fn new(data_root: PathBuf) -> Self {
         let handoff_root = data_root.join("handoffs");
+        let message_root = data_root.join("messages");
         Self {
             runtime_root: data_root.join("runtime"),
             matrix_store_root: data_root.join("matrix-store"),
+            message_database: message_root.join("messages.sqlite"),
+            message_root,
             handoff_database: handoff_root.join("handoffs.sqlite"),
             handoff_root,
             instance_lock: data_root.join("bridge.lock"),
@@ -46,6 +51,7 @@ impl BridgeRuntimePaths {
         create_private_directory(&self.data_root)?;
         create_private_directory(&self.runtime_root)?;
         create_private_directory(&self.matrix_store_root)?;
+        create_private_directory(&self.message_root)?;
         create_private_directory(&self.handoff_root)
     }
 
@@ -63,6 +69,10 @@ impl BridgeRuntimePaths {
 
     pub(crate) fn handoff_database(&self) -> &Path {
         &self.handoff_database
+    }
+
+    pub(crate) fn message_database(&self) -> &Path {
+        &self.message_database
     }
 
     pub(crate) fn runtime_root(&self) -> &Path {
@@ -303,7 +313,12 @@ mod tests {
         drop(store);
         assert!(paths.runtime_root.is_dir());
         assert!(paths.matrix_store_root.is_dir());
+        assert!(paths.message_root.is_dir());
         assert!(paths.handoff_root.is_dir());
+        assert_eq!(
+            paths.message_database(),
+            paths.message_root.join("messages.sqlite")
+        );
         assert_eq!(
             paths.handoff_database(),
             paths.handoff_root.join("handoffs.sqlite")

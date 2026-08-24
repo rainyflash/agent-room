@@ -1,7 +1,10 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use agent_room_bridge_local_adapter::{BridgeLocationFailureKind, resolve_bridge_data_root};
-use agent_room_domain::ids::AgentId;
+use agent_room_domain::{
+    ids::{AgentId, RoomCatalogId},
+    rooms::{RoomLanguage, RoomRegion},
+};
 use uuid::{Uuid, Version};
 
 const DEFAULT_REQUEST_TIMEOUT_MILLIS: u64 = 10_000;
@@ -9,6 +12,7 @@ const DEFAULT_AUTHORIZATION_TIMEOUT_MILLIS: u64 = 10 * 60 * 1_000;
 const DEFAULT_REFRESH_LEAD_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_RECONNECT_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RECONNECT_MAXIMUM_MILLIS: u64 = 60_000;
+const DEFAULT_MATRIX_SYNC_TIMEOUT_MILLIS: u64 = 30_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
 
@@ -26,6 +30,9 @@ impl EnvironmentSource for ProcessEnvironment {
 
 pub(crate) struct BridgeConfig {
     pub(crate) agent_id: Option<AgentId>,
+    pub(crate) public_lobby_catalog_id: Option<RoomCatalogId>,
+    pub(crate) lobby_language: Option<RoomLanguage>,
+    pub(crate) lobby_region: Option<RoomRegion>,
     pub(crate) control_plane_url: String,
     pub(crate) matrix_homeserver_url: String,
     pub(crate) oidc_issuer_url: String,
@@ -36,6 +43,7 @@ pub(crate) struct BridgeConfig {
     pub(crate) refresh_lead_time: Duration,
     pub(crate) reconnect_initial_delay: Duration,
     pub(crate) reconnect_maximum_delay: Duration,
+    pub(crate) matrix_sync_timeout: Duration,
     pub(crate) import_oidc_profile: bool,
     pub(crate) data_root: PathBuf,
 }
@@ -46,6 +54,9 @@ impl BridgeConfig {
     }
 
     fn from_source(source: &impl EnvironmentSource) -> Result<Self, BridgeConfigError> {
+        let agent_id = read_optional_agent_id(source)?;
+        let public_lobby_catalog_id = read_optional_lobby_catalog_id(source)?;
+        validate_agent_lobby_pair(agent_id, public_lobby_catalog_id)?;
         let reconnect_initial_delay = read_bounded_duration(
             source,
             "AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS",
@@ -65,7 +76,10 @@ impl BridgeConfig {
             ));
         }
         Ok(Self {
-            agent_id: read_optional_agent_id(source)?,
+            agent_id,
+            public_lobby_catalog_id,
+            lobby_language: read_optional_lobby_language(source)?,
+            lobby_region: read_optional_lobby_region(source)?,
             control_plane_url: read_required_text(source, "AGENT_ROOM_CONTROL_PLANE_URL")?,
             matrix_homeserver_url: read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
             oidc_issuer_url: read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,
@@ -91,10 +105,72 @@ impl BridgeConfig {
             )?,
             reconnect_initial_delay,
             reconnect_maximum_delay,
+            matrix_sync_timeout: read_bounded_duration(
+                source,
+                "AGENT_ROOM_BRIDGE_MATRIX_SYNC_TIMEOUT_MS",
+                DEFAULT_MATRIX_SYNC_TIMEOUT_MILLIS,
+                1_000..=60_000,
+            )?,
             import_oidc_profile: read_bool(source, "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE", false)?,
             data_root: read_data_root(source)?,
         })
     }
+}
+
+fn read_optional_lobby_catalog_id(
+    source: &impl EnvironmentSource,
+) -> Result<Option<RoomCatalogId>, BridgeConfigError> {
+    let Some(value) = read_optional(source, "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID") else {
+        return Ok(None);
+    };
+    parse_uuid_v7(&value, "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID")
+        .map(RoomCatalogId::from_uuid)
+        .map(Some)
+}
+
+fn validate_agent_lobby_pair(
+    agent_id: Option<AgentId>,
+    lobby_catalog_id: Option<RoomCatalogId>,
+) -> Result<(), BridgeConfigError> {
+    match (agent_id, lobby_catalog_id) {
+        (Some(_), None) => Err(BridgeConfigError::Missing {
+            name: "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID",
+        }),
+        (None, Some(_)) => Err(BridgeConfigError::Missing {
+            name: "AGENT_ROOM_AGENT_ID",
+        }),
+        (Some(_), Some(_)) | (None, None) => Ok(()),
+    }
+}
+
+fn read_optional_lobby_language(
+    source: &impl EnvironmentSource,
+) -> Result<Option<RoomLanguage>, BridgeConfigError> {
+    read_optional(source, "AGENT_ROOM_LOBBY_LANGUAGE")
+        .map(|value| {
+            RoomLanguage::new(value.trim().to_owned()).map_err(|_| {
+                BridgeConfigError::invalid(
+                    "AGENT_ROOM_LOBBY_LANGUAGE",
+                    "必须是受支持的 BCP 47 风格语言标签",
+                )
+            })
+        })
+        .transpose()
+}
+
+fn read_optional_lobby_region(
+    source: &impl EnvironmentSource,
+) -> Result<Option<RoomRegion>, BridgeConfigError> {
+    read_optional(source, "AGENT_ROOM_LOBBY_REGION")
+        .map(|value| {
+            RoomRegion::new(value.trim().to_owned()).map_err(|_| {
+                BridgeConfigError::invalid(
+                    "AGENT_ROOM_LOBBY_REGION",
+                    "必须是小写字母、数字、连字符或下划线组成的地区提示",
+                )
+            })
+        })
+        .transpose()
 }
 
 fn read_optional_agent_id(
@@ -103,16 +179,21 @@ fn read_optional_agent_id(
     let Some(value) = read_optional(source, "AGENT_ROOM_AGENT_ID") else {
         return Ok(None);
     };
-    let id = Uuid::parse_str(value.trim()).map_err(|_| {
-        BridgeConfigError::invalid("AGENT_ROOM_AGENT_ID", "必须是控制面签发的 UUIDv7")
-    })?;
+    parse_uuid_v7(&value, "AGENT_ROOM_AGENT_ID")
+        .map(AgentId::from_uuid)
+        .map(Some)
+}
+
+fn parse_uuid_v7(value: &str, name: &'static str) -> Result<Uuid, BridgeConfigError> {
+    let id = Uuid::parse_str(value.trim())
+        .map_err(|_| BridgeConfigError::invalid(name, "必须是控制面签发的 UUIDv7"))?;
     if id.get_version() != Some(Version::SortRand) {
         return Err(BridgeConfigError::invalid(
-            "AGENT_ROOM_AGENT_ID",
+            name,
             "必须是控制面签发的 UUIDv7",
         ));
     }
-    Ok(Some(AgentId::from_uuid(id)))
+    Ok(id)
 }
 
 fn read_data_root(source: &impl EnvironmentSource) -> Result<PathBuf, BridgeConfigError> {
@@ -268,6 +349,17 @@ mod tests {
         ]))
     }
 
+    fn configure_agent_lobby(environment: &mut MapEnvironment) {
+        environment.0.insert(
+            "AGENT_ROOM_AGENT_ID",
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e44".to_owned(),
+        );
+        environment.0.insert(
+            "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID",
+            "0198b601-77a2-7f41-b4f4-940f291951b8".to_owned(),
+        );
+    }
+
     #[test]
     fn 最小配置使用安全默认值且不导入第三方资料() {
         let config = BridgeConfig::from_source(&valid_environment()).expect("最小配置有效");
@@ -277,8 +369,12 @@ mod tests {
         assert_eq!(config.refresh_lead_time.as_millis(), 120_000);
         assert_eq!(config.reconnect_initial_delay.as_millis(), 1_000);
         assert_eq!(config.reconnect_maximum_delay.as_millis(), 60_000);
+        assert_eq!(config.matrix_sync_timeout.as_millis(), 30_000);
         assert!(!config.import_oidc_profile);
         assert!(config.agent_id.is_none());
+        assert!(config.public_lobby_catalog_id.is_none());
+        assert!(config.lobby_language.is_none());
+        assert!(config.lobby_region.is_none());
         assert!(!config.device_label.is_empty());
         assert!(config.data_root.is_absolute());
     }
@@ -367,11 +463,73 @@ mod tests {
             "AGENT_ROOM_AGENT_ID",
             "0198b601-77a1-7bb8-83eb-a8fe68c97e44".to_owned(),
         );
+        environment.0.insert(
+            "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID",
+            "0198b601-77a2-7f41-b4f4-940f291951b8".to_owned(),
+        );
         assert!(
             BridgeConfig::from_source(&environment)
                 .expect("UUIDv7 Agent 标识有效")
                 .agent_id
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn agent_与公共大厅必须成对配置() {
+        let mut agent_only = valid_environment();
+        agent_only.0.insert(
+            "AGENT_ROOM_AGENT_ID",
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e44".to_owned(),
+        );
+        assert!(matches!(
+            BridgeConfig::from_source(&agent_only),
+            Err(BridgeConfigError::Missing {
+                name: "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID"
+            })
+        ));
+
+        let mut lobby_only = valid_environment();
+        lobby_only.0.insert(
+            "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID",
+            "0198b601-77a2-7f41-b4f4-940f291951b8".to_owned(),
+        );
+        assert!(matches!(
+            BridgeConfig::from_source(&lobby_only),
+            Err(BridgeConfigError::Missing {
+                name: "AGENT_ROOM_AGENT_ID"
+            })
+        ));
+    }
+
+    #[test]
+    fn 公共大厅偏好通过领域类型校验() {
+        let mut environment = valid_environment();
+        configure_agent_lobby(&mut environment);
+        environment
+            .0
+            .insert("AGENT_ROOM_LOBBY_LANGUAGE", "zh-Hans".to_owned());
+        environment
+            .0
+            .insert("AGENT_ROOM_LOBBY_REGION", "ap-southeast-1".to_owned());
+
+        let config = BridgeConfig::from_source(&environment).expect("大厅偏好有效");
+
+        assert_eq!(
+            config
+                .lobby_language
+                .as_ref()
+                .expect("应存在语言偏好")
+                .as_str(),
+            "zh-Hans"
+        );
+        assert_eq!(
+            config
+                .lobby_region
+                .as_ref()
+                .expect("应存在地区偏好")
+                .as_str(),
+            "ap-southeast-1"
         );
     }
 }
