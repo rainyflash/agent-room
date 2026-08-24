@@ -94,11 +94,12 @@ impl LoginCompletionTransaction for PostgresRepositories {
                 .begin()
                 .await
                 .map_err(|error| map_sqlx_error("login.complete", &error))?;
-            insert_principal_if_absent(&mut transaction, principal).await?;
+            insert_principal_if_absent(&mut transaction, principal, "login.complete").await?;
             let account = lock_account_by_oidc(
                 &mut transaction,
                 &principal.oidc_issuer,
                 &principal.oidc_subject,
+                "login.complete",
             )
             .await?;
             if !account.principal.allows_authentication() {
@@ -260,9 +261,10 @@ impl PrincipalSuspensionTransaction for PostgresRepositories {
     }
 }
 
-async fn insert_principal_if_absent(
+pub(crate) async fn insert_principal_if_absent(
     transaction: &mut Transaction<'_, Postgres>,
     registration: &PrincipalRegistration,
+    operation: &'static str,
 ) -> RepositoryResult<()> {
     let avatar_id = registration.avatar_content_id.map(ContentId::as_uuid);
     sqlx::query(
@@ -287,14 +289,15 @@ async fn insert_principal_if_absent(
     .bind(registration.principal.version().value())
     .execute(&mut **transaction)
     .await
-    .map_err(|error| map_sqlx_error("login.complete", &error))?;
+    .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 
-async fn lock_account_by_oidc(
+pub(crate) async fn lock_account_by_oidc(
     transaction: &mut Transaction<'_, Postgres>,
     issuer: &str,
     subject: &str,
+    operation: &'static str,
 ) -> RepositoryResult<PrincipalAccount> {
     let row = sqlx::query(
         r"SELECT id AS principal_id, status, version, matrix_user_id, display_name,
@@ -307,9 +310,9 @@ async fn lock_account_by_oidc(
     .bind(subject)
     .fetch_optional(&mut **transaction)
     .await
-    .map_err(|error| map_sqlx_error("login.complete", &error))?
-    .ok_or_else(|| RepositoryError::new("login.complete", RepositoryErrorKind::CorruptData))?;
-    decode_principal_account(&row, "login.complete")
+    .map_err(|error| map_sqlx_error(operation, &error))?
+    .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::CorruptData))?;
+    decode_principal_account(&row, operation)
 }
 
 async fn insert_web_session(
@@ -382,7 +385,7 @@ fn decode_stored_session(row: &PgRow) -> RepositoryResult<StoredWebSession> {
     })
 }
 
-fn decode_principal_account(
+pub(crate) fn decode_principal_account(
     row: &PgRow,
     operation: &'static str,
 ) -> RepositoryResult<PrincipalAccount> {

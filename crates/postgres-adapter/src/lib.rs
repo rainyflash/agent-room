@@ -1,5 +1,6 @@
 mod agents;
 mod authentication;
+mod devices;
 mod error;
 mod migrations;
 mod outbox;
