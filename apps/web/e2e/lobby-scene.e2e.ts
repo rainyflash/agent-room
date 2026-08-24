@@ -1,4 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 const fixturePath = '/e2e/fixtures/lobby-scene.html';
 
@@ -119,25 +121,4 @@ test('图形上下文不可用时自动降级且仍可查看 Agent', async ({ pa
 function percentile(values: readonly number[], ratio: number): number {
   const index = Math.min(values.length - 1, Math.floor(values.length * ratio));
   return values[index] ?? Number.POSITIVE_INFINITY;
-}
-
-function collectPageFailures(page: Page): string[] {
-  const failures: string[] = [];
-  page.on('pageerror', (error) => {
-    failures.push(error.message);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      failures.push(message.text());
-    }
-  });
-  return failures;
-}
-
-async function expectNoHorizontalOverflow(page: Page): Promise<void> {
-  const dimensions = await page.evaluate(() => ({
-    clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth,
-  }));
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }

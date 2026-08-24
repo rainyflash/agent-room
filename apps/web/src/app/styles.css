@@ -909,7 +909,7 @@
 .message-hub {
   position: absolute;
   z-index: 34;
-  bottom: 18px;
+  bottom: 96px;
   left: 20px;
   display: flex;
   max-width: calc(100% - 40px);
@@ -2469,7 +2469,7 @@
   .message-hub {
     position: fixed;
     right: 0;
-    bottom: 0;
+    bottom: 56px;
     left: 0;
     display: block;
     max-width: none;
@@ -2496,7 +2496,7 @@
 
   .message-composer {
     width: 100%;
-    max-height: calc(100svh - 64px);
+    max-height: calc(100svh - 120px);
     border-width: 1px 0 0;
     border-radius: 0;
   }
