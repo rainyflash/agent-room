@@ -262,6 +262,53 @@ function Invoke-Compose {
   }
 }
 
+function Sync-KeycloakClient {
+  $environment = Read-Environment
+  $compose = @(
+    'compose', '--project-name', $ProjectName, '--env-file', $EnvFile,
+    '--file', $ComposeFile, 'exec', '-T', 'identity'
+  )
+  $admin = '/opt/keycloak/bin/kcadm.sh'
+  $adminConfig = '/tmp/agent-room-kcadm.config'
+
+  & docker @compose $admin config credentials `
+    --config $adminConfig `
+    --server 'http://127.0.0.1:8080' `
+    --realm 'master' `
+    --user $environment.KEYCLOAK_ADMIN `
+    --password $environment.KEYCLOAK_ADMIN_PASSWORD | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw '无法登录本地 Keycloak 管理接口。'
+  }
+
+  $clientJson = & docker @compose $admin get clients `
+    --config $adminConfig `
+    --realm 'agent-room' `
+    --query 'clientId=agent-room-web'
+  if ($LASTEXITCODE -ne 0) {
+    & docker @compose rm -f $adminConfig | Out-Null
+    Write-Warning '现有 Keycloak 数据卷的管理凭据与 .env.local 不一致，无法自动迁移回调地址；全新环境不受影响。'
+    return
+  }
+  $clients = ($clientJson -join "`n") | ConvertFrom-Json
+  if ($clients.Count -ne 1) {
+    throw '本地 Keycloak 必须且只能存在一个 agent-room-web 客户端。'
+  }
+
+  $redirectUris = 'redirectUris=["https://api.agent-room.localhost/auth/oidc/callback","http://127.0.0.1:8090/auth/oidc/callback"]'
+  $webOrigins = 'webOrigins=["https://app.agent-room.localhost","http://localhost:5173"]'
+  & docker @compose $admin update "clients/$($clients[0].id)" `
+    --config $adminConfig `
+    --realm 'agent-room' `
+    --set $redirectUris `
+    --set $webOrigins | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw '无法同步本地 Keycloak 回调地址。'
+  }
+
+  & docker @compose rm -f $adminConfig | Out-Null
+}
+
 function Test-HttpEndpoint {
   param(
     [Parameter(Mandatory)][string]$Name,
@@ -339,6 +386,7 @@ switch ($Action) {
     Prepare-Environment
     Invoke-Compose -Arguments @('config', '--quiet')
     Invoke-Compose -Arguments @('up', '--detach', '--wait', '--wait-timeout', '240')
+    Sync-KeycloakClient
     Test-Services
   }
   'down' {
