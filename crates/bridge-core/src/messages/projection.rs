@@ -3,7 +3,7 @@ use agent_room_application::ports::{
     PortFuture,
 };
 use agent_room_domain::{
-    ids::{MessageId, MessageRevisionId},
+    ids::{ContentId, MessageId, MessageRevisionId},
     messages::{
         MessageContentReference, MessagePreview, MessageProvenance, MessageRelation,
         MessageRevisionKind,
@@ -291,6 +291,29 @@ pub struct MessagePreviewPage {
     next_cursor: Option<MatrixEventId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageContentSourceQuery {
+    room_id: MatrixRoomId,
+    content_id: ContentId,
+}
+
+impl MessageContentSourceQuery {
+    pub const fn new(room_id: MatrixRoomId, content_id: ContentId) -> Self {
+        Self {
+            room_id,
+            content_id,
+        }
+    }
+
+    pub const fn room_id(&self) -> &MatrixRoomId {
+        &self.room_id
+    }
+
+    pub const fn content_id(&self) -> ContentId {
+        self.content_id
+    }
+}
+
 impl MessagePreviewPage {
     pub const fn new(
         previews: Vec<ProjectedMessagePreview>,
@@ -339,6 +362,12 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         &'a self,
         query: &'a MessagePreviewQuery,
     ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>>;
+
+    /// 按正文标识读取已验证且仍有效的本地消息来源，不触发远端正文下载。
+    fn find_content_source<'a>(
+        &'a self,
+        query: &'a MessageContentSourceQuery,
+    ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>;
 }
 
 #[cfg(test)]

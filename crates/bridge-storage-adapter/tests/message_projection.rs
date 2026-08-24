@@ -4,11 +4,12 @@ use agent_room_application::ports::{
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
-        MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
-        MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailureKind,
-        MessageTimelineQueryRepository, ProjectedActorInstanceVerification, ProjectedMessageActor,
-        ProjectedMessagePreview, ProjectedMessageRevision,
+        MessageContentSourceQuery, MessagePreviewQuery, MessageProjectionBatch,
+        MessageProjectionMutation, MessageProjectionStoreFailureKind, MessageSyncIssue,
+        MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
+        MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+        ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
+        ProjectedMessageRevision,
     },
 };
 use agent_room_bridge_storage_adapter::SqliteMessageTimelineRepository;
@@ -344,6 +345,109 @@ async fn 预览查询拒绝不存在的游标() {
     assert_eq!(
         failure.kind(),
         MessageTimelineQueryFailureKind::CursorNotFound
+    );
+}
+
+#[tokio::test]
+async fn 正文来源索引随替换迁移且撤回后立即消失() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let message_id = MessageId::from_uuid(Uuid::now_v7());
+    let base = preview_mutation(
+        "$content-base:matrix.test",
+        message_id,
+        owner_actor(),
+        1_700_000_000_000,
+        "初始正文",
+        1,
+        Some(10),
+    );
+    let MessageProjectionMutation::Preview(base_preview) = &base else {
+        panic!("测试夹具必须是预览");
+    };
+    let original_content_id = base_preview.content.content_id();
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("content-base"),
+            vec![base],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("初始正文可投影");
+    assert!(
+        store
+            .find_content_source(&MessageContentSourceQuery::new(
+                room_id(),
+                original_content_id,
+            ))
+            .await
+            .expect("初始来源可查询")
+            .is_some()
+    );
+
+    let replacement = replacement_mutation(
+        "$content-replacement:matrix.test",
+        message_id,
+        owner_actor(),
+        "替换正文",
+        2,
+    );
+    let MessageProjectionMutation::Revision(revision) = &replacement else {
+        panic!("测试夹具必须是修订");
+    };
+    let replacement_content_id = revision.content.expect("替换正文存在").content_id();
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("content-replacement"),
+            vec![replacement],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("替换正文可投影");
+    assert!(
+        store
+            .find_content_source(&MessageContentSourceQuery::new(
+                room_id(),
+                original_content_id,
+            ))
+            .await
+            .expect("旧来源查询成功")
+            .is_none()
+    );
+    assert!(
+        store
+            .find_content_source(&MessageContentSourceQuery::new(
+                room_id(),
+                replacement_content_id,
+            ))
+            .await
+            .expect("替换来源可查询")
+            .is_some()
+    );
+
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("content-redaction"),
+            vec![redaction_mutation(
+                "$content-redaction:matrix.test",
+                message_id,
+                owner_actor(),
+            )],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("撤回可投影");
+    assert!(
+        store
+            .find_content_source(&MessageContentSourceQuery::new(
+                room_id(),
+                replacement_content_id,
+            ))
+            .await
+            .expect("撤回后查询成功")
+            .is_none()
     );
 }
 

@@ -1,3 +1,4 @@
+mod content;
 mod incoming;
 mod model;
 mod outgoing;
@@ -5,6 +6,12 @@ mod ports;
 mod projection;
 mod wire;
 
+pub use content::{
+    DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
+    MessageContentReadGateway, MessageContentReadRequest, OpenMessageContentDependencies,
+    OpenMessageContentFailure, OpenMessageContentFailureKind, OpenMessageContentRequest,
+    OpenMessageContentService, OpenedMessageContent,
+};
 pub use incoming::{
     MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,
     MessageEventAuthenticator, MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind,
@@ -26,10 +33,11 @@ pub use ports::{
     MessageSubmissionRepository, MessageSubmissionState,
 };
 pub use projection::{
-    MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError, MessageProjectionBatch,
-    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
-    MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
-    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+    MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError,
+    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
+    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
+    MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailure,
+    MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
     ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
     ProjectedMessageRevision,
 };

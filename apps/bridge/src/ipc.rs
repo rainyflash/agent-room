@@ -656,7 +656,7 @@ mod tests {
         agent_identity::BridgeAgentIdentity,
         messages::{
             MessagePreviewPage, MessagePreviewQuery, MessageTimelineQueryFailure,
-            MessageTimelineQueryRepository,
+            MessageTimelineQueryRepository, ProjectedMessagePreview,
         },
         ports::{
             AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
@@ -723,6 +723,14 @@ mod tests {
                 self.0.lock().expect("查询记录锁可用").push(query.clone());
                 Ok(MessagePreviewPage::new(Vec::new(), None))
             })
+        }
+
+        fn find_content_source<'a>(
+            &'a self,
+            _query: &'a agent_room_bridge_core::messages::MessageContentSourceQuery,
+        ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>
+        {
+            Box::pin(async { Ok(None) })
         }
     }
 

@@ -3,8 +3,8 @@ use std::path::Path;
 use agent_room_application::ports::{MatrixEventId, MatrixRoomId, PortFuture};
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
-    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch,
+    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
     MessageTimelineQueryRepository, ProjectedActorInstanceVerification, ProjectedMessageActor,
     ProjectedMessagePreview,
@@ -82,6 +82,13 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
     ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>> {
         Box::pin(async move { self.query_previews(query).await })
     }
+
+    fn find_content_source<'a>(
+        &'a self,
+        query: &'a MessageContentSourceQuery,
+    ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_content_source(query).await })
+    }
 }
 
 impl SqliteMessageTimelineRepository {
@@ -142,6 +149,27 @@ impl SqliteMessageTimelineRepository {
         .await
         .map_err(|error| map_query_sqlx_error(&error))?
         .ok_or_else(|| query_failure(MessageTimelineQueryFailureKind::CursorNotFound))
+    }
+
+    async fn query_content_source(
+        &self,
+        query: &MessageContentSourceQuery,
+    ) -> Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure> {
+        sqlx::query(
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND content_id = ? AND visibility = 'active'",
+        )
+        .bind(query.room_id().as_str())
+        .bind(query.content_id().to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?
+        .as_ref()
+        .map(decode_preview_row)
+        .transpose()
     }
 }
 
@@ -380,8 +408,8 @@ async fn insert_event(
             event_id, room_id, sequence, event_kind, message_id, revision_id,
             revision_kind, created_at_unix_ms, origin_server_timestamp,
             transaction_id, actor_agent_id, actor_json, preview_json,
-            content_json, relation_target_message_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            content_json, relation_target_message_id, content_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING",
     )
     .bind(&event.event_id)
@@ -399,6 +427,7 @@ async fn insert_event(
     .bind(event.preview_json.as_deref())
     .bind(event.content_json.as_deref())
     .bind(event.relation_target_message_id.as_deref())
+    .bind(event.content_id.as_deref())
     .execute(&mut **transaction)
     .await
     .map(|result| result.rows_affected())
@@ -418,13 +447,17 @@ async fn insert_current(
         .content_json
         .as_deref()
         .ok_or_else(corrupt_projection_failure)?;
+    let content_id = event
+        .content_id
+        .as_deref()
+        .ok_or_else(corrupt_projection_failure)?;
     sqlx::query(
         "INSERT INTO message_current_projection (
             message_id, room_id, base_event_id, first_sequence, last_sequence,
             created_at_unix_ms, origin_server_timestamp, actor_agent_id,
             actor_json, preview_json, content_json, relation_target_message_id,
-            visibility, last_revision_event_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL)
+            visibility, last_revision_event_id, content_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?)
          ON CONFLICT(message_id) DO NOTHING",
     )
     .bind(&event.message_id)
@@ -439,6 +472,7 @@ async fn insert_current(
     .bind(preview_json)
     .bind(content_json)
     .bind(event.relation_target_message_id.as_deref())
+    .bind(content_id)
     .execute(&mut **transaction)
     .await
     .map(|result| result.rows_affected())
@@ -452,7 +486,7 @@ async fn apply_pending_revisions(
 ) -> Result<(), MessageProjectionStoreFailure> {
     let rows = sqlx::query(
         "SELECT event_id, sequence, revision_kind, actor_agent_id,
-                preview_json, content_json
+                preview_json, content_json, content_id
          FROM message_projection_event
          WHERE room_id = ? AND message_id = ? AND event_kind = 'revision'
            AND revision_kind IN ('replace', 'redact')
@@ -487,6 +521,9 @@ async fn apply_pending_revisions(
                 content_json: row
                     .try_get("content_json")
                     .map_err(|_| corrupt_projection_failure())?,
+                content_id: row
+                    .try_get("content_id")
+                    .map_err(|_| corrupt_projection_failure())?,
             },
         )
         .await?;
@@ -511,6 +548,7 @@ async fn apply_revision(
             actor_agent_id: event.actor_agent_id.clone(),
             preview_json: event.preview_json.clone(),
             content_json: event.content_json.clone(),
+            content_id: event.content_id.clone(),
         },
     )
     .await
@@ -525,6 +563,7 @@ struct RevisionFields<'a> {
     actor_agent_id: String,
     preview_json: Option<String>,
     content_json: Option<String>,
+    content_id: Option<String>,
 }
 
 async fn apply_revision_fields(
@@ -551,15 +590,20 @@ async fn apply_replacement(
         .content_json
         .as_deref()
         .ok_or_else(corrupt_projection_failure)?;
+    let content_id = revision
+        .content_id
+        .as_deref()
+        .ok_or_else(corrupt_projection_failure)?;
     sqlx::query(
         "UPDATE message_current_projection
-         SET preview_json = ?, content_json = ?, last_revision_event_id = ?,
+         SET preview_json = ?, content_json = ?, content_id = ?, last_revision_event_id = ?,
              last_sequence = MAX(last_sequence, ?)
          WHERE room_id = ? AND message_id = ? AND actor_agent_id = ?
            AND visibility = 'active'",
     )
     .bind(preview_json)
     .bind(content_json)
+    .bind(content_id)
     .bind(&revision.event_id)
     .bind(revision.sequence)
     .bind(revision.room_id)
@@ -577,7 +621,7 @@ async fn apply_redaction(
 ) -> Result<(), MessageProjectionStoreFailure> {
     sqlx::query(
         "UPDATE message_current_projection
-         SET content_json = NULL, visibility = 'redacted',
+         SET content_json = NULL, content_id = NULL, visibility = 'redacted',
              last_revision_event_id = ?, last_sequence = MAX(last_sequence, ?)
          WHERE room_id = ? AND message_id = ? AND actor_agent_id = ?
            AND visibility = 'active'",
@@ -673,6 +717,7 @@ struct EncodedMutation {
     actor_json: String,
     preview_json: Option<String>,
     content_json: Option<String>,
+    content_id: Option<String>,
     relation_target_message_id: Option<String>,
 }
 
@@ -698,6 +743,7 @@ impl EncodedMutation {
                 actor_json: encode_actor(&preview.actor),
                 preview_json: Some(encode_preview(&preview.preview)),
                 content_json: Some(encode_content(preview.content)),
+                content_id: Some(preview.content.content_id().to_string()),
                 relation_target_message_id: preview.relation.map(relation_target),
             }),
             MessageProjectionMutation::Revision(revision) => Ok(Self {
@@ -717,6 +763,9 @@ impl EncodedMutation {
                 actor_json: encode_actor(&revision.actor),
                 preview_json: revision.preview.as_ref().map(encode_preview),
                 content_json: revision.content.map(encode_content),
+                content_id: revision
+                    .content
+                    .map(|content| content.content_id().to_string()),
                 relation_target_message_id: None,
             }),
         }
