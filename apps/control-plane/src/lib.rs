@@ -25,6 +25,7 @@ use agent_room_application::{
     devices::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
     },
+    handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
     ports::SecretValue,
     rooms::{
@@ -55,6 +56,7 @@ use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
+use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
 use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
 use observability::Observability;
@@ -76,6 +78,7 @@ struct IdentityRuntime {
 struct AgentFeatureHttpStates {
     agents: AgentHttpState,
     cards: AgentCardHttpState,
+    handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
 }
 
@@ -273,6 +276,7 @@ async fn build_identity_router(
     let routes = features::authentication::router(state)
         .merge(features::devices::router(device_state))
         .merge(features::agents::router(agent_features.agents))
+        .merge(features::handoffs::router(agent_features.handoffs))
         .merge(features::lobbies::router(agent_features.lobbies))
         .merge(features::agent_cards::router(agent_features.cards))
         .merge(content_routes);
@@ -302,10 +306,14 @@ fn build_agent_feature_states(
         dependencies.system_runtime.clone(),
         request_timeout,
     );
+    let handoffs = Arc::new(HandoffAccessService::new(HandoffAccessDependencies {
+        access: dependencies.repositories.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
     let entries = build_agent_lobby_entry(
         &config.lobby,
-        dependencies.repositories,
-        dependencies.system_runtime,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
         dependencies.matrix_identities,
     )?;
     Ok(AgentFeatureHttpStates {
@@ -321,6 +329,11 @@ fn build_agent_feature_states(
         ),
         cards: AgentCardHttpState::new(AgentCardHttpDependencies {
             cards,
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+        }),
+        handoffs: HandoffHttpState::new(HandoffHttpDependencies {
+            handoffs,
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         }),

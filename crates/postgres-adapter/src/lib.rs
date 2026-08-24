@@ -7,6 +7,7 @@ mod authentication;
 mod content;
 mod devices;
 mod error;
+mod handoffs;
 mod migrations;
 mod outbox;
 mod principals;

@@ -3,6 +3,7 @@ mod agents;
 mod audit;
 mod content;
 mod devices;
+mod handoffs;
 mod identity;
 mod matrix;
 mod notifications;
@@ -46,6 +47,9 @@ pub use devices::{
     DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
     DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
     DeviceSessionStore, DeviceSignature, DeviceTokenReplacement, StoredDeviceSession,
+};
+pub use handoffs::{
+    HandoffAccessRepository, HandoffAuthorizationSnapshot, HandoffInstanceAccessRecord,
 };
 pub use identity::{
     IdentityValueError, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,

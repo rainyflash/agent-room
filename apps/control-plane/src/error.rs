@@ -13,6 +13,7 @@ use agent_room_application::{
         IssueContentReadTicketFailure, OpenContentFailure, RedactContentFailure,
     },
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
+    handoffs::{HandoffAccessFailure, HandoffAccessFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
@@ -368,6 +369,45 @@ impl ApiError {
             correlation.id = %correlation_id.as_uuid(),
             failure = ?failure.kind(),
             "Agent 实例验签材料请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn handoff_access(
+        failure: HandoffAccessFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            HandoffAccessFailureKind::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "handoff.unauthorized",
+                ErrorCategory::Authentication,
+                "设备授权无效或已过期。",
+            ),
+            HandoffAccessFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "handoff.instance_not_found",
+                ErrorCategory::Validation,
+                "Agent 实例不存在或当前主体无权访问。",
+            ),
+            HandoffAccessFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "handoff.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "交接授权依赖暂时不可用。",
+            ),
+            HandoffAccessFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "handoff.internal",
+                ErrorCategory::Transient,
+                "交接授权服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "交接授权请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

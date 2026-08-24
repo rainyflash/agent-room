@@ -6,8 +6,9 @@ use agent_room_application::{
         AgentCardSnapshotRepository, AgentCreationClaim, AgentCreationReservation,
         AgentCreationWorkflow, AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
         AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
-        AgentMembershipTransaction, AgentRegistration, AgentRepository, OutboxMessage,
-        PrincipalRegistration, PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
+        AgentMembershipTransaction, AgentRegistration, AgentRepository, HandoffAccessRepository,
+        OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
+        StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -533,6 +534,92 @@ async fn agent_实例验签材料保留历史公钥并合并设备失效边界()
         Some(UtcMillis::new(invalidated_at_ms).expect("失效时间有效"))
     );
     assert!(historical.registered_at <= historical.invalidated_at.expect("已有失效时间"));
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 上下文交接授权在同一快照返回两个精确实例及主体角色() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 70).await;
+    let requester = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        fixture.agent_id,
+        SecretDigest::from_array([71; 32]),
+        [72; 32],
+        [73; 32],
+    );
+    let requester = register_instance(&repositories, &requester)
+        .await
+        .expect("请求实例注册成功");
+
+    let target_agent_id = AgentId::from_uuid(Uuid::now_v7());
+    AgentRepository::create(
+        &repositories,
+        &agent_registration(target_agent_id, fixture.owner_id, "handoff-target"),
+    )
+    .await
+    .expect("目标 Agent 创建成功");
+    let target = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        target_agent_id,
+        SecretDigest::from_array([74; 32]),
+        [75; 32],
+        [76; 32],
+    );
+    let target = register_instance(&repositories, &target)
+        .await
+        .expect("目标实例注册成功");
+
+    let snapshot = HandoffAccessRepository::inspect_authorization(
+        &repositories,
+        fixture.owner_id,
+        requester.instance.id(),
+        target.instance.id(),
+    )
+    .await
+    .expect("交接授权事实可读取")
+    .expect("两个实例均存在");
+    assert_eq!(snapshot.requester.agent_id, fixture.agent_id);
+    assert_eq!(snapshot.requester.role, Some(AgentRole::Owner));
+    assert!(snapshot.requester.active);
+    assert_eq!(snapshot.target.agent_id, target_agent_id);
+    assert_eq!(snapshot.target.role, Some(AgentRole::Owner));
+    assert!(snapshot.target.active);
+
+    let outsider = HandoffAccessRepository::find_instance_access(
+        &repositories,
+        fixture.operator_id,
+        target.instance.id(),
+    )
+    .await
+    .expect("无权主体查询仍返回事实")
+    .expect("目标实例存在");
+    assert_eq!(outsider.role, None);
+    assert!(outsider.active);
+
+    sqlx::query(
+        "UPDATE agent_room.agent_instance SET status = 'revoked', revoked_at = now() WHERE id = $1",
+    )
+    .bind(target.instance.id().as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("目标实例可撤销");
+    let revoked = HandoffAccessRepository::find_instance_access(
+        &repositories,
+        fixture.owner_id,
+        target.instance.id(),
+    )
+    .await
+    .expect("撤销后事实仍可读取")
+    .expect("撤销实例仍存在");
+    assert!(!revoked.active);
 
     database.close().await;
 }
