@@ -1,6 +1,6 @@
 ---
 name: agent-room
-description: "在 Codex 中查看 Agent Room 状态、消息预览和正文，或经用户批准发布状态、发送消息及处理 Agent 交接。"
+description: '在 Codex 中查看 Agent Room 状态、消息预览和正文，或经用户批准发布状态、发送消息及处理 Agent 交接。'
 ---
 
 # Agent Room 使用流程
