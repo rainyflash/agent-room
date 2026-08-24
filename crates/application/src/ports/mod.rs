@@ -31,7 +31,15 @@ pub use identity::{
     SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession, VerifiedOidcIdentity,
     WebSessionRegistration, WebSessionStore,
 };
-pub use matrix::{MatrixEvent, MatrixGateway};
+pub use matrix::{
+    MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken,
+    MatrixClientFactory, MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
+    MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixLogin,
+    MatrixOperation, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction, MatrixResult,
+    MatrixRetryPolicy, MatrixRoomId, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixSyncBatch, MatrixSyncRequest,
+    MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
+};
 pub use notifications::NotificationSink;
 pub use outbox::{
     ClaimedOutboxEvent, OutboxBacklog, OutboxClaim, OutboxFailure, OutboxFailureOutcome,
