@@ -87,6 +87,14 @@ services:
       - ${AGENT_ROOM_LOCAL_DIR:?缺少 AGENT_ROOM_LOCAL_DIR}/generated/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     restart: unless-stopped
 
+  content-scanner:
+    image: clamav/clamav:1.5.4
+    ports:
+      - '127.0.0.1:13310:3310'
+    volumes:
+      - clamav-data:/var/lib/clamav
+    restart: unless-stopped
+
   mail:
     image: axllent/mailpit:v1.31.0
     environment:
@@ -133,5 +141,6 @@ services:
 volumes:
   caddy-config:
   caddy-data:
+  clamav-data:
   object-data:
   postgres-data:

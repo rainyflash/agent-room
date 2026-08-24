@@ -63,19 +63,25 @@ function Read-Environment {
 function Write-Environment {
   if (Test-Path -LiteralPath $EnvFile) {
     $current = Read-Environment
-    $missingSecrets = [ordered]@{}
+    $missingValues = [ordered]@{}
     if (-not $current.ContainsKey('AGENT_ROOM_DB_RUNTIME_PASSWORD')) {
-      $missingSecrets.AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
+      $missingValues.AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
     }
     if (-not $current.ContainsKey('SYNAPSE_APPSERVICE_TOKEN')) {
-      $missingSecrets.SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
+      $missingValues.SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
     }
     if (-not $current.ContainsKey('SYNAPSE_APPSERVICE_HS_TOKEN')) {
-      $missingSecrets.SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
+      $missingValues.SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
     }
-    if ($missingSecrets.Count -gt 0) {
+    if (-not $current.ContainsKey('CONTENT_TICKET_SECRET')) {
+      $missingValues.CONTENT_TICKET_SECRET = New-RandomSecret
+    }
+    if (-not $current.ContainsKey('CONTENT_MATRIX_AGENT_ID')) {
+      $missingValues.CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
+    }
+    if ($missingValues.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
-      $appended = ($missingSecrets.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
+      $appended = ($missingValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
       Write-Utf8File -Path $EnvFile -Content ("$existing`n$appended`n")
     }
     return
@@ -99,6 +105,8 @@ function Write-Environment {
     SYNAPSE_FORM_SECRET = New-RandomSecret
     S3_ACCESS_KEY = 'agentroomlocal'
     S3_SECRET_KEY = New-RandomSecret
+    CONTENT_TICKET_SECRET = New-RandomSecret
+    CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     SEED_ADMIN_PASSWORD = New-RandomSecret
     SEED_AGENT_PASSWORD = New-RandomSecret
     SEED_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a3'
@@ -431,6 +439,10 @@ function Test-Services {
   $results += Test-HttpEndpoint -Name 'Synapse' -Url 'http://127.0.0.1:18008/_matrix/client/versions'
   $results += Test-HttpEndpoint -Name 'Keycloak' -Url 'http://127.0.0.1:18080/realms/agent-room'
   $results += Test-HttpEndpoint -Name 'SeaweedFS S3' -Url 'http://127.0.0.1:19333/cluster/status'
+  & docker compose --project-name $ProjectName --env-file $EnvFile --file $ComposeFile exec -T content-scanner clamdscan --ping 5 | Out-Null
+  $scannerHealthy = $LASTEXITCODE -eq 0
+  Write-Host ($(if ($scannerHealthy) { '✓ ClamAV' } else { '✗ ClamAV' }))
+  $results += $scannerHealthy
   $results += Test-HttpEndpoint -Name 'Mailpit' -Url 'http://127.0.0.1:18025/api/v1/info'
   $results += Test-HttpEndpoint -Name 'OpenTelemetry Collector' -Url 'http://127.0.0.1:13134/'
   $results += Test-HttpEndpoint -Name 'Caddy 内部 TLS' -Url 'https://gateway.agent-room.localhost:18443/healthz' -AllowInvalidCertificate
@@ -475,7 +487,7 @@ switch ($Action) {
   'up' {
     Prepare-Environment
     Invoke-Compose -Arguments @('config', '--quiet')
-    Invoke-Compose -Arguments @('up', '--detach', '--wait', '--wait-timeout', '240')
+    Invoke-Compose -Arguments @('up', '--detach', '--wait', '--wait-timeout', '420')
     Sync-KeycloakClient
     Test-Services
   }

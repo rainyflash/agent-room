@@ -32,14 +32,19 @@ def read_environment(path: Path) -> dict[str, str]:
 
 
 def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[str, str]:
-    required_secrets = {
-        "AGENT_ROOM_DB_RUNTIME_PASSWORD": values.get(
-            "AGENT_ROOM_DB_RUNTIME_PASSWORD"
-        ),
-        "KEYCLOAK_CLIENT_SECRET": values.get("KEYCLOAK_CLIENT_SECRET"),
-        "SYNAPSE_APPSERVICE_TOKEN": values.get("SYNAPSE_APPSERVICE_TOKEN"),
+    required_values = {
+        name: values.get(name)
+        for name in (
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD",
+            "KEYCLOAK_CLIENT_SECRET",
+            "SYNAPSE_APPSERVICE_TOKEN",
+            "S3_ACCESS_KEY",
+            "S3_SECRET_KEY",
+            "CONTENT_TICKET_SECRET",
+            "CONTENT_MATRIX_AGENT_ID",
+        )
     }
-    missing = [name for name, value in required_secrets.items() if not value]
+    missing = [name for name, value in required_values.items() if not value]
     if missing:
         raise RuntimeError(f".env.local 缺少 {', '.join(missing)}。")
 
@@ -51,24 +56,37 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
             "AGENT_ROOM_DB_PORT": "55432",
             "AGENT_ROOM_DB_NAME": "agent_room",
             "AGENT_ROOM_DB_USER": "agent_room_runtime",
-            "AGENT_ROOM_DB_RUNTIME_PASSWORD": required_secrets[
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD": required_values[
                 "AGENT_ROOM_DB_RUNTIME_PASSWORD"
             ],
             "AGENT_ROOM_DB_TLS_MODE": "disable",
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
-            "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN": required_secrets[
+            "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN": required_values[
                 "SYNAPSE_APPSERVICE_TOKEN"
             ],
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
                 "http://127.0.0.1:19333/cluster/status"
             ),
             "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS": "2000",
+            "AGENT_ROOM_CONTENT_S3_ENDPOINT": "http://127.0.0.1:18333",
+            "AGENT_ROOM_CONTENT_S3_BUCKET": "agent-room-content",
+            "AGENT_ROOM_CONTENT_S3_REGION": "us-east-1",
+            "AGENT_ROOM_CONTENT_S3_ACCESS_KEY": required_values["S3_ACCESS_KEY"],
+            "AGENT_ROOM_CONTENT_S3_SECRET_KEY": required_values["S3_SECRET_KEY"],
+            "AGENT_ROOM_CONTENT_SCANNER_ADDRESS": "127.0.0.1:13310",
+            "AGENT_ROOM_CONTENT_TICKET_KEY_ID": "local-v1",
+            "AGENT_ROOM_CONTENT_TICKET_SECRET": required_values[
+                "CONTENT_TICKET_SECRET"
+            ],
+            "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID": required_values[
+                "CONTENT_MATRIX_AGENT_ID"
+            ],
             "AGENT_ROOM_OIDC_ISSUER_URL": (
                 "http://127.0.0.1:18080/realms/agent-room"
             ),
             "AGENT_ROOM_OIDC_CLIENT_ID": "agent-room-web",
             "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID": "agent-room-bridge",
-            "AGENT_ROOM_OIDC_CLIENT_SECRET": required_secrets[
+            "AGENT_ROOM_OIDC_CLIENT_SECRET": required_values[
                 "KEYCLOAK_CLIENT_SECRET"
             ],
             "AGENT_ROOM_OIDC_REDIRECT_URL": (
