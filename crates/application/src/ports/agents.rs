@@ -110,7 +110,7 @@ pub trait AgentRepository: Send + Sync {
     fn save<'a>(&'a self, agent: &'a Agent) -> PortFuture<'a, RepositoryResult<Agent>>;
 }
 
-/// 为跨 Matrix 和 PostgreSQL 的 Agent 创建流程保留稳定业务标识。
+/// 为跨 Matrix 和 `PostgreSQL` 的 Agent 创建流程保留稳定业务标识。
 pub trait AgentCreationWorkflow: Send + Sync {
     fn reserve<'a>(
         &'a self,

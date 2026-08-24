@@ -31,7 +31,7 @@ impl AgentMembershipRepository for PostgresRepositories {
                     .fetch_optional(self.pool())
                     .await
                     .map_err(|error| map_sqlx_error("agent_membership.find", &error))?;
-            if !status.is_some_and(|status| status == "active") {
+            if status.is_none_or(|status| status != "active") {
                 return Ok(None);
             }
 

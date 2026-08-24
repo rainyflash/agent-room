@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod authentication;
 pub mod devices;
 pub mod health;

@@ -412,6 +412,11 @@ impl AgentMemberships {
         Ok(())
     }
 
+    /// 校验成员是否可以代表 Agent 注册运行实例。
+    ///
+    /// # Errors
+    ///
+    /// 主体不是活跃 Owner 或 Operator 时返回无权操作错误。
     pub fn ensure_can_register_instance(&self, principal_id: PrincipalId) -> DomainResult<()> {
         if self
             .role_of(principal_id)

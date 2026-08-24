@@ -7,6 +7,7 @@ use agent_room_application::{
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
         OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
+        StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -371,39 +372,11 @@ async fn agent_成员变更只允许_owner_且不能移除最后一个_owner() {
 async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
-    let operator_id = PrincipalId::from_uuid(Uuid::now_v7());
-    PrincipalRepository::create(
-        &repositories,
-        &principal_registration(owner_id, "Instance Owner"),
-    )
-    .await
-    .expect("Owner 创建应成功");
-    PrincipalRepository::create(
-        &repositories,
-        &principal_registration(operator_id, "Instance Operator"),
-    )
-    .await
-    .expect("Operator 创建应成功");
-    let owner_device = DeviceId::from_uuid(Uuid::now_v7());
-    insert_verified_device(&database.runtime, owner_device, owner_id, 11).await;
-
-    let agent_id = AgentId::from_uuid(Uuid::now_v7());
-    AgentRepository::create(
-        &repositories,
-        &agent_registration(agent_id, owner_id, "instance-agent"),
-    )
-    .await
-    .expect("Agent 创建应成功");
-    let grant_operator =
-        membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
-    AgentMembershipTransaction::apply_change(
-        &repositories,
-        &grant_operator,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("Owner 应能授予 Operator");
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories).await;
+    let owner_id = fixture.owner_id;
+    let operator_id = fixture.operator_id;
+    let owner_device = fixture.owner_device;
+    let agent_id = fixture.agent_id;
 
     let request_id = AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7());
     let fingerprint = SecretDigest::from_array([31; 32]);
@@ -416,13 +389,9 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
         [41; 32],
         [51; 32],
     );
-    let first = AgentInstanceRegistrationTransaction::register_with_event(
-        &repositories,
-        &registration,
-        &instance_event(&registration),
-    )
-    .await
-    .expect("Owner 的已验证设备应能注册实例");
+    let first = register_instance(&repositories, &registration)
+        .await
+        .expect("Owner 的已验证设备应能注册实例");
 
     let repeated = instance_registration(
         request_id,
@@ -433,13 +402,9 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
         [41; 32],
         [51; 32],
     );
-    let replay = AgentInstanceRegistrationTransaction::register_with_event(
-        &repositories,
-        &repeated,
-        &instance_event(&repeated),
-    )
-    .await
-    .expect("重复请求必须返回既有实例");
+    let replay = register_instance(&repositories, &repeated)
+        .await
+        .expect("重复请求必须返回既有实例");
     assert_eq!(replay.binding.id(), first.binding.id());
     assert_eq!(replay.instance.id(), first.instance.id());
 
@@ -452,14 +417,13 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
         [41; 32],
         [51; 32],
     );
-    let error = AgentInstanceRegistrationTransaction::register_with_event(
+    assert_instance_registration_failure(
         &repositories,
         &changed_body,
-        &instance_event(&changed_body),
+        RepositoryErrorKind::Conflict,
+        "相同请求 ID 不得篡改请求体",
     )
-    .await
-    .expect_err("相同请求 ID 不得篡改请求体");
-    assert_eq!(error.kind(), RepositoryErrorKind::Conflict);
+    .await;
 
     let stolen_device = instance_registration(
         AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
@@ -470,14 +434,13 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
         [42; 32],
         [52; 32],
     );
-    let error = AgentInstanceRegistrationTransaction::register_with_event(
+    assert_instance_registration_failure(
         &repositories,
         &stolen_device,
-        &instance_event(&stolen_device),
+        RepositoryErrorKind::Forbidden,
+        "Operator 不得借用他人的设备注册实例",
     )
-    .await
-    .expect_err("Operator 不得借用他人的设备注册实例");
-    assert_eq!(error.kind(), RepositoryErrorKind::Forbidden);
+    .await;
 
     let impersonation = instance_registration(
         AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
@@ -488,14 +451,13 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
         [43; 32],
         [51; 32],
     );
-    let error = AgentInstanceRegistrationTransaction::register_with_event(
+    assert_instance_registration_failure(
         &repositories,
         &impersonation,
-        &instance_event(&impersonation),
+        RepositoryErrorKind::Conflict,
+        "同一实例公钥不得绑定到另一个适配器主体",
     )
-    .await
-    .expect_err("同一实例公钥不得绑定到另一个适配器主体");
-    assert_eq!(error.kind(), RepositoryErrorKind::Conflict);
+    .await;
 
     let event_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_type = 'agent_instance'",
@@ -674,6 +636,53 @@ fn membership_event(agent_id: AgentId) -> OutboxMessage {
     .expect("成员事件有效")
 }
 
+struct InstanceFixture {
+    owner_id: PrincipalId,
+    operator_id: PrincipalId,
+    owner_device: DeviceId,
+    agent_id: AgentId,
+}
+
+async fn prepare_instance_fixture(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+) -> InstanceFixture {
+    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let operator_id = PrincipalId::from_uuid(Uuid::now_v7());
+    for (id, name) in [
+        (owner_id, "Instance Owner"),
+        (operator_id, "Instance Operator"),
+    ] {
+        PrincipalRepository::create(repositories, &principal_registration(id, name))
+            .await
+            .expect("实例成员主体创建应成功");
+    }
+    let owner_device = DeviceId::from_uuid(Uuid::now_v7());
+    insert_verified_device(pool, owner_device, owner_id, 11).await;
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    AgentRepository::create(
+        repositories,
+        &agent_registration(agent_id, owner_id, "instance-agent"),
+    )
+    .await
+    .expect("Agent 创建应成功");
+    let grant_operator =
+        membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
+    AgentMembershipTransaction::apply_change(
+        repositories,
+        &grant_operator,
+        &membership_event(agent_id),
+    )
+    .await
+    .expect("Owner 应能授予 Operator");
+    InstanceFixture {
+        owner_id,
+        operator_id,
+        owner_device,
+        agent_id,
+    }
+}
+
 async fn insert_verified_device(
     pool: &PgPool,
     device_id: DeviceId,
@@ -754,6 +763,30 @@ fn instance_event(registration: &AgentInstanceRegistration) -> OutboxMessage {
         test_time(),
     )
     .expect("实例注册事件有效")
+}
+
+async fn register_instance(
+    repositories: &PostgresRepositories,
+    registration: &AgentInstanceRegistration,
+) -> agent_room_application::persistence::RepositoryResult<StoredAgentInstanceRegistration> {
+    AgentInstanceRegistrationTransaction::register_with_event(
+        repositories,
+        registration,
+        &instance_event(registration),
+    )
+    .await
+}
+
+async fn assert_instance_registration_failure(
+    repositories: &PostgresRepositories,
+    registration: &AgentInstanceRegistration,
+    expected_kind: RepositoryErrorKind,
+    reason: &str,
+) {
+    let error = register_instance(repositories, registration)
+        .await
+        .expect_err(reason);
+    assert_eq!(error.kind(), expected_kind);
 }
 
 fn test_time() -> UtcMillis {
