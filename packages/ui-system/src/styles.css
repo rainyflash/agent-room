@@ -29,7 +29,9 @@
   --ar-ink-48: color-mix(in srgb, var(--color-ink) 48%, transparent);
   --ar-ink-18: color-mix(in srgb, var(--color-ink) 18%, transparent);
   --ar-ink-09: color-mix(in srgb, var(--color-ink) 9%, transparent);
+  --ar-ink-04: color-mix(in srgb, var(--color-ink) 4%, transparent);
   --ar-paper-72: color-mix(in srgb, var(--color-paper) 72%, transparent);
+  --ar-paper-48: color-mix(in srgb, var(--color-paper) 48%, transparent);
   --ar-paper-18: color-mix(in srgb, var(--color-paper) 18%, transparent);
   --ar-paper-10: color-mix(in srgb, var(--color-paper) 10%, transparent);
   --ar-shadow-short: 0 10px 30px color-mix(in srgb, var(--color-ink) 12%, transparent);

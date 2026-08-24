@@ -14,33 +14,58 @@ import type {
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
+import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
+import type { MessageGateway } from '@/features/messages/domain/message';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
-import { ok } from '@/shared/result';
+import { err, ok } from '@/shared/result';
 
 const room = testRoom(200);
 const lobby: LobbyGateway = {
   read: () => ok(room),
   subscribe: () => noop,
 };
+const messages: MessageGateway = {
+  read: () =>
+    ok({
+      messages: [],
+      observedAtUnixMs: Date.now(),
+      roomId: room.roomId,
+    }),
+  subscribe: () => noop,
+};
+const content: ContentGateway = {
+  download: () => Promise.resolve(err({ code: 'content.download_rejected', retryable: false })),
+  issueReadTicket: () =>
+    Promise.resolve(err({ code: 'content.ticket_rejected', retryable: false })),
+};
+const contentVerifier: ContentVerifier = {
+  verify: () => Promise.resolve(err({ code: 'content.invalid_response', retryable: false })),
+};
 const services: AppServices = {
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
     matrixHomeserverUrl: 'https://matrix.agent-room.test',
   },
+  content,
+  contentVerifier,
   controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
   lobby,
+  messages,
 };
 
 function LobbyFixture() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   return (
     <I18nextProvider i18n={i18n}>
       <AppServicesProvider services={services}>
         <LobbyPage
           catalogId="public-builders"
           onSelectedAgentChange={setSelectedAgentId}
+          onSelectedMessageChange={setSelectedMessageId}
           roomId={room.roomId}
           selectedAgentId={selectedAgentId}
+          selectedMessageId={selectedMessageId}
         />
       </AppServicesProvider>
     </I18nextProvider>

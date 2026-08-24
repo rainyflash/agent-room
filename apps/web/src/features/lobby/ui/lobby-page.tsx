@@ -18,19 +18,24 @@ import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { SceneSemanticRoster } from '@/features/lobby/ui/scene-semantic-roster';
 import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock';
 import { useCompactLobby } from '@/features/lobby/ui/use-compact-lobby';
+import { MessageLayer } from '@/features/messages/ui/message-layer';
 
 export type LobbyPageProps = {
   readonly catalogId: string;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
+  readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
+  readonly selectedMessageId: string | null;
 };
 
 export function LobbyPage({
   catalogId,
   onSelectedAgentChange,
+  onSelectedMessageChange,
   roomId,
   selectedAgentId,
+  selectedMessageId,
 }: LobbyPageProps) {
   const { lobby } = useAppServices();
   const roomStore = useMemo(() => new LobbyRoomStore(lobby, roomId), [lobby, roomId]);
@@ -49,8 +54,10 @@ export function LobbyPage({
       catalogId={catalogId}
       key={state.room.roomId}
       onSelectedAgentChange={onSelectedAgentChange}
+      onSelectedMessageChange={onSelectedMessageChange}
       room={state.room}
       selectedAgentId={selectedAgentId}
+      selectedMessageId={selectedMessageId}
     />
   );
 }
@@ -59,7 +66,14 @@ type ReadyLobbyProps = Omit<LobbyPageProps, 'roomId'> & {
   readonly room: LobbyRoom;
 };
 
-function ReadyLobby({ catalogId, onSelectedAgentChange, room, selectedAgentId }: ReadyLobbyProps) {
+function ReadyLobby({
+  catalogId,
+  onSelectedAgentChange,
+  onSelectedMessageChange,
+  room,
+  selectedAgentId,
+  selectedMessageId,
+}: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
   const compact = useCompactLobby();
   const listRef = useRef<ListModeRosterHandle>(null);
@@ -179,6 +193,11 @@ function ReadyLobby({ catalogId, onSelectedAgentChange, room, selectedAgentId }:
           />
         )}
       </AnimatePresence>
+      <MessageLayer
+        onSelectedMessageChange={onSelectedMessageChange}
+        roomId={room.roomId}
+        selectedMessageId={selectedMessageId}
+      />
       {compact ? null : (
         <SignalDock
           mode={mode}

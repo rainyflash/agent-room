@@ -8,6 +8,7 @@ import { ConnectionPage } from '@/features/session/ui/connection-page';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
+  lobbySearchWithMessage,
   normalizeConnectSearch,
   normalizeLobbySearch,
   routeIdentifierSchema,
@@ -109,8 +110,15 @@ function LobbyInstanceBoundary() {
             search: (previous) => lobbySearchWithAgent(previous, agentId),
           });
         }}
+        onSelectedMessageChange={(messageId) => {
+          void navigate({
+            replace: true,
+            search: (previous) => lobbySearchWithMessage(previous, messageId),
+          });
+        }}
         roomId={roomId}
         selectedAgentId={search.agent ?? null}
+        selectedMessageId={search.message ?? null}
       />
     </Suspense>
   );

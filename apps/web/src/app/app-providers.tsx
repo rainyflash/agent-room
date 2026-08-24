@@ -6,6 +6,10 @@ import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
+import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
+import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
+import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
+import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { SessionProvider } from '@/features/session/ui/session-provider';
@@ -44,6 +48,9 @@ function createRuntime(config: RuntimeConfig) {
     },
   });
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
+  const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
+  const content = new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl });
+  const contentVerifier = new BrowserContentVerifier();
   const browser = new WindowBrowserGateway();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -53,7 +60,14 @@ function createRuntime(config: RuntimeConfig) {
       },
     },
   });
-  const services: AppServices = { config, controlPlane, lobby };
+  const services: AppServices = {
+    config,
+    content,
+    contentVerifier,
+    controlPlane,
+    lobby,
+    messages,
+  };
 
   return {
     queryClient,

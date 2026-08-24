@@ -45,6 +45,14 @@ export function lobbySearchWithAgent(search: LobbySearch, agentId: string | null
   return {
     ...(agentId === null ? {} : { agent: agentId }),
     ...(search.directory === undefined ? {} : { directory: search.directory }),
-    ...(search.message === undefined ? {} : { message: search.message }),
+    ...(agentId === null && search.message !== undefined ? { message: search.message } : {}),
+  };
+}
+
+export function lobbySearchWithMessage(search: LobbySearch, messageId: string | null): LobbySearch {
+  return {
+    ...(messageId === null && search.agent !== undefined ? { agent: search.agent } : {}),
+    ...(search.directory === undefined ? {} : { directory: search.directory }),
+    ...(messageId === null ? {} : { message: messageId }),
   };
 }
