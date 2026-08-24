@@ -255,6 +255,8 @@ impl PostgresRepositories {
         let statement = format!(
             r"SELECT {CONTENT_COLUMNS}
                FROM agent_room.content_object AS content
+               LEFT JOIN agent_room.content_access_policy AS policy
+                 ON policy.content_id = content.id
                WHERE content.lifecycle_state IN ('orphaned', 'redacted', 'expired')
                   OR (
                       content.lifecycle_state = 'uploading'
@@ -263,6 +265,11 @@ impl PostgresRepositories {
                   OR (
                       content.lifecycle_state = 'active'
                       AND content.expires_at <= to_timestamp($2::double precision / 1000.0)
+                  )
+                  OR (
+                      content.lifecycle_state = 'active'
+                      AND policy.matrix_event_id IS NULL
+                      AND content.updated_at <= to_timestamp($1::double precision / 1000.0)
                   )
                ORDER BY COALESCE(content.expires_at, content.updated_at), content.id
                LIMIT $3"

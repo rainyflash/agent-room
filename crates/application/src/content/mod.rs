@@ -1,6 +1,13 @@
+mod lifecycle;
 mod read;
 mod upload;
 
+pub use lifecycle::{
+    BindContentEventDependencies, BindContentEventFailure, BindContentEventOutcome,
+    BindContentEventRequest, BindContentEventService, CleanupContentDependencies,
+    CleanupContentFailure, CleanupContentItemFailure, CleanupContentItemFailureCause,
+    CleanupContentOutcome, CleanupContentPolicy, CleanupContentService, ContentCleanupStage,
+};
 pub use read::{
     ContentReadTicketLifetime, IssueContentReadTicketDependencies, IssueContentReadTicketFailure,
     IssueContentReadTicketRequest, IssueContentReadTicketService, IssuedContentReadTicket,

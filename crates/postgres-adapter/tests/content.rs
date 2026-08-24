@@ -170,18 +170,22 @@ async fn 扫描激活事件绑定与孤儿删除按单向状态持久化() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 回收查询同时发现卡死上传和到期活跃内容() {
+async fn 回收查询同时发现卡死上传_到期内容和未绑定事件的活跃对象() {
     let database = TestDatabase::connect().await;
     let owner = seed_principal(&database.runtime).await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let stale = upload_claim(owner, ContentUploadRequestId::from_uuid(Uuid::now_v7()), 31);
     let expiring = upload_claim(owner, ContentUploadRequestId::from_uuid(Uuid::now_v7()), 32);
+    let unbound = upload_claim(owner, ContentUploadRequestId::from_uuid(Uuid::now_v7()), 33);
     ContentRepository::claim_upload(&repositories, &stale)
         .await
         .expect("卡死上传声明成功");
     ContentRepository::claim_upload(&repositories, &expiring)
         .await
         .expect("待到期声明成功");
+    ContentRepository::claim_upload(&repositories, &unbound)
+        .await
+        .expect("未绑定事件声明成功");
     ContentRepository::record_scan(
         &repositories,
         expiring.content.id(),
@@ -193,12 +197,23 @@ async fn 回收查询同时发现卡死上传和到期活跃内容() {
     ContentRepository::activate(&repositories, expiring.content.id(), time(3_000))
         .await
         .expect("激活成功");
+    ContentRepository::record_scan(
+        &repositories,
+        unbound.content.id(),
+        ContentScanState::Clean,
+        time(2_000),
+    )
+    .await
+    .expect("扫描成功");
+    ContentRepository::activate(&repositories, unbound.content.id(), time(3_000))
+        .await
+        .expect("未绑定对象激活成功");
 
     let candidates = ContentRepository::list_reclaimable(
         &repositories,
         &ReclaimableContentQuery {
             now: time(10_000),
-            orphaned_before: time(1_500),
+            orphaned_before: time(3_500),
             limit: 20,
         },
     )
@@ -207,6 +222,7 @@ async fn 回收查询同时发现卡死上传和到期活跃内容() {
     let ids: Vec<ContentId> = candidates.iter().map(ContentObject::id).collect();
     assert!(ids.contains(&stale.content.id()));
     assert!(ids.contains(&expiring.content.id()));
+    assert!(ids.contains(&unbound.content.id()));
 
     database.close().await;
 }
