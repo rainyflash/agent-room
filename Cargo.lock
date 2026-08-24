@@ -33,9 +33,14 @@ dependencies = [
  "agent-room-bridge-core",
  "agent-room-domain",
  "agent-room-identity-adapter",
+ "axum",
+ "base64 0.22.1",
  "keyring",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "tokio",
+ "url",
  "uuid",
 ]
 
