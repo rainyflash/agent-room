@@ -1,11 +1,14 @@
 use std::{error::Error, time::Duration};
 
 use agent_room_application::ports::{
-    DeviceProofVerifier, DeviceSignature, OidcAuthorizationOptions, OidcAuthorizationRequest,
-    OidcCodeExchange, OidcFailure, OidcFailureKind, OidcGateway, OidcResult, PortFuture,
-    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
+    AgentInstanceSignatureVerifier, DeviceProofVerifier, DeviceSignature, OidcAuthorizationOptions,
+    OidcAuthorizationRequest, OidcCodeExchange, OidcFailure, OidcFailureKind, OidcGateway,
+    OidcResult, PortFuture, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
+    VerifiedOidcIdentity,
 };
-use agent_room_domain::{devices::DevicePublicSigningKey, time::UtcMillis};
+use agent_room_domain::{
+    agents::AgentInstancePublicSigningKey, devices::DevicePublicSigningKey, time::UtcMillis,
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use openidconnect::{
@@ -41,14 +44,36 @@ impl DeviceProofVerifier for Ed25519DeviceProofVerifier {
         signed_message: &[u8],
         signature: &DeviceSignature,
     ) -> bool {
-        let Ok(verifying_key) = VerifyingKey::from_bytes(public_key.as_bytes()) else {
-            return false;
-        };
-        let signature = Signature::from_bytes(signature.as_bytes());
-        verifying_key
-            .verify_strict(signed_message, &signature)
-            .is_ok()
+        verify_ed25519(public_key.as_bytes(), signed_message, signature)
     }
+}
+
+/// Ed25519 Agent 实例事件签名的验签适配器。
+pub struct Ed25519AgentInstanceSignatureVerifier;
+
+impl AgentInstanceSignatureVerifier for Ed25519AgentInstanceSignatureVerifier {
+    fn verify(
+        &self,
+        public_key: &AgentInstancePublicSigningKey,
+        signed_message: &[u8],
+        signature: &DeviceSignature,
+    ) -> bool {
+        verify_ed25519(public_key.as_bytes(), signed_message, signature)
+    }
+}
+
+fn verify_ed25519(
+    public_key: &[u8; 32],
+    signed_message: &[u8],
+    signature: &DeviceSignature,
+) -> bool {
+    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let signature = Signature::from_bytes(signature.as_bytes());
+    verifying_key
+        .verify_strict(signed_message, &signature)
+        .is_ok()
 }
 
 /// 只应由 Bridge 组合根持有的 Ed25519 设备私钥。
@@ -386,10 +411,14 @@ pub enum OidcAdapterConfigurationError {
 
 #[cfg(test)]
 mod tests {
-    use agent_room_application::ports::{DeviceProofVerifier, SecretFactory, SecretValue};
+    use agent_room_application::ports::{
+        AgentInstanceSignatureVerifier, DeviceProofVerifier, SecretFactory, SecretValue,
+    };
+    use agent_room_domain::agents::AgentInstancePublicSigningKey;
 
     use super::{
-        Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey, OidcAdapterConfig, SecureSecretFactory,
+        Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey,
+        OidcAdapterConfig, SecureSecretFactory,
     };
 
     #[test]
@@ -442,5 +471,20 @@ mod tests {
             &signature
         ));
         assert_eq!(format!("{encoded:?}"), "[已脱敏]");
+    }
+
+    #[test]
+    fn agent_实例验签使用独立领域键类型且拒绝篡改() {
+        let signing_key = Ed25519DeviceSigningKey::generate().expect("系统随机源可用");
+        let signature = signing_key
+            .sign(b"agent-instance-event")
+            .expect("签名可生成");
+        let public_key = signing_key.public_key().expect("公钥可导出");
+        let instance_key = AgentInstancePublicSigningKey::new(public_key.as_bytes().to_vec())
+            .expect("实例公钥有效");
+        let verifier = Ed25519AgentInstanceSignatureVerifier;
+
+        assert!(verifier.verify(&instance_key, b"agent-instance-event", &signature));
+        assert!(!verifier.verify(&instance_key, b"agent-instance-event-tampered", &signature));
     }
 }
