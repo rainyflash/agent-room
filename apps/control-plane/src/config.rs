@@ -15,6 +15,8 @@ const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
+const DEFAULT_LOBBY_RESERVATION_LIFETIME_MILLIS: u64 = 60 * 1_000;
+const DEFAULT_LOBBY_PROVISIONING_LEASE_MILLIS: u64 = 30 * 1_000;
 const DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS: u64 = 30_000;
 const DEFAULT_CONTENT_SCANNER_CONNECT_TIMEOUT_MILLIS: u64 = 2_000;
 const DEFAULT_CONTENT_SCANNER_TIMEOUT_MILLIS: u64 = 60_000;
@@ -113,6 +115,12 @@ pub(crate) struct AgentIdentityConfig {
 }
 
 #[derive(Clone)]
+pub(crate) struct LobbyConfig {
+    pub(crate) reservation_lifetime: Duration,
+    pub(crate) provisioning_lease_lifetime: Duration,
+}
+
+#[derive(Clone)]
 pub(crate) struct ContentConfig {
     pub(crate) object_store_endpoint: Url,
     pub(crate) object_store_bucket: String,
@@ -141,6 +149,7 @@ pub(crate) struct ControlPlaneConfig {
     pub(crate) dependencies: DependencyConfig,
     pub(crate) authentication: AuthenticationConfig,
     pub(crate) agent_identity: AgentIdentityConfig,
+    pub(crate) lobby: LobbyConfig,
     pub(crate) content: ContentConfig,
     pub(crate) observability: ObservabilityConfig,
 }
@@ -156,10 +165,28 @@ impl ControlPlaneConfig {
             dependencies: read_dependency_config(source)?,
             authentication: read_authentication_config(source)?,
             agent_identity: read_agent_identity_config(source)?,
+            lobby: read_lobby_config(source)?,
             content: read_content_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_lobby_config(source: &impl EnvironmentSource) -> Result<LobbyConfig, ConfigError> {
+    Ok(LobbyConfig {
+        reservation_lifetime: read_bounded_duration(
+            source,
+            "AGENT_ROOM_LOBBY_RESERVATION_TTL_MS",
+            DEFAULT_LOBBY_RESERVATION_LIFETIME_MILLIS,
+            1_000..=5 * 60 * 1_000,
+        )?,
+        provisioning_lease_lifetime: read_bounded_duration(
+            source,
+            "AGENT_ROOM_LOBBY_PROVISIONING_LEASE_MS",
+            DEFAULT_LOBBY_PROVISIONING_LEASE_MILLIS,
+            1_000..=5 * 60 * 1_000,
+        )?,
+    })
 }
 
 fn read_content_config(source: &impl EnvironmentSource) -> Result<ContentConfig, ConfigError> {

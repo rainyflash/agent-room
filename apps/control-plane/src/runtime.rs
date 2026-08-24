@@ -1,12 +1,15 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_room_application::ports::{Clock, IdentifierFactory};
+use agent_room_application::{
+    ports::{Clock, IdentifierFactory},
+    rooms::{LobbyProvisioningIdentifierFactory, RoomReservationIdentifierFactory},
+};
 use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
         HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId, WebSessionId,
+        RoomProvisioningJobId, RoomProvisioningLeaseId, RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -95,5 +98,25 @@ impl IdentifierFactory for SystemRuntime {
 
     fn outbox_event_id(&self) -> OutboxEventId {
         OutboxEventId::from_uuid(Uuid::now_v7())
+    }
+}
+
+impl RoomReservationIdentifierFactory for SystemRuntime {
+    fn room_reservation_id(&self) -> RoomReservationId {
+        RoomReservationId::from_uuid(Uuid::now_v7())
+    }
+}
+
+impl LobbyProvisioningIdentifierFactory for SystemRuntime {
+    fn room_provisioning_job_id(&self) -> RoomProvisioningJobId {
+        RoomProvisioningJobId::from_uuid(Uuid::now_v7())
+    }
+
+    fn room_provisioning_lease_id(&self) -> RoomProvisioningLeaseId {
+        RoomProvisioningLeaseId::from_uuid(Uuid::now_v7())
+    }
+
+    fn room_instance_id(&self) -> RoomInstanceId {
+        RoomInstanceId::from_uuid(Uuid::now_v7())
     }
 }

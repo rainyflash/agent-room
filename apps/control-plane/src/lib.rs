@@ -19,6 +19,7 @@ use agent_room_application::{
     agent_instance_verification::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
+    agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     devices::{
@@ -26,6 +27,10 @@ use agent_room_application::{
     },
     health::ReadinessService,
     ports::SecretValue,
+    rooms::{
+        LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
+        LobbyProvisioningService,
+    },
 };
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
@@ -45,12 +50,13 @@ use axum::{
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use config::{AuthenticationConfig, ControlPlaneConfig};
+use config::{AuthenticationConfig, ControlPlaneConfig, LobbyConfig};
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
 use features::health::HealthRuntime;
+use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
 use observability::Observability;
 use runtime::SystemRuntime;
 
@@ -65,6 +71,21 @@ pub(crate) struct AppState {
 struct IdentityRuntime {
     routes: Router,
     content_cleanup: content_cleanup::ContentCleanupWorker,
+}
+
+struct AgentFeatureHttpStates {
+    agents: AgentHttpState,
+    cards: AgentCardHttpState,
+    lobbies: LobbyHttpState,
+}
+
+struct AgentFeatureDependencies {
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+    secrets: Arc<SecureSecretFactory>,
+    matrix_identities: Arc<MatrixApplicationServiceProvisioner>,
+    authentication: Arc<AuthenticationService>,
+    devices: Arc<DeviceAuthorizationService>,
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -156,6 +177,10 @@ fn build_router(
             HeaderName::from_static("idempotency-key"),
             HeaderName::from_static("x-agent-room-content-byte-length"),
             HeaderName::from_static("x-agent-room-content-sha256"),
+            HeaderName::from_static("x-agent-room-device-id"),
+            HeaderName::from_static("x-agent-room-proof-issued-at"),
+            HeaderName::from_static("x-agent-room-proof-nonce"),
+            HeaderName::from_static("x-agent-room-proof-signature"),
         ])
         .expose_headers([
             header::CACHE_CONTROL,
@@ -218,34 +243,18 @@ async fn build_identity_router(
         },
         &authentication_config.frontend_origin,
     );
-    let agents = build_agent_management(
-        repositories.clone(),
-        secrets.clone(),
-        system_runtime.clone(),
-        matrix_identities.clone(),
-    );
-    let verification =
-        build_agent_instance_verification(repositories.clone(), system_runtime.clone());
-    let cards = build_agent_card_management(
-        repositories.clone(),
-        system_runtime.clone(),
+    let agent_features = build_agent_feature_states(
+        config,
         request_timeout,
-    );
-    let card_state = AgentCardHttpState::new(AgentCardHttpDependencies {
-        cards,
-        devices: devices.clone(),
-        secrets: secrets.clone(),
-    });
-    let agent_state = AgentHttpState::new(
-        AgentHttpDependencies {
-            agents,
-            verification,
+        AgentFeatureDependencies {
+            repositories: repositories.clone(),
+            system_runtime: system_runtime.clone(),
+            secrets: secrets.clone(),
+            matrix_identities: matrix_identities.clone(),
             authentication: service.clone(),
             devices: devices.clone(),
-            secrets: secrets.clone(),
         },
-        &authentication_config.frontend_origin,
-    );
+    )?;
     let content_runtime =
         content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
             config: &config.content,
@@ -263,13 +272,98 @@ async fn build_identity_router(
     let (content_routes, content_cleanup) = content_runtime.into_parts();
     let routes = features::authentication::router(state)
         .merge(features::devices::router(device_state))
-        .merge(features::agents::router(agent_state))
-        .merge(features::agent_cards::router(card_state))
+        .merge(features::agents::router(agent_features.agents))
+        .merge(features::lobbies::router(agent_features.lobbies))
+        .merge(features::agent_cards::router(agent_features.cards))
         .merge(content_routes);
     Ok(IdentityRuntime {
         routes,
         content_cleanup,
     })
+}
+
+fn build_agent_feature_states(
+    config: &ControlPlaneConfig,
+    request_timeout: Duration,
+    dependencies: AgentFeatureDependencies,
+) -> Result<AgentFeatureHttpStates, StartupError> {
+    let agents = build_agent_management(
+        dependencies.repositories.clone(),
+        dependencies.secrets.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    );
+    let verification = build_agent_instance_verification(
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+    );
+    let cards = build_agent_card_management(
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        request_timeout,
+    );
+    let entries = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories,
+        dependencies.system_runtime,
+        dependencies.matrix_identities,
+    )?;
+    Ok(AgentFeatureHttpStates {
+        agents: AgentHttpState::new(
+            AgentHttpDependencies {
+                agents,
+                verification,
+                authentication: dependencies.authentication,
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+            },
+            &config.authentication.frontend_origin,
+        ),
+        cards: AgentCardHttpState::new(AgentCardHttpDependencies {
+            cards,
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+        }),
+        lobbies: LobbyHttpState::new(LobbyHttpDependencies {
+            entries,
+            devices: dependencies.devices,
+            secrets: dependencies.secrets,
+        }),
+    })
+}
+
+fn build_agent_lobby_entry(
+    config: &LobbyConfig,
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+    matrix: Arc<MatrixApplicationServiceProvisioner>,
+) -> Result<Arc<AgentLobbyEntryService>, StartupError> {
+    let reservation_lifetime = domain_duration(config.reservation_lifetime)?;
+    let provisioning_lease_lifetime = domain_duration(config.provisioning_lease_lifetime)?;
+    let join_policy = LobbyJoinPolicy::new(reservation_lifetime)
+        .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
+    let provisioning_policy = LobbyProvisioningPolicy::new(provisioning_lease_lifetime)
+        .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
+    let provisioning = Arc::new(LobbyProvisioningService::new(
+        LobbyProvisioningDependencies {
+            store: repositories.clone(),
+            matrix: matrix.clone(),
+            identifiers: system_runtime.clone(),
+            clock: system_runtime.clone(),
+        },
+        provisioning_policy,
+    ));
+    Ok(Arc::new(AgentLobbyEntryService::new(
+        AgentLobbyEntryDependencies {
+            access: repositories.clone(),
+            allocations: repositories,
+            memberships: matrix,
+            provisioning,
+            identifiers: system_runtime.clone(),
+            clock: system_runtime,
+        },
+        join_policy,
+    )))
 }
 
 fn build_authentication_http_state(

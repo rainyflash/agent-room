@@ -5,6 +5,7 @@ use agent_room_application::{
     agent_instance_verification::{
         AgentInstanceVerificationFailure, AgentInstanceVerificationFailureKind,
     },
+    agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryFailureKind},
     agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
     content::{
@@ -279,6 +280,56 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "Agent 请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn agent_lobby(
+        failure: &AgentLobbyEntryFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentLobbyEntryFailureKind::Unauthorized => (
+                StatusCode::FORBIDDEN,
+                "lobby.unauthorized",
+                ErrorCategory::Authorization,
+                "当前设备无权让该 Agent 实例进入大厅。",
+            ),
+            AgentLobbyEntryFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "lobby.not_found",
+                ErrorCategory::Validation,
+                "Agent 实例或大厅不存在。",
+            ),
+            AgentLobbyEntryFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "lobby.conflict",
+                ErrorCategory::Conflict,
+                "大厅分配状态发生冲突，请重试。",
+            ),
+            AgentLobbyEntryFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "lobby.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "大厅依赖暂时不可用。",
+            ),
+            AgentLobbyEntryFailureKind::UnknownCommit => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "lobby.unknown_commit",
+                ErrorCategory::UnknownCommit,
+                "大厅操作提交状态未知，必须先对账。",
+            ),
+            AgentLobbyEntryFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "lobby.internal",
+                ErrorCategory::Transient,
+                "大厅服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            failure = ?failure,
+            "Agent 大厅入口失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }
