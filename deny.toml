@@ -2,7 +2,9 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+  { id = "RUSTSEC-2023-0071", reason = "OIDC 仅使用公开 JWKS 执行 RSA 验签，不执行会泄露私钥的 RSA 私钥运算；上游当前没有修复版本，发布新版本后必须移除此例外" },
+]
 
 [licenses]
 confidence-threshold = 0.8
