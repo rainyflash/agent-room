@@ -1,3 +1,4 @@
+mod agent_cards;
 mod agents;
 mod audit;
 mod content;
@@ -12,6 +13,10 @@ mod runtime;
 
 use std::{future::Future, pin::Pin};
 
+pub use agent_cards::{
+    AgentCardFetchFailure, AgentCardFetchFailureKind, AgentCardFetchResult,
+    AgentCardSnapshotRepository, AgentCardSource, FetchedAgentCard,
+};
 pub use agents::{
     AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentInstanceRegistration,
     AgentInstanceRegistrationTransaction, AgentMembershipChange, AgentMembershipRepository,

@@ -40,6 +40,7 @@ define_id!(DeviceAccessTokenId);
 define_id!(DeviceRefreshTokenId);
 define_id!(AgentId);
 define_id!(AgentCreationRequestId);
+define_id!(AgentCardSnapshotId);
 define_id!(AdapterBindingId);
 define_id!(AgentInstanceId);
 define_id!(AgentInstanceRegistrationRequestId);

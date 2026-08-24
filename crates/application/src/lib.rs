@@ -1,3 +1,4 @@
+pub mod agent_cards;
 pub mod agents;
 pub mod authentication;
 pub mod devices;

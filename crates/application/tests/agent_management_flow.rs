@@ -26,7 +26,7 @@ use agent_room_domain::{
     },
     identity::Principal,
     ids::{
-        AdapterBindingId, AgentCreationRequestId, AgentId, AgentInstanceId,
+        AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
         AgentInstanceRegistrationRequestId, AutomationGrantId, ContentId, DeviceAccessTokenId,
         DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId, HandoffId, LoginAttemptId,
         OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
@@ -79,6 +79,10 @@ impl IdentifierFactory for TestIdentifiers {
 
     fn agent_id(&self) -> AgentId {
         AgentId::from_uuid(Uuid::now_v7())
+    }
+
+    fn agent_card_snapshot_id(&self) -> AgentCardSnapshotId {
+        AgentCardSnapshotId::from_uuid(Uuid::now_v7())
     }
 
     fn adapter_binding_id(&self) -> AdapterBindingId {
