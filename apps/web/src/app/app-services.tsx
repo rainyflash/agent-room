@@ -1,5 +1,6 @@
 import { createContext, useContext, type PropsWithChildren } from 'react';
 
+import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway } from '@/features/messages/domain/message';
@@ -12,6 +13,7 @@ export type AppServices = {
   readonly content: ContentGateway;
   readonly contentVerifier: ContentVerifier;
   readonly controlPlane: ControlPlaneClient;
+  readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly messages: MessageGateway;
   readonly messagePublisher: MessagePublisher;

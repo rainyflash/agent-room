@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
+import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-observer-handoff-gateway';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
@@ -52,6 +53,7 @@ function createRuntime(config: RuntimeConfig) {
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   const content = new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl });
   const contentVerifier = new BrowserContentVerifier();
+  const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
   const queryClient = new QueryClient({
@@ -67,6 +69,7 @@ function createRuntime(config: RuntimeConfig) {
     content,
     contentVerifier,
     controlPlane,
+    handoffs,
     lobby,
     messagePublisher,
     messages,

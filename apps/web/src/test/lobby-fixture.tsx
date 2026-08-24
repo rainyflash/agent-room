@@ -8,6 +8,11 @@ import '@/app/styles.css';
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import type {
+  HandoffApprovalRequest,
+  HandoffGateway,
+  HandoffSnapshot,
+} from '@/features/handoffs/domain/handoff';
+import type {
   LobbyAgent,
   LobbyAgentStatus,
   LobbyGateway,
@@ -22,7 +27,7 @@ import type {
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
-import { ok } from '@/shared/result';
+import { err, ok } from '@/shared/result';
 
 const room = testRoom(200);
 let fixtureRoot: Root | null = null;
@@ -119,6 +124,51 @@ class FixtureMessagePublisher implements MessagePublisher {
   }
 }
 
+class FixtureHandoffGateway implements HandoffGateway {
+  #snapshot: HandoffSnapshot | null = null;
+
+  approve(request: HandoffApprovalRequest) {
+    this.#snapshot = {
+      expiresAtUnixMs: request.expiresAtUnixMs,
+      handoffId: request.handoffId,
+      status: 'approved',
+    };
+    return Promise.resolve(
+      ok({ handoffId: request.handoffId, kind: 'submitted' as const, reused: false }),
+    );
+  }
+
+  listTargets() {
+    return Promise.resolve(
+      ok([
+        {
+          agentId: '01990d9e-8400-7000-8000-000000000011',
+          displayName: 'Local Codex Agent',
+          instanceId: '01990d9e-8400-7000-8000-000000000012',
+        },
+      ]),
+    );
+  }
+
+  reconcile() {
+    const snapshot = this.#snapshot;
+    return Promise.resolve(
+      snapshot === null
+        ? err({ code: 'handoff.not_found' as const, retryable: false })
+        : ok({ ...snapshot, status: 'delivered' as const }),
+    );
+  }
+
+  revoke() {
+    const snapshot = this.#snapshot;
+    return Promise.resolve(
+      snapshot === null
+        ? err({ code: 'handoff.not_found' as const, retryable: false })
+        : ok({ ...snapshot, status: 'revoked' as const }),
+    );
+  }
+}
+
 const services: AppServices = {
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
@@ -127,6 +177,7 @@ const services: AppServices = {
   content,
   contentVerifier,
   controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
+  handoffs: new FixtureHandoffGateway(),
   lobby,
   messagePublisher: new FixtureMessagePublisher(),
   messages,
