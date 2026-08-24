@@ -30,6 +30,10 @@ use agent_room_identity_adapter::{
 use crate::{
     config::BridgeConfig,
     control_plane::{ControlPlaneHttpConfig, ReqwestControlPlaneDeviceGateway},
+    runtime_files::{
+        BridgeExclusiveLock, BridgeRuntimeFileFailure, BridgeRuntimeFileFailureKind,
+        BridgeRuntimePaths,
+    },
     secure_storage::{OsDeviceCredentialVault, OsDeviceSigningIdentityStore},
 };
 
@@ -38,6 +42,12 @@ const SECURE_STORAGE_SERVICE: &str = "dev.agent-room.bridge";
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+    let paths = BridgeRuntimePaths::new(config.data_root.clone());
+    paths.prepare().map_err(BridgeRuntimeError::runtime_files)?;
+    let _instance_lock = BridgeExclusiveLock::acquire(paths.instance_lock_path())
+        .map_err(BridgeRuntimeError::instance_lock)?;
+    let _matrix_store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
+        .map_err(BridgeRuntimeError::matrix_store_lock)?;
     let control_plane = Arc::new(
         ReqwestControlPlaneDeviceGateway::new(&ControlPlaneHttpConfig {
             base_url: config.control_plane_url.clone(),
@@ -199,6 +209,45 @@ impl BridgeRuntimeError {
 
     fn terminal() -> Self {
         Self::new("bridge.terminal_unavailable", "无法写入当前终端")
+    }
+
+    fn runtime_files(failure: BridgeRuntimeFileFailure) -> Self {
+        match failure.kind() {
+            BridgeRuntimeFileFailureKind::InvalidPath => {
+                Self::new("bridge.runtime_path_invalid", "Bridge 运行目录无效")
+            }
+            #[cfg(unix)]
+            BridgeRuntimeFileFailureKind::InsecurePermissions => Self::new(
+                "bridge.runtime_permissions_insecure",
+                "Bridge 运行目录或锁文件权限过宽",
+            ),
+            BridgeRuntimeFileFailureKind::AlreadyHeld => {
+                Self::new("bridge.runtime_lock_held", "Bridge 运行锁已被占用")
+            }
+            BridgeRuntimeFileFailureKind::Io => {
+                Self::new("bridge.runtime_io_failed", "Bridge 运行目录或锁文件不可用")
+            }
+        }
+    }
+
+    fn instance_lock(failure: BridgeRuntimeFileFailure) -> Self {
+        if failure.kind() == BridgeRuntimeFileFailureKind::AlreadyHeld {
+            return Self::new(
+                "bridge.already_running",
+                "另一个 Agent Room Bridge 进程已经运行",
+            );
+        }
+        Self::runtime_files(failure)
+    }
+
+    fn matrix_store_lock(failure: BridgeRuntimeFileFailure) -> Self {
+        if failure.kind() == BridgeRuntimeFileFailureKind::AlreadyHeld {
+            return Self::new(
+                "bridge.matrix_store_locked",
+                "Matrix Store 已由另一个进程占用",
+            );
+        }
+        Self::runtime_files(failure)
     }
 
     fn authorization(failure: BridgeAuthorizationFailure) -> Self {

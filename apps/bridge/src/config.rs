@@ -1,4 +1,8 @@
-use std::{env, time::Duration};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const DEFAULT_REQUEST_TIMEOUT_MILLIS: u64 = 10_000;
 const DEFAULT_AUTHORIZATION_TIMEOUT_MILLIS: u64 = 10 * 60 * 1_000;
@@ -27,6 +31,7 @@ pub(crate) struct BridgeConfig {
     pub(crate) authorization_timeout: Duration,
     pub(crate) refresh_lead_time: Duration,
     pub(crate) import_oidc_profile: bool,
+    pub(crate) data_root: PathBuf,
 }
 
 impl BridgeConfig {
@@ -59,8 +64,78 @@ impl BridgeConfig {
                 30_000..=10 * 60 * 1_000,
             )?,
             import_oidc_profile: read_bool(source, "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE", false)?,
+            data_root: read_data_root(source)?,
         })
     }
+}
+
+fn read_data_root(source: &impl EnvironmentSource) -> Result<PathBuf, BridgeConfigError> {
+    let value = read_optional(source, "AGENT_ROOM_BRIDGE_DATA_DIR")
+        .map_or_else(|| default_data_root(source), Ok)?;
+    let value = value.trim();
+    if value.is_empty() || value.len() > MAX_TEXT_LENGTH || value.chars().any(char::is_control) {
+        return Err(BridgeConfigError::invalid(
+            "AGENT_ROOM_BRIDGE_DATA_DIR",
+            "路径为空、过长或包含控制字符",
+        ));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(BridgeConfigError::invalid(
+            "AGENT_ROOM_BRIDGE_DATA_DIR",
+            "必须是绝对路径",
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn default_data_root(source: &impl EnvironmentSource) -> Result<String, BridgeConfigError> {
+    #[cfg(target_os = "windows")]
+    {
+        return source
+            .read("LOCALAPPDATA")
+            .filter(|value| !value.trim().is_empty())
+            .map(|root| format!("{}\\AgentRoom\\Bridge", root.trim_end_matches(['\\', '/'])))
+            .ok_or(BridgeConfigError::Missing {
+                name: "LOCALAPPDATA",
+            });
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return source
+            .read("HOME")
+            .filter(|value| !value.trim().is_empty())
+            .map(|root| {
+                format!(
+                    "{}/Library/Application Support/Agent Room/Bridge",
+                    root.trim_end_matches('/')
+                )
+            })
+            .ok_or(BridgeConfigError::Missing { name: "HOME" });
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(root) = source
+            .read("XDG_DATA_HOME")
+            .filter(|value| !value.trim().is_empty())
+        {
+            return Ok(format!("{}/agent-room/bridge", root.trim_end_matches('/')));
+        }
+        return source
+            .read("HOME")
+            .filter(|value| !value.trim().is_empty())
+            .map(|root| {
+                format!(
+                    "{}/.local/share/agent-room/bridge",
+                    root.trim_end_matches('/')
+                )
+            })
+            .ok_or(BridgeConfigError::Missing { name: "HOME" });
+    }
+    #[allow(unreachable_code)]
+    Err(BridgeConfigError::Missing {
+        name: "AGENT_ROOM_BRIDGE_DATA_DIR",
+    })
 }
 
 fn read_device_label(source: &impl EnvironmentSource) -> Result<String, BridgeConfigError> {
@@ -191,6 +266,13 @@ mod tests {
                 "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID",
                 "agent-room-bridge".to_owned(),
             ),
+            (
+                "AGENT_ROOM_BRIDGE_DATA_DIR",
+                std::env::temp_dir()
+                    .join("agent-room-bridge-config-test")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
         ]))
     }
 
@@ -203,6 +285,7 @@ mod tests {
         assert_eq!(config.refresh_lead_time.as_millis(), 120_000);
         assert!(!config.import_oidc_profile);
         assert!(!config.device_label.is_empty());
+        assert!(config.data_root.is_absolute());
     }
 
     #[test]
@@ -229,6 +312,22 @@ mod tests {
             BridgeConfig::from_source(&environment),
             Err(BridgeConfigError::Invalid {
                 name: "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 数据目录拒绝相对路径() {
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_DATA_DIR", "relative/path".to_owned());
+
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_BRIDGE_DATA_DIR",
                 ..
             })
         ));

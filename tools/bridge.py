@@ -29,6 +29,7 @@ def runtime_environment() -> dict[str, str]:
             "AGENT_ROOM_BRIDGE_REQUEST_TIMEOUT_MS": "10000",
             "AGENT_ROOM_BRIDGE_AUTHORIZATION_TIMEOUT_MS": "600000",
             "AGENT_ROOM_BRIDGE_REFRESH_LEAD_MS": "120000",
+            "AGENT_ROOM_BRIDGE_DATA_DIR": str(ROOT / ".local" / "bridge"),
             "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE": "false",
         }
     )
