@@ -8,6 +8,7 @@ members = [
   "crates/domain",
   "crates/identity-adapter",
   "crates/matrix-adapter",
+  "crates/matrix-provisioning-adapter",
   "crates/postgres-adapter",
   "crates/protocol-conformance",
 ]
@@ -27,6 +28,7 @@ agent-room-bridge-ipc = { version = "0.1.0", path = "crates/bridge-ipc" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
+agent-room-matrix-provisioning-adapter = { version = "0.1.0", path = "crates/matrix-provisioning-adapter" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }

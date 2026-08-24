@@ -22,6 +22,7 @@ def runtime_environment() -> dict[str, str]:
     environment.update(
         {
             "AGENT_ROOM_CONTROL_PLANE_URL": "http://127.0.0.1:8090/",
+            "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
             "AGENT_ROOM_OIDC_ISSUER_URL": (
                 "http://127.0.0.1:18080/realms/agent-room"
             ),

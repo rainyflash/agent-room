@@ -12,6 +12,7 @@ agent-room-bridge-core.workspace = true
 agent-room-bridge-ipc.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
+agent-room-matrix-adapter.workspace = true
 base64.workspace = true
 getrandom.workspace = true
 interprocess.workspace = true

@@ -1,3 +1,5 @@
+//! Matrix Application Service 身份签发基础设施适配器。
+
 use std::{net::IpAddr, time::Duration};
 
 use agent_room_application::ports::{

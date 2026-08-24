@@ -22,7 +22,7 @@ use agent_room_identity_adapter::{
     DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519DeviceProofVerifier,
     OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
-use agent_room_matrix_adapter::{
+use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
 };
 use agent_room_postgres_adapter::PostgresRepositories;

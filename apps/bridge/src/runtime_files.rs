@@ -51,6 +51,10 @@ impl BridgeRuntimePaths {
         &self.matrix_store_lock
     }
 
+    pub(crate) fn matrix_store_root(&self) -> &Path {
+        &self.matrix_store_root
+    }
+
     #[cfg(unix)]
     pub(crate) fn runtime_root(&self) -> &Path {
         &self.runtime_root

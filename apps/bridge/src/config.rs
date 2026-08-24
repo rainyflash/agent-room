@@ -24,6 +24,7 @@ impl EnvironmentSource for ProcessEnvironment {
 
 pub(crate) struct BridgeConfig {
     pub(crate) control_plane_url: String,
+    pub(crate) matrix_homeserver_url: String,
     pub(crate) oidc_issuer_url: String,
     pub(crate) oidc_client_id: String,
     pub(crate) device_label: String,
@@ -42,6 +43,7 @@ impl BridgeConfig {
     fn from_source(source: &impl EnvironmentSource) -> Result<Self, BridgeConfigError> {
         Ok(Self {
             control_plane_url: read_required_text(source, "AGENT_ROOM_CONTROL_PLANE_URL")?,
+            matrix_homeserver_url: read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
             oidc_issuer_url: read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,
             oidc_client_id: read_required_text(source, "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID")?,
             device_label: read_device_label(source)?,
@@ -261,6 +263,10 @@ mod tests {
             (
                 "AGENT_ROOM_OIDC_ISSUER_URL",
                 "http://127.0.0.1:18080/realms/agent-room".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_MATRIX_BASE_URL",
+                "http://127.0.0.1:18008".to_owned(),
             ),
             (
                 "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID",

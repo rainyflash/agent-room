@@ -10,9 +10,9 @@ use agent_room_application::ports::{
     MatrixTransactionId, MatrixUserId, SecretValue,
 };
 use agent_room_domain::{ids::AgentId, time::DurationMillis};
-use agent_room_matrix_adapter::{
+use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
+use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
-    MatrixSdkClientFactory, MatrixSdkConfiguration,
 };
 use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle, time::sleep, time::timeout};

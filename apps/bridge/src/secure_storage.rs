@@ -71,7 +71,7 @@ impl SecretStoreBackend for KeyringBackend {
 pub(crate) struct BridgeRuntimeSecrets {
     installation_id: IpcInstallationId,
     ipc_shared_secret: IpcSharedSecret,
-    _matrix_store_passphrase: SecretValue,
+    matrix_store_passphrase: SecretValue,
 }
 
 impl BridgeRuntimeSecrets {
@@ -81,6 +81,10 @@ impl BridgeRuntimeSecrets {
 
     pub(crate) const fn ipc_shared_secret(&self) -> &IpcSharedSecret {
         &self.ipc_shared_secret
+    }
+
+    pub(crate) const fn matrix_store_passphrase(&self) -> &SecretValue {
+        &self.matrix_store_passphrase
     }
 }
 
@@ -118,7 +122,7 @@ impl OsBridgeRuntimeSecretVault {
         Ok(BridgeRuntimeSecrets {
             installation_id: IpcInstallationId::new(installation_id).map_err(|_| corrupt())?,
             ipc_shared_secret: IpcSharedSecret::new(decode_runtime_secret(&shared_secret)?),
-            _matrix_store_passphrase: SecretValue::new(matrix_store_passphrase)
+            matrix_store_passphrase: SecretValue::new(matrix_store_passphrase)
                 .map_err(|_| corrupt())?,
         })
     }

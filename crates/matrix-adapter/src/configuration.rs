@@ -1,11 +1,18 @@
-use std::{net::IpAddr, num::NonZeroU16, time::Duration};
+use std::{
+    net::IpAddr,
+    num::NonZeroU16,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use agent_room_application::ports::SecretValue;
 use thiserror::Error;
 use url::Url;
 
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
 const DEFAULT_SYNC_TIMELINE_LIMIT: NonZeroU16 = NonZeroU16::new(50).expect("默认值非零");
 const MAX_SYNC_TIMELINE_LIMIT: u16 = 1_000;
+const MIN_STORE_PASSPHRASE_LENGTH: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct MatrixSdkConfiguration {
@@ -104,11 +111,59 @@ pub enum MatrixSdkConfigurationError {
     InvalidSyncTimelineLimit,
 }
 
+#[derive(Debug, Clone)]
+pub struct MatrixSdkStoreConfiguration {
+    path: PathBuf,
+    passphrase: SecretValue,
+}
+
+impl MatrixSdkStoreConfiguration {
+    /// 创建使用 SDK 加密层保护的 `SQLite` Store 配置。
+    ///
+    /// # Errors
+    ///
+    /// 路径不是绝对路径，或口令短于 32 字节时返回配置错误。
+    pub fn encrypted_sqlite(
+        path: impl Into<PathBuf>,
+        passphrase: SecretValue,
+    ) -> Result<Self, MatrixSdkStoreConfigurationError> {
+        let path = path.into();
+        if !path.is_absolute() || path.as_os_str().is_empty() {
+            return Err(MatrixSdkStoreConfigurationError::InvalidPath);
+        }
+        if passphrase.expose().len() < MIN_STORE_PASSPHRASE_LENGTH {
+            return Err(MatrixSdkStoreConfigurationError::WeakPassphrase);
+        }
+        Ok(Self { path, passphrase })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub const fn passphrase(&self) -> &SecretValue {
+        &self.passphrase
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MatrixSdkStoreConfigurationError {
+    #[error("Matrix Store 必须使用绝对路径")]
+    InvalidPath,
+    #[error("Matrix Store 口令至少需要 32 字节")]
+    WeakPassphrase,
+}
+
 #[cfg(test)]
 mod tests {
     use std::{num::NonZeroU16, time::Duration};
 
-    use super::{MatrixSdkConfiguration, MatrixSdkConfigurationError};
+    use agent_room_application::ports::SecretValue;
+
+    use super::{
+        MatrixSdkConfiguration, MatrixSdkConfigurationError, MatrixSdkStoreConfiguration,
+        MatrixSdkStoreConfigurationError,
+    };
 
     #[test]
     fn 只允许_https_或严格回环_http() {
@@ -148,6 +203,27 @@ mod tests {
             configuration
                 .with_sync_timeline_limit(NonZeroU16::new(1_001).expect("测试值非零"))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn 持久存储拒绝相对路径和弱口令() {
+        let secret = |value: &str| SecretValue::new(value).expect("测试秘密有效");
+        assert_eq!(
+            MatrixSdkStoreConfiguration::encrypted_sqlite(
+                "relative/matrix-store",
+                secret("足够长的测试口令足够长的测试口令"),
+            )
+            .expect_err("相对路径必须失败"),
+            MatrixSdkStoreConfigurationError::InvalidPath
+        );
+        assert_eq!(
+            MatrixSdkStoreConfiguration::encrypted_sqlite(
+                std::env::temp_dir().join("matrix-store"),
+                secret("too-short"),
+            )
+            .expect_err("弱口令必须失败"),
+            MatrixSdkStoreConfigurationError::WeakPassphrase
         );
     }
 }

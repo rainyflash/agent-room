@@ -32,7 +32,7 @@ use matrix_sdk::{
 };
 
 use crate::{
-    configuration::MatrixSdkConfiguration,
+    configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
     error::{map_build_error, map_http_error, map_sdk_error},
     mapping::{map_backfill, map_sync_response},
 };
@@ -40,17 +40,48 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct MatrixSdkClientFactory {
     configuration: MatrixSdkConfiguration,
+    store: MatrixSdkStore,
 }
 
 impl MatrixSdkClientFactory {
     pub const fn new(configuration: MatrixSdkConfiguration) -> Self {
-        Self { configuration }
+        Self {
+            configuration,
+            store: MatrixSdkStore::Memory,
+        }
+    }
+
+    pub const fn with_encrypted_sqlite(
+        configuration: MatrixSdkConfiguration,
+        store: MatrixSdkStoreConfiguration,
+    ) -> Self {
+        Self {
+            configuration,
+            store: MatrixSdkStore::EncryptedSqlite(store),
+        }
+    }
+
+    /// 打开并校验配置的 Store，不建立网络会话。
+    ///
+    /// # Errors
+    ///
+    /// `SQLite` Store 无法创建、解密或迁移时返回 Matrix 基础设施错误。
+    pub async fn initialize_store(&self) -> MatrixResult<()> {
+        drop(self.build_client(MatrixOperation::InitializeStore).await?);
+        Ok(())
     }
 
     async fn build_client(&self, operation: MatrixOperation) -> MatrixResult<Client> {
-        Client::builder()
+        let builder = Client::builder()
             .homeserver_url(self.configuration.homeserver_url().clone())
-            .request_config(self.request_config())
+            .request_config(self.request_config());
+        let builder = match &self.store {
+            MatrixSdkStore::Memory => builder,
+            MatrixSdkStore::EncryptedSqlite(store) => {
+                builder.sqlite_store(store.path(), Some(store.passphrase().expose()))
+            }
+        };
+        builder
             .build()
             .await
             .map_err(|error| map_build_error(operation, &error))
@@ -61,6 +92,12 @@ impl MatrixSdkClientFactory {
             .disable_retry()
             .timeout(self.configuration.request_timeout())
     }
+}
+
+#[derive(Debug, Clone)]
+enum MatrixSdkStore {
+    Memory,
+    EncryptedSqlite(MatrixSdkStoreConfiguration),
 }
 
 impl MatrixClientFactory for MatrixSdkClientFactory {
@@ -415,4 +452,76 @@ const fn map_receipt_type(value: MatrixReceiptKind) -> ReceiptType {
 
 const fn invalid_response_failure(operation: MatrixOperation) -> MatrixFailure {
     MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, time::Duration};
+
+    use agent_room_application::ports::{MatrixFailureKind, MatrixOperation, SecretValue};
+    use tempfile::tempdir;
+
+    use crate::{MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration};
+
+    #[tokio::test]
+    async fn 加密_sqlite_store_可持久化且无需联网初始化() {
+        let directory = tempdir().expect("临时目录可创建");
+        let store_path = directory.path().join("matrix-store");
+        let factory =
+            persistent_factory(store_path.clone(), "matrix-store-passphrase-000000000001");
+
+        factory
+            .initialize_store()
+            .await
+            .expect("Store 应成功初始化");
+
+        let entries = fs::read_dir(store_path)
+            .expect("Store 目录应存在")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("Store 目录应可读取");
+        assert!(!entries.is_empty(), "Matrix SDK 必须创建持久文件");
+    }
+
+    #[tokio::test]
+    async fn 错误口令不能打开既有_store() {
+        let directory = tempdir().expect("临时目录可创建");
+        let store_path = directory.path().join("matrix-store");
+        persistent_factory(store_path.clone(), "matrix-store-passphrase-000000000001")
+            .initialize_store()
+            .await
+            .expect("首个口令应建立 Store");
+
+        let failure = persistent_factory(store_path, "matrix-store-passphrase-000000000002")
+            .initialize_store()
+            .await
+            .expect_err("错误口令必须被拒绝");
+
+        assert_eq!(failure.operation(), MatrixOperation::InitializeStore);
+        assert_eq!(failure.kind(), MatrixFailureKind::DependencyUnavailable);
+    }
+
+    #[test]
+    fn 调试输出不会泄露_store_口令() {
+        let directory = tempdir().expect("临时目录可创建");
+        let passphrase = "matrix-store-passphrase-000000000001";
+        let factory = persistent_factory(directory.path().join("matrix-store"), passphrase);
+
+        let debug = format!("{factory:?}");
+        assert!(!debug.contains(passphrase));
+        assert!(debug.contains("[已脱敏]"));
+    }
+
+    fn persistent_factory(
+        store_path: std::path::PathBuf,
+        passphrase: &str,
+    ) -> MatrixSdkClientFactory {
+        let sdk = MatrixSdkConfiguration::new("http://127.0.0.1:18008", Duration::from_secs(5))
+            .expect("SDK 配置有效");
+        let store = MatrixSdkStoreConfiguration::encrypted_sqlite(
+            store_path,
+            SecretValue::new(passphrase).expect("Store 口令有效"),
+        )
+        .expect("Store 配置有效");
+        MatrixSdkClientFactory::with_encrypted_sqlite(sdk, store)
+    }
 }

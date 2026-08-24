@@ -9,8 +9,8 @@ use std::{
 };
 
 use agent_room_application::ports::{
-    Clock, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
-    OidcDevicePromptFailure, ProfileImportConsent,
+    Clock, MatrixFailure, MatrixFailureKind, OidcDeviceAuthorizationPrompt,
+    OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, ProfileImportConsent,
 };
 use agent_room_bridge_core::{
     authorization::{
@@ -30,6 +30,9 @@ use agent_room_domain::{
 use agent_room_identity_adapter::{
     DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, SecureSecretFactory,
 };
+use agent_room_matrix_adapter::{
+    MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
+};
 use tokio::sync::watch;
 
 use crate::{
@@ -44,7 +47,8 @@ use crate::{
         BridgeRuntimePaths,
     },
     secure_storage::{
-        OsBridgeRuntimeSecretVault, OsDeviceCredentialVault, OsDeviceSigningIdentityStore,
+        BridgeRuntimeSecrets, OsBridgeRuntimeSecretVault, OsDeviceCredentialVault,
+        OsDeviceSigningIdentityStore,
     },
 };
 
@@ -62,6 +66,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let runtime_secrets = OsBridgeRuntimeSecretVault::system(SECURE_STORAGE_SERVICE)
         .load_or_create()
         .map_err(BridgeRuntimeError::runtime_secrets)?;
+    initialize_matrix_store(&config, &paths, &runtime_secrets).await?;
     let control_plane = Arc::new(
         ReqwestControlPlaneDeviceGateway::new(&ControlPlaneHttpConfig {
             base_url: config.control_plane_url.clone(),
@@ -133,6 +138,24 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     .map_err(BridgeRuntimeError::ipc)?;
     status.transition(IpcBridgeState::Ready);
     run_until_shutdown(server, status).await
+}
+
+async fn initialize_matrix_store(
+    config: &BridgeConfig,
+    paths: &BridgeRuntimePaths,
+    runtime_secrets: &BridgeRuntimeSecrets,
+) -> Result<(), BridgeRuntimeError> {
+    let sdk = MatrixSdkConfiguration::new(&config.matrix_homeserver_url, config.request_timeout)
+        .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+    let store = MatrixSdkStoreConfiguration::encrypted_sqlite(
+        paths.matrix_store_root().to_path_buf(),
+        runtime_secrets.matrix_store_passphrase().clone(),
+    )
+    .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+    MatrixSdkClientFactory::with_encrypted_sqlite(sdk, store)
+        .initialize_store()
+        .await
+        .map_err(BridgeRuntimeError::matrix_store)
 }
 
 async fn run_until_shutdown(
@@ -402,6 +425,19 @@ impl BridgeRuntimeError {
             );
         }
         Self::runtime_files(failure)
+    }
+
+    fn matrix_store(failure: MatrixFailure) -> Self {
+        if failure.kind() == MatrixFailureKind::InvalidConfiguration {
+            return Self::new(
+                "bridge.matrix_store_configuration_invalid",
+                "Matrix Store 配置无效",
+            );
+        }
+        Self::new(
+            "bridge.matrix_store_unavailable",
+            "无法创建、打开或解密 Matrix Store；拒绝使用临时内存存储继续运行",
+        )
     }
 
     fn authorization(failure: BridgeAuthorizationFailure) -> Self {

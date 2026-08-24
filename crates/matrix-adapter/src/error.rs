@@ -41,6 +41,9 @@ pub(crate) fn map_build_error(
         ClientBuildError::AutoDiscovery(_) => {
             MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
         }
+        ClientBuildError::SqliteStore(_) => {
+            MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable)
+        }
     }
 }
 

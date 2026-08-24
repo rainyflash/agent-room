@@ -1,5 +1,5 @@
 [package]
-name = "agent-room-matrix-adapter"
+name = "agent-room-matrix-provisioning-adapter"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,18 +9,16 @@ repository.workspace = true
 [dependencies]
 agent-room-application.workspace = true
 agent-room-domain.workspace = true
-matrix-sdk = { workspace = true, features = ["bundled-sqlite"] }
-reqwest.workspace = true
+futures-util.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-agent-room-matrix-provisioning-adapter.workspace = true
 axum.workspace = true
 tokio.workspace = true
-tempfile.workspace = true
 uuid.workspace = true
 
 [lints]
