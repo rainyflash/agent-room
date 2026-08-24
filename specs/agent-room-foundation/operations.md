@@ -143,7 +143,7 @@ Synapse 官方说明联邦要求其他服务能访问配置的 `server_name`，�
 
 应用启动时严格校验配置。缺少关键密钥或 URL 就失败退出，不用危险默认值“先跑起来”。
 
-OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精确 redirect URL、前端 Origin、Matrix server name、登录尝试期限、Web 会话期限、近期认证窗口和时钟偏差。生产环境的公开入口必须使用 TLS；client secret 只能来自 Secret 层，禁止写入版本化配置。
+OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精确 redirect URL、前端 Origin、Matrix server name、登录尝试期限、Web 会话期限、近期认证窗口和时钟偏差。Agent 身份签发额外要求 `AGENT_ROOM_MATRIX_APPSERVICE_TOKEN`，其值必须与 Synapse Application Service 注册文件的 `as_token` 一致，并通过部署 Secret 注入。生产环境的公开入口必须使用 TLS；client secret 和 Application Service Token 只能来自 Secret 层，禁止写入版本化配置。
 
 ### 7.2 密钥管理
 

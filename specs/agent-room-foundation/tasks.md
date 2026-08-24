@@ -142,7 +142,7 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
 
 任务 11 的标准 Client-Server API、幂等发送、同步游标、历史回填、错误恢复、真实 Synapse 故障验收和供应链审计记录在 [任务 11 验证记录](./task-11-validation.md)。
 
-- [ ] 12. 实现 Agent 注册、归属与 Matrix 身份
+- [x] 12. 实现 Agent 注册、归属与 Matrix 身份
   - 用户可创建 Agent 或把新实例绑定到已有 Agent。
   - 为 Agent 建立独立 Matrix User，不把用户账户与 Agent 混为同一身份。
   - 实现 Owner/Operator/Viewer 所有权约束和最后 Owner 保护。
@@ -150,6 +150,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - 验证：未授权用户不能绑定、冒充或转移 Agent；重复请求幂等。
   - _依赖：7、9、10、11_
   - _需求：1、2、11、12_
+
+任务 12 的独立 Agent Matrix User、Owner/Operator/Viewer 约束、实例与设备绑定、幂等登记、Application Service 安全边界和真实服务验收记录在 [任务 12 验证记录](./task-12-validation.md)。
 
 - [ ] 13. 实现 Bridge 守护进程基础
   - 建立单实例进程、配置、Matrix SDK 持久 Store、优雅关闭和自动重连。

@@ -109,11 +109,14 @@ flowchart TB
 | OIDC 认证器/Passkey | 用户认证器 + IdP | 人类登录 |
 | Agent Room 设备签名密钥 | Bridge OS 安全存储 | 设备与实例声明、公共载荷签名 |
 | Matrix Device 密钥 | Matrix SDK 加密 Store | Olm/Megolm E2EE 和设备验证 |
+| Matrix Application Service Token | 控制平面 Secret 层 | 仅为独占命名空间创建 Agent User 并签发其设备会话 |
 | Homeserver 签名密钥 | Synapse Secret | Matrix 联邦事件签名 |
 | 内容对象加密密钥 | 客户端内存/加密密钥存储 | 私密正文对象 |
 | 更新签名密钥 | 离线发布环境 | Bridge/Tauri 更新清单签名 |
 
 密钥轮换、撤销和恢复分别处理。复用密钥会把一个协议的泄露扩散到所有边界，是低级但致命的设计错误。
+
+Application Service Token 不是 Agent、用户或 Bridge 凭据。它不能进入 PostgreSQL、前端构建、Bridge 配置、HTTP 响应或日志；控制平面只从部署 Secret 读取，并且只能操作注册文件声明的 `_agent_<uuid>` 独占用户命名空间。
 
 ## 7. Agent 与实例认证
 

@@ -150,7 +150,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 ### 4.4 `agent_ownership`
 
-允许未来团队共同拥有 Agent，但首版只使用 `owner` 和 `operator`。
+允许团队共同管理 Agent；首版使用 `owner`、`operator` 和只读 `viewer`。
 
 | 字段 | 类型 | 约束 |
 | --- | --- | --- |
@@ -196,6 +196,19 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `updated_at` | timestamptz | 非空 |
 
 凭据属于设备安全存储，不进入 `configuration`。
+
+### 4.6.1 Agent 登记幂等回执
+
+跨 PostgreSQL 与 Matrix 的 Agent 创建不能伪装成单一 ACID 事务，因此控制平面先保存稳定业务标识，再对账外部身份：
+
+| 表 | 关键字段 | 约束与用途 |
+| --- | --- | --- |
+| `agent_creation_request` | `id`、`principal_id`、`agent_id`、`request_fingerprint`、`state` | UUIDv7 幂等键预留唯一 Agent ID；只有实际 Agent 已落库后才能转为 `completed` |
+| `agent_instance_registration_request` | `id`、`principal_id`、`device_id`、`agent_id`、`adapter_binding_id`、`agent_instance_id`、`request_fingerprint` | 与 Binding、Instance 和 Outbox 在同一事务提交；重复请求只能恢复原记录 |
+
+两个回执都只保存 SHA-256 请求指纹，不保存访问令牌、Application Service Token 或设备私钥。同一回执 ID 被另一主体、设备或请求正文复用时必须拒绝，不能返回原身份信息。
+
+活跃 Agent Instance 的 32 字节签名公钥全局唯一；同一 `agent_id + device_id + adapter_binding_id` 只能有一个未撤销实例。这样一把已登记公钥不能被另一用户、Agent 或设备重新声明。
 
 ### 4.7 `agent_card_snapshot`
 

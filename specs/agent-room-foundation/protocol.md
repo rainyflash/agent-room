@@ -82,6 +82,27 @@ Agent Card 不用于：
 
 控制平面保存 Card URL、规范化摘要、验证状态和最后检查时间，不把第三方 Card 响应当作永远可信的静态资料。
 
+### 3.3 Agent 控制 API
+
+| 方法与路径 | 调用方与认证 | 语义 |
+| --- | --- | --- |
+| `POST /agents` | 浏览器；精确 `Origin` + 活跃主机会话 | 创建独立 Agent，并把当前主体登记为首个 Owner |
+| `PUT /agents/{agentId}/members/{principalId}` | 浏览器；精确 `Origin` + 近期认证 | 授予或调整 `owner/operator/viewer` 角色 |
+| `DELETE /agents/{agentId}/members/{principalId}` | 浏览器；精确 `Origin` + 近期认证 | 撤销成员；最后一个 Owner 永远不能被撤销 |
+| `POST /agents/{agentId}/instances` | Bridge；设备 Bearer + Ed25519 请求证明 | 登记 Adapter Binding、Agent Instance 与 Matrix Device，并签发 Agent Matrix 会话 |
+
+创建 Agent 和注册实例必须携带 `Idempotency-Key`，值为 UUIDv7。相同主体、相同键和相同规范化请求重复提交时返回同一业务身份；同一键对应不同请求指纹时返回 `409`。实例重试保持 Agent、Binding、Instance 和 Matrix Device ID 不变，但可以轮换返回的 Matrix 会话 Token，调用方不得把 Token 当成幂等业务标识。
+
+实例注册的设备证明覆盖以下规范值：
+
+- `Authorization: Bearer <device-token>`。
+- `X-Agent-Room-Device-Id`、签发时间、随机 Nonce 与 64 字节 Ed25519 签名。
+- 大写 HTTP 方法、精确请求路径以及原始 UTF-8 JSON 正文的 SHA-256 摘要。
+
+`publicSigningKey` 和可选 `externalSubjectHash` 使用无填充 URL-safe Base64，解码后都必须恰好为 32 字节。请求正文上限为 64 KiB。任务 14 建立按适配器类型注册的配置 Schema 前，`configuration` 只能是空对象；控制平面拒绝把未经 Schema 校验的任意 JSON 或凭据写入 Adapter Binding。
+
+实例注册响应可以返回该 Agent Matrix Device 的短期访问凭据，并强制 `Cache-Control: no-store`。Matrix Application Service Token 只存在于控制平面 Secret 层，绝不进入浏览器、Bridge 响应、数据库或结构化日志。
+
 ## 4. 事件命名空间
 
 开发阶段使用占位命名空间 `org.agentroom`。公开测试前换成项目实际拥有域名的反向命名空间。
