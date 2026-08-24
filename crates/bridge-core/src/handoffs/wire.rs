@@ -14,6 +14,7 @@ use agent_room_protocol_conformance::generated::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{SecondsFormat, TimeZone as _, Utc};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{agent_identity::BridgeAgentIdentity, ports::DeviceSigningIdentity};
@@ -80,22 +81,12 @@ pub(super) fn request_event(
         target_instance_id: version_seven(fields.target_instance_id.as_uuid())?,
         extensions: BTreeMap::new(),
     };
-    let mut content =
-        serde_json::to_value(unsigned).map_err(|_| HandoffWireFailure::Serialization)?;
-    remove_signature(&mut content)?;
-    let canonical = serde_jcs::to_vec(&content).map_err(|_| HandoffWireFailure::Serialization)?;
-    let signature = signer
-        .sign(&canonical)
-        .map_err(|_| HandoffWireFailure::Signing)?;
-    insert_signature(&mut content, &signature)?;
-
-    MatrixEvent::new(
-        MatrixEventType::new(HANDOFF_REQUEST_EVENT_TYPE)
-            .map_err(|_| HandoffWireFailure::Serialization)?,
+    signed_event(
+        HANDOFF_REQUEST_EVENT_TYPE,
         request_transaction_id(fields.id)?,
-        content,
+        &unsigned,
+        signer,
     )
-    .map_err(|_| HandoffWireFailure::Serialization)
 }
 
 fn request_transaction_id(
@@ -105,7 +96,7 @@ fn request_transaction_id(
         .map_err(|_| HandoffWireFailure::InvalidIdentifier)
 }
 
-fn actor_ref(
+pub(super) fn actor_ref(
     identity: &BridgeAgentIdentity,
     provenance: MessageProvenance,
 ) -> Result<ActorRef, HandoffWireFailure> {
@@ -147,7 +138,7 @@ const fn wire_provenance(value: MessageProvenance) -> Provenance {
     }
 }
 
-fn version_seven(value: uuid::Uuid) -> Result<String, HandoffWireFailure> {
+pub(super) fn version_seven(value: uuid::Uuid) -> Result<String, HandoffWireFailure> {
     if value.get_version() == Some(uuid::Version::SortRand) {
         Ok(value.to_string())
     } else {
@@ -155,11 +146,33 @@ fn version_seven(value: uuid::Uuid) -> Result<String, HandoffWireFailure> {
     }
 }
 
-fn rfc3339(value: UtcMillis) -> Result<String, HandoffWireFailure> {
+pub(super) fn rfc3339(value: UtcMillis) -> Result<String, HandoffWireFailure> {
     Utc.timestamp_millis_opt(value.value())
         .single()
         .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
         .ok_or(HandoffWireFailure::Serialization)
+}
+
+pub(super) fn signed_event(
+    event_type: &str,
+    transaction_id: MatrixTransactionId,
+    unsigned: &impl Serialize,
+    signer: &dyn DeviceSigningIdentity,
+) -> Result<MatrixEvent, HandoffWireFailure> {
+    let mut content =
+        serde_json::to_value(unsigned).map_err(|_| HandoffWireFailure::Serialization)?;
+    remove_signature(&mut content)?;
+    let canonical = serde_jcs::to_vec(&content).map_err(|_| HandoffWireFailure::Serialization)?;
+    let signature = signer
+        .sign(&canonical)
+        .map_err(|_| HandoffWireFailure::Signing)?;
+    insert_signature(&mut content, &signature)?;
+    MatrixEvent::new(
+        MatrixEventType::new(event_type).map_err(|_| HandoffWireFailure::Serialization)?,
+        transaction_id,
+        content,
+    )
+    .map_err(|_| HandoffWireFailure::Serialization)
 }
 
 fn remove_signature(content: &mut Value) -> Result<(), HandoffWireFailure> {

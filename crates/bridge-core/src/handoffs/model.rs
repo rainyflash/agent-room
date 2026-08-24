@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_room_application::ports::{MatrixDeviceId, MatrixEvent, MatrixUserId};
+use agent_room_application::ports::{MatrixDeviceId, MatrixEvent, MatrixEventType, MatrixUserId};
 use agent_room_domain::{
     handoff::{ContextHandoff, HandoffStatus},
     ids::{AgentId, AgentInstanceId, HandoffId, PrincipalId},
@@ -11,6 +11,50 @@ use crate::agent_identity::BridgeAgentIdentity;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandoffRequestError {
     SourceActorMismatch,
+    InvalidEventContent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecryptedHandoffToDeviceEvent {
+    sender: MatrixUserId,
+    event_type: MatrixEventType,
+    content: serde_json::Value,
+}
+
+impl DecryptedHandoffToDeviceEvent {
+    /// 接受由 Matrix 加密会话解密后的 To-Device 事件。
+    ///
+    /// # Errors
+    ///
+    /// 内容不是对象或超过协议事件大小上限时返回错误。
+    pub fn new(
+        sender: MatrixUserId,
+        event_type: MatrixEventType,
+        content: serde_json::Value,
+    ) -> Result<Self, HandoffRequestError> {
+        let serialized =
+            serde_json::to_vec(&content).map_err(|_| HandoffRequestError::InvalidEventContent)?;
+        if !content.is_object() || serialized.len() > 64 * 1_024 {
+            return Err(HandoffRequestError::InvalidEventContent);
+        }
+        Ok(Self {
+            sender,
+            event_type,
+            content,
+        })
+    }
+
+    pub const fn sender(&self) -> &MatrixUserId {
+        &self.sender
+    }
+
+    pub const fn event_type(&self) -> &MatrixEventType {
+        &self.event_type
+    }
+
+    pub const fn content(&self) -> &serde_json::Value {
+        &self.content
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,4 +222,44 @@ pub enum HandoffDeliveryOutcome {
         handoff_id: HandoffId,
         code: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffReceiptDelivery {
+    Confirmed,
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffReceptionOutcome {
+    Delivered {
+        handoff_id: HandoffId,
+        replayed: bool,
+        receipt: HandoffReceiptDelivery,
+    },
+    AlreadyResolved {
+        handoff_id: HandoffId,
+        status: HandoffStatus,
+        receipt: HandoffReceiptDelivery,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffConsumptionOutcome {
+    context: ConsumedHandoffContext,
+    receipt: HandoffReceiptDelivery,
+}
+
+impl HandoffConsumptionOutcome {
+    pub const fn new(context: ConsumedHandoffContext, receipt: HandoffReceiptDelivery) -> Self {
+        Self { context, receipt }
+    }
+
+    pub const fn context(&self) -> &ConsumedHandoffContext {
+        &self.context
+    }
+
+    pub const fn receipt(&self) -> HandoffReceiptDelivery {
+        self.receipt
+    }
 }

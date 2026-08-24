@@ -1,6 +1,6 @@
 use agent_room_application::ports::PortFuture;
 use agent_room_domain::{
-    content::Sha256Digest,
+    content::ContentMediaType,
     handoff::{ContextHandoff, HandoffFailureCode, HandoffStatus},
     ids::{AgentId, AgentInstanceId, HandoffId, PrincipalId},
     time::UtcMillis,
@@ -120,6 +120,8 @@ pub trait EncryptedHandoffToDeviceGateway: Send + Sync {
 pub enum HandoffStoreFailureKind {
     Conflict,
     NotFound,
+    Expired,
+    AlreadyResolved,
     Unavailable,
     Corrupt,
 }
@@ -202,6 +204,11 @@ impl HandoffStoreCommandOutcome {
 /// `accept_incoming` 必须原子写入交付记录与正文；`Consume` 必须原子返回并删除正文，
 /// 其他终态命令必须在同一事务中删除正文。实现不得把正文写入日志或错误详情。
 pub trait HandoffStore: Send + Sync {
+    fn find(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<Option<ContextHandoff>, HandoffStoreFailure>>;
+
     fn record_outgoing<'a>(
         &'a self,
         handoff: &'a ContextHandoff,
@@ -246,10 +253,14 @@ impl HandoffContentFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffContentRead {
     pub body: std::sync::Arc<[u8]>,
-    pub digest: Sha256Digest,
+    pub media_type: ContentMediaType,
 }
 
 pub trait HandoffContentGateway: Send + Sync {
+    /// 读取与交付记录精确绑定的正文。
+    ///
+    /// 实现必须同时验证房间、来源事件、消息、内容标识和调用方授权；不得接受载荷中的 URL
+    /// 或绕过内容服务绑定关系直接下载任意地址。
     fn read<'a>(
         &'a self,
         handoff: &'a ContextHandoff,

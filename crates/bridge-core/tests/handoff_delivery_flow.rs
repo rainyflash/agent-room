@@ -159,6 +159,19 @@ impl 内存交付存储 {
 }
 
 impl HandoffStore for 内存交付存储 {
+    fn find(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<Option<ContextHandoff>, HandoffStoreFailure>> {
+        let handoff = self
+            .handoff
+            .lock()
+            .expect("交付记录锁可用")
+            .clone()
+            .filter(|handoff| handoff.fields().id == handoff_id);
+        Box::pin(async move { Ok(handoff) })
+    }
+
     fn record_outgoing<'a>(
         &'a self,
         handoff: &'a ContextHandoff,

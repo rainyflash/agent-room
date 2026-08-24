@@ -8,10 +8,50 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 
-use crate::messages::{
-    MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,
-    MessageEventAuthenticator,
-};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentEventAuthenticationDecision {
+    Trusted,
+    TrustedHistoricalRevoked,
+    UnknownInstance,
+    RevokedInstance,
+    AgentInstanceMismatch,
+    InvalidSignature,
+    OutsideInstanceValidityWindow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentEventAuthenticationFailureKind {
+    Unauthorized,
+    Unavailable,
+    Internal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentEventAuthenticationFailure {
+    kind: AgentEventAuthenticationFailureKind,
+}
+
+impl AgentEventAuthenticationFailure {
+    pub const fn new(kind: AgentEventAuthenticationFailureKind) -> Self {
+        Self { kind }
+    }
+
+    pub const fn kind(self) -> AgentEventAuthenticationFailureKind {
+        self.kind
+    }
+}
+
+/// 验证任意 Agent 协议事件的实例归属、有效期和 Ed25519 签名。
+pub trait AgentEventAuthenticator: Send + Sync {
+    fn authenticate<'a>(
+        &'a self,
+        agent_id: AgentId,
+        instance_id: AgentInstanceId,
+        observed_at: UtcMillis,
+        canonical_event: &'a [u8],
+        signature: &'a DeviceSignature,
+    ) -> PortFuture<'a, Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure>>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentInstanceVerificationGatewayFailureKind {
@@ -72,7 +112,7 @@ impl AgentInstanceMessageAuthenticator {
         origin_server_timestamp: UtcMillis,
         canonical_event: &[u8],
         signature: &DeviceSignature,
-    ) -> Result<MessageAuthenticationDecision, MessageAuthenticationFailure> {
+    ) -> Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure> {
         let record = match self.verification.resolve(instance_id).await {
             Ok(record) => record,
             Err(failure) => return map_gateway_failure(failure),
@@ -83,44 +123,45 @@ impl AgentInstanceMessageAuthenticator {
                 .is_some_and(|invalidated_at| invalidated_at < record.registered_at)
         {
             return Err(authentication_failure(
-                MessageAuthenticationFailureKind::Internal,
+                AgentEventAuthenticationFailureKind::Internal,
             ));
         }
         if record.agent_id != agent_id {
-            return Ok(MessageAuthenticationDecision::AgentInstanceMismatch);
+            return Ok(AgentEventAuthenticationDecision::AgentInstanceMismatch);
         }
         if !self
             .signatures
             .verify(&record.public_signing_key, canonical_event, signature)
         {
-            return Ok(MessageAuthenticationDecision::InvalidSignature);
+            return Ok(AgentEventAuthenticationDecision::InvalidSignature);
         }
         if origin_server_timestamp < record.registered_at {
-            return Ok(MessageAuthenticationDecision::OutsideInstanceValidityWindow);
+            return Ok(AgentEventAuthenticationDecision::OutsideInstanceValidityWindow);
         }
         match record.invalidated_at {
             Some(invalidated_at) if origin_server_timestamp >= invalidated_at => {
-                Ok(MessageAuthenticationDecision::RevokedInstance)
+                Ok(AgentEventAuthenticationDecision::RevokedInstance)
             }
-            Some(_) => Ok(MessageAuthenticationDecision::TrustedHistoricalRevoked),
-            None => Ok(MessageAuthenticationDecision::Trusted),
+            Some(_) => Ok(AgentEventAuthenticationDecision::TrustedHistoricalRevoked),
+            None => Ok(AgentEventAuthenticationDecision::Trusted),
         }
     }
 }
 
-impl MessageEventAuthenticator for AgentInstanceMessageAuthenticator {
+impl AgentEventAuthenticator for AgentInstanceMessageAuthenticator {
     fn authenticate<'a>(
         &'a self,
         agent_id: AgentId,
         instance_id: AgentInstanceId,
-        origin_server_timestamp: UtcMillis,
+        observed_at: UtcMillis,
         canonical_event: &'a [u8],
         signature: &'a DeviceSignature,
-    ) -> PortFuture<'a, Result<MessageAuthenticationDecision, MessageAuthenticationFailure>> {
+    ) -> PortFuture<'a, Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure>>
+    {
         Box::pin(self.authenticate_internal(
             agent_id,
             instance_id,
-            origin_server_timestamp,
+            observed_at,
             canonical_event,
             signature,
         ))
@@ -129,26 +170,26 @@ impl MessageEventAuthenticator for AgentInstanceMessageAuthenticator {
 
 fn map_gateway_failure(
     failure: AgentInstanceVerificationGatewayFailure,
-) -> Result<MessageAuthenticationDecision, MessageAuthenticationFailure> {
+) -> Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure> {
     match failure.kind() {
         AgentInstanceVerificationGatewayFailureKind::NotFound => {
-            Ok(MessageAuthenticationDecision::UnknownInstance)
+            Ok(AgentEventAuthenticationDecision::UnknownInstance)
         }
         AgentInstanceVerificationGatewayFailureKind::AuthenticationRejected => Err(
-            authentication_failure(MessageAuthenticationFailureKind::Unauthorized),
+            authentication_failure(AgentEventAuthenticationFailureKind::Unauthorized),
         ),
         AgentInstanceVerificationGatewayFailureKind::Unavailable => Err(authentication_failure(
-            MessageAuthenticationFailureKind::Unavailable,
+            AgentEventAuthenticationFailureKind::Unavailable,
         )),
         AgentInstanceVerificationGatewayFailureKind::InvalidResponse
         | AgentInstanceVerificationGatewayFailureKind::Internal => Err(authentication_failure(
-            MessageAuthenticationFailureKind::Internal,
+            AgentEventAuthenticationFailureKind::Internal,
         )),
     }
 }
 
 const fn authentication_failure(
-    kind: MessageAuthenticationFailureKind,
-) -> MessageAuthenticationFailure {
-    MessageAuthenticationFailure::new(kind)
+    kind: AgentEventAuthenticationFailureKind,
+) -> AgentEventAuthenticationFailure {
+    AgentEventAuthenticationFailure::new(kind)
 }

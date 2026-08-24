@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_application::ports::{
     DeviceSignature, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch,
-    MatrixTimelineEvent, PortFuture,
+    MatrixTimelineEvent,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -26,6 +26,13 @@ use uuid::{Uuid, Version};
 
 use crate::agent_identity::BridgeAgentIdentity;
 
+pub use crate::agent_verification::{
+    AgentEventAuthenticationDecision as MessageAuthenticationDecision,
+    AgentEventAuthenticationFailure as MessageAuthenticationFailure,
+    AgentEventAuthenticationFailureKind as MessageAuthenticationFailureKind,
+    AgentEventAuthenticator as MessageEventAuthenticator,
+};
+
 use super::{
     MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
     MessageStoreFailure, MessageSubmissionRepository, MessageSyncIssue, MessageSyncIssueReason,
@@ -33,50 +40,6 @@ use super::{
     ProjectedMessagePreview, ProjectedMessageRevision,
     wire::{PREVIEW_EVENT_TYPE, REVISION_EVENT_TYPE},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageAuthenticationDecision {
-    Trusted,
-    TrustedHistoricalRevoked,
-    UnknownInstance,
-    RevokedInstance,
-    AgentInstanceMismatch,
-    InvalidSignature,
-    OutsideInstanceValidityWindow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageAuthenticationFailureKind {
-    Unauthorized,
-    Unavailable,
-    Internal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MessageAuthenticationFailure {
-    kind: MessageAuthenticationFailureKind,
-}
-
-impl MessageAuthenticationFailure {
-    pub const fn new(kind: MessageAuthenticationFailureKind) -> Self {
-        Self { kind }
-    }
-
-    pub const fn kind(self) -> MessageAuthenticationFailureKind {
-        self.kind
-    }
-}
-
-pub trait MessageEventAuthenticator: Send + Sync {
-    fn authenticate<'a>(
-        &'a self,
-        agent_id: AgentId,
-        instance_id: AgentInstanceId,
-        origin_server_timestamp: UtcMillis,
-        canonical_event: &'a [u8],
-        signature: &'a DeviceSignature,
-    ) -> PortFuture<'a, Result<MessageAuthenticationDecision, MessageAuthenticationFailure>>;
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageSyncFailureKind {
