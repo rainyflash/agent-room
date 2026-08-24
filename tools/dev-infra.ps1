@@ -257,7 +257,9 @@ namespaces:
   users:
     - exclusive: true
       regex: '^@_agent_[0-9a-f]{32}:matrix\.agent-room\.localhost$'
-  aliases: []
+  aliases:
+    - exclusive: true
+      regex: '^#agent-room-[a-z0-9][a-z0-9._=-]{0,254}:matrix\.agent-room\.localhost$'
   rooms: []
 rate_limited: false
 receive_ephemeral: false

@@ -1,4 +1,4 @@
-//! Matrix Application Service 身份签发基础设施适配器。
+//! Matrix Application Service 身份与受控房间操作基础设施适配器。
 
 use std::{net::IpAddr, time::Duration};
 
@@ -12,6 +12,10 @@ use futures_util::StreamExt;
 use reqwest::{Client, Response, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
+
+mod rooms;
+
+pub use rooms::MatrixApplicationServiceRoomMembership;
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1_024;
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
@@ -80,6 +84,7 @@ pub enum MatrixApplicationServiceConfigurationError {
     HttpClient,
 }
 
+#[derive(Clone)]
 pub struct MatrixApplicationServiceProvisioner {
     client: Client,
     homeserver_url: Url,
@@ -108,6 +113,22 @@ impl MatrixApplicationServiceProvisioner {
             server_name: configuration.server_name,
             access_token: configuration.access_token,
         })
+    }
+
+    /// 为一个受 Application Service 管理的 Agent 用户绑定房间成员能力。
+    ///
+    /// # Errors
+    ///
+    /// 用户不属于受控 Agent 命名空间时拒绝创建，避免 AS token 被滥用于冒充普通用户。
+    pub fn room_membership(
+        self: &std::sync::Arc<Self>,
+        user_id: MatrixUserId,
+    ) -> MatrixResult<MatrixApplicationServiceRoomMembership> {
+        self.ensure_managed_user(&user_id, MatrixOperation::Join)?;
+        Ok(MatrixApplicationServiceRoomMembership::new(
+            self.clone(),
+            user_id,
+        ))
     }
 
     async fn ensure_user_internal(
