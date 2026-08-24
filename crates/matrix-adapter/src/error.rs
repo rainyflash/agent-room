@@ -51,7 +51,7 @@ pub(crate) fn invalid_response<T>(operation: MatrixOperation) -> MatrixResult<T>
     ))
 }
 
-fn map_http_error(operation: MatrixOperation, error: &HttpError) -> MatrixFailure {
+pub(crate) fn map_http_error(operation: MatrixOperation, error: &HttpError) -> MatrixFailure {
     if let Some(api_error) = error.as_client_api_error() {
         return map_api_error(operation, api_error);
     }
@@ -145,11 +145,12 @@ fn duration_millis(value: Duration) -> Option<DurationMillis> {
 mod tests {
     use agent_room_application::ports::{MatrixFailureKind, MatrixOperation};
     use matrix_sdk::{
+        Error,
         reqwest::StatusCode,
         ruma::api::error::{Error as ApiError, ErrorBody, ErrorKind, StandardErrorBody},
     };
 
-    use super::map_api_error;
+    use super::{map_api_error, map_sdk_error};
 
     #[test]
     fn 登录拒绝和房间权限拒绝不会混为一类() {
@@ -170,6 +171,18 @@ mod tests {
         assert_eq!(
             map_api_error(MatrixOperation::Sync, &error).kind(),
             MatrixFailureKind::StaleSyncToken
+        );
+    }
+
+    #[test]
+    fn 发送超时必须进入未知提交对账而不是重试() {
+        assert_eq!(
+            map_sdk_error(MatrixOperation::SendEvent, &Error::Timeout).kind(),
+            MatrixFailureKind::UnknownCommit
+        );
+        assert_eq!(
+            map_sdk_error(MatrixOperation::Sync, &Error::Timeout).kind(),
+            MatrixFailureKind::Timeout
         );
     }
 

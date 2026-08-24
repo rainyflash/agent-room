@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU16, sync::Arc, time::Duration};
 
 use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixClientFactory,
@@ -16,11 +16,15 @@ use matrix_sdk::{
     ruma::{
         OwnedDeviceId, OwnedEventId, OwnedTransactionId, OwnedUserId, RoomId, UInt, UserId,
         api::client::{
+            filter::FilterDefinition,
             receipt::create_receipt::v3::ReceiptType,
             room::{
                 Visibility,
                 create_room::v3::{Request as CreateRoomRequest, RoomPreset},
             },
+            session::login::v3::{LoginInfo, Password, Request as LoginRequest},
+            sync::sync_events::v3::Filter as SyncFilter,
+            uiaa::{MatrixUserIdentifier, UserIdentifier},
         },
         events::receipt::ReceiptThread,
     },
@@ -29,7 +33,7 @@ use matrix_sdk::{
 
 use crate::{
     configuration::MatrixSdkConfiguration,
-    error::{map_build_error, map_sdk_error},
+    error::{map_build_error, map_http_error, map_sdk_error},
     mapping::{map_backfill, map_sync_response},
 };
 
@@ -46,14 +50,16 @@ impl MatrixSdkClientFactory {
     async fn build_client(&self, operation: MatrixOperation) -> MatrixResult<Client> {
         Client::builder()
             .homeserver_url(self.configuration.homeserver_url().clone())
-            .request_config(
-                RequestConfig::new()
-                    .disable_retry()
-                    .timeout(self.configuration.request_timeout()),
-            )
+            .request_config(self.request_config())
             .build()
             .await
             .map_err(|error| map_build_error(operation, &error))
+    }
+
+    fn request_config(&self) -> RequestConfig {
+        RequestConfig::new()
+            .disable_retry()
+            .timeout(self.configuration.request_timeout())
     }
 }
 
@@ -64,21 +70,44 @@ impl MatrixClientFactory for MatrixSdkClientFactory {
     ) -> PortFuture<'a, MatrixResult<MatrixConnection>> {
         Box::pin(async move {
             let client = self.build_client(MatrixOperation::Login).await?;
-            let mut request = client
+            let identifier =
+                UserIdentifier::Matrix(MatrixUserIdentifier::new(login.login_id().to_owned()));
+            let login_info = LoginInfo::Password(Password::new(
+                identifier,
+                login.password().expose().to_owned(),
+            ));
+            let mut request = LoginRequest::new(login_info);
+            request.device_id = login
+                .device_id()
+                .map(|device_id| OwnedDeviceId::from(device_id.as_str()));
+            request.initial_device_display_name =
+                login.initial_device_display_name().map(ToOwned::to_owned);
+            request.refresh_token = true;
+            let response = client
+                .send(request)
+                .with_request_config(self.request_config())
+                .await
+                .map_err(|error| map_http_error(MatrixOperation::Login, &error))?;
+            let session = SdkMatrixSession {
+                meta: SessionMeta {
+                    user_id: response.user_id,
+                    device_id: response.device_id,
+                },
+                tokens: SessionTokens {
+                    access_token: response.access_token,
+                    refresh_token: response.refresh_token,
+                },
+            };
+            client
                 .matrix_auth()
-                .login_username(login.login_id(), login.password().expose())
-                .request_refresh_token();
-            if let Some(device_id) = login.device_id() {
-                request = request.device_id(device_id.as_str());
-            }
-            if let Some(display_name) = login.initial_device_display_name() {
-                request = request.initial_device_display_name(display_name);
-            }
-            request
-                .send()
+                .restore_session(session, RoomLoadSettings::default())
                 .await
                 .map_err(|error| map_sdk_error(MatrixOperation::Login, &error))?;
-            connection_from_client(client, MatrixOperation::Login)
+            connection_from_client(
+                client,
+                MatrixOperation::Login,
+                self.configuration.sync_timeline_limit(),
+            )
         })
     }
 
@@ -94,7 +123,11 @@ impl MatrixClientFactory for MatrixSdkClientFactory {
                 .restore_session(sdk_session, RoomLoadSettings::default())
                 .await
                 .map_err(|error| map_sdk_error(MatrixOperation::RestoreSession, &error))?;
-            connection_from_client(client, MatrixOperation::RestoreSession)
+            connection_from_client(
+                client,
+                MatrixOperation::RestoreSession,
+                self.configuration.sync_timeline_limit(),
+            )
         })
     }
 }
@@ -103,6 +136,7 @@ impl MatrixClientFactory for MatrixSdkClientFactory {
 struct MatrixSdkGateway {
     client: Client,
     metadata: MatrixSessionMetadata,
+    sync_timeline_limit: NonZeroU16,
 }
 
 impl MatrixGateway for MatrixSdkGateway {
@@ -121,6 +155,7 @@ impl MatrixGateway for MatrixSdkGateway {
             let settings = SyncSettings::new()
                 .token(token)
                 .timeout(Duration::from_millis(request.timeout().value()))
+                .filter(sync_filter(self.sync_timeline_limit))
                 .full_state(request.full_state());
             let response = self
                 .client
@@ -278,6 +313,7 @@ impl MatrixSdkGateway {
 fn connection_from_client(
     client: Client,
     operation: MatrixOperation,
+    sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixConnection> {
     let sdk_session = client
         .matrix_auth()
@@ -285,8 +321,18 @@ fn connection_from_client(
         .ok_or_else(|| invalid_response_failure(operation))?;
     let session = from_sdk_session(&sdk_session, operation)?;
     let metadata = session.metadata().clone();
-    let gateway: Arc<dyn MatrixGateway> = Arc::new(MatrixSdkGateway { client, metadata });
+    let gateway: Arc<dyn MatrixGateway> = Arc::new(MatrixSdkGateway {
+        client,
+        metadata,
+        sync_timeline_limit,
+    });
     Ok(MatrixConnection::from_parts(session, gateway))
+}
+
+fn sync_filter(timeline_limit: NonZeroU16) -> SyncFilter {
+    let mut definition = FilterDefinition::empty();
+    definition.room.timeline.limit = Some(UInt::from(timeline_limit.get()));
+    SyncFilter::from(definition)
 }
 
 fn from_sdk_session(

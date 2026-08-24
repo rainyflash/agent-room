@@ -1,14 +1,17 @@
-use std::{net::IpAddr, time::Duration};
+use std::{net::IpAddr, num::NonZeroU16, time::Duration};
 
 use thiserror::Error;
 use url::Url;
 
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
+const DEFAULT_SYNC_TIMELINE_LIMIT: NonZeroU16 = NonZeroU16::new(50).expect("默认值非零");
+const MAX_SYNC_TIMELINE_LIMIT: u16 = 1_000;
 
 #[derive(Debug, Clone)]
 pub struct MatrixSdkConfiguration {
     homeserver_url: Url,
     request_timeout: Duration,
+    sync_timeline_limit: NonZeroU16,
 }
 
 impl MatrixSdkConfiguration {
@@ -30,7 +33,24 @@ impl MatrixSdkConfiguration {
         Ok(Self {
             homeserver_url,
             request_timeout,
+            sync_timeline_limit: DEFAULT_SYNC_TIMELINE_LIMIT,
         })
+    }
+
+    /// 覆盖单次同步允许返回的最大时间线事件数。
+    ///
+    /// # Errors
+    ///
+    /// 上限超过应用层单页安全边界时返回配置错误。
+    pub fn with_sync_timeline_limit(
+        mut self,
+        limit: NonZeroU16,
+    ) -> Result<Self, MatrixSdkConfigurationError> {
+        if limit.get() > MAX_SYNC_TIMELINE_LIMIT {
+            return Err(MatrixSdkConfigurationError::InvalidSyncTimelineLimit);
+        }
+        self.sync_timeline_limit = limit;
+        Ok(self)
     }
 
     pub const fn homeserver_url(&self) -> &Url {
@@ -39,6 +59,10 @@ impl MatrixSdkConfiguration {
 
     pub const fn request_timeout(&self) -> Duration {
         self.request_timeout
+    }
+
+    pub const fn sync_timeline_limit(&self) -> NonZeroU16 {
+        self.sync_timeline_limit
     }
 }
 
@@ -76,11 +100,13 @@ pub enum MatrixSdkConfigurationError {
     InsecureHomeserverUrl,
     #[error("Matrix 请求超时必须处于 1 毫秒到 120 秒之间")]
     InvalidRequestTimeout,
+    #[error("Matrix 单次同步时间线事件上限不能超过 1000")]
+    InvalidSyncTimelineLimit,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{num::NonZeroU16, time::Duration};
 
     use super::{MatrixSdkConfiguration, MatrixSdkConfigurationError};
 
@@ -110,5 +136,18 @@ mod tests {
             assert!(MatrixSdkConfiguration::new(url, Duration::from_secs(10)).is_err());
         }
         assert!(MatrixSdkConfiguration::new("https://matrix.example.org", Duration::ZERO).is_err());
+    }
+
+    #[test]
+    fn 同步时间线默认有界且拒绝超大响应() {
+        let configuration =
+            MatrixSdkConfiguration::new("https://matrix.example.org", Duration::from_secs(10))
+                .expect("配置有效");
+        assert_eq!(configuration.sync_timeline_limit().get(), 50);
+        assert!(
+            configuration
+                .with_sync_timeline_limit(NonZeroU16::new(1_001).expect("测试值非零"))
+                .is_err()
+        );
     }
 }
