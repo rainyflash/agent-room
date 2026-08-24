@@ -2,9 +2,18 @@ use std::{sync::Arc, time::Duration};
 
 use agent_room_application::{
     devices::{AuthenticatedDevice, DeviceCredentials},
-    ports::{AgentInstanceVerificationRecord, PortFuture, PrincipalAccount, SecretValue},
+    ports::{
+        AgentInstanceVerificationRecord, MatrixDeviceId, MatrixSession, MatrixSessionMetadata,
+        MatrixUserId, PortFuture, PrincipalAccount, SecretValue,
+    },
 };
 use agent_room_bridge_core::{
+    agent_identity::BridgeAgentIdentity,
+    agent_runtime::{
+        AgentRuntimeRegistrationIntent, ControlPlaneAgentRuntimeFailure,
+        ControlPlaneAgentRuntimeFailureKind, ControlPlaneAgentRuntimeGateway,
+        ControlPlaneAgentRuntimeResult, RegisteredAgentRuntime,
+    },
     agent_verification::{
         AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailure,
         AgentInstanceVerificationGatewayFailureKind, AgentInstanceVerificationGatewayResult,
@@ -21,7 +30,7 @@ use agent_room_bridge_core::{
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
     identity::Principal,
-    ids::{AgentId, AgentInstanceId, ContentId, DeviceId, PrincipalId},
+    ids::{AdapterBindingId, AgentId, AgentInstanceId, ContentId, DeviceId, PrincipalId},
     time::UtcMillis,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -36,6 +45,7 @@ const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
 const PROOF_ISSUED_AT_HEADER: &str = "x-agent-room-proof-issued-at";
 const PROOF_NONCE_HEADER: &str = "x-agent-room-proof-nonce";
 const PROOF_SIGNATURE_HEADER: &str = "x-agent-room-proof-signature";
+const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 
 pub struct ControlPlaneHttpConfig {
@@ -50,6 +60,12 @@ pub struct ReqwestControlPlaneDeviceGateway {
 }
 
 pub struct ReqwestAgentInstanceVerificationGateway {
+    client: Client,
+    base_url: Url,
+    authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+}
+
+pub struct ReqwestControlPlaneAgentRuntimeGateway {
     client: Client,
     base_url: Url,
     authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
@@ -195,6 +211,63 @@ impl ReqwestAgentInstanceVerificationGateway {
     }
 }
 
+impl ReqwestControlPlaneAgentRuntimeGateway {
+    /// 创建以 Bridge 设备会话签名的 Agent 实例登记网关。
+    ///
+    /// # Errors
+    ///
+    /// 控制面地址、明文传输边界、超时或 HTTP 客户端配置无效时返回错误。
+    pub fn new(
+        config: &ControlPlaneHttpConfig,
+        authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+    ) -> Result<Self, ControlPlaneHttpConfigurationError> {
+        let (client, base_url) = configured_client(config)?;
+        Ok(Self {
+            client,
+            base_url,
+            authorizer,
+        })
+    }
+
+    async fn register_internal(
+        &self,
+        intent: &AgentRuntimeRegistrationIntent,
+    ) -> ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime> {
+        let request_target = format!("/agents/{}/instances", intent.agent_id());
+        let body = serde_json::to_string(&RegisterAgentRuntimeBody {
+            adapter_type: intent.adapter_type(),
+            capability_version: intent.capability_version(),
+            configuration: serde_json::Map::new(),
+            public_signing_key: URL_SAFE_NO_PAD.encode(intent.public_signing_key().as_bytes()),
+        })
+        .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))?;
+        let authorized = self
+            .authorizer
+            .authorize("POST", &request_target, &body)
+            .await
+            .map_err(map_agent_runtime_session_failure)?;
+        let request_url = self
+            .base_url
+            .join(request_target.trim_start_matches('/'))
+            .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))?;
+        let request = signed_agent_runtime_request(
+            self.client
+                .post(request_url)
+                .header(IDEMPOTENCY_KEY_HEADER, intent.request_id().to_string())
+                .header(reqwest::header::CONTENT_TYPE, "application/json"),
+            &authorized,
+            "POST",
+            &request_target,
+        )?;
+        let response = request
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| agent_runtime_transport_failure(&error))?;
+        decode_agent_runtime_response(response, intent.agent_id()).await
+    }
+}
+
 impl AgentInstanceVerificationGateway for ReqwestAgentInstanceVerificationGateway {
     fn resolve(
         &self,
@@ -202,6 +275,15 @@ impl AgentInstanceVerificationGateway for ReqwestAgentInstanceVerificationGatewa
     ) -> PortFuture<'_, AgentInstanceVerificationGatewayResult<AgentInstanceVerificationRecord>>
     {
         Box::pin(self.resolve_internal(instance_id))
+    }
+}
+
+impl ControlPlaneAgentRuntimeGateway for ReqwestControlPlaneAgentRuntimeGateway {
+    fn register<'a>(
+        &'a self,
+        intent: &'a AgentRuntimeRegistrationIntent,
+    ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
+        Box::pin(self.register_internal(intent))
     }
 }
 
@@ -232,6 +314,15 @@ struct RegisterDeviceBody {
     import_locale: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterAgentRuntimeBody<'a> {
+    adapter_type: &'a str,
+    capability_version: &'a str,
+    configuration: serde_json::Map<String, serde_json::Value>,
+    public_signing_key: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeviceCredentialsResponse {
@@ -257,19 +348,51 @@ struct AgentInstanceVerificationResponse {
     invalidated_at_unix_ms: Option<i64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentRuntimeResponse {
+    agent_id: String,
+    display_name: String,
+    avatar_content_id: Option<String>,
+    adapter_binding_id: String,
+    agent_instance_id: String,
+    matrix_user_id: String,
+    matrix_device_id: String,
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
 fn signed_request(
     request: reqwest::RequestBuilder,
     authorized: &AuthorizedControlPlaneRequest,
     expected_method: &str,
     expected_target: &str,
 ) -> Result<reqwest::RequestBuilder, AgentInstanceVerificationGatewayFailure> {
+    signed_request_headers(request, authorized, expected_method, expected_target)
+        .map_err(|()| verification_failure(AgentInstanceVerificationGatewayFailureKind::Internal))
+}
+
+fn signed_agent_runtime_request(
+    request: reqwest::RequestBuilder,
+    authorized: &AuthorizedControlPlaneRequest,
+    expected_method: &str,
+    expected_target: &str,
+) -> Result<reqwest::RequestBuilder, ControlPlaneAgentRuntimeFailure> {
+    signed_request_headers(request, authorized, expected_method, expected_target)
+        .map_err(|()| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))
+}
+
+fn signed_request_headers(
+    request: reqwest::RequestBuilder,
+    authorized: &AuthorizedControlPlaneRequest,
+    expected_method: &str,
+    expected_target: &str,
+) -> Result<reqwest::RequestBuilder, ()> {
     if !authorized.proof.nonce().expose().is_ascii()
         || authorized.proof.method() != expected_method
         || authorized.proof.request_target() != expected_target
     {
-        return Err(verification_failure(
-            AgentInstanceVerificationGatewayFailureKind::Internal,
-        ));
+        return Err(());
     }
     Ok(request
         .bearer_auth(authorized.access_token.expose())
@@ -322,6 +445,22 @@ async fn decode_verification_response(
         ));
     }
     Ok(record)
+}
+
+async fn decode_agent_runtime_response(
+    response: reqwest::Response,
+    requested_agent_id: AgentId,
+) -> ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(agent_runtime_status_failure(status));
+    }
+    let body = read_limited_response_body(response).await.map_err(|()| {
+        agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+    })?;
+    let response = serde_json::from_slice::<AgentRuntimeResponse>(&body)
+        .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse))?;
+    response.try_into_runtime(requested_agent_id)
 }
 
 async fn read_limited_body(response: reqwest::Response) -> ControlPlaneDeviceResult<Vec<u8>> {
@@ -428,6 +567,72 @@ impl TryFrom<AgentInstanceVerificationResponse> for AgentInstanceVerificationRec
     }
 }
 
+impl AgentRuntimeResponse {
+    fn try_into_runtime(
+        self,
+        requested_agent_id: AgentId,
+    ) -> ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime> {
+        let agent_id = parse_v7_id(&self.agent_id)
+            .map(AgentId::from_uuid)
+            .map_err(|()| {
+                agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+            })?;
+        if agent_id != requested_agent_id {
+            return Err(agent_runtime_failure(
+                ControlPlaneAgentRuntimeFailureKind::InvalidResponse,
+            ));
+        }
+        if let Some(content_id) = self.avatar_content_id {
+            parse_v7_id(&content_id).map_err(|()| {
+                agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+            })?;
+        }
+        let binding_id = parse_v7_id(&self.adapter_binding_id)
+            .map(AdapterBindingId::from_uuid)
+            .map_err(|()| {
+                agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+            })?;
+        let instance_id = parse_v7_id(&self.agent_instance_id)
+            .map(AgentInstanceId::from_uuid)
+            .map_err(|()| {
+                agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+            })?;
+        let matrix_user_id = MatrixUserId::new(self.matrix_user_id).map_err(|_| {
+            agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+        })?;
+        let matrix_device_id = MatrixDeviceId::new(self.matrix_device_id).map_err(|_| {
+            agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+        })?;
+        let access_token = SecretValue::new(self.access_token).map_err(|_| {
+            agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+        })?;
+        let refresh_token = self
+            .refresh_token
+            .map(SecretValue::new)
+            .transpose()
+            .map_err(|_| {
+                agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse)
+            })?;
+        let identity = BridgeAgentIdentity::new(
+            agent_id,
+            self.display_name,
+            matrix_user_id.as_str(),
+            instance_id,
+        )
+        .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse))?;
+        RegisteredAgentRuntime::new(
+            identity,
+            binding_id,
+            MatrixSession::new(
+                MatrixSessionMetadata::new(matrix_user_id, matrix_device_id),
+                access_token,
+                refresh_token,
+            ),
+        )
+        .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse))
+    }
+}
+
 fn validate_base_url(url: &Url) -> Result<(), ControlPlaneHttpConfigurationError> {
     let is_loopback = url.host_str().is_some_and(|host| {
         host.eq_ignore_ascii_case("localhost")
@@ -526,6 +731,35 @@ fn verification_status_failure(status: StatusCode) -> AgentInstanceVerificationG
     verification_failure(kind)
 }
 
+fn agent_runtime_transport_failure(error: &reqwest::Error) -> ControlPlaneAgentRuntimeFailure {
+    let kind = if error.is_connect() {
+        ControlPlaneAgentRuntimeFailureKind::Unavailable
+    } else {
+        ControlPlaneAgentRuntimeFailureKind::UnknownCommit
+    };
+    agent_runtime_failure(kind)
+}
+
+fn agent_runtime_status_failure(status: StatusCode) -> ControlPlaneAgentRuntimeFailure {
+    let kind = match status {
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
+            ControlPlaneAgentRuntimeFailureKind::InvalidRequest
+        }
+        StatusCode::UNAUTHORIZED => ControlPlaneAgentRuntimeFailureKind::AuthenticationRejected,
+        StatusCode::FORBIDDEN => ControlPlaneAgentRuntimeFailureKind::Forbidden,
+        StatusCode::NOT_FOUND => ControlPlaneAgentRuntimeFailureKind::NotFound,
+        StatusCode::CONFLICT => ControlPlaneAgentRuntimeFailureKind::Conflict,
+        StatusCode::REQUEST_TIMEOUT
+        | StatusCode::TOO_MANY_REQUESTS
+        | StatusCode::BAD_GATEWAY
+        | StatusCode::SERVICE_UNAVAILABLE
+        | StatusCode::GATEWAY_TIMEOUT => ControlPlaneAgentRuntimeFailureKind::Unavailable,
+        _ if status.is_server_error() => ControlPlaneAgentRuntimeFailureKind::Unavailable,
+        _ => ControlPlaneAgentRuntimeFailureKind::InvalidResponse,
+    };
+    agent_runtime_failure(kind)
+}
+
 fn map_session_failure(failure: BridgeSessionFailure) -> AgentInstanceVerificationGatewayFailure {
     let kind = match failure.kind() {
         BridgeSessionFailureKind::NotAuthorized
@@ -545,6 +779,25 @@ fn map_session_failure(failure: BridgeSessionFailure) -> AgentInstanceVerificati
     verification_failure(kind)
 }
 
+fn map_agent_runtime_session_failure(
+    failure: BridgeSessionFailure,
+) -> ControlPlaneAgentRuntimeFailure {
+    let kind = match failure.kind() {
+        BridgeSessionFailureKind::NotAuthorized
+        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+            ControlPlaneAgentRuntimeFailureKind::AuthenticationRejected
+        }
+        BridgeSessionFailureKind::SecureStorageUnavailable
+        | BridgeSessionFailureKind::ControlPlaneUnavailable => {
+            ControlPlaneAgentRuntimeFailureKind::Unavailable
+        }
+        BridgeSessionFailureKind::CorruptSecureStorage
+        | BridgeSessionFailureKind::InvalidControlPlaneResponse
+        | BridgeSessionFailureKind::Internal => ControlPlaneAgentRuntimeFailureKind::Internal,
+    };
+    agent_runtime_failure(kind)
+}
+
 const fn failure(kind: ControlPlaneDeviceFailureKind) -> ControlPlaneDeviceFailure {
     ControlPlaneDeviceFailure::new(kind)
 }
@@ -553,6 +806,12 @@ const fn verification_failure(
     kind: AgentInstanceVerificationGatewayFailureKind,
 ) -> AgentInstanceVerificationGatewayFailure {
     AgentInstanceVerificationGatewayFailure::new(kind)
+}
+
+const fn agent_runtime_failure(
+    kind: ControlPlaneAgentRuntimeFailureKind,
+) -> ControlPlaneAgentRuntimeFailure {
+    ControlPlaneAgentRuntimeFailure::new(kind)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -587,6 +846,10 @@ mod tests {
         ports::{DeviceSignature, PortFuture, SecretFactory, SecretValue},
     };
     use agent_room_bridge_core::{
+        agent_runtime::{
+            AgentRuntimeRegistrationIntent, ControlPlaneAgentRuntimeFailureKind,
+            ControlPlaneAgentRuntimeGateway,
+        },
         agent_verification::{
             AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailureKind,
         },
@@ -599,8 +862,9 @@ mod tests {
         },
     };
     use agent_room_domain::{
+        agents::AgentInstancePublicSigningKey,
         devices::{DevicePlatform, DevicePublicSigningKey},
-        ids::{AgentInstanceId, DeviceId},
+        ids::{AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId},
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -618,7 +882,8 @@ mod tests {
 
     use super::{
         ControlPlaneHttpConfig, ControlPlaneHttpConfigurationError,
-        ReqwestAgentInstanceVerificationGateway, ReqwestControlPlaneDeviceGateway,
+        ReqwestAgentInstanceVerificationGateway, ReqwestControlPlaneAgentRuntimeGateway,
+        ReqwestControlPlaneDeviceGateway,
     };
 
     const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
@@ -809,6 +1074,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_运行时网关以同一正文完成设备证明和幂等登记() {
+        let app = Router::new().route(
+            "/agents/{agent_id}/instances",
+            post(
+                |Path(agent_id): Path<String>, headers: HeaderMap, body: String| async move {
+                    let parsed = serde_json::from_str::<Value>(&body).ok();
+                    let valid = agent_id == AGENT_ID
+                        && header(&headers, "authorization") == Some("Bearer access-token")
+                        && header(&headers, "idempotency-key")
+                            == Some("0198b601-77a1-7bb8-83eb-a8fe68c97e49")
+                        && header(&headers, "content-type") == Some("application/json")
+                        && header(&headers, "x-agent-room-device-id")
+                            == Some("00000000-0000-0000-0000-000000000001")
+                        && header(&headers, "x-agent-room-proof-issued-at") == Some("1000")
+                        && header(&headers, "x-agent-room-proof-nonce") == Some("0123456789abcdef")
+                        && parsed
+                            == Some(json!({
+                                "adapterType": "codex-desktop",
+                                "capabilityVersion": "2026-08-24",
+                                "configuration": {},
+                                "publicSigningKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+                            }));
+                    if valid {
+                        (StatusCode::OK, Json(valid_agent_runtime_response())).into_response()
+                    } else {
+                        StatusCode::BAD_REQUEST.into_response()
+                    }
+                },
+            ),
+        );
+        let authorizer = Arc::new(测试请求授权器::default());
+        let gateway = agent_runtime_gateway(spawn_server(app).await, authorizer.clone());
+
+        let runtime = gateway
+            .register(&agent_runtime_intent())
+            .await
+            .expect("规范实例登记响应可解析");
+
+        assert_eq!(runtime.identity().agent_id(), agent_id());
+        assert_eq!(runtime.identity().display_name(), "Codex Builder");
+        assert_eq!(runtime.identity().agent_instance_id(), instance_id());
+        assert_eq!(
+            runtime.matrix_session().access_token().expose(),
+            "agent-device-access-token"
+        );
+        let requests = authorizer.requests.lock().expect("授权请求记录锁可用");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "POST");
+        assert_eq!(requests[0].1, format!("/agents/{AGENT_ID}/instances"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&requests[0].2).expect("签名正文是 JSON"),
+            json!({
+                "adapterType": "codex-desktop",
+                "capabilityVersion": "2026-08-24",
+                "configuration": {},
+                "publicSigningKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_运行时网关拒绝错配身份和未知响应字段() {
+        let wrong_identity = Router::new().route(
+            "/agents/{agent_id}/instances",
+            post(|| async {
+                let mut response = valid_agent_runtime_response();
+                response["agentId"] = json!("0198b601-77a1-7bb8-83eb-a8fe68c97e45");
+                Json(response)
+            }),
+        );
+        let unknown_field = Router::new().route(
+            "/agents/{agent_id}/instances",
+            post(|| async {
+                let mut response = valid_agent_runtime_response();
+                response["unexpected"] = json!(true);
+                Json(response)
+            }),
+        );
+
+        for app in [wrong_identity, unknown_field] {
+            let failure =
+                agent_runtime_gateway(spawn_server(app).await, Arc::new(测试请求授权器::default()))
+                    .register(&agent_runtime_intent())
+                    .await
+                    .expect_err("不可信响应必须失败");
+            assert_eq!(
+                failure.kind(),
+                ControlPlaneAgentRuntimeFailureKind::InvalidResponse
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn 实例验签网关区分不存在与畸形成功响应() {
         let not_found = Router::new().route(
             "/agent-instances/{instance_id}/verification",
@@ -923,6 +1281,20 @@ mod tests {
         .expect("本地验签材料网关地址有效")
     }
 
+    fn agent_runtime_gateway(
+        base_url: String,
+        authorizer: Arc<测试请求授权器>,
+    ) -> ReqwestControlPlaneAgentRuntimeGateway {
+        ReqwestControlPlaneAgentRuntimeGateway::new(
+            &ControlPlaneHttpConfig {
+                base_url,
+                request_timeout: Duration::from_secs(2),
+            },
+            authorizer,
+        )
+        .expect("本地 Agent 运行时网关地址有效")
+    }
+
     async fn spawn_server(app: Router) -> String {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -971,6 +1343,37 @@ mod tests {
             "registeredAtUnixMs": 1_000,
             "invalidatedAtUnixMs": 2_000
         })
+    }
+
+    fn valid_agent_runtime_response() -> Value {
+        json!({
+            "agentId": AGENT_ID,
+            "displayName": "Codex Builder",
+            "avatarContentId": null,
+            "adapterBindingId": "0198b601-77a1-7bb8-83eb-a8fe68c97e48",
+            "agentInstanceId": INSTANCE_ID,
+            "matrixUserId": "@agent:example.org",
+            "matrixDeviceId": "AR_TEST",
+            "accessToken": "agent-device-access-token",
+            "refreshToken": null
+        })
+    }
+
+    fn agent_runtime_intent() -> AgentRuntimeRegistrationIntent {
+        AgentRuntimeRegistrationIntent::new(
+            AgentInstanceRegistrationRequestId::from_uuid(
+                Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e49").expect("测试请求标识有效"),
+            ),
+            agent_id(),
+            "codex-desktop",
+            "2026-08-24",
+            AgentInstancePublicSigningKey::new(vec![7; 32]).expect("测试实例公钥有效"),
+        )
+        .expect("测试登记意图有效")
+    }
+
+    fn agent_id() -> AgentId {
+        AgentId::from_uuid(Uuid::parse_str(AGENT_ID).expect("测试 Agent 标识有效"))
     }
 
     fn secret(value: &str) -> SecretValue {

@@ -1,6 +1,8 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use agent_room_bridge_local_adapter::{BridgeLocationFailureKind, resolve_bridge_data_root};
+use agent_room_domain::ids::AgentId;
+use uuid::{Uuid, Version};
 
 const DEFAULT_REQUEST_TIMEOUT_MILLIS: u64 = 10_000;
 const DEFAULT_AUTHORIZATION_TIMEOUT_MILLIS: u64 = 10 * 60 * 1_000;
@@ -23,6 +25,7 @@ impl EnvironmentSource for ProcessEnvironment {
 }
 
 pub(crate) struct BridgeConfig {
+    pub(crate) agent_id: Option<AgentId>,
     pub(crate) control_plane_url: String,
     pub(crate) matrix_homeserver_url: String,
     pub(crate) oidc_issuer_url: String,
@@ -62,6 +65,7 @@ impl BridgeConfig {
             ));
         }
         Ok(Self {
+            agent_id: read_optional_agent_id(source)?,
             control_plane_url: read_required_text(source, "AGENT_ROOM_CONTROL_PLANE_URL")?,
             matrix_homeserver_url: read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
             oidc_issuer_url: read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,
@@ -91,6 +95,24 @@ impl BridgeConfig {
             data_root: read_data_root(source)?,
         })
     }
+}
+
+fn read_optional_agent_id(
+    source: &impl EnvironmentSource,
+) -> Result<Option<AgentId>, BridgeConfigError> {
+    let Some(value) = read_optional(source, "AGENT_ROOM_AGENT_ID") else {
+        return Ok(None);
+    };
+    let id = Uuid::parse_str(value.trim()).map_err(|_| {
+        BridgeConfigError::invalid("AGENT_ROOM_AGENT_ID", "必须是控制面签发的 UUIDv7")
+    })?;
+    if id.get_version() != Some(Version::SortRand) {
+        return Err(BridgeConfigError::invalid(
+            "AGENT_ROOM_AGENT_ID",
+            "必须是控制面签发的 UUIDv7",
+        ));
+    }
+    Ok(Some(AgentId::from_uuid(id)))
 }
 
 fn read_data_root(source: &impl EnvironmentSource) -> Result<PathBuf, BridgeConfigError> {
@@ -256,6 +278,7 @@ mod tests {
         assert_eq!(config.reconnect_initial_delay.as_millis(), 1_000);
         assert_eq!(config.reconnect_maximum_delay.as_millis(), 60_000);
         assert!(!config.import_oidc_profile);
+        assert!(config.agent_id.is_none());
         assert!(!config.device_label.is_empty());
         assert!(config.data_root.is_absolute());
     }
@@ -322,5 +345,33 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn agent_标识必须是_uuidv7() {
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_AGENT_ID",
+            "00000000-0000-0000-0000-000000000001".to_owned(),
+        );
+
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_AGENT_ID",
+                ..
+            })
+        ));
+
+        environment.0.insert(
+            "AGENT_ROOM_AGENT_ID",
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e44".to_owned(),
+        );
+        assert!(
+            BridgeConfig::from_source(&environment)
+                .expect("UUIDv7 Agent 标识有效")
+                .agent_id
+                .is_some()
+        );
     }
 }

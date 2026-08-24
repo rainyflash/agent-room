@@ -1,7 +1,7 @@
 use agent_room_application::ports::MatrixUserId;
 use agent_room_domain::ids::{AgentId, AgentInstanceId};
 
-const MAX_DISPLAY_NAME_CHARACTERS: usize = 80;
+const MAX_DISPLAY_NAME_CHARACTERS: usize = 128;
 const MAX_AVATAR_URL_LENGTH: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -149,6 +149,8 @@ struct AgentResponse {
 #[serde(rename_all = "camelCase")]
 struct AgentInstanceResponse {
     agent_id: String,
+    display_name: String,
+    avatar_content_id: Option<String>,
     adapter_binding_id: String,
     agent_instance_id: String,
     matrix_user_id: String,
@@ -518,6 +520,8 @@ impl From<RegisteredAgentInstance> for AgentInstanceResponse {
     fn from(value: RegisteredAgentInstance) -> Self {
         Self {
             agent_id: value.registration.instance.agent_id().to_string(),
+            display_name: value.agent.display_name,
+            avatar_content_id: value.agent.avatar_content_id.map(|id| id.to_string()),
             adapter_binding_id: value.registration.binding.id().to_string(),
             agent_instance_id: value.registration.instance.id().to_string(),
             matrix_user_id: value
@@ -1022,6 +1026,8 @@ mod tests {
         );
         let payload = response_json(response).await;
         assert_eq!(payload["agentId"], AGENT_UUID);
+        assert_eq!(payload["displayName"], "Codex Builder");
+        assert_eq!(payload["avatarContentId"], Value::Null);
         assert_eq!(payload["matrixDeviceId"], "AR_TEST");
         assert_eq!(payload["accessToken"], "agent-device-access-token");
         assert!(!payload.to_string().contains("application-service-token"));
@@ -1264,6 +1270,7 @@ mod tests {
             matrix_device_id,
         );
         RegisteredAgentInstance {
+            agent: registered_agent(),
             registration: StoredAgentInstanceRegistration { binding, instance },
             matrix_session: MatrixSession::new(
                 MatrixSessionMetadata::new(

@@ -1,4 +1,5 @@
 pub mod agent_identity;
+pub mod agent_runtime;
 pub mod agent_verification;
 pub mod authorization;
 pub mod handoffs;

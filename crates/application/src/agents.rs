@@ -56,6 +56,7 @@ pub struct RegisterAgentInstance {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredAgentInstance {
+    pub agent: RegisteredAgent,
     pub registration: StoredAgentInstanceRegistration,
     pub matrix_session: MatrixSession,
 }
@@ -273,8 +274,8 @@ impl AgentManagementService {
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
 
-        let matrix_user_id =
-            MatrixUserId::new(agent.matrix_user_id).map_err(|_| internal_failure(operation))?;
+        let matrix_user_id = MatrixUserId::new(agent.matrix_user_id.clone())
+            .map_err(|_| internal_failure(operation))?;
         let matrix_device_id =
             MatrixDeviceId::new(stored.instance.matrix_device_id().as_str().to_owned())
                 .map_err(|_| internal_failure(operation))?;
@@ -295,6 +296,7 @@ impl AgentManagementService {
             return Err(internal_failure(operation));
         }
         Ok(RegisteredAgentInstance {
+            agent,
             registration: stored,
             matrix_session: session,
         })
