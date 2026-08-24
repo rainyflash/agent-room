@@ -24,7 +24,20 @@ pub use agents::{
     RegisteredAgent, StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
-pub use content::ContentStore;
+pub use content::{
+    ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
+    ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentAuthorizationRequest,
+    ContentAuthorizationResult, ContentByteStream, ContentDownloadAttempt, ContentDownloadLimiter,
+    ContentEventBinding, ContentLifecycleTransition, ContentMembershipAuthorizer,
+    ContentRateLimitDecision, ContentRateLimitFailure, ContentRateLimitFailureKind,
+    ContentRateLimitResult, ContentReadTicket, ContentReadTicketClaims, ContentReadTicketCodec,
+    ContentRepository, ContentStorageKeyFactory, ContentStorageKeyGenerationFailure,
+    ContentStorageKeyGenerationResult, ContentStreamFailure, ContentStreamFailureKind,
+    ContentStreamResult, ContentTicketFailure, ContentTicketFailureKind, ContentTicketResult,
+    ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint, ObjectStoreFailure,
+    ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
+    PrivateContentObjectStore, ReclaimableContentQuery,
+};
 pub use devices::{
     DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier, DeviceRefreshContext,
     DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,

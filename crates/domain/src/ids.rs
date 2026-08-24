@@ -50,6 +50,7 @@ define_id!(RoomReservationId);
 define_id!(RoomProvisioningJobId);
 define_id!(RoomProvisioningLeaseId);
 define_id!(ContentId);
+define_id!(ContentUploadRequestId);
 define_id!(HandoffId);
 define_id!(AutomationGrantId);
 define_id!(OutboxEventId);
