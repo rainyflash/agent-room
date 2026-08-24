@@ -10,6 +10,7 @@ mod migrations;
 mod outbox;
 mod principals;
 mod projections;
+mod rooms;
 mod transaction;
 
 use sqlx::PgPool;

@@ -666,6 +666,23 @@ impl RoomReservationState {
     }
 }
 
+impl TryFrom<&str> for RoomReservationState {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "reserved" => Ok(Self::Reserved),
+            "committed" => Ok(Self::Committed),
+            "released" => Ok(Self::Released),
+            "expired" => Ok(Self::Expired),
+            _ => Err(validation(
+                "room_reservation_state",
+                "不是支持的容量预约状态",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomReservation {
     id: RoomReservationId,

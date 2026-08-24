@@ -1,4 +1,5 @@
 use agent_room_application::persistence::{RepositoryError, RepositoryErrorKind};
+use agent_room_domain::DomainError;
 use sqlx::error::DatabaseError;
 use thiserror::Error;
 
@@ -24,6 +25,22 @@ pub(crate) fn map_sqlx_error(operation: &'static str, error: &sqlx::Error) -> Re
         _ => RepositoryErrorKind::Unavailable,
     };
 
+    RepositoryError::new(operation, kind)
+}
+
+pub(crate) const fn map_domain_error(
+    operation: &'static str,
+    error: &DomainError,
+) -> RepositoryError {
+    let kind = match error {
+        DomainError::Forbidden { .. } => RepositoryErrorKind::Forbidden,
+        DomainError::InvariantViolation { .. }
+        | DomainError::InvalidTransition { .. }
+        | DomainError::Validation { .. }
+        | DomainError::CapacityExceeded { .. }
+        | DomainError::TimeOverflow
+        | DomainError::VersionOverflow => RepositoryErrorKind::Constraint,
+    };
     RepositoryError::new(operation, kind)
 }
 

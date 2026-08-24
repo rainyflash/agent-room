@@ -15,7 +15,7 @@ use sqlx::{Postgres, Transaction, postgres::PgRow};
 use crate::{
     PostgresRepositories,
     agents::{decode_column, decode_optional_time, decode_time},
-    error::map_sqlx_error,
+    error::{map_domain_error, map_sqlx_error},
     outbox::insert_outbox_event,
 };
 
@@ -261,17 +261,4 @@ fn ensure_event_contract(
             RepositoryErrorKind::Constraint,
         ))
     }
-}
-
-fn map_domain_error(operation: &'static str, error: &DomainError) -> RepositoryError {
-    let kind = match error {
-        DomainError::Forbidden { .. } => RepositoryErrorKind::Forbidden,
-        DomainError::InvariantViolation { .. }
-        | DomainError::InvalidTransition { .. }
-        | DomainError::Validation { .. }
-        | DomainError::CapacityExceeded { .. }
-        | DomainError::TimeOverflow
-        | DomainError::VersionOverflow => RepositoryErrorKind::Constraint,
-    };
-    RepositoryError::new(operation, kind)
 }
