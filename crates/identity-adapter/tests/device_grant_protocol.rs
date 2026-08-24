@@ -22,6 +22,11 @@ use openidconnect::{
         CoreJwsSigningAlgorithm, CoreRsaPrivateSigningKey, CoreTokenResponse, CoreTokenType,
     },
 };
+use rand::rngs::OsRng;
+use rsa::{
+    RsaPrivateKey,
+    pkcs1::{EncodeRsaPrivateKey, LineEnding},
+};
 use serde_json::json;
 use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
 
@@ -29,33 +34,6 @@ const CLIENT_ID: &str = "agent-room-bridge-test";
 const DEVICE_CODE: &str = "一次性设备授权码-测试专用";
 const USER_CODE: &str = "ABCD-EFGH";
 const TEST_KEY_ID: &str = "agent-room-device-grant-test-key";
-const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----\n\
-MIIEowIBAAKCAQEAn4EPtAOCc9AlkeQHPzHStgAbgs7bTZLwUBZdR8/KuKPEHLd4\n\
-rHVTeT+O+XV2jRojdNhxJWTDvNd7nqQ0VEiZQHz/AJmSCpMaJMRBSFKrKb2wqVwG\n\
-U/NsYOYL+QtiWN2lbzcEe6XC0dApr5ydQLrHqkHHig3RBordaZ6Aj+oBHqFEHYpP\n\
-e7Tpe+OfVfHd1E6cS6M1FZcD1NNLYD5lFHpPI9bTwJlsde3uhGqC0ZCuEHg8lhzw\n\
-OHrtIQbS0FVbb9k3+tVTU4fg/3L/vniUFAKwuCLqKnS2BYwdq/mzSnbLY7h/qixo\n\
-R7jig3//kRhuaxwUkRz5iaiQkqgc5gHdrNP5zwIDAQABAoIBAG1lAvQfhBUSKPJK\n\
-Rn4dGbshj7zDSr2FjbQf4pIh/ZNtHk/jtavyO/HomZKV8V0NFExLNi7DUUvvLiW7\n\
-0PgNYq5MDEjJCtSd10xoHa4QpLvYEZXWO7DQPwCmRofkOutf+NqyDS0QnvFvp2d+\n\
-Lov6jn5C5yvUFgw6qWiLAPmzMFlkgxbtjFAWMJB0zBMy2BqjntOJ6KnqtYRMQUxw\n\
-TgXZDF4rhYVKtQVOpfg6hIlsaoPNrF7dofizJ099OOgDmCaEYqM++bUlEHxgrIVk\n\
-wZz+bg43dfJCocr9O5YX0iXaz3TOT5cpdtYbBX+C/5hwrqBWru4HbD3xz8cY1TnD\n\
-qQa0M8ECgYEA3Slxg/DwTXJcb6095RoXygQCAZ5RnAvZlno1yhHtnUex/fp7AZ/9\n\
-nRaO7HX/+SFfGQeutao2TDjDAWU4Vupk8rw9JR0AzZ0N2fvuIAmr/WCsmGpeNqQn\n\
-ev1T7IyEsnh8UMt+n5CafhkikzhEsrmndH6LxOrvRJlsPp6Zv8bUq0kCgYEAuKE2\n\
-dh+cTf6ERF4k4e/jy78GfPYUIaUyoSSJuBzp3Cubk3OCqs6grT8bR/cu0Dm1MZwW\n\
-mtdqDyI95HrUeq3MP15vMMON8lHTeZu2lmKvwqW7anV5UzhM1iZ7z4yMkuUwFWoB\n\
-vyY898EXvRD+hdqRxHlSqAZ192zB3pVFJ0s7pFcCgYAHw9W9eS8muPYv4ZhDu/fL\n\
-2vorDmD1JqFcHCxZTOnX1NWWAj5hXzmrU0hvWvFC0P4ixddHf5Nqd6+5E9G3k4E5\n\
-2IwZCnylu3bqCWNh8pT8T3Gf5FQsfPT5530T2BcsoPhUaeCnP499D+rb2mTnFYeg\n\
-mnTT1B/Ue8KGLFFfn16GKQKBgAiw5gxnbocpXPaO6/OKxFFZ+6c0OjxfN2PogWce\n\
-TU/k6ZzmShdaRKwDFXisxRJeNQ5Rx6qgS0jNFtbDhW8E8WFmQ5urCOqIOYk28EBi\n\
-At4JySm4v+5P7yYBh8B8YD2l9j57z/s8hJAxEbn/q8uHP2ddQqvQKgtsni+pHSk9\n\
-XGBfAoGBANz4qr10DdM8DHhPrAb2YItvPVz/VwkBd1Vqj8zCpyIEKe/07oKOvjWQ\n\
-SgkLDH9x2hBgY01SbP43CvPk0V72invu2TGkI/FXwXWJLLG7tDSgw4YyfhrYrHmg\n\
-1Vre3XB9HH8MYBVB6UIexaAq4xSeoemRKTBesZro7OKjKT8/GmiO\n\
------END RSA PRIVATE KEY-----";
 
 #[derive(Debug, Clone, Copy)]
 enum 断言变体 {
@@ -68,6 +46,7 @@ struct 提供者状态 {
     issuer: String,
     assertion_variant: 断言变体,
     poll_count: Arc<Mutex<usize>>,
+    signing_key_pem: Arc<str>,
 }
 
 struct 假设备授权提供者 {
@@ -85,6 +64,7 @@ impl 假设备授权提供者 {
             issuer: issuer.clone(),
             assertion_variant,
             poll_count: Arc::new(Mutex::new(0)),
+            signing_key_pem: Arc::from(生成测试签名密钥()),
         };
         let router = Router::new()
             .route("/.well-known/openid-configuration", get(发现文档))
@@ -146,8 +126,8 @@ async fn 发现文档(State(state): State<提供者状态>) -> Json<serde_json::
     }))
 }
 
-async fn 公钥集() -> Json<CoreJsonWebKeySet> {
-    let signing_key = 测试签名密钥();
+async fn 公钥集(State(state): State<提供者状态>) -> Json<CoreJsonWebKeySet> {
+    let signing_key = 测试签名密钥(&state.signing_key_pem);
     Json(CoreJsonWebKeySet::new(vec![
         signing_key.as_verification_key(),
     ]))
@@ -222,7 +202,7 @@ fn 创建令牌响应(state: &提供者状态) -> CoreTokenResponse {
     .set_locale(Some(LanguageTag::new("zh-CN".to_owned())));
     let id_token = CoreIdToken::new(
         claims,
-        &测试签名密钥(),
+        &测试签名密钥(&state.signing_key_pem),
         CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
         None,
         None,
@@ -236,12 +216,17 @@ fn 创建令牌响应(state: &提供者状态) -> CoreTokenResponse {
     )
 }
 
-fn 测试签名密钥() -> CoreRsaPrivateSigningKey {
-    CoreRsaPrivateSigningKey::from_pem(
-        TEST_RSA_PRIVATE_KEY,
-        Some(JsonWebKeyId::new(TEST_KEY_ID.to_owned())),
-    )
-    .expect("测试 RSA 私钥有效")
+fn 生成测试签名密钥() -> String {
+    RsaPrivateKey::new(&mut OsRng, 2_048)
+        .expect("测试 RSA 密钥可生成")
+        .to_pkcs1_pem(LineEnding::LF)
+        .expect("测试 RSA 密钥可编码")
+        .to_string()
+}
+
+fn 测试签名密钥(pem: &str) -> CoreRsaPrivateSigningKey {
+    CoreRsaPrivateSigningKey::from_pem(pem, Some(JsonWebKeyId::new(TEST_KEY_ID.to_owned())))
+        .expect("测试 RSA 私钥有效")
 }
 
 #[tokio::test]
