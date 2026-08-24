@@ -1,7 +1,9 @@
 use std::{env, fmt, net::SocketAddr, time::Duration};
 
+use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
 use thiserror::Error;
 use url::Url;
+use uuid::{Uuid, Version};
 
 const DEFAULT_DEPENDENCY_TIMEOUT_MILLIS: u64 = 2_000;
 const DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS: u64 = 5_000;
@@ -13,6 +15,16 @@ const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
+const DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS: u64 = 30_000;
+const DEFAULT_CONTENT_SCANNER_CONNECT_TIMEOUT_MILLIS: u64 = 2_000;
+const DEFAULT_CONTENT_SCANNER_TIMEOUT_MILLIS: u64 = 60_000;
+const DEFAULT_CONTENT_READ_TICKET_TTL_MILLIS: u64 = 60_000;
+const DEFAULT_CONTENT_DOWNLOAD_WINDOW_MILLIS: u64 = 60_000;
+const DEFAULT_CONTENT_DOWNLOAD_MAX_REQUESTS: u32 = 30;
+const DEFAULT_CONTENT_DOWNLOAD_MAX_BYTES: u64 = 250 * 1_024 * 1_024;
+const DEFAULT_CONTENT_CLEANUP_INTERVAL_MILLIS: u64 = 60_000;
+const DEFAULT_CONTENT_ORPHAN_GRACE_MILLIS: u64 = 15 * 60 * 1_000;
+const DEFAULT_CONTENT_CLEANUP_BATCH: u16 = 100;
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
@@ -101,11 +113,35 @@ pub(crate) struct AgentIdentityConfig {
 }
 
 #[derive(Clone)]
+pub(crate) struct ContentConfig {
+    pub(crate) object_store_endpoint: Url,
+    pub(crate) object_store_bucket: String,
+    pub(crate) object_store_region: String,
+    pub(crate) object_store_access_key: SecretValue,
+    pub(crate) object_store_secret_key: SecretValue,
+    pub(crate) object_store_timeout: Duration,
+    pub(crate) scanner_address: SocketAddr,
+    pub(crate) scanner_connect_timeout: Duration,
+    pub(crate) scanner_timeout: Duration,
+    pub(crate) ticket_key_id: String,
+    pub(crate) ticket_secret: SecretValue,
+    pub(crate) matrix_authority_agent_id: AgentId,
+    pub(crate) read_ticket_ttl: Duration,
+    pub(crate) download_window: Duration,
+    pub(crate) download_max_requests: u32,
+    pub(crate) download_max_bytes: u64,
+    pub(crate) cleanup_interval: Duration,
+    pub(crate) orphan_grace: Duration,
+    pub(crate) cleanup_batch: u16,
+}
+
+#[derive(Clone)]
 pub(crate) struct ControlPlaneConfig {
     pub(crate) bind_address: SocketAddr,
     pub(crate) dependencies: DependencyConfig,
     pub(crate) authentication: AuthenticationConfig,
     pub(crate) agent_identity: AgentIdentityConfig,
+    pub(crate) content: ContentConfig,
     pub(crate) observability: ObservabilityConfig,
 }
 
@@ -120,9 +156,104 @@ impl ControlPlaneConfig {
             dependencies: read_dependency_config(source)?,
             authentication: read_authentication_config(source)?,
             agent_identity: read_agent_identity_config(source)?,
+            content: read_content_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_content_config(source: &impl EnvironmentSource) -> Result<ContentConfig, ConfigError> {
+    let scanner_connect_timeout = read_bounded_duration(
+        source,
+        "AGENT_ROOM_CONTENT_SCANNER_CONNECT_TIMEOUT_MS",
+        DEFAULT_CONTENT_SCANNER_CONNECT_TIMEOUT_MILLIS,
+        100..=30_000,
+    )?;
+    let scanner_timeout = read_bounded_duration(
+        source,
+        "AGENT_ROOM_CONTENT_SCANNER_TIMEOUT_MS",
+        DEFAULT_CONTENT_SCANNER_TIMEOUT_MILLIS,
+        1_000..=5 * 60 * 1_000,
+    )?;
+    if scanner_connect_timeout > scanner_timeout {
+        return Err(ConfigError::invalid(
+            "AGENT_ROOM_CONTENT_SCANNER_CONNECT_TIMEOUT_MS",
+            "不得大于扫描总超时",
+        ));
+    }
+    Ok(ContentConfig {
+        object_store_endpoint: parse_http_url(
+            "AGENT_ROOM_CONTENT_S3_ENDPOINT",
+            &read_required_text(source, "AGENT_ROOM_CONTENT_S3_ENDPOINT")?,
+        )?,
+        object_store_bucket: read_required_text(source, "AGENT_ROOM_CONTENT_S3_BUCKET")?,
+        object_store_region: read_required_text(source, "AGENT_ROOM_CONTENT_S3_REGION")?,
+        object_store_access_key: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_CONTENT_S3_ACCESS_KEY",
+        )?),
+        object_store_secret_key: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_CONTENT_S3_SECRET_KEY",
+        )?),
+        object_store_timeout: read_bounded_duration(
+            source,
+            "AGENT_ROOM_CONTENT_S3_TIMEOUT_MS",
+            DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS,
+            100..=5 * 60 * 1_000,
+        )?,
+        scanner_address: read_socket_address(source, "AGENT_ROOM_CONTENT_SCANNER_ADDRESS")?,
+        scanner_connect_timeout,
+        scanner_timeout,
+        ticket_key_id: read_required_text(source, "AGENT_ROOM_CONTENT_TICKET_KEY_ID")?,
+        ticket_secret: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_CONTENT_TICKET_SECRET",
+        )?),
+        matrix_authority_agent_id: read_agent_id(source, "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID")?,
+        read_ticket_ttl: read_bounded_duration(
+            source,
+            "AGENT_ROOM_CONTENT_READ_TICKET_TTL_MS",
+            DEFAULT_CONTENT_READ_TICKET_TTL_MILLIS,
+            1_000..=5 * 60 * 1_000,
+        )?,
+        download_window: read_bounded_duration(
+            source,
+            "AGENT_ROOM_CONTENT_DOWNLOAD_WINDOW_MS",
+            DEFAULT_CONTENT_DOWNLOAD_WINDOW_MILLIS,
+            1_000..=60 * 60 * 1_000,
+        )?,
+        download_max_requests: read_bounded_u32(
+            source,
+            "AGENT_ROOM_CONTENT_DOWNLOAD_MAX_REQUESTS",
+            DEFAULT_CONTENT_DOWNLOAD_MAX_REQUESTS,
+            1..=10_000,
+        )?,
+        download_max_bytes: read_bounded_u64(
+            source,
+            "AGENT_ROOM_CONTENT_DOWNLOAD_MAX_BYTES",
+            DEFAULT_CONTENT_DOWNLOAD_MAX_BYTES,
+            MAX_CONTENT_BYTES..=1_024 * 1_024 * 1_024 * 1_024,
+        )?,
+        cleanup_interval: read_bounded_duration(
+            source,
+            "AGENT_ROOM_CONTENT_CLEANUP_INTERVAL_MS",
+            DEFAULT_CONTENT_CLEANUP_INTERVAL_MILLIS,
+            1_000..=60 * 60 * 1_000,
+        )?,
+        orphan_grace: read_bounded_duration(
+            source,
+            "AGENT_ROOM_CONTENT_ORPHAN_GRACE_MS",
+            DEFAULT_CONTENT_ORPHAN_GRACE_MILLIS,
+            1_000..=24 * 60 * 60 * 1_000,
+        )?,
+        cleanup_batch: read_bounded_u16(
+            source,
+            "AGENT_ROOM_CONTENT_CLEANUP_BATCH",
+            DEFAULT_CONTENT_CLEANUP_BATCH,
+            1..=500,
+        )?,
+    })
 }
 
 fn read_agent_identity_config(
@@ -324,6 +455,74 @@ fn read_optional_u64(
     })
 }
 
+fn read_bounded_u64(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+    default: u64,
+    range: std::ops::RangeInclusive<u64>,
+) -> Result<u64, ConfigError> {
+    let value = read_optional_u64(source, name, default)?;
+    if !range.contains(&value) {
+        return Err(ConfigError::invalid(name, "超出允许的安全范围"));
+    }
+    Ok(value)
+}
+
+fn read_bounded_u32(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+    default: u32,
+    range: std::ops::RangeInclusive<u32>,
+) -> Result<u32, ConfigError> {
+    let value = read_optional(source, name).map_or(Ok(default), |value| {
+        value
+            .parse::<u32>()
+            .map_err(|_| ConfigError::invalid(name, "必须是正整数"))
+    })?;
+    if !range.contains(&value) {
+        return Err(ConfigError::invalid(name, "超出允许的安全范围"));
+    }
+    Ok(value)
+}
+
+fn read_bounded_u16(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+    default: u16,
+    range: std::ops::RangeInclusive<u16>,
+) -> Result<u16, ConfigError> {
+    let value = read_optional(source, name).map_or(Ok(default), |value| {
+        value
+            .parse::<u16>()
+            .map_err(|_| ConfigError::invalid(name, "必须是正整数"))
+    })?;
+    if !range.contains(&value) {
+        return Err(ConfigError::invalid(name, "超出允许的安全范围"));
+    }
+    Ok(value)
+}
+
+fn read_socket_address(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+) -> Result<SocketAddr, ConfigError> {
+    read_required_text(source, name)?
+        .parse::<SocketAddr>()
+        .map_err(|_| ConfigError::invalid(name, "必须是 IP:端口"))
+}
+
+fn read_agent_id(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+) -> Result<AgentId, ConfigError> {
+    let value = Uuid::parse_str(&read_required_text(source, name)?)
+        .map_err(|_| ConfigError::invalid(name, "必须是 UUIDv7"))?;
+    if value.get_version() != Some(Version::SortRand) {
+        return Err(ConfigError::invalid(name, "必须是 UUIDv7"));
+    }
+    Ok(AgentId::from_uuid(value))
+}
+
 fn read_bounded_duration(
     source: &impl EnvironmentSource,
     name: &'static str,
@@ -460,6 +659,36 @@ mod tests {
                 "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN",
                 "local-application-service-token".to_owned(),
             ),
+            (
+                "AGENT_ROOM_CONTENT_S3_ENDPOINT",
+                "http://127.0.0.1:18333".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_CONTENT_S3_BUCKET",
+                "agent-room-content".to_owned(),
+            ),
+            ("AGENT_ROOM_CONTENT_S3_REGION", "us-east-1".to_owned()),
+            (
+                "AGENT_ROOM_CONTENT_S3_ACCESS_KEY",
+                "local-content-access-key".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_CONTENT_S3_SECRET_KEY",
+                "local-content-secret-key".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_CONTENT_SCANNER_ADDRESS",
+                "127.0.0.1:13310".to_owned(),
+            ),
+            ("AGENT_ROOM_CONTENT_TICKET_KEY_ID", "local-v1".to_owned()),
+            (
+                "AGENT_ROOM_CONTENT_TICKET_SECRET",
+                "local-content-ticket-secret-at-least-32-bytes".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID",
+                "01991aaa-0000-7000-8000-000000000001".to_owned(),
+            ),
         ]))
     }
 
@@ -469,6 +698,11 @@ mod tests {
 
         assert_eq!(
             format!("{:?}", config.dependencies.database.password),
+            "[已脱敏]"
+        );
+        assert_eq!(format!("{:?}", config.content.ticket_secret), "[已脱敏]");
+        assert_eq!(
+            format!("{:?}", config.content.object_store_secret_key),
             "[已脱敏]"
         );
     }
@@ -498,6 +732,39 @@ mod tests {
             ControlPlaneConfig::from_source(&environment),
             Err(ConfigError::Invalid {
                 name: "AGENT_ROOM_MATRIX_BASE_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 内容授权身份必须是稳定的_uuidv7() {
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID",
+            "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+        );
+
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Invalid {
+                name: "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 内容预算越界时启动失败() {
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_CONTENT_DOWNLOAD_MAX_BYTES", "1024".to_owned());
+
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Invalid {
+                name: "AGENT_ROOM_CONTENT_DOWNLOAD_MAX_BYTES",
                 ..
             })
         ));
