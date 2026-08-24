@@ -1,5 +1,7 @@
 use std::fmt;
 
+use agent_room_domain::ids::AgentId;
+
 const MAX_MATRIX_ID_LENGTH: usize = 512;
 const MAX_DEVICE_ID_LENGTH: usize = 255;
 const MAX_EVENT_TYPE_LENGTH: usize = 255;
@@ -8,6 +10,7 @@ const MAX_SYNC_TOKEN_LENGTH: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixValueError {
+    InvalidAgentLocalpart,
     InvalidUserId,
     InvalidRoomId,
     InvalidEventId,
@@ -16,6 +19,41 @@ pub enum MatrixValueError {
     InvalidTransactionId,
     InvalidSyncToken,
     InvalidBackfillToken,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MatrixAgentLocalpart(String);
+
+impl MatrixAgentLocalpart {
+    pub fn from_agent_id(agent_id: AgentId) -> Self {
+        Self(format!("_agent_{}", agent_id.as_uuid().simple()))
+    }
+
+    /// 从不可信协议输入恢复 Agent 专属 Localpart。
+    ///
+    /// # Errors
+    ///
+    /// 值不符合 `_agent_` 加 UUID 的独占命名规则时返回错误。
+    pub fn new(value: impl Into<String>) -> Result<Self, MatrixValueError> {
+        let value = value.into();
+        if !valid_agent_localpart(&value) {
+            return Err(MatrixValueError::InvalidAgentLocalpart);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for MatrixAgentLocalpart {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("MatrixAgentLocalpart")
+            .field(&self.0)
+            .finish()
+    }
 }
 
 macro_rules! matrix_string_value {
@@ -124,6 +162,16 @@ fn valid_user_id(value: &str) -> bool {
     valid_sigil_id(value, '@')
 }
 
+fn valid_agent_localpart(value: &str) -> bool {
+    let Some(identifier) = value.strip_prefix("_agent_") else {
+        return false;
+    };
+    identifier.len() == 32
+        && identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn valid_room_id(value: &str) -> bool {
     valid_sigil_id(value, '!')
 }
@@ -171,8 +219,11 @@ fn valid_protocol_text(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MatrixEventType, MatrixRoomId, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
+        MatrixAgentLocalpart, MatrixEventType, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
+        MatrixUserId,
     };
+    use agent_room_domain::ids::AgentId;
+    use uuid::Uuid;
 
     #[test]
     fn 外部标识在进入适配器前拒绝结构错误() {
@@ -195,5 +246,19 @@ mod tests {
     fn 同步游标调试输出不泄漏服务端位置() {
         let token = MatrixSyncToken::new("sensitive-position-token").expect("游标有效");
         assert_eq!(format!("{token:?}"), "[Matrix 同步游标]");
+    }
+
+    #[test]
+    fn agent_localpart_仅能由稳定业务标识派生() {
+        let agent_id = AgentId::from_uuid(
+            Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a3").expect("UUID 有效"),
+        );
+        let localpart = MatrixAgentLocalpart::from_agent_id(agent_id);
+        assert_eq!(
+            localpart.as_str(),
+            "_agent_01945c1e7b5a7c7f8a282de53f56a9a3"
+        );
+        assert!(MatrixAgentLocalpart::new(localpart.as_str()).is_ok());
+        assert!(MatrixAgentLocalpart::new("_agent_alpha").is_err());
     }
 }

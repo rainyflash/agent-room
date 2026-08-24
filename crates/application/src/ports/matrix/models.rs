@@ -20,6 +20,65 @@ const MAX_SYNC_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_BACKFILL_EVENTS: u16 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixAgentUserRegistration {
+    localpart: super::MatrixAgentLocalpart,
+}
+
+impl MatrixAgentUserRegistration {
+    pub const fn new(localpart: super::MatrixAgentLocalpart) -> Self {
+        Self { localpart }
+    }
+
+    pub const fn localpart(&self) -> &super::MatrixAgentLocalpart {
+        &self.localpart
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixAgentDeviceSessionRequest {
+    user_id: MatrixUserId,
+    device_id: MatrixDeviceId,
+    initial_device_display_name: String,
+}
+
+impl MatrixAgentDeviceSessionRequest {
+    /// 创建 Agent 实例的 Matrix 设备会话请求。
+    ///
+    /// # Errors
+    ///
+    /// 设备显示名为空、超长或包含控制字符时失败。
+    pub fn new(
+        user_id: MatrixUserId,
+        device_id: MatrixDeviceId,
+        initial_device_display_name: String,
+    ) -> DomainResult<Self> {
+        validate_text(
+            "matrix_device_display_name",
+            &initial_device_display_name,
+            MAX_DISPLAY_NAME_LENGTH,
+            false,
+        )?;
+        Ok(Self {
+            user_id,
+            device_id,
+            initial_device_display_name,
+        })
+    }
+
+    pub const fn user_id(&self) -> &MatrixUserId {
+        &self.user_id
+    }
+
+    pub const fn device_id(&self) -> &MatrixDeviceId {
+        &self.device_id
+    }
+
+    pub fn initial_device_display_name(&self) -> &str {
+        &self.initial_device_display_name
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixLogin {
     login_id: String,
     password: SecretValue,

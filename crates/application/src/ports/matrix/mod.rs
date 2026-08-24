@@ -8,17 +8,33 @@ pub use failure::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixRecoveryAction, MatrixRetryPolicy,
 };
 pub use models::{
-    MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection,
-    MatrixCreateRoom, MatrixEvent, MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomPreset,
-    MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentUserRegistration,
+    MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
+    MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomPreset, MatrixRoomSync,
+    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
 };
 pub use values::{
-    MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType, MatrixRoomId,
-    MatrixSyncToken, MatrixTransactionId, MatrixUserId, MatrixValueError,
+    MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
+    MatrixRoomId, MatrixSyncToken, MatrixTransactionId, MatrixUserId, MatrixValueError,
 };
 
 pub type MatrixResult<T> = Result<T, MatrixFailure>;
+
+/// 通过受控 Matrix Application Service 命名空间管理 Agent 用户和设备会话。
+///
+/// 实现不得把 Application Service Token 下发给 Bridge 或任何前端。
+pub trait MatrixAgentIdentityProvisioner: Send + Sync {
+    fn ensure_user<'a>(
+        &'a self,
+        registration: &'a MatrixAgentUserRegistration,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserId>>;
+
+    fn issue_device_session<'a>(
+        &'a self,
+        request: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
+}
 
 /// 创建或恢复一个与单个 Matrix 设备绑定的客户端。
 pub trait MatrixClientFactory: Send + Sync {

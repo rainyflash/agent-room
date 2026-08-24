@@ -4,6 +4,8 @@ const MAX_RETRY_ATTEMPTS: u16 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixOperation {
+    ProvisionAgentUser,
+    IssueAgentDeviceSession,
     Login,
     RestoreSession,
     Sync,
@@ -20,7 +22,8 @@ impl MatrixOperation {
     pub const fn is_safe_to_retry(self) -> bool {
         matches!(
             self,
-            Self::Login
+            Self::ProvisionAgentUser
+                | Self::Login
                 | Self::RestoreSession
                 | Self::Sync
                 | Self::Invite
