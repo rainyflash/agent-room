@@ -1,6 +1,7 @@
 pub mod agent_identity;
 pub mod agent_verification;
 pub mod authorization;
+pub mod handoffs;
 pub mod ipc;
 pub mod messages;
 pub mod ports;
