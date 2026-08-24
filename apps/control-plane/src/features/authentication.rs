@@ -299,6 +299,23 @@ pub(crate) fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSess
         .ok_or(MissingSession)
 }
 
+pub(crate) async fn authenticate_session(
+    authentication: &dyn AuthenticationUseCases,
+    jar: &CookieJar,
+    requirement: AuthenticationRequirement,
+    correlation_id: CorrelationId,
+) -> Result<AuthenticatedPrincipal, Response> {
+    let secret = session_secret(jar).map_err(|MissingSession| {
+        no_store(missing_session_error(correlation_id).into_response())
+    })?;
+    authentication
+        .authenticate(&secret, requirement)
+        .await
+        .map_err(|failure| {
+            no_store(ApiError::authentication(failure, correlation_id).into_response())
+        })
+}
+
 pub(crate) fn origin_matches(headers: &HeaderMap, expected: &str) -> bool {
     headers
         .get(header::ORIGIN)

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use agent_room_application::{
-    authentication::{AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationUseCases},
+    authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::{
-        DeviceAuthorizationUseCases, DeviceCredentials, DeviceRequestProof,
-        DeviceRequestProofPayload, RefreshDeviceSession, RegisterDevice,
-        VerifiedDeviceAuthorization,
+        AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationUseCases,
+        DeviceCredentials, DeviceRequestProof, DeviceRequestProofPayload, RefreshDeviceSession,
+        RegisterDevice, VerifiedDeviceAuthorization,
     },
     ports::{
         DeviceSignature, OidcDeviceAssertionVerifier, OidcFailure, OidcFailureKind,
@@ -34,9 +34,7 @@ use uuid::Uuid;
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::authentication::{
-        MissingSession, missing_session_error, no_store, origin_matches, session_secret,
-    },
+    features::authentication::{authenticate_session, no_store, origin_matches},
 };
 
 const REGISTER_DEVICE_PATH: &str = "/auth/devices/register";
@@ -237,8 +235,8 @@ async fn list_devices(
     Extension(correlation_id): Extension<CorrelationId>,
     jar: CookieJar,
 ) -> Response {
-    let principal = match authenticate_web_session(
-        &state,
+    let principal = match authenticate_session(
+        state.authentication.as_ref(),
         &jar,
         AuthenticationRequirement::ActiveSession,
         correlation_id,
@@ -283,8 +281,8 @@ async fn revoke_device(
             ApiError::invalid_request("device.invalid_device_id", correlation_id).into_response(),
         );
     };
-    let principal = match authenticate_web_session(
-        &state,
+    let principal = match authenticate_session(
+        state.authentication.as_ref(),
         &jar,
         AuthenticationRequirement::RecentAuthentication,
         correlation_id,
@@ -304,28 +302,47 @@ async fn revoke_device(
     }
 }
 
-async fn authenticate_web_session(
-    state: &DeviceHttpState,
-    jar: &CookieJar,
-    requirement: AuthenticationRequirement,
-    correlation_id: CorrelationId,
-) -> Result<AuthenticatedPrincipal, Response> {
-    let secret = session_secret(jar).map_err(|MissingSession| {
-        no_store(missing_session_error(correlation_id).into_response())
-    })?;
-    state
-        .authentication
-        .authenticate(&secret, requirement)
-        .await
-        .map_err(|failure| {
-            no_store(ApiError::authentication(failure, correlation_id).into_response())
-        })
-}
-
 fn request_proof(
     state: &DeviceHttpState,
     headers: &HeaderMap,
     request_target: &str,
+) -> Result<DeviceRequestProof, ()> {
+    request_proof_for(state.secrets.as_ref(), headers, "POST", request_target, "")
+}
+
+pub(crate) async fn authenticate_signed_device_request(
+    devices: &dyn DeviceAuthorizationUseCases,
+    secrets: &dyn SecretFactory,
+    headers: &HeaderMap,
+    method: &str,
+    request_target: &str,
+    body: &str,
+    correlation_id: CorrelationId,
+) -> Result<AuthenticatedDevice, Response> {
+    let access_token = bearer_secret(headers)
+        .map_err(|()| no_store(invalid_bearer(correlation_id).into_response()))?;
+    let proof =
+        request_proof_for(secrets, headers, method, request_target, body).map_err(|()| {
+            no_store(
+                ApiError::invalid_request("device.invalid_proof_headers", correlation_id)
+                    .into_response(),
+            )
+        })?;
+    devices
+        .authenticate_device(AuthenticateDeviceRequest {
+            access_token: &access_token,
+            proof: &proof,
+        })
+        .await
+        .map_err(|failure| no_store(ApiError::device(failure, correlation_id).into_response()))
+}
+
+fn request_proof_for(
+    secrets: &dyn SecretFactory,
+    headers: &HeaderMap,
+    method: &str,
+    request_target: &str,
+    body: &str,
 ) -> Result<DeviceRequestProof, ()> {
     let device_id = required_header(headers, DEVICE_ID_HEADER)
         .and_then(|value| Uuid::parse_str(value).map_err(|_| ()))
@@ -342,9 +359,9 @@ fn request_proof(
         device_id,
         issued_at,
         nonce,
-        "POST".to_owned(),
+        method.to_owned(),
         request_target.to_owned(),
-        state.secrets.digest(""),
+        secrets.digest(body),
     )
     .map_err(|_| ())?;
     Ok(DeviceRequestProof::new(payload, signature))
@@ -357,7 +374,7 @@ fn required_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, ()
         .ok_or(())
 }
 
-fn bearer_secret(headers: &HeaderMap) -> Result<SecretValue, ()> {
+pub(crate) fn bearer_secret(headers: &HeaderMap) -> Result<SecretValue, ()> {
     let value = required_header(headers, header::AUTHORIZATION.as_str())?;
     let (scheme, credential) = value.split_once(' ').ok_or(())?;
     if !scheme.eq_ignore_ascii_case("Bearer")

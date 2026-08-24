@@ -1,0 +1,1074 @@
+use std::sync::Arc;
+
+use agent_room_application::{
+    agents::{
+        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, RegisterAgentInstance,
+        RegisteredAgentInstance,
+    },
+    authentication::{AuthenticationRequirement, AuthenticationUseCases},
+    devices::DeviceAuthorizationUseCases,
+    ports::SecretFactory,
+};
+use agent_room_domain::{
+    agents::{AdapterSubjectHash, AgentInstancePublicSigningKey, AgentRole, AgentVisibility},
+    ids::{
+        AgentCreationRequestId, AgentId, AgentInstanceRegistrationRequestId, ContentId, PrincipalId,
+    },
+};
+use agent_room_protocol_conformance::generated::ErrorCategory;
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{DefaultBodyLimit, Extension, Path, State, rejection::JsonRejection},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{post, put},
+};
+use axum_extra::extract::CookieJar;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use uuid::{Uuid, Version};
+
+use crate::{
+    correlation::CorrelationId,
+    error::ApiError,
+    features::{
+        authentication::{authenticate_session, no_store, origin_matches},
+        devices::authenticate_signed_device_request,
+    },
+};
+
+const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+const MAX_AGENT_BODY_BYTES: usize = 64 * 1_024;
+const MAX_ENCODED_HASH_LENGTH: usize = 64;
+const MAX_ENCODED_PUBLIC_KEY_LENGTH: usize = 64;
+
+#[derive(Clone)]
+pub(crate) struct AgentHttpState {
+    agents: Arc<dyn AgentManagementUseCases>,
+    authentication: Arc<dyn AuthenticationUseCases>,
+    devices: Arc<dyn DeviceAuthorizationUseCases>,
+    secrets: Arc<dyn SecretFactory>,
+    frontend_origin: String,
+}
+
+pub(crate) struct AgentHttpDependencies {
+    pub(crate) agents: Arc<dyn AgentManagementUseCases>,
+    pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
+    pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
+    pub(crate) secrets: Arc<dyn SecretFactory>,
+}
+
+impl AgentHttpState {
+    pub(crate) fn new(dependencies: AgentHttpDependencies, frontend_origin: &url::Url) -> Self {
+        Self {
+            agents: dependencies.agents,
+            authentication: dependencies.authentication,
+            devices: dependencies.devices,
+            secrets: dependencies.secrets,
+            frontend_origin: frontend_origin.origin().ascii_serialization(),
+        }
+    }
+}
+
+pub(crate) fn router(state: AgentHttpState) -> Router {
+    Router::new()
+        .route("/agents", post(create_agent))
+        .route(
+            "/agents/{agent_id}/members/{principal_id}",
+            put(grant_membership).delete(revoke_membership),
+        )
+        .route("/agents/{agent_id}/instances", post(register_instance))
+        .layer(DefaultBodyLimit::max(MAX_AGENT_BODY_BYTES))
+        .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateAgentBody {
+    slug: String,
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    avatar_content_id: Option<String>,
+    visibility: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MembershipBody {
+    role: String,
+}
+
+struct MembershipRouteTarget {
+    agent_id: String,
+    principal_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegisterInstanceBody {
+    adapter_type: String,
+    #[serde(default)]
+    external_subject_hash: Option<String>,
+    capability_version: String,
+    #[serde(default)]
+    configuration: Map<String, Value>,
+    public_signing_key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentResponse {
+    agent_id: String,
+    matrix_user_id: String,
+    slug: String,
+    display_name: String,
+    description: String,
+    avatar_content_id: Option<String>,
+    visibility: &'static str,
+    registered_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstanceResponse {
+    agent_id: String,
+    adapter_binding_id: String,
+    agent_instance_id: String,
+    matrix_user_id: String,
+    matrix_device_id: String,
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
+async fn create_agent(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    body: Result<Json<CreateAgentBody>, JsonRejection>,
+) -> Response {
+    if !origin_matches(&headers, &state.frontend_origin) {
+        return no_store(invalid_origin(correlation_id).into_response());
+    }
+    let Ok(request_id) = creation_request_id(&headers) else {
+        return no_store(invalid_idempotency_key(correlation_id).into_response());
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let Ok(Json(body)) = body else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_creation_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(request) = create_agent_request(request_id, actor, body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_creation_body", correlation_id)
+                .into_response(),
+        );
+    };
+    match state.agents.create_agent(request).await {
+        Ok(agent) => {
+            no_store((StatusCode::CREATED, Json(AgentResponse::from(agent))).into_response())
+        }
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn grant_membership(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((agent_id, principal_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    body: Result<Json<MembershipBody>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_membership_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(role) = AgentRole::try_from(body.role.as_str()) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_membership_role", correlation_id)
+                .into_response(),
+        );
+    };
+    change_membership(
+        &state,
+        correlation_id,
+        &headers,
+        &jar,
+        MembershipRouteTarget {
+            agent_id,
+            principal_id,
+        },
+        Some(role),
+    )
+    .await
+}
+
+async fn revoke_membership(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((agent_id, principal_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    change_membership(
+        &state,
+        correlation_id,
+        &headers,
+        &jar,
+        MembershipRouteTarget {
+            agent_id,
+            principal_id,
+        },
+        None,
+    )
+    .await
+}
+
+async fn change_membership(
+    state: &AgentHttpState,
+    correlation_id: CorrelationId,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    target: MembershipRouteTarget,
+    role: Option<AgentRole>,
+) -> Response {
+    if !origin_matches(headers, &state.frontend_origin) {
+        return no_store(invalid_origin(correlation_id).into_response());
+    }
+    let Ok(agent_id) = parse_uuid_v7(&target.agent_id).map(AgentId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    let Ok(principal_id) = parse_uuid_v7(&target.principal_id).map(PrincipalId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        jar,
+        AuthenticationRequirement::RecentAuthentication,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .agents
+        .change_membership(ChangeAgentMembership {
+            actor,
+            agent_id,
+            principal_id,
+            role,
+        })
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn register_instance(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(agent_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request_target = format!("/agents/{agent_id}/instances");
+    let Ok(agent_id) = parse_uuid_v7(&agent_id).map(AgentId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    let Ok(request_id) = instance_request_id(&headers) else {
+        return no_store(invalid_idempotency_key(correlation_id).into_response());
+    };
+    let Ok(body_text) = std::str::from_utf8(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_instance_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "POST",
+        &request_target,
+        body_text,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let Ok(body) = serde_json::from_slice::<RegisterInstanceBody>(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_instance_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(request) = register_instance_request(request_id, actor, agent_id, body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_instance_body", correlation_id)
+                .into_response(),
+        );
+    };
+    match state.agents.register_instance(request).await {
+        Ok(instance) => no_store(Json(AgentInstanceResponse::from(instance)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+fn create_agent_request(
+    request_id: AgentCreationRequestId,
+    actor: agent_room_application::authentication::AuthenticatedPrincipal,
+    body: CreateAgentBody,
+) -> Result<CreateAgent, ()> {
+    let avatar_content_id = body
+        .avatar_content_id
+        .map(|value| parse_uuid_v7(&value).map(ContentId::from_uuid))
+        .transpose()?;
+    let visibility = AgentVisibility::try_from(body.visibility.as_str()).map_err(|_| ())?;
+    Ok(CreateAgent {
+        request_id,
+        actor,
+        slug: body.slug,
+        display_name: body.display_name,
+        description: body.description,
+        avatar_content_id,
+        visibility,
+    })
+}
+
+fn register_instance_request(
+    request_id: AgentInstanceRegistrationRequestId,
+    actor: agent_room_application::devices::AuthenticatedDevice,
+    agent_id: AgentId,
+    body: RegisterInstanceBody,
+) -> Result<RegisterAgentInstance, ()> {
+    let external_subject_hash = body
+        .external_subject_hash
+        .map(|value| {
+            decode_bounded(&value, MAX_ENCODED_HASH_LENGTH)
+                .and_then(|bytes| AdapterSubjectHash::new(bytes).map_err(|_| ()))
+        })
+        .transpose()?;
+    let public_signing_key =
+        decode_bounded(&body.public_signing_key, MAX_ENCODED_PUBLIC_KEY_LENGTH)
+            .and_then(|bytes| AgentInstancePublicSigningKey::new(bytes).map_err(|_| ()))?;
+    Ok(RegisterAgentInstance {
+        request_id,
+        actor,
+        agent_id,
+        adapter_type: body.adapter_type,
+        external_subject_hash,
+        capability_version: body.capability_version,
+        configuration: body.configuration,
+        public_signing_key,
+    })
+}
+
+fn creation_request_id(headers: &HeaderMap) -> Result<AgentCreationRequestId, ()> {
+    idempotency_uuid(headers).map(AgentCreationRequestId::from_uuid)
+}
+
+fn instance_request_id(headers: &HeaderMap) -> Result<AgentInstanceRegistrationRequestId, ()> {
+    idempotency_uuid(headers).map(AgentInstanceRegistrationRequestId::from_uuid)
+}
+
+fn idempotency_uuid(headers: &HeaderMap) -> Result<Uuid, ()> {
+    let value = headers
+        .get(IDEMPOTENCY_KEY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(())?;
+    parse_uuid_v7(value)
+}
+
+fn parse_uuid_v7(value: &str) -> Result<Uuid, ()> {
+    let value = Uuid::parse_str(value).map_err(|_| ())?;
+    if value.get_version() == Some(Version::SortRand) {
+        Ok(value)
+    } else {
+        Err(())
+    }
+}
+
+fn decode_bounded(value: &str, maximum_encoded_length: usize) -> Result<Vec<u8>, ()> {
+    if value.is_empty() || value.len() > maximum_encoded_length {
+        return Err(());
+    }
+    URL_SAFE_NO_PAD.decode(value).map_err(|_| ())
+}
+
+fn invalid_origin(correlation_id: CorrelationId) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "agent.invalid_origin",
+        ErrorCategory::Authorization,
+        "Agent 管理请求来源无效。",
+        correlation_id,
+    )
+}
+
+fn invalid_idempotency_key(correlation_id: CorrelationId) -> ApiError {
+    ApiError::invalid_request("agent.invalid_idempotency_key", correlation_id)
+}
+
+fn invalid_resource_id(correlation_id: CorrelationId) -> ApiError {
+    ApiError::invalid_request("agent.invalid_resource_id", correlation_id)
+}
+
+impl From<agent_room_application::ports::RegisteredAgent> for AgentResponse {
+    fn from(value: agent_room_application::ports::RegisteredAgent) -> Self {
+        Self {
+            agent_id: value.agent.id().to_string(),
+            matrix_user_id: value.matrix_user_id,
+            slug: value.slug,
+            display_name: value.display_name,
+            description: value.description,
+            avatar_content_id: value.avatar_content_id.map(|id| id.to_string()),
+            visibility: value.visibility.as_str(),
+            registered_at_unix_ms: value.registered_at.value(),
+        }
+    }
+}
+
+impl From<RegisteredAgentInstance> for AgentInstanceResponse {
+    fn from(value: RegisteredAgentInstance) -> Self {
+        Self {
+            agent_id: value.registration.instance.agent_id().to_string(),
+            adapter_binding_id: value.registration.binding.id().to_string(),
+            agent_instance_id: value.registration.instance.id().to_string(),
+            matrix_user_id: value
+                .matrix_session
+                .metadata()
+                .user_id()
+                .as_str()
+                .to_owned(),
+            matrix_device_id: value
+                .matrix_session
+                .metadata()
+                .device_id()
+                .as_str()
+                .to_owned(),
+            access_token: value.matrix_session.access_token().expose().to_owned(),
+            refresh_token: value
+                .matrix_session
+                .refresh_token()
+                .map(|token| token.expose().to_owned()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use agent_room_application::{
+        agents::{
+            AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
+            RegisterAgentInstance, RegisteredAgentInstance,
+        },
+        authentication::{
+            AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
+            AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
+        },
+        devices::{
+            AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
+            DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
+        },
+        ports::{
+            MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture,
+            PrincipalAccount, RegisteredAgent, SecretFactory, SecretValue,
+            StoredAgentInstanceRegistration,
+        },
+    };
+    use agent_room_domain::{
+        agents::{
+            AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey,
+            AgentMatrixDeviceId, AgentRole, AgentVisibility,
+        },
+        devices::Device,
+        identity::Principal,
+        ids::{AdapterBindingId, AgentId, AgentInstanceId, DeviceId, PrincipalId},
+        time::UtcMillis,
+    };
+    use agent_room_identity_adapter::SecureSecretFactory;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode, header},
+        middleware,
+    };
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+    use url::Url;
+    use uuid::Uuid;
+
+    use super::{AgentHttpDependencies, AgentHttpState, router};
+
+    const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
+    const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
+    const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
+    const REQUEST_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e45";
+    const BINDING_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
+    const INSTANCE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
+    const TARGET_PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
+    const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
+    const SESSION_COOKIE: &str = "__Host-agent-room-session=session-secret";
+
+    #[derive(Default)]
+    struct FakeAgents {
+        creation: Mutex<Option<CreateAgent>>,
+        registration: Mutex<Option<RegisterAgentInstance>>,
+        membership_changes: Mutex<Vec<ChangeAgentMembership>>,
+    }
+
+    impl AgentManagementUseCases for FakeAgents {
+        fn create_agent(
+            &self,
+            request: CreateAgent,
+        ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+            *self.creation.lock().expect("Agent 创建记录锁可用") = Some(request);
+            Box::pin(async { Ok(registered_agent()) })
+        }
+
+        fn register_instance(
+            &self,
+            request: RegisterAgentInstance,
+        ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>> {
+            *self.registration.lock().expect("Agent 实例记录锁可用") = Some(request);
+            Box::pin(async { Ok(registered_instance()) })
+        }
+
+        fn change_membership(
+            &self,
+            request: ChangeAgentMembership,
+        ) -> PortFuture<'_, AgentManagementResult<()>> {
+            self.membership_changes
+                .lock()
+                .expect("Agent 成员变更记录锁可用")
+                .push(request);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeAuthentication {
+        requirements: Mutex<Vec<AuthenticationRequirement>>,
+    }
+
+    impl AuthenticationUseCases for FakeAuthentication {
+        fn begin_login(
+            &self,
+            _request: BeginLogin,
+        ) -> PortFuture<'_, AuthenticationResult<LoginRedirect>> {
+            Box::pin(async { unreachable!("Agent 路由不会开始浏览器登录") })
+        }
+
+        fn complete_login<'a>(
+            &'a self,
+            _request: CompleteLogin<'a>,
+        ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>> {
+            Box::pin(async { unreachable!("Agent 路由不会完成浏览器登录") })
+        }
+
+        fn authenticate<'a>(
+            &'a self,
+            session_secret: &'a SecretValue,
+            requirement: AuthenticationRequirement,
+        ) -> PortFuture<'a, AuthenticationResult<AuthenticatedPrincipal>> {
+            assert_eq!(session_secret.expose(), "session-secret");
+            self.requirements
+                .lock()
+                .expect("认证要求记录锁可用")
+                .push(requirement);
+            Box::pin(async { Ok(authenticated_principal()) })
+        }
+
+        fn logout<'a>(
+            &'a self,
+            _session_secret: &'a SecretValue,
+        ) -> PortFuture<'a, AuthenticationResult<()>> {
+            Box::pin(async { unreachable!("Agent 路由不会退出浏览器登录") })
+        }
+
+        fn suspend_principal(
+            &self,
+            _principal_id: PrincipalId,
+        ) -> PortFuture<'_, AuthenticationResult<()>> {
+            Box::pin(async { unreachable!("Agent 路由不会暂停主体") })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeDevices {
+        authentications: AtomicUsize,
+        expected_body: Mutex<Option<String>>,
+    }
+
+    impl DeviceAuthorizationUseCases for FakeDevices {
+        fn register_device(
+            &self,
+            _request: RegisterDevice,
+        ) -> PortFuture<'_, DeviceAuthorizationResult<DeviceCredentials>> {
+            Box::pin(async { unreachable!("Agent 路由不会注册用户设备") })
+        }
+
+        fn authenticate_device<'a>(
+            &'a self,
+            request: AuthenticateDeviceRequest<'a>,
+        ) -> PortFuture<'a, DeviceAuthorizationResult<AuthenticatedDevice>> {
+            self.authentications.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(request.access_token.expose(), "device-access-token");
+            assert_eq!(request.proof.device_id(), device_id());
+            assert_eq!(request.proof.issued_at(), time(1_700_000_000_000));
+            assert_eq!(request.proof.nonce().expose(), "nonce-0123456789abcdef");
+            assert_eq!(request.proof.method(), "POST");
+            assert_eq!(
+                request.proof.request_target(),
+                format!("/agents/{AGENT_UUID}/instances")
+            );
+            let expected_body = self
+                .expected_body
+                .lock()
+                .expect("设备请求正文记录锁可用")
+                .take()
+                .expect("测试必须登记原始请求正文");
+            assert_eq!(
+                request.proof.body_digest(),
+                &SecureSecretFactory.digest(&expected_body)
+            );
+            Box::pin(async { Ok(authenticated_device()) })
+        }
+
+        fn refresh_device_session<'a>(
+            &'a self,
+            _request: RefreshDeviceSession<'a>,
+        ) -> PortFuture<'a, DeviceAuthorizationResult<DeviceCredentials>> {
+            Box::pin(async { unreachable!("Agent 路由不会刷新用户设备会话") })
+        }
+
+        fn list_devices(
+            &self,
+            _principal_id: PrincipalId,
+        ) -> PortFuture<'_, DeviceAuthorizationResult<Vec<Device>>> {
+            Box::pin(async { unreachable!("Agent 路由不会列出用户设备") })
+        }
+
+        fn revoke_device(
+            &self,
+            _principal_id: PrincipalId,
+            _device_id: DeviceId,
+        ) -> PortFuture<'_, DeviceAuthorizationResult<()>> {
+            Box::pin(async { unreachable!("Agent 路由不会撤销用户设备") })
+        }
+    }
+
+    fn test_router(
+        agents: Arc<FakeAgents>,
+        authentication: Arc<FakeAuthentication>,
+        devices: Arc<FakeDevices>,
+    ) -> axum::Router {
+        let state = AgentHttpState::new(
+            AgentHttpDependencies {
+                agents,
+                authentication,
+                devices,
+                secrets: Arc::new(SecureSecretFactory),
+            },
+            &Url::parse(FRONTEND_ORIGIN).expect("前端 Origin 有效"),
+        );
+        router(state).layer(middleware::from_fn(crate::correlation::attach))
+    }
+
+    #[tokio::test]
+    async fn 创建_agent_要求同源会话和_uuidv7_幂等键() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let app = test_router(
+            agents.clone(),
+            authentication.clone(),
+            Arc::new(FakeDevices::default()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/agents")
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .header("idempotency-key", REQUEST_UUID)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "slug": "codex-builder",
+                            "displayName": "Codex Builder",
+                            "description": "构建 Agent Room",
+                            "visibility": "private"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("创建 Agent 请求有效"),
+            )
+            .await
+            .expect("创建 Agent 路由可调用");
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store"))
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentId"], AGENT_UUID);
+        assert_eq!(payload["visibility"], "private");
+        assert!(!payload.to_string().contains("application-service-token"));
+
+        let creation = agents
+            .creation
+            .lock()
+            .expect("Agent 创建记录锁可用")
+            .clone()
+            .expect("Agent 创建用例已调用");
+        assert_eq!(creation.request_id.to_string(), REQUEST_UUID);
+        assert_eq!(creation.actor.principal_id, principal_id());
+        assert_eq!(creation.slug, "codex-builder");
+        assert_eq!(creation.visibility, AgentVisibility::Private);
+        assert_eq!(
+            *authentication
+                .requirements
+                .lock()
+                .expect("认证要求记录锁可用"),
+            vec![AuthenticationRequirement::ActiveSession]
+        );
+    }
+
+    #[tokio::test]
+    async fn 非_uuidv7_幂等键在认证和业务用例前失败() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let app = test_router(
+            agents.clone(),
+            authentication.clone(),
+            Arc::new(FakeDevices::default()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/agents")
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .header("idempotency-key", "550e8400-e29b-41d4-a716-446655440000")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "slug": "codex-builder",
+                            "displayName": "Codex Builder",
+                            "visibility": "private"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("非法幂等键请求仍可构造"),
+            )
+            .await
+            .expect("创建 Agent 路由可调用");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            agents
+                .creation
+                .lock()
+                .expect("Agent 创建记录锁可用")
+                .is_none()
+        );
+        assert!(
+            authentication
+                .requirements
+                .lock()
+                .expect("认证要求记录锁可用")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn 成员变更强制最近认证() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let app = test_router(
+            agents.clone(),
+            authentication.clone(),
+            Arc::new(FakeDevices::default()),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/agents/{AGENT_UUID}/members/{TARGET_PRINCIPAL_UUID}"
+                    ))
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "role": "operator" }).to_string()))
+                    .expect("Agent 成员变更请求有效"),
+            )
+            .await
+            .expect("Agent 成员变更路由可调用");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let changes = agents
+            .membership_changes
+            .lock()
+            .expect("Agent 成员变更记录锁可用");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].agent_id, agent_id());
+        assert_eq!(changes[0].principal_id.to_string(), TARGET_PRINCIPAL_UUID);
+        assert_eq!(changes[0].role, Some(AgentRole::Operator));
+        assert_eq!(
+            *authentication
+                .requirements
+                .lock()
+                .expect("认证要求记录锁可用"),
+            vec![AuthenticationRequirement::RecentAuthentication]
+        );
+    }
+
+    #[tokio::test]
+    async fn 注册实例按原始正文验证设备证明并仅返回_agent_设备令牌() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let public_key = URL_SAFE_NO_PAD.encode([7_u8; 32]);
+        let body = json!({
+            "adapterType": "codex-desktop",
+            "capabilityVersion": "2026-08-24",
+            "configuration": { "workspace": "agent-room" },
+            "publicSigningKey": public_key
+        })
+        .to_string();
+        *devices
+            .expected_body
+            .lock()
+            .expect("设备请求正文记录锁可用") = Some(body.clone());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+
+        let response = app
+            .oneshot(instance_request(&body, true))
+            .await
+            .expect("Agent 实例注册路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store"))
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentId"], AGENT_UUID);
+        assert_eq!(payload["matrixDeviceId"], "AR_TEST");
+        assert_eq!(payload["accessToken"], "agent-device-access-token");
+        assert!(!payload.to_string().contains("application-service-token"));
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+
+        let registration = agents
+            .registration
+            .lock()
+            .expect("Agent 实例记录锁可用")
+            .clone()
+            .expect("Agent 实例注册用例已调用");
+        assert_eq!(registration.request_id.to_string(), REQUEST_UUID);
+        assert_eq!(registration.agent_id, agent_id());
+        assert_eq!(registration.actor.device_id, device_id());
+        assert_eq!(registration.adapter_type, "codex-desktop");
+        assert_eq!(registration.public_signing_key.as_bytes(), &[7_u8; 32]);
+    }
+
+    #[tokio::test]
+    async fn 缺失设备证明时不会触碰认证或_agent_用例() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+        let body = json!({
+            "adapterType": "codex-desktop",
+            "capabilityVersion": "2026-08-24",
+            "publicSigningKey": URL_SAFE_NO_PAD.encode([7_u8; 32])
+        })
+        .to_string();
+
+        let response = app
+            .oneshot(instance_request(&body, false))
+            .await
+            .expect("缺失设备证明请求可调用");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
+        assert!(
+            agents
+                .registration
+                .lock()
+                .expect("Agent 实例记录锁可用")
+                .is_none()
+        );
+    }
+
+    fn instance_request(body: &str, include_proof: bool) -> Request<Body> {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(format!("/agents/{AGENT_UUID}/instances"))
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .header("idempotency-key", REQUEST_UUID)
+            .header(header::CONTENT_TYPE, "application/json");
+        if include_proof {
+            request = request
+                .header("x-agent-room-device-id", DEVICE_UUID)
+                .header("x-agent-room-proof-issued-at", "1700000000000")
+                .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+                .header(
+                    "x-agent-room-proof-signature",
+                    URL_SAFE_NO_PAD.encode([9_u8; 64]),
+                );
+        }
+        request
+            .body(Body::from(body.to_owned()))
+            .expect("Agent 实例注册请求有效")
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let body = to_bytes(response.into_body(), 64 * 1_024)
+            .await
+            .expect("响应正文可读取");
+        serde_json::from_slice(&body).expect("响应正文是 JSON")
+    }
+
+    fn registered_agent() -> RegisteredAgent {
+        RegisteredAgent {
+            agent: Agent::register(agent_id()),
+            matrix_user_id: matrix_user_id().as_str().to_owned(),
+            slug: "codex-builder".to_owned(),
+            display_name: "Codex Builder".to_owned(),
+            description: "构建 Agent Room".to_owned(),
+            avatar_content_id: None,
+            visibility: AgentVisibility::Private,
+            registered_at: time(1_700_000_000_000),
+        }
+    }
+
+    fn registered_instance() -> RegisteredAgentInstance {
+        let binding_id = AdapterBindingId::from_uuid(uuid(BINDING_UUID));
+        let binding = AdapterBinding::register(
+            binding_id,
+            agent_id(),
+            "codex-desktop".to_owned(),
+            None,
+            "2026-08-24".to_owned(),
+        )
+        .expect("测试适配器绑定有效");
+        let matrix_device_id =
+            AgentMatrixDeviceId::new("AR_TEST".to_owned()).expect("测试 Matrix 设备标识有效");
+        let instance = AgentInstance::register(
+            AgentInstanceId::from_uuid(uuid(INSTANCE_UUID)),
+            agent_id(),
+            device_id(),
+            binding_id,
+            AgentInstancePublicSigningKey::new(vec![7; 32]).expect("测试实例公钥有效"),
+            matrix_device_id,
+        );
+        RegisteredAgentInstance {
+            registration: StoredAgentInstanceRegistration { binding, instance },
+            matrix_session: MatrixSession::new(
+                MatrixSessionMetadata::new(
+                    matrix_user_id(),
+                    MatrixDeviceId::new("AR_TEST").expect("测试 Matrix 设备标识有效"),
+                ),
+                SecretValue::new("agent-device-access-token").expect("测试设备令牌有效"),
+                None,
+            ),
+        }
+    }
+
+    fn authenticated_principal() -> AuthenticatedPrincipal {
+        AuthenticatedPrincipal {
+            principal_id: principal_id(),
+            matrix_user_id: "@user:matrix.agent-room.test".to_owned(),
+            display_name: "Agent Room User".to_owned(),
+            locale: "zh-CN".to_owned(),
+            authenticated_at: time(1_700_000_000_000),
+            expires_at: time(1_700_028_800_000),
+            recently_authenticated: true,
+        }
+    }
+
+    fn authenticated_device() -> AuthenticatedDevice {
+        AuthenticatedDevice {
+            account: PrincipalAccount {
+                principal: Principal::new(principal_id()),
+                matrix_user_id: "@user:matrix.agent-room.test".to_owned(),
+                display_name: "Agent Room User".to_owned(),
+                avatar_content_id: None,
+                locale: "zh-CN".to_owned(),
+            },
+            device_id: device_id(),
+            access_token_expires_at: time(1_700_000_900_000),
+        }
+    }
+
+    fn matrix_user_id() -> MatrixUserId {
+        MatrixUserId::new(format!(
+            "@_agent_{}:matrix.agent-room.test",
+            agent_id().as_uuid().simple()
+        ))
+        .expect("测试 Matrix 用户标识有效")
+    }
+
+    fn principal_id() -> PrincipalId {
+        PrincipalId::from_uuid(uuid(PRINCIPAL_UUID))
+    }
+
+    fn device_id() -> DeviceId {
+        DeviceId::from_uuid(uuid(DEVICE_UUID))
+    }
+
+    fn agent_id() -> AgentId {
+        AgentId::from_uuid(uuid(AGENT_UUID))
+    }
+
+    fn uuid(value: &str) -> Uuid {
+        Uuid::parse_str(value).expect("测试 UUID 有效")
+    }
+
+    fn time(value: i64) -> UtcMillis {
+        UtcMillis::new(value).expect("测试时间有效")
+    }
+}

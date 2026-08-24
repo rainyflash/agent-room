@@ -9,6 +9,7 @@ mod shutdown;
 use std::{error::Error, fmt, sync::Arc, time::Duration};
 
 use agent_room_application::{
+    agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     devices::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
@@ -21,11 +22,15 @@ use agent_room_identity_adapter::{
     DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519DeviceProofVerifier,
     OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
+use agent_room_matrix_adapter::{
+    MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
+};
 use agent_room_postgres_adapter::PostgresRepositories;
 use axum::{Router, middleware, routing::get};
 use tokio::net::TcpListener;
 
 use config::{AuthenticationConfig, ControlPlaneConfig};
+use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
 use features::health::HealthRuntime;
@@ -68,11 +73,7 @@ pub async fn run() -> Result<(), StartupError> {
             ));
         }
     };
-    let identity_routes = match build_identity_router(
-        &config.authentication,
-        config.dependencies.timeout,
-        &runtime,
-    ) {
+    let identity_routes = match build_identity_router(&config, &runtime) {
         Ok(router) => router,
         Err(error) => {
             runtime.shutdown().await;
@@ -115,13 +116,14 @@ fn build_router(readiness: Arc<ReadinessService>, authentication_routes: Router)
 }
 
 fn build_identity_router(
-    config: &AuthenticationConfig,
-    request_timeout: Duration,
+    config: &ControlPlaneConfig,
     runtime: &HealthRuntime,
 ) -> Result<Router, StartupError> {
-    let oidc = build_web_oidc(config, request_timeout)?;
-    let device_oidc = build_device_oidc(config, request_timeout)?;
-    let policy = authentication_policy(config)?;
+    let authentication_config = &config.authentication;
+    let request_timeout = config.dependencies.timeout;
+    let oidc = build_web_oidc(authentication_config, request_timeout)?;
+    let device_oidc = build_device_oidc(authentication_config, request_timeout)?;
+    let policy = authentication_policy(authentication_config)?;
     let repositories = Arc::new(PostgresRepositories::new(runtime.pool().clone()));
     let system_runtime = Arc::new(SystemRuntime);
     let secrets = Arc::new(SecureSecretFactory);
@@ -140,14 +142,14 @@ fn build_identity_router(
     ));
     let state = AuthenticationHttpState::new(
         service.clone(),
-        config.frontend_origin.clone(),
-        config.login_attempt_ttl,
-        config.web_session_ttl,
+        authentication_config.frontend_origin.clone(),
+        authentication_config.login_attempt_ttl,
+        authentication_config.web_session_ttl,
     )
     .map_err(|error| {
         StartupError::new("startup.invalid_authentication_config", error.to_string())
     })?;
-    let device_policy = device_authorization_policy(config)?;
+    let device_policy = device_authorization_policy(authentication_config)?;
     let devices = Arc::new(DeviceAuthorizationService::new(
         DeviceAuthorizationDependencies {
             registrations: repositories.clone(),
@@ -155,23 +157,90 @@ fn build_identity_router(
             proof_nonces: repositories.clone(),
             proof_verifier: Arc::new(Ed25519DeviceProofVerifier),
             devices: repositories.clone(),
-            revocations: repositories,
+            revocations: repositories.clone(),
             secrets: secrets.clone(),
             identifiers: system_runtime.clone(),
-            clock: system_runtime,
+            clock: system_runtime.clone(),
         },
         device_policy,
     ));
     let device_state = DeviceHttpState::new(
         DeviceHttpDependencies {
-            devices,
+            devices: devices.clone(),
             assertion_verifier: device_oidc,
+            authentication: service.clone(),
+            secrets: secrets.clone(),
+        },
+        &authentication_config.frontend_origin,
+    );
+    let agents = build_agent_management(
+        config,
+        repositories,
+        secrets.clone(),
+        system_runtime,
+        request_timeout,
+    )?;
+    let agent_state = AgentHttpState::new(
+        AgentHttpDependencies {
+            agents,
             authentication: service,
+            devices,
             secrets,
         },
-        &config.frontend_origin,
+        &authentication_config.frontend_origin,
     );
-    Ok(features::authentication::router(state).merge(features::devices::router(device_state)))
+    Ok(features::authentication::router(state)
+        .merge(features::devices::router(device_state))
+        .merge(features::agents::router(agent_state)))
+}
+
+fn build_agent_management(
+    config: &ControlPlaneConfig,
+    repositories: Arc<PostgresRepositories>,
+    secrets: Arc<SecureSecretFactory>,
+    system_runtime: Arc<SystemRuntime>,
+    request_timeout: Duration,
+) -> Result<Arc<AgentManagementService>, StartupError> {
+    let matrix_token = SecretValue::new(
+        config
+            .agent_identity
+            .matrix_application_service_token
+            .expose()
+            .to_owned(),
+    )
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_agent_identity_config",
+            "Matrix Application Service Token 无效".to_owned(),
+        )
+    })?;
+    let matrix_configuration = MatrixApplicationServiceConfiguration::new(
+        config.dependencies.matrix_base_url.as_str(),
+        config.authentication.matrix_server_name.clone(),
+        matrix_token,
+        request_timeout,
+    )
+    .map_err(|error| {
+        StartupError::new("startup.invalid_agent_identity_config", error.to_string())
+    })?;
+    let matrix_identities = Arc::new(
+        MatrixApplicationServiceProvisioner::new(matrix_configuration).map_err(|error| {
+            StartupError::new("startup.invalid_agent_identity_config", error.to_string())
+        })?,
+    );
+    Ok(Arc::new(AgentManagementService::new(
+        AgentManagementDependencies {
+            creations: repositories.clone(),
+            agents: repositories.clone(),
+            memberships: repositories.clone(),
+            membership_changes: repositories.clone(),
+            instances: repositories,
+            matrix_identities,
+            secrets,
+            identifiers: system_runtime.clone(),
+            clock: system_runtime,
+        },
+    )))
 }
 
 fn build_web_oidc(

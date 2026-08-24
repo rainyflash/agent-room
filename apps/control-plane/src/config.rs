@@ -96,10 +96,16 @@ pub(crate) struct AuthenticationConfig {
 }
 
 #[derive(Clone)]
+pub(crate) struct AgentIdentityConfig {
+    pub(crate) matrix_application_service_token: SecretValue,
+}
+
+#[derive(Clone)]
 pub(crate) struct ControlPlaneConfig {
     pub(crate) bind_address: SocketAddr,
     pub(crate) dependencies: DependencyConfig,
     pub(crate) authentication: AuthenticationConfig,
+    pub(crate) agent_identity: AgentIdentityConfig,
     pub(crate) observability: ObservabilityConfig,
 }
 
@@ -113,9 +119,21 @@ impl ControlPlaneConfig {
             bind_address: read_bind_address(source)?,
             dependencies: read_dependency_config(source)?,
             authentication: read_authentication_config(source)?,
+            agent_identity: read_agent_identity_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_agent_identity_config(
+    source: &impl EnvironmentSource,
+) -> Result<AgentIdentityConfig, ConfigError> {
+    Ok(AgentIdentityConfig {
+        matrix_application_service_token: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN",
+        )?),
+    })
 }
 
 fn read_bind_address(source: &impl EnvironmentSource) -> Result<SocketAddr, ConfigError> {
@@ -437,6 +455,10 @@ mod tests {
             (
                 "AGENT_ROOM_MATRIX_SERVER_NAME",
                 "matrix.agent-room.localhost".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN",
+                "local-application-service-token".to_owned(),
             ),
         ]))
     }

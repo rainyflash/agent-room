@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use agent_room_application::{
+    agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
 };
@@ -210,6 +211,54 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "设备认证请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn agent(failure: AgentManagementFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentManagementFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "agent.invalid_request",
+                ErrorCategory::Validation,
+                "Agent 请求无效。",
+            ),
+            AgentManagementFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "agent.forbidden",
+                ErrorCategory::Authorization,
+                "无权操作该 Agent。",
+            ),
+            AgentManagementFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "agent.not_found",
+                ErrorCategory::Validation,
+                "Agent 不存在。",
+            ),
+            AgentManagementFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "agent.conflict",
+                ErrorCategory::Conflict,
+                "Agent 状态或幂等请求发生冲突。",
+            ),
+            AgentManagementFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "Agent 身份依赖暂时不可用。",
+            ),
+            AgentManagementFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "agent.internal",
+                ErrorCategory::Transient,
+                "Agent 服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "Agent 请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

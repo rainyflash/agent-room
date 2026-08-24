@@ -78,6 +78,7 @@ dependencies = [
  "agent-room-application",
  "agent-room-domain",
  "agent-room-identity-adapter",
+ "agent-room-matrix-adapter",
  "agent-room-postgres-adapter",
  "agent-room-protocol-conformance",
  "axum",
