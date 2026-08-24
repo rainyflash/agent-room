@@ -12,10 +12,18 @@ type PixiModule = typeof import('pixi.js');
 export async function mountPixiLobbyScene(
   options: LobbySceneMountOptions,
 ): Promise<LobbySceneHandle> {
+  if (!supportsWebGl()) {
+    throw new Error('当前浏览器没有可用的 WebGL 图形上下文。');
+  }
   const pixi = await import('pixi.js');
   const scene = new PixiLobbyScene(pixi, options);
   await scene.initialize();
   return scene;
+}
+
+function supportsWebGl(): boolean {
+  const probe = document.createElement('canvas');
+  return probe.getContext('webgl2') !== null || probe.getContext('webgl') !== null;
 }
 
 class PixiLobbyScene implements LobbySceneHandle {

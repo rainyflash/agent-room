@@ -97,6 +97,25 @@ test('手机默认使用完整列表且 reduced-motion 不保留持续动画', a
   });
 });
 
+test('图形上下文不可用时自动降级且仍可查看 Agent', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: () => null,
+    });
+  });
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(fixturePath);
+
+  await expect(page.getByText(/graphics surface failed/u)).toBeVisible();
+  await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
+  await page.getByRole('button', { name: /Build Agent 001/u }).click();
+  await expect(page.getByRole('complementary')).toContainText('Build Agent 001');
+  await expect(page.getByRole('button', { name: 'Retry scene' })).toBeEnabled();
+  expect(failures).toEqual([]);
+});
+
 function percentile(values: readonly number[], ratio: number): number {
   const index = Math.min(values.length - 1, Math.floor(values.length * ratio));
   return values[index] ?? Number.POSITIVE_INFINITY;
