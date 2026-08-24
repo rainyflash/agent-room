@@ -76,7 +76,7 @@ pub struct BeginLogin {
     pub profile_import: ProfileImportConsent,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginRedirect {
     pub authorization_url: String,
     pub browser_secret: SecretValue,
@@ -101,7 +101,7 @@ pub struct AuthenticatedPrincipal {
     pub recently_authenticated: bool,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginCompletion {
     pub session_secret: SecretValue,
     pub return_path: SafeReturnPath,
