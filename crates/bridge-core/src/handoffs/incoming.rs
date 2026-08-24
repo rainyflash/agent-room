@@ -18,8 +18,8 @@ use super::{
     EncryptedHandoffToDeviceRequest, HandoffAuthorizationDecision, HandoffAuthorizationGateway,
     HandoffAuthorizationRequest, HandoffConsumptionOutcome, HandoffContentFailure,
     HandoffContentGateway, HandoffInstanceDirectory, HandoffReceiptDelivery,
-    HandoffReceptionOutcome, HandoffRecordOutcome, HandoffStore, HandoffStoreCommand,
-    HandoffStoreCommandOutcome, HandoffStoreFailure, OneShotHandoffPackage,
+    HandoffReceptionOutcome, HandoffRecordOutcome, HandoffResolutionOutcome, HandoffStore,
+    HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure, OneShotHandoffPackage,
     incoming_wire::{HandoffEnvelopeFailure, parse_request},
     receipt_wire::receipt_event,
 };
@@ -240,6 +240,69 @@ impl HandoffReceptionService {
         Ok(HandoffConsumptionOutcome::new(context, receipt))
     }
 
+    /// 拒绝并销毁尚未消费的上下文包。
+    ///
+    /// # Errors
+    ///
+    /// 交付不存在、目标不匹配、已经终结或存储不可用时返回错误。
+    pub async fn decline(
+        &self,
+        handoff_id: HandoffId,
+    ) -> Result<HandoffResolutionOutcome, HandoffReceptionFailure> {
+        let occurred_at = self.clock.now();
+        self.resolve(
+            handoff_id,
+            HandoffStoreCommand::Decline {
+                target_instance_id: self.identity.agent_instance_id(),
+                occurred_at,
+            },
+            occurred_at,
+        )
+        .await
+    }
+
+    /// 撤销并销毁当前实例尚未消费的上下文包。
+    ///
+    /// # Errors
+    ///
+    /// 交付不存在、目标不匹配、尚未批准、已经终结或存储不可用时返回错误。
+    pub async fn revoke(
+        &self,
+        handoff_id: HandoffId,
+    ) -> Result<HandoffResolutionOutcome, HandoffReceptionFailure> {
+        let occurred_at = self.clock.now();
+        self.resolve(
+            handoff_id,
+            HandoffStoreCommand::Revoke {
+                target_instance_id: self.identity.agent_instance_id(),
+                occurred_at,
+            },
+            occurred_at,
+        )
+        .await
+    }
+
+    /// 到期并销毁当前实例的上下文包。
+    ///
+    /// # Errors
+    ///
+    /// 尚未到期、目标不匹配、已经终结或存储不可用时返回错误。
+    pub async fn expire(
+        &self,
+        handoff_id: HandoffId,
+    ) -> Result<HandoffResolutionOutcome, HandoffReceptionFailure> {
+        let occurred_at = self.clock.now();
+        self.resolve(
+            handoff_id,
+            HandoffStoreCommand::Expire {
+                target_instance_id: self.identity.agent_instance_id(),
+                occurred_at,
+            },
+            occurred_at,
+        )
+        .await
+    }
+
     async fn authorize(&self, handoff: &ContextHandoff) -> Result<(), HandoffReceptionFailure> {
         let principal_id = handoff.approved_by_principal_id().ok_or_else(|| {
             HandoffReceptionFailure::simple(HandoffReceptionFailureKind::InvalidEnvelope)
@@ -266,6 +329,30 @@ impl HandoffReceptionService {
             ));
         }
         Ok(())
+    }
+
+    async fn resolve(
+        &self,
+        handoff_id: HandoffId,
+        command: HandoffStoreCommand,
+        occurred_at: agent_room_domain::time::UtcMillis,
+    ) -> Result<HandoffResolutionOutcome, HandoffReceptionFailure> {
+        let outcome = self
+            .store
+            .apply(handoff_id, command)
+            .await
+            .map_err(HandoffReceptionFailure::store)?;
+        let HandoffStoreCommandOutcome::Updated(handoff) = outcome else {
+            return Err(HandoffReceptionFailure::simple(
+                HandoffReceptionFailureKind::Store,
+            ));
+        };
+        let receipt = self.send_receipt(&handoff, occurred_at).await;
+        Ok(HandoffResolutionOutcome::new(
+            handoff.fields().id,
+            handoff.status(),
+            receipt,
+        ))
     }
 
     fn verify_target(&self, handoff: &ContextHandoff) -> Result<(), HandoffReceptionFailure> {

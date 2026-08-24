@@ -4,19 +4,24 @@ use std::sync::{
 };
 
 use agent_room_application::ports::{
-    Clock, DeviceProofVerifier, DeviceSignature, MatrixDeviceId, MatrixUserId, PortFuture,
+    Clock, DeviceProofVerifier, DeviceSignature, MatrixDeviceId, MatrixEventType, MatrixUserId,
+    PortFuture,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
+    agent_verification::{
+        AgentEventAuthenticationDecision, AgentEventAuthenticationFailure, AgentEventAuthenticator,
+    },
     handoffs::{
-        ApproveHandoffRequest, ConsumedHandoffContext, EncryptedHandoffToDeviceGateway,
-        EncryptedHandoffToDeviceRequest, HandoffAuthorizationDecision, HandoffAuthorizationFailure,
-        HandoffAuthorizationGateway, HandoffAuthorizationRequest, HandoffDeliveryDependencies,
-        HandoffDeliveryFailureKind, HandoffDeliveryOutcome, HandoffDeviceAddress,
-        HandoffDirectoryFailure, HandoffInstanceDirectory, HandoffRecordOutcome, HandoffStore,
-        HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure,
-        HandoffStoreFailureKind, HandoffTransportFailure, HandoffTransportFailureKind,
-        OneShotHandoffPackage,
+        ApproveHandoffRequest, ConsumedHandoffContext, DecryptedHandoffToDeviceEvent,
+        EncryptedHandoffToDeviceGateway, EncryptedHandoffToDeviceRequest,
+        HandoffAuthorizationDecision, HandoffAuthorizationFailure, HandoffAuthorizationGateway,
+        HandoffAuthorizationRequest, HandoffDeliveryDependencies, HandoffDeliveryFailureKind,
+        HandoffDeliveryOutcome, HandoffDeviceAddress, HandoffDirectoryFailure,
+        HandoffInstanceDirectory, HandoffReceiptDependencies, HandoffReceiptRecord,
+        HandoffReceiptService, HandoffRecordOutcome, HandoffStore, HandoffStoreCommand,
+        HandoffStoreCommandOutcome, HandoffStoreFailure, HandoffStoreFailureKind,
+        HandoffTransportFailure, HandoffTransportFailureKind, OneShotHandoffPackage,
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
@@ -37,6 +42,9 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use agent_room_identity_adapter::{Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey};
+use agent_room_protocol_conformance::generated::{
+    ActorRef, AgentRef, HandoffReceiptEvent, HandoffReceiptStatus, Provenance,
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
 use uuid::Uuid;
@@ -72,11 +80,36 @@ impl 固定时钟 {
     fn new(value: i64) -> Self {
         Self(AtomicI64::new(value))
     }
+
+    fn set(&self, value: i64) {
+        self.0.store(value, Ordering::SeqCst);
+    }
 }
 
 impl Clock for 固定时钟 {
     fn now(&self) -> UtcMillis {
         UtcMillis::new(self.0.load(Ordering::SeqCst)).expect("测试时间有效")
+    }
+}
+
+struct 验签器(DevicePublicSigningKey);
+
+impl AgentEventAuthenticator for 验签器 {
+    fn authenticate<'a>(
+        &'a self,
+        _agent_id: AgentId,
+        _instance_id: AgentInstanceId,
+        _observed_at: UtcMillis,
+        canonical_event: &'a [u8],
+        signature: &'a DeviceSignature,
+    ) -> PortFuture<'a, Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure>>
+    {
+        let decision = if Ed25519DeviceProofVerifier.verify(&self.0, canonical_event, signature) {
+            AgentEventAuthenticationDecision::Trusted
+        } else {
+            AgentEventAuthenticationDecision::InvalidSignature
+        };
+        Box::pin(async move { Ok(decision) })
     }
 }
 
@@ -245,10 +278,26 @@ impl HandoffStore for 内存交付存储 {
                 }
                 handoff.decline(occurred_at).map(|()| None)
             }
-            HandoffStoreCommand::Revoke { occurred_at } => {
+            HandoffStoreCommand::Revoke {
+                target_instance_id,
+                occurred_at,
+            } => {
+                if handoff.fields().target_instance_id != target_instance_id {
+                    return Box::pin(async {
+                        Err(HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict))
+                    });
+                }
                 handoff.revoke(occurred_at).map(|()| None)
             }
-            HandoffStoreCommand::Expire { occurred_at } => {
+            HandoffStoreCommand::Expire {
+                target_instance_id,
+                occurred_at,
+            } => {
+                if handoff.fields().target_instance_id != target_instance_id {
+                    return Box::pin(async {
+                        Err(HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict))
+                    });
+                }
                 handoff.expire(occurred_at).map(|()| None)
             }
             HandoffStoreCommand::Fail { code, occurred_at } => {
@@ -279,6 +328,24 @@ impl HandoffStore for 内存交付存储 {
             HandoffStoreCommandOutcome::Updated(handoff)
         };
         Box::pin(async move { Ok(outcome) })
+    }
+
+    fn apply_receipt<'a>(
+        &'a self,
+        receipt: &'a HandoffReceiptRecord,
+    ) -> PortFuture<'a, Result<ContextHandoff, HandoffStoreFailure>> {
+        let mut slot = self.handoff.lock().expect("交付记录锁可用");
+        let result = slot
+            .as_mut()
+            .filter(|handoff| handoff.fields().id == receipt.handoff_id())
+            .ok_or_else(|| HandoffStoreFailure::new(HandoffStoreFailureKind::NotFound))
+            .and_then(|handoff| {
+                receipt
+                    .apply_to(handoff)
+                    .map_err(|_| HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict))?;
+                Ok(handoff.clone())
+            });
+        Box::pin(async move { result })
     }
 }
 
@@ -425,6 +492,92 @@ async fn 目录返回错实例时记录稳定失败且不发送() {
     );
 }
 
+#[tokio::test]
+async fn 已送达回执丢失时消费回执仍能单向收敛并允许幂等重放() {
+    let fixture = 测试夹具::new(HandoffAuthorizationDecision::Allowed);
+    fixture
+        .service()
+        .approve_and_send(fixture.request())
+        .await
+        .expect("发送请求成功");
+    fixture.clock.set(1_300);
+    let target_identity = fixture.target_identity();
+    let target_signer = Arc::new(测试签名身份::generate());
+    let service = HandoffReceiptService::new(HandoffReceiptDependencies {
+        identity: fixture.requester_identity.clone(),
+        clock: fixture.clock.clone(),
+        authenticator: Arc::new(验签器(
+            target_signer.public_key().expect("目标公钥可读取"),
+        )),
+        store: fixture.store.clone(),
+    });
+    let receipt = signed_receipt(
+        &fixture,
+        &target_identity,
+        target_signer.as_ref(),
+        HandoffReceiptStatus::Consumed,
+    );
+
+    let first = service.apply(&receipt).await.expect("消费回执可直接收敛");
+    let replay = service.apply(&receipt).await.expect("相同消费回执幂等");
+
+    assert_eq!(first.status(), HandoffStatus::Consumed);
+    assert_eq!(replay.status(), HandoffStatus::Consumed);
+    assert_eq!(
+        fixture.store.stored().map(|handoff| handoff.status()),
+        Some(HandoffStatus::Consumed)
+    );
+}
+
+#[tokio::test]
+async fn 回执状态被篡改后不能推进发送记录() {
+    let fixture = 测试夹具::new(HandoffAuthorizationDecision::Allowed);
+    fixture
+        .service()
+        .approve_and_send(fixture.request())
+        .await
+        .expect("发送请求成功");
+    fixture.clock.set(1_300);
+    let target_identity = fixture.target_identity();
+    let target_signer = Arc::new(测试签名身份::generate());
+    let service = HandoffReceiptService::new(HandoffReceiptDependencies {
+        identity: fixture.requester_identity.clone(),
+        clock: fixture.clock.clone(),
+        authenticator: Arc::new(验签器(
+            target_signer.public_key().expect("目标公钥可读取"),
+        )),
+        store: fixture.store.clone(),
+    });
+    let valid = signed_receipt(
+        &fixture,
+        &target_identity,
+        target_signer.as_ref(),
+        HandoffReceiptStatus::Delivered,
+    );
+    let mut content = valid.content().clone();
+    content["status"] = Value::String("consumed".to_owned());
+    let tampered = DecryptedHandoffToDeviceEvent::new(
+        valid.sender().clone(),
+        valid.event_type().clone(),
+        content,
+    )
+    .expect("篡改事件仍是对象");
+
+    let failure = service
+        .apply(&tampered)
+        .await
+        .expect_err("篡改回执必须失败");
+
+    assert_eq!(
+        failure.kind(),
+        agent_room_bridge_core::handoffs::HandoffReceiptFailureKind::UntrustedSender
+    );
+    assert_eq!(
+        fixture.store.stored().map(|handoff| handoff.status()),
+        Some(HandoffStatus::Approved)
+    );
+}
+
 struct 测试夹具 {
     requester_identity: BridgeAgentIdentity,
     source_identity: BridgeAgentIdentity,
@@ -499,6 +652,16 @@ impl 测试夹具 {
         })
     }
 
+    fn target_identity(&self) -> BridgeAgentIdentity {
+        BridgeAgentIdentity::new(
+            self.target_agent_id,
+            "目标 Codex Agent",
+            self.target_address.matrix_user_id().as_str(),
+            self.target_instance_id,
+        )
+        .expect("目标身份有效")
+    }
+
     fn request(&self) -> ApproveHandoffRequest {
         ApproveHandoffRequest::new(
             ContextHandoff::propose(ContextHandoffFields {
@@ -542,6 +705,55 @@ impl 测试夹具 {
         )
         .expect("交付请求有效")
     }
+}
+
+fn signed_receipt(
+    fixture: &测试夹具,
+    target_identity: &BridgeAgentIdentity,
+    signer: &测试签名身份,
+    status: HandoffReceiptStatus,
+) -> DecryptedHandoffToDeviceEvent {
+    let mut content = serde_json::to_value(HandoffReceiptEvent {
+        actor: ActorRef {
+            agent: AgentRef {
+                agent_id: target_identity.agent_id().to_string(),
+                avatar_url: None,
+                display_name: target_identity.display_name().to_owned(),
+                matrix_user_id: target_identity.matrix_user_id().as_str().to_owned(),
+                extensions: std::collections::BTreeMap::new(),
+            },
+            instance_id: target_identity.agent_instance_id().to_string(),
+            provenance: Provenance::HumanConfirmedAgent,
+            extensions: std::collections::BTreeMap::new(),
+        },
+        correlation_id: fixture.handoff_id.to_string(),
+        created_at: "1970-01-01T00:00:01.250Z".to_owned(),
+        event_type: "org.agentroom.handoff.receipt.v1".to_owned(),
+        failure_code: None,
+        id: fixture.handoff_id.to_string(),
+        requester_instance_id: fixture.requester_identity.agent_instance_id().to_string(),
+        schema_version: "1.0".to_owned(),
+        signature: String::new(),
+        status,
+        extensions: std::collections::BTreeMap::new(),
+    })
+    .expect("回执可序列化");
+    content
+        .as_object_mut()
+        .expect("回执为对象")
+        .remove("signature");
+    let canonical = serde_jcs::to_vec(&content).expect("回执可规范化");
+    let signature = signer.sign(&canonical).expect("回执可签名");
+    content.as_object_mut().expect("回执为对象").insert(
+        "signature".to_owned(),
+        Value::String(URL_SAFE_NO_PAD.encode(signature.as_bytes())),
+    );
+    DecryptedHandoffToDeviceEvent::new(
+        target_identity.matrix_user_id().clone(),
+        MatrixEventType::new("org.agentroom.handoff.receipt.v1").expect("回执类型有效"),
+        content,
+    )
+    .expect("解密回执有效")
 }
 
 fn assert_protocol_event(content: &Value) {

@@ -8,7 +8,7 @@ use agent_room_domain::{
 
 use super::{
     ConsumedHandoffContext, EncryptedHandoffToDeviceRequest, HandoffDeviceAddress,
-    OneShotHandoffPackage,
+    HandoffReceiptRecord, OneShotHandoffPackage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,9 +173,11 @@ pub enum HandoffStoreCommand {
         occurred_at: UtcMillis,
     },
     Revoke {
+        target_instance_id: AgentInstanceId,
         occurred_at: UtcMillis,
     },
     Expire {
+        target_instance_id: AgentInstanceId,
         occurred_at: UtcMillis,
     },
     Fail {
@@ -225,6 +227,11 @@ pub trait HandoffStore: Send + Sync {
         handoff_id: HandoffId,
         command: HandoffStoreCommand,
     ) -> PortFuture<'_, Result<HandoffStoreCommandOutcome, HandoffStoreFailure>>;
+
+    fn apply_receipt<'a>(
+        &'a self,
+        receipt: &'a HandoffReceiptRecord,
+    ) -> PortFuture<'a, Result<ContextHandoff, HandoffStoreFailure>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

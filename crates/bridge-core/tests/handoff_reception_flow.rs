@@ -19,10 +19,11 @@ use agent_room_bridge_core::{
         EncryptedHandoffToDeviceRequest, HandoffAuthorizationDecision, HandoffAuthorizationFailure,
         HandoffAuthorizationGateway, HandoffAuthorizationRequest, HandoffContentFailure,
         HandoffContentGateway, HandoffContentRead, HandoffDeviceAddress, HandoffDirectoryFailure,
-        HandoffInstanceDirectory, HandoffReceiptDelivery, HandoffReceptionDependencies,
-        HandoffReceptionFailureKind, HandoffReceptionOutcome, HandoffRecordOutcome, HandoffStore,
-        HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure,
-        HandoffStoreFailureKind, HandoffTransportFailure, OneShotHandoffPackage,
+        HandoffInstanceDirectory, HandoffReceiptDelivery, HandoffReceiptRecord,
+        HandoffReceptionDependencies, HandoffReceptionFailureKind, HandoffReceptionOutcome,
+        HandoffRecordOutcome, HandoffStore, HandoffStoreCommand, HandoffStoreCommandOutcome,
+        HandoffStoreFailure, HandoffStoreFailureKind, HandoffTransportFailure,
+        OneShotHandoffPackage,
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
@@ -233,6 +234,24 @@ impl HandoffStore for 内存交付存储 {
         let outcome = apply_command(&mut self.0.lock().expect("存储锁可用"), handoff_id, command);
         Box::pin(async move { outcome })
     }
+
+    fn apply_receipt<'a>(
+        &'a self,
+        receipt: &'a HandoffReceiptRecord,
+    ) -> PortFuture<'a, Result<ContextHandoff, HandoffStoreFailure>> {
+        let mut state = self.0.lock().expect("存储锁可用");
+        let result = state
+            .handoffs
+            .get_mut(&receipt.handoff_id())
+            .ok_or_else(|| HandoffStoreFailure::new(HandoffStoreFailureKind::NotFound))
+            .and_then(|handoff| {
+                receipt
+                    .apply_to(handoff)
+                    .map_err(|_| HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict))?;
+                Ok(handoff.clone())
+            });
+        Box::pin(async move { result })
+    }
 }
 
 fn record(
@@ -291,8 +310,24 @@ fn apply_command(
             }
             handoff.decline(occurred_at).map(|()| None)
         }
-        HandoffStoreCommand::Revoke { occurred_at } => handoff.revoke(occurred_at).map(|()| None),
-        HandoffStoreCommand::Expire { occurred_at } => handoff.expire(occurred_at).map(|()| None),
+        HandoffStoreCommand::Revoke {
+            target_instance_id,
+            occurred_at,
+        } => {
+            if handoff.fields().target_instance_id != target_instance_id {
+                return Err(HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict));
+            }
+            handoff.revoke(occurred_at).map(|()| None)
+        }
+        HandoffStoreCommand::Expire {
+            target_instance_id,
+            occurred_at,
+        } => {
+            if handoff.fields().target_instance_id != target_instance_id {
+                return Err(HandoffStoreFailure::new(HandoffStoreFailureKind::Conflict));
+            }
+            handoff.expire(occurred_at).map(|()| None)
+        }
         HandoffStoreCommand::Fail { code, occurred_at } => {
             handoff.fail(code, occurred_at).map(|()| None)
         }
@@ -466,6 +501,52 @@ async fn 到期请求在验签和下载前被拒绝() {
     assert!(fixture.store.status(fixture.handoff_id).is_none());
 }
 
+#[tokio::test]
+async fn 拒绝撤销和到期都会销毁正文并发布对应回执() {
+    let declined = 测试夹具::new();
+    let declined_service = declined.service();
+    declined_service
+        .receive(&declined.request_event(declined.target_identity.agent_instance_id()))
+        .await
+        .expect("交付成功");
+    let declined_outcome = declined_service
+        .decline(declined.handoff_id)
+        .await
+        .expect("拒绝成功");
+    assert_eq!(declined_outcome.status(), HandoffStatus::Declined);
+    assert!(declined_service.consume(declined.handoff_id).await.is_err());
+    assert_last_receipt(&declined, "declined");
+
+    let revoked = 测试夹具::new();
+    let revoked_service = revoked.service();
+    revoked_service
+        .receive(&revoked.request_event(revoked.target_identity.agent_instance_id()))
+        .await
+        .expect("交付成功");
+    let revoked_outcome = revoked_service
+        .revoke(revoked.handoff_id)
+        .await
+        .expect("撤销成功");
+    assert_eq!(revoked_outcome.status(), HandoffStatus::Revoked);
+    assert!(revoked_service.consume(revoked.handoff_id).await.is_err());
+    assert_last_receipt(&revoked, "revoked");
+
+    let expired = 测试夹具::new();
+    let expired_service = expired.service();
+    expired_service
+        .receive(&expired.request_event(expired.target_identity.agent_instance_id()))
+        .await
+        .expect("交付成功");
+    expired.clock.set(2_000);
+    let expired_outcome = expired_service
+        .expire(expired.handoff_id)
+        .await
+        .expect("到期关闭成功");
+    assert_eq!(expired_outcome.status(), HandoffStatus::Expired);
+    assert!(expired_service.consume(expired.handoff_id).await.is_err());
+    assert_last_receipt(&expired, "expired");
+}
+
 struct 测试夹具 {
     requester_identity: BridgeAgentIdentity,
     source_identity: BridgeAgentIdentity,
@@ -621,6 +702,14 @@ fn actor(identity: &BridgeAgentIdentity, provenance: Provenance) -> ActorRef {
         provenance,
         extensions: BTreeMap::new(),
     }
+}
+
+fn assert_last_receipt(fixture: &测试夹具, expected_status: &str) {
+    let receipts = fixture.transport.0.lock().expect("回执记录锁可用");
+    assert_eq!(
+        receipts.last().expect("终态回执存在").event().content()["status"],
+        expected_status
+    );
 }
 
 fn hex(bytes: &[u8]) -> String {

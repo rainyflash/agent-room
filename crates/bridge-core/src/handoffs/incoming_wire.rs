@@ -119,7 +119,7 @@ fn validate_header(wire: &HandoffRequestEvent) -> Result<(), HandoffEnvelopeFail
     Ok(())
 }
 
-fn authentication_material(
+pub(super) fn authentication_material(
     content: &serde_json::Value,
 ) -> Result<(Vec<u8>, DeviceSignature), HandoffEnvelopeFailure> {
     let encoded = content
@@ -143,7 +143,7 @@ fn authentication_material(
     Ok((canonical_event, signature))
 }
 
-fn parse_actor(
+pub(super) fn parse_actor(
     actor: &ActorRef,
 ) -> Result<(BridgeAgentIdentity, MessageProvenance), HandoffEnvelopeFailure> {
     let mut identity = BridgeAgentIdentity::new(
@@ -225,7 +225,7 @@ const fn parse_provenance(value: &Provenance) -> MessageProvenance {
     }
 }
 
-fn parse_v7(value: &str) -> Result<Uuid, HandoffEnvelopeFailure> {
+pub(super) fn parse_v7(value: &str) -> Result<Uuid, HandoffEnvelopeFailure> {
     Uuid::parse_str(value)
         .ok()
         .filter(|id| {
@@ -234,7 +234,7 @@ fn parse_v7(value: &str) -> Result<Uuid, HandoffEnvelopeFailure> {
         .ok_or(HandoffEnvelopeFailure::InvalidEnvelope)
 }
 
-fn parse_time(value: &str) -> Result<UtcMillis, HandoffEnvelopeFailure> {
+pub(super) fn parse_time(value: &str) -> Result<UtcMillis, HandoffEnvelopeFailure> {
     let parsed =
         DateTime::parse_from_rfc3339(value).map_err(|_| HandoffEnvelopeFailure::InvalidEnvelope)?;
     UtcMillis::new(parsed.timestamp_millis()).map_err(|_| HandoffEnvelopeFailure::InvalidEnvelope)
