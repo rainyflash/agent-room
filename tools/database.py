@@ -226,6 +226,7 @@ def coverage(values: dict[str, str]) -> None:
                 "--ignored",
                 "--test-threads=1",
             ],
+            [sys.executable, "tools/matrix.py", "coverage"],
             [
                 "cargo",
                 "llvm-cov",

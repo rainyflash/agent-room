@@ -109,16 +109,16 @@ jobs:
       - name: 启动真实外部依赖
         shell: pwsh
         run: ./tools/dev-infra.ps1 up
-      - name: 验证数据库仓储并合并 Rust 覆盖率
+      - name: 创建 Matrix 测试主体和种子数据
+        shell: pwsh
+        run: ./tools/dev-infra.ps1 seed
+      - name: 验证数据库与 Matrix 并合并 Rust 覆盖率
         run: |
           rustup component add llvm-tools-preview --toolchain 1.97.1
           cargo install cargo-llvm-cov --locked --version 0.9.0
           python tools/database.py coverage
       - name: 应用控制平面数据库迁移
         run: python tools/database.py migrate
-      - name: 幂等创建测试主体、Agent、房间与内容
-        shell: pwsh
-        run: ./tools/dev-infra.ps1 seed
       - name: 再次执行种子验证幂等性
         shell: pwsh
         run: ./tools/dev-infra.ps1 seed

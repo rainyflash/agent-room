@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -60,24 +61,42 @@ def runtime_environment(values: dict[str, str]) -> dict[str, str]:
     return environment
 
 
+def matrix_command(action: str) -> list[str]:
+    runner = {
+        "test": ["cargo", "test"],
+        "coverage": ["cargo", "llvm-cov", "--all-features"],
+    }[action]
+    report_arguments = ["--no-report"] if action == "coverage" else []
+    return [
+        *runner,
+        "-p",
+        "agent-room-matrix-adapter",
+        "--test",
+        "real_synapse",
+        *report_arguments,
+        "--",
+        "--ignored",
+        "--test-threads=1",
+    ]
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "action",
+        choices=("test", "coverage"),
+        nargs="?",
+        default="test",
+    )
+    arguments = parser.parse_args()
+
     try:
         environment = runtime_environment(read_environment(ENV_FILE))
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
         return 2
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "agent-room-matrix-adapter",
-        "--test",
-        "real_synapse",
-        "--",
-        "--ignored",
-        "--test-threads=1",
-    ]
+    command = matrix_command(arguments.action)
     return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
 
 
