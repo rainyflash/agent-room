@@ -8,6 +8,7 @@ use agent_room_bridge_core::ports::{
     DeviceSigningIdentityStore, StoredBridgeDeviceCredentials,
 };
 use agent_room_bridge_ipc::IpcSharedSecret;
+use agent_room_bridge_storage_adapter::HandoffStorageKey;
 use agent_room_domain::{devices::DevicePublicSigningKey, ids::DeviceId, time::UtcMillis};
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -20,6 +21,7 @@ const DEVICE_CREDENTIALS: &str = "device-session-v1";
 const IPC_INSTALLATION_ID: &str = "bridge-ipc-installation-id-v1";
 const IPC_SHARED_SECRET: &str = "bridge-ipc-shared-secret-v1";
 const MATRIX_STORE_PASSPHRASE: &str = "matrix-store-passphrase-v1";
+const HANDOFF_STORAGE_KEY: &str = "handoff-storage-key-v1";
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
 const RUNTIME_SECRET_BYTES: usize = 32;
 
@@ -72,6 +74,7 @@ pub(crate) struct BridgeRuntimeSecrets {
     installation_id: IpcInstallationId,
     ipc_shared_secret: IpcSharedSecret,
     matrix_store_passphrase: SecretValue,
+    handoff_storage_key: HandoffStorageKey,
 }
 
 impl BridgeRuntimeSecrets {
@@ -85,6 +88,10 @@ impl BridgeRuntimeSecrets {
 
     pub(crate) const fn matrix_store_passphrase(&self) -> &SecretValue {
         &self.matrix_store_passphrase
+    }
+
+    pub(crate) const fn handoff_storage_key(&self) -> &HandoffStorageKey {
+        &self.handoff_storage_key
     }
 }
 
@@ -118,12 +125,16 @@ impl OsBridgeRuntimeSecretVault {
         let shared_secret = self.load_or_create_value(IPC_SHARED_SECRET, random_secret)?;
         let matrix_store_passphrase =
             self.load_or_create_value(MATRIX_STORE_PASSPHRASE, random_secret)?;
+        let handoff_storage_key = self.load_or_create_value(HANDOFF_STORAGE_KEY, random_secret)?;
 
         Ok(BridgeRuntimeSecrets {
             installation_id: IpcInstallationId::new(installation_id).map_err(|_| corrupt())?,
             ipc_shared_secret: IpcSharedSecret::new(decode_runtime_secret(&shared_secret)?),
             matrix_store_passphrase: SecretValue::new(matrix_store_passphrase)
                 .map_err(|_| corrupt())?,
+            handoff_storage_key: HandoffStorageKey::from_bytes(decode_runtime_secret(
+                &handoff_storage_key,
+            )?),
         })
     }
 
@@ -337,8 +348,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DEVICE_CREDENTIALS, DEVICE_SIGNING_SEED, IPC_INSTALLATION_ID, IPC_SHARED_SECRET,
-        KeyringBackend, MATRIX_STORE_PASSPHRASE, OsBridgeRuntimeSecretVault,
+        DEVICE_CREDENTIALS, DEVICE_SIGNING_SEED, HANDOFF_STORAGE_KEY, IPC_INSTALLATION_ID,
+        IPC_SHARED_SECRET, KeyringBackend, MATRIX_STORE_PASSPHRASE, OsBridgeRuntimeSecretVault,
         OsDeviceCredentialVault, OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
     };
 
@@ -407,7 +418,10 @@ mod tests {
         assert!(stored.contains_key(IPC_INSTALLATION_ID));
         assert!(stored.contains_key(IPC_SHARED_SECRET));
         assert!(stored.contains_key(MATRIX_STORE_PASSPHRASE));
+        assert!(stored.contains_key(HANDOFF_STORAGE_KEY));
         assert_ne!(stored[IPC_SHARED_SECRET], stored[MATRIX_STORE_PASSPHRASE]);
+        assert_ne!(stored[HANDOFF_STORAGE_KEY], stored[MATRIX_STORE_PASSPHRASE]);
+        assert_ne!(stored[HANDOFF_STORAGE_KEY], stored[IPC_SHARED_SECRET]);
     }
 
     #[test]

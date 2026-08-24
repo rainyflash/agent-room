@@ -17,6 +17,7 @@ const NONCE_BYTES: usize = 24;
 const KEY_VERSION: i64 = 1;
 const ASSOCIATED_DATA_DOMAIN: &[u8] = b"agent-room:handoff-package:v1\0";
 
+#[derive(Clone)]
 pub struct HandoffStorageKey {
     bytes: Zeroizing<[u8; HANDOFF_STORAGE_KEY_BYTES]>,
 }

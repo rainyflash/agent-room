@@ -10,6 +10,7 @@ repository.workspace = true
 agent-room-application.workspace = true
 agent-room-bridge-core.workspace = true
 agent-room-bridge-ipc.workspace = true
+agent-room-bridge-storage-adapter.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
 agent-room-matrix-adapter.workspace = true

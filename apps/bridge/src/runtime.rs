@@ -24,6 +24,7 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
+use agent_room_bridge_storage_adapter::SqliteHandoffStore;
 use agent_room_domain::{
     devices::DevicePlatform,
     time::{DurationMillis, UtcMillis},
@@ -68,6 +69,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         .load_or_create()
         .map_err(BridgeRuntimeError::runtime_secrets)?;
     initialize_matrix_store(&config, &paths, &runtime_secrets).await?;
+    initialize_handoff_store(&paths, &runtime_secrets).await?;
     let device_session = initialize_device_session(&config).await?;
 
     let status = Arc::new(BridgeRuntimeStatus::new(SystemClock.now().value()));
@@ -209,6 +211,21 @@ async fn initialize_matrix_store(
         .initialize_store()
         .await
         .map_err(BridgeRuntimeError::matrix_store)
+}
+
+async fn initialize_handoff_store(
+    paths: &BridgeRuntimePaths,
+    runtime_secrets: &BridgeRuntimeSecrets,
+) -> Result<(), BridgeRuntimeError> {
+    SqliteHandoffStore::open(
+        paths.handoff_database(),
+        runtime_secrets.handoff_storage_key().clone(),
+    )
+    .await
+    .map_err(|failure| BridgeRuntimeError::handoff_store(&failure))?
+    .close()
+    .await;
+    Ok(())
 }
 
 async fn run_until_shutdown(
@@ -648,6 +665,31 @@ impl BridgeRuntimeError {
             "bridge.matrix_store_unavailable",
             "无法创建、打开或解密 Matrix Store；拒绝使用临时内存存储继续运行",
         )
+    }
+
+    fn handoff_store(
+        failure: &agent_room_bridge_storage_adapter::SqliteBridgeStorageOpenFailure,
+    ) -> Self {
+        match failure {
+            agent_room_bridge_storage_adapter::SqliteBridgeStorageOpenFailure::CreateDirectory(
+                _,
+            ) => Self::new(
+                "bridge.handoff_store_directory_unavailable",
+                "无法创建加密的一次性上下文存储目录",
+            ),
+            agent_room_bridge_storage_adapter::SqliteBridgeStorageOpenFailure::Connect(_) => {
+                Self::new(
+                    "bridge.handoff_store_unavailable",
+                    "无法打开加密的一次性上下文存储",
+                )
+            }
+            agent_room_bridge_storage_adapter::SqliteBridgeStorageOpenFailure::Migrate(_) => {
+                Self::new(
+                    "bridge.handoff_store_migration_failed",
+                    "无法迁移加密的一次性上下文存储",
+                )
+            }
+        }
     }
 
     fn authorization(failure: BridgeAuthorizationFailure) -> Self {

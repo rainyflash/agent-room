@@ -82,6 +82,7 @@ dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
  "agent-room-bridge-ipc",
+ "agent-room-bridge-storage-adapter",
  "agent-room-domain",
  "agent-room-identity-adapter",
  "agent-room-matrix-adapter",
