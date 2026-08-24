@@ -36,8 +36,14 @@ use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
 };
 use agent_room_postgres_adapter::PostgresRepositories;
-use axum::{Router, middleware, routing::get};
+use axum::{
+    Router,
+    http::{HeaderName, HeaderValue, Method, header},
+    middleware,
+    routing::get,
+};
 use tokio::net::TcpListener;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use config::{AuthenticationConfig, ControlPlaneConfig};
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
@@ -101,7 +107,11 @@ pub async fn run() -> Result<(), StartupError> {
         routes,
         content_cleanup,
     } = identity_runtime;
-    let app = build_router(runtime.readiness.clone(), routes);
+    let app = build_router(
+        runtime.readiness.clone(),
+        routes,
+        &config.authentication.frontend_origin,
+    )?;
 
     tracing::info!(
         service = SERVICE_NAME,
@@ -124,8 +134,37 @@ pub async fn run() -> Result<(), StartupError> {
     })
 }
 
-fn build_router(readiness: Arc<ReadinessService>, feature_routes: Router) -> Router {
-    Router::new()
+fn build_router(
+    readiness: Arc<ReadinessService>,
+    feature_routes: Router,
+    frontend_origin: &url::Url,
+) -> Result<Router, StartupError> {
+    let origin =
+        HeaderValue::from_str(&frontend_origin.origin().ascii_serialization()).map_err(|_| {
+            StartupError::new(
+                "startup.invalid_authentication_config",
+                "前端 Origin 无法转换为安全 HTTP 头".to_owned(),
+            )
+        })?;
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::exact(origin))
+        .allow_credentials(true)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("x-agent-room-content-byte-length"),
+            HeaderName::from_static("x-agent-room-content-sha256"),
+        ])
+        .expose_headers([
+            header::CACHE_CONTROL,
+            header::RETRY_AFTER,
+            HeaderName::from_static("content-digest"),
+            HeaderName::from_static(correlation::CORRELATION_ID_HEADER),
+        ]);
+
+    Ok(Router::new()
         .route("/health/live", get(features::health::live))
         .route("/health/ready", get(features::health::ready))
         .route("/capabilities", get(features::capabilities::get))
@@ -133,7 +172,8 @@ fn build_router(readiness: Arc<ReadinessService>, feature_routes: Router) -> Rou
         .method_not_allowed_fallback(error::method_not_allowed)
         .with_state(AppState { readiness })
         .merge(feature_routes)
-        .layer(middleware::from_fn(correlation::attach))
+        .layer(cors)
+        .layer(middleware::from_fn(correlation::attach)))
 }
 
 async fn build_identity_router(
@@ -484,13 +524,15 @@ mod tests {
     };
     use axum::{
         body::{Body, to_bytes},
-        http::{Request, StatusCode},
+        http::{HeaderValue, Method, Request, StatusCode, header},
     };
     use serde_json::Value;
     use tower::ServiceExt;
     use uuid::{Uuid, Version};
 
     use super::{build_router, correlation::CORRELATION_ID_HEADER};
+
+    const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 
     struct StaticProbe {
         dependency: DependencyKind,
@@ -518,7 +560,12 @@ mod tests {
             probe(DependencyKind::ObjectStore, Ok(())),
         ])
         .expect("测试探针配置有效");
-        build_router(Arc::new(readiness), axum::Router::new())
+        build_router(
+            Arc::new(readiness),
+            axum::Router::new(),
+            &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
+        )
+        .expect("测试 CORS 配置有效")
     }
 
     async fn body_json(response: axum::response::Response) -> Value {
@@ -624,6 +671,56 @@ mod tests {
         assert_eq!(body["code"], "http.route_not_found");
         assert_eq!(body["correlationId"], correlation_id.to_string());
     }
+
+    #[tokio::test]
+    async fn 浏览器预检只允许配置的前端_origin_并携带凭据() {
+        let response = router_with(Ok(()))
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/auth/session")
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static(FRONTEND_ORIGIN))
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+            Some(&HeaderValue::from_static("true"))
+        );
+    }
+
+    #[tokio::test]
+    async fn 浏览器预检拒绝未配置的_origin() {
+        let response = router_with(Ok(()))
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/auth/session")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("https://evil.example"))
+        );
+    }
 }
 
 #[cfg(test)]
@@ -644,15 +741,22 @@ mod real_dependency_tests {
 
     async fn ready_response(config: &DependencyConfig) -> (StatusCode, Value) {
         let runtime = HealthRuntime::initialize(config).expect("真实依赖探针可初始化");
-        let response = build_router(runtime.readiness.clone(), axum::Router::new())
-            .oneshot(
-                Request::builder()
-                    .uri("/health/ready")
-                    .body(Body::empty())
-                    .expect("请求有效"),
-            )
-            .await
-            .expect("路由执行成功");
+        let frontend_origin =
+            Url::parse("https://app.agent-room.test").expect("测试前端 Origin 有效");
+        let response = build_router(
+            runtime.readiness.clone(),
+            axum::Router::new(),
+            &frontend_origin,
+        )
+        .expect("测试 CORS 配置有效")
+        .oneshot(
+            Request::builder()
+                .uri("/health/ready")
+                .body(Body::empty())
+                .expect("请求有效"),
+        )
+        .await
+        .expect("路由执行成功");
         runtime.shutdown().await;
 
         let status = response.status();
