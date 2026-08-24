@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.handoff.receipt.v1",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a9",
+  "createdAt": "2026-08-23T12:00:03Z",
+  "actor": {
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ab",
+    "provenance": "autonomous_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9aa",
+  "signature": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+  "requesterInstanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+  "status": "delivered",
+  "failureCode": "handoff.delivery_failed"
+}

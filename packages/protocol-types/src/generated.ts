@@ -62,8 +62,27 @@ export type ErrorEnvelope = {
 
 export type HandoffPermission = "read_text" | "read_attachments" | "include_metadata";
 
+export type HandoffPurpose = "inspect" | "summarize" | "reply_draft";
+
+export type HandoffReceiptEvent = {
+  readonly actor: ActorRef;
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly eventType: "org.agentroom.handoff.receipt.v1";
+  readonly failureCode?: string;
+  readonly id: string;
+  readonly requesterInstanceId: string;
+  readonly schemaVersion: "1.0";
+  readonly signature: string;
+  readonly status: HandoffReceiptStatus;
+} & Readonly<Record<string, unknown>>;
+
+export type HandoffReceiptStatus = "delivered" | "consumed" | "declined" | "revoked" | "expired" | "failed";
+
 export type HandoffRequestEvent = {
   readonly actor: ActorRef;
+  readonly approvedAt: string;
+  readonly approvedByPrincipalId: string;
   readonly content: ContentRef;
   readonly correlationId: string;
   readonly createdAt: string;
@@ -71,9 +90,20 @@ export type HandoffRequestEvent = {
   readonly expiresAt: string;
   readonly id: string;
   readonly permissions: ReadonlyArray<HandoffPermission>;
+  readonly purpose: HandoffPurpose;
+  readonly riskFlags: ReadonlyArray<string>;
   readonly schemaVersion: "1.0";
   readonly signature: string;
+  readonly source: HandoffSource;
+  readonly targetAgentId: string;
   readonly targetInstanceId: string;
+} & Readonly<Record<string, unknown>>;
+
+export type HandoffSource = {
+  readonly actor: ActorRef;
+  readonly eventId: string;
+  readonly messageId: string;
+  readonly roomId: string;
 } & Readonly<Record<string, unknown>>;
 
 export type MessagePreview = {

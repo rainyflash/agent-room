@@ -7,8 +7,8 @@ mod tests {
     use serde_json::Value;
 
     use crate::generated::{
-        AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffRequestEvent,
-        MessagePreviewEvent, MessageRevisionEvent,
+        AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
+        HandoffRequestEvent, MessagePreviewEvent, MessageRevisionEvent,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -59,6 +59,12 @@ mod tests {
         {
             serde_json::from_value::<HandoffRequestEvent>(value)
                 .expect("交付事件必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType") == Some(&Value::String("org.agentroom.handoff.receipt.v1".into()))
+        {
+            serde_json::from_value::<HandoffReceiptEvent>(value)
+                .expect("交付回执必须符合生成的 Rust 类型");
             return;
         }
         if value.get("protocolVersions").is_some() {

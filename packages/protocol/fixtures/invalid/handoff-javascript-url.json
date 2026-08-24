@@ -10,18 +10,38 @@
       "matrixUserId": "@build-agent:agent-room.test"
     },
     "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
-    "provenance": "human"
+    "provenance": "human_confirmed_agent"
   },
   "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9aa",
   "signature": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  "targetAgentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
   "targetInstanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ab",
   "content": {
     "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ac",
     "digestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "sizeBytes": 4096,
     "mediaType": "application/json",
+    "fetchMode": "on_demand",
     "downloadUrl": "javascript:alert(1)"
   },
   "permissions": ["read_text"],
+  "purpose": "inspect",
+  "source": {
+    "roomId": "!builders:agent-room.test",
+    "eventId": "$source-message:agent-room.test",
+    "messageId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ad",
+    "actor": {
+      "agent": {
+        "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ae",
+        "displayName": "审查助手",
+        "matrixUserId": "@review-agent:agent-room.test"
+      },
+      "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9af",
+      "provenance": "autonomous_agent"
+    }
+  },
+  "riskFlags": [],
+  "approvedAt": "2026-08-23T12:00:01Z",
+  "approvedByPrincipalId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b0",
   "expiresAt": "2026-08-23T12:05:00Z"
 }

@@ -8,7 +8,8 @@
     { "$ref": "#/$defs/MessagePreviewEvent" },
     { "$ref": "#/$defs/MessageRevisionEvent" },
     { "$ref": "#/$defs/AgentStatusEvent" },
-    { "$ref": "#/$defs/HandoffRequestEvent" }
+    { "$ref": "#/$defs/HandoffRequestEvent" },
+    { "$ref": "#/$defs/HandoffReceiptEvent" }
   ],
   "$defs": {
     "ErrorCategory": {
@@ -47,6 +48,14 @@
     "HandoffPermission": {
       "type": "string",
       "enum": ["read_text", "read_attachments", "include_metadata"]
+    },
+    "HandoffPurpose": {
+      "type": "string",
+      "enum": ["inspect", "summarize", "reply_draft"]
+    },
+    "HandoffReceiptStatus": {
+      "type": "string",
+      "enum": ["delivered", "consumed", "declined", "revoked", "expired", "failed"]
     },
     "AgentRef": {
       "type": "object",
@@ -88,6 +97,32 @@
       "additionalProperties": true,
       "maxProperties": 12
     },
+    "HandoffSource": {
+      "type": "object",
+      "required": ["roomId", "eventId", "messageId", "actor"],
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 512,
+          "pattern": "^\\$[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "messageId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "actor": { "$ref": "#/$defs/ActorRef" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 12
+    },
     "ContentRef": {
       "type": "object",
       "required": ["contentId", "digestSha256", "sizeBytes", "mediaType", "fetchMode"],
@@ -113,6 +148,9 @@
           "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$"
         },
         "fetchMode": { "const": "on_demand" }
+      },
+      "propertyNames": {
+        "not": { "enum": ["downloadUrl", "url"] }
       },
       "additionalProperties": true,
       "maxProperties": 16
@@ -409,8 +447,14 @@
         "correlationId",
         "signature",
         "targetInstanceId",
+        "targetAgentId",
         "content",
         "permissions",
+        "purpose",
+        "source",
+        "riskFlags",
+        "approvedAt",
+        "approvedByPrincipalId",
         "expiresAt"
       ],
       "properties": {
@@ -435,6 +479,11 @@
           "format": "uuid",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
+        "targetAgentId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
         "content": { "$ref": "#/$defs/ContentRef" },
         "permissions": {
           "type": "array",
@@ -443,10 +492,103 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/HandoffPermission" }
         },
+        "purpose": { "$ref": "#/$defs/HandoffPurpose" },
+        "source": { "$ref": "#/$defs/HandoffSource" },
+        "riskFlags": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "approvedByPrincipalId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
         "expiresAt": { "type": "string", "format": "date-time" }
       },
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "actor": {
+              "type": "object",
+              "properties": { "provenance": { "const": "human_confirmed_agent" } }
+            }
+          }
+        }
+      ],
       "additionalProperties": true,
       "maxProperties": 24
+    },
+    "HandoffReceiptEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "signature",
+        "requesterInstanceId",
+        "status"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "org.agentroom.handoff.receipt.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/ActorRef" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "requesterInstanceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "status": { "$ref": "#/$defs/HandoffReceiptStatus" },
+        "failureCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_.]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": { "status": { "const": "failed" } }
+          },
+          "then": {
+            "type": "object",
+            "properties": { "failureCode": { "type": "string" } },
+            "required": ["failureCode"]
+          },
+          "else": {
+            "type": "object",
+            "properties": { "failureCode": false }
+          }
+        }
+      ],
+      "additionalProperties": true,
+      "maxProperties": 20
     }
   }
 }

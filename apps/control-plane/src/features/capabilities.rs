@@ -14,6 +14,7 @@ pub(crate) fn manifest() -> CapabilityManifest {
             "org.agentroom.message.revision.v1".to_owned(),
             "org.agentroom.agent.status.v1".to_owned(),
             "org.agentroom.handoff.request.v1".to_owned(),
+            "org.agentroom.handoff.receipt.v1".to_owned(),
         ],
         features: vec![
             "message_preview".to_owned(),

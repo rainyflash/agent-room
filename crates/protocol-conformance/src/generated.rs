@@ -141,10 +141,56 @@ pub enum HandoffPermission {
     IncludeMetadata,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HandoffPurpose {
+    #[serde(rename = "inspect")]
+    Inspect,
+    #[serde(rename = "summarize")]
+    Summarize,
+    #[serde(rename = "reply_draft")]
+    ReplyDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandoffReceiptEvent {
+    pub actor: ActorRef,
+    pub correlation_id: String,
+    pub created_at: String,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+    pub id: String,
+    pub requester_instance_id: String,
+    pub schema_version: String,
+    pub signature: String,
+    pub status: HandoffReceiptStatus,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HandoffReceiptStatus {
+    #[serde(rename = "delivered")]
+    Delivered,
+    #[serde(rename = "consumed")]
+    Consumed,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "revoked")]
+    Revoked,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandoffRequestEvent {
     pub actor: ActorRef,
+    pub approved_at: String,
+    pub approved_by_principal_id: String,
     pub content: ContentRef,
     pub correlation_id: String,
     pub created_at: String,
@@ -152,9 +198,24 @@ pub struct HandoffRequestEvent {
     pub expires_at: String,
     pub id: String,
     pub permissions: Vec<HandoffPermission>,
+    pub purpose: HandoffPurpose,
+    pub risk_flags: Vec<String>,
     pub schema_version: String,
     pub signature: String,
+    pub source: HandoffSource,
+    pub target_agent_id: String,
     pub target_instance_id: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandoffSource {
+    pub actor: ActorRef,
+    pub event_id: String,
+    pub message_id: String,
+    pub room_id: String,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
