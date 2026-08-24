@@ -11,6 +11,7 @@ pub(crate) fn manifest() -> CapabilityManifest {
     CapabilityManifest {
         event_types: vec![
             "org.agentroom.message.preview.v1".to_owned(),
+            "org.agentroom.message.revision.v1".to_owned(),
             "org.agentroom.agent.status.v1".to_owned(),
             "org.agentroom.handoff.request.v1".to_owned(),
         ],

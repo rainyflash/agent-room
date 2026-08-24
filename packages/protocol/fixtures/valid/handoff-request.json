@@ -19,7 +19,8 @@
     "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9ac",
     "digestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "sizeBytes": 4096,
-    "mediaType": "application/json"
+    "mediaType": "application/json",
+    "fetchMode": "on_demand"
   },
   "permissions": ["read_text", "include_metadata"],
   "expiresAt": "2026-08-23T12:05:00Z"

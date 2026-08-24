@@ -89,8 +89,7 @@ pub struct CapabilityManifest {
 pub struct ContentRef {
     pub content_id: String,
     pub digest_sha256: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub download_url: Option<String>,
+    pub fetch_mode: String,
     pub media_type: String,
     pub size_bytes: u64,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
@@ -162,6 +161,20 @@ pub struct HandoffRequestEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MessagePreview {
+    pub content_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    pub risk_flags: Vec<String>,
+    pub sensitivity: MessageSensitivity,
+    pub summary: String,
+    pub title: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessagePreviewEvent {
     pub actor: ActorRef,
     pub content: ContentRef,
@@ -169,12 +182,64 @@ pub struct MessagePreviewEvent {
     pub created_at: String,
     pub event_type: String,
     pub id: String,
-    pub preview: String,
+    pub preview: MessagePreview,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<MessageRelation>,
     pub room_id: String,
     pub schema_version: String,
     pub signature: String,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRelation {
+    pub kind: String,
+    pub target_message_id: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRevisionEvent {
+    pub actor: ActorRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentRef>,
+    pub correlation_id: String,
+    pub created_at: String,
+    pub event_type: String,
+    pub id: String,
+    pub kind: MessageRevisionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<MessagePreview>,
+    pub room_id: String,
+    pub schema_version: String,
+    pub signature: String,
+    pub target_message_id: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageRevisionKind {
+    #[serde(rename = "replace")]
+    Replace,
+    #[serde(rename = "redact")]
+    Redact,
+    #[serde(rename = "moderate")]
+    Moderate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageSensitivity {
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "sensitive")]
+    Sensitive,
+    #[serde(rename = "restricted")]
+    Restricted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

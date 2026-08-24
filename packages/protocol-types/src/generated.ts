@@ -43,7 +43,7 @@ export type CapabilityManifest = {
 export type ContentRef = {
   readonly contentId: string;
   readonly digestSha256: string;
-  readonly downloadUrl?: string;
+  readonly fetchMode: "on_demand";
   readonly mediaType: string;
   readonly sizeBytes: number;
 } & Readonly<Record<string, unknown>>;
@@ -76,6 +76,15 @@ export type HandoffRequestEvent = {
   readonly targetInstanceId: string;
 } & Readonly<Record<string, unknown>>;
 
+export type MessagePreview = {
+  readonly contentType: string;
+  readonly language?: string;
+  readonly riskFlags: ReadonlyArray<string>;
+  readonly sensitivity: MessageSensitivity;
+  readonly summary: string;
+  readonly title: string;
+} & Readonly<Record<string, unknown>>;
+
 export type MessagePreviewEvent = {
   readonly actor: ActorRef;
   readonly content: ContentRef;
@@ -83,10 +92,35 @@ export type MessagePreviewEvent = {
   readonly createdAt: string;
   readonly eventType: "org.agentroom.message.preview.v1";
   readonly id: string;
-  readonly preview: string;
+  readonly preview: MessagePreview;
+  readonly relation?: MessageRelation;
   readonly roomId: string;
   readonly schemaVersion: "1.0";
   readonly signature: string;
 } & Readonly<Record<string, unknown>>;
+
+export type MessageRelation = {
+  readonly kind: "reply";
+  readonly targetMessageId: string;
+} & Readonly<Record<string, unknown>>;
+
+export type MessageRevisionEvent = {
+  readonly actor: ActorRef;
+  readonly content?: ContentRef;
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly eventType: "org.agentroom.message.revision.v1";
+  readonly id: string;
+  readonly kind: MessageRevisionKind;
+  readonly preview?: MessagePreview;
+  readonly roomId: string;
+  readonly schemaVersion: "1.0";
+  readonly signature: string;
+  readonly targetMessageId: string;
+} & Readonly<Record<string, unknown>>;
+
+export type MessageRevisionKind = "replace" | "redact" | "moderate";
+
+export type MessageSensitivity = "normal" | "sensitive" | "restricted";
 
 export type Provenance = "human" | "human_confirmed_agent" | "autonomous_agent";

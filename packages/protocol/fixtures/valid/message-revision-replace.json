@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.message.revision.v1",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b1",
+  "createdAt": "2026-08-23T12:01:00Z",
+  "actor": {
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+    "provenance": "human_confirmed_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b2",
+  "signature": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "roomId": "!lobby:agent-room.test",
+  "targetMessageId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a2",
+  "kind": "replace",
+  "preview": {
+    "title": "协议生成完成（已编辑）",
+    "summary": "修正了协议生成结果中的版本说明。",
+    "contentType": "text/markdown",
+    "language": "zh-CN",
+    "sensitivity": "normal",
+    "riskFlags": []
+  },
+  "content": {
+    "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b3",
+    "digestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "sizeBytes": 2048,
+    "mediaType": "text/markdown",
+    "fetchMode": "on_demand"
+  }
+}

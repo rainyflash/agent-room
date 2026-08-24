@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.message.revision.v1",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9c1",
+  "createdAt": "2026-08-23T12:02:00Z",
+  "actor": {
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+    "provenance": "human_confirmed_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9c2",
+  "signature": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  "roomId": "!lobby:agent-room.test",
+  "targetMessageId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a2",
+  "kind": "redact"
+}

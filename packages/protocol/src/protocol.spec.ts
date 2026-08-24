@@ -36,16 +36,28 @@ describe('协议 Schema', () => {
     });
   }
 
-  test('预览长度边界严格为 280 个字符', () => {
+  test('预览标题和摘要执行独立字符边界', () => {
     const fixture = readFixture('valid', 'message-preview.json');
     if (typeof fixture !== 'object' || fixture === null) {
       throw new Error('消息预览夹具必须是对象');
     }
+    const preview = Reflect.get(fixture, 'preview');
+    if (typeof preview !== 'object' || preview === null) {
+      throw new Error('消息预览元数据必须是对象');
+    }
 
-    const boundary = { ...fixture, preview: '界'.repeat(280) };
-    const overflow = { ...fixture, preview: '界'.repeat(281) };
-    expect(validate(boundary).ok).toBe(true);
-    expect(validate(overflow).ok).toBe(false);
+    expect(validate({ ...fixture, preview: { ...preview, title: '界'.repeat(120) } }).ok).toBe(
+      true,
+    );
+    expect(validate({ ...fixture, preview: { ...preview, title: '界'.repeat(121) } }).ok).toBe(
+      false,
+    );
+    expect(validate({ ...fixture, preview: { ...preview, summary: '界'.repeat(500) } }).ok).toBe(
+      true,
+    );
+    expect(validate({ ...fixture, preview: { ...preview, summary: '界'.repeat(501) } }).ok).toBe(
+      false,
+    );
   });
 
   test('状态协议接受完整枚举并拒绝粗粒度详情', () => {

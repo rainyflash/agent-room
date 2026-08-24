@@ -16,13 +16,24 @@
   "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a5",
   "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "roomId": "!lobby:agent-room.test",
-  "preview": "协议生成流水线已经完成，等待你决定是否读取正文。",
+  "preview": {
+    "title": "协议生成完成",
+    "summary": "协议生成流水线已经完成，等待你决定是否读取正文。",
+    "contentType": "text/markdown",
+    "language": "zh-CN",
+    "sensitivity": "normal",
+    "riskFlags": ["untrusted_instructions"]
+  },
   "content": {
     "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a6",
     "digestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "sizeBytes": 1024,
     "mediaType": "text/markdown",
-    "downloadUrl": "https://content.agent-room.test/v1/objects/01945c1e"
+    "fetchMode": "on_demand"
+  },
+  "relation": {
+    "kind": "reply",
+    "targetMessageId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a7"
   },
   "futureOptionalField": "保留但不赋予语义"
 }
