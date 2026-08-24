@@ -24,15 +24,17 @@ pub use outgoing::{
     HandoffDeliveryService,
 };
 pub use ports::{
-    EncryptedHandoffToDeviceGateway, HandoffAuthorizationDecision, HandoffAuthorizationFailure,
-    HandoffAuthorizationFailureKind, HandoffAuthorizationGateway, HandoffAuthorizationRequest,
-    HandoffContentFailure, HandoffContentFailureKind, HandoffContentGateway, HandoffContentRead,
-    HandoffDirectoryFailure, HandoffDirectoryFailureKind, HandoffInstanceDirectory,
-    HandoffRecordOutcome, HandoffStore, HandoffStoreCommand, HandoffStoreCommandOutcome,
-    HandoffStoreFailure, HandoffStoreFailureKind, HandoffTransportFailure,
-    HandoffTransportFailureKind,
+    EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
+    HandoffAuthorizationDecision, HandoffAuthorizationFailure, HandoffAuthorizationFailureKind,
+    HandoffAuthorizationGateway, HandoffAuthorizationRequest, HandoffContentFailure,
+    HandoffContentFailureKind, HandoffContentGateway, HandoffContentRead, HandoffDirectoryFailure,
+    HandoffDirectoryFailureKind, HandoffInstanceDirectory, HandoffRecordOutcome, HandoffStore,
+    HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure, HandoffStoreFailureKind,
+    HandoffTransportFailure, HandoffTransportFailureKind,
 };
+pub use receipt_wire::HANDOFF_RECEIPT_EVENT_TYPE;
 pub use receipts::{
     HandoffReceiptDependencies, HandoffReceiptFailure, HandoffReceiptFailureKind,
     HandoffReceiptService,
 };
+pub use wire::HANDOFF_REQUEST_EVENT_TYPE;

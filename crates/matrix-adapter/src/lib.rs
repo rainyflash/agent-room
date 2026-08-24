@@ -2,6 +2,7 @@
 
 mod configuration;
 mod error;
+mod handoff;
 mod mapping;
 mod membership;
 mod provisioning;
@@ -11,6 +12,7 @@ pub use configuration::{
     MatrixSdkConfiguration, MatrixSdkConfigurationError, MatrixSdkStoreConfiguration,
     MatrixSdkStoreConfigurationError,
 };
+pub use handoff::MatrixSdkHandoffGateway;
 pub use membership::MatrixRoomMembershipAdapter;
 pub use provisioning::MatrixRoomProvisioningAdapter;
-pub use sdk::MatrixSdkClientFactory;
+pub use sdk::{MatrixSdkClientFactory, MatrixSdkHandoffConnection};

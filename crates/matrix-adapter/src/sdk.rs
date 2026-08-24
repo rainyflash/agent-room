@@ -9,6 +9,9 @@ use agent_room_application::ports::{
     MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
     MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
 };
+use agent_room_bridge_core::handoffs::{
+    EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
+};
 use matrix_sdk::{
     Client, SessionMeta, SessionTokens,
     authentication::matrix::MatrixSession as SdkMatrixSession,
@@ -48,6 +51,7 @@ use matrix_sdk::{
 use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
     error::{map_build_error, map_http_error, map_sdk_error},
+    handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response},
 };
 
@@ -85,6 +89,19 @@ impl MatrixSdkClientFactory {
         Ok(())
     }
 
+    /// 恢复同一个 Matrix SDK 客户端，并额外暴露加密 To-Device 交付能力。
+    ///
+    /// # Errors
+    ///
+    /// SDK Store、会话或加密状态无法恢复时返回 Matrix 基础设施错误。
+    pub async fn restore_with_handoffs(
+        &self,
+        session: &MatrixSession,
+    ) -> MatrixResult<MatrixSdkHandoffConnection> {
+        let client = self.restore_client(session).await?;
+        handoff_connection_from_client(client, self.configuration.sync_timeline_limit())
+    }
+
     async fn build_client(&self, operation: MatrixOperation) -> MatrixResult<Client> {
         let builder = Client::builder()
             .homeserver_url(self.configuration.homeserver_url().clone())
@@ -101,10 +118,61 @@ impl MatrixSdkClientFactory {
             .map_err(|error| map_build_error(operation, &error))
     }
 
+    async fn restore_client(&self, session: &MatrixSession) -> MatrixResult<Client> {
+        let client = self.build_client(MatrixOperation::RestoreSession).await?;
+        let sdk_session = to_sdk_session(session)?;
+        client
+            .matrix_auth()
+            .restore_session(sdk_session, RoomLoadSettings::default())
+            .await
+            .map_err(|error| map_sdk_error(MatrixOperation::RestoreSession, &error))?;
+        Ok(client)
+    }
+
     fn request_config(&self) -> RequestConfig {
         RequestConfig::new()
             .disable_retry()
             .timeout(self.configuration.request_timeout())
+    }
+}
+
+pub struct MatrixSdkHandoffConnection {
+    matrix: MatrixConnection,
+    handoff: Arc<MatrixSdkHandoffGateway>,
+}
+
+impl std::fmt::Debug for MatrixSdkHandoffConnection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MatrixSdkHandoffConnection")
+            .field("matrix", &self.matrix)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MatrixSdkHandoffConnection {
+    pub const fn matrix(&self) -> &MatrixConnection {
+        &self.matrix
+    }
+
+    pub fn matrix_gateway_handle(&self) -> Arc<dyn MatrixGateway> {
+        self.matrix.gateway_handle()
+    }
+
+    pub fn room_authority_gateway_handle(&self) -> Arc<dyn MatrixRoomAuthorityGateway> {
+        self.matrix.room_authority_gateway_handle()
+    }
+
+    pub fn handoff_transport_handle(&self) -> Arc<dyn EncryptedHandoffToDeviceGateway> {
+        self.handoff.clone()
+    }
+
+    pub fn handoff_event_source_handle(&self) -> Arc<dyn EncryptedHandoffToDeviceEventSource> {
+        self.handoff.clone()
+    }
+
+    pub fn into_parts(self) -> (MatrixConnection, Arc<MatrixSdkHandoffGateway>) {
+        (self.matrix, self.handoff)
     }
 }
 
@@ -167,13 +235,7 @@ impl MatrixClientFactory for MatrixSdkClientFactory {
         session: &'a MatrixSession,
     ) -> PortFuture<'a, MatrixResult<MatrixConnection>> {
         Box::pin(async move {
-            let client = self.build_client(MatrixOperation::RestoreSession).await?;
-            let sdk_session = to_sdk_session(session)?;
-            client
-                .matrix_auth()
-                .restore_session(sdk_session, RoomLoadSettings::default())
-                .await
-                .map_err(|error| map_sdk_error(MatrixOperation::RestoreSession, &error))?;
+            let client = self.restore_client(session).await?;
             connection_from_client(
                 client,
                 MatrixOperation::RestoreSession,
@@ -475,6 +537,28 @@ fn connection_from_client(
     operation: MatrixOperation,
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixConnection> {
+    let (session, sdk_gateway) = sdk_connection_parts(client, operation, sync_timeline_limit)?;
+    Ok(application_connection(session, sdk_gateway))
+}
+
+fn handoff_connection_from_client(
+    client: Client,
+    sync_timeline_limit: NonZeroU16,
+) -> MatrixResult<MatrixSdkHandoffConnection> {
+    let handoff = Arc::new(MatrixSdkHandoffGateway::attach(client.clone()));
+    let (session, sdk_gateway) =
+        sdk_connection_parts(client, MatrixOperation::RestoreSession, sync_timeline_limit)?;
+    Ok(MatrixSdkHandoffConnection {
+        matrix: application_connection(session, sdk_gateway),
+        handoff,
+    })
+}
+
+fn sdk_connection_parts(
+    client: Client,
+    operation: MatrixOperation,
+    sync_timeline_limit: NonZeroU16,
+) -> MatrixResult<(MatrixSession, Arc<MatrixSdkGateway>)> {
     let sdk_session = client
         .matrix_auth()
         .session()
@@ -486,13 +570,16 @@ fn connection_from_client(
         metadata,
         sync_timeline_limit,
     });
+    Ok((session, sdk_gateway))
+}
+
+fn application_connection(
+    session: MatrixSession,
+    sdk_gateway: Arc<MatrixSdkGateway>,
+) -> MatrixConnection {
     let gateway: Arc<dyn MatrixGateway> = sdk_gateway.clone();
     let room_authority_gateway: Arc<dyn MatrixRoomAuthorityGateway> = sdk_gateway;
-    Ok(MatrixConnection::from_parts(
-        session,
-        gateway,
-        room_authority_gateway,
-    ))
+    MatrixConnection::from_parts(session, gateway, room_authority_gateway)
 }
 
 #[derive(Debug, serde::Deserialize)]

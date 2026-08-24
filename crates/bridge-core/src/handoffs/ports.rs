@@ -116,6 +116,16 @@ pub trait EncryptedHandoffToDeviceGateway: Send + Sync {
     ) -> PortFuture<'a, Result<(), HandoffTransportFailure>>;
 }
 
+/// 只暴露 Matrix SDK 已成功解密的 Agent Room To-Device 事件。
+///
+/// 实现必须拒绝明文事件、非 Olm 事件和无法确认发送设备的事件。接收队列不得静默丢弃；
+/// 一旦发生溢出或底层同步终止，必须返回显式失败并让运行时进入恢复流程。
+pub trait EncryptedHandoffToDeviceEventSource: Send + Sync {
+    fn receive(
+        &self,
+    ) -> PortFuture<'_, Result<super::DecryptedHandoffToDeviceEvent, HandoffTransportFailure>>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandoffStoreFailureKind {
     Conflict,

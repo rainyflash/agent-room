@@ -8,8 +8,10 @@ repository.workspace = true
 
 [dependencies]
 agent-room-application.workspace = true
+agent-room-bridge-core.workspace = true
 agent-room-domain.workspace = true
-matrix-sdk = { workspace = true, features = ["bundled-sqlite"] }
+matrix-sdk = { workspace = true, features = ["bundled-sqlite", "experimental-send-custom-to-device"] }
+matrix-sdk-base = { workspace = true, features = ["e2e-encryption", "experimental-send-custom-to-device"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

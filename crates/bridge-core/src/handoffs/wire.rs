@@ -21,7 +21,7 @@ use crate::{agent_identity::BridgeAgentIdentity, ports::DeviceSigningIdentity};
 
 use super::ApproveHandoffRequest;
 
-pub(super) const HANDOFF_REQUEST_EVENT_TYPE: &str = "org.agentroom.handoff.request.v1";
+pub const HANDOFF_REQUEST_EVENT_TYPE: &str = "org.agentroom.handoff.request.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HandoffWireFailure {
