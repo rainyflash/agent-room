@@ -3,6 +3,7 @@
 mod client;
 mod credentials;
 mod endpoint;
+mod location;
 
 pub use client::{LocalBridgeClient, LocalBridgeClientFailure, LocalBridgeClientFailureKind};
 pub use credentials::{
@@ -10,3 +11,7 @@ pub use credentials::{
     IpcCredentialFailure, IpcCredentialFailureKind, IpcCredentialSource, OsIpcCredentialReader,
 };
 pub use endpoint::LocalIpcEndpoint;
+pub use location::{
+    BridgeLocationFailure, BridgeLocationFailureKind, bridge_data_root_from_environment,
+    bridge_runtime_root, resolve_bridge_data_root,
+};
