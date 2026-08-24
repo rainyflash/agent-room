@@ -200,6 +200,7 @@ fn classify_change(
 fn same_capability_surface(left: &NormalizedAgentCard, right: &NormalizedAgentCard) -> bool {
     left.endpoints() == right.endpoints()
         && left.capabilities() == right.capabilities()
+        && left.security_schemes() == right.security_schemes()
         && left.default_input_modes() == right.default_input_modes()
         && left.default_output_modes() == right.default_output_modes()
         && left.skills() == right.skills()

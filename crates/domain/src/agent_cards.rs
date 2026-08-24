@@ -25,6 +25,8 @@ const MAX_MEDIA_MODES: usize = 32;
 const MAX_MEDIA_MODE_LENGTH: usize = 128;
 const MAX_EXTENSIONS: usize = 32;
 const MAX_EXTENSION_DESCRIPTION_LENGTH: usize = 512;
+const MAX_SECURITY_SCHEMES: usize = 32;
+const MAX_SECURITY_SCHEME_NAME_LENGTH: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentCardVerificationState {
@@ -371,6 +373,58 @@ impl AgentCardCapabilities {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCardSecuritySchemeKind {
+    ApiKey,
+    Http,
+    OAuth2,
+    OpenIdConnect,
+    MutualTls,
+}
+
+impl AgentCardSecuritySchemeKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api_key",
+            Self::Http => "http",
+            Self::OAuth2 => "oauth2",
+            Self::OpenIdConnect => "open_id_connect",
+            Self::MutualTls => "mutual_tls",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCardSecurityScheme {
+    name: String,
+    kind: AgentCardSecuritySchemeKind,
+}
+
+impl AgentCardSecurityScheme {
+    /// 创建不含凭据和远端私有配置的认证方案摘要。
+    ///
+    /// # Errors
+    ///
+    /// 名称为空、超长或包含控制字符时失败。
+    pub fn new(name: String, kind: AgentCardSecuritySchemeKind) -> DomainResult<Self> {
+        validate_text(
+            "agent_card_security_scheme_name",
+            &name,
+            MAX_SECURITY_SCHEME_NAME_LENGTH,
+            false,
+        )?;
+        Ok(Self { name, kind })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn kind(&self) -> AgentCardSecuritySchemeKind {
+        self.kind
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCardSkill {
     id: String,
@@ -455,6 +509,7 @@ pub struct NormalizedAgentCard {
     version: String,
     endpoints: Vec<AgentCardEndpoint>,
     capabilities: AgentCardCapabilities,
+    security_schemes: Vec<AgentCardSecurityScheme>,
     default_input_modes: Vec<String>,
     default_output_modes: Vec<String>,
     skills: Vec<AgentCardSkill>,
@@ -468,6 +523,7 @@ pub struct NormalizedAgentCardFields {
     pub version: String,
     pub endpoints: Vec<AgentCardEndpoint>,
     pub capabilities: AgentCardCapabilities,
+    pub security_schemes: Vec<AgentCardSecurityScheme>,
     pub default_input_modes: Vec<String>,
     pub default_output_modes: Vec<String>,
     pub skills: Vec<AgentCardSkill>,
@@ -521,6 +577,18 @@ impl NormalizedAgentCard {
             "agent_card_skill_id",
             fields.skills.iter().map(AgentCardSkill::id),
         )?;
+        ensure_maximum(
+            "agent_card_security_schemes",
+            fields.security_schemes.len(),
+            MAX_SECURITY_SCHEMES,
+        )?;
+        ensure_unique(
+            "agent_card_security_scheme_name",
+            fields
+                .security_schemes
+                .iter()
+                .map(AgentCardSecurityScheme::name),
+        )?;
         Ok(Self {
             name: fields.name,
             description: fields.description,
@@ -528,6 +596,7 @@ impl NormalizedAgentCard {
             version: fields.version,
             endpoints: fields.endpoints,
             capabilities: fields.capabilities,
+            security_schemes: fields.security_schemes,
             default_input_modes: fields.default_input_modes,
             default_output_modes: fields.default_output_modes,
             skills: fields.skills,
@@ -556,6 +625,10 @@ impl NormalizedAgentCard {
 
     pub const fn capabilities(&self) -> &AgentCardCapabilities {
         &self.capabilities
+    }
+
+    pub fn security_schemes(&self) -> &[AgentCardSecurityScheme] {
+        &self.security_schemes
     }
 
     pub fn default_input_modes(&self) -> &[String] {
@@ -890,6 +963,7 @@ mod tests {
                 &BTreeSet::new(),
             )
             .expect("空能力有效"),
+            security_schemes: Vec::new(),
             default_input_modes: vec!["text/plain".to_owned()],
             default_output_modes: vec!["text/plain".to_owned()],
             skills: vec![skill.clone(), skill],
@@ -921,6 +995,7 @@ mod tests {
                 &BTreeSet::new(),
             )
             .expect("测试能力有效"),
+            security_schemes: Vec::new(),
             default_input_modes: vec!["text/plain".to_owned()],
             default_output_modes: vec!["text/plain".to_owned()],
             skills: Vec::new(),

@@ -43,6 +43,7 @@ getrandom = "0.3.4"
 hmac = "0.13.0"
 interprocess = { version = "2.4.3", features = ["tokio"] }
 jsonschema = { version = "0.50.1", default-features = false }
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
 keyring = "4.1.6"
 matrix-sdk = { version = "0.18.0", default-features = false }
 opentelemetry = { version = "0.32.0", features = ["trace"] }
@@ -55,6 +56,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "r
 rsa = { version = "0.9.10", features = ["pem"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serde_jcs = "0.2.0"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"

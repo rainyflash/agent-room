@@ -398,6 +398,7 @@ fn card(name: &str, streaming: bool) -> NormalizedAgentCard {
             &BTreeSet::new(),
         )
         .expect("测试能力有效"),
+        security_schemes: Vec::new(),
         default_input_modes: vec!["text/plain".to_owned()],
         default_output_modes: vec!["text/plain".to_owned()],
         skills: Vec::new(),

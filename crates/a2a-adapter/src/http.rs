@@ -91,6 +91,13 @@ pub struct JsonDocument {
 }
 
 impl JsonDocument {
+    pub fn new(body: Vec<u8>, cache_lifetime: DurationMillis) -> Self {
+        Self {
+            body,
+            cache_lifetime,
+        }
+    }
+
     pub fn body(&self) -> &[u8] {
         &self.body
     }
@@ -209,10 +216,7 @@ impl PinnedHttpsClient {
             }
             body.extend_from_slice(&chunk);
         }
-        Ok(JsonDocument {
-            body,
-            cache_lifetime,
-        })
+        Ok(JsonDocument::new(body, cache_lifetime))
     }
 }
 

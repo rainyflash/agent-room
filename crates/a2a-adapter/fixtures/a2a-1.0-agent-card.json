@@ -1,0 +1,56 @@
+{
+  "name": "Route Planner",
+  "description": "Plans public routes without exposing internal reasoning.",
+  "supportedInterfaces": [
+    {
+      "url": "https://agent.example/a2a/jsonrpc",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    },
+    {
+      "url": "https://agent.example/a2a/http",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Agent Example",
+    "url": "https://agent.example"
+  },
+  "version": "1.2.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "extendedAgentCard": false,
+    "extensions": []
+  },
+  "securitySchemes": {
+    "oauth": {
+      "oauth2SecurityScheme": {
+        "flows": {}
+      }
+    }
+  },
+  "securityRequirements": [
+    {
+      "schemes": {
+        "oauth": {
+          "list": ["agent.read"]
+        }
+      }
+    }
+  ],
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "route-planning",
+      "name": "Route planning",
+      "description": "Plans a route between public locations.",
+      "tags": ["maps", "routes"],
+      "examples": ["Plan a route"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}
