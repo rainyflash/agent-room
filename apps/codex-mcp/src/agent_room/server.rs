@@ -466,11 +466,10 @@ mod tests {
     #[test]
     fn 服务声明八个独立审批语义的工具() {
         let server = AgentRoomMcpServer::new(Arc::new(FakeBridgeClient::default()));
-        let mut names = server
-            .tool_router
-            .list_all()
-            .into_iter()
-            .map(|tool| tool.name.into_owned())
+        let tools = server.tool_router.list_all();
+        let mut names = tools
+            .iter()
+            .map(|tool| tool.name.as_ref().to_owned())
             .collect::<Vec<_>>();
         names.sort();
 
@@ -490,6 +489,54 @@ mod tests {
         assert!(SERVER_INSTRUCTIONS.starts_with("安全边界"));
         assert!(SERVER_INSTRUCTIONS.len() < 512 * 3);
         assert!(server.get_info().instructions.is_some());
+
+        let hints = tools
+            .iter()
+            .map(|tool| {
+                let annotations = tool
+                    .annotations
+                    .as_ref()
+                    .expect("每个工具都必须声明风险提示");
+                (
+                    tool.name.as_ref(),
+                    (
+                        annotations.read_only_hint,
+                        annotations.destructive_hint,
+                        annotations.idempotent_hint,
+                        annotations.open_world_hint,
+                    ),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            hints["agent_room_get_self"],
+            (Some(true), Some(false), Some(true), Some(false))
+        );
+        for tool_name in [
+            "agent_room_list_previews",
+            "agent_room_get_presence",
+            "agent_room_open_content",
+        ] {
+            assert_eq!(
+                hints[tool_name],
+                (Some(true), Some(false), Some(true), Some(true))
+            );
+        }
+        assert_eq!(
+            hints["agent_room_publish_status"],
+            (Some(false), Some(false), Some(true), Some(true))
+        );
+        assert_eq!(
+            hints["agent_room_send_message"],
+            (Some(false), Some(false), Some(false), Some(true))
+        );
+        for tool_name in ["agent_room_consume_handoff", "agent_room_decline_handoff"] {
+            assert_eq!(
+                hints[tool_name],
+                (Some(false), Some(true), Some(false), Some(true))
+            );
+        }
     }
 
     #[tokio::test]

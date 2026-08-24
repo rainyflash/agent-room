@@ -295,10 +295,39 @@ def smoke_test_mcp(binary: Path, working_directory: Path) -> None:
         raise RuntimeError(
             f"MCP 工具集合不一致：缺少 {expected_tools - actual_tools}，多出 {actual_tools - expected_tools}"
         )
+    validate_tool_annotations(tools)
 
     call_result = require_result(by_id, 3)
     if not isinstance(call_result.get("content"), list):
         raise RuntimeError("agent_room_get_self 未返回 MCP 内容数组")
+
+
+def validate_tool_annotations(tools: list[object]) -> None:
+    expected = {
+        "agent_room_get_self": (True, False, True, False),
+        "agent_room_list_previews": (True, False, True, True),
+        "agent_room_get_presence": (True, False, True, True),
+        "agent_room_open_content": (True, False, True, True),
+        "agent_room_publish_status": (False, False, True, True),
+        "agent_room_send_message": (False, False, False, True),
+        "agent_room_consume_handoff": (False, True, False, True),
+        "agent_room_decline_handoff": (False, True, False, True),
+    }
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise RuntimeError("MCP 工具定义必须是对象")
+        name = tool.get("name")
+        annotations = tool.get("annotations")
+        if not isinstance(name, str) or not isinstance(annotations, dict):
+            raise RuntimeError("MCP 工具缺少名称或风险提示")
+        hints = (
+            annotations.get("readOnlyHint"),
+            annotations.get("destructiveHint"),
+            annotations.get("idempotentHint"),
+            annotations.get("openWorldHint"),
+        )
+        if hints != expected[name]:
+            raise RuntimeError(f"MCP 工具 {name} 的风险提示与真实语义不一致")
 
 
 def smoke_test_codex_host(package_root: Path) -> None:
