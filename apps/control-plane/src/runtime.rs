@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agent_room_application::ports::{Clock, IdentifierFactory};
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceId, HandoffId,
-        LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
+        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceAccessTokenId, DeviceId,
+        DeviceRefreshTokenId, DeviceTokenFamilyId, HandoffId, LoginAttemptId, OutboxEventId,
+        PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -37,6 +38,18 @@ impl IdentifierFactory for SystemRuntime {
 
     fn device_id(&self) -> DeviceId {
         DeviceId::from_uuid(Uuid::now_v7())
+    }
+
+    fn device_token_family_id(&self) -> DeviceTokenFamilyId {
+        DeviceTokenFamilyId::from_uuid(Uuid::now_v7())
+    }
+
+    fn device_access_token_id(&self) -> DeviceAccessTokenId {
+        DeviceAccessTokenId::from_uuid(Uuid::now_v7())
+    }
+
+    fn device_refresh_token_id(&self) -> DeviceRefreshTokenId {
+        DeviceRefreshTokenId::from_uuid(Uuid::now_v7())
     }
 
     fn agent_id(&self) -> AgentId {

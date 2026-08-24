@@ -1,6 +1,7 @@
 mod agents;
 mod audit;
 mod content;
+mod devices;
 mod identity;
 mod matrix;
 mod notifications;
@@ -14,6 +15,12 @@ use std::{future::Future, pin::Pin};
 pub use agents::{AgentRegistration, AgentRegistrationTransaction, AgentRepository};
 pub use audit::{AuditRecord, AuditSink};
 pub use content::ContentStore;
+pub use devices::{
+    DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier, DeviceRefreshContext,
+    DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
+    DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
+    DeviceSessionStore, DeviceSignature, DeviceTokenReplacement, StoredDeviceSession,
+};
 pub use identity::{
     IdentityValueError, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
     OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,

@@ -1,7 +1,8 @@
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceId, HandoffId,
-        LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
+        AgentId, AgentInstanceId, AutomationGrantId, ContentId, DeviceAccessTokenId, DeviceId,
+        DeviceRefreshTokenId, DeviceTokenFamilyId, HandoffId, LoginAttemptId, OutboxEventId,
+        PrincipalId, RoomCatalogId, RoomInstanceId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -15,6 +16,9 @@ pub trait IdentifierFactory: Send + Sync {
     fn login_attempt_id(&self) -> LoginAttemptId;
     fn web_session_id(&self) -> WebSessionId;
     fn device_id(&self) -> DeviceId;
+    fn device_token_family_id(&self) -> DeviceTokenFamilyId;
+    fn device_access_token_id(&self) -> DeviceAccessTokenId;
+    fn device_refresh_token_id(&self) -> DeviceRefreshTokenId;
     fn agent_id(&self) -> AgentId;
     fn agent_instance_id(&self) -> AgentInstanceId;
     fn room_catalog_id(&self) -> RoomCatalogId;
