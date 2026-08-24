@@ -6,8 +6,8 @@ use agent_room_application::ports::{
     MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind,
     MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomId, MatrixRoomPreset, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-    MatrixTransactionId, MatrixUserId, SecretValue,
+    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch,
+    MatrixSyncRequest, MatrixSyncToken, MatrixTransactionId, MatrixUserId, SecretValue,
 };
 use agent_room_domain::{ids::AgentId, time::DurationMillis};
 use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
@@ -223,12 +223,37 @@ async fn verify_message_flow(scenario: &RoomScenario) -> MessageFlowResult {
         .expect("发送设备同步结果必须包含事务标识");
     assert_eq!(&reconciled, first.event_id());
 
+    let initial_status = status_state_event(1);
+    send_state_with_retry(
+        scenario.developer.gateway(),
+        &scenario.room_id,
+        &initial_status,
+    )
+    .await;
+    let current_status = status_state_event(2);
+    send_state_with_retry(
+        scenario.developer.gateway(),
+        &scenario.room_id,
+        &current_status,
+    )
+    .await;
+
     let agent_delta = sync(
         scenario.agent.gateway(),
         Some(scenario.agent_baseline.clone()),
     )
     .await;
     let room_delta = room_update(&agent_delta, &scenario.room_id, MatrixRoomSyncKind::Joined);
+    let status = room_delta
+        .timeline()
+        .iter()
+        .chain(room_delta.state())
+        .find(|event| {
+            event.event_type().as_str() == "org.agentroom.agent.status.v1"
+                && event.state_key() == Some("instance-test")
+        })
+        .expect("增量同步必须包含最新状态事件");
+    assert_eq!(status.content()["revision"], 2);
     assert!(room_delta.timeline_limited());
     let previous_batch = room_delta
         .previous_batch()
@@ -322,6 +347,18 @@ fn message_event(transaction_id: String, body: &str) -> MatrixEvent {
     .expect("测试消息有效")
 }
 
+fn status_state_event(revision: u8) -> MatrixStateEvent {
+    MatrixStateEvent::new(
+        MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效"),
+        MatrixStateKey::new("instance-test").expect("状态键有效"),
+        json!({
+            "schemaVersion": "1.0",
+            "revision": revision,
+        }),
+    )
+    .expect("测试状态事件有效")
+}
+
 async fn send_with_retry(
     gateway: &dyn MatrixGateway,
     room_id: &MatrixRoomId,
@@ -335,6 +372,21 @@ async fn send_with_retry(
         }
     }
     panic!("发送重试次数耗尽")
+}
+
+async fn send_state_with_retry(
+    gateway: &dyn MatrixGateway,
+    room_id: &MatrixRoomId,
+    event: &MatrixStateEvent,
+) -> MatrixEventId {
+    let policy = retry_policy();
+    for completed_attempts in 1..=5 {
+        match gateway.send_state_event(room_id, event).await {
+            Ok(event_id) => return event_id,
+            Err(failure) => wait_for_retry(policy, failure, completed_attempts).await,
+        }
+    }
+    panic!("状态发送重试次数耗尽")
 }
 
 async fn leave_with_retry(gateway: &dyn MatrixGateway, room_id: &MatrixRoomId) {
