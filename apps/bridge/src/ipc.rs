@@ -4,6 +4,7 @@ use agent_room_bridge_core::ipc::{
     FoundationIpcScopePolicy, IpcHandshakeAgreement, IpcHandshakeFailureKind,
     IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion,
 };
+use agent_room_bridge_core::messages::MessageTimelineQueryRepository;
 use agent_room_bridge_ipc::{
     IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcErrorCategory, IpcFrame, IpcFrameCodec,
     IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
@@ -24,6 +25,11 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::runtime_files::BridgeRuntimePaths;
+
+mod agent_runtime;
+
+use agent_runtime::AgentRuntimeIpcFacade;
+pub(crate) use agent_runtime::{BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot};
 
 const IPC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_SECRET_BYTES: usize = 32;
@@ -47,11 +53,36 @@ pub(crate) trait BridgeIpcRequestHandler: Send + Sync {
 
 pub(crate) struct FoundationBridgeIpcRequestHandler {
     status_reader: Arc<dyn BridgeStatusReader>,
+    agent_runtime: Option<AgentRuntimeIpcFacade>,
 }
 
 impl FoundationBridgeIpcRequestHandler {
     pub(crate) fn new(status_reader: Arc<dyn BridgeStatusReader>) -> Self {
-        Self { status_reader }
+        Self {
+            status_reader,
+            agent_runtime: None,
+        }
+    }
+
+    pub(crate) fn with_agent_runtime(
+        status_reader: Arc<dyn BridgeStatusReader>,
+        agent_runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
+        previews: Arc<dyn MessageTimelineQueryRepository>,
+    ) -> Self {
+        Self {
+            status_reader: status_reader.clone(),
+            agent_runtime: Some(AgentRuntimeIpcFacade::new(
+                status_reader,
+                agent_runtime_reader,
+                previews,
+            )),
+        }
+    }
+
+    fn agent_runtime(&self) -> Result<&AgentRuntimeIpcFacade, BridgeIpcDispatchFailure> {
+        self.agent_runtime
+            .as_ref()
+            .ok_or_else(agent_runtime_unavailable)
     }
 }
 
@@ -66,21 +97,27 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                         started_at_unix_ms: status.started_at_unix_ms,
                     })
                 }
-                IpcMethod::GetSelf
-                | IpcMethod::ListPreviews(_)
-                | IpcMethod::GetPresence(_)
+                IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
+                IpcMethod::ListPreviews(request) => {
+                    self.agent_runtime()?.list_previews(request).await
+                }
+                IpcMethod::GetPresence(_)
                 | IpcMethod::OpenContent(_)
                 | IpcMethod::PublishStatus(_)
                 | IpcMethod::SendMessage(_)
                 | IpcMethod::ConsumeHandoff(_)
-                | IpcMethod::DeclineHandoff(_) => Err(BridgeIpcDispatchFailure::new(
-                    "bridge.agent_runtime_unavailable",
-                    IpcErrorCategory::DependencyUnavailable,
-                    true,
-                )),
+                | IpcMethod::DeclineHandoff(_) => Err(agent_runtime_unavailable()),
             }
         })
     }
+}
+
+const fn agent_runtime_unavailable() -> BridgeIpcDispatchFailure {
+    BridgeIpcDispatchFailure::new(
+        "bridge.agent_runtime_unavailable",
+        IpcErrorCategory::DependencyUnavailable,
+        true,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -603,16 +640,25 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
+    use agent_room_application::ports::{MatrixRoomId, PortFuture};
     use agent_room_bridge_core::ipc::{
         FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeNegotiator, IpcHandshakeOffer,
         IpcInstallationId, IpcProtocolVersion, IpcScope,
+    };
+    use agent_room_bridge_core::{
+        agent_identity::BridgeAgentIdentity,
+        messages::{
+            MessagePreviewPage, MessagePreviewQuery, MessageTimelineQueryFailure,
+            MessageTimelineQueryRepository,
+        },
     };
     use agent_room_bridge_ipc::{
         IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMethod, IpcResponse,
         IpcScopeName, IpcSharedSecret, IpcVersion, create_challenge_proof,
     };
+    use agent_room_domain::ids::{AgentId, AgentInstanceId};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use tempfile::tempdir;
     use tokio::io::duplex;
@@ -621,7 +667,8 @@ mod tests {
     use crate::runtime_files::BridgeRuntimePaths;
 
     use super::{
-        BridgeIpcContext, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
+        BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
+        BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
         BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, handle_connection,
     };
 
@@ -634,6 +681,89 @@ mod tests {
                 started_at_unix_ms: 1_000,
             }
         }
+    }
+
+    #[derive(Clone)]
+    struct 固定Agent运行时(BridgeAgentRuntimeSnapshot);
+
+    impl BridgeAgentRuntimeReader for 固定Agent运行时 {
+        fn read_agent_runtime(&self) -> Option<BridgeAgentRuntimeSnapshot> {
+            Some(self.0.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct 记录预览查询(Mutex<Vec<MessagePreviewQuery>>);
+
+    impl MessageTimelineQueryRepository for 记录预览查询 {
+        fn list_previews<'a>(
+            &'a self,
+            query: &'a MessagePreviewQuery,
+        ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>> {
+            Box::pin(async move {
+                self.0.lock().expect("查询记录锁可用").push(query.clone());
+                Ok(MessagePreviewPage::new(Vec::new(), None))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_上线后自身摘要与默认大厅预览来自真实运行时() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = BridgeAgentIdentity::new(
+            AgentId::from_uuid(
+                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a3").expect("Agent 标识有效"),
+            ),
+            "Codex Agent",
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test",
+            AgentInstanceId::from_uuid(
+                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a4").expect("实例标识有效"),
+            ),
+        )
+        .expect("Agent 身份有效");
+        let previews = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                identity,
+                "DEVICE-1",
+                room_id.clone(),
+                ["self.read", "previews.read"],
+            ))),
+            previews.clone(),
+        );
+
+        let summary = handler
+            .dispatch(IpcMethod::GetSelf)
+            .await
+            .expect("自身摘要可读");
+        let IpcResponse::SelfSummary { summary } = summary else {
+            panic!("必须返回自身摘要");
+        };
+        assert_eq!(summary.agent.display_name, "Codex Agent");
+        assert_eq!(summary.matrix_device_id, "DEVICE-1");
+        assert_eq!(summary.granted_capabilities, ["self.read", "previews.read"]);
+
+        let page = handler
+            .dispatch(IpcMethod::ListPreviews(
+                agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    room_id: None,
+                    before_event_id: None,
+                    limit: 20,
+                },
+            ))
+            .await
+            .expect("默认大厅预览可读");
+        assert!(matches!(
+            page,
+            IpcResponse::MessagePreviews {
+                previews,
+                next_cursor: None
+            } if previews.is_empty()
+        ));
+        let queries = previews.0.lock().expect("查询记录锁可用");
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].room_id(), &room_id);
     }
 
     #[tokio::test]

@@ -61,7 +61,8 @@ use tokio::{sync::watch, time::sleep};
 use crate::{
     config::BridgeConfig,
     ipc::{
-        BridgeIpcFailure, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
+        BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcFailure,
+        BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
         BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler,
     },
     runtime_files::{
@@ -83,6 +84,7 @@ use agent_room_bridge_storage_adapter::{
 };
 
 const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 2] = ["self.read", "previews.read"];
 
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
@@ -106,11 +108,19 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         SystemClock.now().value(),
         agent_session.is_some(),
     ));
+    let request_handler: Arc<dyn BridgeIpcRequestHandler> = match agent_session.as_ref() {
+        Some(runtime) => Arc::new(FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            status.clone(),
+            runtime.state.clone(),
+            runtime.previews.clone(),
+        )),
+        None => Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
+    };
     let server = BridgeIpcServer::bind(
         &paths,
         runtime_secrets.installation_id().clone(),
         runtime_secrets.ipc_shared_secret().clone(),
-        Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
+        request_handler,
     )
     .map_err(BridgeRuntimeError::ipc)?;
     status.set_component_ready(
@@ -142,6 +152,8 @@ struct AgentSessionRuntime {
     lobby_config: AgentLobbySessionConfig,
     matrix: Arc<MatrixSdkClientFactory>,
     messages: Arc<MessageSyncService>,
+    previews: Arc<SqliteMessageTimelineRepository>,
+    state: Arc<BridgeAgentRuntimeState>,
     sync_timeout: DurationMillis,
     initial_session: Option<AgentOnlineSession>,
     reconnect_policy: ReconnectPolicy,
@@ -153,6 +165,42 @@ struct AgentOnlineSession {
     room_id: MatrixRoomId,
     matrix: Arc<dyn MatrixGateway>,
     next_batch: Option<MatrixSyncToken>,
+}
+
+struct BridgeAgentRuntimeState {
+    snapshot: watch::Sender<Option<BridgeAgentRuntimeSnapshot>>,
+}
+
+impl BridgeAgentRuntimeState {
+    fn new() -> Self {
+        let (snapshot, _receiver) = watch::channel(None);
+        Self { snapshot }
+    }
+
+    fn publish(&self, online: &AgentOnlineSession) {
+        self.snapshot
+            .send_replace(Some(BridgeAgentRuntimeSnapshot::new(
+                online.runtime.identity().clone(),
+                online
+                    .runtime
+                    .matrix_session()
+                    .metadata()
+                    .device_id()
+                    .as_str(),
+                online.room_id.clone(),
+                FOUNDATION_AGENT_CAPABILITIES,
+            )));
+    }
+
+    fn clear(&self) {
+        self.snapshot.send_replace(None);
+    }
+}
+
+impl BridgeAgentRuntimeReader for BridgeAgentRuntimeState {
+    fn read_agent_runtime(&self) -> Option<BridgeAgentRuntimeSnapshot> {
+        self.snapshot.borrow().clone()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -313,9 +361,10 @@ async fn initialize_agent_session(
                 signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             },
         )),
-        projections,
+        projections: projections.clone(),
         submissions,
     }));
+    let state = Arc::new(BridgeAgentRuntimeState::new());
     let lobby_config = AgentLobbySessionConfig::new(
         lobby_catalog_id,
         config.lobby_language.clone(),
@@ -331,6 +380,8 @@ async fn initialize_agent_session(
         lobby_config,
         matrix,
         messages,
+        previews: projections,
+        state,
         sync_timeout,
         initial_session: None,
         reconnect_policy: ReconnectPolicy::new(
@@ -342,6 +393,7 @@ async fn initialize_agent_session(
     runtime.initial_session = match establish_agent_online(&runtime).await {
         Ok(online) => {
             announce_agent_online(&online)?;
+            runtime.state.publish(&online);
             Some(online)
         }
         Err(failure) if is_reconnectable_agent_online_failure(failure) => {
@@ -672,6 +724,7 @@ async fn maintain_agent_session(
                 }
                 Err(failure) if is_reconnectable_agent_online_failure(failure) => {
                     status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
+                    runtime.state.clear();
                     let delay = retry_delay_for_agent_failure(failure, &mut backoff);
                     tracing::warn!(
                         failure_kind = ?failure.kind(),
@@ -684,6 +737,7 @@ async fn maintain_agent_session(
                 }
                 Err(failure) => {
                     status.mark_fatal();
+                    runtime.state.clear();
                     tracing::error!(
                         failure_kind = ?failure.kind(),
                         "Agent Matrix 会话进入离线态，禁止不安全重试"
@@ -705,6 +759,7 @@ async fn maintain_agent_session(
             Ok(agent_online) => {
                 backoff.record_connected();
                 status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, true);
+                runtime.state.publish(&agent_online);
                 if let Err(error) = announce_agent_online(&agent_online) {
                     tracing::warn!(error_code = error.code(), "Agent 已上线但终端不可写");
                 }
@@ -712,6 +767,7 @@ async fn maintain_agent_session(
             }
             Err(failure) if is_reconnectable_agent_online_failure(failure) => {
                 status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
+                runtime.state.clear();
                 let delay = retry_delay_for_agent_failure(failure, &mut backoff);
                 tracing::warn!(
                     failure_kind = ?failure.kind(),
@@ -723,6 +779,7 @@ async fn maintain_agent_session(
             }
             Err(failure) => {
                 status.mark_fatal();
+                runtime.state.clear();
                 tracing::error!(
                     failure_kind = ?failure.kind(),
                     "Agent 上线流程进入离线态，禁止不安全重试"
