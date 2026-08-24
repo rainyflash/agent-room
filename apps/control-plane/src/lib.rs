@@ -192,12 +192,8 @@ async fn build_identity_router(
         system_runtime.clone(),
         matrix_identities.clone(),
     );
-    let verification = Arc::new(AgentInstanceVerificationService::new(
-        AgentInstanceVerificationDependencies {
-            records: repositories.clone(),
-            clock: system_runtime.clone(),
-        },
-    ));
+    let verification =
+        build_agent_instance_verification(repositories.clone(), system_runtime.clone());
     let cards = build_agent_card_management(
         repositories.clone(),
         system_runtime.clone(),
@@ -310,6 +306,18 @@ fn build_agent_management(
         identifiers: system_runtime.clone(),
         clock: system_runtime,
     }))
+}
+
+fn build_agent_instance_verification(
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+) -> Arc<AgentInstanceVerificationService> {
+    Arc::new(AgentInstanceVerificationService::new(
+        AgentInstanceVerificationDependencies {
+            records: repositories,
+            clock: system_runtime,
+        },
+    ))
 }
 
 fn build_matrix_identity_provisioner(

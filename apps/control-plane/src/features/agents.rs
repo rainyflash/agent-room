@@ -18,6 +18,7 @@ use agent_room_domain::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
         ContentId, PrincipalId,
     },
+    time::UtcMillis,
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
@@ -547,7 +548,7 @@ impl From<AgentInstanceVerificationRecord> for AgentInstanceVerificationResponse
             agent_id: value.agent_id.to_string(),
             public_signing_key: URL_SAFE_NO_PAD.encode(value.public_signing_key.as_bytes()),
             registered_at_unix_ms: value.registered_at.value(),
-            invalidated_at_unix_ms: value.invalidated_at.map(|time| time.value()),
+            invalidated_at_unix_ms: value.invalidated_at.map(UtcMillis::value),
         }
     }
 }
