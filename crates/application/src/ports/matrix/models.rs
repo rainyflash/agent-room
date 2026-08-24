@@ -205,6 +205,10 @@ impl MatrixConnection {
         self.gateway.as_ref()
     }
 
+    pub fn gateway_handle(&self) -> Arc<dyn MatrixGateway> {
+        Arc::clone(&self.gateway)
+    }
+
     pub fn into_parts(self) -> (MatrixSession, Arc<dyn MatrixGateway>) {
         (self.session, self.gateway)
     }

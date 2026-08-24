@@ -8,10 +8,12 @@ use agent_room_application::ports::{
     MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId,
     MatrixRoomKind, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
     MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-    MatrixTransactionId, MatrixUserId, SecretValue,
+    MatrixTransactionId, MatrixUserId, RoomProvisioningGateway, SecretValue,
 };
 use agent_room_domain::{ids::AgentId, time::DurationMillis};
-use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
+use agent_room_matrix_adapter::{
+    MatrixRoomProvisioningAdapter, MatrixSdkClientFactory, MatrixSdkConfiguration,
+};
 use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
 };
@@ -158,11 +160,7 @@ async fn prepare_room(
         .expect("Agent 必须能通过标准登录接口认证");
     let agent_user_id = MatrixUserId::new(agent_user).expect("种子 Agent 用户 ID 有效");
 
-    let room_id = developer
-        .gateway()
-        .create_room(&room_request())
-        .await
-        .expect("开发者必须能创建私有房间");
+    let room_id = create_room_with_retry(developer.gateway(), &room_request()).await;
     let denied = agent
         .gateway()
         .join(&room_id)
@@ -170,11 +168,7 @@ async fn prepare_room(
         .expect_err("未受邀用户不得加入私有房间");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 
-    developer
-        .gateway()
-        .invite(&room_id, &agent_user_id)
-        .await
-        .expect("房主必须能发送邀请");
+    invite_with_retry(developer.gateway(), &room_id, &agent_user_id).await;
     let invitation = sync(agent.gateway(), None).await;
     assert_room_kind(&invitation, &room_id, MatrixRoomSyncKind::Invited);
 
@@ -216,15 +210,29 @@ async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &Matri
     .expect("Space 创建请求有效")
     .with_kind(MatrixRoomKind::Space)
     .with_alias_localpart(alias.clone());
-    let room_id = gateway
-        .create_room(&request)
-        .await
-        .expect("必须能通过标准 createRoom 创建 Space");
+    let room_id = create_room_with_retry(gateway, &request).await;
     let resolved = gateway
         .resolve_room_alias(&alias)
         .await
         .expect("确定性别名必须能解析回 Space");
     assert_eq!(resolved, room_id);
+
+    let child_alias =
+        MatrixRoomAliasLocalpart::new(format!("agent-room-child-test-{}", Uuid::now_v7().simple()))
+            .expect("测试子房间别名有效");
+    let child_request = MatrixCreateRoom::new(
+        Some("Agent Room Space 子房间验收".to_owned()),
+        Some("仅用于验证 m.space.child 状态".to_owned()),
+        MatrixRoomVisibility::Private,
+        MatrixRoomPreset::PrivateChat,
+        false,
+        Vec::new(),
+    )
+    .expect("子房间创建请求有效")
+    .with_alias_localpart(child_alias);
+    let child_id = create_room_with_retry(gateway, &child_request).await;
+    let provisioning = MatrixRoomProvisioningAdapter::new(connection.gateway_handle());
+    attach_with_retry(&provisioning, &room_id, &child_id).await;
 
     let observer = factory
         .restore(connection.session())
@@ -237,6 +245,21 @@ async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &Matri
         .find(|event| event.event_type().as_str() == "m.room.create")
         .expect("初次同步必须包含 Space 创建状态");
     assert_eq!(creation.content()["type"], "m.space");
+    let child = space
+        .state()
+        .iter()
+        .chain(space.timeline().iter())
+        .find(|event| {
+            event.event_type().as_str() == "m.space.child"
+                && event.state_key() == Some(child_id.as_str())
+        })
+        .expect("Space 初次同步必须包含子房间状态");
+    assert_eq!(child.content()["suggested"], true);
+    assert_eq!(
+        child.content()["via"],
+        json!(["matrix.agent-room.localhost"])
+    );
+    leave_with_retry(gateway, &child_id).await;
     leave_with_retry(gateway, &room_id).await;
 }
 
@@ -449,6 +472,50 @@ async fn send_with_retry(
         }
     }
     panic!("发送重试次数耗尽")
+}
+
+async fn create_room_with_retry(
+    gateway: &dyn MatrixGateway,
+    request: &MatrixCreateRoom,
+) -> MatrixRoomId {
+    let policy = retry_policy();
+    for completed_attempts in 1..=5 {
+        match gateway.create_room(request).await {
+            Ok(room_id) => return room_id,
+            Err(failure) => wait_for_retry(policy, failure, completed_attempts).await,
+        }
+    }
+    panic!("建房重试次数耗尽")
+}
+
+async fn invite_with_retry(
+    gateway: &dyn MatrixGateway,
+    room_id: &MatrixRoomId,
+    user_id: &MatrixUserId,
+) {
+    let policy = retry_policy();
+    for completed_attempts in 1..=5 {
+        match gateway.invite(room_id, user_id).await {
+            Ok(()) => return,
+            Err(failure) => wait_for_retry(policy, failure, completed_attempts).await,
+        }
+    }
+    panic!("邀请重试次数耗尽")
+}
+
+async fn attach_with_retry(
+    provisioning: &dyn RoomProvisioningGateway,
+    space_id: &MatrixRoomId,
+    child_id: &MatrixRoomId,
+) {
+    let policy = retry_policy();
+    for completed_attempts in 1..=5 {
+        match provisioning.attach_child(space_id, child_id).await {
+            Ok(_) => return,
+            Err(failure) => wait_for_retry(policy, failure, completed_attempts).await,
+        }
+    }
+    panic!("Space 挂载重试次数耗尽")
 }
 
 async fn send_state_with_retry(
