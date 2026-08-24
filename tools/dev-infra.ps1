@@ -126,6 +126,20 @@ function Write-KeycloakRealm {
         webOrigins = @('https://app.agent-room.localhost', 'http://localhost:5173')
         attributes = @{ 'pkce.code.challenge.method' = 'S256' }
       }
+      [ordered]@{
+        clientId = 'agent-room-bridge'
+        name = 'Agent Room Bridge'
+        enabled = $true
+        publicClient = $true
+        protocol = 'openid-connect'
+        standardFlowEnabled = $false
+        implicitFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $false
+        attributes = @{
+          'oauth2.device.authorization.grant.enabled' = 'true'
+        }
+      }
     )
     users = @(
       [ordered]@{
@@ -304,6 +318,50 @@ function Sync-KeycloakClient {
     --set $webOrigins | Out-Null
   if ($LASTEXITCODE -ne 0) {
     throw '无法同步本地 Keycloak 回调地址。'
+  }
+
+  $bridgeClientJson = & docker @compose $admin get clients `
+    --config $adminConfig `
+    --realm 'agent-room' `
+    --query 'clientId=agent-room-bridge'
+  if ($LASTEXITCODE -ne 0) {
+    throw '无法查询本地 Keycloak Bridge 客户端。'
+  }
+  $bridgeClients = @(($bridgeClientJson -join "`n") | ConvertFrom-Json)
+  $deviceGrantAttribute = 'attributes."oauth2.device.authorization.grant.enabled"=true'
+  if ($bridgeClients.Count -eq 0) {
+    & docker @compose $admin create clients `
+      --config $adminConfig `
+      --realm 'agent-room' `
+      --set 'clientId=agent-room-bridge' `
+      --set 'name=Agent Room Bridge' `
+      --set 'enabled=true' `
+      --set 'publicClient=true' `
+      --set 'protocol=openid-connect' `
+      --set 'standardFlowEnabled=false' `
+      --set 'implicitFlowEnabled=false' `
+      --set 'directAccessGrantsEnabled=false' `
+      --set 'serviceAccountsEnabled=false' `
+      --set $deviceGrantAttribute | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw '无法创建本地 Keycloak Bridge 客户端。'
+    }
+  } elseif ($bridgeClients.Count -eq 1) {
+    & docker @compose $admin update "clients/$($bridgeClients[0].id)" `
+      --config $adminConfig `
+      --realm 'agent-room' `
+      --set 'enabled=true' `
+      --set 'publicClient=true' `
+      --set 'standardFlowEnabled=false' `
+      --set 'implicitFlowEnabled=false' `
+      --set 'directAccessGrantsEnabled=false' `
+      --set 'serviceAccountsEnabled=false' `
+      --set $deviceGrantAttribute | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw '无法同步本地 Keycloak Bridge 客户端。'
+    }
+  } else {
+    throw '本地 Keycloak 必须至多存在一个 agent-room-bridge 客户端。'
   }
 
   & docker @compose rm -f $adminConfig | Out-Null

@@ -23,11 +23,13 @@ pub use devices::{
 };
 pub use identity::{
     IdentityValueError, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
-    OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
-    OidcFailureKind, OidcGateway, OidcResult, PrincipalAccount, PrincipalRegistration,
-    PrincipalRepository, PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath,
-    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
-    VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+    OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,
+    OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
+    OidcDeviceGrantGateway, OidcDevicePromptFailure, OidcFailure, OidcFailureKind, OidcGateway,
+    OidcResult, PrincipalAccount, PrincipalRegistration, PrincipalRepository,
+    PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
+    SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession, VerifiedOidcIdentity,
+    WebSessionRegistration, WebSessionStore,
 };
 pub use matrix::{MatrixEvent, MatrixGateway};
 pub use notifications::NotificationSink;

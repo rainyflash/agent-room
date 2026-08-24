@@ -222,6 +222,46 @@ pub trait OidcGateway: Send + Sync {
     ) -> PortFuture<'a, OidcResult<VerifiedOidcIdentity>>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OidcDeviceAuthorizationPrompt {
+    pub user_code: SecretValue,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: DurationMillis,
+    pub polling_interval: DurationMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OidcDevicePromptFailure;
+
+pub trait OidcDeviceAuthorizationPromptSink: Send + Sync {
+    /// 把短期设备验证码交给交互层展示；实现不得记录完整验证码。
+    ///
+    /// # Errors
+    ///
+    /// 当前交互层无法安全展示授权指引时返回错误。
+    fn present(
+        &self,
+        prompt: &OidcDeviceAuthorizationPrompt,
+    ) -> Result<(), OidcDevicePromptFailure>;
+}
+
+pub trait OidcDeviceGrantGateway: Send + Sync {
+    /// 发起 RFC 8628 设备授权并按提供者间隔等待一次性身份断言。
+    fn authorize<'a>(
+        &'a self,
+        prompt_sink: &'a dyn OidcDeviceAuthorizationPromptSink,
+    ) -> PortFuture<'a, OidcResult<SecretValue>>;
+}
+
+pub trait OidcDeviceAssertionVerifier: Send + Sync {
+    /// 校验设备授权返回的 OIDC ID Token，并投影稳定主体声明。
+    fn verify_assertion<'a>(
+        &'a self,
+        assertion: &'a SecretValue,
+    ) -> PortFuture<'a, OidcResult<VerifiedOidcIdentity>>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretGenerationFailure {
     EntropyUnavailable,

@@ -22,6 +22,12 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
+mod device_grant;
+
+pub use device_grant::{
+    DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, OidcDeviceGrantConfigurationError,
+};
+
 const SECRET_ENTROPY_BYTES: usize = 32;
 const ED25519_SEED_BYTES: usize = 32;
 
@@ -326,7 +332,7 @@ fn secret_value(value: &str) -> OidcResult<SecretValue> {
         .map_err(|_| OidcFailure::new(OidcFailureKind::InvalidConfiguration))
 }
 
-fn map_discovery_error<E>(error: &DiscoveryError<E>) -> OidcFailure
+pub(crate) fn map_discovery_error<E>(error: &DiscoveryError<E>) -> OidcFailure
 where
     E: Error + 'static,
 {
@@ -338,7 +344,7 @@ where
     OidcFailure::new(kind)
 }
 
-fn map_token_request_error<E, T>(error: &RequestTokenError<E, T>) -> OidcFailure
+pub(crate) fn map_token_request_error<E, T>(error: &RequestTokenError<E, T>) -> OidcFailure
 where
     E: Error + 'static,
     T: openidconnect::ErrorResponse + 'static,
@@ -353,7 +359,7 @@ where
     OidcFailure::new(kind)
 }
 
-const fn invalid_identity_token() -> OidcFailure {
+pub(crate) const fn invalid_identity_token() -> OidcFailure {
     OidcFailure::new(OidcFailureKind::InvalidIdentityToken)
 }
 
