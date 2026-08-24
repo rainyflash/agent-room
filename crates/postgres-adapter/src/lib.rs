@@ -16,6 +16,9 @@ mod transaction;
 
 use sqlx::PgPool;
 
+pub use content::{
+    ContentDownloadLimitPolicy, ContentDownloadLimitPolicyError, PostgresContentDownloadLimiter,
+};
 pub use error::MigrationFailure;
 pub use migrations::run_migrations;
 

@@ -23,6 +23,11 @@ use crate::{
 use self::decode::{CONTENT_COLUMNS, POLICY_COLUMNS, decode_content, decode_policy};
 
 mod decode;
+mod rate_limit;
+
+pub use rate_limit::{
+    ContentDownloadLimitPolicy, ContentDownloadLimitPolicyError, PostgresContentDownloadLimiter,
+};
 
 impl ContentRepository for PostgresRepositories {
     fn claim_upload<'a>(
