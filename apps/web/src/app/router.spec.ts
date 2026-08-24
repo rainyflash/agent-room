@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+
+import { normalizeConnectSearch, normalizeLobbySearch } from '@/shared/routing/route-state';
+
+describe('路由状态规范化', () => {
+  it('丢弃开放跳转和无效可选情境', () => {
+    expect(normalizeConnectSearch({ returnTo: '//evil.example' })).toEqual({});
+    expect(
+      normalizeLobbySearch({
+        agent: 'valid-agent',
+        directory: 'closed',
+        message: 'bad message',
+      }),
+    ).toEqual({ agent: 'valid-agent' });
+  });
+
+  it('保留可恢复的大厅情境', () => {
+    expect(
+      normalizeLobbySearch({
+        agent: 'agent-01',
+        directory: 'open',
+        message: '$event:matrix.example',
+      }),
+    ).toEqual({
+      agent: 'agent-01',
+      directory: 'open',
+      message: '$event:matrix.example',
+    });
+  });
+});

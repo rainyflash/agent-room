@@ -1,0 +1,228 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/instrument-sans/wght.css';
+@import '@fontsource-variable/noto-sans-sc/wght.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+@source '../../../apps/web/src/**/*.{ts,tsx}';
+@source './**/*.{ts,tsx}';
+
+@theme {
+  --color-ink: #111310;
+  --color-paper: #f2f0e9;
+  --color-signal: #9fe870;
+  --color-network: #66c9d8;
+  --color-alert: #ff6b3d;
+  --font-sans: 'Instrument Sans Variable', 'Noto Sans SC Variable', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+:root {
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ar-ink-92: color-mix(in srgb, var(--color-ink) 92%, transparent);
+  --ar-ink-72: color-mix(in srgb, var(--color-ink) 72%, transparent);
+  --ar-ink-48: color-mix(in srgb, var(--color-ink) 48%, transparent);
+  --ar-ink-18: color-mix(in srgb, var(--color-ink) 18%, transparent);
+  --ar-ink-09: color-mix(in srgb, var(--color-ink) 9%, transparent);
+  --ar-paper-72: color-mix(in srgb, var(--color-paper) 72%, transparent);
+  --ar-paper-18: color-mix(in srgb, var(--color-paper) 18%, transparent);
+  --ar-paper-10: color-mix(in srgb, var(--color-paper) 10%, transparent);
+  --ar-shadow-short: 0 10px 30px color-mix(in srgb, var(--color-ink) 12%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 3px;
+}
+
+::selection {
+  color: var(--color-ink);
+  background: var(--color-signal);
+}
+
+.ar-button {
+  display: inline-flex;
+  min-width: 0;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.ar-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.ar-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.ar-button--compact {
+  min-height: 32px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8125rem;
+}
+
+.ar-button--default {
+  min-height: 40px;
+  padding: 0.625rem 1rem;
+  font-size: 0.9rem;
+}
+
+.ar-button--large {
+  min-height: 48px;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.975rem;
+}
+
+.ar-button--primary {
+  color: var(--color-ink);
+  background: var(--color-signal);
+  border-color: color-mix(in srgb, var(--color-signal) 76%, var(--color-ink));
+}
+
+.ar-button--primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-signal) 90%, white);
+}
+
+.ar-button--network {
+  color: var(--color-ink);
+  background: var(--color-network);
+  border-color: color-mix(in srgb, var(--color-network) 70%, var(--color-ink));
+}
+
+.ar-button--alert {
+  color: var(--color-paper);
+  background: var(--color-alert);
+  border-color: color-mix(in srgb, var(--color-alert) 72%, var(--color-ink));
+}
+
+.ar-button--ghost {
+  color: inherit;
+  background: transparent;
+  border-color: currentColor;
+}
+
+.ar-button--ghost:not(:disabled):hover,
+.ar-button--quiet:not(:disabled):hover {
+  background: var(--ar-ink-09);
+}
+
+.ar-button--quiet {
+  color: inherit;
+  background: transparent;
+  border-color: transparent;
+}
+
+.ar-button__icon {
+  display: inline-grid;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.ar-button__icon > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.8;
+}
+
+.ar-status-mark {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.ar-status-mark > svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+.ar-status-mark--active {
+  color: var(--color-signal);
+}
+
+.ar-status-mark--network {
+  color: var(--color-network);
+}
+
+.ar-status-mark--alert {
+  color: var(--color-alert);
+}
+
+.ar-status-mark--idle {
+  color: var(--ar-paper-72);
+}
+
+.ar-status-mark--offline {
+  color: var(--ar-ink-48);
+}
+
+.ar-status-mark--pulse > svg {
+  animation: ar-status-spin 1.4s linear infinite;
+}
+
+@keyframes ar-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

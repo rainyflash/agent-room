@@ -71,7 +71,7 @@ flowchart LR
 
 ### 3.1 本地 OIDC 登录
 
-- `just dev-up` 生成 Keycloak Realm、机密客户端和 S256 PKCE 配置；全新环境同时允许反向代理回调 `https://api.agent-room.localhost/auth/oidc/callback` 与宿主直连回调 `http://127.0.0.1:8090/auth/oidc/callback`。
+- `just dev-up` 生成 Keycloak Realm、机密客户端和 S256 PKCE 配置；全新环境同时允许反向代理回调 `https://api.agent-room.localhost:18443/auth/oidc/callback` 与宿主直连回调 `http://127.0.0.1:8090/auth/oidc/callback`。本地 TLS 网关固定使用 `18443`，避免悄悄占用宿主的标准 `443` 端口。
 - 对已有开发卷，启动脚本通过 Keycloak Admin API 幂等同步回调地址，不通过 SQL 篡改 IdP 内部数据库。
 - 如果旧卷的管理员凭据与当前 `.env.local` 不一致，脚本发出明确警告但保留现有数据并继续健康检查。只有在确认本地数据可丢弃后，开发者才应使用 `just dev-reset` 重建本项目卷；自动化不得擅自删除身份数据。
 - OIDC Provider 不可用时，新登录和近期认证失败；已有未过期会话仅依赖 Agent Room PostgreSQL，仍可按策略继续工作。

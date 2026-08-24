@@ -144,10 +144,10 @@ function Write-KeycloakRealm {
         standardFlowEnabled = $true
         directAccessGrantsEnabled = $false
         redirectUris = @(
-          'https://api.agent-room.localhost/auth/oidc/callback',
+          'https://api.agent-room.localhost:18443/auth/oidc/callback',
           'http://127.0.0.1:8090/auth/oidc/callback'
         )
-        webOrigins = @('https://app.agent-room.localhost', 'http://localhost:5173')
+        webOrigins = @('https://app.agent-room.localhost:18443', 'http://localhost:5173')
         attributes = @{ 'pkce.code.challenge.method' = 'S256' }
       }
       [ordered]@{
@@ -176,7 +176,7 @@ function Write-KeycloakRealm {
         directAccessGrantsEnabled = $false
         serviceAccountsEnabled = $false
         redirectUris = @(
-          'https://matrix.agent-room.localhost/_synapse/client/oidc/callback'
+          'https://matrix.agent-room.localhost:18443/_synapse/client/oidc/callback'
         )
         webOrigins = @()
       }
@@ -267,7 +267,7 @@ receive_ephemeral: false
 
   $homeserver = @"
 server_name: "matrix.agent-room.localhost"
-public_baseurl: "https://matrix.agent-room.localhost/"
+public_baseurl: "https://matrix.agent-room.localhost:18443/"
 pid_file: /data/homeserver.pid
 app_service_config_files:
   - /data/agent-room-appservice.yaml
@@ -387,8 +387,8 @@ function Sync-KeycloakClients {
     throw '本地 Keycloak 必须且只能存在一个 agent-room-web 客户端。'
   }
 
-  $redirectUris = 'redirectUris=["https://api.agent-room.localhost/auth/oidc/callback","http://127.0.0.1:8090/auth/oidc/callback"]'
-  $webOrigins = 'webOrigins=["https://app.agent-room.localhost","http://localhost:5173"]'
+  $redirectUris = 'redirectUris=["https://api.agent-room.localhost:18443/auth/oidc/callback","http://127.0.0.1:8090/auth/oidc/callback"]'
+  $webOrigins = 'webOrigins=["https://app.agent-room.localhost:18443","http://localhost:5173"]'
   & docker @compose $admin update "clients/$($clients[0].id)" `
     --config $adminConfig `
     --realm 'agent-room' `
@@ -450,7 +450,7 @@ function Sync-KeycloakClients {
     throw '无法查询本地 Keycloak Matrix 客户端。'
   }
   $matrixClients = @(($matrixClientJson -join "`n") | ConvertFrom-Json)
-  $matrixRedirectUris = 'redirectUris=["https://matrix.agent-room.localhost/_synapse/client/oidc/callback"]'
+  $matrixRedirectUris = 'redirectUris=["https://matrix.agent-room.localhost:18443/_synapse/client/oidc/callback"]'
   if ($matrixClients.Count -eq 0) {
     & docker @compose $admin create clients `
       --config $adminConfig `

@@ -90,9 +90,9 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
                 "KEYCLOAK_CLIENT_SECRET"
             ],
             "AGENT_ROOM_OIDC_REDIRECT_URL": (
-                "https://api.agent-room.localhost/auth/oidc/callback"
+                "https://api.agent-room.localhost:18443/auth/oidc/callback"
             ),
-            "AGENT_ROOM_FRONTEND_ORIGIN": "https://app.agent-room.localhost",
+            "AGENT_ROOM_FRONTEND_ORIGIN": "https://app.agent-room.localhost:18443",
             "AGENT_ROOM_MATRIX_SERVER_NAME": "matrix.agent-room.localhost",
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS": "5000",
             "AGENT_ROOM_LOG_FILTER": (
