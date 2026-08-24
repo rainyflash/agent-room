@@ -331,6 +331,7 @@ fn connection_from_client(
 
 fn sync_filter(timeline_limit: NonZeroU16) -> SyncFilter {
     let mut definition = FilterDefinition::empty();
+    definition.room.include_leave = true;
     definition.room.timeline.limit = Some(UInt::from(timeline_limit.get()));
     SyncFilter::from(definition)
 }

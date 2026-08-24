@@ -74,6 +74,9 @@ control-plane: database-migrate
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 
+matrix-integration:
+  python tools/matrix.py
+
 bridge:
   python tools/bridge.py
 

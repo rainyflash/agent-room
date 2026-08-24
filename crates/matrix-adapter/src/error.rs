@@ -57,7 +57,11 @@ pub(crate) fn map_http_error(operation: MatrixOperation, error: &HttpError) -> M
     }
     match error {
         HttpError::Reqwest(request_error) => {
-            transport_failure(operation, request_error.is_timeout())
+            if request_error.is_connect() {
+                MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable)
+            } else {
+                transport_failure(operation, request_error.is_timeout())
+            }
         }
         HttpError::Api(_) | HttpError::IntoHttp(_) => {
             MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
