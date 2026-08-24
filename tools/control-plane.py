@@ -63,6 +63,7 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
                 "http://127.0.0.1:18080/realms/agent-room"
             ),
             "AGENT_ROOM_OIDC_CLIENT_ID": "agent-room-web",
+            "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID": "agent-room-bridge",
             "AGENT_ROOM_OIDC_CLIENT_SECRET": required_secrets[
                 "KEYCLOAK_CLIENT_SECRET"
             ],

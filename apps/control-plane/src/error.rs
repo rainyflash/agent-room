@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use agent_room_application::authentication::{AuthenticationFailure, AuthenticationFailureKind};
+use agent_room_application::{
+    authentication::{AuthenticationFailure, AuthenticationFailureKind},
+    devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
+};
 use agent_room_protocol_conformance::generated::{ErrorCategory, ErrorEnvelope};
 use axum::{
     Json,
@@ -120,6 +123,93 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "认证请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn device(
+        failure: DeviceAuthorizationFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            DeviceAuthorizationFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "device.invalid_request",
+                ErrorCategory::Validation,
+                "设备请求无效。",
+            ),
+            DeviceAuthorizationFailureKind::InvalidAuthorization => (
+                StatusCode::UNAUTHORIZED,
+                "device.invalid_authorization",
+                ErrorCategory::Authentication,
+                "设备授权无效或已过期。",
+            ),
+            DeviceAuthorizationFailureKind::InvalidToken => (
+                StatusCode::UNAUTHORIZED,
+                "device.invalid_token",
+                ErrorCategory::Authentication,
+                "设备凭据无效或已过期。",
+            ),
+            DeviceAuthorizationFailureKind::InvalidProof => (
+                StatusCode::UNAUTHORIZED,
+                "device.invalid_proof",
+                ErrorCategory::Authentication,
+                "设备持有证明无效。",
+            ),
+            DeviceAuthorizationFailureKind::ProofReplay => (
+                StatusCode::UNAUTHORIZED,
+                "device.proof_replay",
+                ErrorCategory::Authentication,
+                "设备请求证明已被使用。",
+            ),
+            DeviceAuthorizationFailureKind::RefreshTokenReuse => (
+                StatusCode::UNAUTHORIZED,
+                "device.refresh_token_reuse",
+                ErrorCategory::Authentication,
+                "检测到刷新凭据重用，设备会话已撤销。",
+            ),
+            DeviceAuthorizationFailureKind::PrincipalSuspended => (
+                StatusCode::FORBIDDEN,
+                "device.principal_suspended",
+                ErrorCategory::Authorization,
+                "该主体已暂停。",
+            ),
+            DeviceAuthorizationFailureKind::DeviceRevoked => (
+                StatusCode::FORBIDDEN,
+                "device.revoked",
+                ErrorCategory::Authorization,
+                "该设备已撤销。",
+            ),
+            DeviceAuthorizationFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "device.not_found",
+                ErrorCategory::Validation,
+                "设备不存在。",
+            ),
+            DeviceAuthorizationFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "device.conflict",
+                ErrorCategory::Conflict,
+                "设备状态发生冲突，请重新授权。",
+            ),
+            DeviceAuthorizationFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "device.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "设备认证依赖暂时不可用。",
+            ),
+            DeviceAuthorizationFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "device.internal",
+                ErrorCategory::Transient,
+                "设备认证服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "设备认证请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

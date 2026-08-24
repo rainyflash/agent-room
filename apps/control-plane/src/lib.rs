@@ -10,17 +10,24 @@ use std::{error::Error, fmt, sync::Arc, time::Duration};
 
 use agent_room_application::{
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
+    devices::{
+        DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
+    },
     health::ReadinessService,
     ports::SecretValue,
 };
 use agent_room_domain::time::DurationMillis;
-use agent_room_identity_adapter::{DiscoveredOidcGateway, OidcAdapterConfig, SecureSecretFactory};
+use agent_room_identity_adapter::{
+    DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519DeviceProofVerifier,
+    OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
+};
 use agent_room_postgres_adapter::PostgresRepositories;
 use axum::{Router, middleware, routing::get};
 use tokio::net::TcpListener;
 
 use config::{AuthenticationConfig, ControlPlaneConfig};
 use features::authentication::AuthenticationHttpState;
+use features::devices::{DeviceHttpDependencies, DeviceHttpState};
 use features::health::HealthRuntime;
 use observability::Observability;
 use runtime::SystemRuntime;
@@ -61,7 +68,7 @@ pub async fn run() -> Result<(), StartupError> {
             ));
         }
     };
-    let authentication_routes = match build_authentication_router(
+    let identity_routes = match build_identity_router(
         &config.authentication,
         config.dependencies.timeout,
         &runtime,
@@ -73,7 +80,7 @@ pub async fn run() -> Result<(), StartupError> {
             return Err(error);
         }
     };
-    let app = build_router(runtime.readiness.clone(), authentication_routes);
+    let app = build_router(runtime.readiness.clone(), identity_routes);
 
     tracing::info!(
         service = SERVICE_NAME,
@@ -107,11 +114,70 @@ fn build_router(readiness: Arc<ReadinessService>, authentication_routes: Router)
         .layer(middleware::from_fn(correlation::attach))
 }
 
-fn build_authentication_router(
+fn build_identity_router(
     config: &AuthenticationConfig,
     request_timeout: Duration,
     runtime: &HealthRuntime,
 ) -> Result<Router, StartupError> {
+    let oidc = build_web_oidc(config, request_timeout)?;
+    let device_oidc = build_device_oidc(config, request_timeout)?;
+    let policy = authentication_policy(config)?;
+    let repositories = Arc::new(PostgresRepositories::new(runtime.pool().clone()));
+    let system_runtime = Arc::new(SystemRuntime);
+    let secrets = Arc::new(SecureSecretFactory);
+    let service = Arc::new(AuthenticationService::new(
+        AuthenticationDependencies {
+            oidc,
+            login_attempts: repositories.clone(),
+            login_completion: repositories.clone(),
+            sessions: repositories.clone(),
+            suspensions: repositories.clone(),
+            secrets: secrets.clone(),
+            identifiers: system_runtime.clone(),
+            clock: system_runtime.clone(),
+        },
+        policy,
+    ));
+    let state = AuthenticationHttpState::new(
+        service.clone(),
+        config.frontend_origin.clone(),
+        config.login_attempt_ttl,
+        config.web_session_ttl,
+    )
+    .map_err(|error| {
+        StartupError::new("startup.invalid_authentication_config", error.to_string())
+    })?;
+    let device_policy = device_authorization_policy(config)?;
+    let devices = Arc::new(DeviceAuthorizationService::new(
+        DeviceAuthorizationDependencies {
+            registrations: repositories.clone(),
+            sessions: repositories.clone(),
+            proof_nonces: repositories.clone(),
+            proof_verifier: Arc::new(Ed25519DeviceProofVerifier),
+            devices: repositories.clone(),
+            revocations: repositories,
+            secrets: secrets.clone(),
+            identifiers: system_runtime.clone(),
+            clock: system_runtime,
+        },
+        device_policy,
+    ));
+    let device_state = DeviceHttpState::new(
+        DeviceHttpDependencies {
+            devices,
+            assertion_verifier: device_oidc,
+            authentication: service,
+            secrets,
+        },
+        &config.frontend_origin,
+    );
+    Ok(features::authentication::router(state).merge(features::devices::router(device_state)))
+}
+
+fn build_web_oidc(
+    config: &AuthenticationConfig,
+    request_timeout: Duration,
+) -> Result<Arc<DiscoveredOidcGateway>, StartupError> {
     let client_secret =
         SecretValue::new(config.client_secret.expose().to_owned()).map_err(|_| {
             StartupError::new(
@@ -119,19 +185,40 @@ fn build_authentication_router(
                 "OIDC 客户端密钥无效".to_owned(),
             )
         })?;
-    let oidc = Arc::new(
-        DiscoveredOidcGateway::new(OidcAdapterConfig {
-            issuer_url: config.issuer_url.to_string(),
-            client_id: config.client_id.clone(),
-            client_secret,
-            redirect_url: config.redirect_url.to_string(),
-            request_timeout,
-        })
-        .map_err(|error| {
-            StartupError::new("startup.invalid_authentication_config", error.to_string())
-        })?,
-    );
-    let policy = AuthenticationPolicy::new(
+    DiscoveredOidcGateway::new(OidcAdapterConfig {
+        issuer_url: config.issuer_url.to_string(),
+        client_id: config.client_id.clone(),
+        client_secret,
+        redirect_url: config.redirect_url.to_string(),
+        request_timeout,
+    })
+    .map(Arc::new)
+    .map_err(|error| StartupError::new("startup.invalid_authentication_config", error.to_string()))
+}
+
+fn build_device_oidc(
+    config: &AuthenticationConfig,
+    request_timeout: Duration,
+) -> Result<Arc<DiscoveredOidcDeviceGrant>, StartupError> {
+    DiscoveredOidcDeviceGrant::new(OidcDeviceGrantConfig {
+        issuer_url: config.issuer_url.to_string(),
+        client_id: config.device_client_id.clone(),
+        request_timeout,
+        maximum_polling_duration: config.device_authorization_maximum_age,
+    })
+    .map(Arc::new)
+    .map_err(|error| {
+        StartupError::new(
+            "startup.invalid_device_authentication_config",
+            error.to_string(),
+        )
+    })
+}
+
+fn authentication_policy(
+    config: &AuthenticationConfig,
+) -> Result<AuthenticationPolicy, StartupError> {
+    AuthenticationPolicy::new(
         domain_duration(config.login_attempt_ttl)?,
         domain_duration(config.web_session_ttl)?,
         domain_duration(config.recent_authentication_window)?,
@@ -143,32 +230,26 @@ fn build_authentication_router(
             "startup.invalid_authentication_config",
             "Matrix 服务名无效".to_owned(),
         )
-    })?;
-    let repositories = Arc::new(PostgresRepositories::new(runtime.pool().clone()));
-    let system_runtime = Arc::new(SystemRuntime);
-    let service = Arc::new(AuthenticationService::new(
-        AuthenticationDependencies {
-            oidc,
-            login_attempts: repositories.clone(),
-            login_completion: repositories.clone(),
-            sessions: repositories.clone(),
-            suspensions: repositories,
-            secrets: Arc::new(SecureSecretFactory),
-            identifiers: system_runtime.clone(),
-            clock: system_runtime,
-        },
-        policy,
-    ));
-    let state = AuthenticationHttpState::new(
-        service,
-        config.frontend_origin.clone(),
-        config.login_attempt_ttl,
-        config.web_session_ttl,
+    })
+}
+
+fn device_authorization_policy(
+    config: &AuthenticationConfig,
+) -> Result<DeviceAuthorizationPolicy, StartupError> {
+    DeviceAuthorizationPolicy::new(
+        domain_duration(config.device_access_token_ttl)?,
+        domain_duration(config.device_refresh_token_ttl)?,
+        domain_duration(config.device_proof_maximum_age)?,
+        domain_duration(config.allowed_clock_skew)?,
+        domain_duration(config.device_authorization_maximum_age)?,
+        config.matrix_server_name.clone(),
     )
-    .map_err(|error| {
-        StartupError::new("startup.invalid_authentication_config", error.to_string())
-    })?;
-    Ok(features::authentication::router(state))
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_device_authentication_config",
+            "设备授权时限或 Matrix 服务名无效".to_owned(),
+        )
+    })
 }
 
 fn domain_duration(duration: Duration) -> Result<DurationMillis, StartupError> {

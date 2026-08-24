@@ -293,20 +293,20 @@ fn login_failure(jar: CookieJar, error: ApiError) -> Response {
     no_store((jar.add(expired_cookie(LOGIN_COOKIE)), error).into_response())
 }
 
-fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSession> {
+pub(crate) fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSession> {
     jar.get(SESSION_COOKIE)
         .and_then(|cookie| SecretValue::new(cookie.value()).ok())
         .ok_or(MissingSession)
 }
 
-fn origin_matches(headers: &HeaderMap, expected: &str) -> bool {
+pub(crate) fn origin_matches(headers: &HeaderMap, expected: &str) -> bool {
     headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value == expected)
 }
 
-fn no_store(mut response: Response) -> Response {
+pub(crate) fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
@@ -343,9 +343,9 @@ impl From<AuthenticatedPrincipal> for SessionResponse {
     }
 }
 
-struct MissingSession;
+pub(crate) struct MissingSession;
 
-fn missing_session_error(correlation_id: CorrelationId) -> ApiError {
+pub(crate) fn missing_session_error(correlation_id: CorrelationId) -> ApiError {
     ApiError::new(
         StatusCode::UNAUTHORIZED,
         "authentication.invalid_session",

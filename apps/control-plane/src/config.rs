@@ -9,6 +9,10 @@ const DEFAULT_LOGIN_ATTEMPT_TTL_MILLIS: u64 = 10 * 60 * 1_000;
 const DEFAULT_WEB_SESSION_TTL_MILLIS: u64 = 8 * 60 * 60 * 1_000;
 const DEFAULT_RECENT_AUTHENTICATION_MILLIS: u64 = 5 * 60 * 1_000;
 const DEFAULT_CLOCK_SKEW_MILLIS: u64 = 60 * 1_000;
+const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
+const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
+const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
@@ -77,6 +81,7 @@ pub(crate) struct AuthenticationConfig {
     pub(crate) issuer_url: Url,
     pub(crate) client_id: String,
     pub(crate) client_secret: SecretValue,
+    pub(crate) device_client_id: String,
     pub(crate) redirect_url: Url,
     pub(crate) frontend_origin: Url,
     pub(crate) matrix_server_name: String,
@@ -84,6 +89,10 @@ pub(crate) struct AuthenticationConfig {
     pub(crate) web_session_ttl: Duration,
     pub(crate) recent_authentication_window: Duration,
     pub(crate) allowed_clock_skew: Duration,
+    pub(crate) device_access_token_ttl: Duration,
+    pub(crate) device_refresh_token_ttl: Duration,
+    pub(crate) device_proof_maximum_age: Duration,
+    pub(crate) device_authorization_maximum_age: Duration,
 }
 
 #[derive(Clone)]
@@ -165,6 +174,7 @@ fn read_authentication_config(
             source,
             "AGENT_ROOM_OIDC_CLIENT_SECRET",
         )?),
+        device_client_id: read_required_text(source, "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID")?,
         redirect_url: parse_http_url(
             "AGENT_ROOM_OIDC_REDIRECT_URL",
             &read_required_text(source, "AGENT_ROOM_OIDC_REDIRECT_URL")?,
@@ -197,6 +207,30 @@ fn read_authentication_config(
             "AGENT_ROOM_ALLOWED_CLOCK_SKEW_MS",
             DEFAULT_CLOCK_SKEW_MILLIS,
             1_000..=5 * 60 * 1_000,
+        )?,
+        device_access_token_ttl: read_bounded_duration(
+            source,
+            "AGENT_ROOM_DEVICE_ACCESS_TOKEN_TTL_MS",
+            DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS,
+            60_000..=60 * 60 * 1_000,
+        )?,
+        device_refresh_token_ttl: read_bounded_duration(
+            source,
+            "AGENT_ROOM_DEVICE_REFRESH_TOKEN_TTL_MS",
+            DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS,
+            60 * 60 * 1_000..=90 * 24 * 60 * 60 * 1_000,
+        )?,
+        device_proof_maximum_age: read_bounded_duration(
+            source,
+            "AGENT_ROOM_DEVICE_PROOF_MAXIMUM_AGE_MS",
+            DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS,
+            5_000..=5 * 60 * 1_000,
+        )?,
+        device_authorization_maximum_age: read_bounded_duration(
+            source,
+            "AGENT_ROOM_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MS",
+            DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS,
+            5 * 60 * 1_000..=30 * 60 * 1_000,
         )?,
     })
 }
@@ -384,6 +418,10 @@ mod tests {
                 "http://127.0.0.1:18080/realms/agent-room".to_owned(),
             ),
             ("AGENT_ROOM_OIDC_CLIENT_ID", "agent-room-web".to_owned()),
+            (
+                "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID",
+                "agent-room-bridge".to_owned(),
+            ),
             (
                 "AGENT_ROOM_OIDC_CLIENT_SECRET",
                 "local-client-secret".to_owned(),

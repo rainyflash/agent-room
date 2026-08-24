@@ -61,6 +61,7 @@ dependencies = [
  "agent-room-protocol-conformance",
  "axum",
  "axum-extra",
+ "base64 0.22.1",
  "futures-util",
  "opentelemetry",
  "opentelemetry-otlp",
