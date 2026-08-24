@@ -6,6 +6,7 @@ members = [
   "crates/application",
   "crates/bridge-core",
   "crates/bridge-ipc",
+  "crates/content-adapter",
   "crates/domain",
   "crates/identity-adapter",
   "crates/matrix-adapter",
@@ -27,6 +28,7 @@ agent-room-a2a-adapter = { version = "0.1.0", path = "crates/a2a-adapter" }
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
 agent-room-bridge-ipc = { version = "0.1.0", path = "crates/bridge-ipc" }
+agent-room-content-adapter = { version = "0.1.0", path = "crates/content-adapter" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
@@ -35,6 +37,7 @@ agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapt
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
+aws-sdk-s3 = { version = "1.143.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio", "rustls"] }
 base64 = "0.22.1"
 chrono = "0.4.45"
 ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
@@ -62,7 +65,7 @@ sqlx = { version = "0.9.0", default-features = false, features = ["macros", "mig
 thiserror = "2.0.20"
 tempfile = "3.25.0"
 time = "0.3.55"
-tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-opentelemetry = "0.33.0"

@@ -1,0 +1,25 @@
+[package]
+name = "agent-room-content-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-application.workspace = true
+agent-room-domain.workspace = true
+aws-sdk-s3.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true
