@@ -7,6 +7,9 @@ export function useCompactLobby(): boolean {
 }
 
 function subscribe(listener: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') {
+    return () => undefined;
+  }
   const mediaQuery = window.matchMedia(compactLobbyQuery);
   mediaQuery.addEventListener('change', listener);
   return () => {
@@ -15,7 +18,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 function snapshot(): boolean {
-  return window.matchMedia(compactLobbyQuery).matches;
+  return typeof window.matchMedia === 'function' && window.matchMedia(compactLobbyQuery).matches;
 }
 
 function serverSnapshot(): boolean {
