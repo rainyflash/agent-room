@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use agent_room_application::ports::{MatrixEventId, MatrixTransactionId, PortFuture};
 use agent_room_bridge_core::messages::{
@@ -7,26 +7,15 @@ use agent_room_bridge_core::messages::{
     MessageSubmissionRecord, MessageSubmissionRepository, MessageSubmissionState,
 };
 use agent_room_domain::ids::MessageSubmissionId;
-use sqlx::{
-    Row as _, Sqlite, SqlitePool, Transaction,
-    migrate::MigrateError,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-};
-use thiserror::Error;
+use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
 use uuid::{Uuid, Version};
 
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_CONNECTIONS: u32 = 4;
+use crate::{
+    database::{SqliteBridgeStorageOpenFailure, open_pool},
+    error::{SqliteFailureKind, classify},
+};
 
-#[derive(Debug, Error)]
-pub enum SqliteMessageSubmissionOpenFailure {
-    #[error("无法创建 Bridge 消息状态目录")]
-    CreateDirectory(#[source] std::io::Error),
-    #[error("无法打开 Bridge 消息状态数据库")]
-    Connect(#[source] sqlx::Error),
-    #[error("无法迁移 Bridge 消息状态数据库")]
-    Migrate(#[source] MigrateError),
-}
+pub type SqliteMessageSubmissionOpenFailure = SqliteBridgeStorageOpenFailure;
 
 #[derive(Clone)]
 pub struct SqliteMessageSubmissionRepository {
@@ -40,32 +29,7 @@ impl SqliteMessageSubmissionRepository {
     ///
     /// 目录不可创建、数据库不可连接或迁移失败时返回错误。
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, SqliteMessageSubmissionOpenFailure> {
-        let path = path.as_ref();
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(SqliteMessageSubmissionOpenFailure::CreateDirectory)?;
-        }
-        let options = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-            .foreign_keys(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Full)
-            .busy_timeout(BUSY_TIMEOUT);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(MAX_CONNECTIONS)
-            .connect_with(options)
-            .await
-            .map_err(SqliteMessageSubmissionOpenFailure::Connect)?;
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .map_err(SqliteMessageSubmissionOpenFailure::Migrate)?;
-        Ok(Self { pool })
+        open_pool(path.as_ref()).await.map(|pool| Self { pool })
     }
 
     async fn claim_record(
@@ -423,17 +387,11 @@ fn ensure_record_invariant(record: &MessageSubmissionRecord) -> Result<(), Messa
 }
 
 fn map_sqlx_error(error: &sqlx::Error) -> MessageStoreFailure {
-    let kind = match error {
-        sqlx::Error::RowNotFound => MessageStoreFailureKind::NotFound,
-        sqlx::Error::ColumnDecode { .. }
-        | sqlx::Error::Decode(_)
-        | sqlx::Error::ColumnIndexOutOfBounds { .. }
-        | sqlx::Error::ColumnNotFound(_)
-        | sqlx::Error::TypeNotFound { .. } => MessageStoreFailureKind::Corrupt,
-        sqlx::Error::Database(database) if database.is_unique_violation() => {
-            MessageStoreFailureKind::Conflict
-        }
-        _ => MessageStoreFailureKind::Unavailable,
+    let kind = match classify(error) {
+        SqliteFailureKind::NotFound => MessageStoreFailureKind::NotFound,
+        SqliteFailureKind::Conflict => MessageStoreFailureKind::Conflict,
+        SqliteFailureKind::Corrupt => MessageStoreFailureKind::Corrupt,
+        SqliteFailureKind::Unavailable => MessageStoreFailureKind::Unavailable,
     };
     MessageStoreFailure::new(kind)
 }

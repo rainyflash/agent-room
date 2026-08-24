@@ -130,6 +130,7 @@ dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
  "agent-room-domain",
+ "serde_json",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
