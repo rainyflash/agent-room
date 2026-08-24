@@ -40,3 +40,11 @@ export function normalizeLobbySearch(search: Record<string, unknown>): LobbySear
     ...(message.success ? { message: message.data } : {}),
   };
 }
+
+export function lobbySearchWithAgent(search: LobbySearch, agentId: string | null): LobbySearch {
+  return {
+    ...(agentId === null ? {} : { agent: agentId }),
+    ...(search.directory === undefined ? {} : { directory: search.directory }),
+    ...(search.message === undefined ? {} : { message: search.message }),
+  };
+}

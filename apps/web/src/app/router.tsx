@@ -1,14 +1,22 @@
 import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
+import { lazy, Suspense } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
+import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import {
   contextIdentifierSchema,
+  lobbySearchWithAgent,
   normalizeConnectSearch,
   normalizeLobbySearch,
   routeIdentifierSchema,
 } from '@/shared/routing/route-state';
+
+const LobbyPage = lazy(async () => {
+  const module = await import('@/features/lobby/ui/lobby-page');
+  return { default: module.LobbyPage };
+});
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -81,11 +89,30 @@ function LobbyBoundary() {
 
 function LobbyInstanceBoundary() {
   const { catalogId, roomId } = lobbyInstanceRoute.useParams();
+  const search = lobbyInstanceRoute.useSearch();
+  const navigate = lobbyInstanceRoute.useNavigate();
   const valid =
     routeIdentifierSchema.safeParse(catalogId).success &&
     contextIdentifierSchema.safeParse(roomId).success;
+  if (!valid) {
+    return <RouteUnavailable invalid routeLabel={`/lobby/${catalogId}/instance/${roomId}`} />;
+  }
   return (
-    <RouteUnavailable invalid={!valid} routeLabel={`/lobby/${catalogId}/instance/${roomId}`} />
+    <Suspense
+      fallback={<LobbyStateBoundary onRetry={() => undefined} state={{ kind: 'loading' }} />}
+    >
+      <LobbyPage
+        catalogId={catalogId}
+        onSelectedAgentChange={(agentId) => {
+          void navigate({
+            replace: true,
+            search: (previous) => lobbySearchWithAgent(previous, agentId),
+          });
+        }}
+        roomId={roomId}
+        selectedAgentId={search.agent ?? null}
+      />
+    </Suspense>
   );
 }
 

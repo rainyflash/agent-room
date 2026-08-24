@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeConnectSearch, normalizeLobbySearch } from '@/shared/routing/route-state';
+import {
+  lobbySearchWithAgent,
+  normalizeConnectSearch,
+  normalizeLobbySearch,
+} from '@/shared/routing/route-state';
 
 describe('路由状态规范化', () => {
   it('丢弃开放跳转和无效可选情境', () => {
@@ -25,6 +29,19 @@ describe('路由状态规范化', () => {
       agent: 'agent-01',
       directory: 'open',
       message: '$event:matrix.example',
+    });
+  });
+
+  it('更新选中 Agent 时物理删除空查询字段', () => {
+    expect(
+      lobbySearchWithAgent(
+        { agent: 'agent-01', directory: 'open', message: '$event:matrix.example' },
+        null,
+      ),
+    ).toEqual({ directory: 'open', message: '$event:matrix.example' });
+    expect(lobbySearchWithAgent({ directory: 'open' }, 'agent-02')).toEqual({
+      agent: 'agent-02',
+      directory: 'open',
     });
   });
 });
