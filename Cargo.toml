@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/bridge",
+  "apps/codex-mcp",
   "apps/control-plane",
   "crates/a2a-adapter",
   "crates/application",
@@ -62,6 +63,7 @@ openidconnect = { version = "4.0.1", default-features = false, features = ["reqw
 proptest = "1.11.0"
 rand = "0.8.7"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+rmcp = { version = "3.1.4", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
 rsa = { version = "0.9.10", features = ["pem"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

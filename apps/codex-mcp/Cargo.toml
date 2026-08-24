@@ -1,0 +1,18 @@
+[package]
+name = "agent-room-codex-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-bridge-ipc.workspace = true
+agent-room-bridge-local-adapter.workspace = true
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
