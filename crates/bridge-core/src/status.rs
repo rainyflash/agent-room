@@ -10,7 +10,6 @@ use agent_room_domain::{
         AgentStatusDetails, AgentStatusLease, AgentStatusSnapshot, AgentStatusVisibility,
         AgentWorkStatus,
     },
-    ids::{AgentId, AgentInstanceId},
     time::{DurationMillis, UtcMillis},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -19,13 +18,13 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::{Uuid, Version};
 
+use crate::agent_identity::BridgeAgentIdentity;
 use crate::ports::{
     AgentStatusStatePublisher, BridgeCredentialFailure, DeviceSigningIdentity,
     StatusEventIdentifierFactory,
 };
 
 const STATUS_EVENT_TYPE: &str = "org.agentroom.agent.status.v1";
-const MAX_DISPLAY_NAME_CHARACTERS: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostAgentState {
@@ -99,53 +98,7 @@ impl AgentStatusRoomTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentStatusIdentity {
-    agent_id: AgentId,
-    display_name: String,
-    matrix_user_id: String,
-    agent_instance_id: AgentInstanceId,
-}
-
-impl AgentStatusIdentity {
-    /// 创建状态事件中的稳定公开身份。
-    ///
-    /// # Errors
-    ///
-    /// 展示名或 Matrix 用户标识不满足协议边界时返回错误。
-    pub fn new(
-        agent_id: AgentId,
-        display_name: impl Into<String>,
-        matrix_user_id: impl Into<String>,
-        agent_instance_id: AgentInstanceId,
-    ) -> Result<Self, StatusPublicationFailure> {
-        let display_name = display_name.into();
-        let matrix_user_id = matrix_user_id.into();
-        if display_name.trim().is_empty()
-            || display_name.chars().count() > MAX_DISPLAY_NAME_CHARACTERS
-            || display_name.chars().any(char::is_control)
-        {
-            return Err(StatusPublicationFailure::new(
-                StatusPublicationFailureKind::InvalidIdentity,
-            ));
-        }
-        if agent_room_application::ports::MatrixUserId::new(matrix_user_id.clone()).is_err() {
-            return Err(StatusPublicationFailure::new(
-                StatusPublicationFailureKind::InvalidIdentity,
-            ));
-        }
-        Ok(Self {
-            agent_id,
-            display_name,
-            matrix_user_id,
-            agent_instance_id,
-        })
-    }
-
-    pub const fn agent_instance_id(&self) -> AgentInstanceId {
-        self.agent_instance_id
-    }
-}
+pub type AgentStatusIdentity = BridgeAgentIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentStatusLeasePolicy {
@@ -455,11 +408,11 @@ impl<'a> UnsignedStatusEvent<'a> {
             created_at: rfc3339(lease.published_at())?,
             actor: StatusActor {
                 agent: StatusAgent {
-                    agent_id: identity.agent_id.as_uuid(),
-                    display_name: &identity.display_name,
-                    matrix_user_id: &identity.matrix_user_id,
+                    agent_id: identity.agent_id().as_uuid(),
+                    display_name: identity.display_name(),
+                    matrix_user_id: identity.matrix_user_id().as_str(),
                 },
-                instance_id: identity.agent_instance_id.as_uuid(),
+                instance_id: identity.agent_instance_id().as_uuid(),
                 provenance: "autonomous_agent",
             },
             correlation_id,
