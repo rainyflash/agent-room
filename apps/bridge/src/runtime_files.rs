@@ -170,12 +170,20 @@ fn map_io_failure(_error: std::io::Error) -> BridgeRuntimeFileFailure {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::{Child, Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+
     use tempfile::tempdir;
 
     use super::{BridgeExclusiveLock, BridgeRuntimeFileFailureKind, BridgeRuntimePaths};
 
     #[test]
-    fn 第二个进程锁不能依赖_pid_文本抢占() {
+    fn 同一进程内重复锁不能依赖_pid_文本抢占() {
         let temporary = tempdir().expect("测试目录可创建");
         let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
         paths.prepare().expect("运行目录可准备");
@@ -188,6 +196,83 @@ mod tests {
         assert_eq!(failure.kind(), BridgeRuntimeFileFailureKind::AlreadyHeld);
         drop(first);
         BridgeExclusiveLock::acquire(paths.instance_lock_path()).expect("释放后可再次获取锁");
+    }
+
+    #[test]
+    fn 另一进程不能获取守护进程锁() {
+        let temporary = tempdir().expect("测试目录可创建");
+        let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
+        paths.prepare().expect("运行目录可准备");
+
+        assert_other_process_cannot_acquire(paths.instance_lock_path(), temporary.path());
+    }
+
+    #[test]
+    fn 另一进程不能获取矩阵存储锁() {
+        let temporary = tempdir().expect("测试目录可创建");
+        let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
+        paths.prepare().expect("运行目录可准备");
+
+        assert_other_process_cannot_acquire(paths.matrix_store_lock_path(), temporary.path());
+    }
+
+    #[test]
+    fn 子进程持锁助手() {
+        let Ok(lock_path) = std::env::var("AGENT_ROOM_TEST_LOCK_HELPER_PATH") else {
+            return;
+        };
+        let ready_path = PathBuf::from(
+            std::env::var("AGENT_ROOM_TEST_LOCK_HELPER_READY").expect("助手必须收到就绪路径"),
+        );
+        let _lock = BridgeExclusiveLock::acquire(Path::new(&lock_path)).expect("子进程应获取锁");
+        fs::write(&ready_path, b"ready").expect("子进程应写入就绪标记");
+        thread::sleep(Duration::from_secs(30));
+    }
+
+    fn assert_other_process_cannot_acquire(lock_path: &Path, temporary_root: &Path) {
+        let ready_path = temporary_root.join("child-ready");
+        let child = Command::new(std::env::current_exe().expect("应找到当前测试程序"))
+            .args([
+                "--exact",
+                "runtime_files::tests::子进程持锁助手",
+                "--nocapture",
+            ])
+            .env("AGENT_ROOM_TEST_LOCK_HELPER_PATH", lock_path)
+            .env("AGENT_ROOM_TEST_LOCK_HELPER_READY", &ready_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("应启动持锁子进程");
+        let mut child = ChildGuard(child);
+        wait_until_ready(&mut child.0, &ready_path);
+
+        let failure = BridgeExclusiveLock::acquire(lock_path).expect_err("另一进程持锁时必须失败");
+
+        assert_eq!(failure.kind(), BridgeRuntimeFileFailureKind::AlreadyHeld);
+    }
+
+    fn wait_until_ready(child: &mut Child, ready_path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready_path.is_file() {
+            assert!(Instant::now() < deadline, "子进程未在时限内持有锁");
+            assert!(
+                child.try_wait().expect("应读取子进程状态").is_none(),
+                "子进程在持锁前异常退出"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    struct ChildGuard(Child);
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
     }
 
     #[test]
