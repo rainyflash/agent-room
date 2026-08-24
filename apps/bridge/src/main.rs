@@ -1,3 +1,4 @@
+mod agent_status;
 mod config;
 mod ipc;
 mod runtime;

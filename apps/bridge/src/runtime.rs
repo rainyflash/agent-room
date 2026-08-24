@@ -35,18 +35,28 @@ use agent_room_bridge_core::{
         MessageStoreFailureKind, MessageSyncDependencies, MessageSyncFailure,
         MessageSyncFailureKind, MessageSyncService,
     },
+    ports::{
+        BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
+        StatusEventIdentifierFactory,
+    },
     reconnect::{ReconnectBackoff, ReconnectPolicy, SessionRefreshPlan},
     session::{
         ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailure,
         BridgeSessionFailureKind, BridgeSessionPolicy, BridgeSessionService,
+    },
+    status::{
+        AgentStatusLeasePolicy, AgentStatusPublicationDependencies, AgentStatusPublicationService,
+        AgentStatusRoomTarget, HostAgentState, MatrixStatusStatePublisher,
+        StatusPublicationFailure, StatusPublicationFailureKind,
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
 use agent_room_bridge_local_adapter::DEFAULT_SECURE_STORAGE_SERVICE;
 use agent_room_bridge_storage_adapter::SqliteHandoffStore;
 use agent_room_domain::{
+    agent_status::AgentStatusVisibility,
     devices::DevicePlatform,
-    ids::AgentInstanceRegistrationRequestId,
+    ids::{AgentId, AgentInstanceRegistrationRequestId, RoomCatalogId},
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_identity_adapter::{
@@ -59,6 +69,7 @@ use agent_room_matrix_adapter::{
 use tokio::{sync::watch, time::sleep};
 
 use crate::{
+    agent_status::AgentStatusPublicationHandle,
     config::BridgeConfig,
     ipc::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcFailure,
@@ -84,7 +95,10 @@ use agent_room_bridge_storage_adapter::{
 };
 
 const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 2] = ["self.read", "previews.read"];
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 3] = ["self.read", "previews.read", "status.publish"];
+const STATUS_LEASE_LIFETIME_MILLIS: u64 = 300_000;
+const STATUS_RENEWAL_INTERVAL_MILLIS: u64 = 120_000;
+const STATUS_RENEWAL_JITTER_MILLIS: u64 = 15_000;
 
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
@@ -147,6 +161,7 @@ struct DeviceSessionRuntime {
 
 struct AgentSessionRuntime {
     service: Arc<AgentRuntimeSessionService>,
+    signing_identities: Arc<dyn DeviceSigningIdentityStore>,
     config: AgentRuntimeSessionConfig,
     lobby: Arc<AgentLobbySessionService>,
     lobby_config: AgentLobbySessionConfig,
@@ -154,6 +169,7 @@ struct AgentSessionRuntime {
     messages: Arc<MessageSyncService>,
     previews: Arc<SqliteMessageTimelineRepository>,
     state: Arc<BridgeAgentRuntimeState>,
+    status_policy: AgentStatusLeasePolicy,
     sync_timeout: DurationMillis,
     initial_session: Option<AgentOnlineSession>,
     reconnect_policy: ReconnectPolicy,
@@ -164,6 +180,7 @@ struct AgentOnlineSession {
     lobby: JoinedAgentLobby,
     room_id: MatrixRoomId,
     matrix: Arc<dyn MatrixGateway>,
+    status: Arc<AgentStatusPublicationHandle>,
     next_batch: Option<MatrixSyncToken>,
 }
 
@@ -178,8 +195,8 @@ impl BridgeAgentRuntimeState {
     }
 
     fn publish(&self, online: &AgentOnlineSession) {
-        self.snapshot
-            .send_replace(Some(BridgeAgentRuntimeSnapshot::new(
+        self.snapshot.send_replace(Some(
+            BridgeAgentRuntimeSnapshot::new(
                 online.runtime.identity().clone(),
                 online
                     .runtime
@@ -189,7 +206,9 @@ impl BridgeAgentRuntimeState {
                     .as_str(),
                 online.room_id.clone(),
                 FOUNDATION_AGENT_CAPABILITIES,
-            )));
+            )
+            .with_status(online.status.clone()),
+        ));
     }
 
     fn clear(&self) {
@@ -210,6 +229,8 @@ enum AgentOnlineFailure {
     ProvisioningBusy(UtcMillis),
     CapacityChanged,
     Matrix(MatrixFailure),
+    SigningIdentity(BridgeCredentialFailure),
+    Status(StatusPublicationFailure),
     MessageSync(MessageSyncFailure),
     InvalidRoom,
 }
@@ -221,6 +242,8 @@ enum AgentOnlineFailureKind {
     ProvisioningBusy,
     CapacityChanged,
     Matrix,
+    SigningIdentity,
+    Status,
     MessageSync,
     InvalidRoom,
 }
@@ -233,6 +256,8 @@ impl AgentOnlineFailure {
             Self::ProvisioningBusy(_) => AgentOnlineFailureKind::ProvisioningBusy,
             Self::CapacityChanged => AgentOnlineFailureKind::CapacityChanged,
             Self::Matrix(_) => AgentOnlineFailureKind::Matrix,
+            Self::SigningIdentity(_) => AgentOnlineFailureKind::SigningIdentity,
+            Self::Status(_) => AgentOnlineFailureKind::Status,
             Self::MessageSync(_) => AgentOnlineFailureKind::MessageSync,
             Self::InvalidRoom => AgentOnlineFailureKind::InvalidRoom,
         }
@@ -313,6 +338,41 @@ async fn initialize_agent_session(
     else {
         return Ok(None);
     };
+    let mut runtime = compose_agent_session_runtime(
+        config,
+        paths,
+        device_session,
+        matrix,
+        agent_id,
+        lobby_catalog_id,
+    )
+    .await?;
+    runtime.initial_session = match establish_agent_online(&runtime).await {
+        Ok(online) => {
+            announce_agent_online(&online)?;
+            runtime.state.publish(&online);
+            Some(online)
+        }
+        Err(failure) if is_reconnectable_agent_online_failure(failure) => {
+            tracing::warn!(
+                failure_kind = ?failure.kind(),
+                "Agent 上线流程暂时不可用，Bridge 将在后台重试"
+            );
+            None
+        }
+        Err(failure) => return Err(BridgeRuntimeError::agent_online(failure)),
+    };
+    Ok(Some(runtime))
+}
+
+async fn compose_agent_session_runtime(
+    config: &BridgeConfig,
+    paths: &BridgeRuntimePaths,
+    device_session: Arc<BridgeSessionService>,
+    matrix: Arc<MatrixSdkClientFactory>,
+    agent_id: AgentId,
+    lobby_catalog_id: RoomCatalogId,
+) -> Result<AgentSessionRuntime, BridgeRuntimeError> {
     let http = ControlPlaneHttpConfig {
         base_url: config.control_plane_url.clone(),
         request_timeout: config.request_timeout,
@@ -321,11 +381,12 @@ async fn initialize_agent_session(
         ReqwestControlPlaneAgentRuntimeGateway::new(&http, device_session.clone())
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
+    let signing_identities: Arc<dyn DeviceSigningIdentityStore> = Arc::new(
+        OsAgentInstanceSigningIdentityStore::system(DEFAULT_SECURE_STORAGE_SERVICE),
+    );
     let service = Arc::new(AgentRuntimeSessionService::new(
         AgentRuntimeSessionDependencies {
-            signing_identities: Arc::new(OsAgentInstanceSigningIdentityStore::system(
-                DEFAULT_SECURE_STORAGE_SERVICE,
-            )),
+            signing_identities: signing_identities.clone(),
             control_plane,
             credentials: Arc::new(OsAgentRuntimeCredentialVault::system(
                 DEFAULT_SECURE_STORAGE_SERVICE,
@@ -371,10 +432,20 @@ async fn initialize_agent_session(
         config.lobby_region.clone(),
     );
     let sync_timeout = domain_duration(config.matrix_sync_timeout)?;
+    let status_policy = AgentStatusLeasePolicy::new(
+        DurationMillis::new(STATUS_LEASE_LIFETIME_MILLIS)
+            .map_err(|_| BridgeRuntimeError::status_policy())?,
+        DurationMillis::new(STATUS_RENEWAL_INTERVAL_MILLIS)
+            .map_err(|_| BridgeRuntimeError::status_policy())?,
+        DurationMillis::new(STATUS_RENEWAL_JITTER_MILLIS)
+            .map_err(|_| BridgeRuntimeError::status_policy())?,
+    )
+    .map_err(|_| BridgeRuntimeError::status_policy())?;
     MatrixSyncRequest::new(None, sync_timeout, true)
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
-    let mut runtime = AgentSessionRuntime {
+    Ok(AgentSessionRuntime {
         service,
+        signing_identities,
         config: agent_config,
         lobby,
         lobby_config,
@@ -382,6 +453,7 @@ async fn initialize_agent_session(
         messages,
         previews: projections,
         state,
+        status_policy,
         sync_timeout,
         initial_session: None,
         reconnect_policy: ReconnectPolicy::new(
@@ -389,23 +461,7 @@ async fn initialize_agent_session(
             domain_duration(config.reconnect_maximum_delay)?,
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
-    };
-    runtime.initial_session = match establish_agent_online(&runtime).await {
-        Ok(online) => {
-            announce_agent_online(&online)?;
-            runtime.state.publish(&online);
-            Some(online)
-        }
-        Err(failure) if is_reconnectable_agent_online_failure(failure) => {
-            tracing::warn!(
-                failure_kind = ?failure.kind(),
-                "Agent 上线流程暂时不可用，Bridge 将在后台重试"
-            );
-            None
-        }
-        Err(failure) => return Err(BridgeRuntimeError::agent_online(failure)),
-    };
-    Ok(Some(runtime))
+    })
 }
 
 async fn establish_agent_online(
@@ -437,11 +493,31 @@ async fn establish_agent_online(
         .restore(registered.matrix_session())
         .await
         .map_err(AgentOnlineFailure::Matrix)?;
+    let signer = runtime
+        .signing_identities
+        .load_or_create()
+        .map_err(AgentOnlineFailure::SigningIdentity)?;
+    let matrix = connection.gateway_handle();
+    let status = Arc::new(AgentStatusPublicationHandle::new(
+        AgentStatusPublicationService::new(
+            AgentStatusPublicationDependencies {
+                identity: registered.identity().clone(),
+                signer,
+                publisher: Arc::new(MatrixStatusStatePublisher::new(matrix.clone())),
+                identifiers: Arc::new(SystemStatusEventIdentifiers),
+                clock: Arc::new(SystemClock),
+            },
+            runtime.status_policy,
+        ),
+        AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
+        HostAgentState::Available,
+    ));
     let mut online = AgentOnlineSession {
         runtime: registered,
         lobby,
         room_id,
-        matrix: connection.gateway_handle(),
+        matrix,
+        status,
         next_batch: None,
     };
     sync_agent_online(runtime, &mut online, true).await?;
@@ -473,6 +549,11 @@ async fn sync_agent_online(
         reconciled_submissions = outcome.reconciled_submissions,
         "Agent Matrix 增量同步已持久化"
     );
+    online
+        .status
+        .renew()
+        .await
+        .map_err(AgentOnlineFailure::Status)?;
     online.next_batch = Some(batch.next_batch().clone());
     Ok(())
 }
@@ -849,8 +930,33 @@ fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
                 | MatrixFailureKind::DependencyUnavailable
                 | MatrixFailureKind::StaleSyncToken
         ),
+        AgentOnlineFailure::SigningIdentity(failure) => {
+            failure.kind() == BridgeCredentialFailureKind::Unavailable
+        }
+        AgentOnlineFailure::Status(failure) => reconnectable_status_publication(failure),
         AgentOnlineFailure::MessageSync(failure) => reconnectable_message_sync(failure),
         AgentOnlineFailure::InvalidRoom => false,
+    }
+}
+
+fn reconnectable_status_publication(failure: StatusPublicationFailure) -> bool {
+    match failure.kind() {
+        StatusPublicationFailureKind::SigningUnavailable => true,
+        StatusPublicationFailureKind::Matrix => failure.matrix_failure().is_some_and(|failure| {
+            matches!(
+                failure.kind(),
+                MatrixFailureKind::Conflict
+                    | MatrixFailureKind::RateLimited
+                    | MatrixFailureKind::Timeout
+                    | MatrixFailureKind::DependencyUnavailable
+                    | MatrixFailureKind::UnknownCommit
+            )
+        }),
+        StatusPublicationFailureKind::InvalidConfiguration
+        | StatusPublicationFailureKind::InvalidIdentity
+        | StatusPublicationFailureKind::InvalidIntent
+        | StatusPublicationFailureKind::InvalidIdentifier
+        | StatusPublicationFailureKind::Serialization => false,
     }
 }
 
@@ -1024,6 +1130,18 @@ impl AgentRuntimeRequestIdFactory for SystemAgentRuntimeIdentifiers {
     }
 }
 
+struct SystemStatusEventIdentifiers;
+
+impl StatusEventIdentifierFactory for SystemStatusEventIdentifiers {
+    fn event_id(&self) -> uuid::Uuid {
+        uuid::Uuid::now_v7()
+    }
+
+    fn correlation_id(&self) -> uuid::Uuid {
+        uuid::Uuid::now_v7()
+    }
+}
+
 fn write_stdout(message: &str) -> Result<(), BridgeRuntimeError> {
     let mut output = io::stdout().lock();
     output
@@ -1104,6 +1222,10 @@ impl BridgeRuntimeError {
         Self::new("bridge.invalid_configuration", message)
     }
 
+    fn status_policy() -> Self {
+        Self::new("bridge.status_policy_invalid", "Agent 状态租约策略无效")
+    }
+
     fn terminal() -> Self {
         Self::new("bridge.terminal_unavailable", "无法写入当前终端")
     }
@@ -1134,13 +1256,13 @@ impl BridgeRuntimeError {
         )
     }
 
-    fn runtime_secrets(failure: agent_room_bridge_core::ports::BridgeCredentialFailure) -> Self {
+    fn runtime_secrets(failure: BridgeCredentialFailure) -> Self {
         match failure.kind() {
-            agent_room_bridge_core::ports::BridgeCredentialFailureKind::Unavailable => Self::new(
+            BridgeCredentialFailureKind::Unavailable => Self::new(
                 "bridge.runtime_secrets_unavailable",
                 "Bridge 运行时秘密无法从操作系统安全存储读取",
             ),
-            agent_room_bridge_core::ports::BridgeCredentialFailureKind::Corrupt => Self::new(
+            BridgeCredentialFailureKind::Corrupt => Self::new(
                 "bridge.runtime_secrets_corrupt",
                 "Bridge 运行时秘密已损坏，拒绝静默替换",
             ),
@@ -1394,44 +1516,7 @@ impl BridgeRuntimeError {
     fn agent_online(failure: AgentOnlineFailure) -> Self {
         match failure {
             AgentOnlineFailure::AgentRuntime(failure) => Self::agent_runtime(failure),
-            AgentOnlineFailure::Lobby(failure) => {
-                let (code, message) = match failure.kind() {
-                    AgentLobbySessionFailureKind::InvalidRequest => {
-                        ("bridge.lobby_request_invalid", "自动大厅配置或请求无效")
-                    }
-                    AgentLobbySessionFailureKind::NotAuthorized => (
-                        "bridge.lobby_not_authorized",
-                        "当前 Bridge 设备尚未获准让 Agent 进入大厅",
-                    ),
-                    AgentLobbySessionFailureKind::Forbidden => (
-                        "bridge.lobby_forbidden",
-                        "当前设备与 Agent 实例的权威绑定不匹配",
-                    ),
-                    AgentLobbySessionFailureKind::NotFound => (
-                        "bridge.lobby_not_found",
-                        "配置的公共大厅或 Agent 实例不存在",
-                    ),
-                    AgentLobbySessionFailureKind::Conflict => {
-                        ("bridge.lobby_conflict", "公共大厅分配状态发生冲突")
-                    }
-                    AgentLobbySessionFailureKind::ControlPlaneUnavailable => (
-                        "bridge.lobby_control_plane_unavailable",
-                        "公共大厅控制面暂时不可用",
-                    ),
-                    AgentLobbySessionFailureKind::EntryOutcomeUnknown => (
-                        "bridge.lobby_entry_unknown",
-                        "公共大厅加入结果未知，必须先重新对账",
-                    ),
-                    AgentLobbySessionFailureKind::InvalidControlPlaneResponse => (
-                        "bridge.lobby_response_invalid",
-                        "公共大厅控制面返回了错配或畸形响应",
-                    ),
-                    AgentLobbySessionFailureKind::Internal => {
-                        ("bridge.lobby_internal", "公共大厅加入流程发生内部错误")
-                    }
-                };
-                Self::new(code, message)
-            }
+            AgentOnlineFailure::Lobby(failure) => Self::agent_lobby(failure),
             AgentOnlineFailure::ProvisioningBusy(_) => {
                 Self::new("bridge.lobby_provisioning_busy", "公共大厅正在创建新分片")
             }
@@ -1439,42 +1524,21 @@ impl BridgeRuntimeError {
                 "bridge.lobby_capacity_changed",
                 "公共大厅容量在分配期间发生变化",
             ),
-            AgentOnlineFailure::Matrix(failure) => {
-                let (code, message) = match failure.kind() {
-                    MatrixFailureKind::Unauthenticated
-                    | MatrixFailureKind::AuthenticationRejected => (
-                        "bridge.matrix_session_rejected",
-                        "Agent Matrix 设备会话已被拒绝",
-                    ),
-                    MatrixFailureKind::Forbidden => (
-                        "bridge.matrix_room_forbidden",
-                        "Agent Matrix 身份无权同步已分配大厅",
-                    ),
-                    MatrixFailureKind::InvalidConfiguration
-                    | MatrixFailureKind::InvalidResponse
-                    | MatrixFailureKind::UnsupportedVersion => (
-                        "bridge.matrix_response_invalid",
-                        "Matrix 配置或响应无法通过安全校验",
-                    ),
-                    MatrixFailureKind::NotFound => (
-                        "bridge.matrix_room_not_found",
-                        "控制面分配的 Matrix 房间不存在",
-                    ),
-                    MatrixFailureKind::Conflict
-                    | MatrixFailureKind::RateLimited
-                    | MatrixFailureKind::Timeout
-                    | MatrixFailureKind::DependencyUnavailable
-                    | MatrixFailureKind::StaleSyncToken => (
-                        "bridge.matrix_temporarily_unavailable",
-                        "Agent Matrix 同步暂时不可用",
-                    ),
-                    MatrixFailureKind::UnknownCommit => (
-                        "bridge.matrix_outcome_unknown",
-                        "Matrix 操作结果未知，必须先对账",
-                    ),
-                };
-                Self::new(code, message)
-            }
+            AgentOnlineFailure::Matrix(failure) => Self::agent_matrix(failure),
+            AgentOnlineFailure::SigningIdentity(failure) => match failure.kind() {
+                BridgeCredentialFailureKind::Unavailable => Self::new(
+                    "bridge.agent_signing_identity_unavailable",
+                    "Agent 实例签名密钥暂时不可用",
+                ),
+                BridgeCredentialFailureKind::Corrupt => Self::new(
+                    "bridge.agent_signing_identity_corrupt",
+                    "Agent 实例签名密钥已损坏，拒绝静默替换",
+                ),
+            },
+            AgentOnlineFailure::Status(failure) => Self::new(
+                "bridge.agent_status_publication_failed",
+                format!("Agent 状态无法安全发布：{:?}", failure.kind()),
+            ),
             AgentOnlineFailure::MessageSync(failure) => Self::new(
                 "bridge.message_sync_failed",
                 format!("消息增量同步无法安全持久化：{:?}", failure.kind()),
@@ -1484,6 +1548,81 @@ impl BridgeRuntimeError {
                 "控制面返回的大厅 Matrix 房间标识无效",
             ),
         }
+    }
+
+    fn agent_lobby(failure: AgentLobbySessionFailure) -> Self {
+        let (code, message) = match failure.kind() {
+            AgentLobbySessionFailureKind::InvalidRequest => {
+                ("bridge.lobby_request_invalid", "自动大厅配置或请求无效")
+            }
+            AgentLobbySessionFailureKind::NotAuthorized => (
+                "bridge.lobby_not_authorized",
+                "当前 Bridge 设备尚未获准让 Agent 进入大厅",
+            ),
+            AgentLobbySessionFailureKind::Forbidden => (
+                "bridge.lobby_forbidden",
+                "当前设备与 Agent 实例的权威绑定不匹配",
+            ),
+            AgentLobbySessionFailureKind::NotFound => (
+                "bridge.lobby_not_found",
+                "配置的公共大厅或 Agent 实例不存在",
+            ),
+            AgentLobbySessionFailureKind::Conflict => {
+                ("bridge.lobby_conflict", "公共大厅分配状态发生冲突")
+            }
+            AgentLobbySessionFailureKind::ControlPlaneUnavailable => (
+                "bridge.lobby_control_plane_unavailable",
+                "公共大厅控制面暂时不可用",
+            ),
+            AgentLobbySessionFailureKind::EntryOutcomeUnknown => (
+                "bridge.lobby_entry_unknown",
+                "公共大厅加入结果未知，必须先重新对账",
+            ),
+            AgentLobbySessionFailureKind::InvalidControlPlaneResponse => (
+                "bridge.lobby_response_invalid",
+                "公共大厅控制面返回了错配或畸形响应",
+            ),
+            AgentLobbySessionFailureKind::Internal => {
+                ("bridge.lobby_internal", "公共大厅加入流程发生内部错误")
+            }
+        };
+        Self::new(code, message)
+    }
+
+    fn agent_matrix(failure: MatrixFailure) -> Self {
+        let (code, message) = match failure.kind() {
+            MatrixFailureKind::Unauthenticated | MatrixFailureKind::AuthenticationRejected => (
+                "bridge.matrix_session_rejected",
+                "Agent Matrix 设备会话已被拒绝",
+            ),
+            MatrixFailureKind::Forbidden => (
+                "bridge.matrix_room_forbidden",
+                "Agent Matrix 身份无权同步已分配大厅",
+            ),
+            MatrixFailureKind::InvalidConfiguration
+            | MatrixFailureKind::InvalidResponse
+            | MatrixFailureKind::UnsupportedVersion => (
+                "bridge.matrix_response_invalid",
+                "Matrix 配置或响应无法通过安全校验",
+            ),
+            MatrixFailureKind::NotFound => (
+                "bridge.matrix_room_not_found",
+                "控制面分配的 Matrix 房间不存在",
+            ),
+            MatrixFailureKind::Conflict
+            | MatrixFailureKind::RateLimited
+            | MatrixFailureKind::Timeout
+            | MatrixFailureKind::DependencyUnavailable
+            | MatrixFailureKind::StaleSyncToken => (
+                "bridge.matrix_temporarily_unavailable",
+                "Agent Matrix 同步暂时不可用",
+            ),
+            MatrixFailureKind::UnknownCommit => (
+                "bridge.matrix_outcome_unknown",
+                "Matrix 操作结果未知，必须先对账",
+            ),
+        };
+        Self::new(code, message)
     }
 
     pub(crate) const fn code(&self) -> &'static str {

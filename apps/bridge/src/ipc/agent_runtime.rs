@@ -1,28 +1,34 @@
 use std::sync::Arc;
 
-use agent_room_application::ports::{MatrixEventId, MatrixRoomId};
+use agent_room_application::ports::{MatrixEventId, MatrixFailureKind, MatrixRoomId};
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
         MessagePreviewQuery, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, ProjectedMessageActor, ProjectedMessagePreview,
     },
+    status::{
+        HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
+        StatusPublicationOutcome,
+    },
 };
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcErrorCategory,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcResponse, IpcSelfSummary,
+    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcWorkStatus,
 };
 use agent_room_domain::messages::{MessageProvenance, MessageSensitivity};
 
 use super::{BridgeIpcDispatchFailure, BridgeStatusReader, agent_runtime_unavailable};
+use crate::agent_status::AgentStatusPublicationHandle;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct BridgeAgentRuntimeSnapshot {
     identity: BridgeAgentIdentity,
     matrix_device_id: String,
     room_id: MatrixRoomId,
     granted_capabilities: Vec<String>,
+    status: Option<Arc<AgentStatusPublicationHandle>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -40,7 +46,13 @@ impl BridgeAgentRuntimeSnapshot {
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
+            status: None,
         }
+    }
+
+    pub(crate) fn with_status(mut self, status: Arc<AgentStatusPublicationHandle>) -> Self {
+        self.status = Some(status);
+        self
     }
 }
 
@@ -104,10 +116,47 @@ impl AgentRuntimeIpcFacade {
         })
     }
 
+    pub(super) async fn publish_status(
+        &self,
+        request: IpcPublishStatusRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
+        let status = runtime.status.ok_or_else(agent_runtime_unavailable)?;
+        let outcome = status
+            .publish(host_status(request.status))
+            .await
+            .map_err(map_status_publication_failure)?;
+        let lease_expires_at_unix_ms = match outcome {
+            StatusPublicationOutcome::Published { lease, .. } => lease.expires_at().value(),
+            StatusPublicationOutcome::NotDue {
+                lease_expires_at, ..
+            } => lease_expires_at.value(),
+        };
+        Ok(IpcResponse::PublishedStatus {
+            publication: IpcPublishedStatus {
+                room_id: room_id.as_str().to_owned(),
+                status: request.status,
+                lease_expires_at_unix_ms,
+            },
+        })
+    }
+
     fn runtime_snapshot(&self) -> Result<BridgeAgentRuntimeSnapshot, BridgeIpcDispatchFailure> {
         self.runtime_reader
             .read_agent_runtime()
             .ok_or_else(agent_runtime_unavailable)
+    }
+}
+
+const fn host_status(status: IpcWorkStatus) -> HostAgentState {
+    match status {
+        IpcWorkStatus::Offline => HostAgentState::Disconnected,
+        IpcWorkStatus::Idle => HostAgentState::Available,
+        IpcWorkStatus::Working => HostAgentState::Running,
+        IpcWorkStatus::WaitingInput => HostAgentState::AwaitingInput,
+        IpcWorkStatus::Blocked => HostAgentState::Blocked,
+        IpcWorkStatus::Completed => HostAgentState::Succeeded,
     }
 }
 
@@ -214,6 +263,44 @@ fn map_preview_query_failure(failure: MessageTimelineQueryFailure) -> BridgeIpcD
         }
         MessageTimelineQueryFailureKind::Corrupt => BridgeIpcDispatchFailure::new(
             "bridge.message_projection_corrupt",
+            IpcErrorCategory::Internal,
+            false,
+        ),
+    }
+}
+
+fn map_status_publication_failure(failure: StatusPublicationFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        StatusPublicationFailureKind::InvalidIntent => {
+            invalid_request("bridge.status_intent_invalid")
+        }
+        StatusPublicationFailureKind::SigningUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.status_signing_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        StatusPublicationFailureKind::Matrix => {
+            let retryable = failure.matrix_failure().is_some_and(|failure| {
+                matches!(
+                    failure.kind(),
+                    MatrixFailureKind::Conflict
+                        | MatrixFailureKind::RateLimited
+                        | MatrixFailureKind::Timeout
+                        | MatrixFailureKind::DependencyUnavailable
+                        | MatrixFailureKind::UnknownCommit
+                )
+            });
+            BridgeIpcDispatchFailure::new(
+                "bridge.status_matrix_failed",
+                IpcErrorCategory::DependencyUnavailable,
+                retryable,
+            )
+        }
+        StatusPublicationFailureKind::InvalidConfiguration
+        | StatusPublicationFailureKind::InvalidIdentity
+        | StatusPublicationFailureKind::InvalidIdentifier
+        | StatusPublicationFailureKind::Serialization => BridgeIpcDispatchFailure::new(
+            "bridge.status_publication_internal",
             IpcErrorCategory::Internal,
             false,
         ),

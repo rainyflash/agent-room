@@ -101,9 +101,11 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::ListPreviews(request) => {
                     self.agent_runtime()?.list_previews(request).await
                 }
+                IpcMethod::PublishStatus(request) => {
+                    self.agent_runtime()?.publish_status(request).await
+                }
                 IpcMethod::GetPresence(_)
                 | IpcMethod::OpenContent(_)
-                | IpcMethod::PublishStatus(_)
                 | IpcMethod::SendMessage(_)
                 | IpcMethod::ConsumeHandoff(_)
                 | IpcMethod::DeclineHandoff(_) => Err(agent_runtime_unavailable()),
@@ -642,7 +644,10 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use agent_room_application::ports::{MatrixRoomId, PortFuture};
+    use agent_room_application::ports::{
+        Clock, DeviceSignature, MatrixEventId, MatrixResult, MatrixRoomId, MatrixStateEvent,
+        PortFuture,
+    };
     use agent_room_bridge_core::ipc::{
         FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeNegotiator, IpcHandshakeOffer,
         IpcInstallationId, IpcProtocolVersion, IpcScope,
@@ -653,18 +658,32 @@ mod tests {
             MessagePreviewPage, MessagePreviewQuery, MessageTimelineQueryFailure,
             MessageTimelineQueryRepository,
         },
+        ports::{
+            AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
+            StatusEventIdentifierFactory,
+        },
+        status::{
+            AgentStatusLeasePolicy, AgentStatusPublicationDependencies,
+            AgentStatusPublicationService, AgentStatusRoomTarget, HostAgentState,
+        },
     };
     use agent_room_bridge_ipc::{
-        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMethod, IpcResponse,
-        IpcScopeName, IpcSharedSecret, IpcVersion, create_challenge_proof,
+        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMethod,
+        IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
+        IpcWorkStatus, create_challenge_proof,
     };
-    use agent_room_domain::ids::{AgentId, AgentInstanceId};
+    use agent_room_domain::{
+        agent_status::AgentStatusVisibility,
+        devices::DevicePublicSigningKey,
+        ids::{AgentId, AgentInstanceId},
+        time::{DurationMillis, UtcMillis},
+    };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use tempfile::tempdir;
     use tokio::io::duplex;
     use uuid::Uuid;
 
-    use crate::runtime_files::BridgeRuntimePaths;
+    use crate::{agent_status::AgentStatusPublicationHandle, runtime_files::BridgeRuntimePaths};
 
     use super::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
@@ -707,20 +726,58 @@ mod tests {
         }
     }
 
+    struct 固定时钟;
+
+    impl Clock for 固定时钟 {
+        fn now(&self) -> UtcMillis {
+            UtcMillis::new(1_000).expect("测试时间有效")
+        }
+    }
+
+    struct 测试签名身份;
+
+    impl DeviceSigningIdentity for 测试签名身份 {
+        fn public_key(&self) -> BridgeCredentialResult<DevicePublicSigningKey> {
+            Ok(DevicePublicSigningKey::new(vec![8; 32]).expect("测试公钥有效"))
+        }
+
+        fn sign(&self, _message: &[u8]) -> BridgeCredentialResult<DeviceSignature> {
+            Ok(DeviceSignature::new(vec![9; 64]).expect("测试签名有效"))
+        }
+    }
+
+    #[derive(Default)]
+    struct 记录状态发布器(Mutex<Vec<MatrixStateEvent>>);
+
+    impl AgentStatusStatePublisher for 记录状态发布器 {
+        fn publish<'a>(
+            &'a self,
+            _room_id: &'a MatrixRoomId,
+            event: &'a MatrixStateEvent,
+        ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
+            self.0.lock().expect("状态事件锁可用").push(event.clone());
+            Box::pin(async {
+                Ok(MatrixEventId::new("$status:matrix.test").expect("事件标识有效"))
+            })
+        }
+    }
+
+    struct 版本七状态标识;
+
+    impl StatusEventIdentifierFactory for 版本七状态标识 {
+        fn event_id(&self) -> Uuid {
+            Uuid::now_v7()
+        }
+
+        fn correlation_id(&self) -> Uuid {
+            Uuid::now_v7()
+        }
+    }
+
     #[tokio::test]
     async fn agent_上线后自身摘要与默认大厅预览来自真实运行时() {
         let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
-        let identity = BridgeAgentIdentity::new(
-            AgentId::from_uuid(
-                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a3").expect("Agent 标识有效"),
-            ),
-            "Codex Agent",
-            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test",
-            AgentInstanceId::from_uuid(
-                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a4").expect("实例标识有效"),
-            ),
-        )
-        .expect("Agent 身份有效");
+        let identity = 测试_agent_身份();
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
             Arc::new(固定状态),
@@ -764,6 +821,82 @@ mod tests {
         let queries = previews.0.lock().expect("查询记录锁可用");
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].room_id(), &room_id);
+    }
+
+    #[tokio::test]
+    async fn 公共大厅状态发布只暴露粗粒度状态并返回真实租约() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录状态发布器::default());
+        let status = Arc::new(AgentStatusPublicationHandle::new(
+            AgentStatusPublicationService::new(
+                AgentStatusPublicationDependencies {
+                    identity: identity.clone(),
+                    signer: Arc::new(测试签名身份),
+                    publisher: publisher.clone(),
+                    identifiers: Arc::new(版本七状态标识),
+                    clock: Arc::new(固定时钟),
+                },
+                AgentStatusLeasePolicy::new(
+                    DurationMillis::new(300_000).expect("租约时长有效"),
+                    DurationMillis::new(120_000).expect("续租间隔有效"),
+                    DurationMillis::new(15_000).expect("续租抖动有效"),
+                )
+                .expect("租约策略有效"),
+            ),
+            AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
+            HostAgentState::Available,
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity,
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["status.publish"],
+                )
+                .with_status(status),
+            )),
+            Arc::new(记录预览查询::default()),
+        );
+
+        let response = handler
+            .dispatch(IpcMethod::PublishStatus(IpcPublishStatusRequest {
+                room_id: room_id.as_str().to_owned(),
+                status: IpcWorkStatus::Working,
+                task_summary: Some("不得进入公共大厅的任务内容".to_owned()),
+                progress_basis_points: Some(5_000),
+            }))
+            .await
+            .expect("状态可发布");
+        assert!(matches!(
+            response,
+            IpcResponse::PublishedStatus { publication }
+                if publication.room_id == room_id.as_str()
+                    && publication.status == IpcWorkStatus::Working
+                    && publication.lease_expires_at_unix_ms == 301_000
+        ));
+        let events = publisher.0.lock().expect("状态事件锁可用");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].content()["status"], "working");
+        assert_eq!(events[0].content()["visibility"], "coarse");
+        assert!(events[0].content().get("taskSummary").is_none());
+        assert!(events[0].content().get("progress").is_none());
+    }
+
+    fn 测试_agent_身份() -> BridgeAgentIdentity {
+        BridgeAgentIdentity::new(
+            AgentId::from_uuid(
+                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a3").expect("Agent 标识有效"),
+            ),
+            "Codex Agent",
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test",
+            AgentInstanceId::from_uuid(
+                Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a4").expect("实例标识有效"),
+            ),
+        )
+        .expect("Agent 身份有效")
     }
 
     #[tokio::test]

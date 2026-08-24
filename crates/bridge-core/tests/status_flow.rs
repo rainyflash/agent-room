@@ -160,7 +160,8 @@ async fn 首次发布后重复调用不会制造续租风暴() {
     assert_eq!(
         duplicate,
         StatusPublicationOutcome::NotDue {
-            renew_at: time(106_000)
+            renew_at: time(106_000),
+            lease_expires_at: time(301_000),
         }
     );
 
@@ -235,7 +236,13 @@ async fn 状态与可见性变化立即发布而详情变化等待续租() {
         )
         .await
         .expect("详情检查成功");
-    assert_eq!(details_only, StatusPublicationOutcome::NotDue { renew_at });
+    assert_eq!(
+        details_only,
+        StatusPublicationOutcome::NotDue {
+            renew_at,
+            lease_expires_at: time(303_000),
+        }
+    );
 
     fixture.clock.set(renew_at);
     let renewal = service

@@ -166,6 +166,7 @@ pub enum StatusPublicationOutcome {
     },
     NotDue {
         renew_at: UtcMillis,
+        lease_expires_at: UtcMillis,
     },
 }
 
@@ -216,6 +217,7 @@ pub type StatusPublicationResult<T> = Result<T, StatusPublicationFailure>;
 struct PublishedRoomStatus {
     snapshot: AgentStatusSnapshot,
     renew_at: UtcMillis,
+    lease_expires_at: UtcMillis,
 }
 
 pub struct AgentStatusPublicationService {
@@ -277,6 +279,7 @@ impl AgentStatusPublicationService {
             } else {
                 return Ok(StatusPublicationOutcome::NotDue {
                     renew_at: previous.renew_at,
+                    lease_expires_at: previous.lease_expires_at,
                 });
             }
         } else {
@@ -302,7 +305,11 @@ impl AgentStatusPublicationService {
             })?;
         self.published_rooms.insert(
             target.room_id().clone(),
-            PublishedRoomStatus { snapshot, renew_at },
+            PublishedRoomStatus {
+                snapshot,
+                renew_at,
+                lease_expires_at: lease.expires_at(),
+            },
         );
         Ok(StatusPublicationOutcome::Published {
             event_id,
