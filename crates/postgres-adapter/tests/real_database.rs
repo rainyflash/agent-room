@@ -32,7 +32,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 30] = [
+const EXPECTED_TABLES: [&str; 31] = [
     "adapter_binding",
     "agent",
     "agent_card_snapshot",
@@ -62,6 +62,7 @@ const EXPECTED_TABLES: [&str; 30] = [
     "room_catalog_entry",
     "room_instance",
     "room_membership_projection",
+    "room_provisioning_job",
     "web_session",
 ];
 
