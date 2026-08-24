@@ -17,6 +17,7 @@ use agent_room_bridge_core::{
         AuthorizeBridgeDevice, AuthorizedBridgeDevice, BridgeAuthorizationDependencies,
         BridgeAuthorizationFailure, BridgeAuthorizationFailureKind, BridgeAuthorizationService,
     },
+    reconnect::{ReconnectBackoff, ReconnectPolicy, SessionRefreshPlan},
     session::{
         ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailure,
         BridgeSessionFailureKind, BridgeSessionPolicy, BridgeSessionService,
@@ -33,7 +34,7 @@ use agent_room_identity_adapter::{
 use agent_room_matrix_adapter::{
     MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
 };
-use tokio::sync::watch;
+use tokio::{sync::watch, time::sleep};
 
 use crate::{
     config::BridgeConfig,
@@ -67,6 +68,35 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         .load_or_create()
         .map_err(BridgeRuntimeError::runtime_secrets)?;
     initialize_matrix_store(&config, &paths, &runtime_secrets).await?;
+    let device_session = initialize_device_session(&config).await?;
+
+    let status = Arc::new(BridgeRuntimeStatus::new(SystemClock.now().value()));
+    let server = BridgeIpcServer::bind(
+        &paths,
+        runtime_secrets.installation_id().clone(),
+        runtime_secrets.ipc_shared_secret().clone(),
+        status.clone(),
+    )
+    .map_err(BridgeRuntimeError::ipc)?;
+    status.transition(if device_session.initial_session.is_some() {
+        IpcBridgeState::Ready
+    } else {
+        IpcBridgeState::Reconnecting
+    });
+    run_until_shutdown(server, status, device_session).await
+}
+
+struct DeviceSessionRuntime {
+    service: Arc<BridgeSessionService>,
+    initial_session: Option<ActiveBridgeSession>,
+    clock: Arc<dyn Clock>,
+    refresh_lead_time: DurationMillis,
+    reconnect_policy: ReconnectPolicy,
+}
+
+async fn initialize_device_session(
+    config: &BridgeConfig,
+) -> Result<DeviceSessionRuntime, BridgeRuntimeError> {
     let control_plane = Arc::new(
         ReqwestControlPlaneDeviceGateway::new(&ControlPlaneHttpConfig {
             base_url: config.control_plane_url.clone(),
@@ -86,33 +116,58 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let signing_identities = Arc::new(OsDeviceSigningIdentityStore::system(SECURE_STORAGE_SERVICE));
     let credentials = Arc::new(OsDeviceCredentialVault::system(SECURE_STORAGE_SERVICE));
     let secrets = Arc::new(SecureSecretFactory);
-    let clock = Arc::new(SystemClock);
-    let session_service = BridgeSessionService::new(
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let refresh_lead_time = domain_duration(config.refresh_lead_time)?;
+    let reconnect_policy = ReconnectPolicy::new(
+        domain_duration(config.reconnect_initial_delay)?,
+        domain_duration(config.reconnect_maximum_delay)?,
+    )
+    .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+    let session_service = Arc::new(BridgeSessionService::new(
         BridgeSessionDependencies {
             signing_identities: signing_identities.clone(),
             control_plane: control_plane.clone(),
             credentials: credentials.clone(),
             secrets: secrets.clone(),
-            clock,
+            clock: clock.clone(),
         },
-        BridgeSessionPolicy::new(domain_duration(config.refresh_lead_time)?),
-    );
+        BridgeSessionPolicy::new(refresh_lead_time),
+    ));
 
+    let authorization_service = BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
+        oidc,
+        signing_identities,
+        control_plane,
+        credentials,
+        secrets,
+    });
+    let initial_session =
+        establish_initial_session(config, &session_service, authorization_service).await?;
+
+    Ok(DeviceSessionRuntime {
+        service: session_service,
+        initial_session,
+        clock,
+        refresh_lead_time,
+        reconnect_policy,
+    })
+}
+
+async fn establish_initial_session(
+    config: &BridgeConfig,
+    session_service: &BridgeSessionService,
+    authorization_service: BridgeAuthorizationService,
+) -> Result<Option<ActiveBridgeSession>, BridgeRuntimeError> {
     match session_service.active_session().await {
-        Ok(session) => announce_active_session(&session)?,
+        Ok(session) => {
+            announce_active_session(&session)?;
+            Ok(Some(session))
+        }
         Err(error) if error.kind() == BridgeSessionFailureKind::NotAuthorized => {
-            let authorization_service =
-                BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
-                    oidc,
-                    signing_identities,
-                    control_plane,
-                    credentials,
-                    secrets,
-                });
             let authorized = authorization_service
                 .authorize(
                     AuthorizeBridgeDevice {
-                        label: config.device_label,
+                        label: config.device_label.clone(),
                         platform: current_platform(),
                         profile_import: ProfileImportConsent {
                             display_name: config.import_oidc_profile,
@@ -124,20 +179,18 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
                 .await
                 .map_err(BridgeRuntimeError::authorization)?;
             announce_authorized_device(authorized)?;
+            let session = session_service
+                .active_session()
+                .await
+                .map_err(BridgeRuntimeError::session)?;
+            Ok(Some(session))
         }
-        Err(error) => return Err(BridgeRuntimeError::session(error)),
+        Err(error) if is_reconnectable_session_failure(error) => {
+            announce_reconnecting_session()?;
+            Ok(None)
+        }
+        Err(error) => Err(BridgeRuntimeError::session(error)),
     }
-
-    let status = Arc::new(BridgeRuntimeStatus::new(SystemClock.now().value()));
-    let server = BridgeIpcServer::bind(
-        &paths,
-        runtime_secrets.installation_id().clone(),
-        runtime_secrets.ipc_shared_secret().clone(),
-        status.clone(),
-    )
-    .map_err(BridgeRuntimeError::ipc)?;
-    status.transition(IpcBridgeState::Ready);
-    run_until_shutdown(server, status).await
 }
 
 async fn initialize_matrix_store(
@@ -161,9 +214,19 @@ async fn initialize_matrix_store(
 async fn run_until_shutdown(
     server: BridgeIpcServer,
     status: Arc<BridgeRuntimeStatus>,
+    device_session: DeviceSessionRuntime,
 ) -> Result<(), BridgeRuntimeError> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut server_task = tokio::spawn(server.run(shutdown_receiver));
+    let mut session_task = tokio::spawn(maintain_device_session(
+        device_session.service,
+        device_session.initial_session,
+        status.clone(),
+        device_session.clock,
+        device_session.refresh_lead_time,
+        device_session.reconnect_policy,
+        shutdown_sender.subscribe(),
+    ));
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {
@@ -172,17 +235,146 @@ async fn run_until_shutdown(
             shutdown_sender
                 .send(true)
                 .map_err(|_| BridgeRuntimeError::ipc_stopped_early())?;
+            let server_result = server_task
+                .await
+                .map_err(|_| BridgeRuntimeError::ipc_task())?;
+            session_task
+                .await
+                .map_err(|_| BridgeRuntimeError::session_task())?;
+            server_result.map_err(BridgeRuntimeError::ipc)
+        }
+        completed = &mut server_task => {
+            status.transition(IpcBridgeState::ShuttingDown);
+            shutdown_sender
+                .send(true)
+                .map_err(|_| BridgeRuntimeError::session_stopped_early())?;
+            session_task
+                .await
+                .map_err(|_| BridgeRuntimeError::session_task())?;
+            completed.map_err(|_| BridgeRuntimeError::ipc_task())?.map_err(BridgeRuntimeError::ipc)
+        }
+        completed = &mut session_task => {
+            status.transition(IpcBridgeState::ShuttingDown);
+            completed.map_err(|_| BridgeRuntimeError::session_task())?;
+            shutdown_sender
+                .send(true)
+                .map_err(|_| BridgeRuntimeError::ipc_stopped_early())?;
             server_task
                 .await
                 .map_err(|_| BridgeRuntimeError::ipc_task())?
-                .map_err(BridgeRuntimeError::ipc)
-        }
-        completed = &mut server_task => {
-            completed
-                .map_err(|_| BridgeRuntimeError::ipc_task())?
-                .map_err(BridgeRuntimeError::ipc)
+                .map_err(BridgeRuntimeError::ipc)?;
+            Err(BridgeRuntimeError::session_stopped_early())
         }
     }
+}
+
+async fn maintain_device_session(
+    session_service: Arc<BridgeSessionService>,
+    mut session: Option<ActiveBridgeSession>,
+    status: Arc<BridgeRuntimeStatus>,
+    clock: Arc<dyn Clock>,
+    refresh_lead_time: DurationMillis,
+    reconnect_policy: ReconnectPolicy,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut backoff = ReconnectBackoff::new(reconnect_policy);
+    let mut retry_delay = session
+        .is_none()
+        .then(|| backoff.record_failure(retry_entropy()));
+
+    loop {
+        let wait = retry_delay.take().map_or_else(
+            || {
+                session
+                    .as_ref()
+                    .map_or(SessionRefreshPlan::DueNow, |active| {
+                        SessionRefreshPlan::calculate(
+                            active.access_token_expires_at,
+                            clock.now(),
+                            refresh_lead_time,
+                        )
+                    })
+            },
+            SessionRefreshPlan::After,
+        );
+        if wait_for_refresh(wait, &mut shutdown).await {
+            return;
+        }
+
+        status.transition(IpcBridgeState::Reconnecting);
+        match session_service.active_session().await {
+            Ok(active) => {
+                backoff.record_connected();
+                status.transition(IpcBridgeState::Ready);
+                session = Some(active);
+            }
+            Err(failure) if is_reconnectable_session_failure(failure) => {
+                let delay = backoff.record_failure(retry_entropy());
+                tracing::warn!(
+                    operation = failure.operation(),
+                    failure_kind = ?failure.kind(),
+                    consecutive_failures = backoff.consecutive_failures(),
+                    retry_after_ms = delay.value(),
+                    "Bridge 设备会话暂时不可用，已安排重连"
+                );
+                session = None;
+                retry_delay = Some(delay);
+            }
+            Err(failure) => {
+                status.transition(IpcBridgeState::Offline);
+                tracing::error!(
+                    operation = failure.operation(),
+                    failure_kind = ?failure.kind(),
+                    "Bridge 设备会话进入离线态，禁止不安全重试"
+                );
+                wait_for_shutdown(&mut shutdown).await;
+                return;
+            }
+        }
+    }
+}
+
+async fn wait_for_refresh(plan: SessionRefreshPlan, shutdown: &mut watch::Receiver<bool>) -> bool {
+    if *shutdown.borrow() {
+        return true;
+    }
+    let SessionRefreshPlan::After(delay) = plan else {
+        return false;
+    };
+    tokio::select! {
+        () = sleep(std::time::Duration::from_millis(delay.value())) => false,
+        changed = shutdown.changed() => {
+            changed.is_err() || *shutdown.borrow_and_update()
+        }
+    }
+}
+
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    while !*shutdown.borrow_and_update() && shutdown.changed().await.is_ok() {}
+}
+
+fn is_reconnectable_session_failure(failure: BridgeSessionFailure) -> bool {
+    matches!(
+        failure.kind(),
+        BridgeSessionFailureKind::ControlPlaneUnavailable
+            | BridgeSessionFailureKind::InvalidControlPlaneResponse
+            | BridgeSessionFailureKind::SecureStorageUnavailable
+    )
+}
+
+fn retry_entropy() -> u64 {
+    let mut entropy = [0_u8; size_of::<u64>()];
+    if getrandom::fill(&mut entropy).is_ok() {
+        return u64::from_le_bytes(entropy);
+    }
+    tracing::warn!(
+        error_code = "bridge.reconnect_entropy_unavailable",
+        "重连抖动无法读取系统熵，改用进程内非安全回退值"
+    );
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX) ^ u64::from(std::process::id())
 }
 
 struct BridgeRuntimeStatus {
@@ -253,6 +445,10 @@ fn announce_authorized_device(device: AuthorizedBridgeDevice) -> Result<(), Brid
         device.access_token_expires_at.value(),
         device.refresh_token_expires_at.value()
     ))
+}
+
+fn announce_reconnecting_session() -> Result<(), BridgeRuntimeError> {
+    write_stdout("Agent Room Bridge 已启动，正在重新连接控制平面。\n")
 }
 
 fn write_stdout(message: &str) -> Result<(), BridgeRuntimeError> {
@@ -349,6 +545,20 @@ impl BridgeRuntimeError {
 
     fn ipc_task() -> Self {
         Self::new("bridge.ipc_task_failed", "本地 IPC 服务任务异常终止")
+    }
+
+    fn session_task() -> Self {
+        Self::new(
+            "bridge.session_task_failed",
+            "Bridge 设备会话维护任务异常终止",
+        )
+    }
+
+    fn session_stopped_early() -> Self {
+        Self::new(
+            "bridge.session_stopped_early",
+            "Bridge 设备会话维护任务已提前停止",
+        )
     }
 
     fn runtime_secrets(failure: agent_room_bridge_core::ports::BridgeCredentialFailure) -> Self {

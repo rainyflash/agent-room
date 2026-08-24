@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -101,19 +102,24 @@ impl DeviceCredentialVault for 内存凭据库 {
 #[derive(Clone, Copy)]
 enum 刷新结果 {
     成功,
+    依赖不可用,
     结果未知,
 }
 
 struct 测试控制平面 {
-    outcome: 刷新结果,
+    outcomes: Mutex<VecDeque<刷新结果>>,
     requests: Mutex<Vec<RefreshBridgeDevice>>,
     calls: AtomicUsize,
 }
 
 impl 测试控制平面 {
     fn new(outcome: 刷新结果) -> Self {
+        Self::sequence([outcome])
+    }
+
+    fn sequence(outcomes: impl IntoIterator<Item = 刷新结果>) -> Self {
         Self {
-            outcome,
+            outcomes: Mutex::new(outcomes.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
         }
@@ -134,10 +140,18 @@ impl ControlPlaneDeviceGateway for 测试控制平面 {
     ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().expect("刷新请求锁可用").push(request);
-        let outcome = self.outcome;
+        let outcome = self
+            .outcomes
+            .lock()
+            .expect("刷新结果锁可用")
+            .pop_front()
+            .expect("测试必须提供刷新结果");
         Box::pin(async move {
             match outcome {
                 刷新结果::成功 => Ok(refreshed_credentials()),
+                刷新结果::依赖不可用 => Err(ControlPlaneDeviceFailure::new(
+                    ControlPlaneDeviceFailureKind::DependencyUnavailable,
+                )),
                 刷新结果::结果未知 => Err(ControlPlaneDeviceFailure::new(
                     ControlPlaneDeviceFailureKind::UnknownCommit,
                 )),
@@ -233,6 +247,43 @@ async fn 刷新结果未知会持久停在待决状态且绝不重放旧令牌()
             .state,
         BridgeCredentialState::RefreshPending
     );
+}
+
+#[tokio::test]
+async fn 网络切换造成的确定失败会恢复旧状态并允许后续重连() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::sequence([
+        刷新结果::依赖不可用,
+        刷新结果::成功,
+    ]));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    let failure = service
+        .active_session()
+        .await
+        .expect_err("网络不可用时本次刷新应明确失败");
+    assert_eq!(
+        failure.kind(),
+        BridgeSessionFailureKind::ControlPlaneUnavailable
+    );
+    assert_eq!(
+        vault
+            .value
+            .lock()
+            .expect("凭据锁可用")
+            .as_ref()
+            .expect("旧凭据应保留")
+            .state,
+        BridgeCredentialState::Ready
+    );
+
+    let recovered = service.active_session().await.expect("网络恢复后应可重连");
+    assert_eq!(recovered.access_token.expose(), "new-access-token");
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 2);
 }
 
 fn service(

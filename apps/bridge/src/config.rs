@@ -7,6 +7,8 @@ use std::{
 const DEFAULT_REQUEST_TIMEOUT_MILLIS: u64 = 10_000;
 const DEFAULT_AUTHORIZATION_TIMEOUT_MILLIS: u64 = 10 * 60 * 1_000;
 const DEFAULT_REFRESH_LEAD_MILLIS: u64 = 2 * 60 * 1_000;
+const DEFAULT_RECONNECT_INITIAL_MILLIS: u64 = 1_000;
+const DEFAULT_RECONNECT_MAXIMUM_MILLIS: u64 = 60_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
 
@@ -31,6 +33,8 @@ pub(crate) struct BridgeConfig {
     pub(crate) request_timeout: Duration,
     pub(crate) authorization_timeout: Duration,
     pub(crate) refresh_lead_time: Duration,
+    pub(crate) reconnect_initial_delay: Duration,
+    pub(crate) reconnect_maximum_delay: Duration,
     pub(crate) import_oidc_profile: bool,
     pub(crate) data_root: PathBuf,
 }
@@ -41,6 +45,24 @@ impl BridgeConfig {
     }
 
     fn from_source(source: &impl EnvironmentSource) -> Result<Self, BridgeConfigError> {
+        let reconnect_initial_delay = read_bounded_duration(
+            source,
+            "AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS",
+            DEFAULT_RECONNECT_INITIAL_MILLIS,
+            100..=60_000,
+        )?;
+        let reconnect_maximum_delay = read_bounded_duration(
+            source,
+            "AGENT_ROOM_BRIDGE_RECONNECT_MAXIMUM_MS",
+            DEFAULT_RECONNECT_MAXIMUM_MILLIS,
+            1_000..=15 * 60 * 1_000,
+        )?;
+        if reconnect_initial_delay > reconnect_maximum_delay {
+            return Err(BridgeConfigError::invalid(
+                "AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS",
+                "不能大于最大重连延迟",
+            ));
+        }
         Ok(Self {
             control_plane_url: read_required_text(source, "AGENT_ROOM_CONTROL_PLANE_URL")?,
             matrix_homeserver_url: read_required_text(source, "AGENT_ROOM_MATRIX_BASE_URL")?,
@@ -65,6 +87,8 @@ impl BridgeConfig {
                 DEFAULT_REFRESH_LEAD_MILLIS,
                 30_000..=10 * 60 * 1_000,
             )?,
+            reconnect_initial_delay,
+            reconnect_maximum_delay,
             import_oidc_profile: read_bool(source, "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE", false)?,
             data_root: read_data_root(source)?,
         })
@@ -289,6 +313,8 @@ mod tests {
         assert_eq!(config.request_timeout.as_millis(), 10_000);
         assert_eq!(config.authorization_timeout.as_millis(), 600_000);
         assert_eq!(config.refresh_lead_time.as_millis(), 120_000);
+        assert_eq!(config.reconnect_initial_delay.as_millis(), 1_000);
+        assert_eq!(config.reconnect_maximum_delay.as_millis(), 60_000);
         assert!(!config.import_oidc_profile);
         assert!(!config.device_label.is_empty());
         assert!(config.data_root.is_absolute());
@@ -334,6 +360,25 @@ mod tests {
             BridgeConfig::from_source(&environment),
             Err(BridgeConfigError::Invalid {
                 name: "AGENT_ROOM_BRIDGE_DATA_DIR",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 初始重连延迟不能大于封顶值() {
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS", "60000".to_owned());
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_RECONNECT_MAXIMUM_MS", "1000".to_owned());
+
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS",
                 ..
             })
         ));
