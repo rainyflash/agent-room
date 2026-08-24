@@ -1,4 +1,8 @@
-use std::{fmt, net::IpAddr, time::Duration};
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use agent_room_application::ports::SecretValue;
 use thiserror::Error;
@@ -6,6 +10,63 @@ use url::Url;
 
 const MAX_BUCKET_LENGTH: usize = 63;
 const MAX_REGION_LENGTH: usize = 64;
+const MAX_SCANNER_TIMEOUT: Duration = Duration::from_mins(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClamAvScannerConfig {
+    address: SocketAddr,
+    connect_timeout: Duration,
+    scan_timeout: Duration,
+}
+
+impl ClamAvScannerConfig {
+    /// 创建只允许受信私网 TCP 端点的 `ClamAV` 扫描配置。
+    ///
+    /// # Errors
+    ///
+    /// 公网地址、零端口、零超时或超过五分钟的扫描预算会被拒绝。
+    pub fn new(
+        address: SocketAddr,
+        connect_timeout: Duration,
+        scan_timeout: Duration,
+    ) -> Result<Self, ClamAvScannerConfigError> {
+        if address.port() == 0 || !is_private_address(address.ip()) {
+            return Err(ClamAvScannerConfigError::InsecureAddress);
+        }
+        if connect_timeout.is_zero()
+            || scan_timeout.is_zero()
+            || connect_timeout > scan_timeout
+            || scan_timeout > MAX_SCANNER_TIMEOUT
+        {
+            return Err(ClamAvScannerConfigError::InvalidTimeout);
+        }
+        Ok(Self {
+            address,
+            connect_timeout,
+            scan_timeout,
+        })
+    }
+
+    pub const fn address(self) -> SocketAddr {
+        self.address
+    }
+
+    pub const fn connect_timeout(self) -> Duration {
+        self.connect_timeout
+    }
+
+    pub const fn scan_timeout(self) -> Duration {
+        self.scan_timeout
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ClamAvScannerConfigError {
+    #[error("ClamAV TCP 端点必须位于回环或私有网络")]
+    InsecureAddress,
+    #[error("ClamAV 超时顺序或范围无效")]
+    InvalidTimeout,
+}
 
 #[derive(Clone)]
 pub struct S3ContentStoreConfig {
@@ -170,13 +231,27 @@ fn is_loopback(endpoint: &Url) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
+const fn is_private_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            address.is_loopback() || address.is_private() || address.is_link_local()
+        }
+        IpAddr::V6(address) => {
+            address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{net::SocketAddr, time::Duration};
 
     use agent_room_application::ports::SecretValue;
 
-    use super::{S3ContentStoreConfig, S3ContentStoreConfigError};
+    use super::{
+        ClamAvScannerConfig, ClamAvScannerConfigError, S3ContentStoreConfig,
+        S3ContentStoreConfigError,
+    };
 
     #[test]
     fn 仅允许_https_或本机开发端点() {
@@ -195,6 +270,26 @@ mod tests {
         assert!(!rendered.contains("test-access-key"));
         assert!(!rendered.contains("test-secret-key"));
         assert!(rendered.contains("已脱敏"));
+    }
+
+    #[test]
+    fn clamav_只接受私网端点和有界超时() {
+        let local = "127.0.0.1:3310".parse::<SocketAddr>().expect("地址有效");
+        assert!(
+            ClamAvScannerConfig::new(local, Duration::from_secs(1), Duration::from_secs(30))
+                .is_ok()
+        );
+        let public = "8.8.8.8:3310".parse::<SocketAddr>().expect("地址有效");
+        assert_eq!(
+            ClamAvScannerConfig::new(public, Duration::from_secs(1), Duration::from_secs(30))
+                .expect_err("公网明文扫描端点必须失败"),
+            ClamAvScannerConfigError::InsecureAddress
+        );
+        assert_eq!(
+            ClamAvScannerConfig::new(local, Duration::from_secs(30), Duration::from_secs(1))
+                .expect_err("连接预算不能大于总扫描预算"),
+            ClamAvScannerConfigError::InvalidTimeout
+        );
     }
 
     fn configuration(endpoint: &str) -> Result<S3ContentStoreConfig, S3ContentStoreConfigError> {
