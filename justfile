@@ -74,6 +74,9 @@ control-plane: database-migrate
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 
+bridge:
+  python tools/bridge.py
+
 infra-config:
   node tools/run-powershell.mjs tools/dev-infra.ps1 config
 
