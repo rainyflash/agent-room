@@ -9,6 +9,7 @@ use crate::{
 };
 
 const MAX_NAME_LENGTH: usize = 128;
+const MAX_URL_LENGTH: usize = 2_048;
 const MAX_DESCRIPTION_LENGTH: usize = 2_048;
 const MAX_VERSION_LENGTH: usize = 64;
 const MAX_PROVIDER_NAME_LENGTH: usize = 128;
@@ -706,6 +707,12 @@ impl AgentCardSnapshot {
 }
 
 fn validate_https_url(field: &'static str, value: &str) -> DomainResult<()> {
+    if value.len() > MAX_URL_LENGTH {
+        return Err(DomainError::Validation {
+            field,
+            reason: "URL 超过长度上限",
+        });
+    }
     let parsed = Url::parse(value).map_err(|_| DomainError::Validation {
         field,
         reason: "必须是绝对 HTTPS URL",

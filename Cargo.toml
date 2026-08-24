@@ -2,6 +2,7 @@
 members = [
   "apps/bridge",
   "apps/control-plane",
+  "crates/a2a-adapter",
   "crates/application",
   "crates/bridge-core",
   "crates/bridge-ipc",
@@ -22,6 +23,7 @@ license = "MIT"
 repository = "https://github.com/agent-room/agent-room"
 
 [workspace.dependencies]
+agent-room-a2a-adapter = { version = "0.1.0", path = "crates/a2a-adapter" }
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
 agent-room-bridge-ipc = { version = "0.1.0", path = "crates/bridge-ipc" }
@@ -49,7 +51,7 @@ opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 proptest = "1.11.0"
 rand = "0.8.7"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
 rsa = { version = "0.9.10", features = ["pem"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
