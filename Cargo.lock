@@ -158,6 +158,7 @@ dependencies = [
  "agent-room-domain",
  "chacha20poly1305",
  "getrandom 0.3.4",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",

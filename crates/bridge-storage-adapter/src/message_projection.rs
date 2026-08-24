@@ -1,13 +1,28 @@
 use std::path::Path;
 
-use agent_room_application::ports::PortFuture;
+use agent_room_application::ports::{MatrixEventId, MatrixRoomId, PortFuture};
+use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
-    MessageProjectionStoreFailureKind, MessageTimelineProjectionStore, ProjectedMessageActor,
+    MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
+    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+    MessageTimelineQueryRepository, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    ProjectedMessagePreview,
 };
-use agent_room_domain::messages::{MessageContentReference, MessagePreview, MessageRelation};
+use agent_room_domain::{
+    content::{ContentMediaType, Sha256Digest},
+    ids::{AgentId, AgentInstanceId, ContentId, MessageId},
+    messages::{
+        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
+        MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
+        MessageTitle,
+    },
+    time::UtcMillis,
+};
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
+use uuid::{Uuid, Version};
 
 use crate::{
     database::{SqliteBridgeStorageOpenFailure, open_pool},
@@ -58,6 +73,264 @@ impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
         Box::pin(async move { self.apply_batch(batch).await })
     }
+}
+
+impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
+    fn list_previews<'a>(
+        &'a self,
+        query: &'a MessagePreviewQuery,
+    ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_previews(query).await })
+    }
+}
+
+impl SqliteMessageTimelineRepository {
+    async fn query_previews(
+        &self,
+        query: &MessagePreviewQuery,
+    ) -> Result<MessagePreviewPage, MessageTimelineQueryFailure> {
+        let cursor_sequence = match query.before_event_id() {
+            Some(cursor) => Some(self.resolve_cursor(query.room_id(), cursor).await?),
+            None => None,
+        };
+        let fetch_limit = i64::from(query.limit()) + 1;
+        let rows = sqlx::query(
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND visibility = 'active'
+               AND (? IS NULL OR first_sequence < ?)
+             ORDER BY first_sequence DESC
+             LIMIT ?",
+        )
+        .bind(query.room_id().as_str())
+        .bind(cursor_sequence)
+        .bind(cursor_sequence)
+        .bind(fetch_limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?;
+
+        let has_more = rows.len() > usize::from(query.limit());
+        let previews = rows
+            .iter()
+            .take(usize::from(query.limit()))
+            .map(decode_preview_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = if has_more {
+            previews.last().map(|preview| preview.event_id.clone())
+        } else {
+            None
+        };
+        Ok(MessagePreviewPage::new(previews, next_cursor))
+    }
+
+    async fn resolve_cursor(
+        &self,
+        room_id: &MatrixRoomId,
+        cursor: &MatrixEventId,
+    ) -> Result<i64, MessageTimelineQueryFailure> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT first_sequence
+             FROM message_current_projection
+             WHERE room_id = ? AND base_event_id = ?",
+        )
+        .bind(room_id.as_str())
+        .bind(cursor.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?
+        .ok_or_else(|| query_failure(MessageTimelineQueryFailureKind::CursorNotFound))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredActor {
+    agent_id: String,
+    instance_id: String,
+    display_name: String,
+    matrix_user_id: String,
+    avatar_url: Option<String>,
+    provenance: String,
+    instance_verification: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredPreview {
+    title: String,
+    summary: String,
+    content_type: String,
+    language: Option<String>,
+    sensitivity: String,
+    risk_flags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredContent {
+    content_id: String,
+    digest_sha256: String,
+    size_bytes: u64,
+}
+
+fn decode_preview_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ProjectedMessagePreview, MessageTimelineQueryFailure> {
+    let actor = decode_actor(row.try_get("actor_json").map_err(|_| corrupt_query())?)?;
+    let preview = decode_preview(row.try_get("preview_json").map_err(|_| corrupt_query())?)?;
+    let content = decode_content(row.try_get("content_json").map_err(|_| corrupt_query())?)?;
+    let created_at = UtcMillis::new(
+        row.try_get("created_at_unix_ms")
+            .map_err(|_| corrupt_query())?,
+    )
+    .map_err(|_| corrupt_query())?;
+    let origin_server_timestamp = row
+        .try_get::<Option<i64>, _>("origin_server_timestamp")
+        .map_err(|_| corrupt_query())?
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| corrupt_query())?;
+    let relation = row
+        .try_get::<Option<String>, _>("relation_target_message_id")
+        .map_err(|_| corrupt_query())?
+        .map(|value| {
+            parse_v7(&value)
+                .map(MessageId::from_uuid)
+                .map(MessageRelation::ReplyTo)
+        })
+        .transpose()?;
+
+    Ok(ProjectedMessagePreview {
+        event_id: MatrixEventId::new(
+            row.try_get::<String, _>("base_event_id")
+                .map_err(|_| corrupt_query())?,
+        )
+        .map_err(|_| corrupt_query())?,
+        transaction_id: None,
+        room_id: MatrixRoomId::new(
+            row.try_get::<String, _>("room_id")
+                .map_err(|_| corrupt_query())?,
+        )
+        .map_err(|_| corrupt_query())?,
+        message_id: MessageId::from_uuid(parse_v7(
+            &row.try_get::<String, _>("message_id")
+                .map_err(|_| corrupt_query())?,
+        )?),
+        created_at,
+        origin_server_timestamp,
+        actor,
+        preview,
+        content,
+        relation,
+    })
+}
+
+fn decode_actor(value: &str) -> Result<ProjectedMessageActor, MessageTimelineQueryFailure> {
+    let stored = serde_json::from_str::<StoredActor>(value).map_err(|_| corrupt_query())?;
+    let mut identity = BridgeAgentIdentity::new(
+        AgentId::from_uuid(parse_v7(&stored.agent_id)?),
+        stored.display_name,
+        stored.matrix_user_id,
+        AgentInstanceId::from_uuid(parse_v7(&stored.instance_id)?),
+    )
+    .map_err(|_| corrupt_query())?;
+    if let Some(avatar_url) = stored.avatar_url {
+        identity = identity
+            .with_avatar_url(avatar_url)
+            .map_err(|_| corrupt_query())?;
+    }
+    let provenance =
+        MessageProvenance::try_from(stored.provenance.as_str()).map_err(|_| corrupt_query())?;
+    let verification = match stored.instance_verification.as_str() {
+        "active" => ProjectedActorInstanceVerification::Active,
+        "revoked_after_event" => ProjectedActorInstanceVerification::RevokedAfterEvent,
+        _ => return Err(corrupt_query()),
+    };
+    Ok(ProjectedMessageActor::new(identity, provenance).with_instance_verification(verification))
+}
+
+fn decode_preview(value: &str) -> Result<MessagePreview, MessageTimelineQueryFailure> {
+    let stored = serde_json::from_str::<StoredPreview>(value).map_err(|_| corrupt_query())?;
+    let language = stored
+        .language
+        .map(MessageLanguage::new)
+        .transpose()
+        .map_err(|_| corrupt_query())?;
+    let risk_flags = stored
+        .risk_flags
+        .into_iter()
+        .map(MessageRiskFlag::new)
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(MessageRiskFlags::new)
+        .map_err(|_| corrupt_query())?;
+    Ok(MessagePreview::new(
+        MessageTitle::new(stored.title).map_err(|_| corrupt_query())?,
+        MessageSummary::new(stored.summary).map_err(|_| corrupt_query())?,
+        ContentMediaType::new(stored.content_type).map_err(|_| corrupt_query())?,
+        language,
+        MessageSensitivity::try_from(stored.sensitivity.as_str()).map_err(|_| corrupt_query())?,
+        risk_flags,
+    ))
+}
+
+fn decode_content(value: &str) -> Result<MessageContentReference, MessageTimelineQueryFailure> {
+    let stored = serde_json::from_str::<StoredContent>(value).map_err(|_| corrupt_query())?;
+    MessageContentReference::new(
+        ContentId::from_uuid(parse_v7(&stored.content_id)?),
+        Sha256Digest::from_bytes(decode_digest(&stored.digest_sha256)?),
+        stored.size_bytes,
+    )
+    .map_err(|_| corrupt_query())
+}
+
+fn parse_v7(value: &str) -> Result<Uuid, MessageTimelineQueryFailure> {
+    let id = Uuid::parse_str(value).map_err(|_| corrupt_query())?;
+    if id.get_version() != Some(Version::SortRand) {
+        return Err(corrupt_query());
+    }
+    Ok(id)
+}
+
+fn decode_digest(value: &str) -> Result<[u8; 32], MessageTimelineQueryFailure> {
+    if value.len() != 64 {
+        return Err(corrupt_query());
+    }
+    let mut digest = [0_u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        digest[index] = decode_hex_nibble(pair[0])?
+            .checked_mul(16)
+            .and_then(|high| high.checked_add(decode_hex_nibble(pair[1]).ok()?))
+            .ok_or_else(corrupt_query)?;
+    }
+    Ok(digest)
+}
+
+fn decode_hex_nibble(value: u8) -> Result<u8, MessageTimelineQueryFailure> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        _ => Err(corrupt_query()),
+    }
+}
+
+fn map_query_sqlx_error(error: &sqlx::Error) -> MessageTimelineQueryFailure {
+    match classify(error) {
+        SqliteFailureKind::Unavailable | SqliteFailureKind::Conflict => {
+            query_failure(MessageTimelineQueryFailureKind::Unavailable)
+        }
+        SqliteFailureKind::Corrupt | SqliteFailureKind::NotFound => corrupt_query(),
+    }
+}
+
+const fn query_failure(kind: MessageTimelineQueryFailureKind) -> MessageTimelineQueryFailure {
+    MessageTimelineQueryFailure::new(kind)
+}
+
+const fn corrupt_query() -> MessageTimelineQueryFailure {
+    query_failure(MessageTimelineQueryFailureKind::Corrupt)
 }
 
 async fn apply_mutation(
@@ -469,12 +742,12 @@ fn encode_preview(preview: &MessagePreview) -> String {
         "title": preview.title().as_str(),
         "summary": preview.summary().as_str(),
         "contentType": preview.content_type().as_str(),
-        "language": preview.language().map(agent_room_domain::messages::MessageLanguage::as_str),
+        "language": preview.language().map(MessageLanguage::as_str),
         "sensitivity": preview.sensitivity().as_str(),
         "riskFlags": preview
             .risk_flags()
             .iter()
-            .map(agent_room_domain::messages::MessageRiskFlag::as_str)
+            .map(MessageRiskFlag::as_str)
             .collect::<Vec<_>>()
     })
     .to_string()

@@ -236,3 +236,128 @@ pub trait MessageTimelineProjectionStore: Send + Sync {
         batch: &'a MessageProjectionBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>>;
 }
+
+const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessagePreviewQuery {
+    room_id: MatrixRoomId,
+    before_event_id: Option<MatrixEventId>,
+    limit: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessagePreviewQueryError {
+    InvalidLimit,
+}
+
+impl MessagePreviewQuery {
+    /// 创建有硬上限的房间预览分页查询。
+    ///
+    /// # Errors
+    ///
+    /// 分页大小为零或超过本地协议上限时返回错误。
+    pub fn new(
+        room_id: MatrixRoomId,
+        before_event_id: Option<MatrixEventId>,
+        limit: u16,
+    ) -> Result<Self, MessagePreviewQueryError> {
+        if limit == 0 || limit > MAXIMUM_PREVIEW_PAGE_SIZE {
+            return Err(MessagePreviewQueryError::InvalidLimit);
+        }
+        Ok(Self {
+            room_id,
+            before_event_id,
+            limit,
+        })
+    }
+
+    pub const fn room_id(&self) -> &MatrixRoomId {
+        &self.room_id
+    }
+
+    pub const fn before_event_id(&self) -> Option<&MatrixEventId> {
+        self.before_event_id.as_ref()
+    }
+
+    pub const fn limit(&self) -> u16 {
+        self.limit
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessagePreviewPage {
+    previews: Vec<ProjectedMessagePreview>,
+    next_cursor: Option<MatrixEventId>,
+}
+
+impl MessagePreviewPage {
+    pub const fn new(
+        previews: Vec<ProjectedMessagePreview>,
+        next_cursor: Option<MatrixEventId>,
+    ) -> Self {
+        Self {
+            previews,
+            next_cursor,
+        }
+    }
+
+    pub fn previews(&self) -> &[ProjectedMessagePreview] {
+        &self.previews
+    }
+
+    pub const fn next_cursor(&self) -> Option<&MatrixEventId> {
+        self.next_cursor.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageTimelineQueryFailureKind {
+    Unavailable,
+    CursorNotFound,
+    Corrupt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageTimelineQueryFailure {
+    kind: MessageTimelineQueryFailureKind,
+}
+
+impl MessageTimelineQueryFailure {
+    pub const fn new(kind: MessageTimelineQueryFailureKind) -> Self {
+        Self { kind }
+    }
+
+    pub const fn kind(self) -> MessageTimelineQueryFailureKind {
+        self.kind
+    }
+}
+
+pub trait MessageTimelineQueryRepository: Send + Sync {
+    /// 从已验证的本地投影读取预览，不触发正文下载。
+    fn list_previews<'a>(
+        &'a self,
+        query: &'a MessagePreviewQuery,
+    ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>>;
+}
+
+#[cfg(test)]
+mod query_tests {
+    use agent_room_application::ports::MatrixRoomId;
+
+    use super::{MessagePreviewQuery, MessagePreviewQueryError};
+
+    #[test]
+    fn 预览分页在核心层保持硬上限() {
+        let room_id = MatrixRoomId::new("!room:matrix.test").expect("房间标识有效");
+
+        assert_eq!(
+            MessagePreviewQuery::new(room_id.clone(), None, 0),
+            Err(MessagePreviewQueryError::InvalidLimit)
+        );
+        assert_eq!(
+            MessagePreviewQuery::new(room_id, None, 51),
+            Err(MessagePreviewQueryError::InvalidLimit)
+        );
+    }
+}

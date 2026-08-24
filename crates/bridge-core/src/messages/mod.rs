@@ -26,8 +26,10 @@ pub use ports::{
     MessageSubmissionRepository, MessageSubmissionState,
 };
 pub use projection::{
-    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
-    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
-    MessageTimelineGap, MessageTimelineProjectionStore, ProjectedActorInstanceVerification,
-    ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
+    MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError, MessageProjectionBatch,
+    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
+    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+    ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
+    ProjectedMessageRevision,
 };

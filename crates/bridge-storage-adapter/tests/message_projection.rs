@@ -4,9 +4,10 @@ use agent_room_application::ports::{
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailureKind,
-        MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
-        MessageTimelineProjectionStore, ProjectedActorInstanceVerification, ProjectedMessageActor,
+        MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
+        MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
+        MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailureKind,
+        MessageTimelineQueryRepository, ProjectedActorInstanceVerification, ProjectedMessageActor,
         ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
@@ -256,6 +257,94 @@ async fn 批次中途编码失败必须回滚事件与同步游标() {
         0
     );
     assert_eq!(current_cursor(&inspector).await, None);
+}
+
+#[tokio::test]
+async fn 预览查询按本地到达顺序分页且不读取正文() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let batch = MessageProjectionBatch::new(
+        sync_token("sync-page"),
+        vec![
+            preview_mutation(
+                "$page-first:matrix.test",
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                1_700_000_000_003,
+                "第一条",
+                1,
+                Some(30),
+            ),
+            preview_mutation(
+                "$page-second:matrix.test",
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                1_700_000_000_002,
+                "第二条",
+                2,
+                Some(20),
+            ),
+            preview_mutation(
+                "$page-third:matrix.test",
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                1_700_000_000_001,
+                "第三条",
+                3,
+                Some(10),
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    store.apply(&batch).await.expect("预览批次可投影");
+
+    let first_page = store
+        .list_previews(&MessagePreviewQuery::new(room_id(), None, 2).expect("查询有效"))
+        .await
+        .expect("首页可读取");
+    assert_eq!(
+        first_page
+            .previews()
+            .iter()
+            .map(|preview| preview.preview.summary().as_str())
+            .collect::<Vec<_>>(),
+        ["第三条", "第二条"]
+    );
+    assert_eq!(
+        first_page.next_cursor().expect("仍有下一页").as_str(),
+        "$page-second:matrix.test"
+    );
+
+    let second_page = store
+        .list_previews(
+            &MessagePreviewQuery::new(room_id(), first_page.next_cursor().cloned(), 2)
+                .expect("查询有效"),
+        )
+        .await
+        .expect("次页可读取");
+    assert_eq!(second_page.previews().len(), 1);
+    assert_eq!(
+        second_page.previews()[0].preview.summary().as_str(),
+        "第一条"
+    );
+    assert!(second_page.next_cursor().is_none());
+}
+
+#[tokio::test]
+async fn 预览查询拒绝不存在的游标() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let failure = store
+        .list_previews(
+            &MessagePreviewQuery::new(room_id(), Some(event_id("$missing:matrix.test")), 20)
+                .expect("查询有效"),
+        )
+        .await
+        .expect_err("不存在的游标不能伪装成空页");
+
+    assert_eq!(
+        failure.kind(),
+        MessageTimelineQueryFailureKind::CursorNotFound
+    );
 }
 
 async fn open_store() -> (TempDir, SqliteMessageTimelineRepository, SqlitePool) {
