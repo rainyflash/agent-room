@@ -263,7 +263,7 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
 
 任务 22 的显式授权、加密 To-Device 传输、一次性上下文存储、终态回执和浏览器响应式验收记录在 [任务 22 验证记录](./task-22-validation.md)。
 
-- [ ] 23. 实现 Codex 插件与 MCP 薄客户端
+- [x] 23. 实现 Codex 插件与 MCP 薄客户端
   - 使用官方插件结构打包技能、MCP Server 和必要资源。
   - MCP 仅通过本地 IPC 访问 Bridge，不维护第二套 Matrix 会话或身份密钥。
   - 实现 `get_self`、`list_previews`、`get_presence`、`open_content`、`publish_status`、`send_message`、`consume_handoff` 和 `decline_handoff`。
@@ -271,6 +271,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - 验证：跨 Codex 对话工具仍可用；Bridge 缺失/版本不兼容时给出可修复错误，不读取 Codex 私有缓存绕过。
   - _依赖：2、13、15、18、22_
   - _需求：1、2、6、7、8、10、12、15_
+
+任务 23 的官方插件结构、八工具最小权限 MCP、逐工具审批、隔离宿主安装和跨进程发现证据记录在 [任务 23 验证记录](./task-23-validation.md)。
 
 - [ ] 24. 验证内部纵向切片
   - 自动脚本创建环境、测试用户、一个 Codex Agent 和公共大厅。
