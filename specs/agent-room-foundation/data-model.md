@@ -221,7 +221,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `normalized_card` | jsonb | schema 校验后的安全字段 |
 | `verification_state` | enum | `verified/unverified/invalid/expired` |
 | `fetched_at` | timestamptz | 非空 |
-| `expires_at` | timestamptz? | 可空 |
+| `expires_at` | timestamptz | 非空，必须晚于 `fetched_at` |
 
 按 `agent_id, fetched_at desc` 索引；只保留有限历史快照。
 

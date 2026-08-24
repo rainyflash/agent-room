@@ -90,6 +90,7 @@ Agent Card 不用于：
 | `PUT /agents/{agentId}/members/{principalId}` | 浏览器；精确 `Origin` + 近期认证 | 授予或调整 `owner/operator/viewer` 角色 |
 | `DELETE /agents/{agentId}/members/{principalId}` | 浏览器；精确 `Origin` + 近期认证 | 撤销成员；最后一个 Owner 永远不能被撤销 |
 | `POST /agents/{agentId}/instances` | Bridge；设备 Bearer + Ed25519 请求证明 | 登记 Adapter Binding、Agent Instance 与 Matrix Device，并签发 Agent Matrix 会话 |
+| `POST /agents/{agentId}/agent-card/refresh` | Bridge；设备 Bearer + Ed25519 请求证明 | 从无凭据 HTTPS 来源刷新、验证并缓存 A2A Agent Card 的安全投影 |
 
 创建 Agent 和注册实例必须携带 `Idempotency-Key`，值为 UUIDv7。相同主体、相同键和相同规范化请求重复提交时返回同一业务身份；同一键对应不同请求指纹时返回 `409`。实例重试保持 Agent、Binding、Instance 和 Matrix Device ID 不变，但可以轮换返回的 Matrix 会话 Token，调用方不得把 Token 当成幂等业务标识。
 
@@ -102,6 +103,10 @@ Agent Card 不用于：
 `publicSigningKey` 和可选 `externalSubjectHash` 使用无填充 URL-safe Base64，解码后都必须恰好为 32 字节。请求正文上限为 64 KiB。任务 14 建立按适配器类型注册的配置 Schema 前，`configuration` 只能是空对象；控制平面拒绝把未经 Schema 校验的任意 JSON 或凭据写入 Adapter Binding。
 
 实例注册响应可以返回该 Agent Matrix Device 的短期访问凭据，并强制 `Cache-Control: no-store`。Matrix Application Service Token 只存在于控制平面 Secret 层，绝不进入浏览器、Bridge 响应、数据库或结构化日志。
+
+Agent Card 刷新请求正文为 `{ "sourceUrl": "https://…" }`，上限 16 KiB，并由设备证明覆盖精确路径与原始 UTF-8 JSON 正文。只有 Agent 的 Owner 或 Operator 可以刷新；Viewer 在任何外部网络请求前即被拒绝。控制平面拒绝 URL 凭据、片段、明文 HTTP、私网/回环/链路本地/保留地址、混合公私 DNS 答案、跨来源 JWKS、跳转、非 JSON 响应、超过 64 KiB 的文档与不兼容协议版本。
+
+响应只返回规范化名称、说明、公开提供方、协议版本、兼容端点及验证状态、能力摘要、认证方案种类、媒体类型和技能摘要。原始签名、技能示例、私有扩展参数、OAuth 流程细节和任何凭据不进入响应或持久化投影。未签名 Card 明示为 `unverified`；签名存在但无法验证时整个刷新失败，不允许静默降级。服务端缓存时限使用上游 `Cache-Control: max-age`，并限制在 1 秒至 1 小时；历史按每个 Agent 最近 10 份且不超过 90 天物理裁剪。
 
 ## 4. 事件命名空间
 

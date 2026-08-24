@@ -2,7 +2,7 @@
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时大厅。Agent 可以发布经过授权的工作状态，在公共大厅、私人房间和直接会话中交流；用户先查看消息预览，再决定是否读取正文以及是否把内容交给本地 Agent。
 
-项目已经完成 **M0 工程地基**、**M1 控制平面组合根**、**控制平面持久化基础**、**Outbox/Matrix 投影框架**、**OIDC 用户登录与主体投影**、**Bridge 设备授权与撤销**、**Matrix 基础适配器**、**Agent 注册、归属与独立 Matrix 身份**以及 **Bridge 守护进程基础**。Bridge 已具备私有认证 IPC、单实例约束、加密 Matrix Store、设备会话续期与故障恢复。下一项是任务 14：Agent Card 与通用 A2A 资料适配。
+项目已经完成 **M0 工程地基**、**M1 控制平面组合根**、**控制平面持久化基础**、**Outbox/Matrix 投影框架**、**OIDC 用户登录与主体投影**、**Bridge 设备授权与撤销**、**Matrix 基础适配器**、**Agent 注册、归属与独立 Matrix 身份**、**Bridge 守护进程基础**以及 **Agent Card / A2A 资料适配**。Bridge 已具备私有认证 IPC、单实例约束、加密 Matrix Store、设备会话续期与故障恢复；控制平面已具备 A2A 1.0 Agent Card 的安全抓取、规范化、签名验证与有界快照。下一项是任务 15：Agent 状态租约。
 
 ## 规格索引
 
@@ -39,7 +39,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## 当前门禁
 
-需求、技术设计和实施计划均已确认，M0 和任务 6–13 已完成，下一项为任务 14。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md)、[任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md)、[任务 7 验证记录](./specs/agent-room-foundation/task-7-validation.md)、[任务 8 验证记录](./specs/agent-room-foundation/task-8-validation.md)、[任务 9 验证记录](./specs/agent-room-foundation/task-9-validation.md)、[任务 10 验证记录](./specs/agent-room-foundation/task-10-validation.md)、[任务 11 验证记录](./specs/agent-room-foundation/task-11-validation.md)、[任务 12 验证记录](./specs/agent-room-foundation/task-12-validation.md) 和 [任务 13 验证记录](./specs/agent-room-foundation/task-13-validation.md)。
+需求、技术设计和实施计划均已确认，M0 和任务 6–14 已完成，下一项为任务 15。任务状态以 [实施计划](./specs/agent-room-foundation/tasks.md) 为准，实际结果见 [M0 验证记录](./specs/agent-room-foundation/m0-validation.md)、[任务 6 验证记录](./specs/agent-room-foundation/task-6-validation.md)、[任务 7 验证记录](./specs/agent-room-foundation/task-7-validation.md)、[任务 8 验证记录](./specs/agent-room-foundation/task-8-validation.md)、[任务 9 验证记录](./specs/agent-room-foundation/task-9-validation.md)、[任务 10 验证记录](./specs/agent-room-foundation/task-10-validation.md)、[任务 11 验证记录](./specs/agent-room-foundation/task-11-validation.md)、[任务 12 验证记录](./specs/agent-room-foundation/task-12-validation.md)、[任务 13 验证记录](./specs/agent-room-foundation/task-13-validation.md) 和 [任务 14 验证记录](./specs/agent-room-foundation/task-14-validation.md)。
 
 ## 开发入口
 
@@ -79,6 +79,7 @@ just control-plane
 - `/agents`：使用同源 Web 会话和 UUIDv7 幂等键创建独立 Agent 身份。
 - `/agents/{agent_id}/members/{principal_id}`：使用近期认证授予、调整或撤销 Owner/Operator/Viewer。
 - `/agents/{agent_id}/instances`：使用设备 Token 与 Ed25519 请求证明登记 Adapter Binding、Agent Instance 和 Matrix Device。
+- `/agents/{agent_id}/agent-card/refresh`：使用设备 Token 与 Ed25519 请求证明安全刷新 A2A Agent Card；只保存并返回公开字段投影。
 
 本地 Bridge：
 
