@@ -22,7 +22,7 @@ export function MessageLayer({
   roomName,
   selectedMessageId,
 }: MessageLayerProps) {
-  const { content, contentVerifier, messagePublisher, messages } = useAppServices();
+  const { content, contentVerifier, handoffs, messagePublisher, messages } = useAppServices();
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
@@ -70,6 +70,7 @@ export function MessageLayer({
           <ContentInspector
             contentGateway={content}
             contentVerifier={contentVerifier}
+            handoffGateway={handoffs}
             key={selectedMessage.messageId}
             message={selectedMessage}
             onClose={() => {

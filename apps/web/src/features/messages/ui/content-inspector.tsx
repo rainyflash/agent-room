@@ -1,6 +1,7 @@
 import { useMachine } from '@xstate/react';
 import { Button } from '@agent-room/ui-system';
 import {
+  Bot,
   Download,
   Eye,
   FileCheck2,
@@ -13,9 +14,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
+import { HandoffPanel } from '@/features/handoffs/ui/handoff-panel';
 import { createContentInspectionMachine } from '@/features/messages/application/content-inspection-machine';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageSignatureStatus, RoomMessageSignal } from '@/features/messages/domain/message';
@@ -30,6 +33,7 @@ const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>
 export type ContentInspectorProps = {
   readonly contentGateway: ContentGateway;
   readonly contentVerifier: ContentVerifier;
+  readonly handoffGateway: HandoffGateway;
   readonly message: RoomMessageSignal;
   readonly onClose: () => void;
 };
@@ -37,6 +41,7 @@ export type ContentInspectorProps = {
 export function ContentInspector({
   contentGateway,
   contentVerifier,
+  handoffGateway,
   message,
   onClose,
 }: ContentInspectorProps) {
@@ -47,6 +52,7 @@ export function ContentInspector({
     [contentGateway, contentVerifier],
   );
   const [inspection, send] = useMachine(machine);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const createdAt = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -196,42 +202,75 @@ export function ContentInspector({
             </div>
           ) : null}
           {inspection.matches('ready') && content !== null ? (
-            <section className="content-inspector__verified" aria-label={t('messages.body.label')}>
-              <header>
-                <FileCheck2 aria-hidden="true" />
-                <div>
-                  <strong>{t('messages.body.verified')}</strong>
-                  <span>{content.digestSha256.slice(0, 16)}…</span>
-                </div>
-              </header>
-              {content.mode === 'text' && content.text !== undefined ? (
-                content.mediaType === 'text/markdown' ? (
-                  <RestrictedMarkdown source={content.text} />
+            <>
+              <section
+                className="content-inspector__verified"
+                aria-label={t('messages.body.label')}
+              >
+                <header>
+                  <FileCheck2 aria-hidden="true" />
+                  <div>
+                    <strong>{t('messages.body.verified')}</strong>
+                    <span>{content.digestSha256.slice(0, 16)}…</span>
+                  </div>
+                </header>
+                {content.mode === 'text' && content.text !== undefined ? (
+                  content.mediaType === 'text/markdown' ? (
+                    <RestrictedMarkdown source={content.text} />
+                  ) : (
+                    <pre>{content.text}</pre>
+                  )
                 ) : (
-                  <pre>{content.text}</pre>
-                )
-              ) : (
-                <div className="content-inspector__attachment">
-                  <p>{t('messages.body.attachmentNotice')}</p>
-                  <Button
-                    icon={<Download aria-hidden="true" />}
-                    onClick={() => {
-                      downloadVerifiedContent(
-                        content.bytes,
-                        content.mediaType,
-                        reference.contentId,
-                      );
-                    }}
-                    tone="quiet"
-                  >
-                    {t('messages.body.download')}
-                  </Button>
+                  <div className="content-inspector__attachment">
+                    <p>{t('messages.body.attachmentNotice')}</p>
+                    <Button
+                      icon={<Download aria-hidden="true" />}
+                      onClick={() => {
+                        downloadVerifiedContent(
+                          content.bytes,
+                          content.mediaType,
+                          reference.contentId,
+                        );
+                      }}
+                      tone="quiet"
+                    >
+                      {t('messages.body.download')}
+                    </Button>
+                  </div>
+                )}
+                {content.mediaType === 'text/markdown' ? (
+                  <p className="content-inspector__sandbox-note">
+                    {t('messages.body.safeMarkdown')}
+                  </p>
+                ) : null}
+              </section>
+              <section className="content-inspector__handoff-gate">
+                <Bot aria-hidden="true" />
+                <div>
+                  <strong>{t('handoff.gate.title')}</strong>
+                  <p>{t('handoff.gate.detail')}</p>
                 </div>
-              )}
-              {content.mediaType === 'text/markdown' ? (
-                <p className="content-inspector__sandbox-note">{t('messages.body.safeMarkdown')}</p>
+                <Button
+                  disabled={handoffOpen}
+                  onClick={() => {
+                    setHandoffOpen(true);
+                  }}
+                  size="compact"
+                  tone="network"
+                >
+                  {t('handoff.gate.open')}
+                </Button>
+              </section>
+              {handoffOpen ? (
+                <HandoffPanel
+                  gateway={handoffGateway}
+                  message={{ ...message, content: reference, preview }}
+                  onBack={() => {
+                    setHandoffOpen(false);
+                  }}
+                />
               ) : null}
-            </section>
+            </>
           ) : null}
         </>
       )}

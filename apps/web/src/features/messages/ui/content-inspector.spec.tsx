@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
@@ -51,6 +52,37 @@ describe('ContentInspector', () => {
     expect(screen.getByText('[link](javascript:alert(1))')).toBeVisible();
     expect(view.container.querySelector('img')).toBeNull();
     expect(view.container.querySelector('a')).toBeNull();
+  });
+
+  it('查看正文不会隐式交付，交给 Agent 需要独立确认精确实例和范围', async () => {
+    const user = userEvent.setup();
+    const runtime = dependencies('Verified remote context');
+    renderInspector(runtime);
+
+    expect(screen.queryByRole('button', { name: 'Give to Agent' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open full content' }));
+    await screen.findByText('Length and SHA-256 verified');
+
+    expect(runtime.listTargets).not.toHaveBeenCalled();
+    expect(runtime.approve).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Give to Agent' }));
+    await screen.findByRole('heading', { name: 'Approve one-time context' });
+
+    expect(runtime.listTargets).toHaveBeenCalledWith('!public:agent-room.test');
+    expect(runtime.approve).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm handoff' }));
+    await screen.findByText('Approval sent');
+
+    expect(runtime.approve).toHaveBeenCalledOnce();
+    expect(runtime.approve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permissions: ['read_text', 'include_metadata'],
+        purpose: 'summarize',
+        target: expect.objectContaining({
+          instanceId: '01990d9e-8400-7000-8000-000000000012',
+        }),
+      }),
+    );
   });
 
   it('撤回消息永远不会出现正文读取按钮', () => {
@@ -100,10 +132,39 @@ function dependencies(text: string) {
       }),
     ),
   );
+  const approve = vi.fn<HandoffGateway['approve']>((request) =>
+    Promise.resolve(
+      ok({ handoffId: request.handoffId, kind: 'submitted' as const, reused: false }),
+    ),
+  );
+  const listTargets = vi.fn<HandoffGateway['listTargets']>(() =>
+    Promise.resolve(
+      ok([
+        {
+          agentId: '01990d9e-8400-7000-8000-000000000011',
+          displayName: 'Local Codex Agent',
+          instanceId: '01990d9e-8400-7000-8000-000000000012',
+        },
+      ]),
+    ),
+  );
+  const reconcile = vi.fn<HandoffGateway['reconcile']>((handoffId) =>
+    Promise.resolve(
+      ok({ expiresAtUnixMs: 1_800_000_000_000, handoffId, status: 'delivered' as const }),
+    ),
+  );
+  const revoke = vi.fn<HandoffGateway['revoke']>((handoffId) =>
+    Promise.resolve(
+      ok({ expiresAtUnixMs: 1_800_000_000_000, handoffId, status: 'revoked' as const }),
+    ),
+  );
   return {
+    approve,
     content: { download, issueReadTicket } satisfies ContentGateway,
     download,
+    handoffs: { approve, listTargets, reconcile, revoke } satisfies HandoffGateway,
     issueReadTicket,
+    listTargets,
     onClose: vi.fn(),
     verifier: { verify } satisfies ContentVerifier,
     verify,
@@ -119,6 +180,7 @@ function renderInspector(
       <ContentInspector
         contentGateway={runtime.content}
         contentVerifier={runtime.verifier}
+        handoffGateway={runtime.handoffs}
         message={selectedMessage}
         onClose={runtime.onClose}
       />
