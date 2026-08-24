@@ -381,6 +381,25 @@ async fn verify_message_flow(scenario: &RoomScenario) -> MessageFlowResult {
 }
 
 async fn verify_receipt_and_leave(scenario: &RoomScenario, message_flow: MessageFlowResult) {
+    let developer_user_id = scenario.developer.session().metadata().user_id();
+    let agent_user_id = scenario.agent.session().metadata().user_id();
+    let developer_authority = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_authority(&scenario.room_id, developer_user_id)
+        .await
+        .expect("创建者权威状态可读取");
+    assert!(developer_authority.is_joined());
+    assert!(developer_authority.power_level().is_at_least(50));
+    let agent_authority = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_authority(&scenario.room_id, agent_user_id)
+        .await
+        .expect("成员权威状态可读取");
+    assert!(agent_authority.is_joined());
+    assert!(!agent_authority.power_level().is_at_least(50));
+
     scenario
         .agent
         .gateway()
@@ -398,7 +417,21 @@ async fn verify_receipt_and_leave(scenario: &RoomScenario, message_flow: Message
     )
     .await;
     assert_room_kind(&agent_left, &scenario.room_id, MatrixRoomSyncKind::Left);
+    let departed_authority = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_authority(&scenario.room_id, agent_user_id)
+        .await
+        .expect("离房后的权威状态可读取");
+    assert!(!departed_authority.is_joined());
     leave_with_retry(scenario.developer.gateway(), &scenario.room_id).await;
+    let stale_snapshot = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_authority(&scenario.room_id, agent_user_id)
+        .await
+        .expect_err("校验者离房后不得把离房快照当作当前状态");
+    assert_eq!(stale_snapshot.kind(), MatrixFailureKind::Forbidden);
 }
 
 fn factory(

@@ -10,9 +10,10 @@ pub use failure::{
 pub use models::{
     MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentUserRegistration,
     MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
-    MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomKind, MatrixRoomPreset,
-    MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
+    MatrixLogin, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixRoomAuthority,
+    MatrixRoomKind, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
+    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
+    MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
@@ -48,6 +49,17 @@ pub trait MatrixClientFactory: Send + Sync {
         &'a self,
         session: &'a MatrixSession,
     ) -> PortFuture<'a, MatrixResult<MatrixConnection>>;
+}
+
+/// 从 Homeserver 当前房间状态读取成员资格和 Power Level。
+///
+/// 实现不得用本地同步缓存或控制平面投影替代权威状态查询。
+pub trait MatrixRoomAuthorityGateway: Send + Sync {
+    fn inspect_room_authority<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>>;
 }
 
 /// 已认证 Matrix 会话的协议无关能力端口。

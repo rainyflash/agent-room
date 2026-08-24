@@ -1,6 +1,9 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{PortFuture, PrincipalRegistration, PrincipalRepository},
+    ports::{
+        ContentPrincipalIdentityLookup, MatrixUserId, PortFuture, PrincipalRegistration,
+        PrincipalRepository,
+    },
 };
 use agent_room_domain::{
     identity::{Principal, PrincipalStatus},
@@ -95,6 +98,28 @@ impl PrincipalRepository for PostgresRepositories {
                 }
                 None => Err(classify_missing_principal(&self.pool, principal.id()).await?),
             }
+        })
+    }
+}
+
+impl ContentPrincipalIdentityLookup for PostgresRepositories {
+    fn find_active_matrix_user(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
+        Box::pin(async move {
+            let operation = "content_identity.find_active_matrix_user";
+            let matrix_user_id: Option<String> = sqlx::query_scalar(
+                "SELECT matrix_user_id FROM agent_room.principal WHERE id = $1 AND status = 'active'",
+            )
+            .bind(principal_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            matrix_user_id
+                .map(MatrixUserId::new)
+                .transpose()
+                .map_err(|_| corrupt_data(operation))
         })
     }
 }

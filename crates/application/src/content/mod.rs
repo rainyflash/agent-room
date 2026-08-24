@@ -1,7 +1,11 @@
+mod authorization;
 mod lifecycle;
 mod read;
 mod upload;
 
+pub use authorization::{
+    ContentMembershipAuthorizationDependencies, ContentMembershipAuthorizationService,
+};
 pub use lifecycle::{
     BindContentEventDependencies, BindContentEventFailure, BindContentEventOutcome,
     BindContentEventRequest, BindContentEventService, CleanupContentDependencies,

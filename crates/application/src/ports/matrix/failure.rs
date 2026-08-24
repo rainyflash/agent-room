@@ -19,6 +19,7 @@ pub enum MatrixOperation {
     SendStateEvent,
     SendReceipt,
     Backfill,
+    InspectRoomAuthority,
 }
 
 impl MatrixOperation {
@@ -37,6 +38,7 @@ impl MatrixOperation {
                 | Self::SendStateEvent
                 | Self::SendReceipt
                 | Self::Backfill
+                | Self::InspectRoomAuthority
         )
     }
 }

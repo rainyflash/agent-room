@@ -3,10 +3,11 @@ use std::{num::NonZeroU16, sync::Arc, time::Duration};
 use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixClientFactory,
     MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
-    MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixReceipt,
-    MatrixReceiptKind, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent,
-    MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
+    MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixPowerLevel,
+    MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
+    MatrixRoomAuthorityGateway, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset,
+    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
+    MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
 };
 use matrix_sdk::{
     Client, SessionMeta, SessionTokens,
@@ -24,10 +25,20 @@ use matrix_sdk::{
                 create_room::v3::{CreationContent, Request as CreateRoomRequest, RoomPreset},
             },
             session::login::v3::{LoginInfo, Password, Request as LoginRequest},
+            state::get_state_event_for_key::v3::{
+                Request as GetStateEventRequest, StateEventFormat,
+            },
             sync::sync_events::v3::Filter as SyncFilter,
             uiaa::{MatrixUserIdentifier, UserIdentifier},
         },
-        events::receipt::ReceiptThread,
+        events::{
+            StateEventType,
+            receipt::ReceiptThread,
+            room::{
+                member::{MembershipState, RoomMemberEventContent},
+                power_levels::RoomPowerLevelsEventContent,
+            },
+        },
         room::RoomType,
         serde::Raw,
     },
@@ -388,6 +399,64 @@ impl MatrixGateway for MatrixSdkGateway {
     }
 }
 
+impl MatrixRoomAuthorityGateway for MatrixSdkGateway {
+    fn inspect_room_authority<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::InspectRoomAuthority;
+            let room_id = parse_room_id(room_id, operation)?;
+            let user_id = parse_user_id(user_id, operation)?;
+            let inspector_user_id = parse_user_id(self.metadata.user_id(), operation)?;
+            let inspector_is_joined = get_state_content::<RoomMemberEventContent>(
+                &self.client,
+                room_id.clone(),
+                StateEventType::RoomMember,
+                inspector_user_id.to_string(),
+                operation,
+            )
+            .await?
+            .is_some_and(|content| content.membership == MembershipState::Join);
+            if !inspector_is_joined {
+                return Err(MatrixFailure::new(operation, MatrixFailureKind::Forbidden));
+            }
+
+            let user_is_joined = if inspector_user_id == user_id {
+                true
+            } else {
+                get_state_content::<RoomMemberEventContent>(
+                    &self.client,
+                    room_id.clone(),
+                    StateEventType::RoomMember,
+                    user_id.to_string(),
+                    operation,
+                )
+                .await?
+                .is_some_and(|content| content.membership == MembershipState::Join)
+            };
+            if !user_is_joined {
+                return Ok(MatrixRoomAuthority::not_joined());
+            }
+
+            let (power_levels, create_event) = tokio::try_join!(
+                get_state_content::<RoomPowerLevelsEventContent>(
+                    &self.client,
+                    room_id.clone(),
+                    StateEventType::RoomPowerLevels,
+                    String::new(),
+                    operation,
+                ),
+                get_room_create_event(&self.client, room_id, operation),
+            )?;
+            let create_event = create_event.ok_or_else(|| invalid_response_failure(operation))?;
+            let power_level = effective_power_level(&user_id, power_levels.as_ref(), &create_event);
+            Ok(MatrixRoomAuthority::joined(power_level))
+        })
+    }
+}
+
 impl MatrixSdkGateway {
     fn room(
         &self,
@@ -412,12 +481,117 @@ fn connection_from_client(
         .ok_or_else(|| invalid_response_failure(operation))?;
     let session = from_sdk_session(&sdk_session, operation)?;
     let metadata = session.metadata().clone();
-    let gateway: Arc<dyn MatrixGateway> = Arc::new(MatrixSdkGateway {
+    let sdk_gateway = Arc::new(MatrixSdkGateway {
         client,
         metadata,
         sync_timeline_limit,
     });
-    Ok(MatrixConnection::from_parts(session, gateway))
+    let gateway: Arc<dyn MatrixGateway> = sdk_gateway.clone();
+    let room_authority_gateway: Arc<dyn MatrixRoomAuthorityGateway> = sdk_gateway;
+    Ok(MatrixConnection::from_parts(
+        session,
+        gateway,
+        room_authority_gateway,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RoomCreateEventEnvelope {
+    sender: String,
+    content: RoomCreateEventContent,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RoomCreateEventContent {
+    #[serde(default)]
+    creator: Option<String>,
+    #[serde(default = "default_room_version")]
+    room_version: String,
+}
+
+async fn get_state_content<T>(
+    client: &Client,
+    room_id: matrix_sdk::ruma::OwnedRoomId,
+    event_type: StateEventType,
+    state_key: String,
+    operation: MatrixOperation,
+) -> MatrixResult<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let request = GetStateEventRequest::new(room_id, event_type, state_key);
+    match client.send(request).await {
+        Ok(response) => response
+            .into_content()
+            .deserialize_as_unchecked::<T>()
+            .map(Some)
+            .map_err(|_| invalid_response_failure(operation)),
+        Err(error) => map_optional_state_error(operation, &error),
+    }
+}
+
+async fn get_room_create_event(
+    client: &Client,
+    room_id: matrix_sdk::ruma::OwnedRoomId,
+    operation: MatrixOperation,
+) -> MatrixResult<Option<RoomCreateEventEnvelope>> {
+    let mut request = GetStateEventRequest::new(room_id, StateEventType::RoomCreate, String::new());
+    request.format = StateEventFormat::Event;
+    match client.send(request).await {
+        Ok(response) => serde_json::from_str(response.event_or_content.get())
+            .map(Some)
+            .map_err(|_| invalid_response_failure(operation)),
+        Err(error) => map_optional_state_error(operation, &error),
+    }
+}
+
+fn map_optional_state_error<T>(
+    operation: MatrixOperation,
+    error: &matrix_sdk::HttpError,
+) -> MatrixResult<Option<T>> {
+    let failure = map_http_error(operation, error);
+    if failure.kind() == MatrixFailureKind::NotFound {
+        Ok(None)
+    } else {
+        Err(failure)
+    }
+}
+
+fn effective_power_level(
+    user_id: &OwnedUserId,
+    power_levels: Option<&RoomPowerLevelsEventContent>,
+    create_event: &RoomCreateEventEnvelope,
+) -> MatrixPowerLevel {
+    let room_version = create_event.content.room_version.parse::<u16>().ok();
+    let creator = if room_version.is_some_and(|version| version >= 12) {
+        create_event.sender.as_str()
+    } else {
+        create_event
+            .content
+            .creator
+            .as_deref()
+            .unwrap_or(&create_event.sender)
+    };
+    if creator == user_id.as_str() && room_version.is_some_and(|version| version >= 12) {
+        return MatrixPowerLevel::Infinite;
+    }
+    let finite = power_levels.map_or_else(
+        || if creator == user_id.as_str() { 100 } else { 0 },
+        |content| {
+            i64::from(
+                content
+                    .users
+                    .get(user_id)
+                    .copied()
+                    .unwrap_or(content.users_default),
+            )
+        },
+    );
+    MatrixPowerLevel::finite(finite)
+}
+
+fn default_room_version() -> String {
+    "1".to_owned()
 }
 
 fn sync_filter(timeline_limit: NonZeroU16) -> SyncFilter {

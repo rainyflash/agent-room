@@ -7,8 +7,8 @@ use crate::ports::SecretValue;
 
 use super::{
     MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType, MatrixGateway,
-    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId,
-    MatrixUserId,
+    MatrixRoomAliasLocalpart, MatrixRoomAuthorityGateway, MatrixRoomId, MatrixStateKey,
+    MatrixSyncToken, MatrixTransactionId, MatrixUserId,
 };
 
 const MAX_LOGIN_ID_LENGTH: usize = 512;
@@ -190,11 +190,20 @@ impl MatrixSession {
 pub struct MatrixConnection {
     session: MatrixSession,
     gateway: Arc<dyn MatrixGateway>,
+    room_authority_gateway: Arc<dyn MatrixRoomAuthorityGateway>,
 }
 
 impl MatrixConnection {
-    pub const fn from_parts(session: MatrixSession, gateway: Arc<dyn MatrixGateway>) -> Self {
-        Self { session, gateway }
+    pub const fn from_parts(
+        session: MatrixSession,
+        gateway: Arc<dyn MatrixGateway>,
+        room_authority_gateway: Arc<dyn MatrixRoomAuthorityGateway>,
+    ) -> Self {
+        Self {
+            session,
+            gateway,
+            room_authority_gateway,
+        }
     }
 
     pub const fn session(&self) -> &MatrixSession {
@@ -209,8 +218,22 @@ impl MatrixConnection {
         Arc::clone(&self.gateway)
     }
 
-    pub fn into_parts(self) -> (MatrixSession, Arc<dyn MatrixGateway>) {
-        (self.session, self.gateway)
+    pub fn room_authority_gateway(&self) -> &dyn MatrixRoomAuthorityGateway {
+        self.room_authority_gateway.as_ref()
+    }
+
+    pub fn room_authority_gateway_handle(&self) -> Arc<dyn MatrixRoomAuthorityGateway> {
+        Arc::clone(&self.room_authority_gateway)
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        MatrixSession,
+        Arc<dyn MatrixGateway>,
+        Arc<dyn MatrixRoomAuthorityGateway>,
+    ) {
+        (self.session, self.gateway, self.room_authority_gateway)
     }
 }
 
@@ -220,6 +243,57 @@ impl fmt::Debug for MatrixConnection {
             .debug_struct("MatrixConnection")
             .field("metadata", self.session.metadata())
             .finish_non_exhaustive()
+    }
+}
+
+/// Matrix 用户在房间中的有效 Power Level。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixPowerLevel {
+    Finite(i64),
+    Infinite,
+}
+
+impl MatrixPowerLevel {
+    pub const fn finite(value: i64) -> Self {
+        Self::Finite(value)
+    }
+
+    pub const fn is_at_least(self, minimum: i64) -> bool {
+        match self {
+            Self::Finite(value) => value >= minimum,
+            Self::Infinite => true,
+        }
+    }
+}
+
+/// 单次权威状态查询得到的内容读取授权证据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatrixRoomAuthority {
+    joined: bool,
+    power_level: MatrixPowerLevel,
+}
+
+impl MatrixRoomAuthority {
+    pub const fn joined(power_level: MatrixPowerLevel) -> Self {
+        Self {
+            joined: true,
+            power_level,
+        }
+    }
+
+    pub const fn not_joined() -> Self {
+        Self {
+            joined: false,
+            power_level: MatrixPowerLevel::Finite(0),
+        }
+    }
+
+    pub const fn is_joined(self) -> bool {
+        self.joined
+    }
+
+    pub const fn power_level(self) -> MatrixPowerLevel {
+        self.power_level
     }
 }
 

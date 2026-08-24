@@ -9,7 +9,7 @@ use futures_util::Stream;
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixEventId, MatrixRoomId, PortFuture};
+use super::{MatrixEventId, MatrixRoomId, MatrixUserId, PortFuture};
 
 mod failures;
 mod models;
@@ -108,6 +108,14 @@ pub trait ContentMembershipAuthorizer: Send + Sync {
         &'a self,
         request: &'a ContentAuthorizationRequest,
     ) -> PortFuture<'a, ContentAuthorizationResult<ContentAuthorizationDecision>>;
+}
+
+/// 把控制平面主体解析为当前有效的 Matrix 用户；停用主体必须返回 `None`。
+pub trait ContentPrincipalIdentityLookup: Send + Sync {
+    fn find_active_matrix_user(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
 }
 
 /// 发行和验证分钟级自包含票据；实现不得持久化原始票据。
