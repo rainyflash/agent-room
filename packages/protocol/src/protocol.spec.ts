@@ -20,6 +20,10 @@ function readFixture(kind: 'valid' | 'invalid', name: string): unknown {
   return JSON.parse(readFileSync(`${fixturesRoot}/${kind}/${name}`, 'utf8'));
 }
 
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 describe('协议 Schema', () => {
   for (const name of fixtureNames('valid')) {
     test(`接受正例 ${name}`, () => {
@@ -38,11 +42,11 @@ describe('协议 Schema', () => {
 
   test('预览标题和摘要执行独立字符边界', () => {
     const fixture = readFixture('valid', 'message-preview.json');
-    if (typeof fixture !== 'object' || fixture === null) {
+    if (!isUnknownRecord(fixture)) {
       throw new Error('消息预览夹具必须是对象');
     }
-    const preview = Reflect.get(fixture, 'preview');
-    if (typeof preview !== 'object' || preview === null) {
+    const preview = fixture.preview;
+    if (!isUnknownRecord(preview)) {
       throw new Error('消息预览元数据必须是对象');
     }
 
@@ -62,7 +66,7 @@ describe('协议 Schema', () => {
 
   test('状态协议接受完整枚举并拒绝粗粒度详情', () => {
     const fixture = readFixture('valid', 'agent-status.json');
-    if (typeof fixture !== 'object' || fixture === null) {
+    if (!isUnknownRecord(fixture)) {
       throw new Error('状态夹具必须是对象');
     }
 
