@@ -32,6 +32,7 @@ const SESSION_COOKIE: &str = "__Host-agent-room-session";
 pub(crate) struct AuthenticationHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     frontend_origin: Url,
+    issuer: Url,
     serialized_frontend_origin: String,
     login_cookie_ttl: CookieDuration,
     session_cookie_ttl: CookieDuration,
@@ -45,6 +46,7 @@ impl AuthenticationHttpState {
     /// 前端地址不是纯 Origin，或 Cookie 生命周期无法安全转换时返回配置错误。
     pub(crate) fn new(
         authentication: Arc<dyn AuthenticationUseCases>,
+        issuer: Url,
         frontend_origin: Url,
         login_cookie_ttl: Duration,
         session_cookie_ttl: Duration,
@@ -61,6 +63,7 @@ impl AuthenticationHttpState {
         Ok(Self {
             authentication,
             frontend_origin,
+            issuer,
             serialized_frontend_origin,
             login_cookie_ttl,
             session_cookie_ttl,
@@ -92,6 +95,10 @@ struct BeginLoginQuery {
 #[serde(deny_unknown_fields)]
 struct CompleteLoginQuery {
     code: String,
+    #[serde(default)]
+    iss: Option<String>,
+    #[serde(default, rename = "session_state")]
+    _session_state: Option<String>,
     state: String,
 }
 
@@ -162,6 +169,16 @@ async fn complete_login(
             ApiError::invalid_request("authentication.invalid_callback_query", correlation_id),
         );
     };
+    if query
+        .iss
+        .as_deref()
+        .is_some_and(|issuer| issuer != state.issuer.as_str())
+    {
+        return login_failure(
+            jar,
+            ApiError::invalid_request("authentication.issuer_mismatch", correlation_id),
+        );
+    }
     let Some(browser_secret) = jar
         .get(LOGIN_COOKIE)
         .and_then(|cookie| SecretValue::new(cookie.value()).ok())
@@ -486,6 +503,7 @@ mod tests {
     fn test_router(fake: Arc<FakeAuthentication>) -> axum::Router {
         let state = AuthenticationHttpState::new(
             fake,
+            Url::parse("https://identity.example").expect("OIDC issuer 有效"),
             Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
             Duration::from_mins(10),
             Duration::from_hours(8),
@@ -580,7 +598,7 @@ mod tests {
         let response = test_router(fake.clone())
             .oneshot(
                 Request::builder()
-                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
+                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state&iss=https%3A%2F%2Fidentity.example%2F&session_state=opaque")
                     .header(header::COOKIE, "__Host-agent-room-login=browser-secret")
                     .body(Body::empty())
                     .expect("请求有效"),
@@ -613,6 +631,29 @@ mod tests {
                 && cookie.contains("Max-Age=28800")
         }));
         assert_eq!(fake.complete.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn 回调显式拒绝不匹配的授权服务器_issuer() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state&iss=https%3A%2F%2Fevil.example")
+                    .header(header::COOKIE, "__Host-agent-room-login=browser-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        assert!(
+            set_cookies(&response)
+                .iter()
+                .any(|cookie| cookie.contains("Max-Age=0"))
+        );
     }
 
     #[tokio::test]

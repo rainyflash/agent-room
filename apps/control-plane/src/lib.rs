@@ -204,6 +204,7 @@ async fn build_identity_router(
     ));
     let state = AuthenticationHttpState::new(
         service.clone(),
+        authentication_config.issuer_url.clone(),
         authentication_config.frontend_origin.clone(),
         authentication_config.login_attempt_ttl,
         authentication_config.web_session_ttl,
