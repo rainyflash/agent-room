@@ -1,12 +1,13 @@
 use std::{error::Error, time::Duration};
 
 use agent_room_application::ports::{
-    OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
-    OidcFailureKind, OidcGateway, OidcResult, PortFuture, SecretDigest, SecretFactory,
-    SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
+    DeviceProofVerifier, DeviceSignature, OidcAuthorizationOptions, OidcAuthorizationRequest,
+    OidcCodeExchange, OidcFailure, OidcFailureKind, OidcGateway, OidcResult, PortFuture,
+    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
 };
-use agent_room_domain::time::UtcMillis;
+use agent_room_domain::{devices::DevicePublicSigningKey, time::UtcMillis};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, DiscoveryError,
     IssuerUrl, JsonWebKey, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier,
@@ -22,6 +23,97 @@ use thiserror::Error;
 use tokio::sync::OnceCell;
 
 const SECRET_ENTROPY_BYTES: usize = 32;
+const ED25519_SEED_BYTES: usize = 32;
+
+/// Ed25519 设备持有证明的服务端验签适配器。
+pub struct Ed25519DeviceProofVerifier;
+
+impl DeviceProofVerifier for Ed25519DeviceProofVerifier {
+    fn verify(
+        &self,
+        public_key: &DevicePublicSigningKey,
+        signed_message: &[u8],
+        signature: &DeviceSignature,
+    ) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(public_key.as_bytes()) else {
+            return false;
+        };
+        let signature = Signature::from_bytes(signature.as_bytes());
+        verifying_key
+            .verify_strict(signed_message, &signature)
+            .is_ok()
+    }
+}
+
+/// 只应由 Bridge 组合根持有的 Ed25519 设备私钥。
+pub struct Ed25519DeviceSigningKey(SigningKey);
+
+impl Ed25519DeviceSigningKey {
+    /// 使用操作系统密码学随机源生成设备私钥。
+    ///
+    /// # Errors
+    ///
+    /// 操作系统随机源不可用时安全失败，不允许退化为可预测随机数。
+    pub fn generate() -> Result<Self, DeviceSigningKeyError> {
+        let mut seed = [0_u8; ED25519_SEED_BYTES];
+        getrandom::fill(&mut seed).map_err(|_| DeviceSigningKeyError::EntropyUnavailable)?;
+        Ok(Self(SigningKey::from_bytes(&seed)))
+    }
+
+    /// 从 OS 安全存储中的 URL-safe Base64 种子恢复私钥。
+    ///
+    /// # Errors
+    ///
+    /// 编码非法或解码后不是 32 字节时返回错误。
+    pub fn from_encoded_seed(encoded_seed: &SecretValue) -> Result<Self, DeviceSigningKeyError> {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(encoded_seed.expose())
+            .map_err(|_| DeviceSigningKeyError::InvalidSeed)?;
+        let seed = <[u8; ED25519_SEED_BYTES]>::try_from(decoded)
+            .map_err(|_| DeviceSigningKeyError::InvalidSeed)?;
+        Ok(Self(SigningKey::from_bytes(&seed)))
+    }
+
+    /// 导出仅供立即写入 OS 安全存储的脱敏种子。
+    ///
+    /// # Errors
+    ///
+    /// 编码结果违反敏感值边界时返回错误。
+    pub fn encoded_seed(&self) -> Result<SecretValue, DeviceSigningKeyError> {
+        SecretValue::new(URL_SAFE_NO_PAD.encode(self.0.to_bytes()))
+            .map_err(|_| DeviceSigningKeyError::InvalidSeed)
+    }
+
+    /// 导出领域层可识别的设备公钥。
+    ///
+    /// # Errors
+    ///
+    /// 密码库输出无法满足领域长度约束时返回错误。
+    pub fn public_key(&self) -> Result<DevicePublicSigningKey, DeviceSigningKeyError> {
+        DevicePublicSigningKey::new(self.0.verifying_key().to_bytes().to_vec())
+            .map_err(|_| DeviceSigningKeyError::InvalidDerivedValue)
+    }
+
+    /// 对规范化设备载荷签名。
+    ///
+    /// # Errors
+    ///
+    /// 密码库输出无法满足应用层签名长度约束时返回错误。
+    pub fn sign(&self, message: &[u8]) -> Result<DeviceSignature, DeviceSigningKeyError> {
+        DeviceSignature::new(self.0.sign(message).to_bytes().to_vec())
+            .map_err(|_| DeviceSigningKeyError::InvalidDerivedValue)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum DeviceSigningKeyError {
+    #[error("操作系统随机源不可用")]
+    EntropyUnavailable,
+    #[error("设备签名密钥无效")]
+    InvalidSeed,
+    #[error("设备签名派生值无效")]
+    InvalidDerivedValue,
+}
 
 pub struct SecureSecretFactory;
 
@@ -288,9 +380,11 @@ pub enum OidcAdapterConfigurationError {
 
 #[cfg(test)]
 mod tests {
-    use agent_room_application::ports::{SecretFactory, SecretValue};
+    use agent_room_application::ports::{DeviceProofVerifier, SecretFactory, SecretValue};
 
-    use super::{OidcAdapterConfig, SecureSecretFactory};
+    use super::{
+        Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey, OidcAdapterConfig, SecureSecretFactory,
+    };
 
     #[test]
     fn 会话密钥具有足够熵且调试输出脱敏() {
@@ -318,5 +412,29 @@ mod tests {
         });
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn 设备签名密钥可安全恢复且篡改载荷无法通过验签() {
+        let signing_key = Ed25519DeviceSigningKey::generate().expect("系统随机源可用");
+        let encoded = signing_key.encoded_seed().expect("种子可编码");
+        let restored = Ed25519DeviceSigningKey::from_encoded_seed(&encoded).expect("种子可恢复");
+        let verifier = Ed25519DeviceProofVerifier;
+        let signature = restored
+            .sign(b"agent-room-device-proof")
+            .expect("签名可生成");
+        let restored_public_key = restored.public_key().expect("公钥可导出");
+
+        assert_eq!(
+            signing_key.public_key().expect("公钥可导出"),
+            restored_public_key
+        );
+        assert!(verifier.verify(&restored_public_key, b"agent-room-device-proof", &signature));
+        assert!(!verifier.verify(
+            &restored_public_key,
+            b"agent-room-device-proof-tampered",
+            &signature
+        ));
+        assert_eq!(format!("{encoded:?}"), "[已脱敏]");
     }
 }
