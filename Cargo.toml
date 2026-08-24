@@ -6,6 +6,7 @@ members = [
   "crates/application",
   "crates/bridge-core",
   "crates/bridge-ipc",
+  "crates/bridge-storage-adapter",
   "crates/content-adapter",
   "crates/domain",
   "crates/identity-adapter",
@@ -28,6 +29,7 @@ agent-room-a2a-adapter = { version = "0.1.0", path = "crates/a2a-adapter" }
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
 agent-room-bridge-ipc = { version = "0.1.0", path = "crates/bridge-ipc" }
+agent-room-bridge-storage-adapter = { version = "0.1.0", path = "crates/bridge-storage-adapter" }
 agent-room-content-adapter = { version = "0.1.0", path = "crates/content-adapter" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }

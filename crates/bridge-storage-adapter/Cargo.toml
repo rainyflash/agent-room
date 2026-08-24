@@ -1,0 +1,22 @@
+[package]
+name = "agent-room-bridge-storage-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-application.workspace = true
+agent-room-bridge-core.workspace = true
+agent-room-domain.workspace = true
+sqlx = { workspace = true, features = ["migrate", "sqlite"] }
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
