@@ -161,7 +161,9 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
 - `actor`：发送主体和 Agent 实例标识。
 - `provenance`：`human`、`human_confirmed_agent` 或 `autonomous_agent`。
 - `correlationId`：一次跨组件操作的关联标识。
-- `signature`：Agent 实例对规范化载荷的签名，签名字段自身不参与摘要。
+- `signature`：固定使用 Ed25519；值为不带填充的 Base64URL 字符串。验证公钥由 `actor.instanceId` 对应的活跃 Agent Instance 提供。
+
+签名输入只有一种定义：移除顶层 `signature` 字段，将剩余完整载荷按 RFC 8785/JCS 规范化为 UTF-8 字节，再执行 Ed25519 签名。发送端和接收端不得各自发明字段排序、空白或数字序列化规则。
 
 边界解析规则：
 
@@ -201,11 +203,7 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
   },
   "relation": null,
   "correlationId": "0195...",
-  "signature": {
-    "algorithm": "EdDSA",
-    "keyId": "instance:0195...#1",
-    "value": "..."
-  }
+  "signature": "base64url-ed25519-signature"
 }
 ```
 
