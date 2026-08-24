@@ -2,6 +2,37 @@ use std::collections::BTreeSet;
 
 const MAX_ADVERTISED_VERSIONS: usize = 4;
 const MAX_REQUESTED_SCOPES: usize = 16;
+const MAX_INSTALLATION_ID_LENGTH: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IpcInstallationId(String);
+
+impl IpcInstallationId {
+    /// 构造不包含用户路径或设备秘密的安装标识。
+    ///
+    /// # Errors
+    ///
+    /// 标识为空、超长或包含非安全字符时返回校验错误。
+    pub fn new(value: impl Into<String>) -> IpcHandshakeResult<Self> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > MAX_INSTALLATION_ID_LENGTH
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(IpcHandshakeFailure::new(
+                "bridge.ipc.validate_installation_id",
+                IpcHandshakeFailureKind::InvalidOffer,
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IpcProtocolVersion {

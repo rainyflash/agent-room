@@ -4,6 +4,7 @@ members = [
   "apps/control-plane",
   "crates/application",
   "crates/bridge-core",
+  "crates/bridge-ipc",
   "crates/domain",
   "crates/identity-adapter",
   "crates/matrix-adapter",
@@ -22,6 +23,7 @@ repository = "https://github.com/agent-room/agent-room"
 [workspace.dependencies]
 agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
+agent-room-bridge-ipc = { version = "0.1.0", path = "crates/bridge-ipc" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
@@ -34,6 +36,7 @@ chrono = "0.4.45"
 ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
 futures-util = "0.3.32"
 getrandom = "0.3.4"
+hmac = "0.13.0"
 jsonschema = { version = "0.50.1", default-features = false }
 keyring = "4.1.6"
 matrix-sdk = { version = "0.18.0", default-features = false }
@@ -51,7 +54,7 @@ sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"
 time = "0.3.55"
-tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-opentelemetry = "0.33.0"
