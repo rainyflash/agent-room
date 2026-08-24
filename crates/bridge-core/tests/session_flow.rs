@@ -177,6 +177,67 @@ async fn 尚有足够有效期的访问令牌不会触发刷新() {
 }
 
 #[tokio::test]
+async fn 控制面请求使用访问令牌签名精确方法目标和正文() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(10_000))));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let service = service(vault, control_plane.clone(), messages.clone());
+
+    let authorized = service
+        .authorize_request(
+            "GET",
+            "/agent-instances/0198b601-77a1-7bb8-83eb-a8fe68c97e47/verification",
+            "",
+        )
+        .await
+        .expect("控制面请求可授权");
+
+    assert_eq!(authorized.access_token.expose(), "old-access-token");
+    assert_eq!(authorized.proof.device_id(), device_id());
+    assert_eq!(authorized.proof.method(), "GET");
+    assert_eq!(
+        authorized.proof.request_target(),
+        "/agent-instances/0198b601-77a1-7bb8-83eb-a8fe68c97e47/verification"
+    );
+    assert_eq!(
+        authorized.proof.body_digest(),
+        &SecureSecretFactory.digest("")
+    );
+    let expected_message = authorized
+        .proof
+        .payload()
+        .signing_message(&SecureSecretFactory.digest("old-access-token"));
+    assert_eq!(
+        messages.lock().expect("签名记录锁可用").as_slice(),
+        [expected_message]
+    );
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn 控制面请求在访问令牌临期时先刷新再用新令牌签名() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let service = service(vault, control_plane.clone(), messages.clone());
+
+    let authorized = service
+        .authorize_request("POST", "/messages", r#"{"body":"hello"}"#)
+        .await
+        .expect("刷新后控制面请求可授权");
+
+    assert_eq!(authorized.access_token.expose(), "new-access-token");
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    let expected_message = authorized
+        .proof
+        .payload()
+        .signing_message(&SecureSecretFactory.digest("new-access-token"));
+    let signed_messages = messages.lock().expect("签名记录锁可用");
+    assert_eq!(signed_messages.len(), 2);
+    assert_eq!(signed_messages[1], expected_message);
+}
+
+#[tokio::test]
 async fn 临近过期时先持久化刷新中状态再原子替换新凭据() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
     let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));

@@ -18,11 +18,31 @@ use crate::ports::{
 
 const REFRESH_DEVICE_PATH: &str = "/auth/devices/refresh";
 
+const REFRESH_PROOF_OPERATIONS: ProofFailureOperations = ProofFailureOperations {
+    load_key: "bridge.session.load_key",
+    nonce: "bridge.session.nonce",
+    payload: "bridge.session.proof",
+    sign: "bridge.session.sign",
+};
+
+const CONTROL_PLANE_PROOF_OPERATIONS: ProofFailureOperations = ProofFailureOperations {
+    load_key: "bridge.session.authorize_request.load_key",
+    nonce: "bridge.session.authorize_request.nonce",
+    payload: "bridge.session.authorize_request.proof",
+    sign: "bridge.session.authorize_request.sign",
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveBridgeSession {
     pub device_id: DeviceId,
     pub access_token: SecretValue,
     pub access_token_expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedControlPlaneRequest {
+    pub access_token: SecretValue,
+    pub proof: DeviceRequestProof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +103,24 @@ pub struct BridgeSessionDependencies {
     pub credentials: Arc<dyn DeviceCredentialVault>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
+}
+
+#[derive(Clone, Copy)]
+struct ProofFailureOperations {
+    load_key: &'static str,
+    nonce: &'static str,
+    payload: &'static str,
+    sign: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct ProofInput<'a> {
+    device_id: DeviceId,
+    credential: &'a SecretValue,
+    issued_at: UtcMillis,
+    method: &'a str,
+    request_target: &'a str,
+    body: &'a str,
 }
 
 impl BridgeSessionService {
@@ -150,32 +188,79 @@ impl BridgeSessionService {
         self.resolve_refresh(stored, result)
     }
 
+    /// 为控制面请求获取有效访问令牌，并对精确方法、目标和正文签名。
+    ///
+    /// # Errors
+    ///
+    /// 会话不可用、刷新失败、密钥不可用或请求证明不合法时返回稳定错误。
+    pub async fn authorize_request(
+        &self,
+        method: &str,
+        request_target: &str,
+        body: &str,
+    ) -> BridgeSessionResult<AuthorizedControlPlaneRequest> {
+        let session = self.active_session().await?;
+        let proof = self.signed_proof(
+            ProofInput {
+                device_id: session.device_id,
+                credential: &session.access_token,
+                issued_at: self.clock.now(),
+                method,
+                request_target,
+                body,
+            },
+            CONTROL_PLANE_PROOF_OPERATIONS,
+        )?;
+        Ok(AuthorizedControlPlaneRequest {
+            access_token: session.access_token,
+            proof,
+        })
+    }
+
     fn refresh_proof(
         &self,
         stored: &StoredBridgeDeviceCredentials,
         now: UtcMillis,
     ) -> BridgeSessionResult<DeviceRequestProof> {
+        self.signed_proof(
+            ProofInput {
+                device_id: stored.device_id,
+                credential: &stored.refresh_token,
+                issued_at: now,
+                method: "POST",
+                request_target: REFRESH_DEVICE_PATH,
+                body: "",
+            },
+            REFRESH_PROOF_OPERATIONS,
+        )
+    }
+
+    fn signed_proof(
+        &self,
+        input: ProofInput<'_>,
+        operations: ProofFailureOperations,
+    ) -> BridgeSessionResult<DeviceRequestProof> {
         let identity = self
             .signing_identities
             .load_or_create()
-            .map_err(|error| map_credential_failure("bridge.session.load_key", error))?;
+            .map_err(|error| map_credential_failure(operations.load_key, error))?;
         let nonce = self
             .secrets
             .generate()
-            .map_err(|_| failure("bridge.session.nonce", BridgeSessionFailureKind::Internal))?;
+            .map_err(|_| failure(operations.nonce, BridgeSessionFailureKind::Internal))?;
         let payload = DeviceRequestProofPayload::new(
-            stored.device_id,
-            now,
+            input.device_id,
+            input.issued_at,
             nonce,
-            "POST".to_owned(),
-            REFRESH_DEVICE_PATH.to_owned(),
-            self.secrets.digest(""),
+            input.method.to_owned(),
+            input.request_target.to_owned(),
+            self.secrets.digest(input.body),
         )
-        .map_err(|_| failure("bridge.session.proof", BridgeSessionFailureKind::Internal))?;
-        let message = payload.signing_message(&self.secrets.digest(stored.refresh_token.expose()));
+        .map_err(|_| failure(operations.payload, BridgeSessionFailureKind::Internal))?;
+        let message = payload.signing_message(&self.secrets.digest(input.credential.expose()));
         let signature = identity
             .sign(&message)
-            .map_err(|error| map_credential_failure("bridge.session.sign", error))?;
+            .map_err(|error| map_credential_failure(operations.sign, error))?;
         Ok(DeviceRequestProof::new(payload, signature))
     }
 
