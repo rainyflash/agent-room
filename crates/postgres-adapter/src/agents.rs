@@ -1,15 +1,17 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentRegistration, AgentRegistrationTransaction, AgentRepository, OutboxMessage, PortFuture,
+        AgentRegistration, AgentRegistrationTransaction, AgentRepository, OutboxMessage,
+        PortFuture, RegisteredAgent,
     },
 };
 use agent_room_domain::{
-    agents::{Agent, AgentStatus},
-    ids::AgentId,
+    agents::{Agent, AgentStatus, AgentVisibility},
+    ids::{AgentId, ContentId},
+    time::UtcMillis,
     version::AggregateVersion,
 };
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_event};
 
@@ -28,6 +30,15 @@ impl AgentRepository for PostgresRepositories {
 
             row.map(decode_agent(id)).transpose()
         })
+    }
+
+    fn find_registration(
+        &self,
+        id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<RegisteredAgent>>> {
+        Box::pin(
+            async move { find_registered_agent(&self.pool, id, "agent.find_registration").await },
+        )
     }
 
     fn create<'a>(
@@ -124,14 +135,12 @@ impl PostgresRepositories {
     }
 }
 
-async fn insert_agent_registration(
+pub(crate) async fn insert_agent_registration(
     transaction: &mut Transaction<'_, Postgres>,
     registration: &AgentRegistration,
 ) -> RepositoryResult<()> {
     let agent = &registration.agent;
-    let avatar_id = registration
-        .avatar_content_id
-        .map(agent_room_domain::ids::ContentId::as_uuid);
+    let avatar_id = registration.avatar_content_id.map(ContentId::as_uuid);
     let registered_at = registration.registered_at.value();
 
     sqlx::query(
@@ -175,7 +184,7 @@ async fn insert_agent_registration(
     Ok(())
 }
 
-fn decode_agent(id: AgentId) -> impl FnOnce(sqlx::postgres::PgRow) -> RepositoryResult<Agent> {
+fn decode_agent(id: AgentId) -> impl FnOnce(PgRow) -> RepositoryResult<Agent> {
     move |row| {
         let status: String = row
             .try_get("lifecycle_state")
@@ -188,14 +197,87 @@ fn decode_agent(id: AgentId) -> impl FnOnce(sqlx::postgres::PgRow) -> Repository
     }
 }
 
-fn decode_version(
-    row: &sqlx::postgres::PgRow,
+pub(crate) async fn find_registered_agent(
+    executor: &sqlx::PgPool,
+    id: AgentId,
     operation: &'static str,
-) -> RepositoryResult<AggregateVersion> {
+) -> RepositoryResult<Option<RegisteredAgent>> {
+    let row = sqlx::query(
+        r"SELECT matrix_user_id, slug, display_name, description, avatar_content_id,
+               visibility, lifecycle_state, version,
+               floor(extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms
+          FROM agent_room.agent
+          WHERE id = $1",
+    )
+    .bind(id.as_uuid())
+    .fetch_optional(executor)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    row.map(|row| decode_registered_agent(&row, id, operation))
+        .transpose()
+}
+
+pub(crate) fn decode_registered_agent(
+    row: &PgRow,
+    id: AgentId,
+    operation: &'static str,
+) -> RepositoryResult<RegisteredAgent> {
+    let status: String = decode_column(row, "lifecycle_state", operation)?;
+    let status = AgentStatus::try_from(status.as_str()).map_err(|_| corrupt_data(operation))?;
+    let visibility: String = decode_column(row, "visibility", operation)?;
+    let visibility =
+        AgentVisibility::try_from(visibility.as_str()).map_err(|_| corrupt_data(operation))?;
+    let avatar_content_id: Option<uuid::Uuid> = decode_column(row, "avatar_content_id", operation)?;
+    Ok(RegisteredAgent {
+        agent: Agent::restore(id, status, decode_version(row, operation)?),
+        matrix_user_id: decode_column(row, "matrix_user_id", operation)?,
+        slug: decode_column(row, "slug", operation)?,
+        display_name: decode_column(row, "display_name", operation)?,
+        description: decode_column(row, "description", operation)?,
+        avatar_content_id: avatar_content_id.map(ContentId::from_uuid),
+        visibility,
+        registered_at: decode_time(row, "created_at_ms", operation)?,
+    })
+}
+
+fn decode_version(row: &PgRow, operation: &'static str) -> RepositoryResult<AggregateVersion> {
     let value: i64 = row
         .try_get("version")
         .map_err(|error| map_sqlx_error(operation, &error))?;
     AggregateVersion::new(value).map_err(|_| corrupt_data(operation))
+}
+
+pub(crate) fn decode_time(
+    row: &PgRow,
+    column: &str,
+    operation: &'static str,
+) -> RepositoryResult<UtcMillis> {
+    let value: i64 = decode_column(row, column, operation)?;
+    UtcMillis::new(value).map_err(|_| corrupt_data(operation))
+}
+
+pub(crate) fn decode_optional_time(
+    row: &PgRow,
+    column: &str,
+    operation: &'static str,
+) -> RepositoryResult<Option<UtcMillis>> {
+    let value: Option<i64> = decode_column(row, column, operation)?;
+    value
+        .map(UtcMillis::new)
+        .transpose()
+        .map_err(|_| corrupt_data(operation))
+}
+
+pub(crate) fn decode_column<T>(
+    row: &PgRow,
+    column: &str,
+    operation: &'static str,
+) -> RepositoryResult<T>
+where
+    for<'decode> T: sqlx::Decode<'decode, Postgres> + sqlx::Type<Postgres>,
+{
+    row.try_get(column)
+        .map_err(|error| map_sqlx_error(operation, &error))
 }
 
 async fn classify_missing_agent(
@@ -218,6 +300,6 @@ async fn classify_missing_agent(
     ))
 }
 
-fn corrupt_data(operation: &'static str) -> RepositoryError {
+pub(crate) fn corrupt_data(operation: &'static str) -> RepositoryError {
     RepositoryError::new(operation, RepositoryErrorKind::CorruptData)
 }

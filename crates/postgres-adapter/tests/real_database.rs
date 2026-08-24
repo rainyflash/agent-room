@@ -2,23 +2,28 @@ use std::{borrow::Cow, env};
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
-    ports::{AgentRegistration, AgentRepository, PrincipalRegistration, PrincipalRepository},
+    ports::{
+        AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentRegistration,
+        AgentRepository, OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
+    },
 };
 use agent_room_domain::{
     agents::{Agent, AgentVisibility},
     identity::Principal,
-    ids::{AgentId, PrincipalId},
+    ids::{AgentCreationRequestId, AgentId, OutboxEventId, PrincipalId},
     time::UtcMillis,
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 27] = [
+const EXPECTED_TABLES: [&str; 29] = [
     "adapter_binding",
     "agent",
     "agent_card_snapshot",
+    "agent_creation_request",
     "agent_instance",
+    "agent_instance_registration_request",
     "agent_ownership",
     "audit_event",
     "automation_grant",
@@ -164,6 +169,103 @@ async fn 仓储执行真实读写并拒绝并发覆盖() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_创建请求幂等且篡改请求体会冲突() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    PrincipalRepository::create(
+        &repositories,
+        &principal_registration(principal_id, "Agent Owner"),
+    )
+    .await
+    .expect("Owner 创建应成功");
+
+    let request_id = AgentCreationRequestId::from_uuid(Uuid::now_v7());
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let fingerprint = SecretDigest::from_array([7; 32]);
+    let claim = AgentCreationClaim {
+        request_id,
+        owner_id: principal_id,
+        proposed_agent_id: agent_id,
+        request_fingerprint: fingerprint,
+        reserved_at: test_time(),
+    };
+    assert_eq!(
+        AgentCreationWorkflow::reserve(&repositories, &claim)
+            .await
+            .expect("首次预留应成功"),
+        AgentCreationReservation::Reserved { agent_id }
+    );
+
+    let repeated_claim = AgentCreationClaim {
+        proposed_agent_id: AgentId::from_uuid(Uuid::now_v7()),
+        ..claim.clone()
+    };
+    assert_eq!(
+        AgentCreationWorkflow::reserve(&repositories, &repeated_claim)
+            .await
+            .expect("重复预留应返回稳定 Agent ID"),
+        AgentCreationReservation::Reserved { agent_id }
+    );
+
+    let registration = agent_registration(agent_id, principal_id, "idempotent-agent");
+    let event = OutboxMessage::new(
+        OutboxEventId::from_uuid(Uuid::now_v7()),
+        "agent".to_owned(),
+        agent_id.as_uuid(),
+        "agent.registered.v1".to_owned(),
+        serde_json::Map::new(),
+        test_time(),
+    )
+    .expect("注册事件有效");
+    AgentCreationWorkflow::complete_with_event(
+        &repositories,
+        request_id,
+        &fingerprint,
+        &registration,
+        &event,
+    )
+    .await
+    .expect("首次完成应成功");
+    AgentCreationWorkflow::complete_with_event(
+        &repositories,
+        request_id,
+        &fingerprint,
+        &registration,
+        &event,
+    )
+    .await
+    .expect("重复完成不得重复写入");
+
+    let completed = AgentCreationWorkflow::reserve(&repositories, &claim)
+        .await
+        .expect("完成后重试应读取既有注册");
+    assert!(matches!(
+        completed,
+        AgentCreationReservation::Completed(ref stored) if stored.agent.id() == agent_id
+    ));
+    let outbox_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_id = $1")
+            .bind(agent_id.as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .expect("应能验证 Outbox 幂等性");
+    assert_eq!(outbox_count, 1);
+
+    let tampered = AgentCreationClaim {
+        request_fingerprint: SecretDigest::from_array([8; 32]),
+        ..claim
+    };
+    let error = AgentCreationWorkflow::reserve(&repositories, &tampered)
+        .await
+        .expect_err("相同幂等键不得接受不同请求体");
+    assert_eq!(error.kind(), RepositoryErrorKind::Conflict);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 事务失败会回滚且外键拒绝孤儿记录() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -280,6 +382,23 @@ fn principal_registration(id: PrincipalId, display_name: &str) -> PrincipalRegis
         display_name: display_name.to_owned(),
         avatar_content_id: None,
         locale: "zh-CN".to_owned(),
+        registered_at: test_time(),
+    }
+}
+
+fn agent_registration(agent_id: AgentId, owner_id: PrincipalId, slug: &str) -> AgentRegistration {
+    AgentRegistration {
+        agent: Agent::register(agent_id),
+        owner_id,
+        matrix_user_id: format!(
+            "@_agent_{}:matrix.agent-room.localhost",
+            agent_id.as_uuid().simple()
+        ),
+        slug: slug.to_owned(),
+        display_name: "幂等 Agent".to_owned(),
+        description: "真实事务状态机测试".to_owned(),
+        avatar_content_id: None,
+        visibility: AgentVisibility::Private,
         registered_at: test_time(),
     }
 }

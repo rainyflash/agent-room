@@ -12,7 +12,12 @@ mod runtime;
 
 use std::{future::Future, pin::Pin};
 
-pub use agents::{AgentRegistration, AgentRegistrationTransaction, AgentRepository};
+pub use agents::{
+    AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentInstanceRegistration,
+    AgentInstanceRegistrationTransaction, AgentMembershipChange, AgentMembershipRepository,
+    AgentMembershipTransaction, AgentRegistration, AgentRegistrationTransaction, AgentRepository,
+    RegisteredAgent, StoredAgentInstanceRegistration,
+};
 pub use audit::{AuditRecord, AuditSink};
 pub use content::ContentStore;
 pub use devices::{

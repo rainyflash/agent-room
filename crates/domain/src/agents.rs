@@ -61,6 +61,22 @@ impl AgentVisibility {
     }
 }
 
+impl TryFrom<&str> for AgentVisibility {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "public" => Ok(Self::Public),
+            "unlisted" => Ok(Self::Unlisted),
+            "private" => Ok(Self::Private),
+            _ => Err(DomainError::Validation {
+                field: "agent_visibility",
+                reason: "包含未知可见性",
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     id: AgentId,
@@ -193,6 +209,35 @@ pub struct AgentMember {
 }
 
 impl AgentMember {
+    /// 从持久化记录恢复 Agent 成员。
+    ///
+    /// # Errors
+    ///
+    /// 撤销时间早于授权时间时失败。
+    pub fn restore(
+        agent_id: AgentId,
+        principal_id: PrincipalId,
+        role: AgentRole,
+        granted_by: PrincipalId,
+        granted_at: UtcMillis,
+        revoked_at: Option<UtcMillis>,
+    ) -> DomainResult<Self> {
+        if revoked_at.is_some_and(|value| value < granted_at) {
+            return Err(DomainError::Validation {
+                field: "agent_member_revoked_at",
+                reason: "不能早于授权时间",
+            });
+        }
+        Ok(Self {
+            agent_id,
+            principal_id,
+            role,
+            granted_by,
+            granted_at,
+            revoked_at,
+        })
+    }
+
     pub const fn agent_id(&self) -> AgentId {
         self.agent_id
     }
@@ -511,6 +556,30 @@ impl AdapterBinding {
         })
     }
 
+    /// 从持久化记录恢复适配器绑定。
+    ///
+    /// # Errors
+    ///
+    /// 适配器类型或能力版本无效时失败。
+    pub fn restore(
+        id: AdapterBindingId,
+        agent_id: AgentId,
+        adapter_type: String,
+        external_subject_hash: Option<AdapterSubjectHash>,
+        capability_version: String,
+        state: AdapterBindingState,
+    ) -> DomainResult<Self> {
+        let mut binding = Self::register(
+            id,
+            agent_id,
+            adapter_type,
+            external_subject_hash,
+            capability_version,
+        )?;
+        binding.state = state;
+        Ok(binding)
+    }
+
     pub const fn id(&self) -> AdapterBindingId {
         self.id
     }
@@ -661,6 +730,40 @@ impl AgentInstance {
             status: AgentInstanceStatus::Connecting,
             lease_expires_at: None,
         }
+    }
+
+    /// 从持久化记录恢复 Agent 实例。
+    ///
+    /// # Errors
+    ///
+    /// 在线状态和租约字段不一致时失败。
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore(
+        id: AgentInstanceId,
+        agent_id: AgentId,
+        device_id: DeviceId,
+        adapter_binding_id: AdapterBindingId,
+        public_signing_key: AgentInstancePublicSigningKey,
+        matrix_device_id: AgentMatrixDeviceId,
+        status: AgentInstanceStatus,
+        lease_expires_at: Option<UtcMillis>,
+    ) -> DomainResult<Self> {
+        if matches!(status, AgentInstanceStatus::Online) != lease_expires_at.is_some() {
+            return Err(DomainError::InvariantViolation {
+                entity: "agent_instance",
+                rule: "只有在线实例可以持有租约",
+            });
+        }
+        Ok(Self {
+            id,
+            agent_id,
+            device_id,
+            adapter_binding_id,
+            public_signing_key,
+            matrix_device_id,
+            status,
+            lease_expires_at,
+        })
     }
 
     pub const fn id(&self) -> AgentInstanceId {
