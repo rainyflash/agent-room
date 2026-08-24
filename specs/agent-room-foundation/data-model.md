@@ -30,6 +30,7 @@
 ```mermaid
 erDiagram
     PRINCIPAL ||--o{ AGENT_OWNERSHIP : owns
+    PRINCIPAL ||--o{ WEB_SESSION : authenticates_with
     AGENT ||--o{ AGENT_OWNERSHIP : is_owned_through
     PRINCIPAL ||--o{ DEVICE : authorizes
     AGENT ||--o{ AGENT_INSTANCE : runs_as
@@ -75,6 +76,42 @@ erDiagram
 | `version` | bigint | 乐观并发版本 |
 
 不得保存 OIDC Access Token。需要调用 IdP 管理接口时使用服务身份。
+
+#### 4.1.1 `oidc_login_attempt`
+
+保存短期、一次性的浏览器登录状态。它不关联尚未创建的 Principal，也不保存原始 `state` 或浏览器秘密。
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUIDv7 | 主键 |
+| `browser_secret_digest` | bytea | 非空，32 字节，唯一 |
+| `state_digest` | bytea | 非空，32 字节，唯一 |
+| `nonce` | text | 非空，长度限制 |
+| `pkce_verifier` | text | 非空，43–128 字符 |
+| `return_path` | text | 仅允许本站绝对路径，拒绝 `//`、反斜杠和控制字符 |
+| `import_display_name` | boolean | 是否显式同意导入名称 |
+| `import_locale` | boolean | 是否显式同意导入语言 |
+| `created_at` | timestamptz | 非空 |
+| `expires_at` | timestamptz | 非空，晚于创建时间 |
+| `consumed_at` | timestamptz? | 可空；设置后不得再次消费 |
+
+浏览器秘密和 OIDC `state` 只以 SHA-256 摘要落库；PKCE verifier 仅在短生命周期内保留，用于回调时兑换授权码。消费操作必须同时匹配浏览器摘要与状态摘要，并在单条原子更新中写入 `consumed_at`。
+
+#### 4.1.2 `web_session`
+
+代表控制平面 Web 会话。Cookie 中的高熵随机秘密只返回浏览器，数据库只保存摘要。
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUIDv7 | 主键 |
+| `principal_id` | UUIDv7 | 外键，非空 |
+| `secret_digest` | bytea | 非空，32 字节，唯一 |
+| `authenticated_at` | timestamptz | IdP 最近认证时间，非空 |
+| `created_at` | timestamptz | 非空 |
+| `expires_at` | timestamptz | 非空，晚于创建时间 |
+| `revoked_at` | timestamptz? | 可空；登出或安全撤销时设置 |
+
+普通会话有效性与“近期认证”分开计算。OIDC 暂时不可用时，未过期、未撤销且主体仍活跃的本地会话继续工作；高风险操作仍要求 `authenticated_at` 落在近期认证窗口内。
 
 ### 4.2 `device`
 
@@ -404,6 +441,8 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 - `principal (oidc_issuer, oidc_subject)` 唯一。
 - `principal (matrix_user_id)` 唯一。
+- `oidc_login_attempt (browser_secret_digest)` 和 `(state_digest)` 唯一；未消费行按 `expires_at` 建部分索引。
+- `web_session (secret_digest)` 唯一；未撤销行按 `(principal_id, expires_at)` 建部分索引。
 - `agent (matrix_user_id)` 唯一。
 - `agent_ownership (principal_id) WHERE revoked_at IS NULL`。
 - `agent_instance (agent_id, status, last_seen_at DESC)`。
@@ -440,6 +479,8 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - Agent 状态历史：只保留服务运行所需窗口；客户端只查询当前状态。
 - Agent Card 快照：保留最近 10 份或 90 天，以先到者为准。
 - 上下文包本地正文：消费后立即删除，未消费默认 24 小时过期。
+- OIDC 登录尝试：过期或消费后仅保留短期安全调查窗口，随后物理清理；PKCE verifier 不进入长期审计。
+- Web 会话：过期或撤销后按安全调查窗口清理，Cookie 秘密和 OIDC Token 永不进入审计日志。
 - 安全审计：默认 180 天，具体由部署者政策决定。
 - 举报案件：按治理和法律政策配置，和普通聊天保留分开。
 

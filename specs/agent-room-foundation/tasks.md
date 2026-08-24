@@ -109,7 +109,7 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
 
 任务 8 的事务 Outbox、租约消费者、死信、Matrix 游标/回执、房间投影重建和安全回源策略记录在 [任务 8 验证记录](./task-8-validation.md)。
 
-- [ ] 9. 实现 OIDC 用户登录与主体投影
+- [x] 9. 实现 OIDC 用户登录与主体投影
   - Web/桌面采用 Authorization Code + PKCE；控制平面验证 issuer、audience、nonce 和状态。
   - 首次登录幂等创建 Principal，并建立 Matrix User 映射。
   - 会话使用安全 Cookie；实现登出、近期认证和主体暂停。
@@ -117,6 +117,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - 验证：Login CSRF、错误 issuer、过期 token、重复 subject 和开放跳转均被拒绝。
   - _依赖：6、7_
   - _需求：1、11、12、14_
+
+任务 9 的 OIDC 协议适配、安全 Cookie、主体幂等投影、会话撤销和攻击用例记录在 [任务 9 验证记录](./task-9-validation.md)。
 
 - [ ] 10. 实现 Bridge 设备授权与撤销
   - Bridge 使用 OAuth Device Authorization Grant 绑定用户。

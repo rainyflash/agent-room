@@ -65,6 +65,13 @@ flowchart LR
 - 本地测试账户、房间和 Agent 由 Seed 工具幂等创建，禁止 README 里列一堆手工步骤。
 - Compose 使用独立数据库和角色：`synapse`、`agent_room`、`identity`。
 
+### 3.1 本地 OIDC 登录
+
+- `just dev-up` 生成 Keycloak Realm、机密客户端和 S256 PKCE 配置；全新环境同时允许反向代理回调 `https://api.agent-room.localhost/auth/oidc/callback` 与宿主直连回调 `http://127.0.0.1:8090/auth/oidc/callback`。
+- 对已有开发卷，启动脚本通过 Keycloak Admin API 幂等同步回调地址，不通过 SQL 篡改 IdP 内部数据库。
+- 如果旧卷的管理员凭据与当前 `.env.local` 不一致，脚本发出明确警告但保留现有数据并继续健康检查。只有在确认本地数据可丢弃后，开发者才应使用 `just dev-reset` 重建本项目卷；自动化不得擅自删除身份数据。
+- OIDC Provider 不可用时，新登录和近期认证失败；已有未过期会话仅依赖 Agent Room PostgreSQL，仍可按策略继续工作。
+
 ## 4. 单机参考部署
 
 封闭测试可以运行在一台 Linux VPS，但各数据目录和密钥独立：
@@ -135,6 +142,8 @@ Synapse 官方说明联邦要求其他服务能访问配置的 `server_name`，�
 - 控制平面动态配置：可审计的房间/策略值。
 
 应用启动时严格校验配置。缺少关键密钥或 URL 就失败退出，不用危险默认值“先跑起来”。
+
+OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精确 redirect URL、前端 Origin、Matrix server name、登录尝试期限、Web 会话期限、近期认证窗口和时钟偏差。生产环境的公开入口必须使用 TLS；client secret 只能来自 Secret 层，禁止写入版本化配置。
 
 ### 7.2 密钥管理
 
