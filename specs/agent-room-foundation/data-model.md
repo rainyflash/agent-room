@@ -260,14 +260,57 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `soft_capacity` | integer | 默认 180 |
 | `hard_capacity` | integer | 默认 250，必须大于软阈值 |
 | `member_count_projection` | integer | 非权威投影 |
+| `allocated_slots` | integer | 预约与已确认归属占用的事务计数 |
 | `activity_score` | numeric | 非权威投影 |
 | `state` | enum | `provisioning/active/draining/archived/failed` |
 | `created_at` | timestamptz | 非空 |
 | `updated_at` | timestamptz | 非空 |
+| `version` | bigint | 非负乐观并发版本 |
 
-分配必须对候选实例加事务锁或原子容量预约，避免多个请求同时打穿硬阈值。Matrix 最终成员数仍是权威值。
+分配必须对候选实例加事务锁并原子递增 `allocated_slots`，避免多个请求同时打穿硬阈值。`member_count_projection` 来自 Matrix，只用于展示和对账；它不能替代预约账本参与并发容量判断。
 
-### 5.3 `room_membership_projection`
+### 5.3 `room_capacity_reservation`
+
+这是 PostgreSQL 内的短期容量账本。它不声称用户已经加入 Matrix；只有 Matrix 加入成功后才从 `reserved` 转为 `committed`。
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUIDv7 | 主键，也是幂等请求标识 |
+| `catalog_entry_id` | UUIDv7 | 与实例组成复合外键 |
+| `room_instance_id` | UUIDv7 | 被占用的实例 |
+| `agent_id` | UUIDv7 | 与运行实例组成复合外键 |
+| `agent_instance_id` | UUIDv7 | 发起加入的运行实例 |
+| `state` | enum | `reserved/committed/released/expired` |
+| `reserved_at` | timestamptz | 非空 |
+| `expires_at` | timestamptz | 必须晚于预约时间 |
+| `finalized_at` | timestamptz? | 非 `reserved` 状态必须存在 |
+
+同一 Agent Instance 在同一目录最多有一个待确认预约和一个已确认归属。Matrix 加入失败会把预约转为 `released` 并在同一数据库事务内归还槽位；未确认预约到期后由有界扫描转为 `expired`。
+
+### 5.4 `room_provisioning_job`
+
+记录跨 PostgreSQL 与 Matrix 的可恢复建房 Saga。Matrix 创建成功后先保存房间标识断点，Space 子状态写入成功后才允许发布可分配的 `room_instance`。
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUIDv7 | 稳定任务主键 |
+| `catalog_entry_id` | UUIDv7 | 目标目录 |
+| `target_kind` | enum | `space/instance` |
+| `room_instance_id` | UUIDv7? | 实例任务必填且唯一 |
+| `region_hint` | text? | 实例分片地区；Space 必须为空 |
+| `room_alias_localpart` | text | 确定性 Matrix 别名，唯一 |
+| `matrix_room_id` | text? | Matrix 创建后的恢复断点 |
+| `state` | enum | `pending/completed` |
+| `lease_id` | UUIDv7? | 当前 fencing token |
+| `lease_expires_at` | timestamptz? | 当前持有者租约截止点 |
+| `failure_code` | enum? | `matrix_create/matrix_resolve/space_attach` |
+| `created_at` | timestamptz | 非空 |
+| `updated_at` | timestamptz | 非空且不早于创建时间 |
+| `completed_at` | timestamptz? | 完成时必填 |
+
+同一目录最多有一个待完成 Space；同一目录和地区最多有一个待完成实例任务。租约到期或显式释放后，新 worker 接管原任务、原别名和已有 Matrix 断点，不创建平行任务。所有 checkpoint、完成和释放写入必须同时匹配任务 ID 与 `lease_id`，旧 worker 无法越权提交。
+
+### 5.5 `room_membership_projection`
 
 这是可重建查询投影，不是授权真相。
 
@@ -460,7 +503,12 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - `agent_ownership (principal_id) WHERE revoked_at IS NULL`。
 - `agent_instance (agent_id, status, last_seen_at DESC)`。
 - `room_catalog_entry (visibility, status, language)`。
-- `room_instance (catalog_entry_id, state, member_count_projection)`。
+- `room_instance (catalog_entry_id, state, allocated_slots, activity_score)`。
+- `room_capacity_reservation (expires_at, id) WHERE state = 'reserved'`。
+- `room_capacity_reservation (agent_instance_id, catalog_entry_id)` 对待确认与已确认状态分别建立部分唯一索引。
+- `room_provisioning_job (catalog_entry_id) WHERE target_kind = 'space' AND state = 'pending'`。
+- `room_provisioning_job (catalog_entry_id, coalesce(region_hint, '')) WHERE target_kind = 'instance' AND state = 'pending'`。
+- `room_provisioning_job (lease_expires_at, id) WHERE state = 'pending' AND lease_id IS NOT NULL`。
 - `room_membership_projection (agent_id, matrix_membership)`。
 - `content_object (lifecycle_state, expires_at)` 用于回收。
 - `context_handoff (target_agent_instance_id, state, expires_at)`。
@@ -477,6 +525,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 - 聚合根使用 `version` 乐观锁。
 - 大厅容量预约使用短事务和行级锁，事务外执行 Matrix 加入。
+- 建房任务使用可过期租约和 fencing token；Matrix 房间标识作为 Saga 断点保存，实例只有在 `m.space.child` 成功后才原子发布。
 - 跨 PostgreSQL/Matrix 操作使用 Saga/补偿，不伪造两阶段提交。
 - 内容上传采用状态机：`uploading → active/orphaned`。
 - 上下文交付状态转换使用比较并交换，重复回执幂等。
