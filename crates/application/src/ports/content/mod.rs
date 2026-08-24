@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use agent_room_domain::{
-    content::{ContentObject, ContentStorageKey},
+    content::{ContentObject, ContentScanState, ContentStorageKey},
     ids::{ContentId, PrincipalId},
     time::UtcMillis,
 };
@@ -17,6 +17,7 @@ mod models;
 pub use failures::{
     ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentAuthorizationResult,
     ContentRateLimitFailure, ContentRateLimitFailureKind, ContentRateLimitResult,
+    ContentScanFailure, ContentScanFailureKind, ContentScanResult,
     ContentStorageKeyGenerationFailure, ContentStorageKeyGenerationResult, ContentStreamFailure,
     ContentStreamFailureKind, ContentTicketFailure, ContentTicketFailureKind, ContentTicketResult,
     ObjectStoreFailure, ObjectStoreFailureKind, ObjectStoreResult,
@@ -54,6 +55,13 @@ pub trait ContentRepository: Send + Sync {
         &self,
         content_id: ContentId,
         activated_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<ContentObject>>;
+
+    fn record_scan(
+        &self,
+        content_id: ContentId,
+        outcome: ContentScanState,
+        scanned_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<ContentObject>>;
 
     fn bind_event<'a>(
@@ -122,6 +130,14 @@ pub trait ContentDownloadLimiter: Send + Sync {
         &'a self,
         attempt: &'a ContentDownloadAttempt,
     ) -> PortFuture<'a, ContentRateLimitResult<ContentRateLimitDecision>>;
+}
+
+/// 在隔离实现中扫描服务端可见正文；客户端 E2EE 密文不得送入此端口。
+pub trait ContentScanner: Send + Sync {
+    fn scan<'a>(
+        &'a self,
+        content: &'a ContentObject,
+    ) -> PortFuture<'a, ContentScanResult<ContentScanState>>;
 }
 
 /// 使用加密安全随机源生成与用户、房间和原文件名无关的对象键。

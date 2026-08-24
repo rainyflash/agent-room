@@ -154,3 +154,32 @@ pub type ContentRateLimitResult<T> = Result<T, ContentRateLimitFailure>;
 pub struct ContentStorageKeyGenerationFailure;
 
 pub type ContentStorageKeyGenerationResult<T> = Result<T, ContentStorageKeyGenerationFailure>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentScanFailureKind {
+    Unavailable,
+    InvalidResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("内容扫描操作 {operation} 失败：{kind:?}")]
+pub struct ContentScanFailure {
+    operation: &'static str,
+    kind: ContentScanFailureKind,
+}
+
+impl ContentScanFailure {
+    pub const fn new(operation: &'static str, kind: ContentScanFailureKind) -> Self {
+        Self { operation, kind }
+    }
+
+    pub const fn operation(&self) -> &'static str {
+        self.operation
+    }
+
+    pub const fn kind(&self) -> ContentScanFailureKind {
+        self.kind
+    }
+}
+
+pub type ContentScanResult<T> = Result<T, ContentScanFailure>;
