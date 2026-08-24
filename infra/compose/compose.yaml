@@ -93,6 +93,7 @@ services:
       - '127.0.0.1:13310:3310'
     volumes:
       - clamav-data:/var/lib/clamav
+      - ${AGENT_ROOM_ROOT:?缺少 AGENT_ROOM_ROOT}/infra/clamav/agent-room-test.ndb:/var/lib/clamav/agent-room-test.ndb
     restart: unless-stopped
 
   mail:

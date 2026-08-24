@@ -37,6 +37,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 tower.workspace = true
 
 [lints]

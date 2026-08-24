@@ -163,7 +163,9 @@ def migrate(values: dict[str, str]) -> None:
 
 
 def run_in_test_database(
-    values: dict[str, str], commands: list[list[str]]
+    values: dict[str, str],
+    commands: list[list[str]],
+    additional_environment: dict[str, str] | None = None,
 ) -> None:
     migration_password = required_value(values, "AGENT_ROOM_DB_PASSWORD")
     runtime_password = required_value(values, "AGENT_ROOM_DB_RUNTIME_PASSWORD")
@@ -177,6 +179,7 @@ def run_in_test_database(
     environment["AGENT_ROOM_TEST_RUNTIME_DATABASE_URL"] = database_url(
         "agent_room_runtime", runtime_password, TEST_DATABASE
     )
+    environment.update(additional_environment or {})
     try:
         for command in commands:
             run(command, environment)
