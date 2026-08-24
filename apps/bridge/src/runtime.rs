@@ -38,7 +38,6 @@ use tokio::{sync::watch, time::sleep};
 
 use crate::{
     config::BridgeConfig,
-    control_plane::{ControlPlaneHttpConfig, ReqwestControlPlaneDeviceGateway},
     ipc::{
         BridgeIpcFailure, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
         BridgeStatusSnapshot,
@@ -52,6 +51,7 @@ use crate::{
         OsDeviceSigningIdentityStore,
     },
 };
+use agent_room_bridge::control_plane::{ControlPlaneHttpConfig, ReqwestControlPlaneDeviceGateway};
 
 const SECURE_STORAGE_SERVICE: &str = "dev.agent-room.bridge";
 

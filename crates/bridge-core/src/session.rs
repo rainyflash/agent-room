@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_application::{
     devices::{DeviceRequestProof, DeviceRequestProofPayload},
-    ports::{Clock, SecretFactory, SecretValue},
+    ports::{Clock, PortFuture, SecretFactory, SecretValue},
 };
 use agent_room_domain::{
     ids::DeviceId,
@@ -43,6 +43,15 @@ pub struct ActiveBridgeSession {
 pub struct AuthorizedControlPlaneRequest {
     pub access_token: SecretValue,
     pub proof: DeviceRequestProof,
+}
+
+pub trait ControlPlaneRequestAuthorizer: Send + Sync {
+    fn authorize<'a>(
+        &'a self,
+        method: &'a str,
+        request_target: &'a str,
+        body: &'a str,
+    ) -> PortFuture<'a, BridgeSessionResult<AuthorizedControlPlaneRequest>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,6 +344,17 @@ impl BridgeSessionService {
         self.credentials
             .clear()
             .map_err(|error| map_credential_failure(operation, error))
+    }
+}
+
+impl ControlPlaneRequestAuthorizer for BridgeSessionService {
+    fn authorize<'a>(
+        &'a self,
+        method: &'a str,
+        request_target: &'a str,
+        body: &'a str,
+    ) -> PortFuture<'a, BridgeSessionResult<AuthorizedControlPlaneRequest>> {
+        Box::pin(self.authorize_request(method, request_target, body))
     }
 }
 
