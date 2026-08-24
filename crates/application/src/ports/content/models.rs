@@ -28,6 +28,22 @@ impl ContentAccessMode {
     }
 }
 
+impl TryFrom<&str> for ContentAccessMode {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "room_member" => Ok(Self::RoomMember),
+            "sender_only" => Ok(Self::SenderOnly),
+            "moderator" => Ok(Self::Moderator),
+            _ => Err(DomainError::Validation {
+                field: "content_access_mode",
+                reason: "不是支持的访问模式",
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentAccessPolicy {
     content_id: ContentId,

@@ -133,6 +133,21 @@ impl ContentEncryptionMode {
     }
 }
 
+impl TryFrom<&str> for ContentEncryptionMode {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "server_side" => Ok(Self::ServerSide),
+            "client_e2ee" => Ok(Self::ClientE2ee),
+            _ => Err(DomainError::Validation {
+                field: "content_encryption_mode",
+                reason: "不是支持的加密模式",
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentScanState {
     Pending,
@@ -158,6 +173,24 @@ impl ContentScanState {
     }
 }
 
+impl TryFrom<&str> for ContentScanState {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "clean" => Ok(Self::Clean),
+            "suspicious" => Ok(Self::Suspicious),
+            "rejected" => Ok(Self::Rejected),
+            "not_applicable" => Ok(Self::NotApplicable),
+            _ => Err(DomainError::Validation {
+                field: "content_scan_state",
+                reason: "不是支持的扫描状态",
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentLifecycleState {
     Uploading,
@@ -177,6 +210,25 @@ impl ContentLifecycleState {
             Self::Redacted => "redacted",
             Self::Expired => "expired",
             Self::Deleted => "deleted",
+        }
+    }
+}
+
+impl TryFrom<&str> for ContentLifecycleState {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "uploading" => Ok(Self::Uploading),
+            "active" => Ok(Self::Active),
+            "orphaned" => Ok(Self::Orphaned),
+            "redacted" => Ok(Self::Redacted),
+            "expired" => Ok(Self::Expired),
+            "deleted" => Ok(Self::Deleted),
+            _ => Err(DomainError::Validation {
+                field: "content_lifecycle_state",
+                reason: "不是支持的生命周期状态",
+            }),
         }
     }
 }

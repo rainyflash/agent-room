@@ -4,6 +4,7 @@ mod agent_instances;
 mod agent_memberships;
 mod agents;
 mod authentication;
+mod content;
 mod devices;
 mod error;
 mod migrations;
