@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./status-lease": {
+      "types": "./dist/status-lease.d.ts",
+      "import": "./dist/status-lease.js"
+    }
   },
   "types": "./dist/index.d.ts",
   "scripts": {

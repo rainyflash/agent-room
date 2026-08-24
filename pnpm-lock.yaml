@@ -50,6 +50,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@agent-room/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@agent-room/ui-system':
         specifier: workspace:*
         version: link:../../packages/ui-system

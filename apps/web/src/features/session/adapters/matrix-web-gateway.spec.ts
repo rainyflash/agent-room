@@ -52,6 +52,25 @@ describe('MatrixWebGateway', () => {
     await expect(gateway.logout()).resolves.toEqual({ ok: true, value: undefined });
     expect(storage.length).toBe(0);
   });
+
+  it('恢复和登出边界都会先撤下旧客户端租约', async () => {
+    const observedClients: null[] = [];
+    const gateway = new MatrixWebGateway({
+      baseUrl: 'https://matrix.agent-room.test',
+      onClientChange: (client) => {
+        if (client === null) {
+          observedClients.push(client);
+        }
+      },
+      sessionStorage: memoryStorage(),
+      url: () => new URL('https://app.agent-room.test/connect'),
+    });
+
+    await gateway.restore('@user:matrix.agent-room.test');
+    await gateway.logout();
+
+    expect(observedClients).toEqual([null, null]);
+  });
 });
 
 function memoryStorage(initial: Readonly<Record<string, string>> = {}): Storage {

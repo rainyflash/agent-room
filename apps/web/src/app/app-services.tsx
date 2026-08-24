@@ -1,11 +1,13 @@
 import { createContext, useContext, type PropsWithChildren } from 'react';
 
 import type { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
 export type AppServices = {
   readonly config: RuntimeConfig;
   readonly controlPlane: ControlPlaneClient;
+  readonly lobby: LobbyGateway;
 };
 
 const AppServicesContext = createContext<AppServices | null>(null);

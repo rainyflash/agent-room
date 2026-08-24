@@ -4,11 +4,14 @@ import { useMemo } from 'react';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
+import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
+import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { SessionProvider } from '@/features/session/ui/session-provider';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
+import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 export type AppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -30,7 +33,17 @@ export function AppProviders({ config }: AppProvidersProps) {
 
 function createRuntime(config: RuntimeConfig) {
   const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
-  const matrix = new MatrixWebGateway({ baseUrl: config.matrixHomeserverUrl });
+  const matrixClients = new MatrixClientRegistry();
+  const matrix = new MatrixWebGateway({
+    baseUrl: config.matrixHomeserverUrl,
+    onClientActivity: (client) => {
+      matrixClients.refresh(client);
+    },
+    onClientChange: (client) => {
+      matrixClients.replace(client);
+    },
+  });
+  const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
   const browser = new WindowBrowserGateway();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -40,7 +53,7 @@ function createRuntime(config: RuntimeConfig) {
       },
     },
   });
-  const services: AppServices = { config, controlPlane };
+  const services: AppServices = { config, controlPlane, lobby };
 
   return {
     queryClient,

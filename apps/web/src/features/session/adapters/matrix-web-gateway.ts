@@ -43,6 +43,8 @@ export type MatrixWebGatewayOptions = {
   readonly indexedDB?: IDBFactory;
   readonly localStorage?: Storage;
   readonly navigate?: (url: string) => void;
+  readonly onClientActivity?: (client: MatrixClient) => void;
+  readonly onClientChange?: (client: MatrixClient | null) => void;
   readonly online?: () => boolean;
   readonly replaceHistory?: (url: string) => void;
   readonly sessionStorage?: Storage;
@@ -55,6 +57,8 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #indexedDB: IDBFactory | undefined;
   readonly #localStorage: Storage | undefined;
   readonly #navigate: (url: string) => void;
+  readonly #onClientActivity: (client: MatrixClient) => void;
+  readonly #onClientChange: (client: MatrixClient | null) => void;
   readonly #online: () => boolean;
   readonly #replaceHistory: (url: string) => void;
   readonly #sessionStorage: Storage;
@@ -69,6 +73,8 @@ export class MatrixWebGateway implements MatrixGateway {
     navigate = (url) => {
       window.location.assign(url);
     },
+    onClientActivity = ignoreClientActivity,
+    onClientChange = ignoreClientChange,
     online = () => window.navigator.onLine,
     replaceHistory = (url) => {
       window.history.replaceState(window.history.state, '', url);
@@ -81,6 +87,8 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#indexedDB = indexedDB;
     this.#localStorage = localStorage;
     this.#navigate = navigate;
+    this.#onClientActivity = onClientActivity;
+    this.#onClientChange = onClientChange;
     this.#online = online;
     this.#replaceHistory = replaceHistory;
     this.#sessionStorage = sessionStorage;
@@ -114,6 +122,7 @@ export class MatrixWebGateway implements MatrixGateway {
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
+    this.#onClientChange(null);
 
     const capturedTokenResult = this.#consumeLoginToken();
     if (!capturedTokenResult.ok) {
@@ -190,8 +199,10 @@ export class MatrixWebGateway implements MatrixGateway {
         sdk.SyncState,
         this.#online,
         this.#syncTimeoutMs,
+        this.#onClientActivity,
       );
       this.#activeConnection = connection;
+      this.#onClientChange(client);
       const returnPath = capturedToken === null ? undefined : this.#consumeReturnPath();
       return ok({
         connection,
@@ -215,6 +226,7 @@ export class MatrixWebGateway implements MatrixGateway {
   async logout(): Promise<Result<void, SessionFailure>> {
     const active = this.#activeConnection;
     this.#activeConnection = null;
+    this.#onClientChange(null);
     this.#clearBrowserState();
     if (active === null) {
       return ok(undefined);
@@ -337,14 +349,24 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 }
 
+function ignoreClientChange(client: MatrixClient | null): void {
+  void client;
+}
+
+function ignoreClientActivity(client: MatrixClient): void {
+  void client;
+}
+
 class BrowserMatrixConnection implements MatrixConnection {
   readonly deviceId: string;
   readonly userId: string;
   readonly #client: MatrixClient;
+  readonly #onClientActivity: (client: MatrixClient) => void;
   readonly #online: () => boolean;
   readonly #syncEvent: ClientEvent.Sync;
   readonly #syncState: typeof SyncState;
   readonly #syncTimeoutMs: number;
+  #observingActivity = true;
   #started = false;
 
   constructor(
@@ -353,17 +375,21 @@ class BrowserMatrixConnection implements MatrixConnection {
     syncState: typeof SyncState,
     online: () => boolean,
     syncTimeoutMs: number,
+    onClientActivity: (client: MatrixClient) => void,
   ) {
     this.#client = client;
     this.#syncEvent = syncEvent;
     this.#syncState = syncState;
+    this.#onClientActivity = onClientActivity;
     this.#online = online;
     this.#syncTimeoutMs = syncTimeoutMs;
     this.deviceId = client.getDeviceId() ?? 'unknown-device';
     this.userId = client.getUserId() ?? 'unknown-user';
+    this.#client.on(this.#syncEvent, this.#handleClientActivity);
   }
 
   disconnect(): void {
+    this.#stopObservingActivity();
     this.#client.stopClient();
   }
 
@@ -424,6 +450,7 @@ class BrowserMatrixConnection implements MatrixConnection {
       remoteResult = err(failure('matrix', 'matrix.logout_failed', !this.#online(), true));
     }
 
+    this.#stopObservingActivity();
     this.#client.stopClient();
     try {
       await this.#client.clearStores();
@@ -433,6 +460,18 @@ class BrowserMatrixConnection implements MatrixConnection {
         : remoteResult;
     }
     return remoteResult;
+  }
+
+  readonly #handleClientActivity = (): void => {
+    this.#onClientActivity(this.#client);
+  };
+
+  #stopObservingActivity(): void {
+    if (!this.#observingActivity) {
+      return;
+    }
+    this.#observingActivity = false;
+    this.#client.removeListener(this.#syncEvent, this.#handleClientActivity);
   }
 }
 
