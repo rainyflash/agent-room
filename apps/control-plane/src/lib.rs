@@ -202,16 +202,7 @@ async fn build_identity_router(
         },
         policy,
     ));
-    let state = AuthenticationHttpState::new(
-        service.clone(),
-        authentication_config.issuer_url.clone(),
-        authentication_config.frontend_origin.clone(),
-        authentication_config.login_attempt_ttl,
-        authentication_config.web_session_ttl,
-    )
-    .map_err(|error| {
-        StartupError::new("startup.invalid_authentication_config", error.to_string())
-    })?;
+    let state = build_authentication_http_state(service.clone(), authentication_config)?;
     let devices = build_device_authorization(
         authentication_config,
         repositories.clone(),
@@ -279,6 +270,20 @@ async fn build_identity_router(
         routes,
         content_cleanup,
     })
+}
+
+fn build_authentication_http_state(
+    service: Arc<AuthenticationService>,
+    config: &AuthenticationConfig,
+) -> Result<AuthenticationHttpState, StartupError> {
+    AuthenticationHttpState::new(
+        service,
+        config.issuer_url.clone(),
+        config.frontend_origin.clone(),
+        config.login_attempt_ttl,
+        config.web_session_ttl,
+    )
+    .map_err(|error| StartupError::new("startup.invalid_authentication_config", error.to_string()))
 }
 
 fn build_device_authorization(
