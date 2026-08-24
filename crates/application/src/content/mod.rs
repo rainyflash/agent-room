@@ -1,6 +1,7 @@
 mod authorization;
 mod lifecycle;
 mod read;
+mod service;
 mod upload;
 
 pub use authorization::{
@@ -8,20 +9,22 @@ pub use authorization::{
 };
 pub use lifecycle::{
     BindContentEventDependencies, BindContentEventFailure, BindContentEventOutcome,
-    BindContentEventRequest, BindContentEventService, CleanupContentDependencies,
-    CleanupContentFailure, CleanupContentItemFailure, CleanupContentItemFailureCause,
-    CleanupContentOutcome, CleanupContentPolicy, CleanupContentService, ContentCleanupStage,
+    BindContentEventRequest, BindContentEventResult, BindContentEventService,
+    CleanupContentDependencies, CleanupContentFailure, CleanupContentItemFailure,
+    CleanupContentItemFailureCause, CleanupContentOutcome, CleanupContentPolicy,
+    CleanupContentService, ContentCleanupStage,
 };
 pub use read::{
     ContentReadTicketLifetime, IssueContentReadTicketDependencies, IssueContentReadTicketFailure,
-    IssueContentReadTicketRequest, IssueContentReadTicketService, IssuedContentReadTicket,
-    OpenContentDependencies, OpenContentFailure, OpenContentRequest, OpenContentService,
-    OpenedVerifiedContent,
+    IssueContentReadTicketRequest, IssueContentReadTicketResult, IssueContentReadTicketService,
+    IssuedContentReadTicket, OpenContentDependencies, OpenContentFailure, OpenContentRequest,
+    OpenContentResult, OpenContentService, OpenedVerifiedContent,
 };
+pub use service::{ContentService, ContentServiceDependencies, ContentUseCases};
 pub use upload::{
     BeginContentUploadDependencies, BeginContentUploadFailure, BeginContentUploadOutcome,
-    BeginContentUploadRequest, BeginContentUploadService, CompleteContentUploadDependencies,
-    CompleteContentUploadFailure, CompleteContentUploadOutcome, CompleteContentUploadRequest,
-    CompleteContentUploadService, ContentIdentifierFactory, ContentUploadCompensationFailures,
-    ContentUploadFailureStage,
+    BeginContentUploadRequest, BeginContentUploadResult, BeginContentUploadService,
+    CompleteContentUploadDependencies, CompleteContentUploadFailure, CompleteContentUploadOutcome,
+    CompleteContentUploadRequest, CompleteContentUploadResult, CompleteContentUploadService,
+    ContentIdentifierFactory, ContentUploadCompensationFailures, ContentUploadFailureStage,
 };
