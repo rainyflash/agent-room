@@ -13,6 +13,14 @@ use crate::persistence::RepositoryResult;
 
 use super::{MatrixResult, PortFuture};
 
+mod provisioning;
+
+pub use provisioning::{
+    RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
+    RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
+    RoomProvisioningTarget,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RoomDirectoryQuery {
     pub language: Option<RoomLanguage>,

@@ -47,6 +47,8 @@ define_id!(AgentInstanceRegistrationRequestId);
 define_id!(RoomCatalogId);
 define_id!(RoomInstanceId);
 define_id!(RoomReservationId);
+define_id!(RoomProvisioningJobId);
+define_id!(RoomProvisioningLeaseId);
 define_id!(ContentId);
 define_id!(HandoffId);
 define_id!(AutomationGrantId);
