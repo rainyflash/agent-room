@@ -3,6 +3,7 @@ use std::fmt;
 use agent_room_domain::ids::{AgentId, AgentInstanceId};
 
 const MAX_MATRIX_ID_LENGTH: usize = 512;
+const MAX_ROOM_ALIAS_LOCALPART_LENGTH: usize = 255;
 const MAX_DEVICE_ID_LENGTH: usize = 255;
 const MAX_EVENT_TYPE_LENGTH: usize = 255;
 const MAX_TRANSACTION_ID_LENGTH: usize = 255;
@@ -14,6 +15,7 @@ pub enum MatrixValueError {
     InvalidAgentLocalpart,
     InvalidUserId,
     InvalidRoomId,
+    InvalidRoomAliasLocalpart,
     InvalidEventId,
     InvalidDeviceId,
     InvalidEventType,
@@ -95,6 +97,11 @@ macro_rules! matrix_string_value {
 
 matrix_string_value!(MatrixUserId, InvalidUserId, valid_user_id);
 matrix_string_value!(MatrixRoomId, InvalidRoomId, valid_room_id);
+matrix_string_value!(
+    MatrixRoomAliasLocalpart,
+    InvalidRoomAliasLocalpart,
+    valid_room_alias_localpart
+);
 matrix_string_value!(MatrixEventId, InvalidEventId, valid_event_id);
 matrix_string_value!(MatrixDeviceId, InvalidDeviceId, valid_device_id);
 matrix_string_value!(MatrixEventType, InvalidEventType, valid_event_type);
@@ -213,6 +220,15 @@ fn valid_room_id(value: &str) -> bool {
     valid_sigil_id(value, '!')
 }
 
+fn valid_room_alias_localpart(value: &str) -> bool {
+    (1..=MAX_ROOM_ALIAS_LOCALPART_LENGTH).contains(&value.len())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'=' | b'-')
+        })
+}
+
 fn valid_event_id(value: &str) -> bool {
     (4..=MAX_MATRIX_ID_LENGTH).contains(&value.len())
         && value.starts_with('$')
@@ -260,8 +276,8 @@ fn valid_protocol_text(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MatrixAgentLocalpart, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
-        MatrixTransactionId, MatrixUserId,
+        MatrixAgentLocalpart, MatrixEventType, MatrixRoomAliasLocalpart, MatrixRoomId,
+        MatrixStateKey, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
     };
     use agent_room_domain::ids::{AgentId, AgentInstanceId};
     use uuid::Uuid;
@@ -314,5 +330,13 @@ mod tests {
         );
         assert!(MatrixAgentLocalpart::new(localpart.as_str()).is_ok());
         assert!(MatrixAgentLocalpart::new("_agent_alpha").is_err());
+    }
+
+    #[test]
+    fn 房间别名_localpart_限制为可确定性生成的安全字符() {
+        assert!(MatrixRoomAliasLocalpart::new("agent-room.general.ap-southeast-1").is_ok());
+        assert!(MatrixRoomAliasLocalpart::new("General").is_err());
+        assert!(MatrixRoomAliasLocalpart::new("general:example.org").is_err());
+        assert!(MatrixRoomAliasLocalpart::new("").is_err());
     }
 }

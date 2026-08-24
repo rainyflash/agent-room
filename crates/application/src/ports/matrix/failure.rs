@@ -11,6 +11,7 @@ pub enum MatrixOperation {
     RestoreSession,
     Sync,
     CreateRoom,
+    ResolveRoomAlias,
     Invite,
     Join,
     Leave,
@@ -29,6 +30,7 @@ impl MatrixOperation {
                 | Self::Login
                 | Self::RestoreSession
                 | Self::Sync
+                | Self::ResolveRoomAlias
                 | Self::Invite
                 | Self::Join
                 | Self::Leave
@@ -229,15 +231,17 @@ mod tests {
     }
 
     #[test]
-    fn 非幂等超时和未知提交绝不盲目重试() {
-        let create_timeout =
-            MatrixFailure::new(MatrixOperation::CreateRoom, MatrixFailureKind::Timeout);
+    fn 非幂等未知提交进入对账而不是盲目重试() {
+        let create_unknown = MatrixFailure::new(
+            MatrixOperation::CreateRoom,
+            MatrixFailureKind::UnknownCommit,
+        );
         let send_unknown =
             MatrixFailure::new(MatrixOperation::SendEvent, MatrixFailureKind::UnknownCommit);
 
         assert_eq!(
-            policy().recovery(create_timeout, 1),
-            MatrixRecoveryAction::Stop
+            policy().recovery(create_unknown, 1),
+            MatrixRecoveryAction::ReconcileSubmission
         );
         assert_eq!(
             policy().recovery(send_unknown, 1),

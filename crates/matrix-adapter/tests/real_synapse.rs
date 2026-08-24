@@ -5,9 +5,10 @@ use agent_room_application::ports::{
     MatrixAgentLocalpart, MatrixAgentUserRegistration, MatrixClientFactory, MatrixConnection,
     MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind,
-    MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomId, MatrixRoomPreset, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch,
-    MatrixSyncRequest, MatrixSyncToken, MatrixTransactionId, MatrixUserId, SecretValue,
+    MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId,
+    MatrixRoomKind, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
+    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+    MatrixTransactionId, MatrixUserId, SecretValue,
 };
 use agent_room_domain::{ids::AgentId, time::DurationMillis};
 use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
@@ -65,6 +66,7 @@ async fn 真实_synapse_支持房间生命周期_幂等发送_回执和回填() 
     .await;
     let message_flow = verify_message_flow(&scenario).await;
     verify_receipt_and_leave(&scenario, message_flow).await;
+    verify_space_alias(&factory, &scenario.developer).await;
 }
 
 #[tokio::test]
@@ -150,7 +152,6 @@ async fn prepare_room(
         .restore(&developer_session)
         .await
         .expect("访问令牌必须能恢复同一 Matrix 设备会话");
-
     let agent = factory
         .login(&login(agent_user, agent_password))
         .await
@@ -197,6 +198,76 @@ async fn prepare_room(
         developer_baseline,
         agent_baseline,
     }
+}
+
+async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &MatrixConnection) {
+    let gateway = connection.gateway();
+    let alias =
+        MatrixRoomAliasLocalpart::new(format!("agent-room-space-test-{}", Uuid::now_v7().simple()))
+            .expect("测试 Space 别名有效");
+    let request = MatrixCreateRoom::new(
+        Some("Agent Room Space 验收".to_owned()),
+        Some("仅用于验证 Matrix Space 与确定性别名".to_owned()),
+        MatrixRoomVisibility::Private,
+        MatrixRoomPreset::PrivateChat,
+        false,
+        Vec::new(),
+    )
+    .expect("Space 创建请求有效")
+    .with_kind(MatrixRoomKind::Space)
+    .with_alias_localpart(alias.clone());
+    let room_id = gateway
+        .create_room(&request)
+        .await
+        .expect("必须能通过标准 createRoom 创建 Space");
+    let resolved = gateway
+        .resolve_room_alias(&alias)
+        .await
+        .expect("确定性别名必须能解析回 Space");
+    assert_eq!(resolved, room_id);
+
+    let observer = factory
+        .restore(connection.session())
+        .await
+        .expect("独立验收会话必须能从头同步 Space 状态");
+    let space = sync_until_room(observer.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
+    let creation = space
+        .state()
+        .iter()
+        .find(|event| event.event_type().as_str() == "m.room.create")
+        .expect("初次同步必须包含 Space 创建状态");
+    assert_eq!(creation.content()["type"], "m.space");
+    leave_with_retry(gateway, &room_id).await;
+}
+
+async fn sync_until_room(
+    gateway: &dyn MatrixGateway,
+    room_id: &MatrixRoomId,
+    kind: MatrixRoomSyncKind,
+) -> MatrixRoomSync {
+    let mut since = None;
+    let mut available = Vec::new();
+    for _ in 0..10 {
+        let batch = sync(gateway, since).await;
+        available.extend(
+            batch
+                .rooms()
+                .iter()
+                .map(|room| format!("{}:{:?}", room.room_id().as_str(), room.kind())),
+        );
+        if let Some(room) = batch
+            .rooms()
+            .iter()
+            .find(|room| room.room_id() == room_id && room.kind() == kind)
+        {
+            return room.clone();
+        }
+        since = Some(batch.next_batch().clone());
+    }
+    panic!(
+        "同步结果始终缺少房间 {} 的 {kind:?} 更新；实际房间：{available:?}",
+        room_id.as_str()
+    )
 }
 
 async fn verify_message_flow(scenario: &RoomScenario) -> MessageFlowResult {
@@ -450,11 +521,21 @@ fn room_update<'a>(
     room_id: &MatrixRoomId,
     kind: MatrixRoomSyncKind,
 ) -> &'a MatrixRoomSync {
+    let available = batch
+        .rooms()
+        .iter()
+        .map(|room| format!("{}:{:?}", room.room_id().as_str(), room.kind()))
+        .collect::<Vec<_>>();
     batch
         .rooms()
         .iter()
         .find(|room| room.room_id() == room_id && room.kind() == kind)
-        .unwrap_or_else(|| panic!("同步结果缺少房间 {} 的 {kind:?} 更新", room_id.as_str()))
+        .unwrap_or_else(|| {
+            panic!(
+                "同步结果缺少房间 {} 的 {kind:?} 更新；实际房间：{available:?}",
+                room_id.as_str()
+            )
+        })
 }
 
 fn unique_value(prefix: &str) -> String {

@@ -7,7 +7,8 @@ use crate::ports::SecretValue;
 
 use super::{
     MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType, MatrixGateway,
-    MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
+    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId,
+    MatrixUserId,
 };
 
 const MAX_LOGIN_ID_LENGTH: usize = 512;
@@ -231,6 +232,12 @@ pub enum MatrixRoomPreset {
     TrustedPrivateChat,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixRoomKind {
+    Conversation,
+    Space,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixCreateRoom {
     name: Option<String>,
@@ -239,6 +246,8 @@ pub struct MatrixCreateRoom {
     preset: MatrixRoomPreset,
     direct: bool,
     invite: Vec<MatrixUserId>,
+    kind: MatrixRoomKind,
+    alias_localpart: Option<MatrixRoomAliasLocalpart>,
 }
 
 impl MatrixCreateRoom {
@@ -274,7 +283,21 @@ impl MatrixCreateRoom {
             preset,
             direct,
             invite,
+            kind: MatrixRoomKind::Conversation,
+            alias_localpart: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_kind(mut self, kind: MatrixRoomKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub fn with_alias_localpart(mut self, alias_localpart: MatrixRoomAliasLocalpart) -> Self {
+        self.alias_localpart = Some(alias_localpart);
+        self
     }
 
     pub fn name(&self) -> Option<&str> {
@@ -299,6 +322,14 @@ impl MatrixCreateRoom {
 
     pub fn invite(&self) -> &[MatrixUserId] {
         &self.invite
+    }
+
+    pub const fn kind(&self) -> MatrixRoomKind {
+        self.kind
+    }
+
+    pub const fn alias_localpart(&self) -> Option<&MatrixRoomAliasLocalpart> {
+        self.alias_localpart.as_ref()
     }
 }
 

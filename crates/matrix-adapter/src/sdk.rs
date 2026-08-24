@@ -4,9 +4,9 @@ use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixClientFactory,
     MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixReceipt,
-    MatrixReceiptKind, MatrixResult, MatrixRoomId, MatrixRoomPreset, MatrixRoomVisibility,
-    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixUserId, PortFuture, SecretValue,
+    MatrixReceiptKind, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+    MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent,
+    MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
 };
 use matrix_sdk::{
     Client, SessionMeta, SessionTokens,
@@ -14,19 +14,22 @@ use matrix_sdk::{
     config::{RequestConfig, SyncSettings, SyncToken},
     room::MessagesOptions,
     ruma::{
-        OwnedDeviceId, OwnedEventId, OwnedTransactionId, OwnedUserId, RoomId, UInt, UserId,
+        OwnedDeviceId, OwnedEventId, OwnedTransactionId, OwnedUserId, RoomAliasId, RoomId, UInt,
+        UserId,
         api::client::{
             filter::FilterDefinition,
             receipt::create_receipt::v3::ReceiptType,
             room::{
                 Visibility,
-                create_room::v3::{Request as CreateRoomRequest, RoomPreset},
+                create_room::v3::{CreationContent, Request as CreateRoomRequest, RoomPreset},
             },
             session::login::v3::{LoginInfo, Password, Request as LoginRequest},
             sync::sync_events::v3::Filter as SyncFilter,
             uiaa::{MatrixUserIdentifier, UserIdentifier},
         },
         events::receipt::ReceiptThread,
+        room::RoomType,
+        serde::Raw,
     },
     store::RoomLoadSettings,
 };
@@ -214,6 +217,10 @@ impl MatrixGateway for MatrixSdkGateway {
             sdk_request.visibility = map_visibility(request.visibility());
             sdk_request.preset = Some(map_preset(request.preset()));
             sdk_request.is_direct = request.direct();
+            sdk_request.room_alias_name = request
+                .alias_localpart()
+                .map(|alias| alias.as_str().to_owned());
+            sdk_request.creation_content = map_creation_content(request.kind())?;
             sdk_request.invite = request
                 .invite()
                 .iter()
@@ -230,6 +237,29 @@ impl MatrixGateway for MatrixSdkGateway {
                     MatrixFailureKind::InvalidResponse,
                 )
             })
+        })
+    }
+
+    fn resolve_room_alias<'a>(
+        &'a self,
+        alias_localpart: &'a MatrixRoomAliasLocalpart,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
+        Box::pin(async move {
+            let user_id =
+                parse_user_id(self.metadata.user_id(), MatrixOperation::ResolveRoomAlias)?;
+            let alias = RoomAliasId::parse(format!(
+                "#{}:{}",
+                alias_localpart.as_str(),
+                user_id.server_name()
+            ))
+            .map_err(|_| invalid_response_failure(MatrixOperation::ResolveRoomAlias))?;
+            let response = self
+                .client
+                .resolve_room_alias(&alias)
+                .await
+                .map_err(|error| map_http_error(MatrixOperation::ResolveRoomAlias, &error))?;
+            MatrixRoomId::new(response.room_id.to_string())
+                .map_err(|_| invalid_response_failure(MatrixOperation::ResolveRoomAlias))
         })
     }
 
@@ -466,6 +496,17 @@ const fn map_preset(value: MatrixRoomPreset) -> RoomPreset {
     }
 }
 
+fn map_creation_content(kind: MatrixRoomKind) -> MatrixResult<Option<Raw<CreationContent>>> {
+    if kind == MatrixRoomKind::Conversation {
+        return Ok(None);
+    }
+    let mut content = CreationContent::new();
+    content.room_type = Some(RoomType::Space);
+    Raw::new(&content)
+        .map(Some)
+        .map_err(|_| invalid_response_failure(MatrixOperation::CreateRoom))
+}
+
 const fn map_receipt_type(value: MatrixReceiptKind) -> ReceiptType {
     match value {
         MatrixReceiptKind::Read => ReceiptType::Read,
@@ -482,10 +523,30 @@ const fn invalid_response_failure(operation: MatrixOperation) -> MatrixFailure {
 mod tests {
     use std::{fs, time::Duration};
 
-    use agent_room_application::ports::{MatrixFailureKind, MatrixOperation, SecretValue};
+    use agent_room_application::ports::{
+        MatrixFailureKind, MatrixOperation, MatrixRoomKind, SecretValue,
+    };
+    use matrix_sdk::ruma::room::RoomType;
     use tempfile::tempdir;
 
-    use crate::{MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration};
+    use crate::{
+        MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
+        sdk::map_creation_content,
+    };
+
+    #[test]
+    fn space_创建内容使用标准_m_space_房间类型() {
+        assert!(
+            map_creation_content(MatrixRoomKind::Conversation)
+                .expect("普通房间映射成功")
+                .is_none()
+        );
+        let raw = map_creation_content(MatrixRoomKind::Space)
+            .expect("Space 映射成功")
+            .expect("Space 必须携带创建内容");
+        let content = raw.deserialize().expect("Space 创建内容可反序列化");
+        assert_eq!(content.room_type, Some(RoomType::Space));
+    }
 
     #[tokio::test]
     async fn 加密_sqlite_store_可持久化且无需联网初始化() {

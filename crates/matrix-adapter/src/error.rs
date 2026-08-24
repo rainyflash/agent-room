@@ -126,7 +126,10 @@ fn map_status(operation: MatrixOperation, status: u16) -> MatrixFailure {
 }
 
 fn transport_failure(operation: MatrixOperation, timed_out: bool) -> MatrixFailure {
-    let kind = if operation == MatrixOperation::SendEvent {
+    let kind = if matches!(
+        operation,
+        MatrixOperation::CreateRoom | MatrixOperation::SendEvent
+    ) {
         MatrixFailureKind::UnknownCommit
     } else if timed_out {
         MatrixFailureKind::Timeout
@@ -182,7 +185,11 @@ mod tests {
     }
 
     #[test]
-    fn 发送超时必须进入未知提交对账而不是重试() {
+    fn 非幂等写入超时必须进入未知提交对账而不是重试() {
+        assert_eq!(
+            map_sdk_error(MatrixOperation::CreateRoom, &Error::Timeout).kind(),
+            MatrixFailureKind::UnknownCommit
+        );
         assert_eq!(
             map_sdk_error(MatrixOperation::SendEvent, &Error::Timeout).kind(),
             MatrixFailureKind::UnknownCommit

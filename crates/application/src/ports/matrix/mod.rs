@@ -10,14 +10,14 @@ pub use failure::{
 pub use models::{
     MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentUserRegistration,
     MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
-    MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomPreset, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRoomKind, MatrixRoomPreset,
+    MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
-    MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
-    MatrixValueError,
+    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixStateKey, MatrixSyncToken, MatrixTransactionId,
+    MatrixUserId, MatrixValueError,
 };
 
 pub type MatrixResult<T> = Result<T, MatrixFailure>;
@@ -64,6 +64,11 @@ pub trait MatrixGateway: Send + Sync {
     fn create_room<'a>(
         &'a self,
         request: &'a MatrixCreateRoom,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>>;
+
+    fn resolve_room_alias<'a>(
+        &'a self,
+        alias_localpart: &'a MatrixRoomAliasLocalpart,
     ) -> PortFuture<'a, MatrixResult<MatrixRoomId>>;
 
     fn invite<'a>(
