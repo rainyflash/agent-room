@@ -332,10 +332,10 @@ impl ApiError {
     }
 
     pub(crate) fn begin_content_upload(
-        failure: BeginContentUploadFailure,
+        failure: &BeginContentUploadFailure,
         correlation_id: CorrelationId,
     ) -> Self {
-        let mapping = match &failure {
+        let mapping = match failure {
             BeginContentUploadFailure::Denied => authorization_denied("content.upload.denied"),
             BeginContentUploadFailure::Authorization(error) => {
                 content_authorization_mapping(error, "content.upload")
@@ -346,15 +346,15 @@ impl ApiError {
                 repository_mapping(error, "content.upload")
             }
         };
-        log_content_failure("begin_upload", &failure, correlation_id);
+        log_content_failure("begin_upload", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 
     pub(crate) fn complete_content_upload(
-        failure: CompleteContentUploadFailure,
+        failure: &CompleteContentUploadFailure,
         correlation_id: CorrelationId,
     ) -> Self {
-        let mapping = match &failure {
+        let mapping = match failure {
             CompleteContentUploadFailure::NotFound => content_not_found(),
             CompleteContentUploadFailure::Forbidden => {
                 authorization_denied("content.upload.forbidden")
@@ -386,15 +386,15 @@ impl ApiError {
                 "上传内容未通过安全扫描。",
             ),
         };
-        log_content_failure("complete_upload", &failure, correlation_id);
+        log_content_failure("complete_upload", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 
     pub(crate) fn bind_content_event(
-        failure: BindContentEventFailure,
+        failure: &BindContentEventFailure,
         correlation_id: CorrelationId,
     ) -> Self {
-        let mapping = match &failure {
+        let mapping = match failure {
             BindContentEventFailure::NotFound => content_not_found(),
             BindContentEventFailure::Forbidden | BindContentEventFailure::Revoked => {
                 authorization_denied("content.binding.forbidden")
@@ -408,15 +408,15 @@ impl ApiError {
                 repository_mapping(error, "content.binding")
             }
         };
-        log_content_failure("bind_event", &failure, correlation_id);
+        log_content_failure("bind_event", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 
     pub(crate) fn issue_content_ticket(
-        failure: IssueContentReadTicketFailure,
+        failure: &IssueContentReadTicketFailure,
         correlation_id: CorrelationId,
     ) -> Self {
-        let mapping = match &failure {
+        let mapping = match failure {
             IssueContentReadTicketFailure::NotFound => content_not_found(),
             IssueContentReadTicketFailure::NotReadable(_) => {
                 content_conflict("content.read.not_readable")
@@ -434,12 +434,15 @@ impl ApiError {
             }
             IssueContentReadTicketFailure::Ticket(error) => ticket_mapping(error, "content.read"),
         };
-        log_content_failure("issue_read_ticket", &failure, correlation_id);
+        log_content_failure("issue_read_ticket", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 
-    pub(crate) fn open_content(failure: OpenContentFailure, correlation_id: CorrelationId) -> Self {
-        let mapping = match &failure {
+    pub(crate) fn open_content(
+        failure: &OpenContentFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match failure {
             OpenContentFailure::Ticket(error) => ticket_mapping(error, "content.open"),
             OpenContentFailure::NotFound => content_not_found(),
             OpenContentFailure::NotReadable(state) => unreadable_mapping(*state),
@@ -461,7 +464,7 @@ impl ApiError {
                     correlation_id,
                 )
                 .retry_after_seconds(seconds_until(*retry_at));
-                log_content_failure("open", &failure, correlation_id);
+                log_content_failure("open", failure, correlation_id);
                 return error;
             }
             OpenContentFailure::ObjectStore(error) => {
@@ -471,7 +474,7 @@ impl ApiError {
                 dependency_content("content.open.corrupt_metadata")
             }
         };
-        log_content_failure("open", &failure, correlation_id);
+        log_content_failure("open", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 }

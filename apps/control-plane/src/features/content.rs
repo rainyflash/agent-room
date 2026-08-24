@@ -215,7 +215,7 @@ async fn begin_upload(
             no_store((status, axum::Json(response)).into_response())
         }
         Err(failure) => {
-            no_store(ApiError::begin_content_upload(failure, correlation_id).into_response())
+            no_store(ApiError::begin_content_upload(&failure, correlation_id).into_response())
         }
     }
 }
@@ -276,7 +276,7 @@ async fn complete_upload(
     {
         Ok(outcome) => no_store(axum::Json(complete_upload_response(outcome)).into_response()),
         Err(failure) => {
-            no_store(ApiError::complete_content_upload(failure, correlation_id).into_response())
+            no_store(ApiError::complete_content_upload(&failure, correlation_id).into_response())
         }
     }
 }
@@ -332,7 +332,7 @@ async fn bind_content_event(
     {
         Ok(outcome) => no_store(axum::Json(bind_event_response(outcome)).into_response()),
         Err(failure) => {
-            no_store(ApiError::bind_content_event(failure, correlation_id).into_response())
+            no_store(ApiError::bind_content_event(&failure, correlation_id).into_response())
         }
     }
 }
@@ -379,7 +379,7 @@ async fn issue_read_ticket(
             .into_response(),
         ),
         Err(failure) => {
-            no_store(ApiError::issue_content_ticket(failure, correlation_id).into_response())
+            no_store(ApiError::issue_content_ticket(&failure, correlation_id).into_response())
         }
     }
 }
@@ -430,7 +430,7 @@ async fn open_content(
         .await
     {
         Ok(opened) => verified_content_response(opened),
-        Err(failure) => no_store(ApiError::open_content(failure, correlation_id).into_response()),
+        Err(failure) => no_store(ApiError::open_content(&failure, correlation_id).into_response()),
     }
 }
 

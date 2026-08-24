@@ -9,8 +9,10 @@ repository.workspace = true
 [dependencies]
 agent-room-a2a-adapter.workspace = true
 agent-room-application.workspace = true
+agent-room-content-adapter.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
+agent-room-matrix-adapter.workspace = true
 agent-room-matrix-provisioning-adapter.workspace = true
 agent-room-postgres-adapter.workspace = true
 agent-room-protocol-conformance.workspace = true

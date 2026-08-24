@@ -146,8 +146,10 @@ version = "0.1.0"
 dependencies = [
  "agent-room-a2a-adapter",
  "agent-room-application",
+ "agent-room-content-adapter",
  "agent-room-domain",
  "agent-room-identity-adapter",
+ "agent-room-matrix-adapter",
  "agent-room-matrix-provisioning-adapter",
  "agent-room-postgres-adapter",
  "agent-room-protocol-conformance",
