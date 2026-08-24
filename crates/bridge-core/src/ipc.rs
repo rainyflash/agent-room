@@ -77,6 +77,14 @@ pub enum IpcCallerKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IpcScope {
     BridgeStatusRead,
+    SelfRead,
+    PreviewsRead,
+    PresenceRead,
+    ContentRead,
+    StatusPublish,
+    MessageSend,
+    HandoffConsume,
+    HandoffDecline,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,15 +162,12 @@ pub struct FoundationIpcScopePolicy;
 
 impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
-        matches!(
-            (caller, scope),
-            (
-                IpcCallerKind::CodexPlugin
-                    | IpcCallerKind::DesktopShell
-                    | IpcCallerKind::DiagnosticCli,
-                IpcScope::BridgeStatusRead
-            )
-        )
+        match caller {
+            IpcCallerKind::CodexPlugin => true,
+            IpcCallerKind::DesktopShell | IpcCallerKind::DiagnosticCli => {
+                scope == IpcScope::BridgeStatusRead
+            }
+        }
     }
 }
 
@@ -365,5 +370,32 @@ mod tests {
             .expect_err("未授权作用域必须失败");
 
         assert_eq!(failure.kind(), IpcHandshakeFailureKind::ScopeDenied);
+    }
+
+    #[test]
+    fn codex_插件可逐项申请工具作用域而诊断客户端只能读取状态() {
+        let policy = FoundationIpcScopePolicy;
+        let tool_scopes = [
+            IpcScope::SelfRead,
+            IpcScope::PreviewsRead,
+            IpcScope::PresenceRead,
+            IpcScope::ContentRead,
+            IpcScope::StatusPublish,
+            IpcScope::MessageSend,
+            IpcScope::HandoffConsume,
+            IpcScope::HandoffDecline,
+        ];
+
+        assert!(
+            tool_scopes
+                .iter()
+                .all(|scope| policy.allows(IpcCallerKind::CodexPlugin, *scope))
+        );
+        assert!(
+            tool_scopes
+                .iter()
+                .all(|scope| !policy.allows(IpcCallerKind::DiagnosticCli, *scope))
+        );
+        assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
     }
 }

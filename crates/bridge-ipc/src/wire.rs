@@ -7,6 +7,8 @@ use agent_room_bridge_core::ipc::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::tools::{IpcMethod, IpcResponse};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcFrame {
@@ -78,32 +80,14 @@ pub struct IpcVersion {
 #[serde(rename_all = "snake_case")]
 pub enum IpcScopeName {
     BridgeStatusRead,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IpcMethod {
-    BridgeStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum IpcResponse {
-    BridgeStatus {
-        state: IpcBridgeState,
-        #[serde(rename = "startedAtUnixMs")]
-        started_at_unix_ms: i64,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IpcBridgeState {
-    Starting,
-    Ready,
-    Reconnecting,
-    Offline,
-    ShuttingDown,
+    SelfRead,
+    PreviewsRead,
+    PresenceRead,
+    ContentRead,
+    StatusPublish,
+    MessageSend,
+    HandoffConsume,
+    HandoffDecline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +162,14 @@ impl From<IpcScopeName> for IpcScope {
     fn from(value: IpcScopeName) -> Self {
         match value {
             IpcScopeName::BridgeStatusRead => Self::BridgeStatusRead,
+            IpcScopeName::SelfRead => Self::SelfRead,
+            IpcScopeName::PreviewsRead => Self::PreviewsRead,
+            IpcScopeName::PresenceRead => Self::PresenceRead,
+            IpcScopeName::ContentRead => Self::ContentRead,
+            IpcScopeName::StatusPublish => Self::StatusPublish,
+            IpcScopeName::MessageSend => Self::MessageSend,
+            IpcScopeName::HandoffConsume => Self::HandoffConsume,
+            IpcScopeName::HandoffDecline => Self::HandoffDecline,
         }
     }
 }
@@ -186,6 +178,14 @@ impl From<IpcScope> for IpcScopeName {
     fn from(value: IpcScope) -> Self {
         match value {
             IpcScope::BridgeStatusRead => Self::BridgeStatusRead,
+            IpcScope::SelfRead => Self::SelfRead,
+            IpcScope::PreviewsRead => Self::PreviewsRead,
+            IpcScope::PresenceRead => Self::PresenceRead,
+            IpcScope::ContentRead => Self::ContentRead,
+            IpcScope::StatusPublish => Self::StatusPublish,
+            IpcScope::MessageSend => Self::MessageSend,
+            IpcScope::HandoffConsume => Self::HandoffConsume,
+            IpcScope::HandoffDecline => Self::HandoffDecline,
         }
     }
 }

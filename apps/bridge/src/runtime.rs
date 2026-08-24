@@ -41,7 +41,7 @@ use crate::{
     config::BridgeConfig,
     ipc::{
         BridgeIpcFailure, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
-        BridgeStatusSnapshot,
+        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler,
     },
     runtime_files::{
         BridgeExclusiveLock, BridgeRuntimeFileFailure, BridgeRuntimeFileFailureKind,
@@ -77,7 +77,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         &paths,
         runtime_secrets.installation_id().clone(),
         runtime_secrets.ipc_shared_secret().clone(),
-        status.clone(),
+        Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
     )
     .map_err(BridgeRuntimeError::ipc)?;
     status.transition(if device_session.initial_session.is_some() {

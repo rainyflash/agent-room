@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, future::Future, io, pin::Pin, sync::Arc, time::Duration};
 
 use agent_room_bridge_core::ipc::{
     FoundationIpcScopePolicy, IpcHandshakeAgreement, IpcHandshakeFailureKind,
-    IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion, IpcScope,
+    IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion,
 };
 use agent_room_bridge_ipc::{
     IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcErrorCategory, IpcFrame, IpcFrameCodec,
@@ -35,6 +35,72 @@ pub(crate) struct BridgeStatusSnapshot {
 
 pub(crate) trait BridgeStatusReader: Send + Sync {
     fn read_status(&self) -> BridgeStatusSnapshot;
+}
+
+type BridgeIpcDispatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<IpcResponse, BridgeIpcDispatchFailure>> + Send + 'a>>;
+
+pub(crate) trait BridgeIpcRequestHandler: Send + Sync {
+    fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_>;
+}
+
+pub(crate) struct FoundationBridgeIpcRequestHandler {
+    status_reader: Arc<dyn BridgeStatusReader>,
+}
+
+impl FoundationBridgeIpcRequestHandler {
+    pub(crate) fn new(status_reader: Arc<dyn BridgeStatusReader>) -> Self {
+        Self { status_reader }
+    }
+}
+
+impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
+    fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
+        Box::pin(async move {
+            match method {
+                IpcMethod::BridgeStatus => {
+                    let status = self.status_reader.read_status();
+                    Ok(IpcResponse::BridgeStatus {
+                        state: status.state,
+                        started_at_unix_ms: status.started_at_unix_ms,
+                    })
+                }
+                IpcMethod::GetSelf
+                | IpcMethod::ListPreviews(_)
+                | IpcMethod::GetPresence(_)
+                | IpcMethod::OpenContent(_)
+                | IpcMethod::PublishStatus(_)
+                | IpcMethod::SendMessage(_)
+                | IpcMethod::ConsumeHandoff(_)
+                | IpcMethod::DeclineHandoff(_) => Err(BridgeIpcDispatchFailure::new(
+                    "bridge.agent_runtime_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    true,
+                )),
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BridgeIpcDispatchFailure {
+    code: &'static str,
+    category: IpcErrorCategory,
+    retryable: bool,
+}
+
+impl BridgeIpcDispatchFailure {
+    pub(crate) const fn new(
+        code: &'static str,
+        category: IpcErrorCategory,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            code,
+            category,
+            retryable,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +151,7 @@ pub(crate) struct BridgeIpcServer {
     installation_id: IpcInstallationId,
     shared_secret: IpcSharedSecret,
     server_instance_id: Uuid,
-    status_reader: Arc<dyn BridgeStatusReader>,
+    request_handler: Arc<dyn BridgeIpcRequestHandler>,
 }
 
 impl BridgeIpcServer {
@@ -98,7 +164,7 @@ impl BridgeIpcServer {
         paths: &BridgeRuntimePaths,
         installation_id: IpcInstallationId,
         shared_secret: IpcSharedSecret,
-        status_reader: Arc<dyn BridgeStatusReader>,
+        request_handler: Arc<dyn BridgeIpcRequestHandler>,
     ) -> BridgeIpcResult<Self> {
         let endpoint = BridgeIpcEndpoint::from_installation(paths, &installation_id);
         let options = private_listener_options(&endpoint)?;
@@ -110,7 +176,7 @@ impl BridgeIpcServer {
             installation_id,
             shared_secret,
             server_instance_id: Uuid::now_v7(),
-            status_reader,
+            request_handler,
         })
     }
 
@@ -124,7 +190,7 @@ impl BridgeIpcServer {
             installation_id: self.installation_id,
             shared_secret: self.shared_secret,
             server_instance_id: self.server_instance_id,
-            status_reader: self.status_reader,
+            request_handler: self.request_handler,
         });
         let mut connections = JoinSet::new();
 
@@ -179,7 +245,7 @@ struct BridgeIpcContext {
     installation_id: IpcInstallationId,
     shared_secret: IpcSharedSecret,
     server_instance_id: Uuid,
-    status_reader: Arc<dyn BridgeStatusReader>,
+    request_handler: Arc<dyn BridgeIpcRequestHandler>,
 }
 
 async fn handle_connection<S>(mut stream: S, context: &BridgeIpcContext) -> BridgeIpcResult<()>
@@ -325,41 +391,67 @@ where
             return Err(BridgeIpcFailure::new(BridgeIpcFailureKind::Protocol));
         };
 
-        match method {
-            IpcMethod::BridgeStatus
-                if agreement
-                    .granted_scopes()
-                    .contains(&IpcScope::BridgeStatusRead) =>
-            {
-                let status = context.status_reader.read_status();
+        let method_name = method.name();
+        if let Err(failure) = method.validate() {
+            send_error(
+                &mut *stream,
+                Some(correlation_id),
+                failure.code(),
+                IpcErrorCategory::Validation,
+                false,
+            )
+            .await?;
+            continue;
+        }
+        if !agreement
+            .granted_scopes()
+            .contains(&method.required_scope())
+        {
+            send_error(
+                &mut *stream,
+                Some(correlation_id),
+                "bridge.ipc.scope_denied",
+                IpcErrorCategory::Authorization,
+                false,
+            )
+            .await?;
+            continue;
+        }
+
+        match context.request_handler.dispatch(method).await {
+            Ok(result) => {
                 IpcFrameCodec::write(
                     &mut *stream,
                     &IpcFrame::Response {
                         correlation_id,
-                        result: IpcResponse::BridgeStatus {
-                            state: status.state,
-                            started_at_unix_ms: status.started_at_unix_ms,
-                        },
+                        result,
                     },
                 )
                 .await
                 .map_err(BridgeIpcFailure::protocol)?;
                 tracing::debug!(
                     event = "bridge_ipc_request",
-                    method = "bridge_status",
+                    method = method_name,
                     result = "ok",
                     "本地 IPC 请求完成"
                 );
             }
-            IpcMethod::BridgeStatus => {
+            Err(failure) => {
                 send_error(
                     &mut *stream,
                     Some(correlation_id),
-                    "bridge.ipc.scope_denied",
-                    IpcErrorCategory::Authorization,
-                    false,
+                    failure.code,
+                    failure.category,
+                    failure.retryable,
                 )
                 .await?;
+                tracing::warn!(
+                    event = "bridge_ipc_request",
+                    method = method_name,
+                    result = "error",
+                    code = failure.code,
+                    "本地 IPC 请求失败"
+                );
             }
         }
     }
@@ -566,7 +658,7 @@ mod tests {
 
     use super::{
         BridgeIpcContext, BridgeIpcFailureKind, BridgeIpcServer, BridgeStatusReader,
-        BridgeStatusSnapshot, handle_connection,
+        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, handle_connection,
     };
 
     struct 固定状态;
@@ -588,7 +680,7 @@ mod tests {
             installation_id: installation_id.clone(),
             shared_secret: secret.clone(),
             server_instance_id: Uuid::from_u128(99),
-            status_reader: Arc::new(固定状态),
+            request_handler: Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
         };
         let (mut client, server) = duplex(8 * 1_024);
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
@@ -662,11 +754,37 @@ mod tests {
                 },
             }
         );
+
+        assert_get_self_scope_denied(&mut client).await;
         drop(client);
         server_task
             .await
             .expect("服务端任务未崩溃")
             .expect("客户端正常断开");
+    }
+
+    async fn assert_get_self_scope_denied<S>(client: &mut S)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        let denied_id = Uuid::from_u128(2);
+        IpcFrameCodec::write(
+            client,
+            &IpcFrame::Request {
+                correlation_id: denied_id,
+                method: IpcMethod::GetSelf,
+            },
+        )
+        .await
+        .expect("越权请求可发送");
+        assert!(matches!(
+            IpcFrameCodec::read(client).await.expect("越权响应可读取"),
+            IpcFrame::Error {
+                correlation_id: Some(id),
+                category: IpcErrorCategory::Authorization,
+                ..
+            } if id == denied_id
+        ));
     }
 
     #[tokio::test]
@@ -676,7 +794,7 @@ mod tests {
             installation_id: installation_id.clone(),
             shared_secret: IpcSharedSecret::new([7; 32]),
             server_instance_id: Uuid::from_u128(99),
-            status_reader: Arc::new(固定状态),
+            request_handler: Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
         };
         let (mut client, server) = duplex(8 * 1_024);
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
@@ -732,7 +850,7 @@ mod tests {
             &paths,
             installation_id.clone(),
             IpcSharedSecret::new([1; 32]),
-            Arc::new(固定状态),
+            Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
         )
         .expect("首个私有端点可创建");
 
@@ -740,7 +858,7 @@ mod tests {
             &paths,
             installation_id,
             IpcSharedSecret::new([1; 32]),
-            Arc::new(固定状态),
+            Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
         ) else {
             panic!("相同端点不能被第二个服务占用");
         };

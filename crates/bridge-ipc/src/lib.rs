@@ -1,5 +1,6 @@
 mod authentication;
 mod codec;
+mod tools;
 mod wire;
 
 pub use authentication::{
@@ -7,7 +8,15 @@ pub use authentication::{
     create_challenge_proof, verify_challenge_proof,
 };
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
+pub use tools::{
+    IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcConsumedHandoff, IpcContentReference,
+    IpcDeclinedHandoff, IpcGetPresenceRequest, IpcHandoffRequest, IpcHandoffStatus,
+    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
+    IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest, IpcOpenedContent,
+    IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+};
 pub use wire::{
-    IpcBridgeState, IpcCaller, IpcErrorCategory, IpcFrame, IpcMethod, IpcResponse, IpcScopeName,
-    IpcVersion, client_offer_from_frame, server_agreement_frame,
+    IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,
+    server_agreement_frame,
 };

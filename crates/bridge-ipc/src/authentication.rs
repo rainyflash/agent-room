@@ -132,6 +132,14 @@ const fn caller_tag(caller: IpcCallerKind) -> u8 {
 const fn scope_tag(scope: IpcScope) -> u8 {
     match scope {
         IpcScope::BridgeStatusRead => 1,
+        IpcScope::SelfRead => 2,
+        IpcScope::PreviewsRead => 3,
+        IpcScope::PresenceRead => 4,
+        IpcScope::ContentRead => 5,
+        IpcScope::StatusPublish => 6,
+        IpcScope::MessageSend => 7,
+        IpcScope::HandoffConsume => 8,
+        IpcScope::HandoffDecline => 9,
     }
 }
 
