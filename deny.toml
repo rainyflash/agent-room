@@ -3,7 +3,7 @@ all-features = true
 
 [advisories]
 ignore = [
-  { id = "RUSTSEC-2023-0071", reason = "OIDC 仅使用公开 JWKS 执行 RSA 验签，不执行会泄露私钥的 RSA 私钥运算；上游当前没有修复版本，发布新版本后必须移除此例外" },
+  { id = "RUSTSEC-2023-0071", reason = "生产路径只使用公开 JWKS 执行 RSA 验签；隔离回环 OIDC 协议测试会即时生成临时 RSA 密钥并仅在测试进程内签名，上游当前没有修复版本，发布新版本后必须移除此例外" },
 ]
 
 [licenses]

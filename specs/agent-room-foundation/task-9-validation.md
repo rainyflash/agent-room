@@ -66,7 +66,7 @@
 - `just database-integration` 的 10 个真实 PostgreSQL 测试全部通过，其中任务 9 新增 3 个原子性、并发与一次性消费场景。
 - `just control-plane-integration` 的真实依赖及逐层断连测试通过。
 - `just coverage` 合并普通测试与真实 PostgreSQL 测试后，Rust 行覆盖率为 78.77%，高于 60% 门禁；认证应用层、OIDC 适配器、PostgreSQL 认证适配器和 HTTP 认证功能的行覆盖率分别为 88.22%、85.84%、87.79% 和 91.49%。TypeScript 四项覆盖率均为 100%。
-- `cargo deny check` 的 bans、licenses 和 sources 通过。`RUSTSEC-2023-0071` 仅影响 `rsa` 私钥运算，而本项目经 `openidconnect` 只使用公开 JWKS 验签；上游尚无修复版本，因此 `deny.toml` 记录了带理由的临时精确例外，升级后必须移除。
+- `cargo deny check` 的 bans、licenses 和 sources 通过。`RUSTSEC-2023-0071` 仅影响 `rsa` 私钥运算；生产路径经 `openidconnect` 只使用公开 JWKS 验签，隔离回环协议测试使用进程内临时 RSA 密钥签名。上游尚无修复版本，因此 `deny.toml` 记录了带理由的临时精确例外，升级后必须移除。
 - 使用 npm 官方审计端点执行 `pnpm audit --audit-level high`，未发现已知漏洞。
 - Windows MSVC 的本地化 `linker_messages` 仍是无害提示，不影响编译或测试结论。
 
