@@ -39,6 +39,7 @@ flowchart LR
     Postgres["PostgreSQL"]
     IdP["OIDC Provider"]
     ObjectStore["S3 兼容对象存储"]
+    Scanner["ClamAV 内容扫描器"]
     Mail["测试邮件捕获"]
     OTel["OTel Collector"]
 
@@ -50,6 +51,7 @@ flowchart LR
     Control --> Postgres
     Synapse --> Postgres
     Control --> ObjectStore
+    Control --> Scanner
     IdP --> Postgres
     IdP --> Mail
     Control --> OTel
@@ -64,6 +66,8 @@ flowchart LR
 - `just dev-reset` 只删除明确命名的本项目开发卷，并在脚本中校验路径/项目名。
 - 本地测试账户、房间和 Agent 由 Seed 工具幂等创建，禁止 README 里列一堆手工步骤。
 - Compose 使用独立数据库和角色：`synapse`、`agent_room`、`identity`。
+- Compose 的 ClamAV 仅向宿主回环地址暴露 TCP 端口，病毒库使用独立持久卷；首次下载与加载签名会明显增加启动时间和内存占用。
+- `just content-integration` 使用隔离 PostgreSQL、真实 SeaweedFS 和真实 ClamAV 验证完整上传、拒绝补偿与回收链路。本地专用无害签名只存在于开发 Compose，不进入生产病毒库。
 
 ### 3.1 本地 OIDC 登录
 
@@ -145,6 +149,8 @@ Synapse 官方说明联邦要求其他服务能访问配置的 `server_name`，�
 
 OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精确 redirect URL、前端 Origin、Matrix server name、登录尝试期限、Web 会话期限、近期认证窗口和时钟偏差。Agent 身份签发额外要求 `AGENT_ROOM_MATRIX_APPSERVICE_TOKEN`，其值必须与 Synapse Application Service 注册文件的 `as_token` 一致，并通过部署 Secret 注入。生产环境的公开入口必须使用 TLS；client secret 和 Application Service Token 只能来自 Secret 层，禁止写入版本化配置。
 
+内容服务额外要求私有 S3 端点、桶、区域与独立凭据，受信私网 ClamAV 地址，HMAC 票据 Key ID/Secret，以及稳定 UUIDv7 `AGENT_ROOM_CONTENT_MATRIX_AGENT_ID`。票据密钥不得与 OIDC、Matrix Application Service 或对象存储密钥复用；轮换时必须至少保留旧密钥至既有票据的最大有效期结束。内容授权 Matrix 身份必须保持在每个受管房间中，才能读取当前成员与 Power Level 状态；离开房间后的 state-at-leave 不得用于授权。建房流程必须由该身份创建房间或显式邀请并确认加入，缺失成员关系时内容服务应失败关闭。
+
 ### 7.2 密钥管理
 
 - 开发：本地 `.env.local` 与生成密钥，已加入忽略规则。
@@ -167,11 +173,11 @@ OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精
 
 - 桶按环境隔离，默认私有。
 - 对象 key 不含用户名称、Room ID 或原文件名。
-- 使用预签名短期票据并限制方法、大小和内容摘要。
+- 对象桶不公开，也不向客户端返回永久对象 URL。控制平面签发绑定主体、Content ID、版本与期限的短期 HMAC 票据，并在真正读取时再次校验当前 Matrix 权限。
 - 生命周期任务清理 `orphaned/expired/redacted` 对象。
 - 客户端 E2EE 对象不在服务端解密或扫描正文；只能做密文大小、格式和行为治理。
 - 非 E2EE 附件扫描失败时保持 `pending/suspicious`，不自动放行。
-- 上传和下载带宽按主体、Agent、房间和 IP 多层限流。
+- 下载配额由 PostgreSQL 原子维护并跨控制平面副本共享；首版按主体同时限制窗口请求数与字节数。Agent、房间与 IP 多层配额属于公开测试前的容量加固，不得在文档中伪装成已实现。
 
 ## 10. 可观测性
 
