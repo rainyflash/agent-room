@@ -121,6 +121,85 @@ impl BindContentEventService {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RedactContentRequest {
+    pub principal_id: PrincipalId,
+    pub content_id: ContentId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RedactContentOutcome {
+    Redacted(ContentObject),
+    AlreadyRedacted(ContentObject),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RedactContentFailure {
+    NotFound,
+    Forbidden,
+    InvalidState(ContentLifecycleState),
+    Repository(RepositoryError),
+}
+
+pub type RedactContentResult<T> = Result<T, RedactContentFailure>;
+
+pub struct RedactContentDependencies {
+    pub clock: Arc<dyn Clock>,
+    pub repository: Arc<dyn ContentRepository>,
+}
+
+pub struct RedactContentService {
+    clock: Arc<dyn Clock>,
+    repository: Arc<dyn ContentRepository>,
+}
+
+impl RedactContentService {
+    pub fn new(dependencies: RedactContentDependencies) -> Self {
+        Self {
+            clock: dependencies.clock,
+            repository: dependencies.repository,
+        }
+    }
+
+    /// 立即撤销正文读取资格，并把对象交给后台回收。
+    ///
+    /// # Errors
+    ///
+    /// 内容不存在、主体不是所有者、内容不处于可撤回状态或仓储失败时返回错误。
+    pub async fn redact(
+        &self,
+        request: RedactContentRequest,
+    ) -> RedactContentResult<RedactContentOutcome> {
+        let content = self
+            .repository
+            .find_content(request.content_id)
+            .await
+            .map_err(RedactContentFailure::Repository)?
+            .ok_or(RedactContentFailure::NotFound)?;
+        if content.owner_principal_id() != request.principal_id {
+            return Err(RedactContentFailure::Forbidden);
+        }
+        match content.lifecycle_state() {
+            ContentLifecycleState::Redacted => {
+                return Ok(RedactContentOutcome::AlreadyRedacted(content));
+            }
+            ContentLifecycleState::Active => {}
+            state => return Err(RedactContentFailure::InvalidState(state)),
+        }
+        let redacted = self
+            .repository
+            .transition(&ContentLifecycleTransition {
+                content_id: request.content_id,
+                expected: ContentLifecycleState::Active,
+                target: ContentLifecycleState::Redacted,
+                changed_at: self.clock.now(),
+            })
+            .await
+            .map_err(RedactContentFailure::Repository)?;
+        Ok(RedactContentOutcome::Redacted(redacted))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CleanupContentPolicy {
     orphan_grace: DurationMillis,
     batch_limit: u16,

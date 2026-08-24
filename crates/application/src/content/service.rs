@@ -9,7 +9,8 @@ use super::{
     CompleteContentUploadRequest, CompleteContentUploadResult, CompleteContentUploadService,
     IssueContentReadTicketRequest, IssueContentReadTicketResult, IssueContentReadTicketService,
     IssuedContentReadTicket, OpenContentRequest, OpenContentResult, OpenContentService,
-    OpenedVerifiedContent,
+    OpenedVerifiedContent, RedactContentOutcome, RedactContentRequest, RedactContentResult,
+    RedactContentService,
 };
 
 /// 内容 HTTP、MCP 与后续客户端适配器共享的应用能力边界。
@@ -29,6 +30,11 @@ pub trait ContentUseCases: Send + Sync {
         request: BindContentEventRequest,
     ) -> PortFuture<'_, BindContentEventResult<BindContentEventOutcome>>;
 
+    fn redact(
+        &self,
+        request: RedactContentRequest,
+    ) -> PortFuture<'_, RedactContentResult<RedactContentOutcome>>;
+
     fn issue_read_ticket(
         &self,
         request: IssueContentReadTicketRequest,
@@ -44,6 +50,7 @@ pub struct ContentServiceDependencies {
     pub begin_upload: Arc<BeginContentUploadService>,
     pub complete_upload: Arc<CompleteContentUploadService>,
     pub bind_event: Arc<BindContentEventService>,
+    pub redact: Arc<RedactContentService>,
     pub issue_read_ticket: Arc<IssueContentReadTicketService>,
     pub open: Arc<OpenContentService>,
 }
@@ -52,6 +59,7 @@ pub struct ContentService {
     begin_upload: Arc<BeginContentUploadService>,
     complete_upload: Arc<CompleteContentUploadService>,
     bind_event: Arc<BindContentEventService>,
+    redact: Arc<RedactContentService>,
     issue_read_ticket: Arc<IssueContentReadTicketService>,
     open: Arc<OpenContentService>,
 }
@@ -62,6 +70,7 @@ impl ContentService {
             begin_upload: dependencies.begin_upload,
             complete_upload: dependencies.complete_upload,
             bind_event: dependencies.bind_event,
+            redact: dependencies.redact,
             issue_read_ticket: dependencies.issue_read_ticket,
             open: dependencies.open,
         }
@@ -88,6 +97,13 @@ impl ContentUseCases for ContentService {
         request: BindContentEventRequest,
     ) -> PortFuture<'_, BindContentEventResult<BindContentEventOutcome>> {
         Box::pin(self.bind_event.bind(request))
+    }
+
+    fn redact(
+        &self,
+        request: RedactContentRequest,
+    ) -> PortFuture<'_, RedactContentResult<RedactContentOutcome>> {
+        Box::pin(self.redact.redact(request))
     }
 
     fn issue_read_ticket(

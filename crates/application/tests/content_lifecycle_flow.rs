@@ -8,7 +8,8 @@ use agent_room_application::{
         BindContentEventDependencies, BindContentEventFailure, BindContentEventOutcome,
         BindContentEventRequest, BindContentEventService, CleanupContentDependencies,
         CleanupContentItemFailureCause, CleanupContentPolicy, CleanupContentService,
-        ContentCleanupStage,
+        ContentCleanupStage, RedactContentDependencies, RedactContentFailure, RedactContentOutcome,
+        RedactContentRequest, RedactContentService,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -67,6 +68,44 @@ async fn 已发送事件被幂等绑定且不能换绑到另一个事件() {
         .await
         .expect_err("已经绑定的内容不能换绑");
     assert_eq!(failure, BindContentEventFailure::EventConflict);
+}
+
+#[tokio::test]
+async fn 所有者撤回正文立即关闭读取状态且重复请求幂等() {
+    let owner = PrincipalId::from_uuid(Uuid::now_v7());
+    let stranger = PrincipalId::from_uuid(Uuid::now_v7());
+    let content = content(owner, ContentLifecycleState::Active, Some(time(50_000)));
+    let repository = Arc::new(MemoryLifecycleRepository::new([content.clone()]));
+    let service = RedactContentService::new(RedactContentDependencies {
+        clock: Arc::new(FixedClock),
+        repository: repository.clone(),
+    });
+
+    let forbidden = service
+        .redact(RedactContentRequest {
+            principal_id: stranger,
+            content_id: content.id(),
+        })
+        .await
+        .expect_err("非所有者不能撤回正文");
+    assert_eq!(forbidden, RedactContentFailure::Forbidden);
+
+    let request = RedactContentRequest {
+        principal_id: owner,
+        content_id: content.id(),
+    };
+    assert!(matches!(
+        service.redact(request).await.expect("首次撤回成功"),
+        RedactContentOutcome::Redacted(_)
+    ));
+    assert!(matches!(
+        service.redact(request).await.expect("重复撤回幂等成功"),
+        RedactContentOutcome::AlreadyRedacted(_)
+    ));
+    assert_eq!(
+        repository.state(content.id()),
+        ContentLifecycleState::Redacted
+    );
 }
 
 #[tokio::test]

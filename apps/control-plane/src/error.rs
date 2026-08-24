@@ -6,7 +6,7 @@ use agent_room_application::{
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
     content::{
         BeginContentUploadFailure, BindContentEventFailure, CompleteContentUploadFailure,
-        IssueContentReadTicketFailure, OpenContentFailure,
+        IssueContentReadTicketFailure, OpenContentFailure, RedactContentFailure,
     },
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
@@ -409,6 +409,22 @@ impl ApiError {
             }
         };
         log_content_failure("bind_event", failure, correlation_id);
+        from_mapping(mapping, correlation_id)
+    }
+
+    pub(crate) fn redact_content(
+        failure: &RedactContentFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let mapping = match failure {
+            RedactContentFailure::NotFound => content_not_found(),
+            RedactContentFailure::Forbidden => authorization_denied("content.redact.forbidden"),
+            RedactContentFailure::InvalidState(_) => {
+                content_conflict("content.redact.invalid_state")
+            }
+            RedactContentFailure::Repository(error) => repository_mapping(error, "content.redact"),
+        };
+        log_content_failure("redact", failure, correlation_id);
         from_mapping(mapping, correlation_id)
     }
 

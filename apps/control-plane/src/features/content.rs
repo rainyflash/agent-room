@@ -5,7 +5,8 @@ use agent_room_application::{
     content::{
         BeginContentUploadOutcome, BeginContentUploadRequest, BindContentEventOutcome,
         BindContentEventRequest, CompleteContentUploadOutcome, CompleteContentUploadRequest,
-        ContentUseCases, IssueContentReadTicketRequest, OpenContentRequest,
+        ContentUseCases, IssueContentReadTicketRequest, OpenContentRequest, RedactContentOutcome,
+        RedactContentRequest,
     },
     devices::DeviceAuthorizationUseCases,
     ports::{
@@ -26,7 +27,7 @@ use axum::{
     extract::{DefaultBodyLimit, Extension, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{post, put},
+    routing::{delete, post, put},
 };
 use axum_extra::extract::CookieJar;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -88,6 +89,7 @@ pub(crate) fn router(state: ContentHttpState) -> Router {
             "/content/{content_id}/read-tickets",
             post(issue_read_ticket),
         )
+        .route("/content/{content_id}", delete(redact_content))
         .route("/content/{content_id}/open", post(open_content))
         .layer(DefaultBodyLimit::max(MAX_CONTENT_JSON_BYTES));
     let streaming_routes = Router::new().route(
@@ -173,6 +175,14 @@ struct BindEventResponse {
 struct ReadTicketResponse {
     ticket: String,
     expires_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RedactContentResponse {
+    content_id: String,
+    lifecycle_state: &'static str,
+    already_redacted: bool,
 }
 
 async fn begin_upload(
@@ -380,6 +390,47 @@ async fn issue_read_ticket(
         ),
         Err(failure) => {
             no_store(ApiError::issue_content_ticket(&failure, correlation_id).into_response())
+        }
+    }
+}
+
+async fn redact_content(
+    State(state): State<ContentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(content_id): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let Ok(content_id) = parse_content_id(&content_id) else {
+        return invalid_request("content.invalid_content_id", correlation_id);
+    };
+    let request_target = format!("/content/{content_id}");
+    let principal_id = match authenticate_content_request(
+        &state,
+        &headers,
+        &jar,
+        "DELETE",
+        &request_target,
+        "",
+        correlation_id,
+    )
+    .await
+    {
+        Ok(principal_id) => principal_id,
+        Err(response) => return response,
+    };
+
+    match state
+        .content
+        .redact(RedactContentRequest {
+            principal_id,
+            content_id,
+        })
+        .await
+    {
+        Ok(outcome) => no_store(axum::Json(redact_content_response(outcome)).into_response()),
+        Err(failure) => {
+            no_store(ApiError::redact_content(&failure, correlation_id).into_response())
         }
     }
 }
@@ -626,6 +677,18 @@ fn bind_event_response(outcome: BindContentEventOutcome) -> BindEventResponse {
     }
 }
 
+fn redact_content_response(outcome: RedactContentOutcome) -> RedactContentResponse {
+    let (content, already_redacted) = match outcome {
+        RedactContentOutcome::Redacted(content) => (content, false),
+        RedactContentOutcome::AlreadyRedacted(content) => (content, true),
+    };
+    RedactContentResponse {
+        content_id: content.id().to_string(),
+        lifecycle_state: content.lifecycle_state().as_str(),
+        already_redacted,
+    }
+}
+
 fn verified_content_response(
     opened: agent_room_application::content::OpenedVerifiedContent,
 ) -> Response {
@@ -691,7 +754,8 @@ mod tests {
             CompleteContentUploadOutcome, CompleteContentUploadRequest,
             CompleteContentUploadResult, ContentUseCases, IssueContentReadTicketRequest,
             IssueContentReadTicketResult, IssuedContentReadTicket, OpenContentRequest,
-            OpenContentResult, OpenedVerifiedContent,
+            OpenContentResult, OpenedVerifiedContent, RedactContentOutcome, RedactContentRequest,
+            RedactContentResult,
         },
         devices::{
             AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
@@ -808,6 +872,15 @@ mod tests {
             _request: BindContentEventRequest,
         ) -> PortFuture<'_, BindContentEventResult<BindContentEventOutcome>> {
             Box::pin(async { unreachable!("当前测试不会绑定事件") })
+        }
+
+        fn redact(
+            &self,
+            _request: RedactContentRequest,
+        ) -> PortFuture<'_, RedactContentResult<RedactContentOutcome>> {
+            let mut content = self.content.clone();
+            content.redact().expect("测试内容可撤回");
+            Box::pin(async move { Ok(RedactContentOutcome::Redacted(content)) })
         }
 
         fn issue_read_ticket(

@@ -10,6 +10,7 @@ use agent_room_application::{
         ContentMembershipAuthorizationService, ContentReadTicketLifetime, ContentService,
         ContentServiceDependencies, ContentUseCases, IssueContentReadTicketDependencies,
         IssueContentReadTicketService, OpenContentDependencies, OpenContentService,
+        RedactContentDependencies, RedactContentService,
     },
     devices::DeviceAuthorizationUseCases,
     ports::{
@@ -167,6 +168,10 @@ fn build_content_application(
         clock: dependencies.system_runtime.clone(),
         repository: dependencies.repository.clone(),
     }));
+    let redact = Arc::new(RedactContentService::new(RedactContentDependencies {
+        clock: dependencies.system_runtime.clone(),
+        repository: dependencies.repository.clone(),
+    }));
     let issue_read_ticket = Arc::new(IssueContentReadTicketService::new(
         IssueContentReadTicketDependencies {
             clock: dependencies.system_runtime.clone(),
@@ -188,6 +193,7 @@ fn build_content_application(
         begin_upload,
         complete_upload,
         bind_event,
+        redact,
         issue_read_ticket,
         open,
     })) as Arc<dyn ContentUseCases>;

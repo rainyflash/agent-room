@@ -13,6 +13,8 @@ pub use lifecycle::{
     CleanupContentDependencies, CleanupContentFailure, CleanupContentItemFailure,
     CleanupContentItemFailureCause, CleanupContentOutcome, CleanupContentPolicy,
     CleanupContentResult, CleanupContentService, ContentCleanupStage, ContentCleanupUseCases,
+    RedactContentDependencies, RedactContentFailure, RedactContentOutcome, RedactContentRequest,
+    RedactContentResult, RedactContentService,
 };
 pub use read::{
     ContentReadTicketLifetime, IssueContentReadTicketDependencies, IssueContentReadTicketFailure,
