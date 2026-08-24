@@ -3,6 +3,7 @@ members = [
   "apps/bridge",
   "apps/control-plane",
   "crates/application",
+  "crates/bridge-core",
   "crates/domain",
   "crates/identity-adapter",
   "crates/postgres-adapter",
@@ -19,6 +20,7 @@ repository = "https://github.com/agent-room/agent-room"
 
 [workspace.dependencies]
 agent-room-application = { version = "0.1.0", path = "crates/application" }
+agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
@@ -31,6 +33,7 @@ ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
 futures-util = "0.3.32"
 getrandom = "0.3.4"
 jsonschema = { version = "0.50.1", default-features = false }
+keyring = "4.1.6"
 opentelemetry = { version = "0.32.0", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
