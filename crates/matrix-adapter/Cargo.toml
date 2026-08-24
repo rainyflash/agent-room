@@ -1,0 +1,23 @@
+[package]
+name = "agent-room-matrix-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-application.workspace = true
+agent-room-domain.workspace = true
+matrix-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

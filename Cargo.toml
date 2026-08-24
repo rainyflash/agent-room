@@ -6,6 +6,7 @@ members = [
   "crates/bridge-core",
   "crates/domain",
   "crates/identity-adapter",
+  "crates/matrix-adapter",
   "crates/postgres-adapter",
   "crates/protocol-conformance",
 ]
@@ -23,6 +24,7 @@ agent-room-application = { version = "0.1.0", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0", path = "crates/bridge-core" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
+agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
@@ -34,6 +36,7 @@ futures-util = "0.3.32"
 getrandom = "0.3.4"
 jsonschema = { version = "0.50.1", default-features = false }
 keyring = "4.1.6"
+matrix-sdk = { version = "0.18.0", default-features = false }
 opentelemetry = { version = "0.32.0", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
