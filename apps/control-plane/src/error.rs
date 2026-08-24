@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use agent_room_application::{
     agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
+    agent_instance_verification::{
+        AgentInstanceVerificationFailure, AgentInstanceVerificationFailureKind,
+    },
     agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
     content::{
@@ -276,6 +279,44 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "Agent 请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn agent_instance_verification(
+        failure: AgentInstanceVerificationFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentInstanceVerificationFailureKind::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "agent_instance_verification.unauthorized",
+                ErrorCategory::Authentication,
+                "设备授权无效或已过期。",
+            ),
+            AgentInstanceVerificationFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "agent_instance_verification.not_found",
+                ErrorCategory::Validation,
+                "Agent 实例不存在。",
+            ),
+            AgentInstanceVerificationFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_instance_verification.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "Agent 实例验签材料暂时不可用。",
+            ),
+            AgentInstanceVerificationFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "agent_instance_verification.internal",
+                ErrorCategory::Transient,
+                "Agent 实例验签服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            failure = ?failure.kind(),
+            "Agent 实例验签材料请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

@@ -16,6 +16,9 @@ use agent_room_a2a_adapter::{
 };
 use agent_room_application::{
     agent_cards::{AgentCardDependencies, AgentCardService},
+    agent_instance_verification::{
+        AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
+    },
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     devices::{
@@ -189,6 +192,12 @@ async fn build_identity_router(
         system_runtime.clone(),
         matrix_identities.clone(),
     );
+    let verification = Arc::new(AgentInstanceVerificationService::new(
+        AgentInstanceVerificationDependencies {
+            records: repositories.clone(),
+            clock: system_runtime.clone(),
+        },
+    ));
     let cards = build_agent_card_management(
         repositories.clone(),
         system_runtime.clone(),
@@ -202,6 +211,7 @@ async fn build_identity_router(
     let agent_state = AgentHttpState::new(
         AgentHttpDependencies {
             agents,
+            verification,
             authentication: service.clone(),
             devices: devices.clone(),
             secrets: secrets.clone(),

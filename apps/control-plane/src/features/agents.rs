@@ -1,18 +1,22 @@
 use std::sync::Arc;
 
 use agent_room_application::{
+    agent_instance_verification::{
+        AgentInstanceVerificationUseCases, ResolveAgentInstanceVerification,
+    },
     agents::{
         AgentManagementUseCases, ChangeAgentMembership, CreateAgent, RegisterAgentInstance,
         RegisteredAgentInstance,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
-    ports::SecretFactory,
+    ports::{AgentInstanceVerificationRecord, SecretFactory},
 };
 use agent_room_domain::{
     agents::{AdapterSubjectHash, AgentInstancePublicSigningKey, AgentRole, AgentVisibility},
     ids::{
-        AgentCreationRequestId, AgentId, AgentInstanceRegistrationRequestId, ContentId, PrincipalId,
+        AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
+        ContentId, PrincipalId,
     },
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -22,7 +26,7 @@ use axum::{
     extract::{DefaultBodyLimit, Extension, Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{post, put},
+    routing::{get, post, put},
 };
 use axum_extra::extract::CookieJar;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -48,6 +52,7 @@ const MAX_ENCODED_PUBLIC_KEY_LENGTH: usize = 64;
 #[derive(Clone)]
 pub(crate) struct AgentHttpState {
     agents: Arc<dyn AgentManagementUseCases>,
+    verification: Arc<dyn AgentInstanceVerificationUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
@@ -56,6 +61,7 @@ pub(crate) struct AgentHttpState {
 
 pub(crate) struct AgentHttpDependencies {
     pub(crate) agents: Arc<dyn AgentManagementUseCases>,
+    pub(crate) verification: Arc<dyn AgentInstanceVerificationUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
@@ -65,6 +71,7 @@ impl AgentHttpState {
     pub(crate) fn new(dependencies: AgentHttpDependencies, frontend_origin: &url::Url) -> Self {
         Self {
             agents: dependencies.agents,
+            verification: dependencies.verification,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
@@ -81,6 +88,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
             put(grant_membership).delete(revoke_membership),
         )
         .route("/agents/{agent_id}/instances", post(register_instance))
+        .route(
+            "/agent-instances/{instance_id}/verification",
+            get(resolve_instance_verification),
+        )
         .layer(DefaultBodyLimit::max(MAX_AGENT_BODY_BYTES))
         .with_state(state)
 }
@@ -143,6 +154,16 @@ struct AgentInstanceResponse {
     matrix_device_id: String,
     access_token: String,
     refresh_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstanceVerificationResponse {
+    agent_instance_id: String,
+    agent_id: String,
+    public_signing_key: String,
+    registered_at_unix_ms: i64,
+    invalidated_at_unix_ms: Option<i64>,
 }
 
 async fn create_agent(
@@ -339,6 +360,51 @@ async fn register_instance(
     }
 }
 
+async fn resolve_instance_verification(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(instance_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request_target = format!("/agent-instances/{instance_id}/verification");
+    let Ok(instance_id) = parse_uuid_v7(&instance_id).map(AgentInstanceId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    if !body.is_empty() {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_verification_body", correlation_id)
+                .into_response(),
+        );
+    }
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "GET",
+        &request_target,
+        "",
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .verification
+        .resolve(ResolveAgentInstanceVerification { actor, instance_id })
+        .await
+    {
+        Ok(record) => {
+            no_store(Json(AgentInstanceVerificationResponse::from(record)).into_response())
+        }
+        Err(failure) => {
+            no_store(ApiError::agent_instance_verification(failure, correlation_id).into_response())
+        }
+    }
+}
+
 fn create_agent_request(
     request_id: AgentCreationRequestId,
     actor: agent_room_application::authentication::AuthenticatedPrincipal,
@@ -474,6 +540,18 @@ impl From<RegisteredAgentInstance> for AgentInstanceResponse {
     }
 }
 
+impl From<AgentInstanceVerificationRecord> for AgentInstanceVerificationResponse {
+    fn from(value: AgentInstanceVerificationRecord) -> Self {
+        Self {
+            agent_instance_id: value.instance_id.to_string(),
+            agent_id: value.agent_id.to_string(),
+            public_signing_key: URL_SAFE_NO_PAD.encode(value.public_signing_key.as_bytes()),
+            registered_at_unix_ms: value.registered_at.value(),
+            invalidated_at_unix_ms: value.invalidated_at.map(|time| time.value()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -482,6 +560,10 @@ mod tests {
     };
 
     use agent_room_application::{
+        agent_instance_verification::{
+            AgentInstanceVerificationResult, AgentInstanceVerificationUseCases,
+            ResolveAgentInstanceVerification,
+        },
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
             RegisterAgentInstance, RegisteredAgentInstance,
@@ -495,9 +577,9 @@ mod tests {
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
         },
         ports::{
-            MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture,
-            PrincipalAccount, RegisteredAgent, SecretFactory, SecretValue,
-            StoredAgentInstanceRegistration,
+            AgentInstanceVerificationRecord, MatrixDeviceId, MatrixSession, MatrixSessionMetadata,
+            MatrixUserId, PortFuture, PrincipalAccount, RegisteredAgent, SecretFactory,
+            SecretValue, StoredAgentInstanceRegistration,
         },
     };
     use agent_room_domain::{
@@ -571,6 +653,25 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FakeVerification {
+        resolutions: Mutex<Vec<ResolveAgentInstanceVerification>>,
+    }
+
+    impl AgentInstanceVerificationUseCases for FakeVerification {
+        fn resolve(
+            &self,
+            request: ResolveAgentInstanceVerification,
+        ) -> PortFuture<'_, AgentInstanceVerificationResult<AgentInstanceVerificationRecord>>
+        {
+            self.resolutions
+                .lock()
+                .expect("实例验签查询记录锁可用")
+                .push(request);
+            Box::pin(async { Ok(verification_record()) })
+        }
+    }
+
+    #[derive(Default)]
     struct FakeAuthentication {
         requirements: Mutex<Vec<AuthenticationRequirement>>,
     }
@@ -621,7 +722,26 @@ mod tests {
     #[derive(Default)]
     struct FakeDevices {
         authentications: AtomicUsize,
-        expected_body: Mutex<Option<String>>,
+        expected_request: Mutex<Option<ExpectedDeviceRequest>>,
+    }
+
+    struct ExpectedDeviceRequest {
+        method: String,
+        target: String,
+        body: String,
+    }
+
+    impl FakeDevices {
+        fn expect_request(&self, method: &str, target: String, body: String) {
+            *self
+                .expected_request
+                .lock()
+                .expect("设备请求预期记录锁可用") = Some(ExpectedDeviceRequest {
+                method: method.to_owned(),
+                target,
+                body,
+            });
+        }
     }
 
     impl DeviceAuthorizationUseCases for FakeDevices {
@@ -637,24 +757,21 @@ mod tests {
             request: AuthenticateDeviceRequest<'a>,
         ) -> PortFuture<'a, DeviceAuthorizationResult<AuthenticatedDevice>> {
             self.authentications.fetch_add(1, Ordering::SeqCst);
+            let expected = self
+                .expected_request
+                .lock()
+                .expect("设备请求预期记录锁可用")
+                .take()
+                .expect("测试必须登记完整设备请求预期");
             assert_eq!(request.access_token.expose(), "device-access-token");
             assert_eq!(request.proof.device_id(), device_id());
             assert_eq!(request.proof.issued_at(), time(1_700_000_000_000));
             assert_eq!(request.proof.nonce().expose(), "nonce-0123456789abcdef");
-            assert_eq!(request.proof.method(), "POST");
-            assert_eq!(
-                request.proof.request_target(),
-                format!("/agents/{AGENT_UUID}/instances")
-            );
-            let expected_body = self
-                .expected_body
-                .lock()
-                .expect("设备请求正文记录锁可用")
-                .take()
-                .expect("测试必须登记原始请求正文");
+            assert_eq!(request.proof.method(), expected.method);
+            assert_eq!(request.proof.request_target(), expected.target);
             assert_eq!(
                 request.proof.body_digest(),
-                &SecureSecretFactory.digest(&expected_body)
+                &SecureSecretFactory.digest(&expected.body)
             );
             Box::pin(async { Ok(authenticated_device()) })
         }
@@ -687,9 +804,24 @@ mod tests {
         authentication: Arc<FakeAuthentication>,
         devices: Arc<FakeDevices>,
     ) -> axum::Router {
+        test_router_with_verification(
+            agents,
+            authentication,
+            devices,
+            Arc::new(FakeVerification::default()),
+        )
+    }
+
+    fn test_router_with_verification(
+        agents: Arc<FakeAgents>,
+        authentication: Arc<FakeAuthentication>,
+        devices: Arc<FakeDevices>,
+        verification: Arc<FakeVerification>,
+    ) -> axum::Router {
         let state = AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
+                verification,
                 authentication,
                 devices,
                 secrets: Arc::new(SecureSecretFactory),
@@ -866,10 +998,11 @@ mod tests {
             "publicSigningKey": public_key
         })
         .to_string();
-        *devices
-            .expected_body
-            .lock()
-            .expect("设备请求正文记录锁可用") = Some(body.clone());
+        devices.expect_request(
+            "POST",
+            format!("/agents/{AGENT_UUID}/instances"),
+            body.clone(),
+        );
         let app = test_router(
             agents.clone(),
             Arc::new(FakeAuthentication::default()),
@@ -939,6 +1072,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 查询实例验签材料要求设备持有证明并返回完整时间窗() {
+        let devices = Arc::new(FakeDevices::default());
+        let verification = Arc::new(FakeVerification::default());
+        devices.expect_request(
+            "GET",
+            format!("/agent-instances/{INSTANCE_UUID}/verification"),
+            String::new(),
+        );
+        let app = test_router_with_verification(
+            Arc::new(FakeAgents::default()),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+            verification.clone(),
+        );
+
+        let response = app
+            .oneshot(verification_request(true))
+            .await
+            .expect("实例验签材料路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store"))
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentInstanceId"], INSTANCE_UUID);
+        assert_eq!(payload["agentId"], AGENT_UUID);
+        assert_eq!(
+            payload["publicSigningKey"],
+            URL_SAFE_NO_PAD.encode([11_u8; 32])
+        );
+        assert_eq!(payload["registeredAtUnixMs"], 1_700_000_000_000_i64);
+        assert_eq!(payload["invalidatedAtUnixMs"], 1_700_000_100_000_i64);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+
+        let resolutions = verification
+            .resolutions
+            .lock()
+            .expect("实例验签查询记录锁可用");
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].instance_id.to_string(), INSTANCE_UUID);
+        assert_eq!(resolutions[0].actor.device_id, device_id());
+    }
+
+    #[tokio::test]
+    async fn 缺失设备证明时不会查询实例验签材料() {
+        let devices = Arc::new(FakeDevices::default());
+        let verification = Arc::new(FakeVerification::default());
+        let app = test_router_with_verification(
+            Arc::new(FakeAgents::default()),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+            verification.clone(),
+        );
+
+        let response = app
+            .oneshot(verification_request(false))
+            .await
+            .expect("缺失设备证明的实例验签请求可调用");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
+        assert!(
+            verification
+                .resolutions
+                .lock()
+                .expect("实例验签查询记录锁可用")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn 未注册适配器_schema_时拒绝持久化任意配置() {
         let agents = Arc::new(FakeAgents::default());
         let devices = Arc::new(FakeDevices::default());
@@ -949,10 +1155,11 @@ mod tests {
             "publicSigningKey": URL_SAFE_NO_PAD.encode([7_u8; 32])
         })
         .to_string();
-        *devices
-            .expected_body
-            .lock()
-            .expect("设备请求正文记录锁可用") = Some(body.clone());
+        devices.expect_request(
+            "POST",
+            format!("/agents/{AGENT_UUID}/instances"),
+            body.clone(),
+        );
         let app = test_router(
             agents.clone(),
             Arc::new(FakeAuthentication::default()),
@@ -995,6 +1202,24 @@ mod tests {
         request
             .body(Body::from(body.to_owned()))
             .expect("Agent 实例注册请求有效")
+    }
+
+    fn verification_request(include_proof: bool) -> Request<Body> {
+        let mut request = Request::builder()
+            .method("GET")
+            .uri(format!("/agent-instances/{INSTANCE_UUID}/verification"))
+            .header(header::AUTHORIZATION, "Bearer device-access-token");
+        if include_proof {
+            request = request
+                .header("x-agent-room-device-id", DEVICE_UUID)
+                .header("x-agent-room-proof-issued-at", "1700000000000")
+                .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+                .header(
+                    "x-agent-room-proof-signature",
+                    URL_SAFE_NO_PAD.encode([9_u8; 64]),
+                );
+        }
+        request.body(Body::empty()).expect("实例验签材料请求有效")
     }
 
     async fn response_json(response: axum::response::Response) -> Value {
@@ -1047,6 +1272,17 @@ mod tests {
                 SecretValue::new("agent-device-access-token").expect("测试设备令牌有效"),
                 None,
             ),
+        }
+    }
+
+    fn verification_record() -> AgentInstanceVerificationRecord {
+        AgentInstanceVerificationRecord {
+            instance_id: AgentInstanceId::from_uuid(uuid(INSTANCE_UUID)),
+            agent_id: agent_id(),
+            public_signing_key: AgentInstancePublicSigningKey::new(vec![11; 32])
+                .expect("测试实例验签公钥有效"),
+            registered_at: time(1_700_000_000_000),
+            invalidated_at: Some(time(1_700_000_100_000)),
         }
     }
 
