@@ -35,6 +35,7 @@ def runtime_environment(values: dict[str, str]) -> dict[str, str]:
     required = {
         "SEED_ADMIN_PASSWORD": values.get("SEED_ADMIN_PASSWORD"),
         "SEED_AGENT_PASSWORD": values.get("SEED_AGENT_PASSWORD"),
+        "SYNAPSE_APPSERVICE_TOKEN": values.get("SYNAPSE_APPSERVICE_TOKEN"),
     }
     missing = [name for name, value in required.items() if not value]
     if missing:
@@ -55,6 +56,9 @@ def runtime_environment(values: dict[str, str]) -> dict[str, str]:
             ),
             "AGENT_ROOM_MATRIX_TEST_AGENT_PASSWORD": required[
                 "SEED_AGENT_PASSWORD"
+            ],
+            "AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN": required[
+                "SYNAPSE_APPSERVICE_TOKEN"
             ],
         }
     )

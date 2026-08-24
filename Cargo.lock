@@ -140,7 +140,10 @@ version = "0.1.0"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
+ "axum",
+ "futures-util",
  "matrix-sdk",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

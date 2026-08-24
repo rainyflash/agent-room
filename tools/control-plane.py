@@ -37,6 +37,7 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
             "AGENT_ROOM_DB_RUNTIME_PASSWORD"
         ),
         "KEYCLOAK_CLIENT_SECRET": values.get("KEYCLOAK_CLIENT_SECRET"),
+        "SYNAPSE_APPSERVICE_TOKEN": values.get("SYNAPSE_APPSERVICE_TOKEN"),
     }
     missing = [name for name, value in required_secrets.items() if not value]
     if missing:
@@ -55,6 +56,9 @@ def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[
             ],
             "AGENT_ROOM_DB_TLS_MODE": "disable",
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
+            "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN": required_secrets[
+                "SYNAPSE_APPSERVICE_TOKEN"
+            ],
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
                 "http://127.0.0.1:19333/cluster/status"
             ),

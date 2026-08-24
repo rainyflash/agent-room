@@ -63,10 +63,20 @@ function Read-Environment {
 function Write-Environment {
   if (Test-Path -LiteralPath $EnvFile) {
     $current = Read-Environment
+    $missingSecrets = [ordered]@{}
     if (-not $current.ContainsKey('AGENT_ROOM_DB_RUNTIME_PASSWORD')) {
+      $missingSecrets.AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
+    }
+    if (-not $current.ContainsKey('SYNAPSE_APPSERVICE_TOKEN')) {
+      $missingSecrets.SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
+    }
+    if (-not $current.ContainsKey('SYNAPSE_APPSERVICE_HS_TOKEN')) {
+      $missingSecrets.SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
+    }
+    if ($missingSecrets.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
-      $runtimePassword = New-RandomSecret
-      Write-Utf8File -Path $EnvFile -Content ("$existing`nAGENT_ROOM_DB_RUNTIME_PASSWORD=$runtimePassword`n")
+      $appended = ($missingSecrets.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
+      Write-Utf8File -Path $EnvFile -Content ("$existing`n$appended`n")
     }
     return
   }
@@ -83,6 +93,8 @@ function Write-Environment {
     KEYCLOAK_ADMIN_PASSWORD = New-RandomSecret
     KEYCLOAK_CLIENT_SECRET = New-RandomSecret
     SYNAPSE_REGISTRATION_SECRET = New-RandomSecret
+    SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
+    SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
     SYNAPSE_MACAROON_SECRET = New-RandomSecret
     SYNAPSE_FORM_SECRET = New-RandomSecret
     S3_ACCESS_KEY = 'agentroomlocal'
@@ -207,10 +219,30 @@ function Write-SynapseConfig {
     }
   }
 
+  $appserviceTemplate = @'
+id: "agent-room"
+url: null
+as_token: "__AS_TOKEN__"
+hs_token: "__HS_TOKEN__"
+sender_localpart: "_agent_room"
+namespaces:
+  users:
+    - exclusive: true
+      regex: '^@_agent_[0-9a-f]{32}:matrix\.agent-room\.localhost$'
+  aliases: []
+  rooms: []
+rate_limited: false
+receive_ephemeral: false
+'@
+  $appservice = $appserviceTemplate.Replace('__AS_TOKEN__', $Environment.SYNAPSE_APPSERVICE_TOKEN).Replace('__HS_TOKEN__', $Environment.SYNAPSE_APPSERVICE_HS_TOKEN)
+  Write-Utf8File -Path (Join-Path $directory 'agent-room-appservice.yaml') -Content ($appservice + "`n")
+
   $homeserver = @"
 server_name: "matrix.agent-room.localhost"
 public_baseurl: "http://localhost:18008/"
 pid_file: /data/homeserver.pid
+app_service_config_files:
+  - /data/agent-room-appservice.yaml
 listeners:
   - port: 8008
     tls: false

@@ -1,14 +1,19 @@
 use std::{env, future::pending, num::NonZeroU16, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixAcceptedEvent, MatrixClientFactory, MatrixConnection, MatrixCreateRoom, MatrixEvent,
-    MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixLogin,
-    MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomId,
-    MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSyncBatch,
-    MatrixSyncRequest, MatrixSyncToken, MatrixTransactionId, MatrixUserId, SecretValue,
+    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner,
+    MatrixAgentLocalpart, MatrixAgentUserRegistration, MatrixClientFactory, MatrixConnection,
+    MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
+    MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind,
+    MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomId, MatrixRoomPreset, MatrixRoomSync,
+    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+    MatrixTransactionId, MatrixUserId, SecretValue,
 };
-use agent_room_domain::time::DurationMillis;
-use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
+use agent_room_domain::{ids::AgentId, time::DurationMillis};
+use agent_room_matrix_adapter::{
+    MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
+    MatrixSdkClientFactory, MatrixSdkConfiguration,
+};
 use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle, time::sleep, time::timeout};
 use uuid::Uuid;
@@ -60,6 +65,56 @@ async fn 真实_synapse_支持房间生命周期_幂等发送_回执和回填() 
     .await;
     let message_flow = verify_message_flow(&scenario).await;
     verify_receipt_and_leave(&scenario, message_flow).await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_可幂等建立独立_agent_用户和设备会话() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
+    let configuration = MatrixApplicationServiceConfiguration::new(
+        &base_url,
+        "matrix.agent-room.localhost",
+        SecretValue::new(application_service_token).expect("Application Service Token 有效"),
+        TEST_REQUEST_TIMEOUT,
+    )
+    .expect("Application Service 配置有效");
+    let provisioner =
+        MatrixApplicationServiceProvisioner::new(configuration).expect("适配器可初始化");
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let registration =
+        MatrixAgentUserRegistration::new(MatrixAgentLocalpart::from_agent_id(agent_id));
+
+    let first = provisioner
+        .ensure_user(&registration)
+        .await
+        .expect("首次创建 Agent 用户成功");
+    let repeated = provisioner
+        .ensure_user(&registration)
+        .await
+        .expect("重复创建对账为同一用户");
+    assert_eq!(first, repeated);
+    let device_id =
+        MatrixDeviceId::new(format!("AR_{}", Uuid::now_v7().simple())).expect("设备标识有效");
+    let request = MatrixAgentDeviceSessionRequest::new(
+        first.clone(),
+        device_id.clone(),
+        "Agent Room 真实验收实例".to_owned(),
+    )
+    .expect("设备会话请求有效");
+    let session = provisioner
+        .issue_device_session(&request)
+        .await
+        .expect("可签发 Agent 设备会话");
+    assert_eq!(session.metadata().user_id(), &first);
+    assert_eq!(session.metadata().device_id(), &device_id);
+
+    let connection = factory(&base_url, TEST_REQUEST_TIMEOUT, 3)
+        .restore(&session)
+        .await
+        .expect("新会话必须能由 Matrix SDK 恢复");
+    let batch = sync(connection.gateway(), None).await;
+    assert!(!batch.next_batch().as_str().is_empty());
 }
 
 struct RoomScenario {
