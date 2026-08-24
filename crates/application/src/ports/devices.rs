@@ -45,6 +45,8 @@ pub enum DeviceProofValueError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceSessionRegistration {
+    pub authorization_token_digest: SecretDigest,
+    pub authorization_receipt_expires_at: UtcMillis,
     pub family: DeviceTokenFamily,
     pub access_token_id: DeviceAccessTokenId,
     pub access_token_digest: SecretDigest,

@@ -443,6 +443,11 @@ impl DeviceAuthorizationService {
         )
         .map_err(|_| internal_failure("device.register"))?;
         let session_registration = DeviceSessionRegistration {
+            authorization_token_digest: *request.authorization.authorization_token_digest(),
+            authorization_receipt_expires_at: now
+                .checked_add(self.policy.device_authorization_maximum_age)
+                .and_then(|value| value.checked_add(self.policy.allowed_clock_skew))
+                .map_err(|_| internal_failure("device.register"))?,
             family,
             access_token_id: self.identifiers.device_access_token_id(),
             access_token_digest: self.secrets.digest(access_token.expose()),

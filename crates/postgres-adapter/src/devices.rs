@@ -249,6 +249,14 @@ async fn register_device_transaction(
         .map_err(|error| map_sqlx_error(operation, &error))?;
     let (account, device) =
         resolve_device_owner(&mut transaction, principal, requested_device, operation).await?;
+    consume_authorization_receipt(
+        &mut transaction,
+        account.principal.id(),
+        device.id(),
+        session,
+        operation,
+    )
+    .await?;
     revoke_active_families(&mut transaction, device.id(), session.issued_at, operation).await?;
     let family = DeviceTokenFamily::new(
         session.family.id(),
@@ -290,6 +298,41 @@ async fn register_device_transaction(
         family,
         access_token_expires_at: session.access_token_expires_at,
     })
+}
+
+async fn consume_authorization_receipt(
+    transaction: &mut Transaction<'_, Postgres>,
+    principal_id: PrincipalId,
+    device_id: DeviceId,
+    session: &DeviceSessionRegistration,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    sqlx::query(
+        r"DELETE FROM agent_room.device_authorization_receipt
+           WHERE expires_at < to_timestamp($1::double precision / 1000.0)",
+    )
+    .bind(session.issued_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    sqlx::query(
+        r"INSERT INTO agent_room.device_authorization_receipt (
+            authorization_digest, principal_id, device_id, consumed_at, expires_at
+        ) VALUES (
+            $1, $2, $3,
+            to_timestamp($4::double precision / 1000.0),
+            to_timestamp($5::double precision / 1000.0)
+        )",
+    )
+    .bind(session.authorization_token_digest.as_bytes().as_slice())
+    .bind(principal_id.as_uuid())
+    .bind(device_id.as_uuid())
+    .bind(session.issued_at.value())
+    .bind(session.authorization_receipt_expires_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
 }
 
 async fn resolve_device_owner(

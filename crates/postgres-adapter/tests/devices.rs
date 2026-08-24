@@ -1,5 +1,6 @@
 use std::env;
 
+use agent_room_application::persistence::RepositoryErrorKind;
 use agent_room_application::ports::{
     DeviceProofNonceStore, DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository,
     DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
@@ -52,6 +53,15 @@ async fn 设备撤销会原子失效_token_并写入传播事件() {
     )
     .await
     .expect("设备与 Token 应原子写入");
+    let replay = DeviceRegistrationTransaction::register(
+        &repositories,
+        &registration.principal,
+        &registration.device,
+        &registration.session,
+    )
+    .await
+    .expect_err("同一 OIDC 设备授权断言不得重复注册");
+    assert_eq!(replay.kind(), RepositoryErrorKind::Conflict);
 
     assert!(
         DeviceSessionStore::find_active_access(
@@ -236,6 +246,8 @@ fn registration(access_digest: u8, refresh_digest: u8) -> RegistrationFixture {
     )
     .expect("Token 族有效");
     let session = DeviceSessionRegistration {
+        authorization_token_digest: SecretDigest::from_array([access_digest.wrapping_add(100); 32]),
+        authorization_receipt_expires_at: test_time(10 * 60 * 1_000),
         family,
         access_token_id: DeviceAccessTokenId::from_uuid(Uuid::now_v7()),
         access_token_digest: SecretDigest::from_array([access_digest; 32]),
