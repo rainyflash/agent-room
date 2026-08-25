@@ -113,6 +113,7 @@ async fn 只解析活跃主体且数据库拒绝损坏标识() {
 
 async fn seed_owned_agent(pool: &PgPool, principal_id: PrincipalId) -> AgentId {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let mut transaction = pool.begin().await.expect("测试事务应启动");
     sqlx::query(
         r"INSERT INTO agent_room.agent (
               id, matrix_user_id, slug, display_name, description, visibility,
@@ -128,7 +129,7 @@ async fn seed_owned_agent(pool: &PgPool, principal_id: PrincipalId) -> AgentId {
         agent_id.as_uuid().simple()
     ))
     .bind(format!("content-agent-{}", agent_id.as_uuid().simple()))
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .expect("测试 Agent 写入成功");
     sqlx::query(
@@ -138,9 +139,13 @@ async fn seed_owned_agent(pool: &PgPool, principal_id: PrincipalId) -> AgentId {
     )
     .bind(principal_id.as_uuid())
     .bind(agent_id.as_uuid())
-    .execute(pool)
+    .execute(&mut *transaction)
     .await
     .expect("测试 Agent 所有权写入成功");
+    transaction
+        .commit()
+        .await
+        .expect("测试 Agent 事实应原子提交");
     agent_id
 }
 

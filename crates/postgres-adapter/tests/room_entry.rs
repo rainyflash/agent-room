@@ -280,11 +280,13 @@ async fn 大厅访问记录绑定实例设备和权威_matrix_身份并反映撤
     assert_eq!(active.device_id, fixture.device);
     assert!(active.active);
 
-    sqlx::query("UPDATE agent_room.agent_instance SET revoked_at = now() WHERE id = $1")
-        .bind(fixture.instance.as_uuid())
-        .execute(&database.runtime)
-        .await
-        .expect("实例应可撤销");
+    sqlx::query(
+        "UPDATE agent_room.agent_instance SET status = 'revoked', revoked_at = now() WHERE id = $1",
+    )
+    .bind(fixture.instance.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("实例应可撤销");
     let revoked = repositories
         .find_lobby_access(fixture.instance)
         .await

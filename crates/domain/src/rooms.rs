@@ -357,8 +357,16 @@ impl RoomCatalog {
         self.fields.matrix_space_id.as_ref()
     }
 
+    pub const fn owner_principal_id(&self) -> Option<PrincipalId> {
+        self.fields.owner_principal_id
+    }
+
     pub const fn visibility(&self) -> RoomCatalogVisibility {
         self.fields.visibility
+    }
+
+    pub const fn retention_days(&self) -> Option<u16> {
+        self.fields.retention_days
     }
 
     pub const fn status(&self) -> RoomCatalogStatus {
