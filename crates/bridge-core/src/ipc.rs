@@ -83,6 +83,7 @@ pub enum IpcScope {
     ContentRead,
     StatusPublish,
     MessageSend,
+    HandoffApprove,
     HandoffConsume,
     HandoffDecline,
 }
@@ -195,10 +196,11 @@ pub struct FoundationIpcScopePolicy;
 impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
         match caller {
-            IpcCallerKind::CodexPlugin => true,
-            IpcCallerKind::DesktopShell | IpcCallerKind::DiagnosticCli => {
-                scope == IpcScope::BridgeStatusRead
+            IpcCallerKind::CodexPlugin => scope != IpcScope::HandoffApprove,
+            IpcCallerKind::DesktopShell => {
+                matches!(scope, IpcScope::BridgeStatusRead | IpcScope::HandoffApprove)
             }
+            IpcCallerKind::DiagnosticCli => scope == IpcScope::BridgeStatusRead,
         }
     }
 }
@@ -430,6 +432,9 @@ mod tests {
                 .all(|scope| !policy.allows(IpcCallerKind::DiagnosticCli, *scope))
         );
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::HandoffApprove));
+        assert!(!policy.allows(IpcCallerKind::CodexPlugin, IpcScope::HandoffApprove));
+        assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
 
     #[test]

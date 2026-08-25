@@ -338,6 +338,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::OpenedContent { .. } => "opened_content",
         IpcResponse::PublishedStatus { .. } => "published_status",
         IpcResponse::SentMessage { .. } => "sent_message",
+        IpcResponse::ApprovedHandoff { .. } => "approved_handoff",
         IpcResponse::ConsumedHandoff { .. } => "consumed_handoff",
         IpcResponse::DeclinedHandoff { .. } => "declined_handoff",
     }

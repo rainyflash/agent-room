@@ -140,6 +140,7 @@ const fn scope_tag(scope: IpcScope) -> u8 {
         IpcScope::MessageSend => 7,
         IpcScope::HandoffConsume => 8,
         IpcScope::HandoffDecline => 9,
+        IpcScope::HandoffApprove => 10,
     }
 }
 

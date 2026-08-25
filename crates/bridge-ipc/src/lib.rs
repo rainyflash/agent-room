@@ -11,8 +11,9 @@ pub use authentication::{
 pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, IpcClientSession};
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
-    IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcConsumedHandoff, IpcContentReference,
-    IpcDeclinedHandoff, IpcGetPresenceRequest, IpcHandoffRequest, IpcHandoffStatus,
+    IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcBridgeState, IpcConsumedHandoff,
+    IpcContentReference, IpcDeclinedHandoff, IpcGetPresenceRequest, IpcHandoffPermission,
+    IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest, IpcOpenedContent,
     IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,

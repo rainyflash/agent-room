@@ -30,9 +30,10 @@ use agent_room_bridge_core::{
     handoffs::{
         EncryptedHandoffToDeviceEventSource, HANDOFF_RECEIPT_EVENT_TYPE,
         HANDOFF_REQUEST_EVENT_TYPE, HandoffAuthorizationGateway, HandoffContentGateway,
-        HandoffInstanceDirectory, HandoffReceiptDependencies, HandoffReceiptService,
-        HandoffReceptionDependencies, HandoffReceptionService, HandoffStore,
-        HandoffTransportFailureKind, ProjectedHandoffContentGateway,
+        HandoffDeliveryDependencies, HandoffDeliveryService, HandoffInstanceDirectory,
+        HandoffReceiptDependencies, HandoffReceiptService, HandoffReceptionDependencies,
+        HandoffReceptionService, HandoffStore, HandoffTransportFailureKind,
+        ProjectedHandoffContentGateway,
     },
     lobby_session::{
         AgentLobbySessionConfig, AgentLobbySessionFailure, AgentLobbySessionFailureKind,
@@ -153,6 +154,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
             runtime.state.clone(),
             runtime.previews.clone(),
             runtime.content.clone(),
+            Arc::new(SystemClock),
         )),
         None => Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
     };
@@ -231,6 +233,7 @@ struct AgentOnlineSession {
     status: Arc<AgentStatusPublicationHandle>,
     publication: Arc<MessagePublicationService>,
     handoffs: Arc<HandoffReceptionService>,
+    handoff_delivery: Arc<HandoffDeliveryService>,
     handoff_worker: HandoffEventWorker,
     next_batch: Option<MatrixSyncToken>,
 }
@@ -271,6 +274,7 @@ impl BridgeAgentRuntimeState {
             )
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
+            .with_handoff_delivery(online.handoff_delivery.clone())
             .with_handoffs(online.handoffs.clone()),
         ));
     }
@@ -651,8 +655,17 @@ async fn establish_agent_online(
         authenticator: runtime.handoffs.authenticator.clone(),
         authorization: runtime.handoffs.authorization.clone(),
         directory: runtime.handoffs.directory.clone(),
-        transport: handoff_transport,
+        transport: handoff_transport.clone(),
         content: runtime.handoffs.content.clone(),
+        store: runtime.handoffs.store.clone(),
+    }));
+    let handoff_delivery = Arc::new(HandoffDeliveryService::new(HandoffDeliveryDependencies {
+        identity: registered.identity().clone(),
+        signer,
+        clock: Arc::new(SystemClock),
+        authorization: runtime.handoffs.authorization.clone(),
+        directory: runtime.handoffs.directory.clone(),
+        transport: handoff_transport,
         store: runtime.handoffs.store.clone(),
     }));
     let handoff_receipts = Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
@@ -671,6 +684,7 @@ async fn establish_agent_online(
         status,
         publication,
         handoffs,
+        handoff_delivery,
         handoff_worker,
         next_batch: None,
     };

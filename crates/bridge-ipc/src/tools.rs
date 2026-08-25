@@ -25,6 +25,7 @@ pub enum IpcMethod {
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
     SendMessage(IpcSendMessageRequest),
+    ApproveHandoff(IpcApproveHandoffRequest),
     ConsumeHandoff(IpcHandoffRequest),
     DeclineHandoff(IpcHandoffRequest),
 }
@@ -39,6 +40,7 @@ impl IpcMethod {
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
             Self::SendMessage(_) => "send_message",
+            Self::ApproveHandoff(_) => "approve_handoff",
             Self::ConsumeHandoff(_) => "consume_handoff",
             Self::DeclineHandoff(_) => "decline_handoff",
         }
@@ -53,6 +55,7 @@ impl IpcMethod {
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
             Self::SendMessage(_) => IpcScope::MessageSend,
+            Self::ApproveHandoff(_) => IpcScope::HandoffApprove,
             Self::ConsumeHandoff(_) => IpcScope::HandoffConsume,
             Self::DeclineHandoff(_) => IpcScope::HandoffDecline,
         }
@@ -71,6 +74,7 @@ impl IpcMethod {
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
             Self::SendMessage(request) => request.validate(),
+            Self::ApproveHandoff(request) => request.validate(),
             Self::ConsumeHandoff(request) | Self::DeclineHandoff(request) => request.validate(),
         }
     }
@@ -243,6 +247,53 @@ impl IpcHandoffRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcApproveHandoffRequest {
+    pub handoff_id: String,
+    pub principal_id: String,
+    pub room_id: String,
+    pub source_content_id: String,
+    pub target_agent_id: String,
+    pub target_instance_id: String,
+    pub permissions: Vec<IpcHandoffPermission>,
+    pub purpose: IpcHandoffPurpose,
+    pub expires_at_unix_ms: i64,
+}
+
+impl IpcApproveHandoffRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_uuid_v7(&self.handoff_id, "bridge.ipc.handoff_id_invalid")?;
+        validate_uuid_v7(&self.principal_id, "bridge.ipc.principal_id_invalid")?;
+        validate_bounded(
+            &self.room_id,
+            MAX_ROOM_ID_BYTES,
+            "bridge.ipc.room_id_invalid",
+        )?;
+        validate_uuid_v7(&self.source_content_id, "bridge.ipc.content_id_invalid")?;
+        validate_uuid_v7(&self.target_agent_id, "bridge.ipc.target_agent_id_invalid")?;
+        validate_uuid_v7(
+            &self.target_instance_id,
+            "bridge.ipc.target_instance_id_invalid",
+        )?;
+        if self.permissions.is_empty() || self.permissions.len() > 3 {
+            return Err(failure("bridge.ipc.handoff_permissions_invalid"));
+        }
+        let unique = self
+            .permissions
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique.len() != self.permissions.len() {
+            return Err(failure("bridge.ipc.handoff_permissions_invalid"));
+        }
+        if self.expires_at_unix_ms <= 0 {
+            return Err(failure("bridge.ipc.handoff_expiry_invalid"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
     BridgeStatus {
@@ -269,6 +320,9 @@ pub enum IpcResponse {
     },
     SentMessage {
         message: IpcSentMessage,
+    },
+    ApprovedHandoff {
+        handoff: IpcHandoffSubmission,
     },
     ConsumedHandoff {
         handoff: IpcConsumedHandoff,
@@ -388,6 +442,30 @@ pub struct IpcDeclinedHandoff {
     pub status: IpcHandoffStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum IpcHandoffSubmission {
+    Submitted {
+        #[serde(rename = "handoffId")]
+        handoff_id: String,
+        reused: bool,
+    },
+    DeliveryUncertain {
+        #[serde(rename = "handoffId")]
+        handoff_id: String,
+    },
+    Resolved {
+        #[serde(rename = "handoffId")]
+        handoff_id: String,
+        status: IpcHandoffStatus,
+    },
+    Failed {
+        #[serde(rename = "handoffId")]
+        handoff_id: String,
+        code: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcBridgeState {
@@ -425,6 +503,22 @@ pub enum IpcMessageProvenance {
     AutonomousAgent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcHandoffPermission {
+    ReadText,
+    ReadAttachments,
+    IncludeMetadata,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcHandoffPurpose {
+    Inspect,
+    Summarize,
+    ReplyDraft,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcSubmissionState {
@@ -436,7 +530,13 @@ pub enum IpcSubmissionState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcHandoffStatus {
+    Approved,
+    Delivered,
+    Consumed,
     Declined,
+    Revoked,
+    Expired,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,8 +623,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        IpcHandoffRequest, IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity,
-        IpcMethod, IpcPublishStatusRequest, IpcSendMessageRequest, IpcWorkStatus,
+        IpcApproveHandoffRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
+        IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
+        IpcPublishStatusRequest, IpcSendMessageRequest, IpcWorkStatus,
     };
 
     #[test]
@@ -539,6 +640,20 @@ mod tests {
                     limit: 20,
                 }),
                 IpcScope::PreviewsRead,
+            ),
+            (
+                IpcMethod::ApproveHandoff(IpcApproveHandoffRequest {
+                    handoff_id: id.clone(),
+                    principal_id: Uuid::now_v7().to_string(),
+                    room_id: "!room:matrix.test".to_owned(),
+                    source_content_id: Uuid::now_v7().to_string(),
+                    target_agent_id: Uuid::now_v7().to_string(),
+                    target_instance_id: Uuid::now_v7().to_string(),
+                    permissions: vec![IpcHandoffPermission::ReadText],
+                    purpose: IpcHandoffPurpose::Summarize,
+                    expires_at_unix_ms: 2_000,
+                }),
+                IpcScope::HandoffApprove,
             ),
             (
                 IpcMethod::ConsumeHandoff(IpcHandoffRequest {
@@ -625,6 +740,28 @@ mod tests {
                 .expect_err("非 UUIDv7 交接标识必须失败")
                 .code(),
             "bridge.ipc.handoff_id_invalid"
+        );
+
+        let duplicate_permissions = IpcMethod::ApproveHandoff(IpcApproveHandoffRequest {
+            handoff_id: Uuid::now_v7().to_string(),
+            principal_id: Uuid::now_v7().to_string(),
+            room_id: "!room:matrix.test".to_owned(),
+            source_content_id: Uuid::now_v7().to_string(),
+            target_agent_id: Uuid::now_v7().to_string(),
+            target_instance_id: Uuid::now_v7().to_string(),
+            permissions: vec![
+                IpcHandoffPermission::ReadText,
+                IpcHandoffPermission::ReadText,
+            ],
+            purpose: IpcHandoffPurpose::Inspect,
+            expires_at_unix_ms: 2_000,
+        });
+        assert_eq!(
+            duplicate_permissions
+                .validate()
+                .expect_err("重复权限必须失败")
+                .code(),
+            "bridge.ipc.handoff_permissions_invalid"
         );
     }
 
