@@ -30,8 +30,9 @@ use agent_room_bridge_core::{
     handoffs::{
         EncryptedHandoffToDeviceEventSource, HANDOFF_RECEIPT_EVENT_TYPE,
         HANDOFF_REQUEST_EVENT_TYPE, HandoffAuthorizationGateway, HandoffContentGateway,
-        HandoffInstanceDirectory, HandoffReceptionDependencies, HandoffReceptionService,
-        HandoffStore, HandoffTransportFailureKind, ProjectedHandoffContentGateway,
+        HandoffInstanceDirectory, HandoffReceiptDependencies, HandoffReceiptService,
+        HandoffReceptionDependencies, HandoffReceptionService, HandoffStore,
+        HandoffTransportFailureKind, ProjectedHandoffContentGateway,
     },
     lobby_session::{
         AgentLobbySessionConfig, AgentLobbySessionFailure, AgentLobbySessionFailureKind,
@@ -230,16 +231,16 @@ struct AgentOnlineSession {
     status: Arc<AgentStatusPublicationHandle>,
     publication: Arc<MessagePublicationService>,
     handoffs: Arc<HandoffReceptionService>,
-    handoff_worker: HandoffReceptionWorker,
+    handoff_worker: HandoffEventWorker,
     next_batch: Option<MatrixSyncToken>,
 }
 
-struct HandoffReceptionWorker {
+struct HandoffEventWorker {
     task: JoinHandle<()>,
     terminal_failure: watch::Receiver<Option<HandoffTransportFailureKind>>,
 }
 
-impl Drop for HandoffReceptionWorker {
+impl Drop for HandoffEventWorker {
     fn drop(&mut self) {
         self.task.abort();
     }
@@ -645,7 +646,7 @@ async fn establish_agent_online(
     ));
     let handoffs = Arc::new(HandoffReceptionService::new(HandoffReceptionDependencies {
         identity: registered.identity().clone(),
-        signer,
+        signer: signer.clone(),
         clock: Arc::new(SystemClock),
         authenticator: runtime.handoffs.authenticator.clone(),
         authorization: runtime.handoffs.authorization.clone(),
@@ -654,7 +655,14 @@ async fn establish_agent_online(
         content: runtime.handoffs.content.clone(),
         store: runtime.handoffs.store.clone(),
     }));
-    let handoff_worker = spawn_handoff_reception_worker(handoff_events, handoffs.clone());
+    let handoff_receipts = Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
+        identity: registered.identity().clone(),
+        clock: Arc::new(SystemClock),
+        authenticator: runtime.handoffs.authenticator.clone(),
+        store: runtime.handoffs.store.clone(),
+    }));
+    let handoff_worker =
+        spawn_handoff_event_worker(handoff_events, handoffs.clone(), handoff_receipts);
     let mut online = AgentOnlineSession {
         runtime: registered,
         lobby,
@@ -670,10 +678,11 @@ async fn establish_agent_online(
     Ok(online)
 }
 
-fn spawn_handoff_reception_worker(
+fn spawn_handoff_event_worker(
     events: Arc<dyn EncryptedHandoffToDeviceEventSource>,
     handoffs: Arc<HandoffReceptionService>,
-) -> HandoffReceptionWorker {
+    receipts: Arc<HandoffReceiptService>,
+) -> HandoffEventWorker {
     let (terminal_sender, terminal_failure) = watch::channel(None);
     let task = tokio::spawn(async move {
         loop {
@@ -703,16 +712,24 @@ fn spawn_handoff_reception_worker(
                         );
                     }
                 },
-                HANDOFF_RECEIPT_EVENT_TYPE => {
-                    tracing::debug!("收到尚未接入发送侧状态机的交接回执");
-                }
+                HANDOFF_RECEIPT_EVENT_TYPE => match receipts.apply(&event).await {
+                    Ok(outcome) => {
+                        tracing::info!(?outcome, "交接回执已验证并推进本地发送状态");
+                    }
+                    Err(failure) => {
+                        tracing::warn!(
+                            failure_kind = ?failure.kind(),
+                            "交接回执未通过发送侧验证"
+                        );
+                    }
+                },
                 unexpected => {
                     tracing::warn!(event_type = unexpected, "忽略未知的加密交接协议事件");
                 }
             }
         }
     });
-    HandoffReceptionWorker {
+    HandoffEventWorker {
         task,
         terminal_failure,
     }
