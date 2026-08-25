@@ -58,9 +58,21 @@ export type RoomMessageSignal = {
   readonly signatureStatus: MessageSignatureStatus;
 };
 
+export type ReadOnlyFederatedEventReason = 'legacy_namespace' | 'unknown_event_type';
+
+export type ReadOnlyFederatedEvent = {
+  readonly endToEndEncrypted: boolean;
+  readonly eventType: string;
+  readonly matrixEventId: string;
+  readonly reason: ReadOnlyFederatedEventReason;
+  readonly sender: string;
+  readonly serverTimestamp: number;
+};
+
 export type MessageRoomProjection = {
   readonly messages: readonly RoomMessageSignal[];
   readonly observedAtUnixMs: number;
+  readonly readOnlyFederatedEvents: readonly ReadOnlyFederatedEvent[];
   readonly roomId: string;
 };
 

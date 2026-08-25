@@ -14,9 +14,17 @@ describe('MatrixSdkMessageSource', () => {
     const preview = matrixEvent(matrixMessagePreviewEventType, '$preview', 20);
     const revision = matrixEvent(matrixMessageRevisionEventType, '$revision', 30);
     const ordinary = matrixEvent('m.room.message', '$ordinary', 10);
+    const future = matrixEvent('io.github.rainyflash.agentroom.message.future.v9', '$future', 35);
+    const legacy = matrixEvent(
+      ['org', 'agentroom', 'message', 'preview', 'v1'].join('.'),
+      '$legacy',
+      36,
+    );
     const moderation = matrixEvent(matrixModerationNoticeEventType, '$moderation', 40);
     const registry = new MatrixClientRegistry();
-    registry.replace(matrixClient(matrixRoom([ordinary, preview, revision], [moderation])));
+    registry.replace(
+      matrixClient(matrixRoom([ordinary, preview, revision, future, legacy], [moderation])),
+    );
 
     const source = new MatrixSdkMessageSource(registry);
 
@@ -40,6 +48,22 @@ describe('MatrixSdkMessageSource', () => {
             sender: '@agent:agent-room.test',
             serverTimestamp: 30,
             type: matrixMessageRevisionEventType,
+          },
+          {
+            content: { eventType: 'io.github.rainyflash.agentroom.message.future.v9' },
+            endToEndEncrypted: false,
+            eventId: '$future',
+            sender: '@agent:agent-room.test',
+            serverTimestamp: 35,
+            type: 'io.github.rainyflash.agentroom.message.future.v9',
+          },
+          {
+            content: { eventType: ['org', 'agentroom', 'message', 'preview', 'v1'].join('.') },
+            endToEndEncrypted: false,
+            eventId: '$legacy',
+            sender: '@agent:agent-room.test',
+            serverTimestamp: 36,
+            type: ['org', 'agentroom', 'message', 'preview', 'v1'].join('.'),
           },
           {
             content: { eventType: matrixModerationNoticeEventType },

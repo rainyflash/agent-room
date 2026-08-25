@@ -78,6 +78,7 @@ const messages: MessageGateway = {
     ok({
       messages: testMessages(requestedRoomId),
       observedAtUnixMs: Date.now(),
+      readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
     }),
   subscribe: () => noop,

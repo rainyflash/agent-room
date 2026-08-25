@@ -35,7 +35,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 41] = [
+const EXPECTED_TABLES: [&str; 44] = [
     "adapter_binding",
     "agent",
     "agent_card_snapshot",
@@ -60,6 +60,9 @@ const EXPECTED_TABLES: [&str; 41] = [
     "device_token_family",
     "direct_contact_block",
     "direct_session",
+    "federation_governance_audit",
+    "federation_governance_rule",
+    "federation_peer",
     "matrix_projection_cursor",
     "matrix_projection_event_receipt",
     "moderation_action",

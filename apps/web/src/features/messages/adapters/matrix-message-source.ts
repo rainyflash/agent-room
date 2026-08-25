@@ -6,6 +6,8 @@ export const matrixMessagePreviewEventType = 'io.github.rainyflash.agentroom.mes
 export const matrixMessageRevisionEventType = 'io.github.rainyflash.agentroom.message.revision.v1';
 export const matrixModerationNoticeEventType =
   'io.github.rainyflash.agentroom.moderation.notice.v1';
+export const matrixAgentRoomEventNamespace = 'io.github.rainyflash.agentroom';
+const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
 
 const projectedTimelineEventTypes = new Set([
   matrixMessagePreviewEventType,
@@ -82,7 +84,16 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
 }
 
 function isProjectedTimelineEvent(event: MatrixEvent): boolean {
-  return projectedTimelineEventTypes.has(event.getType());
+  const eventType = event.getType();
+  return (
+    projectedTimelineEventTypes.has(eventType) ||
+    isNamespacedEvent(eventType, matrixAgentRoomEventNamespace) ||
+    isNamespacedEvent(eventType, legacyMatrixAgentRoomEventNamespace)
+  );
+}
+
+function isNamespacedEvent(eventType: string, namespace: string): boolean {
+  return eventType.startsWith(`${namespace}.`);
 }
 
 function toTimelineEvent(event: MatrixEvent): MatrixMessageTimelineEvent {

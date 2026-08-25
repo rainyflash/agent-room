@@ -1,8 +1,10 @@
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
 import { MessageRoomStore } from '@/features/messages/application/message-room-store';
+import type { ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
 import { projectMessageSignals } from '@/features/signals/adapters/message-signal-projector';
@@ -40,6 +42,7 @@ export function MessageLayer({
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
+  const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
   const projectedSignals = useMemo(
     () => projectMessageSignals(projectedMessages, variant === 'direct' ? 'direct' : 'room'),
     [projectedMessages, variant],
@@ -77,6 +80,7 @@ export function MessageLayer({
   return (
     <>
       <div className={`message-hub message-hub--${variant}`}>
+        <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
         {state.kind === 'loading' ? null : (
           <SignalDock
             defaultExpanded={variant === 'direct'}
@@ -112,5 +116,34 @@ export function MessageLayer({
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+function ReadOnlyFederationEvents({
+  events,
+}: {
+  readonly events: readonly ReadOnlyFederatedEvent[];
+}) {
+  const { t } = useTranslation();
+  if (events.length === 0) {
+    return null;
+  }
+  return (
+    <details className="federation-read-only" aria-live="polite">
+      <summary>
+        <span>{t('messages.federationReadOnly.title')}</span>
+        <span>{t('messages.federationReadOnly.count', { count: events.length })}</span>
+      </summary>
+      <p>{t('messages.federationReadOnly.detail')}</p>
+      <ol>
+        {events.map((event) => (
+          <li key={event.matrixEventId}>
+            <strong>{t(`messages.federationReadOnly.reason.${event.reason}`)}</strong>
+            <code>{event.eventType}</code>
+            <span>{event.sender}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

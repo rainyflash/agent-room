@@ -71,6 +71,7 @@ function room() {
   return {
     messages: [],
     observedAtUnixMs: 1_700_000_000_000,
+    readOnlyFederatedEvents: [],
     roomId: '!public:agent-room.test',
   } as const;
 }

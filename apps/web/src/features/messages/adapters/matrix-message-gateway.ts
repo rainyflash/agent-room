@@ -4,6 +4,7 @@ import {
   matrixMessagePreviewEventType,
   matrixMessageRevisionEventType,
   matrixModerationNoticeEventType,
+  matrixAgentRoomEventNamespace,
   type MatrixMessageRoomSnapshot,
   type MatrixMessageSource,
   type MatrixMessageTimelineEvent,
@@ -18,12 +19,15 @@ import {
   type MessageReadResult,
   type MessageRelation,
   type MessageRoomProjection,
+  type ReadOnlyFederatedEvent,
   type MessageSignatureStatus,
   type RoomMessageSignal,
 } from '@/features/messages/domain/message';
 import { err, ok } from '@/shared/result';
 
 const MAX_PROJECTED_MESSAGES = 200;
+const MAX_PROJECTED_READ_ONLY_EVENTS = 50;
+const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
 const uuidV7Schema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
@@ -244,6 +248,7 @@ function projectRoom(
   const messages = new Map<string, MutableMessage>();
   const pendingRevisions = new Map<string, ParsedRevision[]>();
   const moderationNotices = new Map<string, ParsedModerationNotice>();
+  const readOnlyFederatedEvents: ReadOnlyFederatedEvent[] = [];
   const seenMatrixEventIds = new Set<string>();
 
   for (const timelineEvent of room.timelineEvents) {
@@ -287,6 +292,11 @@ function projectRoom(
           moderationNotices.set(notice.targetEventId, notice);
         }
       }
+      continue;
+    }
+    const readOnlyEvent = projectReadOnlyFederatedEvent(timelineEvent);
+    if (readOnlyEvent !== null) {
+      readOnlyFederatedEvents.push(readOnlyEvent);
     }
   }
 
@@ -306,7 +316,40 @@ function projectRoom(
   return Object.freeze({
     messages: Object.freeze(projected),
     observedAtUnixMs,
+    readOnlyFederatedEvents: Object.freeze(
+      readOnlyFederatedEvents
+        .toSorted(compareReadOnlyEvents)
+        .slice(0, MAX_PROJECTED_READ_ONLY_EVENTS),
+    ),
     roomId: room.roomId,
+  });
+}
+
+function projectReadOnlyFederatedEvent(
+  event: MatrixMessageTimelineEvent,
+): ReadOnlyFederatedEvent | null {
+  if (
+    event.eventId === undefined ||
+    event.sender === undefined ||
+    !validServerTimestamp(event.serverTimestamp)
+  ) {
+    return null;
+  }
+  const reason = event.type.startsWith(`${legacyMatrixAgentRoomEventNamespace}.`)
+    ? 'legacy_namespace'
+    : event.type.startsWith(`${matrixAgentRoomEventNamespace}.`)
+      ? 'unknown_event_type'
+      : null;
+  if (reason === null) {
+    return null;
+  }
+  return Object.freeze({
+    endToEndEncrypted: event.endToEndEncrypted,
+    eventType: event.type,
+    matrixEventId: event.eventId,
+    reason,
+    sender: event.sender,
+    serverTimestamp: event.serverTimestamp,
   });
 }
 
@@ -438,6 +481,16 @@ function freezeMessage(message: MutableMessage): RoomMessageSignal {
 }
 
 function compareMessages(left: MutableMessage, right: MutableMessage): number {
+  const timestampDifference = right.serverTimestamp - left.serverTimestamp;
+  return timestampDifference === 0
+    ? right.matrixEventId.localeCompare(left.matrixEventId)
+    : timestampDifference;
+}
+
+function compareReadOnlyEvents(
+  left: ReadOnlyFederatedEvent,
+  right: ReadOnlyFederatedEvent,
+): number {
   const timestampDifference = right.serverTimestamp - left.serverTimestamp;
   return timestampDifference === 0
     ? right.matrixEventId.localeCompare(left.matrixEventId)

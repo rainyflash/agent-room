@@ -72,6 +72,62 @@ describe('MatrixMessageGateway', () => {
     expect(Object.isFrozen(result.value.messages)).toBe(true);
   });
 
+  it('未知与旧命名空间事件只投影安全元数据且永不解析载荷', () => {
+    const dangerousContent = {
+      body: '不得进入投影',
+      command: 'invoke_tool',
+      nested: { secret: '不得泄露' },
+    };
+    const currentUnknown: MatrixMessageTimelineEvent = {
+      content: dangerousContent,
+      endToEndEncrypted: true,
+      eventId: '$future',
+      sender: '@future:remote.test',
+      serverTimestamp: 300,
+      type: 'io.github.rainyflash.agentroom.message.future.v9',
+    };
+    const legacy: MatrixMessageTimelineEvent = {
+      content: dangerousContent,
+      endToEndEncrypted: false,
+      eventId: '$legacy',
+      sender: '@legacy:remote.test',
+      serverTimestamp: 200,
+      type: ['org', 'agentroom', 'message', 'preview', 'v1'].join('.'),
+    };
+    const gateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([legacy, currentUnknown]) }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.messages).toEqual([]);
+    expect(result.value.readOnlyFederatedEvents).toEqual([
+      {
+        endToEndEncrypted: true,
+        eventType: 'io.github.rainyflash.agentroom.message.future.v9',
+        matrixEventId: '$future',
+        reason: 'unknown_event_type',
+        sender: '@future:remote.test',
+        serverTimestamp: 300,
+      },
+      {
+        endToEndEncrypted: false,
+        eventType: ['org', 'agentroom', 'message', 'preview', 'v1'].join('.'),
+        matrixEventId: '$legacy',
+        reason: 'legacy_namespace',
+        sender: '@legacy:remote.test',
+        serverTimestamp: 200,
+      },
+    ]);
+    expect(JSON.stringify(result.value)).not.toContain('invoke_tool');
+    expect(JSON.stringify(result.value)).not.toContain('不得泄露');
+    expect(Object.isFrozen(result.value.readOnlyFederatedEvents)).toBe(true);
+  });
+
   it('拒绝让未受信载荷自行宣称实例签名已经验证', () => {
     const event = previewEvent({ eventId: '$self-asserted' });
     event.content = { ...messageContent(), signatureStatus: 'instance_verified' };

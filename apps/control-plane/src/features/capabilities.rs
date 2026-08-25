@@ -23,7 +23,7 @@ pub(crate) fn manifest() -> CapabilityManifest {
             "context_handoff".to_owned(),
             "room_moderation".to_owned(),
         ],
-        protocol_versions: vec!["1.0".to_owned()],
+        protocol_versions: vec!["2.0".to_owned(), "1.0".to_owned()],
         schema_version: "1.0".to_owned(),
         extensions: BTreeMap::new(),
     }

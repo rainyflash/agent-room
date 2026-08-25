@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "protocolVersions": ["1.0"],
+  "protocolVersions": ["2.0", "1.0"],
   "eventTypes": [
     "io.github.rainyflash.agentroom.message.preview.v1",
     "io.github.rainyflash.agentroom.message.revision.v1",
