@@ -9,6 +9,7 @@ pub mod identity;
 pub mod ids;
 pub mod messages;
 pub mod policy;
+pub mod private_rooms;
 pub mod rooms;
 pub mod time;
 pub mod version;
