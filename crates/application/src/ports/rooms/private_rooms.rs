@@ -13,8 +13,9 @@ use agent_room_domain::{
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
-        MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
+        MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption,
+        MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
+        PortFuture,
     },
 };
 
@@ -120,12 +121,13 @@ impl PrivateMatrixRoomCreation {
     pub fn new(request: MatrixCreateRoom, alias: MatrixRoomAliasLocalpart) -> DomainResult<Self> {
         let valid = request.visibility() == MatrixRoomVisibility::Private
             && request.preset() == MatrixRoomPreset::PrivateChat
+            && request.encryption() == MatrixRoomEncryption::EndToEnd
             && request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate
             && request.alias_localpart() == Some(&alias);
         if !valid {
             return Err(invariant(
                 "private_matrix_room_creation",
-                "私人 Matrix 房间必须隐藏、邀请制、受管且带稳定别名",
+                "私人 Matrix 房间必须隐藏、邀请制、端到端加密、受管且带稳定别名",
             ));
         }
         Ok(Self { request, alias })
@@ -357,6 +359,7 @@ mod tests {
         )
         .expect("基础请求有效")
         .with_alias_localpart(alias.clone())
+        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
         assert!(PrivateMatrixRoomCreation::new(private, alias).is_ok());
     }

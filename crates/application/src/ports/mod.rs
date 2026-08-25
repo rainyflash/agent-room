@@ -69,9 +69,9 @@ pub use matrix::{
     MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway,
     MatrixLogin, MatrixOperation, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind,
     MatrixRecoveryAction, MatrixResult, MatrixRetryPolicy, MatrixRoomAliasLocalpart,
-    MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
+    MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition,
+    MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
     MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
 };

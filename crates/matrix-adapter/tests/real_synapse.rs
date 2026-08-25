@@ -198,6 +198,7 @@ fn direct_room_creation(creator: &MatrixUserId, peer: &MatrixUserId) -> DirectMa
         vec![peer.clone()],
     )
     .expect("直接会话建房请求有效")
+    .with_end_to_end_encryption()
     .with_alias_localpart(alias.clone());
     DirectMatrixRoomCreation::new(request, alias, creator.clone(), peer.clone())
         .expect("直接会话约束有效")
@@ -327,6 +328,7 @@ fn private_room_creation(
     )
     .expect("私人房间建房请求有效")
     .with_alias_localpart(alias.clone())
+    .with_end_to_end_encryption()
     .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
     PrivateMatrixRoomCreation::new(request, alias).expect("受管私人房间请求有效")
 }

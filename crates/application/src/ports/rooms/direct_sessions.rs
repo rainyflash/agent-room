@@ -13,8 +13,8 @@ use agent_room_domain::{
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomPreset,
-        MatrixRoomVisibility, MatrixUserId, PortFuture,
+        MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption,
+        MatrixRoomId, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
     },
 };
 
@@ -67,13 +67,14 @@ impl DirectMatrixRoomCreation {
         let valid = creator != peer
             && request.visibility() == MatrixRoomVisibility::Private
             && request.preset() == MatrixRoomPreset::TrustedPrivateChat
+            && request.encryption() == MatrixRoomEncryption::EndToEnd
             && request.direct()
             && request.alias_localpart() == Some(&alias)
             && request.invite() == [peer.clone()];
         if !valid {
             return Err(invariant(
                 "direct_matrix_room_creation",
-                "直接 Matrix 房间必须私密、双人、带稳定别名并标记为直接会话",
+                "直接 Matrix 房间必须私密、双人、端到端加密、带稳定别名并标记为直接会话",
             ));
         }
         Ok(Self {
@@ -301,6 +302,7 @@ mod tests {
             ],
         )
         .expect("基础请求有效")
+        .with_end_to_end_encryption()
         .with_alias_localpart(alias.clone());
 
         assert!(DirectMatrixRoomCreation::new(group, alias, creator, peer).is_err());

@@ -564,6 +564,7 @@ impl PrivateRoomService {
         )
         .map_err(|error| domain(operation, &error))?
         .with_alias_localpart(alias.clone())
+        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
         let matrix = PrivateMatrixRoomCreation::new(matrix_request, alias)
             .map_err(|error| domain(operation, &error))?;

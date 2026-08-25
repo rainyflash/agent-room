@@ -11,9 +11,10 @@ pub use models::{
     MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentUserRegistration,
     MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
     MatrixLogin, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixRoomAuthority,
-    MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition,
-    MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent,
+    MatrixRoomEncryption, MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset,
+    MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
+    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
+    MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,

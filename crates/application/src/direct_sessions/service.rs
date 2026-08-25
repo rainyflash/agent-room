@@ -273,6 +273,7 @@ impl DirectSessionService {
             vec![actor_matrix.clone()],
         )
         .map_err(|error| domain(operation, &error))?
+        .with_end_to_end_encryption()
         .with_alias_localpart(alias.clone());
         let creation = DirectMatrixRoomCreation::new(
             matrix_request,

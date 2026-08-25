@@ -3,10 +3,11 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use agent_room_application::ports::{
     AgentRoomMembershipFactory, DirectMatrixRoomCreation, DirectSessionMatrixProvisioner,
     MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-    MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, MatrixRoomPowerProfile,
-    MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture, PrivateMatrixMembership,
-    PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
-    PrivateRoomMatrixProvisioner, RoomMembershipGateway, RoomProvisioningGateway,
+    MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
+    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
+    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, RoomMembershipGateway,
+    RoomProvisioningGateway,
 };
 use agent_room_domain::rooms::MatrixRoomReference;
 use reqwest::Url;
@@ -491,10 +492,19 @@ struct CreateRoomRequest<'a> {
     is_direct: bool,
     invite: Vec<&'a str>,
     creation_content: Value,
+    initial_state: Vec<InitialStateEventRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     room_alias_name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     power_level_content_override: Option<PowerLevelContentOverride<'a>>,
+}
+
+#[derive(Serialize)]
+struct InitialStateEventRequest {
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    state_key: &'static str,
+    content: Value,
 }
 
 #[derive(Serialize)]
@@ -532,6 +542,18 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             MatrixRoomKind::Space => json!({ "type": "m.space" }),
         };
         let member_writable_events = request.member_writable_state_event_types();
+        let initial_state = match request.encryption() {
+            MatrixRoomEncryption::Unencrypted => Vec::new(),
+            MatrixRoomEncryption::EndToEnd => vec![InitialStateEventRequest {
+                event_type: "m.room.encryption",
+                state_key: "",
+                content: json!({
+                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "rotation_period_ms": 604_800_000_u64,
+                    "rotation_period_msgs": 100_u64,
+                }),
+            }],
+        };
         let managed_private = request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate;
         let power_level_content_override = (managed_private || !member_writable_events.is_empty())
             .then(|| PowerLevelContentOverride {
@@ -555,6 +577,7 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             is_direct: request.direct(),
             invite: request.invite().iter().map(MatrixUserId::as_str).collect(),
             creation_content,
+            initial_state,
             room_alias_name: request
                 .alias_localpart()
                 .map(MatrixRoomAliasLocalpart::as_str),
@@ -906,6 +929,7 @@ mod tests {
             Vec::new(),
         )
         .expect("建房请求有效")
+        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
 
         let body =
@@ -920,6 +944,11 @@ mod tests {
         assert_eq!(levels["ban"], 100);
         assert_eq!(levels["redact"], 100);
         assert!(levels["users"].is_null(), "不得覆盖 Matrix 创建者映射");
+        assert_eq!(body["initial_state"][0]["type"], "m.room.encryption");
+        assert_eq!(
+            body["initial_state"][0]["content"]["algorithm"],
+            "m.megolm.v1.aes-sha2"
+        );
     }
 
     #[test]
@@ -1068,6 +1097,7 @@ mod tests {
             vec![peer.clone()],
         )
         .expect("直接建房请求有效")
+        .with_end_to_end_encryption()
         .with_alias_localpart(alias.clone());
         let creation = DirectMatrixRoomCreation::new(request, alias, creator.clone(), peer.clone())
             .expect("直接会话约束有效");

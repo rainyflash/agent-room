@@ -316,6 +316,16 @@ pub enum MatrixRoomKind {
     Space,
 }
 
+/// Matrix 房间正文的传输保密策略。
+///
+/// 公共大厅允许服务端治理，因此默认保持明文；私人房间和直接会话必须显式选择端到端加密。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatrixRoomEncryption {
+    #[default]
+    Unencrypted,
+    EndToEnd,
+}
+
 /// Matrix 建房时采用的协议权限基线。
 ///
 /// 产品权限仍由 Agent Room 自己持久化；该配置只负责把 Matrix 收紧为不可绕过的硬边界。
@@ -335,6 +345,7 @@ pub struct MatrixCreateRoom {
     direct: bool,
     invite: Vec<MatrixUserId>,
     kind: MatrixRoomKind,
+    encryption: MatrixRoomEncryption,
     power_profile: MatrixRoomPowerProfile,
     alias_localpart: Option<MatrixRoomAliasLocalpart>,
     member_writable_state_event_types: Vec<MatrixEventType>,
@@ -374,6 +385,7 @@ impl MatrixCreateRoom {
             direct,
             invite,
             kind: MatrixRoomKind::Conversation,
+            encryption: MatrixRoomEncryption::Unencrypted,
             power_profile: MatrixRoomPowerProfile::Standard,
             alias_localpart: None,
             member_writable_state_event_types: Vec::new(),
@@ -383,6 +395,12 @@ impl MatrixCreateRoom {
     #[must_use]
     pub fn with_kind(mut self, kind: MatrixRoomKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub fn with_end_to_end_encryption(mut self) -> Self {
+        self.encryption = MatrixRoomEncryption::EndToEnd;
         self
     }
 
@@ -433,6 +451,10 @@ impl MatrixCreateRoom {
 
     pub const fn kind(&self) -> MatrixRoomKind {
         self.kind
+    }
+
+    pub const fn encryption(&self) -> MatrixRoomEncryption {
+        self.encryption
     }
 
     pub const fn power_profile(&self) -> MatrixRoomPowerProfile {

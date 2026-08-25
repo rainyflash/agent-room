@@ -5,9 +5,9 @@ use agent_room_application::ports::{
     MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixPowerLevel,
     MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
-    MatrixRoomAuthorityGateway, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset,
-    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
-    MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
+    MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
+    MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent,
+    MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
 };
 use agent_room_bridge_core::handoffs::{
     EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
@@ -35,9 +35,10 @@ use matrix_sdk::{
             uiaa::{MatrixUserIdentifier, UserIdentifier},
         },
         events::{
-            StateEventType,
+            InitialStateEvent, StateEventType,
             receipt::ReceiptThread,
             room::{
+                encryption::RoomEncryptionEventContent,
                 member::{MembershipState, RoomMemberEventContent},
                 power_levels::RoomPowerLevelsEventContent,
             },
@@ -47,6 +48,7 @@ use matrix_sdk::{
     },
     store::RoomLoadSettings,
 };
+use matrix_sdk_base::crypto::{CollectStrategy, DecryptionSettings, TrustRequirement};
 
 use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
@@ -105,7 +107,11 @@ impl MatrixSdkClientFactory {
     async fn build_client(&self, operation: MatrixOperation) -> MatrixResult<Client> {
         let builder = Client::builder()
             .homeserver_url(self.configuration.homeserver_url().clone())
-            .request_config(self.request_config());
+            .request_config(self.request_config())
+            .with_room_key_recipient_strategy(CollectStrategy::OnlyTrustedDevices)
+            .with_decryption_settings(DecryptionSettings {
+                sender_device_trust_requirement: TrustRequirement::CrossSigned,
+            });
         let builder = match &self.store {
             MatrixSdkStore::Memory => builder,
             MatrixSdkStore::EncryptedSqlite(store) => {
@@ -294,6 +300,14 @@ impl MatrixGateway for MatrixSdkGateway {
                 .alias_localpart()
                 .map(|alias| alias.as_str().to_owned());
             sdk_request.creation_content = map_creation_content(request.kind())?;
+            if request.encryption() == MatrixRoomEncryption::EndToEnd {
+                sdk_request.initial_state.push(
+                    InitialStateEvent::with_empty_state_key(
+                        RoomEncryptionEventContent::with_recommended_defaults(),
+                    )
+                    .to_raw_any(),
+                );
+            }
             sdk_request.invite = request
                 .invite()
                 .iter()
