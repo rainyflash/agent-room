@@ -6,10 +6,14 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
-    ids::{AgentId, AgentInstanceId, ContentId, MessageId, MessageRevisionId},
+    ids::{
+        AgentId, AgentInstanceId, ContentEncryptionContextId, ContentId, MessageId,
+        MessageRevisionId,
+    },
     messages::{
-        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
-        MessageRelation, MessageRevisionKind, MessageRiskFlag, MessageRiskFlags,
+        CLIENT_CONTENT_KEY_BYTES, CLIENT_CONTENT_NONCE_BYTES, ClientContentEncryption,
+        ClientContentEncryptionAlgorithm, MessageContentReference, MessageLanguage, MessagePreview,
+        MessageProvenance, MessageRelation, MessageRevisionKind, MessageRiskFlag, MessageRiskFlags,
         MessageSensitivity, MessageSummary, MessageTitle,
     },
     time::UtcMillis,
@@ -297,9 +301,10 @@ fn parse_preview_event(
         room_id,
         &wire.correlation_id,
     )?;
+    let context_id = wire.id.clone();
     let actor = parse_actor(wire.actor, event)?;
     let preview = parse_preview(wire.preview)?;
-    let content = parse_content(&wire.content, &preview)?;
+    let content = parse_content(&wire.content, &preview, &context_id, event)?;
     let relation = wire
         .relation
         .map(|relation| {
@@ -341,6 +346,7 @@ fn parse_revision_event(
         room_id,
         &wire.correlation_id,
     )?;
+    let context_id = wire.id.clone();
     let actor = parse_actor(wire.actor, event)?;
     let (kind, preview, content) = match wire.kind {
         WireMessageRevisionKind::Replace => {
@@ -353,6 +359,8 @@ fn parse_revision_event(
                     .as_ref()
                     .ok_or(MessageSyncIssueReason::InvalidEnvelope)?,
                 &preview,
+                &context_id,
+                event,
             )?;
             (MessageRevisionKind::Replace, Some(preview), Some(content))
         }
@@ -445,14 +453,49 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
 fn parse_content(
     content: &ContentRef,
     preview: &MessagePreview,
+    expected_context_id: &str,
+    event: &MatrixTimelineEvent,
 ) -> Result<MessageContentReference, MessageSyncIssueReason> {
     if content.fetch_mode != "on_demand" || content.media_type != preview.content_type().as_str() {
         return Err(MessageSyncIssueReason::InvalidEnvelope);
     }
-    MessageContentReference::new(
+    let reference = MessageContentReference::new(
         ContentId::from_uuid(parse_v7(&content.content_id)?),
         Sha256Digest::from_bytes(parse_sha256(&content.digest_sha256)?),
         content.size_bytes,
+    )
+    .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
+    let Some(encryption) = content.encryption.as_ref() else {
+        return Ok(reference);
+    };
+    if !event.end_to_end_encrypted() || encryption.context_id != expected_context_id {
+        return Err(MessageSyncIssueReason::InvalidEnvelope);
+    }
+    Ok(reference.with_client_encryption(parse_client_encryption(encryption)?))
+}
+
+fn parse_client_encryption(
+    encryption: &agent_room_protocol_conformance::generated::ClientContentEncryption,
+) -> Result<ClientContentEncryption, MessageSyncIssueReason> {
+    let algorithm = ClientContentEncryptionAlgorithm::try_from(encryption.algorithm.as_str())
+        .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
+    let context_id = ContentEncryptionContextId::from_uuid(parse_v7(&encryption.context_id)?);
+    let key: [u8; CLIENT_CONTENT_KEY_BYTES] = URL_SAFE_NO_PAD
+        .decode(&encryption.key_base64_url)
+        .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?
+        .try_into()
+        .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
+    let nonce: [u8; CLIENT_CONTENT_NONCE_BYTES] = URL_SAFE_NO_PAD
+        .decode(&encryption.nonce_base64_url)
+        .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?
+        .try_into()
+        .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
+    ClientContentEncryption::new(
+        algorithm,
+        context_id,
+        key,
+        nonce,
+        encryption.plaintext_size_bytes,
     )
     .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)
 }

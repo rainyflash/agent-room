@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_application::ports::{
-    Clock, MatrixEventId, MatrixFailureKind, MatrixRoomId, PortFuture,
+    Clock, MatrixEventId, MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
@@ -13,13 +13,14 @@ use agent_room_bridge_core::{
         HandoffTransportFailureKind, handoff_source_matches_projection,
     },
     messages::{
-        MessageBody, MessageContentFailureKind, MessageContentReadFailureKind,
+        MessageBodyProtectionService, MessageContentFailureKind, MessageContentReadFailureKind,
         MessageContentSourceQuery, MessagePreviewQuery, MessagePublicationFailure,
         MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
         MessageStoreFailureKind, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
         OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
-        ProjectedMessagePreview, SendMessageRequest,
+        ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
+        ProtectMessageBodyRequest, SendMessageRequest,
     },
     presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
     status::{
@@ -38,7 +39,7 @@ use agent_room_bridge_ipc::{
 };
 use agent_room_domain::{
     agent_status::AgentWorkStatus,
-    content::{ContentByteLength, ContentEncryptionMode, ContentMediaType},
+    content::{ContentByteLength, ContentMediaType},
     handoff::{
         ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffPermission,
         HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
@@ -73,6 +74,8 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     handoff_delivery: Option<Arc<dyn AgentHandoffDeliveryRuntime>>,
     handoffs: Option<Arc<dyn AgentHandoffRuntime>>,
     presence: Option<Arc<dyn PresenceProjectionRepository>>,
+    room_encryption: MatrixRoomEncryption,
+    message_content_protection: Option<Arc<MessageBodyProtectionService>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -95,6 +98,8 @@ impl BridgeAgentRuntimeSnapshot {
             handoff_delivery: None,
             handoffs: None,
             presence: None,
+            room_encryption: MatrixRoomEncryption::Unencrypted,
+            message_content_protection: None,
         }
     }
 
@@ -108,6 +113,23 @@ impl BridgeAgentRuntimeSnapshot {
         publication: Arc<MessagePublicationService>,
     ) -> Self {
         self.publication = Some(publication);
+        self
+    }
+
+    pub(crate) fn with_message_content_protection(
+        mut self,
+        protection: Arc<MessageBodyProtectionService>,
+    ) -> Self {
+        self.message_content_protection = Some(protection);
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn with_room_encryption(
+        mut self,
+        room_encryption: MatrixRoomEncryption,
+    ) -> Self {
+        self.room_encryption = room_encryption;
         self
     }
 
@@ -329,7 +351,7 @@ impl AgentRuntimeIpcFacade {
         let source = opened.source();
         Ok(IpcResponse::OpenedContent {
             content: IpcOpenedContent {
-                content: ipc_content(source.content, source.preview.content_type().as_str()),
+                content: ipc_content(&source.content, source.preview.content_type().as_str()),
                 source_room_id: source.room_id.as_str().to_owned(),
                 source_event_id: source.event_id.as_str().to_owned(),
                 source_actor: ipc_actor(&source.actor),
@@ -381,13 +403,20 @@ impl AgentRuntimeIpcFacade {
             message_sensitivity(request.sensitivity),
             risk_flags,
         );
-        let body = MessageBody::new(
-            request.body.into_bytes(),
-            media_type,
-            ContentEncryptionMode::ServerSide,
-            None,
-        )
-        .map_err(|_| invalid_request("bridge.ipc.message_body_invalid"))?;
+        let protection = runtime
+            .message_content_protection
+            .as_ref()
+            .ok_or_else(agent_runtime_unavailable)?;
+        let body = protection
+            .protect(&ProtectMessageBodyRequest {
+                submission_id,
+                room_id: &room_id,
+                room_encryption: runtime.room_encryption,
+                media_type: &media_type,
+                plaintext: request.body.as_bytes(),
+                expires_at: None,
+            })
+            .map_err(map_body_protection_failure)?;
         let relation = request
             .reply_to_message_id
             .as_deref()
@@ -762,7 +791,7 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
         created_at_unix_ms: preview.created_at.value(),
         title: preview.preview.title().as_str().to_owned(),
         summary: preview.preview.summary().as_str().to_owned(),
-        content: ipc_content(preview.content, preview.preview.content_type().as_str()),
+        content: ipc_content(&preview.content, preview.preview.content_type().as_str()),
         language: preview
             .preview
             .language()
@@ -777,7 +806,7 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
     }
 }
 
-fn ipc_content(content: MessageContentReference, media_type: &str) -> IpcContentReference {
+fn ipc_content(content: &MessageContentReference, media_type: &str) -> IpcContentReference {
     IpcContentReference {
         content_id: content.content_id().to_string(),
         digest_sha256: encode_hex(content.digest().as_bytes()),
@@ -1271,6 +1300,46 @@ fn map_content_open_failure(failure: OpenMessageContentFailure) -> BridgeIpcDisp
             || internal_failure("bridge.message_content_internal"),
             map_content_read_failure,
         ),
+        OpenMessageContentFailureKind::Cryptography => failure
+            .cryptography_failure()
+            .map_or_else(
+                || internal_failure("bridge.message_content_crypto_internal"),
+                |cryptography| match cryptography.kind() {
+                    agent_room_bridge_core::messages::MessageContentCryptographyFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+                        "bridge.message_content_crypto_unavailable",
+                        IpcErrorCategory::DependencyUnavailable,
+                        true,
+                    ),
+                    agent_room_bridge_core::messages::MessageContentCryptographyFailureKind::InvalidRequest
+                    | agent_room_bridge_core::messages::MessageContentCryptographyFailureKind::AuthenticationFailed => {
+                        internal_failure("bridge.message_content_authentication_failed")
+                    }
+                },
+            ),
+    }
+}
+
+const fn map_body_protection_failure(
+    failure: ProtectMessageBodyFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        ProtectMessageBodyFailureKind::InvalidBody => {
+            invalid_request("bridge.ipc.message_body_invalid")
+        }
+        ProtectMessageBodyFailureKind::Cryptography => {
+            match failure.cryptography_failure() {
+                Some(cryptography)
+                    if matches!(
+                        cryptography.kind(),
+                        agent_room_bridge_core::messages::MessageContentCryptographyFailureKind::Unavailable
+                    ) => BridgeIpcDispatchFailure::new(
+                        "bridge.message_content_crypto_unavailable",
+                        IpcErrorCategory::DependencyUnavailable,
+                        true,
+                    ),
+                _ => internal_failure("bridge.message_content_crypto_failed"),
+            }
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use agent_room_application::ports::MatrixRoomId;
 use agent_room_domain::{
     content::{ContentByteLength, ContentEncryptionMode, ContentMediaType, Sha256Digest},
     ids::{ContentId, MessageId, MessageSubmissionId},
-    messages::{MessagePreview, MessageProvenance, MessageRelation},
+    messages::{ClientContentEncryption, MessagePreview, MessageProvenance, MessageRelation},
     time::UtcMillis,
 };
 use sha2::{Digest, Sha256};
@@ -17,6 +17,7 @@ pub struct MessageBody {
     byte_length: ContentByteLength,
     media_type: ContentMediaType,
     encryption_mode: ContentEncryptionMode,
+    client_encryption: Option<ClientContentEncryption>,
     expires_at: Option<UtcMillis>,
 }
 
@@ -25,6 +26,7 @@ pub enum MessageRequestError {
     InvalidSubmissionId,
     InvalidBodyLength,
     MediaTypeMismatch,
+    MissingClientEncryption,
 }
 
 impl MessageBody {
@@ -39,6 +41,39 @@ impl MessageBody {
         encryption_mode: ContentEncryptionMode,
         expires_at: Option<UtcMillis>,
     ) -> Result<Self, MessageRequestError> {
+        if encryption_mode == ContentEncryptionMode::ClientE2ee {
+            return Err(MessageRequestError::MissingClientEncryption);
+        }
+        Self::from_parts(bytes, media_type, encryption_mode, None, expires_at)
+    }
+
+    /// 创建已经由客户端 AEAD 保护、只允许进入 E2EE 房间的消息正文。
+    ///
+    /// # Errors
+    ///
+    /// 密文为空或超过内容服务上限时返回错误。
+    pub fn client_encrypted(
+        bytes: impl Into<Arc<[u8]>>,
+        media_type: ContentMediaType,
+        encryption: ClientContentEncryption,
+        expires_at: Option<UtcMillis>,
+    ) -> Result<Self, MessageRequestError> {
+        Self::from_parts(
+            bytes,
+            media_type,
+            ContentEncryptionMode::ClientE2ee,
+            Some(encryption),
+            expires_at,
+        )
+    }
+
+    fn from_parts(
+        bytes: impl Into<Arc<[u8]>>,
+        media_type: ContentMediaType,
+        encryption_mode: ContentEncryptionMode,
+        client_encryption: Option<ClientContentEncryption>,
+        expires_at: Option<UtcMillis>,
+    ) -> Result<Self, MessageRequestError> {
         let bytes = bytes.into();
         let byte_length = u64::try_from(bytes.len())
             .ok()
@@ -51,6 +86,7 @@ impl MessageBody {
             byte_length,
             media_type,
             encryption_mode,
+            client_encryption,
             expires_at,
         })
     }
@@ -73,6 +109,10 @@ impl MessageBody {
 
     pub const fn encryption_mode(&self) -> ContentEncryptionMode {
         self.encryption_mode
+    }
+
+    pub const fn client_encryption(&self) -> Option<&ClientContentEncryption> {
+        self.client_encryption.as_ref()
     }
 
     pub const fn expires_at(&self) -> Option<UtcMillis> {

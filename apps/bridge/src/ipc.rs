@@ -678,14 +678,15 @@ mod tests {
             HandoffReceptionFailure, HandoffResolutionOutcome,
         },
         messages::{
-            DownloadedMessageContent, MessageContentBindRequest, MessageContentFailure,
-            MessageContentGateway, MessageContentReadFailure, MessageContentReadFailureKind,
-            MessageContentReadGateway, MessageContentReadRequest, MessageContentRecord,
-            MessageContentRedactRequest, MessageContentSourceQuery, MessageContentUploadRequest,
-            MessageEventPublisher, MessagePreviewPage, MessagePreviewQuery,
-            MessagePublicationDependencies, MessagePublicationService, MessageTimelineQueryFailure,
-            MessageTimelineQueryRepository, OpenMessageContentDependencies,
-            OpenMessageContentService, ProjectedMessageActor, ProjectedMessagePreview,
+            DownloadedMessageContent, MessageBodyProtectionService, MessageContentBindRequest,
+            MessageContentFailure, MessageContentGateway, MessageContentReadFailure,
+            MessageContentReadFailureKind, MessageContentReadGateway, MessageContentReadRequest,
+            MessageContentRecord, MessageContentRedactRequest, MessageContentSourceQuery,
+            MessageContentUploadRequest, MessageEventPublisher, MessagePreviewPage,
+            MessagePreviewQuery, MessagePublicationDependencies, MessagePublicationService,
+            MessageTimelineQueryFailure, MessageTimelineQueryRepository,
+            OpenMessageContentDependencies, OpenMessageContentService, ProjectedMessageActor,
+            ProjectedMessagePreview,
         },
         ports::{
             AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
@@ -727,6 +728,7 @@ mod tests {
         rooms::MatrixRoomReference,
         time::{DurationMillis, UtcMillis},
     };
+    use agent_room_message_crypto_adapter::{AesGcmMessageContentCipher, MessageContentRootKey};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use tempfile::tempdir;
     use tokio::io::duplex;
@@ -1237,6 +1239,7 @@ mod tests {
                     byte_length: ContentByteLength::new(6).expect("正文长度有效"),
                     media_type: ContentMediaType::new("text/plain").expect("媒体类型有效"),
                 })),
+                cryptography: None,
             },
         ));
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
@@ -1303,6 +1306,7 @@ mod tests {
                     room_id.clone(),
                     ["message.send"],
                 )
+                .with_message_content_protection(测试正文保护())
                 .with_message_publication(publication),
             )),
             previews.clone(),
@@ -1349,6 +1353,12 @@ mod tests {
         );
         drop(uploads);
         assert_eq!(content.bindings.lock().expect("正文绑定锁可用").len(), 1);
+    }
+
+    fn 测试正文保护() -> Arc<MessageBodyProtectionService> {
+        Arc::new(MessageBodyProtectionService::new(Arc::new(
+            AesGcmMessageContentCipher::new(MessageContentRootKey::from_bytes([31; 32])),
+        )))
     }
 
     #[tokio::test]
@@ -1593,6 +1603,7 @@ mod tests {
             OpenMessageContentDependencies {
                 projections,
                 content: Arc::new(拒绝正文网关),
+                cryptography: None,
             },
         ))
     }

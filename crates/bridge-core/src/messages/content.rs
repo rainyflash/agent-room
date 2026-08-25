@@ -8,8 +8,9 @@ use agent_room_domain::{
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    MessageContentSourceQuery, MessageTimelineQueryFailure, MessageTimelineQueryRepository,
-    ProjectedMessagePreview,
+    DecryptMessageContentRequest, MessageContentCipher, MessageContentCryptographyFailure,
+    MessageContentCryptographyFailureKind, MessageContentSourceQuery, MessageTimelineQueryFailure,
+    MessageTimelineQueryRepository, ProjectedMessagePreview,
 };
 
 const MAX_INLINE_CONTENT_BYTES: u64 = 48 * 1_024;
@@ -118,6 +119,7 @@ pub enum OpenMessageContentFailureKind {
     Content,
     IntegrityMismatch,
     InvalidEncoding,
+    Cryptography,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +127,7 @@ pub struct OpenMessageContentFailure {
     kind: OpenMessageContentFailureKind,
     projection: Option<MessageTimelineQueryFailure>,
     content: Option<MessageContentReadFailure>,
+    cryptography: Option<MessageContentCryptographyFailure>,
 }
 
 impl OpenMessageContentFailure {
@@ -133,6 +136,7 @@ impl OpenMessageContentFailure {
             kind,
             projection: None,
             content: None,
+            cryptography: None,
         }
     }
 
@@ -141,6 +145,7 @@ impl OpenMessageContentFailure {
             kind: OpenMessageContentFailureKind::Projection,
             projection: Some(failure),
             content: None,
+            cryptography: None,
         }
     }
 
@@ -149,6 +154,16 @@ impl OpenMessageContentFailure {
             kind: OpenMessageContentFailureKind::Content,
             projection: None,
             content: Some(failure),
+            cryptography: None,
+        }
+    }
+
+    const fn cryptography(failure: MessageContentCryptographyFailure) -> Self {
+        Self {
+            kind: OpenMessageContentFailureKind::Cryptography,
+            projection: None,
+            content: None,
+            cryptography: Some(failure),
         }
     }
 
@@ -163,16 +178,22 @@ impl OpenMessageContentFailure {
     pub const fn content_failure(self) -> Option<MessageContentReadFailure> {
         self.content
     }
+
+    pub const fn cryptography_failure(self) -> Option<MessageContentCryptographyFailure> {
+        self.cryptography
+    }
 }
 
 pub struct OpenMessageContentDependencies {
     pub projections: Arc<dyn MessageTimelineQueryRepository>,
     pub content: Arc<dyn MessageContentReadGateway>,
+    pub cryptography: Option<Arc<dyn MessageContentCipher>>,
 }
 
 pub struct OpenMessageContentService {
     projections: Arc<dyn MessageTimelineQueryRepository>,
     content: Arc<dyn MessageContentReadGateway>,
+    cryptography: Option<Arc<dyn MessageContentCipher>>,
 }
 
 impl OpenMessageContentService {
@@ -180,6 +201,7 @@ impl OpenMessageContentService {
         Self {
             projections: dependencies.projections,
             content: dependencies.content,
+            cryptography: dependencies.cryptography,
         }
     }
 
@@ -203,13 +225,18 @@ impl OpenMessageContentService {
             .ok_or_else(|| {
                 OpenMessageContentFailure::simple(OpenMessageContentFailureKind::NotFound)
             })?;
-        let expected = source.content;
+        let expected = &source.content;
         if !is_inline_text(source.preview.content_type()) {
             return Err(OpenMessageContentFailure::simple(
                 OpenMessageContentFailureKind::UnsupportedMediaType,
             ));
         }
-        if expected.size_bytes() > MAX_INLINE_CONTENT_BYTES {
+        let plaintext_size = expected
+            .client_encryption()
+            .map_or(expected.size_bytes(), |encryption| {
+                encryption.plaintext_size_bytes()
+            });
+        if plaintext_size > MAX_INLINE_CONTENT_BYTES {
             return Err(OpenMessageContentFailure::simple(
                 OpenMessageContentFailureKind::TooLarge,
             ));
@@ -227,7 +254,25 @@ impl OpenMessageContentService {
                 OpenMessageContentFailureKind::IntegrityMismatch,
             ));
         }
-        let body = std::str::from_utf8(&opened.bytes)
+        let plaintext = match expected.client_encryption() {
+            Some(encryption) => self
+                .cryptography
+                .as_ref()
+                .ok_or_else(|| {
+                    OpenMessageContentFailure::cryptography(MessageContentCryptographyFailure::new(
+                        MessageContentCryptographyFailureKind::Unavailable,
+                    ))
+                })?
+                .decrypt(&DecryptMessageContentRequest {
+                    room_id: &source.room_id,
+                    media_type: source.preview.content_type(),
+                    ciphertext: &opened.bytes,
+                    encryption,
+                })
+                .map_err(OpenMessageContentFailure::cryptography)?,
+            None => opened.bytes.clone(),
+        };
+        let body = std::str::from_utf8(&plaintext)
             .map_err(|_| {
                 OpenMessageContentFailure::simple(OpenMessageContentFailureKind::InvalidEncoding)
             })?
@@ -244,7 +289,7 @@ fn is_inline_text(media_type: &ContentMediaType) -> bool {
 }
 
 fn content_matches(source: &ProjectedMessagePreview, opened: &DownloadedMessageContent) -> bool {
-    let expected = source.content;
+    let expected = &source.content;
     let actual_length = u64::try_from(opened.bytes.len()).ok();
     let actual_digest = Sha256Digest::from_bytes(Sha256::digest(&opened.bytes).into());
     opened.media_type == *source.preview.content_type()

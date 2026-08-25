@@ -332,14 +332,25 @@ impl ContentObjectResponse {
     }
 
     fn is_uploadable(&self) -> bool {
-        matches!(
-            (self.lifecycle_state.as_str(), self.scan_state.as_str()),
-            ("uploading", "pending") | ("active", "clean")
-        )
+        match self.encryption_mode.as_str() {
+            "server_side" => matches!(
+                (self.lifecycle_state.as_str(), self.scan_state.as_str()),
+                ("uploading", "pending") | ("active", "clean")
+            ),
+            "client_e2ee" => matches!(
+                (self.lifecycle_state.as_str(), self.scan_state.as_str()),
+                ("uploading" | "active", "not_applicable")
+            ),
+            _ => false,
+        }
     }
 
     fn is_active(&self) -> bool {
-        self.lifecycle_state == "active" && self.scan_state == "clean"
+        self.lifecycle_state == "active"
+            && matches!(
+                (self.encryption_mode.as_str(), self.scan_state.as_str()),
+                ("server_side", "clean") | ("client_e2ee", "not_applicable")
+            )
     }
 
     fn content_id(&self) -> Result<ContentId, MessageContentFailure> {

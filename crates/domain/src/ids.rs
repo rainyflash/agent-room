@@ -51,6 +51,7 @@ define_id!(RoomProvisioningJobId);
 define_id!(RoomProvisioningLeaseId);
 define_id!(ContentId);
 define_id!(ContentUploadRequestId);
+define_id!(ContentEncryptionContextId);
 define_id!(MessageId);
 define_id!(MessageRevisionId);
 define_id!(MessageSubmissionId);

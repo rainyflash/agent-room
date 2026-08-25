@@ -391,6 +391,19 @@ impl MatrixGateway for MatrixSdkGateway {
     ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
         Box::pin(async move {
             let room = self.room(room_id, MatrixOperation::SendEvent)?;
+            if event_requires_end_to_end_encryption(event) {
+                let encrypted = room
+                    .latest_encryption_state()
+                    .await
+                    .map_err(|error| map_sdk_error(MatrixOperation::SendEvent, &error))?
+                    .is_encrypted();
+                if !encrypted {
+                    return Err(MatrixFailure::new(
+                        MatrixOperation::SendEvent,
+                        MatrixFailureKind::Forbidden,
+                    ));
+                }
+            }
             let transaction_id = OwnedTransactionId::from(event.transaction_id().as_str());
             let response = room
                 .send_raw(event.event_type().as_str(), event.content().clone())
@@ -473,6 +486,14 @@ impl MatrixGateway for MatrixSdkGateway {
             map_backfill(&response)
         })
     }
+}
+
+fn event_requires_end_to_end_encryption(event: &MatrixEvent) -> bool {
+    event
+        .content()
+        .get("content")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|content| content.contains_key("encryption"))
 }
 
 impl MatrixRoomAuthorityGateway for MatrixSdkGateway {

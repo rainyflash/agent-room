@@ -731,6 +731,7 @@ pub struct MatrixTimelineEvent {
     transaction_id: Option<MatrixTransactionId>,
     origin_server_timestamp: Option<u64>,
     content: Value,
+    end_to_end_encrypted: bool,
 }
 
 impl MatrixTimelineEvent {
@@ -766,7 +767,14 @@ impl MatrixTimelineEvent {
             transaction_id,
             origin_server_timestamp,
             content,
+            end_to_end_encrypted: false,
         })
+    }
+
+    #[must_use]
+    pub const fn with_end_to_end_encryption(mut self) -> Self {
+        self.end_to_end_encrypted = true;
+        self
     }
 
     pub const fn event_id(&self) -> Option<&MatrixEventId> {
@@ -795,6 +803,10 @@ impl MatrixTimelineEvent {
 
     pub const fn content(&self) -> &Value {
         &self.content
+    }
+
+    pub const fn end_to_end_encrypted(&self) -> bool {
+        self.end_to_end_encrypted
     }
 }
 

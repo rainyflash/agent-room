@@ -14,6 +14,7 @@ members = [
   "crates/identity-adapter",
   "crates/matrix-adapter",
   "crates/matrix-provisioning-adapter",
+  "crates/message-crypto-adapter",
   "crates/postgres-adapter",
   "crates/protocol-conformance",
 ]
@@ -38,10 +39,12 @@ agent-room-domain = { version = "0.1.0", path = "crates/domain" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
 agent-room-matrix-provisioning-adapter = { version = "0.1.0", path = "crates/matrix-provisioning-adapter" }
+agent-room-message-crypto-adapter = { version = "0.1.0", path = "crates/message-crypto-adapter" }
 agent-room-postgres-adapter = { version = "0.1.0", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0", path = "crates/protocol-conformance" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
+aes-gcm = "0.10.3"
 aws-sdk-s3 = { version = "1.143.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio", "rustls"] }
 base64 = "0.22.1"
 chrono = "0.4.45"

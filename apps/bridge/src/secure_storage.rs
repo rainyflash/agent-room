@@ -22,7 +22,7 @@ use agent_room_bridge_local_adapter::{
     IPC_INSTALLATION_ID_ACCOUNT as IPC_INSTALLATION_ID,
     IPC_SHARED_SECRET_ACCOUNT as IPC_SHARED_SECRET,
 };
-use agent_room_bridge_storage_adapter::HandoffStorageKey;
+use agent_room_bridge_storage_adapter::{HandoffStorageKey, MessageProjectionStorageKey};
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
     devices::DevicePublicSigningKey,
@@ -32,6 +32,7 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
+use agent_room_message_crypto_adapter::MessageContentRootKey;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,8 @@ const DEVICE_CREDENTIALS: &str = "device-session-v1";
 const AGENT_RUNTIME_CREDENTIALS: &str = "agent-runtime-session-v1";
 const MATRIX_STORE_PASSPHRASE: &str = "matrix-store-passphrase-v1";
 const HANDOFF_STORAGE_KEY: &str = "handoff-storage-key-v1";
+const MESSAGE_PROJECTION_STORAGE_KEY: &str = "message-projection-storage-key-v1";
+const MESSAGE_CONTENT_ROOT_KEY: &str = "message-content-root-key-v1";
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
 const RUNTIME_SECRET_BYTES: usize = 32;
 
@@ -96,6 +99,8 @@ pub(crate) struct BridgeRuntimeSecrets {
     ipc_shared_secret: IpcSharedSecret,
     matrix_store_passphrase: SecretValue,
     handoff_storage_key: HandoffStorageKey,
+    message_projection_storage_key: MessageProjectionStorageKey,
+    message_content_root_key: MessageContentRootKey,
 }
 
 impl BridgeRuntimeSecrets {
@@ -113,6 +118,14 @@ impl BridgeRuntimeSecrets {
 
     pub(crate) const fn handoff_storage_key(&self) -> &HandoffStorageKey {
         &self.handoff_storage_key
+    }
+
+    pub(crate) const fn message_projection_storage_key(&self) -> &MessageProjectionStorageKey {
+        &self.message_projection_storage_key
+    }
+
+    pub(crate) const fn message_content_root_key(&self) -> &MessageContentRootKey {
+        &self.message_content_root_key
     }
 }
 
@@ -147,6 +160,10 @@ impl OsBridgeRuntimeSecretVault {
         let matrix_store_passphrase =
             self.load_or_create_value(MATRIX_STORE_PASSPHRASE, random_secret)?;
         let handoff_storage_key = self.load_or_create_value(HANDOFF_STORAGE_KEY, random_secret)?;
+        let message_projection_storage_key =
+            self.load_or_create_value(MESSAGE_PROJECTION_STORAGE_KEY, random_secret)?;
+        let message_content_root_key =
+            self.load_or_create_value(MESSAGE_CONTENT_ROOT_KEY, random_secret)?;
 
         Ok(BridgeRuntimeSecrets {
             installation_id: IpcInstallationId::new(installation_id).map_err(|_| corrupt())?,
@@ -155,6 +172,12 @@ impl OsBridgeRuntimeSecretVault {
                 .map_err(|_| corrupt())?,
             handoff_storage_key: HandoffStorageKey::from_bytes(decode_runtime_secret(
                 &handoff_storage_key,
+            )?),
+            message_projection_storage_key: MessageProjectionStorageKey::from_bytes(
+                decode_runtime_secret(&message_projection_storage_key)?,
+            ),
+            message_content_root_key: MessageContentRootKey::from_bytes(decode_runtime_secret(
+                &message_content_root_key,
             )?),
         })
     }
@@ -641,7 +664,8 @@ mod tests {
     use super::{
         AGENT_INSTANCE_SIGNING_SEED, AGENT_RUNTIME_CREDENTIALS, DEVICE_CREDENTIALS,
         DEVICE_SIGNING_SEED, HANDOFF_STORAGE_KEY, IPC_INSTALLATION_ID, IPC_SHARED_SECRET,
-        KeyringBackend, MATRIX_STORE_PASSPHRASE, OsAgentInstanceSigningIdentityStore,
+        KeyringBackend, MATRIX_STORE_PASSPHRASE, MESSAGE_CONTENT_ROOT_KEY,
+        MESSAGE_PROJECTION_STORAGE_KEY, OsAgentInstanceSigningIdentityStore,
         OsAgentRuntimeCredentialVault, OsBridgeRuntimeSecretVault, OsDeviceCredentialVault,
         OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
     };
@@ -730,9 +754,19 @@ mod tests {
         assert!(stored.contains_key(IPC_SHARED_SECRET));
         assert!(stored.contains_key(MATRIX_STORE_PASSPHRASE));
         assert!(stored.contains_key(HANDOFF_STORAGE_KEY));
+        assert!(stored.contains_key(MESSAGE_PROJECTION_STORAGE_KEY));
+        assert!(stored.contains_key(MESSAGE_CONTENT_ROOT_KEY));
         assert_ne!(stored[IPC_SHARED_SECRET], stored[MATRIX_STORE_PASSPHRASE]);
         assert_ne!(stored[HANDOFF_STORAGE_KEY], stored[MATRIX_STORE_PASSPHRASE]);
         assert_ne!(stored[HANDOFF_STORAGE_KEY], stored[IPC_SHARED_SECRET]);
+        assert_ne!(
+            stored[MESSAGE_PROJECTION_STORAGE_KEY],
+            stored[HANDOFF_STORAGE_KEY]
+        );
+        assert_ne!(
+            stored[MESSAGE_CONTENT_ROOT_KEY],
+            stored[MESSAGE_PROJECTION_STORAGE_KEY]
+        );
     }
 
     #[test]

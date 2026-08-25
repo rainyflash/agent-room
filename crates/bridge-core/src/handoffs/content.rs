@@ -102,12 +102,12 @@ pub fn handoff_source_matches_projection(
         && actual_actor.agent_id() == expected_actor.agent_id()
         && actual_actor.agent_instance_id() == expected_actor.instance_id()
         && source.actor.provenance() == expected_actor.provenance()
-        && content_reference_matches(source.content, handoff)
+        && content_reference_matches(&source.content, handoff)
         && source.preview.content_type() == fields.content.media_type()
         && &fields.risk_flags == source.preview.risk_flags()
 }
 
-fn content_reference_matches(actual: MessageContentReference, handoff: &ContextHandoff) -> bool {
+fn content_reference_matches(actual: &MessageContentReference, handoff: &ContextHandoff) -> bool {
     let expected = &handoff.fields().content;
     actual.content_id() == expected.content_id()
         && actual.digest() == expected.digest()

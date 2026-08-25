@@ -1,4 +1,5 @@
 mod content;
+mod crypto;
 mod incoming;
 mod model;
 mod outgoing;
@@ -11,6 +12,12 @@ pub use content::{
     MessageContentReadGateway, MessageContentReadRequest, OpenMessageContentDependencies,
     OpenMessageContentFailure, OpenMessageContentFailureKind, OpenMessageContentRequest,
     OpenMessageContentService, OpenedMessageContent,
+};
+pub use crypto::{
+    DecryptMessageContentRequest, EncryptMessageContentRequest, EncryptedMessageContent,
+    MessageBodyProtectionService, MessageContentCipher, MessageContentCryptographyFailure,
+    MessageContentCryptographyFailureKind, ProtectMessageBodyFailure,
+    ProtectMessageBodyFailureKind, ProtectMessageBodyRequest,
 };
 pub use incoming::{
     MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,

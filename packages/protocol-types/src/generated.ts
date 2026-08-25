@@ -40,9 +40,18 @@ export type CapabilityManifest = {
   readonly schemaVersion: "1.0";
 } & Readonly<Record<string, unknown>>;
 
+export type ClientContentEncryption = {
+  readonly algorithm: "org.agentroom.content.aes-256-gcm.v1";
+  readonly contextId: string;
+  readonly keyBase64Url: string;
+  readonly nonceBase64Url: string;
+  readonly plaintextSizeBytes: number;
+};
+
 export type ContentRef = {
   readonly contentId: string;
   readonly digestSha256: string;
+  readonly encryption?: ClientContentEncryption;
   readonly fetchMode: "on_demand";
   readonly mediaType: string;
   readonly sizeBytes: number;

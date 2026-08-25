@@ -15,6 +15,7 @@ agent-room-bridge-storage-adapter.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
 agent-room-matrix-adapter.workspace = true
+agent-room-message-crypto-adapter.workspace = true
 base64.workspace = true
 getrandom.workspace = true
 interprocess.workspace = true

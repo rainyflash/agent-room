@@ -3,10 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MatrixClient } from 'matrix-js-sdk';
-import type {
-  CryptoApi,
-  DeviceIsolationMode,
-} from 'matrix-js-sdk/lib/crypto-api/index.js';
+import type { CryptoApi, DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js';
 
 import { initializeMatrixCrypto, MatrixWebGateway } from './matrix-web-gateway';
 
@@ -91,8 +88,9 @@ describe('MatrixWebGateway', () => {
     } as Pick<CryptoApi, 'setDeviceIsolationMode' | 'setTrustCrossSignedDevices'>;
     const client = {
       getCrypto: () => crypto,
-      initRustCrypto: async (options: unknown) => {
+      initRustCrypto: (options: unknown) => {
         calls.push(['initialize', options]);
+        return Promise.resolve();
       },
     } as unknown as Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;
 
@@ -103,10 +101,7 @@ describe('MatrixWebGateway', () => {
     });
 
     expect(calls).toEqual([
-      [
-        'initialize',
-        { cryptoDatabasePrefix: 'agent-room-crypto-device', useIndexedDB: true },
-      ],
+      ['initialize', { cryptoDatabasePrefix: 'agent-room-crypto-device', useIndexedDB: true }],
       ['cross-signing', true],
       ['isolation', isolationMode],
     ]);
@@ -115,7 +110,7 @@ describe('MatrixWebGateway', () => {
   it('Rust Crypto 初始化后不可用时失败关闭', async () => {
     const client = {
       getCrypto: () => undefined,
-      initRustCrypto: async () => undefined,
+      initRustCrypto: () => Promise.resolve(),
     } as unknown as Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;
 
     await expect(

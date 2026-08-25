@@ -157,7 +157,7 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
       const restored = await crypto.restoreKeyBackup({
         progressCallback: (progress) => {
           onProgress(
-            progress.stage === 'fetch'
+            !('successes' in progress)
               ? { stage: 'fetching' }
               : {
                   failures: progress.failures,

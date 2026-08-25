@@ -34,6 +34,7 @@ async fn 正文只在本地验签来源存在后下载并逐项校验完整性()
     let service = OpenMessageContentService::new(OpenMessageContentDependencies {
         projections: Arc::new(固定来源仓储(Some(source.clone()))),
         content: gateway.clone(),
+        cryptography: None,
     });
 
     let opened = service
@@ -64,6 +65,7 @@ async fn 摘要不一致和缺失来源都不能把远端字节交给宿主() {
     let service = OpenMessageContentService::new(OpenMessageContentDependencies {
         projections: Arc::new(固定来源仓储(Some(source.clone()))),
         content: gateway.clone(),
+        cryptography: None,
     });
 
     let failure = service
@@ -85,6 +87,7 @@ async fn 摘要不一致和缺失来源都不能把远端字节交给宿主() {
     let missing_service = OpenMessageContentService::new(OpenMessageContentDependencies {
         projections: Arc::new(固定来源仓储(None)),
         content: missing_gateway.clone(),
+        cryptography: None,
     });
     let failure = missing_service
         .open(&OpenMessageContentRequest::new(

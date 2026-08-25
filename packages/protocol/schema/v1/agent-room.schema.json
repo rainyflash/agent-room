@@ -147,6 +147,7 @@
           "maxLength": 128,
           "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$"
         },
+        "encryption": { "$ref": "#/$defs/ClientContentEncryption" },
         "fetchMode": { "const": "on_demand" }
       },
       "propertyNames": {
@@ -154,6 +155,38 @@
       },
       "additionalProperties": true,
       "maxProperties": 16
+    },
+    "ClientContentEncryption": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "contextId",
+        "keyBase64Url",
+        "nonceBase64Url",
+        "plaintextSizeBytes"
+      ],
+      "properties": {
+        "algorithm": { "const": "org.agentroom.content.aes-256-gcm.v1" },
+        "contextId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "keyBase64Url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "nonceBase64Url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{16}$"
+        },
+        "plaintextSizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 26214400
+        }
+      },
+      "additionalProperties": false
     },
     "MessagePreview": {
       "type": "object",

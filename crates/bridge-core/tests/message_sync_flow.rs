@@ -289,6 +289,77 @@ async fn 同步按_matrix_顺序投影并逐条隔离坏事件() {
     );
 }
 
+#[tokio::test]
+async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
+    let fixture = 测试夹具::new();
+    let encrypted_id = Uuid::now_v7();
+    let mut encrypted_payload = preview_payload(
+        encrypted_id,
+        room_id().as_str(),
+        "2026-08-24T12:00:00.000Z",
+        None,
+    );
+    encrypted_payload["content"]["encryption"] = json!({
+        "algorithm": "org.agentroom.content.aes-256-gcm.v1",
+        "contextId": encrypted_id,
+        "keyBase64Url": URL_SAFE_NO_PAD.encode([7_u8; 32]),
+        "nonceBase64Url": URL_SAFE_NO_PAD.encode([8_u8; 12]),
+        "plaintextSizeBytes": 112
+    });
+    let mut leaked_payload = encrypted_payload.clone();
+    leaked_payload["id"] = json!(Uuid::now_v7());
+    leaked_payload["content"]["encryption"]["contextId"] = leaked_payload["id"].clone();
+    let encrypted = signed_timeline_event(
+        &fixture.signing_key,
+        "$encrypted:matrix.test",
+        "org.agentroom.message.preview.v1",
+        encrypted_payload,
+        None,
+    )
+    .with_end_to_end_encryption();
+    let leaked = signed_timeline_event(
+        &fixture.signing_key,
+        "$plaintext:matrix.test",
+        "org.agentroom.message.preview.v1",
+        leaked_payload,
+        None,
+    );
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("encrypted-content-sync").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![encrypted, leaked],
+            Vec::new(),
+        )],
+    );
+
+    let outcome = fixture
+        .service()
+        .process(&sync)
+        .await
+        .expect("批次应可隔离泄漏事件");
+
+    assert_eq!(outcome.accepted_events, 1);
+    assert_eq!(outcome.isolated_events, 1);
+    let batches = fixture.projections.batches.lock().expect("投影记录锁可用");
+    let MessageProjectionMutation::Preview(preview) = &batches[0].mutations()[0] else {
+        panic!("加密事件应进入预览投影");
+    };
+    let encryption = preview
+        .content
+        .client_encryption()
+        .expect("投影必须保留解密材料");
+    assert_eq!(encryption.context_id().as_uuid(), encrypted_id);
+    assert_eq!(encryption.key(), &[7_u8; 32]);
+    assert_eq!(
+        batches[0].issues()[0].reason,
+        MessageSyncIssueReason::InvalidEnvelope
+    );
+}
+
 fn mixed_sync(fixture: &测试夹具, message_id: Uuid, reply_target: Uuid) -> MatrixSyncBatch {
     let room_id = room_id();
     let preview = signed_timeline_event(

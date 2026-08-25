@@ -102,7 +102,7 @@ pub(super) fn preview_event(
         correlation_id: submission_id.as_uuid(),
         room_id: request.room_id().as_str(),
         preview: preview(request.preview()),
-        content: content_ref(content),
+        content: content_ref(content, request.body()),
         relation: request.relation().map(relation),
     };
     signed_event(PREVIEW_EVENT_TYPE, transaction_id, &unsigned, signer)
@@ -127,7 +127,7 @@ pub(super) fn edit_event(
         target_message_id: request.target_message_id().as_uuid(),
         kind: "replace",
         preview: preview(request.preview()),
-        content: content_ref(content),
+        content: content_ref(content, request.body()),
     };
     signed_event(REVISION_EVENT_TYPE, transaction_id, &unsigned, signer)
 }
@@ -252,17 +252,34 @@ fn body_fingerprint(value: &super::MessageBody) -> WireBodyFingerprint<'_> {
         size_bytes: value.byte_length().value(),
         media_type: value.media_type().as_str(),
         encryption_mode: value.encryption_mode().as_str(),
+        encryption: value.client_encryption().map(client_encryption),
         expires_at_unix_ms: value.expires_at().map(UtcMillis::value),
     }
 }
 
-fn content_ref(value: &MessageContentRecord) -> WireContentRef<'_> {
+fn content_ref<'a>(
+    value: &'a MessageContentRecord,
+    body: &'a super::MessageBody,
+) -> WireContentRef<'a> {
     WireContentRef {
         content_id: value.content_id.as_uuid(),
         digest_sha256: hex(value.digest.as_bytes()),
         size_bytes: value.byte_length.value(),
         media_type: value.media_type.as_str(),
         fetch_mode: "on_demand",
+        encryption: body.client_encryption().map(client_encryption),
+    }
+}
+
+fn client_encryption(
+    value: &agent_room_domain::messages::ClientContentEncryption,
+) -> WireClientContentEncryption {
+    WireClientContentEncryption {
+        algorithm: value.algorithm().as_str(),
+        context_id: value.context_id().as_uuid(),
+        key_base64_url: URL_SAFE_NO_PAD.encode(value.key()),
+        nonce_base64_url: URL_SAFE_NO_PAD.encode(value.nonce()),
+        plaintext_size_bytes: value.plaintext_size_bytes(),
     }
 }
 
@@ -322,6 +339,8 @@ struct WireBodyFingerprint<'a> {
     size_bytes: u64,
     media_type: &'a str,
     encryption_mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encryption: Option<WireClientContentEncryption>,
     expires_at_unix_ms: Option<i64>,
 }
 
@@ -333,6 +352,18 @@ struct WireContentRef<'a> {
     size_bytes: u64,
     media_type: &'a str,
     fetch_mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encryption: Option<WireClientContentEncryption>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireClientContentEncryption {
+    algorithm: &'static str,
+    context_id: Uuid,
+    key_base64_url: String,
+    nonce_base64_url: String,
+    plaintext_size_bytes: u64,
 }
 
 #[derive(Serialize)]

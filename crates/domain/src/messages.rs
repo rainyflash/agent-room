@@ -1,10 +1,11 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt};
 
 use crate::{
     DomainError, DomainResult,
     content::{ContentMediaType, Sha256Digest},
-    ids::{ContentId, MessageId},
+    ids::{ContentEncryptionContextId, ContentId, MessageId},
 };
+use zeroize::Zeroizing;
 
 const MAX_TITLE_CHARACTERS: usize = 120;
 const MAX_SUMMARY_CHARACTERS: usize = 500;
@@ -289,11 +290,113 @@ impl MessagePreview {
     }
 }
 
+pub const CLIENT_CONTENT_KEY_BYTES: usize = 32;
+pub const CLIENT_CONTENT_NONCE_BYTES: usize = 12;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientContentEncryptionAlgorithm {
+    Aes256GcmV1,
+}
+
+impl ClientContentEncryptionAlgorithm {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aes256GcmV1 => "org.agentroom.content.aes-256-gcm.v1",
+        }
+    }
+}
+
+impl TryFrom<&str> for ClientContentEncryptionAlgorithm {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "org.agentroom.content.aes-256-gcm.v1" => Ok(Self::Aes256GcmV1),
+            _ => Err(DomainError::Validation {
+                field: "client_content_encryption_algorithm",
+                reason: "不支持的客户端正文加密算法",
+            }),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientContentEncryption {
+    algorithm: ClientContentEncryptionAlgorithm,
+    context_id: ContentEncryptionContextId,
+    key: Zeroizing<[u8; CLIENT_CONTENT_KEY_BYTES]>,
+    nonce: [u8; CLIENT_CONTENT_NONCE_BYTES],
+    plaintext_size_bytes: u64,
+}
+
+impl ClientContentEncryption {
+    /// 创建只允许随 Matrix 加密事件传递的正文解密材料。
+    ///
+    /// # Errors
+    ///
+    /// 明文字节数为空或超过全局正文上限时返回错误。
+    pub fn new(
+        algorithm: ClientContentEncryptionAlgorithm,
+        context_id: ContentEncryptionContextId,
+        key: [u8; CLIENT_CONTENT_KEY_BYTES],
+        nonce: [u8; CLIENT_CONTENT_NONCE_BYTES],
+        plaintext_size_bytes: u64,
+    ) -> DomainResult<Self> {
+        if !(1..=25 * 1_024 * 1_024).contains(&plaintext_size_bytes) {
+            return Err(DomainError::Validation {
+                field: "client_content_plaintext_size",
+                reason: "必须在 1 字节到 25 MiB 之间",
+            });
+        }
+        Ok(Self {
+            algorithm,
+            context_id,
+            key: Zeroizing::new(key),
+            nonce,
+            plaintext_size_bytes,
+        })
+    }
+
+    pub const fn algorithm(&self) -> ClientContentEncryptionAlgorithm {
+        self.algorithm
+    }
+
+    pub const fn context_id(&self) -> ContentEncryptionContextId {
+        self.context_id
+    }
+
+    pub fn key(&self) -> &[u8; CLIENT_CONTENT_KEY_BYTES] {
+        &self.key
+    }
+
+    pub const fn nonce(&self) -> &[u8; CLIENT_CONTENT_NONCE_BYTES] {
+        &self.nonce
+    }
+
+    pub const fn plaintext_size_bytes(&self) -> u64 {
+        self.plaintext_size_bytes
+    }
+}
+
+impl fmt::Debug for ClientContentEncryption {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClientContentEncryption")
+            .field("algorithm", &self.algorithm)
+            .field("context_id", &self.context_id)
+            .field("key", &"[已隐藏]")
+            .field("nonce", &"[已隐藏]")
+            .field("plaintext_size_bytes", &self.plaintext_size_bytes)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageContentReference {
     content_id: ContentId,
     digest: Sha256Digest,
     size_bytes: u64,
+    client_encryption: Option<ClientContentEncryption>,
 }
 
 impl MessageContentReference {
@@ -313,19 +416,30 @@ impl MessageContentReference {
             content_id,
             digest,
             size_bytes,
+            client_encryption: None,
         })
     }
 
-    pub const fn content_id(self) -> ContentId {
+    #[must_use]
+    pub fn with_client_encryption(mut self, encryption: ClientContentEncryption) -> Self {
+        self.client_encryption = Some(encryption);
+        self
+    }
+
+    pub const fn content_id(&self) -> ContentId {
         self.content_id
     }
 
-    pub const fn digest(self) -> Sha256Digest {
+    pub const fn digest(&self) -> Sha256Digest {
         self.digest
     }
 
-    pub const fn size_bytes(self) -> u64 {
+    pub const fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    pub const fn client_encryption(&self) -> Option<&ClientContentEncryption> {
+        self.client_encryption.as_ref()
     }
 }
 

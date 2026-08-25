@@ -11,14 +11,16 @@ use agent_room_bridge_core::messages::{
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
-    ids::{AgentId, AgentInstanceId, ContentId, MessageId},
+    ids::{AgentId, AgentInstanceId, ContentEncryptionContextId, ContentId, MessageId},
     messages::{
-        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
-        MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
-        MessageTitle,
+        CLIENT_CONTENT_KEY_BYTES, CLIENT_CONTENT_NONCE_BYTES, ClientContentEncryption,
+        ClientContentEncryptionAlgorithm, MessageContentReference, MessageLanguage, MessagePreview,
+        MessageProvenance, MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity,
+        MessageSummary, MessageTitle,
     },
     time::UtcMillis,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
@@ -27,11 +29,16 @@ use uuid::{Uuid, Version};
 use crate::{
     database::{SqliteBridgeStorageOpenFailure, open_pool},
     error::{SqliteFailureKind, classify},
+    message_projection_crypto::{
+        MESSAGE_PROJECTION_WRAPPING_NONCE_BYTES, MessageProjectionKeyCipher,
+        MessageProjectionStorageKey,
+    },
 };
 
 #[derive(Clone)]
 pub struct SqliteMessageTimelineRepository {
     pool: SqlitePool,
+    key_cipher: MessageProjectionKeyCipher,
 }
 
 impl SqliteMessageTimelineRepository {
@@ -40,8 +47,14 @@ impl SqliteMessageTimelineRepository {
     /// # Errors
     ///
     /// 目录不可创建、数据库不可连接或迁移失败时返回错误。
-    pub async fn open(path: impl AsRef<Path>) -> Result<Self, SqliteBridgeStorageOpenFailure> {
-        open_pool(path.as_ref()).await.map(|pool| Self { pool })
+    pub async fn open(
+        path: impl AsRef<Path>,
+        storage_key: &MessageProjectionStorageKey,
+    ) -> Result<Self, SqliteBridgeStorageOpenFailure> {
+        open_pool(path.as_ref()).await.map(|pool| Self {
+            pool,
+            key_cipher: MessageProjectionKeyCipher::new(storage_key),
+        })
     }
 
     async fn apply_batch(
@@ -54,7 +67,7 @@ impl SqliteMessageTimelineRepository {
             .await
             .map_err(|error| map_sqlx_error(&error))?;
         for mutation in batch.mutations() {
-            apply_mutation(&mut transaction, mutation).await?;
+            apply_mutation(&mut transaction, mutation, &self.key_cipher).await?;
         }
         persist_issues(&mut transaction, batch).await?;
         persist_gaps(&mut transaction, batch).await?;
@@ -123,7 +136,7 @@ impl SqliteMessageTimelineRepository {
         let previews = rows
             .iter()
             .take(usize::from(query.limit()))
-            .map(decode_preview_row)
+            .map(|row| decode_preview_row(row, &self.key_cipher))
             .collect::<Result<Vec<_>, _>>()?;
         let next_cursor = if has_more {
             previews.last().map(|preview| preview.event_id.clone())
@@ -168,7 +181,7 @@ impl SqliteMessageTimelineRepository {
         .await
         .map_err(|error| map_query_sqlx_error(&error))?
         .as_ref()
-        .map(decode_preview_row)
+        .map(|row| decode_preview_row(row, &self.key_cipher))
         .transpose()
     }
 }
@@ -202,14 +215,36 @@ struct StoredContent {
     content_id: String,
     digest_sha256: String,
     size_bytes: u64,
+    encryption: Option<StoredClientContentEncryption>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredClientContentEncryption {
+    algorithm: String,
+    context_id: String,
+    wrapped_key_base64_url: String,
+    wrapping_nonce_base64_url: String,
+    nonce_base64_url: String,
+    plaintext_size_bytes: u64,
 }
 
 fn decode_preview_row(
     row: &sqlx::sqlite::SqliteRow,
+    key_cipher: &MessageProjectionKeyCipher,
 ) -> Result<ProjectedMessagePreview, MessageTimelineQueryFailure> {
     let actor = decode_actor(row.try_get("actor_json").map_err(|_| corrupt_query())?)?;
     let preview = decode_preview(row.try_get("preview_json").map_err(|_| corrupt_query())?)?;
-    let content = decode_content(row.try_get("content_json").map_err(|_| corrupt_query())?)?;
+    let room_id = MatrixRoomId::new(
+        row.try_get::<String, _>("room_id")
+            .map_err(|_| corrupt_query())?,
+    )
+    .map_err(|_| corrupt_query())?;
+    let content = decode_content(
+        row.try_get("content_json").map_err(|_| corrupt_query())?,
+        &room_id,
+        key_cipher,
+    )?;
     let created_at = UtcMillis::new(
         row.try_get("created_at_unix_ms")
             .map_err(|_| corrupt_query())?,
@@ -238,11 +273,7 @@ fn decode_preview_row(
         )
         .map_err(|_| corrupt_query())?,
         transaction_id: None,
-        room_id: MatrixRoomId::new(
-            row.try_get::<String, _>("room_id")
-                .map_err(|_| corrupt_query())?,
-        )
-        .map_err(|_| corrupt_query())?,
+        room_id,
         message_id: MessageId::from_uuid(parse_v7(
             &row.try_get::<String, _>("message_id")
                 .map_err(|_| corrupt_query())?,
@@ -304,14 +335,71 @@ fn decode_preview(value: &str) -> Result<MessagePreview, MessageTimelineQueryFai
     ))
 }
 
-fn decode_content(value: &str) -> Result<MessageContentReference, MessageTimelineQueryFailure> {
+fn decode_content(
+    value: &str,
+    room_id: &MatrixRoomId,
+    key_cipher: &MessageProjectionKeyCipher,
+) -> Result<MessageContentReference, MessageTimelineQueryFailure> {
     let stored = serde_json::from_str::<StoredContent>(value).map_err(|_| corrupt_query())?;
-    MessageContentReference::new(
-        ContentId::from_uuid(parse_v7(&stored.content_id)?),
+    let content_id = ContentId::from_uuid(parse_v7(&stored.content_id)?);
+    let reference = MessageContentReference::new(
+        content_id,
         Sha256Digest::from_bytes(decode_digest(&stored.digest_sha256)?),
         stored.size_bytes,
     )
-    .map_err(|_| corrupt_query())
+    .map_err(|_| corrupt_query())?;
+    let Some(stored_encryption) = stored.encryption else {
+        return Ok(reference);
+    };
+    let algorithm =
+        ClientContentEncryptionAlgorithm::try_from(stored_encryption.algorithm.as_str())
+            .map_err(|_| corrupt_query())?;
+    let encryption_context =
+        ContentEncryptionContextId::from_uuid(parse_v7(&stored_encryption.context_id)?);
+    let nonce =
+        decode_base64_array::<CLIENT_CONTENT_NONCE_BYTES>(&stored_encryption.nonce_base64_url)?;
+    let wrapping_nonce = decode_base64_array::<MESSAGE_PROJECTION_WRAPPING_NONCE_BYTES>(
+        &stored_encryption.wrapping_nonce_base64_url,
+    )?;
+    let wrapped_key = URL_SAFE_NO_PAD
+        .decode(&stored_encryption.wrapped_key_base64_url)
+        .map_err(|_| corrupt_query())?;
+    let placeholder = ClientContentEncryption::new(
+        algorithm,
+        encryption_context,
+        [0_u8; CLIENT_CONTENT_KEY_BYTES],
+        nonce,
+        stored_encryption.plaintext_size_bytes,
+    )
+    .map_err(|_| corrupt_query())?;
+    let key = key_cipher
+        .unwrap(
+            room_id,
+            content_id,
+            &placeholder,
+            &wrapping_nonce,
+            &wrapped_key,
+        )
+        .map_err(|()| corrupt_query())?;
+    let encryption = ClientContentEncryption::new(
+        algorithm,
+        encryption_context,
+        key,
+        nonce,
+        stored_encryption.plaintext_size_bytes,
+    )
+    .map_err(|_| corrupt_query())?;
+    Ok(reference.with_client_encryption(encryption))
+}
+
+fn decode_base64_array<const LENGTH: usize>(
+    value: &str,
+) -> Result<[u8; LENGTH], MessageTimelineQueryFailure> {
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| corrupt_query())?
+        .try_into()
+        .map_err(|_| corrupt_query())
 }
 
 fn parse_v7(value: &str) -> Result<Uuid, MessageTimelineQueryFailure> {
@@ -364,8 +452,9 @@ const fn corrupt_query() -> MessageTimelineQueryFailure {
 async fn apply_mutation(
     transaction: &mut Transaction<'_, Sqlite>,
     mutation: &MessageProjectionMutation,
+    key_cipher: &MessageProjectionKeyCipher,
 ) -> Result<(), MessageProjectionStoreFailure> {
-    let encoded = EncodedMutation::from_mutation(mutation)?;
+    let encoded = EncodedMutation::from_mutation(mutation, key_cipher)?;
     let sequence = next_sequence(transaction, &encoded.room_id).await?;
     if insert_event(transaction, &encoded, sequence).await? == 0 {
         return Ok(());
@@ -724,6 +813,7 @@ struct EncodedMutation {
 impl EncodedMutation {
     fn from_mutation(
         mutation: &MessageProjectionMutation,
+        key_cipher: &MessageProjectionKeyCipher,
     ) -> Result<Self, MessageProjectionStoreFailure> {
         match mutation {
             MessageProjectionMutation::Preview(preview) => Ok(Self {
@@ -742,7 +832,11 @@ impl EncodedMutation {
                 actor_agent_id: preview.actor.identity().agent_id().to_string(),
                 actor_json: encode_actor(&preview.actor),
                 preview_json: Some(encode_preview(&preview.preview)),
-                content_json: Some(encode_content(preview.content)),
+                content_json: Some(encode_content(
+                    &preview.content,
+                    &preview.room_id,
+                    key_cipher,
+                )?),
                 content_id: Some(preview.content.content_id().to_string()),
                 relation_target_message_id: preview.relation.map(relation_target),
             }),
@@ -762,9 +856,14 @@ impl EncodedMutation {
                 actor_agent_id: revision.actor.identity().agent_id().to_string(),
                 actor_json: encode_actor(&revision.actor),
                 preview_json: revision.preview.as_ref().map(encode_preview),
-                content_json: revision.content.map(encode_content),
+                content_json: revision
+                    .content
+                    .as_ref()
+                    .map(|content| encode_content(content, &revision.room_id, key_cipher))
+                    .transpose()?,
                 content_id: revision
                     .content
+                    .as_ref()
                     .map(|content| content.content_id().to_string()),
                 relation_target_message_id: None,
             }),
@@ -802,14 +901,35 @@ fn encode_preview(preview: &MessagePreview) -> String {
     .to_string()
 }
 
-fn encode_content(content: MessageContentReference) -> String {
-    json!({
+fn encode_content(
+    content: &MessageContentReference,
+    room_id: &MatrixRoomId,
+    key_cipher: &MessageProjectionKeyCipher,
+) -> Result<String, MessageProjectionStoreFailure> {
+    let encryption = content
+        .client_encryption()
+        .map(|encryption| {
+            let wrapped = key_cipher
+                .wrap(room_id, content.content_id(), encryption)
+                .map_err(|()| unavailable_projection_failure())?;
+            Ok(json!({
+                "algorithm": encryption.algorithm().as_str(),
+                "contextId": encryption.context_id().to_string(),
+                "wrappedKeyBase64Url": URL_SAFE_NO_PAD.encode(wrapped.ciphertext),
+                "wrappingNonceBase64Url": URL_SAFE_NO_PAD.encode(wrapped.nonce),
+                "nonceBase64Url": URL_SAFE_NO_PAD.encode(encryption.nonce()),
+                "plaintextSizeBytes": encryption.plaintext_size_bytes()
+            }))
+        })
+        .transpose()?;
+    Ok(json!({
         "contentId": content.content_id().to_string(),
         "digestSha256": encode_hex(content.digest().as_bytes()),
         "sizeBytes": content.size_bytes(),
-        "fetchMode": "on_demand"
+        "fetchMode": "on_demand",
+        "encryption": encryption
     })
-    .to_string()
+    .to_string())
 }
 
 fn relation_target(relation: MessageRelation) -> String {
@@ -850,4 +970,8 @@ fn map_sqlx_error(error: &sqlx::Error) -> MessageProjectionStoreFailure {
 
 const fn corrupt_projection_failure() -> MessageProjectionStoreFailure {
     MessageProjectionStoreFailure::new(MessageProjectionStoreFailureKind::Corrupt)
+}
+
+const fn unavailable_projection_failure() -> MessageProjectionStoreFailure {
+    MessageProjectionStoreFailure::new(MessageProjectionStoreFailureKind::Unavailable)
 }

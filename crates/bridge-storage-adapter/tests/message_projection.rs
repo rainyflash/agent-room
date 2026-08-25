@@ -12,16 +12,23 @@ use agent_room_bridge_core::{
         ProjectedMessageRevision,
     },
 };
-use agent_room_bridge_storage_adapter::SqliteMessageTimelineRepository;
+use agent_room_bridge_storage_adapter::{
+    MessageProjectionStorageKey, SqliteMessageTimelineRepository,
+};
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
-    ids::{AgentId, AgentInstanceId, ContentId, MessageId, MessageRevisionId},
+    ids::{
+        AgentId, AgentInstanceId, ContentEncryptionContextId, ContentId, MessageId,
+        MessageRevisionId,
+    },
     messages::{
-        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
-        MessageRevisionKind, MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
+        ClientContentEncryption, ClientContentEncryptionAlgorithm, MessageContentReference,
+        MessageLanguage, MessagePreview, MessageProvenance, MessageRevisionKind, MessageRiskFlags,
+        MessageSensitivity, MessageSummary, MessageTitle,
     },
     time::UtcMillis,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sqlx::{
     Row as _, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -374,16 +381,7 @@ async fn 正文来源索引随替换迁移且撤回后立即消失() {
         ))
         .await
         .expect("初始正文可投影");
-    assert!(
-        store
-            .find_content_source(&MessageContentSourceQuery::new(
-                room_id(),
-                original_content_id,
-            ))
-            .await
-            .expect("初始来源可查询")
-            .is_some()
-    );
+    assert!(has_content_source(&store, original_content_id).await);
 
     let replacement = replacement_mutation(
         "$content-replacement:matrix.test",
@@ -395,7 +393,11 @@ async fn 正文来源索引随替换迁移且撤回后立即消失() {
     let MessageProjectionMutation::Revision(revision) = &replacement else {
         panic!("测试夹具必须是修订");
     };
-    let replacement_content_id = revision.content.expect("替换正文存在").content_id();
+    let replacement_content_id = revision
+        .content
+        .as_ref()
+        .expect("替换正文存在")
+        .content_id();
     store
         .apply(&MessageProjectionBatch::new(
             sync_token("content-replacement"),
@@ -405,26 +407,8 @@ async fn 正文来源索引随替换迁移且撤回后立即消失() {
         ))
         .await
         .expect("替换正文可投影");
-    assert!(
-        store
-            .find_content_source(&MessageContentSourceQuery::new(
-                room_id(),
-                original_content_id,
-            ))
-            .await
-            .expect("旧来源查询成功")
-            .is_none()
-    );
-    assert!(
-        store
-            .find_content_source(&MessageContentSourceQuery::new(
-                room_id(),
-                replacement_content_id,
-            ))
-            .await
-            .expect("替换来源可查询")
-            .is_some()
-    );
+    assert!(!has_content_source(&store, original_content_id).await);
+    assert!(has_content_source(&store, replacement_content_id).await);
 
     store
         .apply(&MessageProjectionBatch::new(
@@ -439,30 +423,107 @@ async fn 正文来源索引随替换迁移且撤回后立即消失() {
         ))
         .await
         .expect("撤回可投影");
-    assert!(
-        store
-            .find_content_source(&MessageContentSourceQuery::new(
-                room_id(),
-                replacement_content_id,
-            ))
-            .await
-            .expect("撤回后查询成功")
-            .is_none()
+    assert!(!has_content_source(&store, replacement_content_id).await);
+}
+
+#[tokio::test]
+async fn 客户端正文密钥落盘前必须由设备存储密钥封装() {
+    let (_temporary, store, inspector) = open_store().await;
+    let message_id = MessageId::from_uuid(Uuid::now_v7());
+    let event = "$encrypted-content:matrix.test";
+    let key = [0xAB; 32];
+    let encryption = ClientContentEncryption::new(
+        ClientContentEncryptionAlgorithm::Aes256GcmV1,
+        ContentEncryptionContextId::from_uuid(
+            Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e48").expect("加密上下文标识有效"),
+        ),
+        key,
+        [0xCD; 12],
+        128,
+    )
+    .expect("客户端加密元数据有效");
+    let mut mutation = preview_mutation(
+        event,
+        message_id,
+        owner_actor(),
+        1_700_000_000_000,
+        "加密正文",
+        9,
+        Some(10),
     );
+    let MessageProjectionMutation::Preview(preview) = &mut mutation else {
+        panic!("测试夹具必须是预览");
+    };
+    preview.content = MessageContentReference::new(
+        ContentId::from_uuid(Uuid::now_v7()),
+        Sha256Digest::from_bytes([9; 32]),
+        144,
+    )
+    .expect("密文引用有效")
+    .with_client_encryption(encryption);
+    let content_id = preview.content.content_id();
+
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("encrypted-content"),
+            vec![mutation],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("加密正文可投影");
+
+    let raw_content: String = sqlx::query_scalar(
+        "SELECT content_json FROM message_current_projection WHERE message_id = ?",
+    )
+    .bind(message_id.to_string())
+    .fetch_one(&inspector)
+    .await
+    .expect("原始正文投影可读取");
+    assert!(!raw_content.contains(&URL_SAFE_NO_PAD.encode(key)));
+    assert!(raw_content.contains("wrappedKeyBase64Url"));
+    assert!(!raw_content.contains("keyBase64Url"));
+
+    let projected = store
+        .find_content_source(&MessageContentSourceQuery::new(room_id(), content_id))
+        .await
+        .expect("正文来源可查询")
+        .expect("正文来源存在");
+    let restored = projected
+        .content
+        .client_encryption()
+        .expect("客户端加密元数据已恢复");
+    assert_eq!(restored.key(), &key);
+    assert_eq!(restored.nonce(), &[0xCD; 12]);
+    assert_eq!(restored.plaintext_size_bytes(), 128);
 }
 
 async fn open_store() -> (TempDir, SqliteMessageTimelineRepository, SqlitePool) {
     let temporary = TempDir::new().expect("临时目录可创建");
     let path = temporary.path().join("messages.sqlite3");
-    let store = SqliteMessageTimelineRepository::open(&path)
-        .await
-        .expect("投影数据库可打开");
+    let store = SqliteMessageTimelineRepository::open(
+        &path,
+        &MessageProjectionStorageKey::from_bytes([29; 32]),
+    )
+    .await
+    .expect("投影数据库可打开");
     let inspector = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(SqliteConnectOptions::new().filename(path).read_only(true))
         .await
         .expect("只读检查连接可打开");
     (temporary, store, inspector)
+}
+
+async fn has_content_source(
+    store: &SqliteMessageTimelineRepository,
+    content_id: ContentId,
+) -> bool {
+    store
+        .find_content_source(&MessageContentSourceQuery::new(room_id(), content_id))
+        .await
+        .expect("正文来源可查询")
+        .is_some()
 }
 
 #[allow(clippy::too_many_arguments)]

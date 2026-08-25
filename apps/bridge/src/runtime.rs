@@ -9,9 +9,9 @@ use std::{
 };
 
 use agent_room_application::ports::{
-    Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixRoomId, MatrixSyncRequest,
-    MatrixSyncToken, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
-    OidcDevicePromptFailure, ProfileImportConsent,
+    Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixRoomEncryption, MatrixRoomId,
+    MatrixSyncRequest, MatrixSyncToken, OidcDeviceAuthorizationPrompt,
+    OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, ProfileImportConsent,
 };
 use agent_room_bridge_core::{
     agent_runtime::{
@@ -40,7 +40,8 @@ use agent_room_bridge_core::{
         AgentLobbySessionService, ControlPlaneLobbyEntryOutcome, JoinedAgentLobby,
     },
     messages::{
-        MatrixMessageEventPublisher, MessageAuthenticationFailureKind, MessageContentGateway,
+        MatrixMessageEventPublisher, MessageAuthenticationFailureKind,
+        MessageBodyProtectionService, MessageContentCipher, MessageContentGateway,
         MessageContentReadGateway, MessageProjectionStoreFailureKind,
         MessagePublicationDependencies, MessagePublicationService, MessageStoreFailureKind,
         MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind, MessageSyncService,
@@ -81,6 +82,7 @@ use agent_room_identity_adapter::{
 use agent_room_matrix_adapter::{
     MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
 };
+use agent_room_message_crypto_adapter::AesGcmMessageContentCipher;
 use tokio::{sync::watch, task::JoinHandle, time::sleep};
 
 use crate::{
@@ -145,6 +147,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let agent_session = initialize_agent_session(
         &config,
         &paths,
+        &runtime_secrets,
         device_session.service.clone(),
         matrix,
         handoff_store,
@@ -206,6 +209,7 @@ struct AgentSessionRuntime {
     presence_projections: Arc<dyn PresenceProjectionRepository>,
     previews: Arc<SqliteMessageTimelineRepository>,
     content: Arc<OpenMessageContentService>,
+    content_protection: Arc<MessageBodyProtectionService>,
     outbound_content: Arc<dyn MessageContentGateway>,
     submissions: Arc<SqliteMessageSubmissionRepository>,
     handoffs: AgentHandoffServices,
@@ -216,10 +220,17 @@ struct AgentSessionRuntime {
     reconnect_policy: ReconnectPolicy,
 }
 
+#[derive(Clone, Copy)]
+struct AgentSessionTarget {
+    agent_id: AgentId,
+    lobby_catalog_id: RoomCatalogId,
+}
+
 struct AgentMessageServices {
     sync: Arc<MessageSyncService>,
     projections: Arc<SqliteMessageTimelineRepository>,
     content: Arc<OpenMessageContentService>,
+    content_protection: Arc<MessageBodyProtectionService>,
     outbound_content: Arc<dyn MessageContentGateway>,
     submissions: Arc<SqliteMessageSubmissionRepository>,
     authenticator: Arc<dyn AgentEventAuthenticator>,
@@ -243,6 +254,7 @@ struct AgentOnlineSession {
     matrix: Arc<dyn MatrixGateway>,
     status: Arc<AgentStatusPublicationHandle>,
     publication: Arc<MessagePublicationService>,
+    content_protection: Arc<MessageBodyProtectionService>,
     handoffs: Arc<HandoffReceptionService>,
     handoff_delivery: Arc<HandoffDeliveryService>,
     handoff_worker: HandoffEventWorker,
@@ -286,6 +298,8 @@ impl BridgeAgentRuntimeState {
             )
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
+            .with_message_content_protection(online.content_protection.clone())
+            .with_room_encryption(MatrixRoomEncryption::Unencrypted)
             .with_handoff_delivery(online.handoff_delivery.clone())
             .with_handoffs(online.handoffs.clone())
             .with_presence(online.presence_projections.clone()),
@@ -417,6 +431,7 @@ async fn initialize_device_session(
 async fn initialize_agent_session(
     config: &BridgeConfig,
     paths: &BridgeRuntimePaths,
+    runtime_secrets: &BridgeRuntimeSecrets,
     device_session: Arc<BridgeSessionService>,
     matrix: Arc<MatrixSdkClientFactory>,
     handoff_store: Arc<SqliteHandoffStore>,
@@ -429,11 +444,14 @@ async fn initialize_agent_session(
     let mut runtime = compose_agent_session_runtime(
         config,
         paths,
+        runtime_secrets,
         device_session,
         matrix,
         handoff_store,
-        agent_id,
-        lobby_catalog_id,
+        AgentSessionTarget {
+            agent_id,
+            lobby_catalog_id,
+        },
     )
     .await?;
     runtime.initial_session = match establish_agent_online(&runtime).await {
@@ -457,11 +475,11 @@ async fn initialize_agent_session(
 async fn compose_agent_session_runtime(
     config: &BridgeConfig,
     paths: &BridgeRuntimePaths,
+    runtime_secrets: &BridgeRuntimeSecrets,
     device_session: Arc<BridgeSessionService>,
     matrix: Arc<MatrixSdkClientFactory>,
     handoff_store: Arc<SqliteHandoffStore>,
-    agent_id: AgentId,
-    lobby_catalog_id: RoomCatalogId,
+    target: AgentSessionTarget,
 ) -> Result<AgentSessionRuntime, BridgeRuntimeError> {
     let http = ControlPlaneHttpConfig {
         base_url: config.control_plane_url.clone(),
@@ -484,15 +502,24 @@ async fn compose_agent_session_runtime(
             identifiers: Arc::new(SystemAgentRuntimeIdentifiers),
         },
     ));
-    let agent_config =
-        AgentRuntimeSessionConfig::new(agent_id, "codex-desktop", CODEX_ADAPTER_CAPABILITY_VERSION)
-            .map_err(BridgeRuntimeError::agent_runtime)?;
+    let agent_config = AgentRuntimeSessionConfig::new(
+        target.agent_id,
+        "codex-desktop",
+        CODEX_ADAPTER_CAPABILITY_VERSION,
+    )
+    .map_err(BridgeRuntimeError::agent_runtime)?;
     let lobby = Arc::new(AgentLobbySessionService::new(Arc::new(
         ReqwestControlPlaneLobbyEntryGateway::new(&http, device_session.clone())
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     )));
-    let message_services =
-        compose_agent_message_services(&http, paths, device_session.clone(), agent_id).await?;
+    let message_services = compose_agent_message_services(
+        &http,
+        paths,
+        runtime_secrets,
+        device_session.clone(),
+        target.agent_id,
+    )
+    .await?;
     let handoff_gateway = Arc::new(
         ReqwestControlPlaneHandoffGateway::new(&http, device_session)
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
@@ -506,7 +533,7 @@ async fn compose_agent_session_runtime(
     };
     let state = Arc::new(BridgeAgentRuntimeState::new());
     let lobby_config = AgentLobbySessionConfig::new(
-        lobby_catalog_id,
+        target.lobby_catalog_id,
         config.lobby_language.clone(),
         config.lobby_region.clone(),
     );
@@ -534,6 +561,7 @@ async fn compose_agent_session_runtime(
         presence_projections: message_services.presence_projections,
         previews: message_services.projections,
         content: message_services.content,
+        content_protection: message_services.content_protection,
         outbound_content: message_services.outbound_content,
         submissions: message_services.submissions,
         handoffs,
@@ -552,6 +580,7 @@ async fn compose_agent_session_runtime(
 async fn compose_agent_message_services(
     http: &ControlPlaneHttpConfig,
     paths: &BridgeRuntimePaths,
+    runtime_secrets: &BridgeRuntimeSecrets,
     device_session: Arc<BridgeSessionService>,
     actor_agent_id: AgentId,
 ) -> Result<AgentMessageServices, BridgeRuntimeError> {
@@ -560,9 +589,12 @@ async fn compose_agent_message_services(
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let projections = Arc::new(
-        SqliteMessageTimelineRepository::open(paths.message_database())
-            .await
-            .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
+        SqliteMessageTimelineRepository::open(
+            paths.message_database(),
+            runtime_secrets.message_projection_storage_key(),
+        )
+        .await
+        .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
     );
     let submissions = Arc::new(
         SqliteMessageSubmissionRepository::open(paths.message_database())
@@ -577,12 +609,17 @@ async fn compose_agent_message_services(
         ReqwestControlPlaneContentGateway::new(http, device_session, actor_agent_id)
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
+    let content_cryptography: Arc<dyn MessageContentCipher> = Arc::new(
+        AesGcmMessageContentCipher::new(runtime_secrets.message_content_root_key().clone()),
+    );
     let content = Arc::new(OpenMessageContentService::new(
         OpenMessageContentDependencies {
             projections: projections.clone(),
             content: content_reader.clone(),
+            cryptography: Some(content_cryptography.clone()),
         },
     ));
+    let content_protection = Arc::new(MessageBodyProtectionService::new(content_cryptography));
     let authenticator: Arc<dyn AgentEventAuthenticator> = Arc::new(
         AgentInstanceMessageAuthenticator::new(AgentInstanceMessageAuthenticatorDependencies {
             verification,
@@ -617,6 +654,7 @@ async fn compose_agent_message_services(
         sync,
         projections,
         content,
+        content_protection,
         outbound_content,
         submissions,
         authenticator,
@@ -707,6 +745,7 @@ async fn establish_agent_online(
         matrix,
         status,
         publication,
+        content_protection: runtime.content_protection.clone(),
         handoffs,
         handoff_delivery,
         handoff_worker,

@@ -51,6 +51,7 @@ pub(super) fn request_event(
             fetch_mode: "on_demand".to_owned(),
             media_type: fields.content.media_type().as_str().to_owned(),
             size_bytes: fields.content.byte_length().value(),
+            encryption: None,
             extensions: BTreeMap::new(),
         },
         correlation_id: id.clone(),

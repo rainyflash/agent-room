@@ -86,9 +86,21 @@ pub struct CapabilityManifest {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ClientContentEncryption {
+    pub algorithm: String,
+    pub context_id: String,
+    pub key_base64_url: String,
+    pub nonce_base64_url: String,
+    pub plaintext_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContentRef {
     pub content_id: String,
     pub digest_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<ClientContentEncryption>,
     pub fetch_mode: String,
     pub media_type: String,
     pub size_bytes: u64,

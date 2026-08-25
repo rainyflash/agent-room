@@ -108,7 +108,12 @@ fn map_timeline_event(
     event: &TimelineEvent,
     operation: MatrixOperation,
 ) -> MatrixResult<MatrixTimelineEvent> {
-    map_raw_event(event.raw(), operation)
+    let mapped = map_raw_event(event.raw(), operation)?;
+    Ok(if event.encryption_info().is_some() {
+        mapped.with_end_to_end_encryption()
+    } else {
+        mapped
+    })
 }
 
 fn map_state(state: &State) -> MatrixResult<(MatrixRoomStatePosition, Vec<MatrixTimelineEvent>)> {

@@ -648,6 +648,7 @@ impl 测试夹具 {
                 fetch_mode: "on_demand".to_owned(),
                 media_type: "text/markdown".to_owned(),
                 size_bytes: u64::try_from(self.body.len()).expect("测试正文长度可转换"),
+                encryption: None,
                 extensions: BTreeMap::new(),
             },
             correlation_id: self.handoff_id.to_string(),
