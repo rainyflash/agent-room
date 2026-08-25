@@ -975,6 +975,7 @@ mod tests {
             MatrixRoomPowerProfile::ManagedPrivate
         );
     }
+
     use crate::ports::{
         MatrixEventId, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
         MatrixTransactionId,

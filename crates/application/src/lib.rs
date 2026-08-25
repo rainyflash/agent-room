@@ -10,6 +10,7 @@ pub mod health;
 pub mod outbox;
 pub mod persistence;
 pub mod ports;
+pub mod private_rooms;
 pub mod rooms;
 
 mod principal_projection;

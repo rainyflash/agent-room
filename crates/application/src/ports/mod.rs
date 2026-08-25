@@ -87,13 +87,14 @@ pub use projections::{
 };
 pub use rooms::{
     AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory,
-    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateRoomMatrixGateway,
-    PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-    PrivateRoomStore, PublicLobbyDirectoryEntry, RoomAllocationEvidence, RoomAllocationMode,
-    RoomAllocationStore, RoomDirectory, RoomDirectoryQuery, RoomMembershipGateway,
-    RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
-    RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
-    RoomProvisioningTarget, RoomReservationClaim, RoomReservationOutcome,
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
+    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
+    PrivateRoomSnapshot, PrivateRoomStore, PublicLobbyDirectoryEntry, RoomAllocationEvidence,
+    RoomAllocationMode, RoomAllocationStore, RoomDirectory, RoomDirectoryQuery,
+    RoomMembershipGateway, RoomProvisioningClaim, RoomProvisioningClaimOutcome,
+    RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
+    RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget, RoomReservationClaim,
+    RoomReservationOutcome,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

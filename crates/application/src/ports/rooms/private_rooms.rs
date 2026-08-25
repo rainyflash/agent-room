@@ -3,8 +3,8 @@ use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
     rooms::{
-        MatrixRoomReference, RoomCatalog, RoomCatalogKind, RoomCatalogStatus, RoomInstance,
-        RoomInstanceState,
+        MatrixRoomReference, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
+        RoomInstance, RoomInstanceFields, RoomInstanceState,
     },
     time::UtcMillis,
     version::AggregateVersion,
@@ -25,6 +25,26 @@ pub enum PrivateMatrixMembership {
     Left,
     Banned,
     Knocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateMatrixSpeakingAssignment {
+    user_id: MatrixUserId,
+    allowed: bool,
+}
+
+impl PrivateMatrixSpeakingAssignment {
+    pub const fn new(user_id: MatrixUserId, allowed: bool) -> Self {
+        Self { user_id, allowed }
+    }
+
+    pub const fn user_id(&self) -> &MatrixUserId {
+        &self.user_id
+    }
+
+    pub const fn allowed(&self) -> bool {
+        self.allowed
+    }
 }
 
 impl PrivateMatrixMembership {
@@ -74,6 +94,12 @@ pub trait PrivateRoomMatrixGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
         allowed: bool,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn set_speaking_batch<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        assignments: &'a [PrivateMatrixSpeakingAssignment],
     ) -> PortFuture<'a, MatrixResult<()>>;
 
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>>;
@@ -190,6 +216,60 @@ impl PrivateRoomSnapshot {
 
     pub const fn room(&self) -> &PrivateRoom {
         &self.room
+    }
+
+    /// 用新的权限聚合重建生命周期一致的组合快照。
+    ///
+    /// 房主与归档状态只有一个事实源：`PrivateRoom`。目录和实例只是同一事务中的持久化投影。
+    ///
+    /// # Errors
+    ///
+    /// 新聚合属于其他目录，或重建后的领域对象无效时返回错误。
+    pub fn replacing_room(self, room: PrivateRoom) -> DomainResult<Self> {
+        if room.catalog_id() != self.catalog.id() {
+            return Err(invariant(
+                "private_room_snapshot",
+                "替换聚合必须属于原私人房间",
+            ));
+        }
+        let archived = room.status() == PrivateRoomLifecycleStatus::Archived;
+        let catalog = RoomCatalog::new(
+            self.catalog.id(),
+            RoomCatalogFields {
+                kind: self.catalog.kind(),
+                slug: self.catalog.slug().cloned(),
+                name: self.catalog.name().to_owned(),
+                description: self.catalog.description().to_owned(),
+                language: self.catalog.language().cloned(),
+                matrix_space_id: self.catalog.matrix_space_id().cloned(),
+                owner_principal_id: Some(room.owner_principal_id()),
+                visibility: self.catalog.visibility(),
+                retention_days: self.catalog.retention_days(),
+                status: if archived {
+                    RoomCatalogStatus::Archived
+                } else {
+                    RoomCatalogStatus::Active
+                },
+            },
+        )?;
+        let instance = RoomInstance::restore(
+            self.instance.id(),
+            RoomInstanceFields {
+                catalog_id: self.instance.catalog_id(),
+                matrix_room_id: self.instance.matrix_room_id().clone(),
+                region: self.instance.region().cloned(),
+                capacity: self.instance.capacity(),
+                projected_member_count: self.instance.projected_member_count(),
+                allocated_slots: self.instance.allocated_slots(),
+                activity_score_millis: self.instance.activity_score_millis(),
+                state: if archived {
+                    RoomInstanceState::Archived
+                } else {
+                    RoomInstanceState::Active
+                },
+            },
+        )?;
+        Self::new(catalog, instance, room)
     }
 }
 

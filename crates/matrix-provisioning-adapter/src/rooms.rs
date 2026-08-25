@@ -4,8 +4,9 @@ use agent_room_application::ports::{
     AgentRoomMembershipFactory, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind,
     MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
-    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateRoomMatrixGateway,
-    PrivateRoomMatrixProvisioner, RoomMembershipGateway, RoomProvisioningGateway,
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
+    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, RoomMembershipGateway,
+    RoomProvisioningGateway,
 };
 use agent_room_domain::rooms::MatrixRoomReference;
 use reqwest::Url;
@@ -243,14 +244,23 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        Box::pin(send_membership_action(
-            self,
-            room_id,
-            user_id,
-            "invite",
-            None,
-            MatrixOperation::Invite,
-        ))
+        Box::pin(async move {
+            if matches!(
+                PrivateRoomMatrixGateway::membership(self, room_id, user_id).await?,
+                Some(PrivateMatrixMembership::Invited | PrivateMatrixMembership::Joined)
+            ) {
+                return Ok(());
+            }
+            send_membership_action(
+                self,
+                room_id,
+                user_id,
+                "invite",
+                None,
+                MatrixOperation::Invite,
+            )
+            .await
+        })
     }
 
     fn kick<'a>(
@@ -258,14 +268,23 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        Box::pin(send_membership_action(
-            self,
-            room_id,
-            user_id,
-            "kick",
-            Some("Agent Room 私人房间权限已撤销"),
-            MatrixOperation::Kick,
-        ))
+        Box::pin(async move {
+            if matches!(
+                PrivateRoomMatrixGateway::membership(self, room_id, user_id).await?,
+                None | Some(PrivateMatrixMembership::Left)
+            ) {
+                return Ok(());
+            }
+            send_membership_action(
+                self,
+                room_id,
+                user_id,
+                "kick",
+                Some("Agent Room 私人房间权限已撤销"),
+                MatrixOperation::Kick,
+            )
+            .await
+        })
     }
 
     fn ban<'a>(
@@ -273,14 +292,23 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        Box::pin(send_membership_action(
-            self,
-            room_id,
-            user_id,
-            "ban",
-            Some("Agent Room 私人房间成员已被封禁"),
-            MatrixOperation::Ban,
-        ))
+        Box::pin(async move {
+            if matches!(
+                PrivateRoomMatrixGateway::membership(self, room_id, user_id).await?,
+                Some(PrivateMatrixMembership::Banned)
+            ) {
+                return Ok(());
+            }
+            send_membership_action(
+                self,
+                room_id,
+                user_id,
+                "ban",
+                Some("Agent Room 私人房间成员已被封禁"),
+                MatrixOperation::Ban,
+            )
+            .await
+        })
     }
 
     fn set_speaking<'a>(
@@ -292,7 +320,30 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         Box::pin(async move {
             let operation = MatrixOperation::UpdatePowerLevels;
             let mut content = read_power_levels(self, room_id, operation).await?;
-            apply_active_private_policy(&mut content, Some((user_id, allowed)), operation)?;
+            apply_active_private_policy(
+                &mut content,
+                &[PrivateMatrixSpeakingAssignment::new(
+                    user_id.clone(),
+                    allowed,
+                )],
+                operation,
+            )?;
+            write_power_levels(self, room_id, &content, operation).await
+        })
+    }
+
+    fn set_speaking_batch<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            if assignments.is_empty() {
+                return Ok(());
+            }
+            let operation = MatrixOperation::UpdatePowerLevels;
+            let mut content = read_power_levels(self, room_id, operation).await?;
+            apply_active_private_policy(&mut content, assignments, operation)?;
             write_power_levels(self, room_id, &content, operation).await
         })
     }
@@ -517,26 +568,28 @@ async fn write_power_levels(
 
 fn apply_active_private_policy(
     content: &mut Map<String, Value>,
-    speaking_change: Option<(&MatrixUserId, bool)>,
+    assignments: &[PrivateMatrixSpeakingAssignment],
     operation: MatrixOperation,
 ) -> MatrixResult<()> {
     set_private_policy_thresholds(content, PRIVATE_SPEAKER_POWER_LEVEL);
-    let Some((user_id, allowed)) = speaking_change else {
+    if assignments.is_empty() {
         return Ok(());
-    };
+    }
     let users = content
         .entry("users".to_owned())
         .or_insert_with(|| Value::Object(Map::new()))
         .as_object_mut()
         .ok_or_else(|| invalid_response(operation))?;
-    users.insert(
-        user_id.as_str().to_owned(),
-        Value::from(if allowed {
-            PRIVATE_SPEAKER_POWER_LEVEL
-        } else {
-            PRIVATE_VIEWER_POWER_LEVEL
-        }),
-    );
+    for assignment in assignments {
+        users.insert(
+            assignment.user_id().as_str().to_owned(),
+            Value::from(if assignment.allowed() {
+                PRIVATE_SPEAKER_POWER_LEVEL
+            } else {
+                PRIVATE_VIEWER_POWER_LEVEL
+            }),
+        );
+    }
     Ok(())
 }
 
@@ -636,8 +689,8 @@ mod tests {
     use agent_room_application::ports::{
         MatrixCreateRoom, MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
-        PrivateMatrixMembership, PrivateRoomMatrixGateway, RoomMembershipGateway,
-        RoomProvisioningGateway, SecretValue,
+        PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
+        RoomMembershipGateway, RoomProvisioningGateway, SecretValue,
     };
     use agent_room_domain::rooms::MatrixRoomReference;
     use axum::{
@@ -746,6 +799,7 @@ mod tests {
         assert_eq!(levels["kick"], 100);
         assert_eq!(levels["ban"], 100);
         assert_eq!(levels["redact"], 100);
+        assert!(levels["users"].is_null(), "不得覆盖 Matrix 创建者映射");
     }
 
     #[test]
@@ -762,7 +816,7 @@ mod tests {
 
         apply_active_private_policy(
             &mut content,
-            Some((&user, true)),
+            &[PrivateMatrixSpeakingAssignment::new(user.clone(), true)],
             MatrixOperation::UpdatePowerLevels,
         )
         .expect("发言策略有效");
@@ -806,7 +860,10 @@ mod tests {
         );
         provisioner.invite(&room, &member).await.expect("可邀请");
         provisioner
-            .set_speaking(&room, &member, true)
+            .set_speaking_batch(
+                &room,
+                &[PrivateMatrixSpeakingAssignment::new(member.clone(), true)],
+            )
             .await
             .expect("可授予发言硬边界");
         provisioner.kick(&room, &member).await.expect("可移除");
@@ -817,10 +874,12 @@ mod tests {
             server.actions().await,
             vec![
                 "membership",
-                "invite",
+                "membership",
                 "read-power",
                 "write-power",
+                "membership",
                 "kick",
+                "membership",
                 "ban",
                 "read-power",
                 "write-power"
