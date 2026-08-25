@@ -455,6 +455,7 @@ async fn 治理和撤销要求近期认证及明确影响确认() {
 fn report_request() -> SubmitModerationReport {
     SubmitModerationReport {
         actor: actor(false),
+        case_id: ModerationCaseId::from_uuid(Uuid::now_v7()),
         target: ModerationTarget::new(ModerationTargetKind::Event, "$event:matrix.test")
             .expect("目标有效"),
         reason: ModerationReason::Spam,
@@ -472,6 +473,7 @@ fn report_request() -> SubmitModerationReport {
 fn action_request() -> ApplyModerationAction {
     ApplyModerationAction {
         actor: actor(true),
+        action_id: ModerationActionId::from_uuid(Uuid::now_v7()),
         case_id: None,
         room_catalog_id: room_id(),
         kind: ModerationActionKind::Mute,

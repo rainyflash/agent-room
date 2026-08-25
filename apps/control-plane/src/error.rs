@@ -19,6 +19,7 @@ use agent_room_application::{
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
     direct_sessions::{DirectSessionFailure, DirectSessionFailureKind},
     handoffs::{HandoffAccessFailure, HandoffAccessFailureKind},
+    moderation::{ModerationFailure, ModerationFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
@@ -121,6 +122,63 @@ impl ApiError {
             "自动发言授权请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn moderation(failure: ModerationFailure, correlation_id: CorrelationId) -> Self {
+        let mapping = match failure.kind() {
+            ModerationFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "moderation.invalid_request",
+                ErrorCategory::Validation,
+                "治理请求无效。",
+            ),
+            ModerationFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "moderation.forbidden",
+                ErrorCategory::Authorization,
+                "当前主体无权执行该治理操作。",
+            ),
+            ModerationFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "moderation.not_found",
+                ErrorCategory::Validation,
+                "治理资源不存在。",
+            ),
+            ModerationFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "moderation.conflict",
+                ErrorCategory::Conflict,
+                "治理状态已经变化，请刷新后重试。",
+            ),
+            ModerationFailureKind::RateLimited => {
+                let error = Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "moderation.rate_limited",
+                    ErrorCategory::Transient,
+                    "举报过于频繁，请稍后重试。",
+                    correlation_id,
+                )
+                .retry_after_seconds(seconds_until(
+                    failure.retry_at().expect("限速失败必须携带重试时间"),
+                ));
+                log_moderation_failure(failure, correlation_id);
+                return error;
+            }
+            ModerationFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "moderation.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "治理依赖暂时不可用，动作未被伪装为成功。",
+            ),
+            ModerationFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "moderation.internal",
+                ErrorCategory::Transient,
+                "治理服务发生内部错误。",
+            ),
+        };
+        log_moderation_failure(failure, correlation_id);
+        from_mapping(mapping, correlation_id)
     }
 
     fn retry_after_seconds(mut self, seconds: u64) -> Self {
@@ -1017,6 +1075,15 @@ fn log_content_failure(
         operation,
         failure = ?failure,
         "内容请求失败"
+    );
+}
+
+fn log_moderation_failure(failure: ModerationFailure, correlation_id: CorrelationId) {
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        operation = failure.operation(),
+        failure = ?failure.kind(),
+        "治理请求失败"
     );
 }
 

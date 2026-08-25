@@ -32,6 +32,7 @@ use agent_room_application::{
     direct_sessions::{DirectSessionDependencies, DirectSessionService},
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
+    moderation::{ModerationDependencies, ModerationService},
     ports::{MatrixAgentLocalpart, MatrixRoomAuthorityGateway, MatrixUserId, SecretValue},
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
     rooms::{
@@ -68,6 +69,7 @@ use features::direct_sessions::DirectSessionHttpState;
 use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
 use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
+use features::moderation::ModerationHttpState;
 use features::private_rooms::PrivateRoomHttpState;
 use observability::Observability;
 use runtime::SystemRuntime;
@@ -94,6 +96,7 @@ struct AgentFeatureHttpStates {
     private_rooms: PrivateRoomHttpState,
     direct_sessions: DirectSessionHttpState,
     automation: AutomationHttpState,
+    moderation: ModerationHttpState,
 }
 
 struct AgentFeatureDependencies {
@@ -304,6 +307,7 @@ async fn build_identity_router(
         ))
         .merge(features::agent_cards::router(agent_features.cards))
         .merge(features::automation::router(agent_features.automation))
+        .merge(features::moderation::router(agent_features.moderation))
         .merge(content_routes);
     Ok(IdentityRuntime {
         routes,
@@ -356,13 +360,8 @@ fn build_agent_feature_states(
         clock: dependencies.system_runtime.clone(),
     }));
     let automation = build_automation_http_state(config, &dependencies);
-    let direct_sessions = Arc::new(DirectSessionService::new(DirectSessionDependencies {
-        store: dependencies.repositories.clone(),
-        agents: dependencies.repositories.clone(),
-        matrix: dependencies.matrix_identities,
-        identifiers: dependencies.system_runtime.clone(),
-        clock: dependencies.system_runtime,
-    }));
+    let moderation = build_moderation_management(&dependencies);
+    let direct_sessions = build_direct_session_management(&dependencies);
     Ok(AgentFeatureHttpStates {
         agents: AgentHttpState::new(
             AgentHttpDependencies {
@@ -407,7 +406,38 @@ fn build_agent_feature_states(
             &config.authentication.frontend_origin,
         ),
         automation,
+        moderation: ModerationHttpState::new(
+            moderation,
+            dependencies.authentication,
+            &config.authentication.frontend_origin,
+        ),
     })
+}
+
+fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
+    Arc::new(ModerationService::new(ModerationDependencies {
+        repository: dependencies.repositories.clone(),
+        authority: dependencies.repositories.clone(),
+        effects: dependencies.matrix_identities.clone(),
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime.clone(),
+        report_policy: agent_room_application::ports::ModerationReportPolicy {
+            maximum_reports: 5,
+            window: DurationMillis::new(10 * 60 * 1_000).expect("固定举报限速窗口必须有效"),
+        },
+    }))
+}
+
+fn build_direct_session_management(
+    dependencies: &AgentFeatureDependencies,
+) -> Arc<DirectSessionService> {
+    Arc::new(DirectSessionService::new(DirectSessionDependencies {
+        store: dependencies.repositories.clone(),
+        agents: dependencies.repositories.clone(),
+        matrix: dependencies.matrix_identities.clone(),
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }))
 }
 
 fn build_automation_http_state(

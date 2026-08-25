@@ -10,5 +10,6 @@ pub(crate) mod direct_sessions;
 pub(crate) mod handoffs;
 pub(crate) mod health;
 pub(crate) mod lobbies;
+pub(crate) mod moderation;
 pub(crate) mod private_rooms;
 mod resource_ids;

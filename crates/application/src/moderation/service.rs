@@ -108,7 +108,7 @@ impl ModerationService {
             return Err(failure(OPERATION, ModerationFailureKind::Forbidden));
         }
         let case = ModerationCase::open(
-            self.identifiers.moderation_case_id(),
+            request.case_id,
             request.actor.principal_id,
             request.target,
             request.reason,
@@ -175,7 +175,7 @@ impl ModerationService {
         self.require_matching_case(request.case_id, &request.target, OPERATION)
             .await?;
         let mut action = ModerationAction::reserve(
-            self.identifiers.moderation_action_id(),
+            request.action_id,
             request.case_id,
             request.actor.principal_id,
             request.room_catalog_id,

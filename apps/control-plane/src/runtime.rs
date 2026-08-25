@@ -1,15 +1,16 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_room_application::{
-    ports::{Clock, IdentifierFactory},
+    ports::{Clock, IdentifierFactory, ModerationIdentifierFactory},
     rooms::{LobbyProvisioningIdentifierFactory, RoomReservationIdentifierFactory},
 };
 use agent_room_domain::{
     ids::{
-        AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
-        ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomProvisioningJobId, RoomProvisioningLeaseId, RoomReservationId, WebSessionId,
+        AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AuditEventId,
+        AutomationGrantId, ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId,
+        DeviceTokenFamilyId, HandoffId, LoginAttemptId, ModerationActionId, ModerationCaseId,
+        OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
+        RoomProvisioningLeaseId, RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -118,5 +119,19 @@ impl LobbyProvisioningIdentifierFactory for SystemRuntime {
 
     fn room_instance_id(&self) -> RoomInstanceId {
         RoomInstanceId::from_uuid(Uuid::now_v7())
+    }
+}
+
+impl ModerationIdentifierFactory for SystemRuntime {
+    fn moderation_case_id(&self) -> ModerationCaseId {
+        ModerationCaseId::from_uuid(Uuid::now_v7())
+    }
+
+    fn moderation_action_id(&self) -> ModerationActionId {
+        ModerationActionId::from_uuid(Uuid::now_v7())
+    }
+
+    fn moderation_audit_event_id(&self) -> AuditEventId {
+        AuditEventId::from_uuid(Uuid::now_v7())
     }
 }

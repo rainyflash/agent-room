@@ -9,6 +9,7 @@ use crate::authentication::AuthenticatedPrincipal;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmitModerationReport {
     pub actor: AuthenticatedPrincipal,
+    pub case_id: ModerationCaseId,
     pub target: ModerationTarget,
     pub reason: ModerationReason,
     pub description: String,
@@ -23,6 +24,7 @@ pub struct ListMyModerationCases {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyModerationAction {
     pub actor: AuthenticatedPrincipal,
+    pub action_id: ModerationActionId,
     pub case_id: Option<ModerationCaseId>,
     pub room_catalog_id: RoomCatalogId,
     pub kind: ModerationActionKind,
