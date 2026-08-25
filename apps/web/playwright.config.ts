@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const capacityRun = process.env.AGENT_ROOM_CAPACITY_REPORT === '1';
+
 export default defineConfig({
   expect: { timeout: 8_000 },
   forbidOnly: true,
@@ -18,8 +20,9 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command:
-      'corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 127.0.0.1 --port 14173 --strictPort',
+    command: capacityRun
+      ? 'corepack pnpm@10.28.0 --filter @agent-room/web exec vite preview --host 127.0.0.1 --port 14173 --strictPort'
+      : 'corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 127.0.0.1 --port 14173 --strictPort',
     cwd: '../..',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

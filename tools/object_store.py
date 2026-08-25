@@ -4,16 +4,25 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
+import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 from typing import Final
 
+if __package__:
+    from .capacity import git_revision, write_json
+else:
+    from capacity import git_revision, write_json
+
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 ENV_FILE: Final = ROOT / ".env.local"
 SAFE_SECRET: Final = re.compile(r"^[A-Za-z0-9._~-]{3,256}$")
+REPORT: Final = ROOT / "artifacts" / "capacity" / "content-report.json"
+OBSERVATION_PREFIX: Final = "CAPACITY_CONTENT_OBSERVATION="
 
 
 def read_environment() -> dict[str, str]:
@@ -39,10 +48,36 @@ def required_value(values: dict[str, str], name: str) -> str:
     return value
 
 
-def run(command: list[str], environment: dict[str, str]) -> None:
-    result = subprocess.run(command, cwd=ROOT, env=environment, check=False)
+def run(
+    command: list[str], environment: dict[str, str], *, capture: bool = False
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=capture,
+        text=capture,
+        encoding="utf-8" if capture else None,
+        errors="replace" if capture else None,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"命令执行失败，退出码为 {result.returncode}。")
+    return result
+
+
+def parse_capacity_observation(output: str) -> dict[str, object]:
+    matches = [
+        line.split(OBSERVATION_PREFIX, maxsplit=1)[1]
+        for line in output.splitlines()
+        if OBSERVATION_PREFIX in line
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("对象容量测试没有产出唯一观察记录。")
+    value = json.loads(matches[0])
+    if not isinstance(value, dict):
+        raise RuntimeError("对象容量观察必须是 JSON 对象。")
+    return value
 
 
 def main() -> int:
@@ -72,7 +107,7 @@ def main() -> int:
             ],
             environment,
         )
-        run(
+        result = run(
             [
                 "cargo",
                 "test",
@@ -82,10 +117,29 @@ def main() -> int:
                 "seaweedfs",
                 "--",
                 "--ignored",
+                "--nocapture",
                 "--test-threads=1",
             ],
             environment,
+            capture=True,
         )
+        output = (result.stdout or "") + (result.stderr or "")
+        metrics = parse_capacity_observation(output)
+        write_json(
+            REPORT,
+            {
+                "schemaVersion": 1,
+                "scenario": "content_25_mib_concurrency",
+                "evidenceLevel": "real_s3_compatible_store",
+                "generatedAt": datetime.now(UTC).isoformat(),
+                "revision": git_revision(),
+                "passed": True,
+                "releaseGateEligible": True,
+                "topology": "SeaweedFS S3 compatibility path through the production adapter",
+                "metrics": metrics,
+            },
+        )
+        print(f"对象容量报告：{REPORT}")
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
         return 1

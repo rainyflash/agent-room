@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => ({
     react(),
     tailwindcss(),
     VitePWA({
-      disable: mode === 'desktop' || mode === 'vertical',
+      disable: mode === 'capacity' || mode === 'desktop' || mode === 'vertical',
       injectRegister: false,
       manifest: {
         name: 'Agent Room',
@@ -48,6 +48,16 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     reportCompressedSize: true,
+    ...(mode === 'capacity'
+      ? {
+          rollupOptions: {
+            input: {
+              application: 'index.html',
+              lobbyCapacityFixture: 'e2e/fixtures/lobby-scene.html',
+            },
+          },
+        }
+      : {}),
     sourcemap: true,
   },
   test: {

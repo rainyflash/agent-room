@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
@@ -39,6 +41,8 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
 });
 
 test('200 节点场景交互保持在有界帧预算内', async ({ page }, testInfo) => {
+  const developerTools = await page.context().newCDPSession(page);
+  await developerTools.send('Performance.enable');
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
   const canvas = page.locator('.lobby-scene__canvas');
@@ -69,8 +73,15 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
 
   const median = percentile(frameDurations, 0.5);
   const p95 = percentile(frameDurations, 0.95);
+  const runtimeBudget = await collectRuntimeBudget(page, developerTools);
   await testInfo.attach('frame-budget.json', {
-    body: Buffer.from(JSON.stringify({ medianMilliseconds: median, p95Milliseconds: p95 })),
+    body: Buffer.from(
+      JSON.stringify({
+        medianMilliseconds: median,
+        p95Milliseconds: p95,
+        ...runtimeBudget,
+      }),
+    ),
     contentType: 'application/json',
   });
   testInfo.annotations.push({
@@ -79,6 +90,18 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   });
   expect(median).toBeLessThanOrEqual(22);
   expect(p95).toBeLessThanOrEqual(40);
+  expect(runtimeBudget.javascriptHeapBytes).toBeLessThanOrEqual(256 * 1_024 * 1_024);
+  expect(runtimeBudget.textureCount).toBeLessThanOrEqual(256);
+  expect(runtimeBudget.renderedNodes).toBeLessThanOrEqual(200);
+  expect(runtimeBudget.messageNodes).toBeLessThanOrEqual(200);
+  expect(runtimeBudget.resourceCount).toBeLessThanOrEqual(80);
+  expect(runtimeBudget.decodedResourceBytes).toBeLessThanOrEqual(12 * 1_024 * 1_024);
+  expect(runtimeBudget.externalImageResources).toBe(0);
+  await writeCapacityReport({
+    medianMilliseconds: median,
+    p95Milliseconds: p95,
+    ...runtimeBudget,
+  });
 });
 
 test('手机默认使用完整列表且 reduced-motion 不保留持续动画', async ({ page }) => {
@@ -196,4 +219,68 @@ async function fixtureContentReadCount(page: import('@playwright/test').Page): P
     };
     return fixtureWindow.__agentRoomFixtureContentReads?.downloads ?? -1;
   });
+}
+
+async function collectRuntimeBudget(
+  page: import('@playwright/test').Page,
+  developerTools: import('@playwright/test').CDPSession,
+) {
+  const performanceMetrics = await developerTools.send('Performance.getMetrics');
+  const javascriptHeapBytes =
+    performanceMetrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ??
+    Number.POSITIVE_INFINITY;
+  const browserMetrics = await page.evaluate(() => {
+    const resourceEntries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    const scene = document.querySelector<HTMLElement>('.lobby-scene__visual');
+    return {
+      decodedResourceBytes: resourceEntries.reduce(
+        (total, resource) => total + resource.decodedBodySize,
+        0,
+      ),
+      externalImageResources: resourceEntries.filter(
+        (resource) =>
+          resource.initiatorType === 'img' && new URL(resource.name).origin !== location.origin,
+      ).length,
+      messageNodes: document.querySelectorAll('.message-signal').length,
+      renderedNodes: Number(scene?.dataset.agentRoomRenderedNodes ?? Number.NaN),
+      resourceCount: resourceEntries.length,
+      textureCount: Number(scene?.dataset.agentRoomTextureCount ?? Number.NaN),
+    };
+  });
+  return { javascriptHeapBytes, ...browserMetrics };
+}
+
+async function writeCapacityReport(metrics: Readonly<Record<string, number>>): Promise<void> {
+  if (process.env.AGENT_ROOM_CAPACITY_REPORT !== '1') {
+    return;
+  }
+  const revision = process.env.AGENT_ROOM_CAPACITY_REVISION;
+  if (revision === undefined || revision.length < 7) {
+    throw new Error('容量报告缺少 Git 修订。');
+  }
+  const reportPath = path.resolve('../../artifacts/capacity/web-report.json');
+  await mkdir(path.dirname(reportPath), { recursive: true });
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        scenario: 'web_200_node_budget',
+        evidenceLevel: 'real_chromium_webgl',
+        generatedAt: new Date().toISOString(),
+        revision,
+        passed: true,
+        releaseGateEligible: true,
+        topology: {
+          browser: 'Chromium through Playwright CDP',
+          nodes: 200,
+          viewport: '1440x900',
+        },
+        metrics,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
 }

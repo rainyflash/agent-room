@@ -9,6 +9,12 @@ import { ViewportController } from '@/features/lobby/scene/viewport-controller';
 
 type PixiModule = typeof import('pixi.js');
 
+type TextureAwareRenderer = {
+  readonly texture?: {
+    readonly managedTextures?: readonly unknown[];
+  };
+};
+
 export async function mountPixiLobbyScene(
   options: LobbySceneMountOptions,
 ): Promise<LobbySceneHandle> {
@@ -115,6 +121,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#app = null;
     this.#worldLayer = null;
     this.#nodesLayer = null;
+    delete this.#host.dataset.agentRoomRenderedNodes;
+    delete this.#host.dataset.agentRoomTextureCount;
     app?.destroy({ removeView: true }, { children: true, context: true });
   }
 
@@ -177,7 +185,8 @@ class PixiLobbyScene implements LobbySceneHandle {
       child.destroy({ children: true });
     }
     const detail = sceneDetailForZoom(camera.scale);
-    for (const node of visibleLobbyNodes(this.#projection, this.#camera.viewport())) {
+    const visibleNodes = visibleLobbyNodes(this.#projection, this.#camera.viewport());
+    for (const node of visibleNodes) {
       nodesLayer.addChild(
         createAgentNodeView(this.#pixi, {
           detail,
@@ -188,6 +197,11 @@ class PixiLobbyScene implements LobbySceneHandle {
       );
     }
     app.render();
+    const renderer = app.renderer as TextureAwareRenderer;
+    this.#host.dataset.agentRoomRenderedNodes = String(visibleNodes.length);
+    this.#host.dataset.agentRoomTextureCount = String(
+      renderer.texture?.managedTextures?.length ?? 0,
+    );
   }
 
   #scheduleRender(): void {
