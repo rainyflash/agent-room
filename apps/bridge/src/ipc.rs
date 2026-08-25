@@ -678,13 +678,14 @@ mod tests {
             HandoffReceptionFailure, HandoffResolutionOutcome,
         },
         messages::{
-            DownloadedMessageContent, MessageBodyProtectionService, MessageContentBindRequest,
-            MessageContentFailure, MessageContentGateway, MessageContentReadFailure,
-            MessageContentReadFailureKind, MessageContentReadGateway, MessageContentReadRequest,
-            MessageContentRecord, MessageContentRedactRequest, MessageContentSourceQuery,
-            MessageContentUploadRequest, MessageEventPublisher, MessagePreviewPage,
-            MessagePreviewQuery, MessagePublicationDependencies, MessagePublicationService,
-            MessageTimelineQueryFailure, MessageTimelineQueryRepository,
+            AutomationAuthorizationGateway, AutomationAuthorizationRequest,
+            AutomationAuthorizationResult, DownloadedMessageContent, MessageBodyProtectionService,
+            MessageContentBindRequest, MessageContentFailure, MessageContentGateway,
+            MessageContentReadFailure, MessageContentReadFailureKind, MessageContentReadGateway,
+            MessageContentReadRequest, MessageContentRecord, MessageContentRedactRequest,
+            MessageContentSourceQuery, MessageContentUploadRequest, MessageEventPublisher,
+            MessagePreviewPage, MessagePreviewQuery, MessagePublicationDependencies,
+            MessagePublicationService, MessageTimelineQueryFailure, MessageTimelineQueryRepository,
             OpenMessageContentDependencies, OpenMessageContentService, ProjectedMessageActor,
             ProjectedMessagePreview,
         },
@@ -720,7 +721,10 @@ mod tests {
             HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
             HandoffSourceEventId,
         },
-        ids::{AgentId, AgentInstanceId, ContentId, HandoffId, MessageId, PrincipalId},
+        ids::{
+            AgentId, AgentInstanceId, AutomationGrantId, ContentId, HandoffId, MessageId,
+            PrincipalId, RoomCatalogId,
+        },
         messages::{
             MessageContentReference, MessagePreview, MessageProvenance, MessageRiskFlag,
             MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
@@ -942,6 +946,17 @@ mod tests {
     }
 
     struct 测试签名身份;
+
+    struct 允许自动授权;
+
+    impl AutomationAuthorizationGateway for 允许自动授权 {
+        fn authorize<'a>(
+            &'a self,
+            _request: &'a AutomationAuthorizationRequest,
+        ) -> PortFuture<'a, AutomationAuthorizationResult<()>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     impl DeviceSigningIdentity for 测试签名身份 {
         fn public_key(&self) -> BridgeCredentialResult<DevicePublicSigningKey> {
@@ -1294,6 +1309,8 @@ mod tests {
                 publisher: publisher.clone(),
                 content: content.clone(),
                 submissions,
+                automation: Arc::new(允许自动授权),
+                room_catalog_id: 测试房间目录标识(),
             },
         ));
         let previews = Arc::new(记录预览查询::default());
@@ -1316,6 +1333,7 @@ mod tests {
         let submission_id = Uuid::now_v7().to_string();
         let request = IpcSendMessageRequest {
             submission_id: Some(submission_id.clone()),
+            automation_grant_id: Some(测试自动授权标识().to_string()),
             room_id: room_id.as_str().to_owned(),
             title: "构建完成".to_owned(),
             summary: "Bridge 已通过完整验证".to_owned(),
@@ -1512,6 +1530,18 @@ mod tests {
             ),
         )
         .expect("Agent 身份有效")
+    }
+
+    fn 测试自动授权标识() -> AutomationGrantId {
+        AutomationGrantId::from_uuid(
+            Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e47").expect("授权标识有效"),
+        )
+    }
+
+    fn 测试房间目录标识() -> RoomCatalogId {
+        RoomCatalogId::from_uuid(
+            Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e46").expect("房间目录标识有效"),
+        )
     }
 
     fn 测试正文投影(

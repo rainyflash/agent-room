@@ -4,11 +4,16 @@ use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixFailure, MatrixFailureKind,
     MatrixGateway, MatrixResult, MatrixRoomId, MatrixTransactionId, PortFuture,
 };
-use agent_room_domain::ids::{ContentUploadRequestId, MessageSubmissionId};
+use agent_room_domain::{
+    ids::{ContentUploadRequestId, MessageSubmissionId, RoomCatalogId},
+    messages::MessageProvenance,
+    policy::AutomationRiskScanOutcome,
+};
 
 use crate::{agent_identity::BridgeAgentIdentity, ports::DeviceSigningIdentity};
 
 use super::{
+    AutomationAuthorizationFailure, AutomationAuthorizationGateway, AutomationAuthorizationRequest,
     EditMessageRequest, MessageContentBindRequest, MessageContentFailure,
     MessageContentFailureKind, MessageContentGateway, MessageContentRecord,
     MessageContentRedactRequest, MessageContentUploadRequest, MessageEventPublisher,
@@ -24,6 +29,7 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessagePublicationFailureKind {
     InvalidIntent,
+    AutomationAuthorization,
     SigningUnavailable,
     Serialization,
     Store,
@@ -37,6 +43,7 @@ pub struct MessagePublicationFailure {
     store: Option<MessageStoreFailure>,
     content: Option<MessageContentFailure>,
     matrix: Option<MatrixFailure>,
+    automation: Option<AutomationAuthorizationFailure>,
 }
 
 impl MessagePublicationFailure {
@@ -46,6 +53,7 @@ impl MessagePublicationFailure {
             store: None,
             content: None,
             matrix: None,
+            automation: None,
         }
     }
 
@@ -55,6 +63,7 @@ impl MessagePublicationFailure {
             store: Some(failure),
             content: None,
             matrix: None,
+            automation: None,
         }
     }
 
@@ -64,6 +73,7 @@ impl MessagePublicationFailure {
             store: None,
             content: Some(failure),
             matrix: None,
+            automation: None,
         }
     }
 
@@ -73,6 +83,17 @@ impl MessagePublicationFailure {
             store: None,
             content: None,
             matrix: Some(failure),
+            automation: None,
+        }
+    }
+
+    const fn automation(failure: AutomationAuthorizationFailure) -> Self {
+        Self {
+            kind: MessagePublicationFailureKind::AutomationAuthorization,
+            store: None,
+            content: None,
+            matrix: None,
+            automation: Some(failure),
         }
     }
 
@@ -90,6 +111,10 @@ impl MessagePublicationFailure {
 
     pub const fn matrix_failure(self) -> Option<MatrixFailure> {
         self.matrix
+    }
+
+    pub const fn automation_failure(self) -> Option<AutomationAuthorizationFailure> {
+        self.automation
     }
 }
 
@@ -118,6 +143,8 @@ pub struct MessagePublicationDependencies {
     pub publisher: Arc<dyn MessageEventPublisher>,
     pub content: Arc<dyn MessageContentGateway>,
     pub submissions: Arc<dyn MessageSubmissionRepository>,
+    pub automation: Arc<dyn AutomationAuthorizationGateway>,
+    pub room_catalog_id: RoomCatalogId,
 }
 
 pub struct MessagePublicationService {
@@ -126,6 +153,8 @@ pub struct MessagePublicationService {
     publisher: Arc<dyn MessageEventPublisher>,
     content: Arc<dyn MessageContentGateway>,
     submissions: Arc<dyn MessageSubmissionRepository>,
+    automation: Arc<dyn AutomationAuthorizationGateway>,
+    room_catalog_id: RoomCatalogId,
 }
 
 impl MessagePublicationService {
@@ -136,6 +165,8 @@ impl MessagePublicationService {
             publisher: dependencies.publisher,
             content: dependencies.content,
             submissions: dependencies.submissions,
+            automation: dependencies.automation,
+            room_catalog_id: dependencies.room_catalog_id,
         }
     }
 
@@ -148,6 +179,7 @@ impl MessagePublicationService {
         &self,
         request: &SendMessageRequest,
     ) -> MessagePublicationResult<MessagePublicationOutcome> {
+        self.authorize_automation(request).await?;
         let fingerprint = preview_fingerprint(&self.identity, request).map_err(map_wire_failure)?;
         let transaction_id =
             preview_transaction_id(request.submission_id()).map_err(map_wire_failure)?;
@@ -178,6 +210,31 @@ impl MessagePublicationService {
         .map_err(map_wire_failure)?;
         self.publish_with_content(request.submission_id(), request.room_id(), event, content)
             .await
+    }
+
+    async fn authorize_automation(
+        &self,
+        request: &SendMessageRequest,
+    ) -> MessagePublicationResult<()> {
+        if request.provenance() != MessageProvenance::AutonomousAgent {
+            return Ok(());
+        }
+        let grant_id = request.automation_grant_id().ok_or_else(|| {
+            MessagePublicationFailure::simple(MessagePublicationFailureKind::InvalidIntent)
+        })?;
+        self.automation
+            .authorize(&AutomationAuthorizationRequest {
+                grant_id,
+                submission_id: request.submission_id(),
+                agent_id: self.identity.agent_id(),
+                agent_instance_id: self.identity.agent_instance_id(),
+                room_catalog_id: self.room_catalog_id,
+                matrix_room_id: request.room_id().clone(),
+                is_reply: request.relation().is_some(),
+                risk_scan: AutomationRiskScanOutcome::NotRequested,
+            })
+            .await
+            .map_err(MessagePublicationFailure::automation)
     }
 
     /// 发布引用原消息的替换修订，并把新正文绑定到修订事件。

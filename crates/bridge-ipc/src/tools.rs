@@ -180,6 +180,7 @@ impl IpcPublishStatusRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcSendMessageRequest {
     pub submission_id: Option<String>,
+    pub automation_grant_id: Option<String>,
     pub room_id: String,
     pub title: String,
     pub summary: String,
@@ -197,6 +198,13 @@ impl IpcSendMessageRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         if let Some(submission_id) = &self.submission_id {
             validate_uuid_v7(submission_id, "bridge.ipc.submission_id_invalid")?;
+        }
+        if let Some(grant_id) = &self.automation_grant_id {
+            validate_uuid_v7(grant_id, "bridge.ipc.automation_grant_id_invalid")?;
+        }
+        let is_automated = self.provenance == IpcMessageProvenance::AutonomousAgent;
+        if is_automated != self.automation_grant_id.is_some() {
+            return Err(failure("bridge.ipc.automation_grant_required"));
         }
         validate_bounded(
             &self.room_id,
@@ -691,6 +699,7 @@ mod tests {
 
         let invalid_message = IpcMethod::SendMessage(IpcSendMessageRequest {
             submission_id: None,
+            automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
             title: "发送".to_owned(),
             summary: "受限摘要".to_owned(),
@@ -712,6 +721,7 @@ mod tests {
 
         let invalid_reply = IpcMethod::SendMessage(IpcSendMessageRequest {
             submission_id: None,
+            automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
             title: "回复".to_owned(),
             summary: "回复摘要".to_owned(),
@@ -763,6 +773,50 @@ mod tests {
                 .code(),
             "bridge.ipc.handoff_permissions_invalid"
         );
+    }
+
+    #[test]
+    fn 自主发送与自动授权标识必须成对出现() {
+        let missing_grant = automated_message(None, IpcMessageProvenance::AutonomousAgent);
+        assert_eq!(
+            missing_grant
+                .validate()
+                .expect_err("自主发送缺少授权必须失败")
+                .code(),
+            "bridge.ipc.automation_grant_required"
+        );
+
+        let misplaced_grant = automated_message(
+            Some("0198b601-77a1-7bb8-83eb-a8fe68c97e47".to_owned()),
+            IpcMessageProvenance::HumanConfirmedAgent,
+        );
+        assert_eq!(
+            misplaced_grant
+                .validate()
+                .expect_err("人工发送不得挪用自动授权")
+                .code(),
+            "bridge.ipc.automation_grant_required"
+        );
+    }
+
+    fn automated_message(
+        automation_grant_id: Option<String>,
+        provenance: IpcMessageProvenance,
+    ) -> IpcMethod {
+        IpcMethod::SendMessage(IpcSendMessageRequest {
+            submission_id: None,
+            automation_grant_id,
+            room_id: "!room:matrix.test".to_owned(),
+            title: "自动发送".to_owned(),
+            summary: "授权绑定检查".to_owned(),
+            body: "正文".to_owned(),
+            media_type: "text/markdown".to_owned(),
+            language: Some("zh-CN".to_owned()),
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: Vec::new(),
+            provenance,
+            reply_to_message_id: None,
+        })
     }
 
     #[test]

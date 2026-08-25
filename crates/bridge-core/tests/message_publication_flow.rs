@@ -14,14 +14,16 @@ use agent_room_application::ports::{
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        EditMessageRequest, MessageBody, MessageContentBindRequest, MessageContentFailure,
-        MessageContentFailureKind, MessageContentGateway, MessageContentRecord,
-        MessageContentRedactRequest, MessageContentUploadRequest, MessageEventPublisher,
-        MessagePublicationDependencies, MessagePublicationFailureKind, MessagePublicationOutcome,
-        MessagePublicationService, MessageStoreFailure, MessageStoreFailureKind,
-        MessageSubmissionClaim, MessageSubmissionClaimOutcome, MessageSubmissionRecord,
-        MessageSubmissionRepository, MessageSubmissionState, RedactMessageRequest,
-        SendMessageRequest,
+        AutomationAuthorizationDenial, AutomationAuthorizationFailure,
+        AutomationAuthorizationGateway, AutomationAuthorizationRequest,
+        AutomationAuthorizationResult, EditMessageRequest, MessageBody, MessageContentBindRequest,
+        MessageContentFailure, MessageContentFailureKind, MessageContentGateway,
+        MessageContentRecord, MessageContentRedactRequest, MessageContentUploadRequest,
+        MessageEventPublisher, MessagePublicationDependencies, MessagePublicationFailureKind,
+        MessagePublicationOutcome, MessagePublicationService, MessageStoreFailure,
+        MessageStoreFailureKind, MessageSubmissionClaim, MessageSubmissionClaimOutcome,
+        MessageSubmissionRecord, MessageSubmissionRepository, MessageSubmissionState,
+        RedactMessageRequest, SendMessageRequest,
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
@@ -31,7 +33,10 @@ use agent_room_bridge_core::{
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
     devices::DevicePublicSigningKey,
-    ids::{AgentId, AgentInstanceId, ContentId, MessageId, MessageSubmissionId},
+    ids::{
+        AgentId, AgentInstanceId, AutomationGrantId, ContentId, MessageId, MessageSubmissionId,
+        RoomCatalogId,
+    },
     messages::{
         MessageLanguage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlag,
         MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
@@ -46,6 +51,32 @@ const MESSAGE_SCHEMA: &str =
     include_str!("../../../packages/protocol/schema/v1/agent-room.schema.json");
 
 struct 测试签名身份(Ed25519DeviceSigningKey);
+
+struct 允许自动授权;
+
+impl AutomationAuthorizationGateway for 允许自动授权 {
+    fn authorize<'a>(
+        &'a self,
+        _request: &'a AutomationAuthorizationRequest,
+    ) -> PortFuture<'a, AutomationAuthorizationResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct 拒绝自动授权;
+
+impl AutomationAuthorizationGateway for 拒绝自动授权 {
+    fn authorize<'a>(
+        &'a self,
+        _request: &'a AutomationAuthorizationRequest,
+    ) -> PortFuture<'a, AutomationAuthorizationResult<()>> {
+        Box::pin(async {
+            Err(AutomationAuthorizationFailure::denied(
+                AutomationAuthorizationDenial::RateLimitExceeded,
+            ))
+        })
+    }
+}
 
 impl 测试签名身份 {
     fn generate() -> Self {
@@ -378,6 +409,10 @@ struct 测试夹具 {
 
 impl 测试夹具 {
     fn new() -> Self {
+        Self::with_automation(Arc::new(允许自动授权))
+    }
+
+    fn with_automation(automation: Arc<dyn AutomationAuthorizationGateway>) -> Self {
         let audit = Arc::new(Mutex::new(Vec::new()));
         let signer = Arc::new(测试签名身份::generate());
         let publisher = Arc::new(记录消息发布器::new(Arc::clone(&audit)));
@@ -389,6 +424,8 @@ impl 测试夹具 {
             publisher: publisher.clone(),
             content: content.clone(),
             submissions: submissions.clone(),
+            automation,
+            room_catalog_id: room_catalog_id(),
         });
         Self {
             signer,
@@ -399,6 +436,44 @@ impl 测试夹具 {
             audit,
         }
     }
+}
+
+#[tokio::test]
+async fn 自动授权拒绝发生在本地认领正文上传与_matrix_发布之前() {
+    let fixture = 测试夹具::with_automation(Arc::new(拒绝自动授权));
+    let request = send_request(
+        MessageSubmissionId::from_uuid(Uuid::now_v7()),
+        "不会发送",
+        None,
+    );
+
+    let failure = fixture
+        .service
+        .send(&request)
+        .await
+        .expect_err("频率耗尽必须拒绝发送");
+
+    assert_eq!(
+        failure.kind(),
+        MessagePublicationFailureKind::AutomationAuthorization
+    );
+    assert_eq!(
+        failure
+            .automation_failure()
+            .expect("保留自动授权失败")
+            .denial(),
+        Some(AutomationAuthorizationDenial::RateLimitExceeded)
+    );
+    assert!(fixture.audit.lock().expect("审计锁可用").is_empty());
+    assert!(fixture.publisher.events().is_empty());
+    assert!(
+        fixture
+            .submissions
+            .0
+            .lock()
+            .expect("提交仓库锁可用")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -573,8 +648,21 @@ fn send_request(
         body("正文只按需读取"),
         MessageProvenance::AutonomousAgent,
         relation,
+        Some(automation_grant_id()),
     )
     .expect("发送请求有效")
+}
+
+fn automation_grant_id() -> AutomationGrantId {
+    AutomationGrantId::from_uuid(
+        Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e47").expect("测试授权标识有效"),
+    )
+}
+
+fn room_catalog_id() -> RoomCatalogId {
+    RoomCatalogId::from_uuid(
+        Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e46").expect("测试房间目录标识有效"),
+    )
 }
 
 fn preview(summary: &str) -> MessagePreview {

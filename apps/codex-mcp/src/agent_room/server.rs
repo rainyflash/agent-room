@@ -576,6 +576,7 @@ mod tests {
         server
             .send_message(Parameters(SendMessageInput {
                 submission_id: None,
+                automation_grant_id: None,
                 room_id: "!room:example.test".to_owned(),
                 title: "状态".to_owned(),
                 summary: "MCP 已接通".to_owned(),

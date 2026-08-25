@@ -39,11 +39,13 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::{Uuid, Version};
 
+mod automation;
 mod content;
 mod handoffs;
 mod lobbies;
 mod message_content;
 
+pub use automation::ReqwestControlPlaneAutomationAuthorizationGateway;
 pub use content::ReqwestControlPlaneContentGateway;
 pub use handoffs::ReqwestControlPlaneHandoffGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;

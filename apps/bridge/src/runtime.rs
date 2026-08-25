@@ -40,9 +40,9 @@ use agent_room_bridge_core::{
         AgentLobbySessionService, ControlPlaneLobbyEntryOutcome, JoinedAgentLobby,
     },
     messages::{
-        MatrixMessageEventPublisher, MessageAuthenticationFailureKind,
-        MessageBodyProtectionService, MessageContentCipher, MessageContentGateway,
-        MessageContentReadGateway, MessageProjectionStoreFailureKind,
+        AutomationAuthorizationGateway, MatrixMessageEventPublisher,
+        MessageAuthenticationFailureKind, MessageBodyProtectionService, MessageContentCipher,
+        MessageContentGateway, MessageContentReadGateway, MessageProjectionStoreFailureKind,
         MessagePublicationDependencies, MessagePublicationService, MessageStoreFailureKind,
         MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind, MessageSyncService,
         OpenMessageContentDependencies, OpenMessageContentService,
@@ -104,9 +104,10 @@ use crate::{
 };
 use agent_room_bridge::control_plane::{
     ControlPlaneHttpConfig, ReqwestAgentInstanceVerificationGateway,
-    ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneContentGateway,
-    ReqwestControlPlaneDeviceGateway, ReqwestControlPlaneHandoffGateway,
-    ReqwestControlPlaneLobbyEntryGateway, ReqwestControlPlaneMessageContentGateway,
+    ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneAutomationAuthorizationGateway,
+    ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
+    ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneLobbyEntryGateway,
+    ReqwestControlPlaneMessageContentGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -212,6 +213,7 @@ struct AgentSessionRuntime {
     content_protection: Arc<MessageBodyProtectionService>,
     outbound_content: Arc<dyn MessageContentGateway>,
     submissions: Arc<SqliteMessageSubmissionRepository>,
+    automation: Arc<dyn AutomationAuthorizationGateway>,
     handoffs: AgentHandoffServices,
     state: Arc<BridgeAgentRuntimeState>,
     status_policy: AgentStatusLeasePolicy,
@@ -233,6 +235,7 @@ struct AgentMessageServices {
     content_protection: Arc<MessageBodyProtectionService>,
     outbound_content: Arc<dyn MessageContentGateway>,
     submissions: Arc<SqliteMessageSubmissionRepository>,
+    automation: Arc<dyn AutomationAuthorizationGateway>,
     authenticator: Arc<dyn AgentEventAuthenticator>,
     handoff_content: Arc<dyn HandoffContentGateway>,
     presence: Arc<PresenceSyncService>,
@@ -564,6 +567,7 @@ async fn compose_agent_session_runtime(
         content_protection: message_services.content_protection,
         outbound_content: message_services.outbound_content,
         submissions: message_services.submissions,
+        automation: message_services.automation,
         handoffs,
         state,
         status_policy,
@@ -603,6 +607,10 @@ async fn compose_agent_message_services(
     );
     let outbound_content: Arc<dyn MessageContentGateway> = Arc::new(
         ReqwestControlPlaneMessageContentGateway::new(http, device_session.clone(), actor_agent_id)
+            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
+    let automation: Arc<dyn AutomationAuthorizationGateway> = Arc::new(
+        ReqwestControlPlaneAutomationAuthorizationGateway::new(http, device_session.clone())
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let content_reader: Arc<dyn MessageContentReadGateway> = Arc::new(
@@ -657,6 +665,7 @@ async fn compose_agent_message_services(
         content_protection,
         outbound_content,
         submissions,
+        automation,
         authenticator,
         handoff_content,
         presence,
@@ -708,6 +717,8 @@ async fn establish_agent_online(
             publisher: Arc::new(MatrixMessageEventPublisher::new(matrix.clone())),
             content: runtime.outbound_content.clone(),
             submissions: runtime.submissions.clone(),
+            automation: runtime.automation.clone(),
+            room_catalog_id: lobby.catalog_id(),
         },
     ));
     let handoffs = Arc::new(HandoffReceptionService::new(HandoffReceptionDependencies {

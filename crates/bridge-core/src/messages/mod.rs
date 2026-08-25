@@ -1,3 +1,4 @@
+mod automation;
 mod content;
 mod crypto;
 mod incoming;
@@ -7,6 +8,11 @@ mod ports;
 mod projection;
 mod wire;
 
+pub use automation::{
+    AutomationAuthorizationDenial, AutomationAuthorizationFailure,
+    AutomationAuthorizationFailureKind, AutomationAuthorizationGateway,
+    AutomationAuthorizationRequest, AutomationAuthorizationResult,
+};
 pub use content::{
     DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
     MessageContentReadGateway, MessageContentReadRequest, OpenMessageContentDependencies,

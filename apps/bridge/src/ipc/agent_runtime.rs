@@ -13,10 +13,12 @@ use agent_room_bridge_core::{
         HandoffTransportFailureKind, handoff_source_matches_projection,
     },
     messages::{
-        MessageBodyProtectionService, MessageContentFailureKind, MessageContentReadFailureKind,
-        MessageContentSourceQuery, MessagePreviewQuery, MessagePublicationFailure,
-        MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
-        MessageStoreFailureKind, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+        AutomationAuthorizationDenial, AutomationAuthorizationFailure,
+        AutomationAuthorizationFailureKind, MessageBodyProtectionService,
+        MessageContentFailureKind, MessageContentReadFailureKind, MessageContentSourceQuery,
+        MessagePreviewQuery, MessagePublicationFailure, MessagePublicationFailureKind,
+        MessagePublicationOutcome, MessagePublicationService, MessageStoreFailureKind,
+        MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
         OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
         ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
@@ -46,7 +48,8 @@ use agent_room_domain::{
         HandoffSourceEventId, HandoffStatus,
     },
     ids::{
-        AgentId, AgentInstanceId, ContentId, HandoffId, MessageId, MessageSubmissionId, PrincipalId,
+        AgentId, AgentInstanceId, AutomationGrantId, ContentId, HandoffId, MessageId,
+        MessageSubmissionId, PrincipalId,
     },
     messages::{
         MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
@@ -423,6 +426,11 @@ impl AgentRuntimeIpcFacade {
             .map(parse_message_id)
             .transpose()?
             .map(MessageRelation::ReplyTo);
+        let automation_grant_id = request
+            .automation_grant_id
+            .as_deref()
+            .map(parse_automation_grant_id)
+            .transpose()?;
         let intent = SendMessageRequest::new(
             submission_id,
             room_id,
@@ -430,6 +438,7 @@ impl AgentRuntimeIpcFacade {
             body,
             message_provenance(request.provenance),
             relation,
+            automation_grant_id,
         )
         .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?;
 
@@ -828,6 +837,10 @@ fn parse_submission_id(value: &str) -> Result<MessageSubmissionId, BridgeIpcDisp
     parse_uuid_v7(value, "bridge.ipc.submission_id_invalid").map(MessageSubmissionId::from_uuid)
 }
 
+fn parse_automation_grant_id(value: &str) -> Result<AutomationGrantId, BridgeIpcDispatchFailure> {
+    parse_uuid_v7(value, "bridge.ipc.automation_grant_id_invalid").map(AutomationGrantId::from_uuid)
+}
+
 fn parse_message_id(value: &str) -> Result<MessageId, BridgeIpcDispatchFailure> {
     parse_uuid_v7(value, "bridge.ipc.message_id_invalid").map(MessageId::from_uuid)
 }
@@ -1160,6 +1173,12 @@ fn map_message_publication_failure(failure: MessagePublicationFailure) -> Bridge
         MessagePublicationFailureKind::InvalidIntent => {
             invalid_request("bridge.message_intent_invalid")
         }
+        MessagePublicationFailureKind::AutomationAuthorization => {
+            failure.automation_failure().map_or_else(
+                || internal_failure("bridge.automation_authorization_internal"),
+                map_automation_authorization_failure,
+            )
+        }
         MessagePublicationFailureKind::SigningUnavailable => BridgeIpcDispatchFailure::new(
             "bridge.message_signing_unavailable",
             IpcErrorCategory::DependencyUnavailable,
@@ -1180,6 +1199,65 @@ fn map_message_publication_failure(failure: MessagePublicationFailure) -> Bridge
             || internal_failure("bridge.message_matrix_internal"),
             map_message_matrix_failure,
         ),
+    }
+}
+
+fn map_automation_authorization_failure(
+    failure: AutomationAuthorizationFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        AutomationAuthorizationFailureKind::Denied => BridgeIpcDispatchFailure::new(
+            failure
+                .denial()
+                .map_or("bridge.automation_denied", automation_denial_code),
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        AutomationAuthorizationFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.automation_authorization_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        AutomationAuthorizationFailureKind::InvalidResponse => BridgeIpcDispatchFailure::new(
+            "bridge.automation_authorization_invalid_response",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        AutomationAuthorizationFailureKind::Internal => {
+            internal_failure("bridge.automation_authorization_internal")
+        }
+    }
+}
+
+const fn automation_denial_code(reason: AutomationAuthorizationDenial) -> &'static str {
+    match reason {
+        AutomationAuthorizationDenial::ControlPlaneRejected => {
+            "bridge.automation_control_plane_rejected"
+        }
+        AutomationAuthorizationDenial::GrantNotFound => "bridge.automation_grant_not_found",
+        AutomationAuthorizationDenial::GrantNotStarted => "bridge.automation_grant_not_started",
+        AutomationAuthorizationDenial::GrantRevoked => "bridge.automation_grant_revoked",
+        AutomationAuthorizationDenial::GrantExpired => "bridge.automation_grant_expired",
+        AutomationAuthorizationDenial::AgentMismatch => "bridge.automation_agent_mismatch",
+        AutomationAuthorizationDenial::InstanceMismatch => "bridge.automation_instance_mismatch",
+        AutomationAuthorizationDenial::RoomMismatch => "bridge.automation_room_mismatch",
+        AutomationAuthorizationDenial::MessageKindNotAllowed => {
+            "bridge.automation_message_kind_not_allowed"
+        }
+        AutomationAuthorizationDenial::UnknownRecipientNotAllowed => {
+            "bridge.automation_unknown_recipient_not_allowed"
+        }
+        AutomationAuthorizationDenial::RateLimitExceeded => "bridge.automation_rate_limit_exceeded",
+        AutomationAuthorizationDenial::TotalLimitExceeded => {
+            "bridge.automation_total_limit_exceeded"
+        }
+        AutomationAuthorizationDenial::RiskScanRequired => "bridge.automation_risk_scan_required",
+        AutomationAuthorizationDenial::RiskScanRejected => "bridge.automation_risk_scan_rejected",
+        AutomationAuthorizationDenial::ActorMismatch => "bridge.automation_actor_mismatch",
+        AutomationAuthorizationDenial::AuthorityChanged => "bridge.automation_authority_changed",
+        AutomationAuthorizationDenial::MatrixPermissionDenied => {
+            "bridge.automation_matrix_permission_denied"
+        }
     }
 }
 

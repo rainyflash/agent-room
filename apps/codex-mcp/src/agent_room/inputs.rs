@@ -157,6 +157,8 @@ impl From<MessageProvenanceInput> for IpcMessageProvenance {
 pub struct SendMessageInput {
     /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
     pub submission_id: Option<String>,
+    /// 自主发送必填的自动发言授权 UUID；人工或逐次确认发送不得携带。
+    pub automation_grant_id: Option<String>,
     /// Matrix 房间 ID。
     pub room_id: String,
     /// 预览标题，最多 120 个字符。
@@ -184,6 +186,7 @@ impl From<SendMessageInput> for IpcSendMessageRequest {
     fn from(input: SendMessageInput) -> Self {
         Self {
             submission_id: input.submission_id,
+            automation_grant_id: input.automation_grant_id,
             room_id: input.room_id,
             title: input.title,
             summary: input.summary,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agent_room_application::ports::MatrixRoomId;
 use agent_room_domain::{
     content::{ContentByteLength, ContentEncryptionMode, ContentMediaType, Sha256Digest},
-    ids::{ContentId, MessageId, MessageSubmissionId},
+    ids::{AutomationGrantId, ContentId, MessageId, MessageSubmissionId},
     messages::{ClientContentEncryption, MessagePreview, MessageProvenance, MessageRelation},
     time::UtcMillis,
 };
@@ -27,6 +27,7 @@ pub enum MessageRequestError {
     InvalidBodyLength,
     MediaTypeMismatch,
     MissingClientEncryption,
+    InvalidAutomationGrant,
 }
 
 impl MessageBody {
@@ -128,6 +129,7 @@ pub struct SendMessageRequest {
     body: MessageBody,
     provenance: MessageProvenance,
     relation: Option<MessageRelation>,
+    automation_grant_id: Option<AutomationGrantId>,
 }
 
 impl SendMessageRequest {
@@ -143,10 +145,15 @@ impl SendMessageRequest {
         body: MessageBody,
         provenance: MessageProvenance,
         relation: Option<MessageRelation>,
+        automation_grant_id: Option<AutomationGrantId>,
     ) -> Result<Self, MessageRequestError> {
         validate_submission(submission_id)?;
         if preview.content_type() != body.media_type() {
             return Err(MessageRequestError::MediaTypeMismatch);
+        }
+        let is_automated = provenance == MessageProvenance::AutonomousAgent;
+        if is_automated != automation_grant_id.is_some() {
+            return Err(MessageRequestError::InvalidAutomationGrant);
         }
         Ok(Self {
             submission_id,
@@ -155,6 +162,7 @@ impl SendMessageRequest {
             body,
             provenance,
             relation,
+            automation_grant_id,
         })
     }
 
@@ -180,6 +188,10 @@ impl SendMessageRequest {
 
     pub const fn relation(&self) -> Option<MessageRelation> {
         self.relation
+    }
+
+    pub const fn automation_grant_id(&self) -> Option<AutomationGrantId> {
+        self.automation_grant_id
     }
 }
 
