@@ -27,6 +27,7 @@ import {
   type MessagePublisher,
   validatePublicationDraft,
 } from '@/features/messages/domain/publication';
+import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 
 const browserSubmissionIds = new BrowserSubmissionIdFactory();
 
@@ -48,6 +49,7 @@ export function MessageComposer({
   submissionIds = browserSubmissionIds,
 }: MessageComposerProps) {
   const { i18n, t } = useTranslation();
+  const runtime = useRuntimeCompatibility();
   const reduceMotion = useReducedMotion();
   const machine = useMemo(() => createMessagePublicationMachine(publisher), [publisher]);
   const [publication, send] = useMachine(machine);
@@ -74,7 +76,7 @@ export function MessageComposer({
   };
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (!publication.matches('ready') || draftIssues.length > 0) {
+    if (!runtime.writes.allowed || !publication.matches('ready') || draftIssues.length > 0) {
       return;
     }
     send({
@@ -188,7 +190,17 @@ export function MessageComposer({
         </ComposerBoundary>
       ) : null}
       {publication.matches('ready') ? (
-        <form className="message-composer__form" onSubmit={submit}>
+        <form
+          aria-disabled={!runtime.writes.allowed}
+          className="message-composer__form"
+          onSubmit={submit}
+        >
+          {runtime.writes.allowed ? null : (
+            <ComposerBoundary
+              detail={t(`pwa.writeBlocked.${runtime.writes.reason}`)}
+              label={t('pwa.writeBlocked.title')}
+            />
+          )}
           <label>
             <span>{t('messages.composer.field.title')}</span>
             <input
@@ -273,7 +285,7 @@ export function MessageComposer({
                 : t('messages.composer.issueCount', { count: draftIssues.length })}
             </div>
             <Button
-              disabled={draftIssues.length > 0}
+              disabled={draftIssues.length > 0 || !runtime.writes.allowed}
               icon={<Send aria-hidden="true" />}
               tone="primary"
               type="submit"

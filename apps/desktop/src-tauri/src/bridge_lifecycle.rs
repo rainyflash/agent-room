@@ -55,6 +55,42 @@ pub(crate) enum ExitDecision {
     Halt,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResumeProbeState {
+    Ready,
+    Absent,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResumeDecision {
+    Ready(BridgeOwnership),
+    StartManaged,
+    KeepProbing,
+    Halt,
+}
+
+pub(crate) const fn decide_resume(
+    probe: ResumeProbeState,
+    managed_child_active: bool,
+    phase: BridgePhase,
+) -> ResumeDecision {
+    match probe {
+        ResumeProbeState::Ready => ResumeDecision::Ready(if managed_child_active {
+            BridgeOwnership::Managed
+        } else {
+            BridgeOwnership::External
+        }),
+        ResumeProbeState::Absent
+            if !managed_child_active && !matches!(phase, BridgePhase::Halted) =>
+        {
+            ResumeDecision::StartManaged
+        }
+        ResumeProbeState::Absent => ResumeDecision::KeepProbing,
+        ResumeProbeState::Blocked => ResumeDecision::Halt,
+    }
+}
+
 impl BridgeRestartPolicy {
     pub(crate) fn new(now_unix_ms: i64) -> Self {
         Self {
@@ -176,7 +212,10 @@ impl BridgeRestartPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::{BridgeOwnership, BridgePhase, BridgeRestartPolicy, ExitDecision};
+    use super::{
+        BridgeOwnership, BridgePhase, BridgeRestartPolicy, ExitDecision, ResumeDecision,
+        ResumeProbeState, decide_resume,
+    };
 
     #[test]
     fn 已运行_bridge_被发现后不会争夺生命周期所有权() {
@@ -241,5 +280,25 @@ mod tests {
         assert_eq!(policy.child_exited(1, Some(0), true), ExitDecision::Stop);
         assert_eq!(policy.snapshot().phase, BridgePhase::Stopped);
         assert_eq!(policy.snapshot().automatic_restart_count, 0);
+    }
+
+    #[test]
+    fn 系统唤醒后重新探测而不沿用休眠前的假绿色状态() {
+        assert_eq!(
+            decide_resume(ResumeProbeState::Absent, false, BridgePhase::Ready),
+            ResumeDecision::StartManaged
+        );
+        assert_eq!(
+            decide_resume(ResumeProbeState::Ready, false, BridgePhase::Ready),
+            ResumeDecision::Ready(BridgeOwnership::External)
+        );
+        assert_eq!(
+            decide_resume(ResumeProbeState::Blocked, true, BridgePhase::Ready),
+            ResumeDecision::Halt
+        );
+        assert_eq!(
+            decide_resume(ResumeProbeState::Absent, true, BridgePhase::Ready),
+            ResumeDecision::KeepProbing
+        );
     }
 }

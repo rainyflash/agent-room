@@ -1,40 +1,30 @@
 import { Button } from '@agent-room/ui-system';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useRegisterSW } from 'virtual:pwa-register/react';
+
+import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 
 export function UpdatePrompt() {
   const { t } = useTranslation();
-  const {
-    needRefresh: [needRefresh, setNeedRefresh],
-    updateServiceWorker,
-  } = useRegisterSW();
+  const runtime = useRuntimeCompatibility();
 
-  if (!needRefresh) {
+  if (!runtime.updateWaiting) {
     return null;
   }
 
   return (
     <aside aria-live="polite" className="update-prompt">
-      <p>{t('pwa.update.title')}</p>
+      <div>
+        <strong>{t('pwa.update.title')}</strong>
+        <p>{t('pwa.update.writeBlocked')}</p>
+      </div>
       <Button
         icon={<RefreshCw aria-hidden="true" />}
-        onClick={() => void updateServiceWorker(true)}
+        onClick={() => void runtime.applyUpdate()}
         size="compact"
         tone="primary"
       >
         {t('pwa.update.action')}
-      </Button>
-      <Button
-        aria-label={t('pwa.update.dismiss')}
-        icon={<X aria-hidden="true" />}
-        onClick={() => {
-          setNeedRefresh(false);
-        }}
-        size="compact"
-        tone="quiet"
-      >
-        {t('pwa.update.dismiss')}
       </Button>
     </aside>
   );

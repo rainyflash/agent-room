@@ -74,6 +74,9 @@ object-store-integration:
 content-integration:
   python tools/content.py
 
+reliability:
+  python tools/reliability.py
+
 control-plane: database-migrate
   python tools/control-plane.py run
 

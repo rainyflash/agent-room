@@ -269,14 +269,24 @@ impl MessageContentGateway for 内存内容网关 {
 }
 
 #[derive(Default)]
-struct 内存提交仓库(Mutex<BTreeMap<MessageSubmissionId, MessageSubmissionRecord>>);
+struct 内存提交仓库 {
+    fail_next_claim: AtomicBool,
+    records: Mutex<BTreeMap<MessageSubmissionId, MessageSubmissionRecord>>,
+}
 
 impl MessageSubmissionRepository for 内存提交仓库 {
     fn claim<'a>(
         &'a self,
         claim: &'a MessageSubmissionClaim,
     ) -> PortFuture<'a, Result<MessageSubmissionClaimOutcome, MessageStoreFailure>> {
-        let mut records = self.0.lock().expect("提交仓库锁可用");
+        if self.fail_next_claim.swap(false, Ordering::SeqCst) {
+            return Box::pin(async {
+                Err(MessageStoreFailure::new(
+                    MessageStoreFailureKind::Unavailable,
+                ))
+            });
+        }
+        let mut records = self.records.lock().expect("提交仓库锁可用");
         let result = if let Some(existing) = records.get(&claim.submission_id) {
             if existing.kind != claim.kind
                 || existing.fingerprint != claim.fingerprint
@@ -353,7 +363,7 @@ impl MessageSubmissionRepository for 内存提交仓库 {
         transaction_id: &'a MatrixTransactionId,
         event_id: &'a MatrixEventId,
     ) -> PortFuture<'a, Result<Option<MessageSubmissionRecord>, MessageStoreFailure>> {
-        let mut records = self.0.lock().expect("提交仓库锁可用");
+        let mut records = self.records.lock().expect("提交仓库锁可用");
         let Some(record) = records
             .values_mut()
             .find(|record| &record.transaction_id == transaction_id)
@@ -386,7 +396,7 @@ impl 内存提交仓库 {
         + Send
         + 'a,
     ) -> PortFuture<'a, Result<MessageSubmissionRecord, MessageStoreFailure>> {
-        let mut records = self.0.lock().expect("提交仓库锁可用");
+        let mut records = self.records.lock().expect("提交仓库锁可用");
         let result = records
             .get_mut(&submission_id)
             .ok_or_else(|| MessageStoreFailure::new(MessageStoreFailureKind::NotFound))
@@ -469,11 +479,49 @@ async fn 自动授权拒绝发生在本地认领正文上传与_matrix_发布之
     assert!(
         fixture
             .submissions
-            .0
+            .records
             .lock()
             .expect("提交仓库锁可用")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn 本地磁盘暂不可用时发送明确失败且恢复后只产生一个事件() {
+    let fixture = 测试夹具::new();
+    fixture
+        .submissions
+        .fail_next_claim
+        .store(true, Ordering::SeqCst);
+    let request = send_request(
+        MessageSubmissionId::from_uuid(Uuid::now_v7()),
+        "磁盘恢复",
+        None,
+    );
+
+    let failure = fixture
+        .service
+        .send(&request)
+        .await
+        .expect_err("存储不可用不能伪装成已发送");
+    assert_eq!(failure.kind(), MessagePublicationFailureKind::Store);
+    assert_eq!(
+        failure.store_failure().expect("包含存储错误").kind(),
+        MessageStoreFailureKind::Unavailable
+    );
+    assert!(fixture.publisher.events().is_empty());
+    assert_eq!(fixture.content.upload_calls.load(Ordering::SeqCst), 0);
+
+    let recovered = fixture
+        .service
+        .send(&request)
+        .await
+        .expect("磁盘恢复后可发送");
+    assert!(matches!(
+        recovered,
+        MessagePublicationOutcome::Published { reused: false, .. }
+    ));
+    assert_eq!(fixture.publisher.events().len(), 1);
 }
 
 #[tokio::test]

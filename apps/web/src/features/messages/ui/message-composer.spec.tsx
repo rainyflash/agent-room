@@ -14,6 +14,10 @@ import type {
   MessagePublisherIdentity,
 } from '@/features/messages/domain/publication';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
+import {
+  RuntimeCompatibilityBoundary,
+  type RuntimeCompatibility,
+} from '@/features/updates/ui/runtime-compatibility-context';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -126,17 +130,43 @@ describe('MessageComposer', () => {
     expect(runtime.reconcile).toHaveBeenCalledOnce();
     expect(runtime.reconcile).toHaveBeenCalledWith(submissionId);
   });
+
+  it('旧协议等待更新时进入只读且不创建发送意图', async () => {
+    const runtime = publisher({ publishResults: [published] });
+    const compatibility: RuntimeCompatibility = {
+      applyUpdate: () => Promise.resolve(),
+      updateWaiting: true,
+      writes: { allowed: false, reason: 'update_required' },
+    };
+    const user = userEvent.setup();
+    renderComposer(runtime.value, compatibility);
+    await user.click(screen.getByRole('button', { name: 'Open the message composer' }));
+    await screen.findByText('Build Agent');
+
+    expect(screen.getByText('Read-only safety mode')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign and send' })).toBeDisabled();
+    expect(runtime.publish).not.toHaveBeenCalled();
+  });
 });
 
-function renderComposer(value: MessagePublisher) {
+function renderComposer(value: MessagePublisher, compatibility?: RuntimeCompatibility) {
+  const composer = (
+    <MessageComposer
+      publisher={value}
+      roomId="!builders:agent-room.test"
+      roomName="Builders Exchange"
+      submissionIds={submissionIds}
+    />
+  );
   return render(
     <I18nextProvider i18n={i18n}>
-      <MessageComposer
-        publisher={value}
-        roomId="!builders:agent-room.test"
-        roomName="Builders Exchange"
-        submissionIds={submissionIds}
-      />
+      {compatibility === undefined ? (
+        composer
+      ) : (
+        <RuntimeCompatibilityBoundary value={compatibility}>
+          {composer}
+        </RuntimeCompatibilityBoundary>
+      )}
     </I18nextProvider>,
   );
 }

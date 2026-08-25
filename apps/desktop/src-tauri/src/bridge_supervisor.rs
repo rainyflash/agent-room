@@ -21,6 +21,7 @@ use url::Url;
 use crate::{
     bridge_lifecycle::{
         BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy, ExitDecision,
+        ResumeDecision, ResumeProbeState, decide_resume,
     },
     desktop_config::DesktopBridgeConfig,
 };
@@ -270,30 +271,33 @@ impl BridgeSupervisorActor {
     }
 
     async fn handle_resume(&mut self) {
-        match self.probe().await {
-            ProbeOutcome::Ready => {
-                let ownership = if self.managed_child_active {
-                    BridgeOwnership::Managed
-                } else {
-                    BridgeOwnership::External
-                };
+        let probe = self.probe().await;
+        let probe_state = match probe {
+            ProbeOutcome::Ready => ResumeProbeState::Ready,
+            ProbeOutcome::Absent => ResumeProbeState::Absent,
+            ProbeOutcome::Blocked(_) => ResumeProbeState::Blocked,
+        };
+        match decide_resume(
+            probe_state,
+            self.managed_child_active,
+            self.policy.snapshot().phase,
+        ) {
+            ResumeDecision::Ready(ownership) => {
                 self.policy.discovered_ready(now_unix_ms(), ownership);
                 self.publish();
             }
-            ProbeOutcome::Absent
-                if !self.managed_child_active
-                    && self.policy.snapshot().phase != BridgePhase::Halted =>
-            {
-                self.start_managed();
-            }
-            ProbeOutcome::Absent => {
+            ResumeDecision::StartManaged => self.start_managed(),
+            ResumeDecision::KeepProbing => {
                 self.policy.set_diagnostic(
                     now_unix_ms(),
                     "desktop.bridge.resume_probe_pending".to_owned(),
                 );
                 self.publish();
             }
-            ProbeOutcome::Blocked(code) => {
+            ResumeDecision::Halt => {
+                let ProbeOutcome::Blocked(code) = probe else {
+                    unreachable!("阻断恢复决策只能来自阻断探测")
+                };
                 self.policy.halt(now_unix_ms(), code);
                 self.publish();
             }
