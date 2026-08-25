@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react';
 import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
+import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import {
@@ -117,6 +118,9 @@ function LobbyInstanceBoundary() {
         onExitRoom={() => {
           void navigate({ to: '/connect' });
         }}
+        onOpenSecurity={() => {
+          void navigate({ params: { section: 'security' }, to: '/settings/$section' });
+        }}
         onSelectedAgentChange={(agentId) => {
           void navigate({
             replace: true,
@@ -147,10 +151,20 @@ function LobbyInstanceBoundary() {
 
 function SettingsBoundary() {
   const { section } = settingsRoute.useParams();
+  const navigate = settingsRoute.useNavigate();
+  const valid = routeIdentifierSchema.safeParse(section).success;
+  if (!valid || section !== 'security') {
+    return <RouteUnavailable invalid={!valid} routeLabel={`/settings/${section}`} />;
+  }
   return (
-    <RouteUnavailable
-      invalid={!routeIdentifierSchema.safeParse(section).success}
-      routeLabel={`/settings/${section}`}
+    <SecurityPage
+      onBack={() => {
+        if (window.history.length > 1) {
+          window.history.back();
+          return;
+        }
+        void navigate({ to: '/connect' });
+      }}
     />
   );
 }

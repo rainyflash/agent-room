@@ -1,5 +1,5 @@
 import { Button } from '@agent-room/ui-system';
-import { RotateCw } from 'lucide-react';
+import { RotateCw, ShieldCheck } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -29,6 +29,7 @@ export type LobbyPageProps = {
   readonly catalogId: string;
   readonly onEnterRoom: (catalogId: string, matrixRoomId: string) => void;
   readonly onExitRoom: () => void;
+  readonly onOpenSecurity: () => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -43,6 +44,7 @@ export function LobbyPage({
   catalogId,
   onEnterRoom,
   onExitRoom,
+  onOpenSecurity,
   onSelectedAgentChange,
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
@@ -70,6 +72,7 @@ export function LobbyPage({
       key={state.room.roomId}
       onEnterRoom={onEnterRoom}
       onExitRoom={onExitRoom}
+      onOpenSecurity={onOpenSecurity}
       onSelectedAgentChange={onSelectedAgentChange}
       onSelectedDirectSessionChange={onSelectedDirectSessionChange}
       onSelectedMessageChange={onSelectedMessageChange}
@@ -90,6 +93,7 @@ function ReadyLobby({
   catalogId,
   onEnterRoom,
   onExitRoom,
+  onOpenSecurity,
   onSelectedAgentChange,
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
@@ -157,12 +161,24 @@ function ReadyLobby({
       <RoomBeacon
         actions={
           principal === null ? undefined : (
-            <PrivateRoomHub
-              currentCatalogId={catalogId}
-              onEnterRoom={onEnterRoom}
-              onExitRoom={onExitRoom}
-              principal={principal}
-            />
+            <>
+              <Button
+                aria-label={t('security.launcher')}
+                className="security-launcher"
+                icon={<ShieldCheck aria-hidden="true" />}
+                onClick={onOpenSecurity}
+                size="compact"
+                tone="quiet"
+              >
+                {t('security.launcher')}
+              </Button>
+              <PrivateRoomHub
+                currentCatalogId={catalogId}
+                onEnterRoom={onEnterRoom}
+                onExitRoom={onExitRoom}
+                principal={principal}
+              />
+            </>
           )
         }
         agentCount={room.agents.length}

@@ -690,8 +690,10 @@
 .room-beacon__actions {
   display: flex;
   align-items: center;
+  gap: 0.2rem;
 }
 
+.security-launcher,
 .private-room-launcher {
   position: relative;
   color: var(--color-paper);
@@ -4087,7 +4089,8 @@ p.message-dock__headline {
     display: none;
   }
 
-  .private-room-launcher > span:last-child {
+  .private-room-launcher > span:last-child,
+  .security-launcher > span:last-child {
     display: none;
   }
 

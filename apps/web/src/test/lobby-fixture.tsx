@@ -292,6 +292,7 @@ function LobbyFixture() {
             catalogId="public-builders"
             onEnterRoom={() => undefined}
             onExitRoom={() => undefined}
+            onOpenSecurity={() => undefined}
             onSelectedAgentChange={setSelectedAgentId}
             onSelectedDirectSessionChange={setSelectedDirectSessionId}
             onSelectedMessageChange={setSelectedMessageId}

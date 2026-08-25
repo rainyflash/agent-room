@@ -1,4 +1,5 @@
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
+import { securityResources } from '@/features/security/i18n/security-resources';
 
 export const resources = {
   en: {
@@ -462,6 +463,7 @@ export const resources = {
       'pwa.update.action': 'Reload update',
       'pwa.update.dismiss': 'Later',
       ...privateRoomResources.en,
+      ...securityResources.en,
     },
   },
   'zh-CN': {
@@ -881,6 +883,7 @@ export const resources = {
       'pwa.update.action': '重新加载更新',
       'pwa.update.dismiss': '稍后',
       ...privateRoomResources['zh-CN'],
+      ...securityResources['zh-CN'],
     },
   },
 } as const;
