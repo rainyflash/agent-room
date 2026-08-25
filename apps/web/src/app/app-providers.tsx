@@ -4,6 +4,9 @@ import { useMemo } from 'react';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
+import { ControlPlaneDirectSessionClient } from '@/features/direct-sessions/adapters/control-plane-direct-session-client';
+import { MatrixSdkDirectSessionGateway } from '@/features/direct-sessions/adapters/matrix-direct-session-gateway';
+import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-observer-handoff-gateway';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
@@ -57,6 +60,9 @@ function createRuntime(config: RuntimeConfig) {
   const contentVerifier = new BrowserContentVerifier();
   const privateRooms = new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl });
   const privateRoomMatrix = new MatrixSdkPrivateRoomGateway(matrixClients);
+  const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
+  const directSessionMatrix = new MatrixSdkDirectSessionGateway(matrixClients);
+  const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix);
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
@@ -73,6 +79,8 @@ function createRuntime(config: RuntimeConfig) {
     content,
     contentVerifier,
     controlPlane,
+    directSessionCoordinator,
+    directSessions,
     handoffs,
     lobby,
     messagePublisher,

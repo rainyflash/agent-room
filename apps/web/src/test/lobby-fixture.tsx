@@ -8,6 +8,11 @@ import '@/app/styles.css';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import type {
+  DirectSessionGateway,
+  DirectSessionMatrixGateway,
+} from '@/features/direct-sessions/domain/direct-session';
 import type {
   HandoffApprovalRequest,
   HandoffGateway,
@@ -70,6 +75,23 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
 };
+const unavailableDirectSession = async () =>
+  err({ code: 'direct_session.fixture_unavailable', retryable: false });
+const directSessions: DirectSessionGateway = {
+  inspect: unavailableDirectSession,
+  list: async () => ok([]),
+  open: unavailableDirectSession,
+  setBlocked: unavailableDirectSession,
+};
+const directSessionMatrix: DirectSessionMatrixGateway = {
+  markDisplayed: unavailableDirectSession,
+  prepare: unavailableDirectSession,
+  setIgnored: unavailableDirectSession,
+};
+const directSessionCoordinator = new DirectSessionCoordinator(
+  directSessions,
+  directSessionMatrix,
+);
 const fixtureContent =
   '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
 const contentReadCounts = { downloads: 0, tickets: 0 };
@@ -203,6 +225,8 @@ const services: AppServices = {
   content,
   contentVerifier,
   controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
+  directSessionCoordinator,
+  directSessions,
   handoffs: new FixtureHandoffGateway(),
   lobby,
   messagePublisher: new FixtureMessagePublisher(),

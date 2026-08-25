@@ -1,5 +1,7 @@
 import { createContext, useContext, type PropsWithChildren } from 'react';
 
+import type { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import type { DirectSessionGateway } from '@/features/direct-sessions/domain/direct-session';
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -17,6 +19,8 @@ export type AppServices = {
   readonly content: ContentGateway;
   readonly contentVerifier: ContentVerifier;
   readonly controlPlane: ControlPlaneClient;
+  readonly directSessionCoordinator: DirectSessionCoordinator;
+  readonly directSessions: DirectSessionGateway;
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly messages: MessageGateway;
