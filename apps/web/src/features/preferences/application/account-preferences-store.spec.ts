@@ -5,6 +5,7 @@ import {
   createAccountPreferencesDocument,
   mergeAccountPreferencesDocuments,
   updateAccountPreference,
+  valuesFromAccountPreferences,
   type AccountPreferenceValues,
   type AccountPreferencesDocument,
 } from '@/features/preferences/domain/account-preferences';
@@ -55,6 +56,50 @@ describe('账户偏好同步仓库', () => {
     expect(store.getSnapshot().values).toEqual({ language: 'zh-CN', lobbyView: 'list' });
     expect(gateway.writes).toHaveLength(1);
     unsubscribe();
+  });
+
+  it.each([
+    { label: '设备乙最后写入', writeOrder: [0, 1] as const },
+    { label: '设备甲最后写入', writeOrder: [1, 0] as const },
+  ])('两个设备真实竞争时最终收敛：$label', async ({ writeOrder }) => {
+    const server = new ContendedPreferencesServer(document('INITIAL_DEVICE'));
+    const storeA = new AccountPreferencesStore(server.gateway('DEVICE_A'), {
+      language: 'system',
+      lobbyView: 'scene',
+    });
+    const storeB = new AccountPreferencesStore(server.gateway('DEVICE_B'), {
+      language: 'system',
+      lobbyView: 'scene',
+    });
+    const unsubscribeA = storeA.subscribe(vi.fn());
+    const unsubscribeB = storeB.subscribe(vi.fn());
+    await Promise.all([expectSnapshot(storeA, 'synced'), expectSnapshot(storeB, 'synced')]);
+
+    server.captureConcurrentWrites();
+    expect(storeA.update('language', 'zh-CN')).toEqual({ ok: true, value: undefined });
+    expect(storeB.update('lobbyView', 'list')).toEqual({ ok: true, value: undefined });
+    await vi.waitFor(() => {
+      expect(server.capturedWriteCount()).toBe(2);
+    });
+
+    server.releaseConcurrentWrites(writeOrder);
+
+    await vi.waitFor(() => {
+      expect(server.values()).toEqual({ language: 'zh-CN', lobbyView: 'list' });
+      expect(storeA.getSnapshot()).toMatchObject({
+        failure: null,
+        status: 'synced',
+        values: { language: 'zh-CN', lobbyView: 'list' },
+      });
+      expect(storeB.getSnapshot()).toMatchObject({
+        failure: null,
+        status: 'synced',
+        values: { language: 'zh-CN', lobbyView: 'list' },
+      });
+    });
+
+    unsubscribeA();
+    unsubscribeB();
   });
 
   it('断线写入保持待同步，网络活动后自动重试并确认', async () => {
@@ -176,6 +221,85 @@ class FakePreferencesGateway implements AccountPreferencesGateway {
 
   notify(): void {
     for (const listener of this.listeners) {
+      listener();
+    }
+  }
+}
+
+class ContendedPreferencesServer {
+  readonly #listeners = new Set<() => void>();
+  #captureWrites = false;
+  #capturedWrites: Array<{
+    readonly document: AccountPreferencesDocument;
+    readonly resolve: (result: Result<void, AccountPreferencesSyncFailure>) => void;
+  }> = [];
+  #remote: AccountPreferencesDocument;
+
+  constructor(initial: AccountPreferencesDocument) {
+    this.#remote = initial;
+  }
+
+  gateway(writerId: string): AccountPreferencesGateway {
+    return {
+      read: () => Promise.resolve(ok(this.#remote)),
+      scope: () => ({ accountId: '@operator:agent-room.test', writerId }),
+      subscribe: (listener) => {
+        this.#listeners.add(listener);
+        return () => {
+          this.#listeners.delete(listener);
+        };
+      },
+      write: (documentValue) => this.#write(documentValue),
+    };
+  }
+
+  captureConcurrentWrites(): void {
+    this.#captureWrites = true;
+  }
+
+  capturedWriteCount(): number {
+    return this.#capturedWrites.length;
+  }
+
+  releaseConcurrentWrites(writeOrder: readonly [number, number]): void {
+    if (this.#capturedWrites.length !== writeOrder.length) {
+      throw new Error('并发写入尚未全部到达测试栅栏。');
+    }
+    const captured = this.#capturedWrites;
+    this.#capturedWrites = [];
+    this.#captureWrites = false;
+    for (const index of writeOrder) {
+      const write = captured[index];
+      if (write === undefined) {
+        throw new Error('并发写入顺序包含无效索引。');
+      }
+      this.#remote = write.document;
+    }
+    for (const write of captured) {
+      write.resolve(ok(undefined));
+    }
+    this.#notify();
+  }
+
+  values(): AccountPreferenceValues {
+    return valuesFromAccountPreferences(this.#remote);
+  }
+
+  #write(
+    documentValue: AccountPreferencesDocument,
+  ): Promise<Result<void, AccountPreferencesSyncFailure>> {
+    if (!this.#captureWrites) {
+      this.#remote = documentValue;
+      this.#notify();
+      return Promise.resolve(ok(undefined));
+    }
+    return new Promise((resolve) => {
+      this.#capturedWrites.push({ document: documentValue, resolve });
+    });
+  }
+
+  #notify(): void {
+    for (const listener of this.#listeners) {
       listener();
     }
   }
