@@ -2,6 +2,7 @@ import { automationResources } from '@/features/automation/i18n/automation-resou
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
+import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
   en: {
@@ -10,9 +11,16 @@ export const resources = {
       'app.environment': 'FEDERATED OPERATIONS LOBBY',
       'app.skipToContent': 'Skip to main content',
       'app.language': 'Language',
+      'app.language.account': 'Account default',
+      'app.language.device': 'This device only',
       'app.language.system': 'System',
       'app.language.english': 'English',
       'app.language.chinese': '简体中文',
+      'bootstrap.failure.title': 'Agent Room could not start',
+      'bootstrap.failure.detail':
+        'Reload the page. If the failure persists, verify the runtime configuration.',
+      'bootstrap.failure.log':
+        'Agent Room bootstrap failed before a recoverable session could be created.',
       'desktop.runtime.title': 'Desktop runtime',
       'desktop.phase.discovering': 'Inspecting Bridge',
       'desktop.phase.starting': 'Starting Bridge',
@@ -56,9 +64,12 @@ export const resources = {
       'route.invalid.description':
         'A required path identifier is malformed. Nothing was fetched or inferred from it.',
       'config.title': 'Runtime configuration is invalid',
+      'config.eyebrow': 'RUNTIME / CONFIGURATION',
       'config.description':
         'The client stopped before opening a network session. Correct the build-time origins and reload.',
       'connection.eyebrow': 'CONNECTION BAY / SESSION 01',
+      'connection.transport': 'WEB / MATRIX',
+      'connection.session': 'SESSION 01',
       'connection.title': 'Bring the room online',
       'connection.subtitle':
         'One human identity, one Matrix device, and explicit truth for every dependency.',
@@ -333,6 +344,24 @@ export const resources = {
       'messages.body.download': 'Download verified file',
       'messages.body.safeMarkdown':
         'Restricted Markdown view: HTML is inert and links are not activated.',
+      'messages.translation.title': 'Optional local translation',
+      'messages.translation.detail':
+        'Runs only after this click. Your browser may download a language pack; the verified original remains unchanged.',
+      'messages.translation.action': 'Translate explicitly',
+      'messages.translation.running': 'Translating locally',
+      'messages.translation.machineBadge': 'Machine translation',
+      'messages.translation.originalPreserved':
+        'Generated view only. The verified original above remains the source of truth.',
+      'messages.translation.failure.invalid_language':
+        'The sender did not declare a supported source language.',
+      'messages.translation.failure.same_language':
+        'The message is already in this interface language.',
+      'messages.translation.failure.unavailable':
+        'This desktop browser does not provide local translation for this language pair.',
+      'messages.translation.failure.creation_failed':
+        'The browser could not prepare its local translation model. Try again later.',
+      'messages.translation.failure.translation_failed':
+        'Local translation failed. The verified original is still available.',
       'handoff.gate.title': 'Give verified content to an Agent',
       'handoff.gate.detail':
         'Viewing stops here. A separate approval chooses one exact instance, scope, purpose, and expiry.',
@@ -510,9 +539,14 @@ export const resources = {
       'app.environment': '联邦式 AGENT 运营大厅',
       'app.skipToContent': '跳到主要内容',
       'app.language': '语言',
+      'app.language.account': '账户默认',
+      'app.language.device': '仅此设备',
       'app.language.system': '跟随系统',
       'app.language.english': 'English',
       'app.language.chinese': '简体中文',
+      'bootstrap.failure.title': 'Agent Room 无法启动',
+      'bootstrap.failure.detail': '请重新加载页面；如果问题持续，请检查运行时配置。',
+      'bootstrap.failure.log': 'Agent Room 在建立可恢复会话前启动失败。',
       'desktop.runtime.title': '桌面运行时',
       'desktop.phase.discovering': '正在检查 Bridge',
       'desktop.phase.starting': '正在启动 Bridge',
@@ -554,8 +588,11 @@ export const resources = {
       'route.invalid.title': '无法解析这个路由',
       'route.invalid.description': '必需的路径标识格式错误；客户端没有据此请求或推测任何数据。',
       'config.title': '运行配置无效',
+      'config.eyebrow': '运行时 / 配置',
       'config.description': '客户端在建立网络会话前已停止。请修正构建期 Origin 后重新加载。',
       'connection.eyebrow': '连接舱 / 会话 01',
+      'connection.transport': '网页 / MATRIX',
+      'connection.session': '会话 01',
       'connection.title': '让大厅真正上线',
       'connection.subtitle': '一个人类身份、一个 Matrix 设备，每个依赖都只显示真实状态。',
       'connection.liveRegion': '连接阶段：{{stage}}。{{detail}}',
@@ -808,6 +845,18 @@ export const resources = {
       'messages.body.attachmentNotice': '附件已经验证，但绝不会自动执行或自动打开。',
       'messages.body.download': '下载已验证文件',
       'messages.body.safeMarkdown': '受限 Markdown 视图：HTML 不生效，链接不可直接点击。',
+      'messages.translation.title': '可选的本地翻译',
+      'messages.translation.detail': '仅在点击后执行。浏览器可能下载语言包；已验证原文不会被修改。',
+      'messages.translation.action': '明确翻译',
+      'messages.translation.running': '正在本地翻译',
+      'messages.translation.machineBadge': '机器翻译',
+      'messages.translation.originalPreserved':
+        '这里只是生成视图；上方已验证原文仍是唯一可信来源。',
+      'messages.translation.failure.invalid_language': '发送方没有声明受支持的原文语言。',
+      'messages.translation.failure.same_language': '消息已经使用当前界面语言。',
+      'messages.translation.failure.unavailable': '此桌面浏览器不提供该语言组合的本地翻译。',
+      'messages.translation.failure.creation_failed': '浏览器无法准备本地翻译模型，请稍后重试。',
+      'messages.translation.failure.translation_failed': '本地翻译失败，已验证原文仍然可用。',
       'handoff.gate.title': '把已验证内容交给 Agent',
       'handoff.gate.detail':
         '查看正文到此为止。交付需要另一项独立授权，明确选择实例、范围、用途和期限。',
@@ -961,4 +1010,12 @@ export const resources = {
   },
 } as const;
 
-export type SupportedLanguage = keyof typeof resources;
+type ResourceLanguage = keyof typeof resources;
+type CatalogLanguagesMatch = ResourceLanguage extends SupportedLanguage
+  ? SupportedLanguage extends ResourceLanguage
+    ? true
+    : never
+  : never;
+
+export const catalogLanguagesMatch: CatalogLanguagesMatch = true;
+export type { SupportedLanguage } from '@/shared/i18n/language';

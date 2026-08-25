@@ -48,11 +48,18 @@ describe('账户偏好 React 边界', () => {
       </I18nextProvider>,
     );
 
-    await user.selectOptions(screen.getByRole('combobox'), 'zh-CN');
+    await user.selectOptions(screen.getByRole('combobox'), 'account:zh-CN');
     await waitFor(() => {
       expect(document.documentElement.lang).toBe('zh-CN');
     });
     expect(window.localStorage.getItem('agent-room.language')).toBe('zh-CN');
+    expect(store.getSnapshot().values.language).toBe('zh-CN');
+
+    await user.selectOptions(screen.getByRole('combobox'), 'device:en');
+    await waitFor(() => {
+      expect(document.documentElement.lang).toBe('en');
+    });
+    expect(window.localStorage.getItem('agent-room.language.device-override')).toBe('en');
     expect(store.getSnapshot().values.language).toBe('zh-CN');
 
     await user.click(screen.getByRole('button', { name: '切换列表视图' }));

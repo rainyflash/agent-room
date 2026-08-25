@@ -22,9 +22,12 @@ import { HandoffPanel } from '@/features/handoffs/ui/handoff-panel';
 import { createContentInspectionMachine } from '@/features/messages/application/content-inspection-machine';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageSignatureStatus, RoomMessageSignal } from '@/features/messages/domain/message';
+import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
+import { ExplicitMachineTranslation } from '@/features/messages/ui/explicit-machine-translation';
 import { RestrictedMarkdown } from '@/features/messages/ui/restricted-markdown';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import { MessageReportControl } from '@/features/moderation/ui/message-report-control';
+import { formatBytes, formatDateTime } from '@/shared/i18n/formatters';
 
 const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>> = Object.freeze({
   instance_verified: ShieldCheck,
@@ -40,6 +43,7 @@ export type ContentInspectorProps = {
   readonly message: RoomMessageSignal;
   readonly moderationGateway: ModerationGateway;
   readonly onClose: () => void;
+  readonly translationGateway: MachineTranslationGateway;
 };
 
 export function ContentInspector({
@@ -50,6 +54,7 @@ export function ContentInspector({
   message,
   moderationGateway,
   onClose,
+  translationGateway,
 }: ContentInspectorProps) {
   const { i18n, t } = useTranslation();
   const reduceMotion = useReducedMotion();
@@ -59,10 +64,7 @@ export function ContentInspector({
   );
   const [inspection, send] = useMachine(machine);
   const [handoffOpen, setHandoffOpen] = useState(false);
-  const createdAt = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(message.serverTimestamp);
+  const createdAt = formatDateTime(message.serverTimestamp, i18n.resolvedLanguage);
   const preview = message.preview;
   const reference = message.content;
   const content = inspection.context.content;
@@ -257,6 +259,14 @@ export function ContentInspector({
                   </p>
                 ) : null}
               </section>
+              {content.mode === 'text' && content.text !== undefined ? (
+                <ExplicitMachineTranslation
+                  gateway={translationGateway}
+                  mediaType={content.mediaType}
+                  originalText={content.text}
+                  sourceLanguage={preview.language}
+                />
+              ) : null}
               <section className="content-inspector__handoff-gate">
                 <Bot aria-hidden="true" />
                 <div>
@@ -293,17 +303,6 @@ export function ContentInspector({
 
 function initials(displayName: string): string {
   return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
-}
-
-function formatBytes(value: number, language: string | undefined): string {
-  const formatter = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
-  if (value < 1_024) {
-    return `${formatter.format(value)} B`;
-  }
-  if (value < 1_024 * 1_024) {
-    return `${formatter.format(value / 1_024)} KiB`;
-  }
-  return `${formatter.format(value / (1_024 * 1_024))} MiB`;
 }
 
 function downloadVerifiedContent(bytes: Uint8Array, mediaType: string, contentId: string): void {

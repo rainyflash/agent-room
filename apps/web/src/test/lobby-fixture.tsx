@@ -457,6 +457,9 @@ const services: AppServices = {
   lobby,
   messagePublisher: new FixtureMessagePublisher(),
   messages,
+  messageTranslation: {
+    translate: async () => err({ code: 'unavailable' as const, retryable: false }),
+  },
   moderation,
   privateRoomMatrix,
   privateRooms,

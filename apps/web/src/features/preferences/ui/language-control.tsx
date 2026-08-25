@@ -7,9 +7,16 @@ import {
   type LanguagePreference,
 } from '@/features/preferences/domain/account-preferences';
 import { useOptionalAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
-import { readLanguagePreference, setLanguagePreference } from '@/shared/i18n/i18n';
+import {
+  readDeviceLanguageOverride,
+  readLanguagePreference,
+  setDeviceLanguageOverride,
+  setLanguagePreference,
+} from '@/shared/i18n/i18n';
+import { isDeviceLanguageOverride, type DeviceLanguageOverride } from '@/shared/i18n/language';
 
 const preferences: readonly LanguagePreference[] = ['system', 'en', 'zh-CN'];
+type LanguageSelection = `account:${LanguagePreference}` | `device:${LanguagePreference}`;
 
 export function LanguageControl() {
   const { t } = useTranslation();
@@ -17,7 +24,13 @@ export function LanguageControl() {
   const [localPreference, setLocalPreference] = useState<LanguagePreference>(() =>
     readLanguagePreference(window.localStorage),
   );
+  const [localDeviceOverride, setLocalDeviceOverride] = useState<DeviceLanguageOverride>(() =>
+    readDeviceLanguageOverride(window.localStorage),
+  );
   const preference = accountPreferences?.snapshot.values.language ?? localPreference;
+  const deviceOverride = accountPreferences?.deviceLanguageOverride ?? localDeviceOverride;
+  const selection: LanguageSelection =
+    deviceOverride === 'account' ? `account:${preference}` : `device:${deviceOverride}`;
 
   const labels: Readonly<Record<LanguagePreference, string>> = {
     en: t('app.language.english'),
@@ -32,25 +45,64 @@ export function LanguageControl() {
       <select
         aria-label={t('app.language')}
         onChange={(event) => {
-          const next = event.target.value;
-          if (!isLanguagePreference(next)) {
+          const next = parseLanguageSelection(event.target.value);
+          if (next === null) {
             throw new Error('语言选择器产生了不受支持的偏好值。');
           }
-          if (accountPreferences === null) {
-            setLocalPreference(next);
-            void setLanguagePreference(next);
+          if (next.scope === 'device') {
+            if (accountPreferences === null) {
+              setLocalDeviceOverride(next.preference);
+              void setDeviceLanguageOverride(next.preference, preference);
+              return;
+            }
+            accountPreferences.setDeviceLanguageOverride(next.preference);
             return;
           }
-          accountPreferences.setLanguage(next);
+          if (accountPreferences === null) {
+            setLocalPreference(next.preference);
+            setLocalDeviceOverride('account');
+            void setDeviceLanguageOverride('account', next.preference);
+            void setLanguagePreference(next.preference);
+            return;
+          }
+          accountPreferences.setDeviceLanguageOverride('account');
+          accountPreferences.setLanguage(next.preference);
         }}
-        value={preference}
+        value={selection}
       >
-        {preferences.map((value) => (
-          <option key={value} value={value}>
-            {labels[value]}
-          </option>
-        ))}
+        <optgroup label={t('app.language.account')}>
+          {preferences.map((value) => (
+            <option key={`account:${value}`} value={`account:${value}`}>
+              {labels[value]}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label={t('app.language.device')}>
+          {preferences.map((value) => (
+            <option key={`device:${value}`} value={`device:${value}`}>
+              {labels[value]}
+            </option>
+          ))}
+        </optgroup>
       </select>
     </label>
   );
+}
+
+function parseLanguageSelection(
+  value: string,
+): { readonly preference: LanguagePreference; readonly scope: 'account' | 'device' } | null {
+  const [scope, preference, extra] = value.split(':');
+  if (
+    extra !== undefined ||
+    (scope !== 'account' && scope !== 'device') ||
+    preference === undefined ||
+    !isLanguagePreference(preference)
+  ) {
+    return null;
+  }
+  if (scope === 'device' && !isDeviceLanguageOverride(preference)) {
+    return null;
+  }
+  return { preference, scope };
 }

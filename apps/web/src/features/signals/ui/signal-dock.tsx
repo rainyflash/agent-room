@@ -27,6 +27,7 @@ import {
   type SignalProjection,
 } from '@/features/signals/domain/signal';
 import { MessageProvenanceMark } from '@/features/messages/ui/message-provenance-mark';
+import { formatDateTime, formatRelativeTime } from '@/shared/i18n/formatters';
 
 const MAX_VISIBLE_SIGNALS = 50;
 
@@ -76,10 +77,7 @@ export function SignalDock({
     displayedSignals.some((signal) => signal.kind === kind),
   );
   const featuredSignal = displayedSignals[0] ?? null;
-  const formatter = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const language = i18n.resolvedLanguage;
 
   const toggleFrozen = (): void => {
     if (frozen) {
@@ -175,7 +173,7 @@ export function SignalDock({
             <ol aria-label={t('signals.dock.listLabel')} className="message-dock__list">
               {visibleSignals.slice(0, MAX_VISIBLE_SIGNALS).map((signal) => (
                 <SignalRow
-                  formatter={formatter}
+                  language={language}
                   key={signal.signalId}
                   onAction={onAction}
                   selected={selectedSignalId === signal.signalId}
@@ -231,12 +229,12 @@ function DockHeadline({
 }
 
 function SignalRow({
-  formatter,
+  language,
   onAction,
   selected,
   signal,
 }: {
-  readonly formatter: Intl.DateTimeFormat;
+  readonly language: string | undefined;
   readonly onAction: (action: SignalAction) => void;
   readonly selected: boolean;
   readonly signal: SignalProjection;
@@ -267,7 +265,9 @@ function SignalRow({
               )}
             </span>
             <time dateTime={new Date(signal.occurredAtUnixMs).toISOString()}>
-              {formatter.format(signal.occurredAtUnixMs)}
+              <span title={formatDateTime(signal.occurredAtUnixMs, language)}>
+                {formatRelativeTime(signal.occurredAtUnixMs, Date.now(), language)}
+              </span>
             </time>
           </span>
           <span className="message-signal__title">

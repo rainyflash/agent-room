@@ -8,7 +8,8 @@ import '@/app/styles.css';
 import { AppProviders } from '@/app/app-providers';
 import { ConfigurationFailure } from '@/app/configuration-failure';
 import { loadRuntimeConfig } from '@/shared/config/runtime-config';
-import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { i18n, initializeI18n, resolveSystemLanguage } from '@/shared/i18n/i18n';
+import { resources } from '@/shared/i18n/resources';
 
 async function bootstrap(): Promise<void> {
   await initializeI18n();
@@ -31,17 +32,18 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap().catch(() => {
+  const language = resolveSystemLanguage(window.navigator.languages);
+  const messages = resources[language].translation;
   const rootElement = document.querySelector('#root');
   if (rootElement instanceof HTMLElement) {
     const main = document.createElement('main');
     const title = document.createElement('h1');
     const detail = document.createElement('p');
     main.style.padding = '2rem';
-    title.textContent = 'Agent Room could not start';
-    detail.textContent =
-      'Reload the page. If the failure persists, verify the runtime configuration.';
+    title.textContent = messages['bootstrap.failure.title'];
+    detail.textContent = messages['bootstrap.failure.detail'];
     main.append(title, detail);
     rootElement.replaceChildren(main);
   }
-  console.error('Agent Room bootstrap failed before a recoverable session could be created.');
+  console.error(messages['bootstrap.failure.log']);
 });

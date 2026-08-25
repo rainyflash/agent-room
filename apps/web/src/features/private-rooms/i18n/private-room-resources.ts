@@ -96,6 +96,7 @@ const en = {
   'privateRooms.governance.invite.detail':
     'The Control Plane resolves the trusted Matrix identity; do not paste a Matrix user ID here.',
   'privateRooms.governance.invite.principal': 'Principal UUIDv7',
+  'privateRooms.governance.invite.principalPlaceholder': '0198b601-…',
   'privateRooms.governance.invite.permissions': 'Invitation permissions',
   'privateRooms.governance.members.title': 'Membership ledger',
   'privateRooms.governance.members.detail':
@@ -207,6 +208,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.invite.detail':
     'Control Plane 会解析可信 Matrix 身份；这里不要粘贴 Matrix 用户 ID。',
   'privateRooms.governance.invite.principal': '主体 UUIDv7',
+  'privateRooms.governance.invite.principalPlaceholder': '0198b601-…',
   'privateRooms.governance.invite.permissions': '邀请权限',
   'privateRooms.governance.members.title': '成员账本',
   'privateRooms.governance.members.detail':

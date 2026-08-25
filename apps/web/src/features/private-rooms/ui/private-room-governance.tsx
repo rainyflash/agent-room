@@ -132,7 +132,7 @@ export function PrivateRoomGovernance({
             <input
               disabled={mutation.isPending}
               onChange={(event) => setInvitee(event.target.value)}
-              placeholder="0198b601-…"
+              placeholder={t('privateRooms.governance.invite.principalPlaceholder')}
               value={invitee}
             />
           </label>

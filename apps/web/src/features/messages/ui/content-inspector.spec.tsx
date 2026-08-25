@@ -10,6 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
+import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
@@ -85,6 +86,22 @@ describe('ContentInspector', () => {
         }),
       }),
     );
+  });
+
+  it('机器翻译必须显式点击，结果标记为机器生成且原文保持可见', async () => {
+    const user = userEvent.setup();
+    const runtime = dependencies('需要保留的原始正文');
+    renderInspector(runtime);
+
+    await user.click(screen.getByRole('button', { name: 'Open full content' }));
+    await screen.findByText('需要保留的原始正文');
+    expect(runtime.translate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Translate explicitly' }));
+    expect(await screen.findByText('Machine translation')).toBeVisible();
+    expect(screen.getByText('Translated locally')).toBeVisible();
+    expect(screen.getByText('需要保留的原始正文')).toBeVisible();
+    expect(runtime.translate).toHaveBeenCalledOnce();
   });
 
   it('撤回消息永远不会出现正文读取按钮', () => {
@@ -206,6 +223,15 @@ function dependencies(text: string) {
       }),
     ),
   );
+  const translate = vi.fn<MachineTranslationGateway['translate']>((request) =>
+    Promise.resolve(
+      ok({
+        ...request,
+        provenance: 'machine' as const,
+        translatedText: 'Translated locally',
+      }),
+    ),
+  );
   const moderation = {
     applyAction: async () =>
       Promise.resolve().then(() => {
@@ -231,6 +257,8 @@ function dependencies(text: string) {
     moderation,
     onClose: vi.fn(),
     report,
+    translate,
+    translation: { translate } satisfies MachineTranslationGateway,
     verifier: { verify } satisfies ContentVerifier,
     verify,
   };
@@ -251,6 +279,7 @@ function renderInspector(
           message={selectedMessage}
           moderationGateway={runtime.moderation}
           onClose={runtime.onClose}
+          translationGateway={runtime.translation}
         />
       </QueryClientProvider>
     </I18nextProvider>,
@@ -279,6 +308,7 @@ function message(): RoomMessageSignal {
     messageId: '01990d9e-8400-7000-8000-000000000003',
     preview: {
       contentType: 'text/markdown',
+      language: 'zh-CN',
       riskFlags: ['untrusted_instructions'],
       sensitivity: 'normal',
       summary: 'Waiting for content approval',

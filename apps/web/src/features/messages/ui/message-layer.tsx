@@ -28,8 +28,15 @@ export function MessageLayer({
   selectedMessageId,
   variant = 'room',
 }: MessageLayerProps) {
-  const { content, contentVerifier, handoffs, messagePublisher, messages, moderation } =
-    useAppServices();
+  const {
+    content,
+    contentVerifier,
+    handoffs,
+    messagePublisher,
+    messages,
+    messageTranslation,
+    moderation,
+  } = useAppServices();
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
@@ -100,6 +107,7 @@ export function MessageLayer({
             onClose={() => {
               onSelectedMessageChange(null);
             }}
+            translationGateway={messageTranslation}
           />
         )}
       </AnimatePresence>

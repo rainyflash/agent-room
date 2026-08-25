@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
 import { err, ok, type Result } from '@/shared/result';
+import type { LanguagePreference } from '@/shared/i18n/language';
+
+export { isLanguagePreference, type LanguagePreference } from '@/shared/i18n/language';
 
 const writerIdSchema = z.string().trim().min(1).max(255);
 const logicalClockSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -20,7 +23,6 @@ const accountPreferencesSchema = z
   })
   .strict();
 
-export type LanguagePreference = 'system' | 'en' | 'zh-CN';
 export type LobbyViewPreference = 'scene' | 'list';
 
 export type AccountPreferenceValues = {
@@ -47,12 +49,6 @@ export type AccountPreferencesFailure = {
     'preferences.clock_exhausted' | 'preferences.invalid_document' | 'preferences.invalid_writer';
   readonly retryable: boolean;
 };
-
-const languagePreferences: ReadonlySet<string> = new Set(['system', 'en', 'zh-CN']);
-
-export function isLanguagePreference(value: string): value is LanguagePreference {
-  return languagePreferences.has(value);
-}
 
 export function parseAccountPreferencesDocument(
   input: unknown,

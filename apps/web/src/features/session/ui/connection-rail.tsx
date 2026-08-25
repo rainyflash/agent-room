@@ -53,8 +53,8 @@ export function ConnectionRail({ stages }: ConnectionRailProps) {
       </ol>
 
       <footer className="connection-rail__footer">
-        <span>WEB / MATRIX</span>
-        <span>SESSION 01</span>
+        <span>{t('connection.transport')}</span>
+        <span>{t('connection.session')}</span>
       </footer>
     </aside>
   );

@@ -20,7 +20,7 @@ export function ConfigurationFailure({ issues }: ConfigurationFailureProps) {
       </header>
       <section className="boundary-page__body">
         <AlertTriangle aria-hidden="true" className="boundary-page__icon" />
-        <p className="eyebrow">RUNTIME / CONFIGURATION</p>
+        <p className="eyebrow">{t('config.eyebrow')}</p>
         <h1>{t('config.title')}</h1>
         <p>{t('config.description')}</p>
         <ul className="configuration-issues">

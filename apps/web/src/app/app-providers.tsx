@@ -13,6 +13,7 @@ import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-obse
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
+import { BrowserMachineTranslationGateway } from '@/features/messages/adapters/browser-machine-translation-gateway';
 import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
@@ -98,6 +99,7 @@ function createRuntime(config: RuntimeConfig) {
   const automation = new ControlPlaneAutomationGrantClient({ baseUrl: config.controlPlaneUrl });
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
+  const messageTranslation = new BrowserMachineTranslationGateway();
   const browser = new WindowBrowserGateway();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -120,6 +122,7 @@ function createRuntime(config: RuntimeConfig) {
     lobby,
     messagePublisher,
     messages,
+    messageTranslation,
     moderation,
     privateRoomMatrix,
     privateRooms,

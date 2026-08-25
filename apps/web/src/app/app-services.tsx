@@ -7,6 +7,7 @@ import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway } from '@/features/messages/domain/message';
+import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import type {
@@ -30,6 +31,7 @@ export type AppServices = {
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly messages: MessageGateway;
+  readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;
   readonly moderation: ModerationGateway;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
