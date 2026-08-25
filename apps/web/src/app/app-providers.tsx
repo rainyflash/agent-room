@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
@@ -32,6 +32,7 @@ export type AppProvidersProps = {
 
 export function AppProviders({ config }: AppProvidersProps) {
   const runtime = useMemo(() => createRuntime(config), [config]);
+  useVerticalSecurityDriver(runtime.matrixClients);
 
   return (
     <QueryClientProvider client={runtime.queryClient}>
@@ -99,8 +100,28 @@ function createRuntime(config: RuntimeConfig) {
   };
 
   return {
+    matrixClients,
     queryClient,
     services,
     sessionDependencies: { browser, controlPlane, matrix },
   };
+}
+
+function useVerticalSecurityDriver(matrixClients: MatrixClientRegistry): void {
+  useEffect(() => {
+    if (import.meta.env.VITE_AGENT_ROOM_VERTICAL_SECURITY_DRIVER !== 'enabled') {
+      return;
+    }
+    let active = true;
+    let uninstall: (() => void) | undefined;
+    void import('@/test/vertical-security-driver').then((driver) => {
+      if (active) {
+        uninstall = driver.installVerticalSecurityDriver(matrixClients);
+      }
+    });
+    return () => {
+      active = false;
+      uninstall?.();
+    };
+  }, [matrixClients]);
 }

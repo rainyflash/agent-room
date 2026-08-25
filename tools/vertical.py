@@ -887,7 +887,10 @@ def start_web(
     processes: ProcessStack,
     redactor: LogRedactor,
     log_root: Path = LOG_ROOT,
+    environment_overrides: Mapping[str, str] | None = None,
 ) -> ManagedProcess:
+    web_environment = os.environ.copy()
+    web_environment.update(environment_overrides or {})
     web = processes.start(
         ManagedProcess(
             name="web",
@@ -901,7 +904,7 @@ def start_web(
                 "5173",
                 "--strictPort",
             ],
-            environment=os.environ.copy(),
+            environment=web_environment,
             log_path=log_root / "web.log",
             redactor=redactor,
         )
@@ -1747,7 +1750,12 @@ def security() -> None:
             start_control_plane(
                 processes, environment, redactor, SECURITY_LOG_ROOT
             )
-            start_web(processes, redactor, SECURITY_LOG_ROOT)
+            start_web(
+                processes,
+                redactor,
+                SECURITY_LOG_ROOT,
+                {"VITE_AGENT_ROOM_VERTICAL_SECURITY_DRIVER": "enabled"},
+            )
             verify_browser_security(environment)
         scanned_logs = verify_sanitized_logs(
             (

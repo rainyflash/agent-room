@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { connectLiveSession } from '../e2e-live/support/live-session';
+import type { VerticalSecuritySample } from '../src/test/vertical-security-driver';
 
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
@@ -19,6 +20,7 @@ test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', asy
     await openSecurity(page);
     await establishEncryptedIdentity(page);
     await setupRecovery(page, recoveryPassphrase);
+    const recoverySample = await createRecoverySample(page);
 
     const second = await openDevice(browser, additionalContexts);
     await connectLiveSession(second, username ?? '', password ?? '');
@@ -29,6 +31,7 @@ test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', asy
     await connectLiveSession(recovered, username ?? '', password ?? '');
     await openSecurity(recovered);
     await recoverNewDevice(recovered, recoveryPassphrase);
+    await decryptRecoverySample(recovered, recoverySample);
   } finally {
     await Promise.all(
       additionalContexts.map(async (context) => {
@@ -124,8 +127,42 @@ async function recoverNewDevice(page: Page, passphrase: string): Promise<void> {
   await expect(recoveryCredential).toBeVisible({ timeout: 10_000 });
   await recoveryCredential.fill(passphrase);
   await page.getByRole('button', { name: /Recover history|恢复历史/u }).click();
-  await expect(page.locator('.security-recovery__complete')).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator('.security-recovery__complete')).toContainText(
+    /Recovered [1-9]\d* of [1-9]\d* encrypted room keys|已恢复 [1-9]\d* \/ [1-9]\d* 个加密房间密钥/u,
+    { timeout: 90_000 },
+  );
   await expect(currentDevice(page)).toContainText(/Verified|已验证/u, { timeout: 60_000 });
+}
+
+async function createRecoverySample(page: Page): Promise<VerticalSecuritySample> {
+  await waitForVerticalSecurityDriver(page);
+  return await page.evaluate(async () => {
+    const driver = window.__agentRoomVerticalSecurityDriver;
+    if (driver === undefined) {
+      throw new Error('纵向安全驱动没有安装。');
+    }
+    return await driver.createRecoverySample();
+  });
+}
+
+async function decryptRecoverySample(page: Page, sample: VerticalSecuritySample): Promise<void> {
+  await waitForVerticalSecurityDriver(page);
+  await page.evaluate(async (candidate) => {
+    const driver = window.__agentRoomVerticalSecurityDriver;
+    if (driver === undefined) {
+      throw new Error('纵向安全驱动没有安装。');
+    }
+    await driver.decryptRecoverySample(candidate);
+  }, sample);
+}
+
+async function waitForVerticalSecurityDriver(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => await page.evaluate(() => window.__agentRoomVerticalSecurityDriver !== undefined),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 }
 
 function currentDevice(page: Page) {
