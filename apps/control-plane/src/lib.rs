@@ -16,6 +16,9 @@ use agent_room_a2a_adapter::{
 };
 use agent_room_application::{
     agent_cards::{AgentCardDependencies, AgentCardService},
+    agent_instance_management::{
+        AgentInstanceManagementDependencies, AgentInstanceManagementService,
+    },
     agent_instance_verification::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
@@ -55,6 +58,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use config::{AuthenticationConfig, ControlPlaneConfig, LobbyConfig};
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
+use features::agent_instances::{AgentInstanceHttpState, AgentInstanceHttpStateDependencies};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
@@ -81,6 +85,7 @@ struct IdentityRuntime {
 
 struct AgentFeatureHttpStates {
     agents: AgentHttpState,
+    instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
@@ -282,6 +287,7 @@ async fn build_identity_router(
     let routes = features::authentication::router(state)
         .merge(features::devices::router(device_state))
         .merge(features::agents::router(agent_features.agents))
+        .merge(features::agent_instances::router(agent_features.instances))
         .merge(features::handoffs::router(agent_features.handoffs))
         .merge(features::lobbies::router(agent_features.lobbies))
         .merge(features::private_rooms::router(
@@ -312,6 +318,11 @@ fn build_agent_feature_states(
     let verification = build_agent_instance_verification(
         dependencies.repositories.clone(),
         dependencies.system_runtime.clone(),
+    );
+    let instances = build_agent_instance_management(
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
     );
     let cards = build_agent_card_management(
         dependencies.repositories.clone(),
@@ -352,6 +363,13 @@ fn build_agent_feature_states(
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),
                 secrets: dependencies.secrets.clone(),
+            },
+            &config.authentication.frontend_origin,
+        ),
+        instances: AgentInstanceHttpState::new(
+            AgentInstanceHttpStateDependencies {
+                instances,
+                authentication: dependencies.authentication.clone(),
             },
             &config.authentication.frontend_origin,
         ),
@@ -523,6 +541,23 @@ fn build_agent_instance_verification(
     Arc::new(AgentInstanceVerificationService::new(
         AgentInstanceVerificationDependencies {
             records: repositories,
+            clock: system_runtime,
+        },
+    ))
+}
+
+fn build_agent_instance_management(
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+    matrix: Arc<MatrixApplicationServiceProvisioner>,
+) -> Arc<AgentInstanceManagementService> {
+    Arc::new(AgentInstanceManagementService::new(
+        AgentInstanceManagementDependencies {
+            instances: repositories.clone(),
+            revocations: repositories.clone(),
+            matrix_cleanup: repositories,
+            matrix,
+            identifiers: system_runtime.clone(),
             clock: system_runtime,
         },
     ))

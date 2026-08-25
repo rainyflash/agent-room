@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use agent_room_application::{
     agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
+    agent_instance_management::{
+        AgentInstanceManagementFailure, AgentInstanceManagementFailureKind,
+    },
     agent_instance_verification::{
         AgentInstanceVerificationFailure, AgentInstanceVerificationFailureKind,
     },
@@ -283,6 +286,45 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "Agent 请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn agent_instance_management(
+        failure: AgentInstanceManagementFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentInstanceManagementFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "agent_instance.forbidden",
+                ErrorCategory::Authorization,
+                "无权管理该 Agent 实例。",
+            ),
+            AgentInstanceManagementFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "agent_instance.not_found",
+                ErrorCategory::Validation,
+                "Agent 实例不存在。",
+            ),
+            AgentInstanceManagementFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_instance.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "Agent 实例管理依赖暂时不可用。",
+            ),
+            AgentInstanceManagementFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "agent_instance.internal",
+                ErrorCategory::Transient,
+                "Agent 实例管理服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "Agent 实例管理请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }
