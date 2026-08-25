@@ -53,6 +53,7 @@ VERTICAL_ROOT: Final = ROOT / ".local" / "vertical"
 BOOTSTRAP_RESULT: Final = VERTICAL_ROOT / "bootstrap.json"
 CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
+SECURITY_LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-27" / "services"
 CATALOG_SEED_ID: Final = "019d2c44-1dc5-7a5b-9e32-2f3c1d4b5a61"
 CATALOG_SLUG: Final = "vertical-codex-lobby"
 SENDER_SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24.sender"
@@ -770,18 +771,20 @@ RETURNING id::text;
     return catalog_id
 
 
-def build_runtime_binaries() -> None:
+def build_runtime_binaries(
+    packages: Sequence[str] = (
+        "agent-room-control-plane",
+        "agent-room-bridge",
+        "agent-room-codex-mcp",
+    ),
+) -> None:
+    package_arguments = [argument for package in packages for argument in ("-p", package)]
     run_checked(
         [
             executable("cargo"),
             "build",
             "--locked",
-            "-p",
-            "agent-room-control-plane",
-            "-p",
-            "agent-room-bridge",
-            "-p",
-            "agent-room-codex-mcp",
+            *package_arguments,
         ]
     )
 
@@ -859,6 +862,7 @@ def start_control_plane(
     processes: ProcessStack,
     environment: Mapping[str, str],
     redactor: LogRedactor,
+    log_root: Path = LOG_ROOT,
 ) -> ManagedProcess:
     control_plane = processes.start(
         ManagedProcess(
@@ -867,7 +871,7 @@ def start_control_plane(
             environment=control_plane_runtime_environment(
                 environment, enable_telemetry=True
             ),
-            log_path=LOG_ROOT / "control-plane.log",
+            log_path=log_root / "control-plane.log",
             redactor=redactor,
         )
     )
@@ -879,7 +883,11 @@ def start_control_plane(
     return control_plane
 
 
-def start_web(processes: ProcessStack, redactor: LogRedactor) -> ManagedProcess:
+def start_web(
+    processes: ProcessStack,
+    redactor: LogRedactor,
+    log_root: Path = LOG_ROOT,
+) -> ManagedProcess:
     web = processes.start(
         ManagedProcess(
             name="web",
@@ -894,7 +902,7 @@ def start_web(processes: ProcessStack, redactor: LogRedactor) -> ManagedProcess:
                 "--strictPort",
             ],
             environment=os.environ.copy(),
-            log_path=LOG_ROOT / "web.log",
+            log_path=log_root / "web.log",
             redactor=redactor,
         )
     )
@@ -935,6 +943,31 @@ def bootstrap_agent(environment: Mapping[str, str]) -> dict[str, str]:
         if not result.get(name, "").startswith("@"):
             raise VerticalFailure(f"浏览器引导结果缺少有效 {name}。")
     return result
+
+
+def verify_browser_security(environment: Mapping[str, str]) -> None:
+    """在全新 Synapse 中运行三设备交叉签名、SAS 与恢复验收。"""
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(
+                environment, "SEED_ADMIN_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_EVIDENCE_TASK": "task-27",
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "security.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
 
 
 def start_authorized_bridge(
@@ -1704,13 +1737,49 @@ def bootstrap() -> None:
     )
 
 
+def security() -> None:
+    environment = prepare_environment()
+    build_runtime_binaries(("agent-room-control-plane",))
+    with IsolatedInfrastructure():
+        initialize_isolated_dependencies()
+        redactor = LogRedactor(environment)
+        with ProcessStack() as processes:
+            start_control_plane(
+                processes, environment, redactor, SECURITY_LOG_ROOT
+            )
+            start_web(processes, redactor, SECURITY_LOG_ROOT)
+            verify_browser_security(environment)
+        scanned_logs = verify_sanitized_logs(
+            (
+                SECURITY_LOG_ROOT / "control-plane.log",
+                SECURITY_LOG_ROOT / "web.log",
+            ),
+            redactor,
+        )
+    print(
+        json.dumps(
+            {
+                "devices": "3",
+                "logFilesScanned": str(len(scanned_logs)),
+                "scenario": "cross-signing+sas+recovery",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("bootstrap",), nargs="?", default="bootstrap")
+    parser.add_argument(
+        "action", choices=("bootstrap", "security"), nargs="?", default="bootstrap"
+    )
     arguments = parser.parse_args()
     try:
         if arguments.action == "bootstrap":
             bootstrap()
+        elif arguments.action == "security":
+            security()
     except (
         LocalRuntimeError,
         McpClientFailure,

@@ -161,7 +161,7 @@ export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
                 pendingDeviceId={
                   beginVerification.isPending ? beginVerification.variables.deviceId : null
                 }
-                verificationAvailable={inspection.data.value.crossSigningReady}
+                verificationAvailable={inspection.data.value.crossSigningIdentityExists}
                 verificationOpen={beginVerification.isPending || verification !== null}
               />
             </div>
@@ -239,7 +239,7 @@ function reviewRecovery(): void {
 function postureAction(
   snapshot: {
     readonly blockers: readonly MatrixSecurityBlocker[];
-    readonly crossSigningReady: boolean;
+    readonly crossSigningIdentityExists: boolean;
     readonly devices: readonly MatrixSecurityDevice[];
     readonly kind: 'action_required' | 'blocked' | 'ready';
   },
@@ -252,7 +252,7 @@ function postureAction(
   if (snapshot.kind === 'ready') {
     return null;
   }
-  if (!snapshot.crossSigningReady) {
+  if (!snapshot.crossSigningIdentityExists) {
     return { kind: 'establish_identity', onSelect: establishIdentity, pending: identityPending };
   }
   const currentDevice = snapshot.devices.find((device) => device.current);

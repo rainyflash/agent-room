@@ -1,10 +1,12 @@
 import { defineConfig } from '@playwright/test';
 
+const evidenceTask = process.env.AGENT_ROOM_VERTICAL_EVIDENCE_TASK ?? 'task-24';
+
 export default defineConfig({
   expect: { timeout: 20_000 },
   forbidOnly: true,
   fullyParallel: false,
-  outputDir: '../../artifacts/browser/task-24/results',
+  outputDir: `../../artifacts/browser/${evidenceTask}/results`,
   reporter: [['list']],
   testDir: './e2e-vertical',
   testMatch: '**/*.e2e.ts',

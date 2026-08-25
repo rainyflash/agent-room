@@ -11,6 +11,7 @@ export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, string>> 
   backup_missing: 'security.blocker.backup_missing',
   backup_untrusted: 'security.blocker.backup_untrusted',
   cross_signing_missing: 'security.blocker.cross_signing_missing',
+  cross_signing_not_ready: 'security.blocker.cross_signing_not_ready',
   current_device_unverified: 'security.blocker.current_device_unverified',
   room_unencrypted: 'security.blocker.room_unencrypted',
   secret_storage_missing: 'security.blocker.secret_storage_missing',

@@ -87,9 +87,10 @@ function verificationSession(): MatrixVerificationSession {
     stage: 'comparing' as const,
   });
   return {
+    activate: vi.fn(),
     cancel: async () => ok(undefined),
     confirm: async () => ok(undefined),
-    dispose: vi.fn(),
+    deactivate: vi.fn(),
     getSnapshot: () => snapshot,
     mismatch: vi.fn(),
     subscribe: () => () => undefined,

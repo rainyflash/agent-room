@@ -50,6 +50,17 @@ describe('evaluateMatrixSecurity', () => {
       sendAllowed: false,
     });
   });
+
+  it('区分账户没有交叉签名身份与当前设备尚未取得交叉签名能力', () => {
+    expect(
+      evaluateMatrixSecurity(
+        evidence({ crossSigningIdentityExists: false, crossSigningReady: false }),
+      ).blockers,
+    ).toContain('cross_signing_missing');
+    expect(evaluateMatrixSecurity(evidence({ crossSigningReady: false })).blockers).toContain(
+      'cross_signing_not_ready',
+    );
+  });
 });
 
 describe('isValidRecoveryPassphrase', () => {
@@ -64,6 +75,7 @@ describe('isValidRecoveryPassphrase', () => {
 function evidence(overrides: Partial<MatrixSecurityEvidence> = {}): MatrixSecurityEvidence {
   return {
     backup: 'ready',
+    crossSigningIdentityExists: true,
     crossSigningReady: true,
     cryptoVersion: 'Rust SDK test',
     currentDeviceId: 'ALICE-WEB',

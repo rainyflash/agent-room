@@ -9,6 +9,7 @@ export type MatrixSecurityBlocker =
   | 'backup_missing'
   | 'backup_untrusted'
   | 'cross_signing_missing'
+  | 'cross_signing_not_ready'
   | 'current_device_unverified'
   | 'room_unencrypted'
   | 'secret_storage_missing';
@@ -24,6 +25,7 @@ export type MatrixSecurityDevice = {
 
 export type MatrixSecurityEvidence = {
   readonly backup: MatrixBackupState;
+  readonly crossSigningIdentityExists: boolean;
   readonly crossSigningReady: boolean;
   readonly cryptoVersion: string;
   readonly currentDeviceId: string;
@@ -158,9 +160,10 @@ export type MatrixVerificationSnapshot =
     };
 
 export type MatrixVerificationSession = {
+  activate(): void;
   cancel(): Promise<Result<void, MatrixSecurityFailure>>;
   confirm(): Promise<Result<void, MatrixSecurityFailure>>;
-  dispose(): void;
+  deactivate(): void;
   getSnapshot(): MatrixVerificationSnapshot;
   mismatch(): void;
   subscribe(listener: () => void): () => void;
@@ -180,7 +183,10 @@ const recoveryBlockers = new Set<MatrixSecurityBlocker>([
 export function evaluateMatrixSecurity(evidence: MatrixSecurityEvidence): MatrixSecurityPosture {
   const currentDevice = evidence.devices.find((device) => device.current);
   const blockers = Object.freeze([
-    ...(evidence.crossSigningReady ? [] : (['cross_signing_missing'] as const)),
+    ...(evidence.crossSigningIdentityExists ? [] : (['cross_signing_missing'] as const)),
+    ...(evidence.crossSigningIdentityExists && !evidence.crossSigningReady
+      ? (['cross_signing_not_ready'] as const)
+      : []),
     ...(currentDevice?.trust === 'verified' ? [] : (['current_device_unverified'] as const)),
     ...(evidence.secretStorageReady ? [] : (['secret_storage_missing'] as const)),
     ...backupBlockers[evidence.backup],

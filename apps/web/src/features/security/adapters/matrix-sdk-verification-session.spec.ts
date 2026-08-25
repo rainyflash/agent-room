@@ -61,7 +61,7 @@ describe('MatrixSdkVerificationSession', () => {
     });
   });
 
-  it('响应端接受请求后等待发起端选择 SAS，避免双方争抢 start 事件', () => {
+  it('请求端在 Ready 后等待接受端选择 SAS，避免双方争抢 start 事件', () => {
     const flow = verificationFlow();
     const session = new MatrixSdkVerificationSession(flow.request, 'OTHER-DEVICE', false);
     session.activate();
@@ -74,6 +74,56 @@ describe('MatrixSdkVerificationSession', () => {
 
     expect(session.getSnapshot()).toMatchObject({ stage: 'comparing' });
     expect(flow.startVerification).not.toHaveBeenCalled();
+    session.deactivate();
+  });
+
+  it('接受端确认请求后选择 SAS 并启动 verifier', async () => {
+    const flow = verificationFlow();
+    const session = new MatrixSdkVerificationSession(flow.request, 'OTHER-DEVICE');
+    session.activate();
+
+    flow.advance(VerificationPhase.Ready);
+
+    await vi.waitFor(() => {
+      expect(flow.startVerification).toHaveBeenCalledWith('m.sas.v1');
+    });
+    session.deactivate();
+  });
+
+  it('SDK 漏发请求变更事件时仍会对账并挂载远端创建的 verifier', async () => {
+    vi.useFakeTimers();
+    const flow = verificationFlow();
+    const session = new MatrixSdkVerificationSession(flow.request, 'OTHER-DEVICE', false);
+
+    try {
+      session.activate();
+      flow.advance(VerificationPhase.Ready);
+      flow.advanceSilently(VerificationPhase.Started);
+
+      expect(flow.verify).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(flow.verify).toHaveBeenCalledOnce();
+    } finally {
+      session.deactivate();
+      vi.useRealTimers();
+    }
+  });
+
+  it('React StrictMode 预演停用后可重新激活同一验证会话', () => {
+    const flow = verificationFlow();
+    const session = new MatrixSdkVerificationSession(flow.request, 'OTHER-DEVICE', false);
+
+    session.activate();
+    session.deactivate();
+    session.activate();
+    flow.advance(VerificationPhase.Ready);
+    flow.advance(VerificationPhase.Started);
+    flow.showSas();
+
+    expect(flow.verify).toHaveBeenCalledOnce();
+    expect(session.getSnapshot()).toMatchObject({ stage: 'comparing' });
+    session.deactivate();
   });
 });
 
@@ -99,6 +149,7 @@ function verificationFlow() {
       ],
     },
   };
+  const verify = vi.fn(() => verification);
   const verifierShape = {
     get hasBeenCancelled() {
       return false;
@@ -116,7 +167,7 @@ function verificationFlow() {
       }
       return verifierShape;
     },
-    verify: () => verification,
+    verify,
   };
   const verifier = verifierShape as unknown as Verifier;
   const startVerification = vi.fn(() => Promise.resolve(verifier));
@@ -149,6 +200,9 @@ function verificationFlow() {
         listener();
       }
     },
+    advanceSilently: (next: VerificationPhase) => {
+      phase = next;
+    },
     complete: () => resolveVerification?.(),
     confirm,
     mismatch,
@@ -159,5 +213,6 @@ function verificationFlow() {
       }
     },
     startVerification,
+    verify,
   };
 }

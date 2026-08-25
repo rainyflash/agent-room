@@ -33,12 +33,10 @@ export function DeviceVerificationDialog({
   const verifiedReported = useRef(false);
   const terminal = isTerminal(snapshot);
 
-  useEffect(
-    () => () => {
-      session.dispose();
-    },
-    [session],
-  );
+  useEffect(() => {
+    session.activate();
+    return () => session.deactivate();
+  }, [session]);
 
   useEffect(() => {
     if (snapshot.stage === 'verified' && !verifiedReported.current) {

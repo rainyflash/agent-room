@@ -54,7 +54,14 @@ describe('SecurityWorkspace', () => {
       stage: 'comparing',
     });
     const beginVerification = vi.fn(async () => ok(session.value));
-    const gateway = securityGateway(blockedSnapshot(), { beginVerification });
+    const gateway = securityGateway(
+      {
+        ...blockedSnapshot(),
+        blockers: ['cross_signing_not_ready', 'current_device_unverified'],
+        crossSigningReady: false,
+      },
+      { beginVerification },
+    );
 
     renderWorkspace(gateway);
     await user.click((await screen.findAllByRole('button', { name: 'Verify' }))[0]!);
@@ -75,6 +82,7 @@ describe('SecurityWorkspace', () => {
       {
         ...blockedSnapshot(),
         blockers: ['cross_signing_missing', 'current_device_unverified'] as const,
+        crossSigningIdentityExists: false,
         crossSigningReady: false,
       },
       { establishIdentity },
@@ -147,6 +155,7 @@ function readySnapshot(): MatrixSecuritySnapshot {
   return Object.freeze({
     backup: 'ready',
     blockers: [],
+    crossSigningIdentityExists: true,
     crossSigningReady: true,
     cryptoVersion: 'Rust SDK 1.0',
     currentDeviceId: 'ALICE-WEB',
@@ -198,9 +207,10 @@ function verificationSession(snapshot: MatrixVerificationSnapshot) {
   const listeners = new Set<() => void>();
   const confirm = vi.fn(async () => ok(undefined));
   const value: MatrixVerificationSession = {
+    activate: vi.fn(),
     cancel: async () => ok(undefined),
     confirm,
-    dispose: vi.fn(),
+    deactivate: vi.fn(),
     getSnapshot: () => snapshot,
     mismatch: vi.fn(),
     subscribe: (listener) => {

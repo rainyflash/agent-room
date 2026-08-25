@@ -238,6 +238,7 @@ async fn assert_direct_account_data(
 }
 
 struct PrivateRoomScenario {
+    base_url: String,
     provisioner: MatrixApplicationServiceProvisioner,
     owner: MatrixConnection,
     member: MatrixConnection,
@@ -300,6 +301,7 @@ async fn prepare_private_room_scenario() -> PrivateRoomScenario {
     );
 
     PrivateRoomScenario {
+        base_url,
         provisioner,
         owner,
         member,
@@ -380,19 +382,7 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
 }
 
 async fn verify_private_room_governance_boundary(scenario: &PrivateRoomScenario) {
-    scenario
-        .provisioner
-        .kick(&scenario.room_id, &scenario.member_user_id)
-        .await
-        .expect("可从 Matrix 硬边界移除成员");
-    assert_eq!(
-        scenario
-            .provisioner
-            .membership(&scenario.room_id, &scenario.member_user_id)
-            .await
-            .expect("移除后成员状态可读取"),
-        Some(PrivateMatrixMembership::Left)
-    );
+    verify_removal_rotates_encryption(scenario).await;
     let denied = scenario
         .member
         .gateway()
@@ -439,6 +429,163 @@ async fn verify_private_room_governance_boundary(scenario: &PrivateRoomScenario)
         .await
         .expect_err("归档后非服务管理员必须进入只读状态");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+}
+
+async fn verify_removal_rotates_encryption(scenario: &PrivateRoomScenario) {
+    let before_removal = send_with_retry(
+        scenario.owner.gateway(),
+        &scenario.room_id,
+        &message_event(unique_value("private-before-removal"), "移除前加密消息"),
+    )
+    .await;
+    let previous_session = encrypted_event_session_id(
+        &scenario.base_url,
+        &scenario.owner,
+        &scenario.room_id,
+        before_removal.event_id(),
+    )
+    .await;
+
+    scenario
+        .provisioner
+        .kick(&scenario.room_id, &scenario.member_user_id)
+        .await
+        .expect("可从 Matrix 硬边界移除成员");
+    assert_eq!(
+        scenario
+            .provisioner
+            .membership(&scenario.room_id, &scenario.member_user_id)
+            .await
+            .expect("移除后成员状态可读取"),
+        Some(PrivateMatrixMembership::Left)
+    );
+    sync_until_membership(
+        scenario.owner.gateway(),
+        &scenario.room_id,
+        &scenario.member_user_id,
+        "leave",
+    )
+    .await;
+    let after_removal = send_with_retry(
+        scenario.owner.gateway(),
+        &scenario.room_id,
+        &message_event(unique_value("private-after-removal"), "移除后加密消息"),
+    )
+    .await;
+    let rotated_session = encrypted_event_session_id(
+        &scenario.base_url,
+        &scenario.owner,
+        &scenario.room_id,
+        after_removal.event_id(),
+    )
+    .await;
+    assert_ne!(
+        previous_session, rotated_session,
+        "成员移除后必须为后续事件创建新的 Megolm 会话"
+    );
+    assert_removed_member_cannot_read_event(
+        &scenario.base_url,
+        &scenario.member,
+        &scenario.room_id,
+        after_removal.event_id(),
+    )
+    .await;
+}
+
+async fn sync_until_membership(
+    gateway: &dyn MatrixGateway,
+    room_id: &MatrixRoomId,
+    user_id: &MatrixUserId,
+    expected_membership: &str,
+) {
+    let mut since = None;
+    for _ in 0..10 {
+        let batch = sync(gateway, since).await;
+        if batch.rooms().iter().any(|room| {
+            room.room_id() == room_id
+                && room
+                    .state()
+                    .iter()
+                    .chain(room.timeline().iter())
+                    .any(|event| {
+                        event.event_type().as_str() == "m.room.member"
+                            && event.state_key() == Some(user_id.as_str())
+                            && event.content()["membership"] == expected_membership
+                    })
+        }) {
+            return;
+        }
+        since = Some(batch.next_batch().clone());
+    }
+    panic!(
+        "同步结果始终缺少成员 {} 的 {expected_membership} 状态",
+        user_id.as_str()
+    );
+}
+
+async fn encrypted_event_session_id(
+    base_url: &str,
+    reader: &MatrixConnection,
+    room_id: &MatrixRoomId,
+    event_id: &MatrixEventId,
+) -> String {
+    let response = read_raw_room_event(base_url, reader, room_id, event_id)
+        .await
+        .error_for_status()
+        .expect("房间成员必须能读取自己的加密事件")
+        .json::<serde_json::Value>()
+        .await
+        .expect("Matrix 加密事件必须是 JSON");
+    assert_eq!(response["type"], "m.room.encrypted");
+    assert_eq!(response["content"]["algorithm"], "m.megolm.v1.aes-sha2");
+    response["content"]["session_id"]
+        .as_str()
+        .expect("Megolm 事件必须包含 session_id")
+        .to_owned()
+}
+
+async fn assert_removed_member_cannot_read_event(
+    base_url: &str,
+    removed: &MatrixConnection,
+    room_id: &MatrixRoomId,
+    event_id: &MatrixEventId,
+) {
+    let response = read_raw_room_event(base_url, removed, room_id, event_id).await;
+    assert!(
+        matches!(
+            response.status(),
+            reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::NOT_FOUND
+        ),
+        "被移除成员不得取得或枚举移除后的加密事件，实际状态为 {}",
+        response.status()
+    );
+}
+
+async fn read_raw_room_event(
+    base_url: &str,
+    reader: &MatrixConnection,
+    room_id: &MatrixRoomId,
+    event_id: &MatrixEventId,
+) -> reqwest::Response {
+    let mut endpoint = reqwest::Url::parse(base_url).expect("Matrix 基础地址有效");
+    endpoint
+        .path_segments_mut()
+        .expect("Matrix 基础地址可追加路径")
+        .extend([
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id.as_str(),
+            "event",
+            event_id.as_str(),
+        ]);
+    reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(reader.session().access_token().expose())
+        .send()
+        .await
+        .expect("Matrix 原始事件读取请求必须返回 HTTP 响应")
 }
 
 fn application_service_provisioner(

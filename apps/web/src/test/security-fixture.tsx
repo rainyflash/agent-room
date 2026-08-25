@@ -42,6 +42,7 @@ const security: MatrixSecurityGateway = {
 const securitySnapshot: MatrixSecuritySnapshot = Object.freeze({
   backup: 'locked',
   blockers: ['backup_locked'] as const,
+  crossSigningIdentityExists: true,
   crossSigningReady: true,
   cryptoVersion: 'Rust SDK 0.12.0',
   currentDeviceId: 'ALICE-WEB-2026',
@@ -104,6 +105,7 @@ function createVerificationSession(): MatrixVerificationSession {
   };
 
   return {
+    activate: () => undefined,
     cancel: async () => {
       publish(Object.freeze({ cancellationCode: 'm.user', stage: 'cancelled' }));
       return ok(undefined);
@@ -112,7 +114,7 @@ function createVerificationSession(): MatrixVerificationSession {
       publish(Object.freeze({ stage: 'verified' }));
       return ok(undefined);
     },
-    dispose: () => listeners.clear(),
+    deactivate: () => undefined,
     getSnapshot: () => snapshot,
     mismatch: () =>
       publish(Object.freeze({ cancellationCode: 'm.mismatched_sas', stage: 'cancelled' })),

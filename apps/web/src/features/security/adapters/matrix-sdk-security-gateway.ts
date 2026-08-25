@@ -60,9 +60,7 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
       const session = new MatrixSdkVerificationSession(
         pending.request,
         pending.notice.sourceDeviceId,
-        false,
       );
-      session.activate();
       return ok(session);
     } catch {
       return err(failure('security.verification_failed', true));
@@ -89,8 +87,8 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
               active.value.userId,
               targetDeviceId,
             );
-      const session = new MatrixSdkVerificationSession(verificationRequest, targetDeviceId);
-      session.activate();
+      // to-device 验证由接受请求的一侧选择 SAS 方法；请求侧只等待 start 事件。
+      const session = new MatrixSdkVerificationSession(verificationRequest, targetDeviceId, false);
       return ok(session);
     } catch {
       return err(failure('security.verification_failed', true));
@@ -154,17 +152,25 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
 
     try {
       const userIds = participantUserIds(client, inspection.roomId, userId);
-      const [crossSigningReady, secretStorage, backup, roomEncryption, deviceMap] =
-        await Promise.all([
-          crypto.isCrossSigningReady(),
-          crypto.getSecretStorageStatus(),
-          inspectBackup(crypto),
-          inspectRoomEncryption(crypto, inspection.roomId),
-          crypto.getUserDeviceInfo(userIds, true),
-        ]);
+      const [
+        crossSigningReady,
+        crossSigningStatus,
+        secretStorage,
+        backup,
+        roomEncryption,
+        deviceMap,
+      ] = await Promise.all([
+        crypto.isCrossSigningReady(),
+        crypto.getCrossSigningStatus(),
+        crypto.getSecretStorageStatus(),
+        inspectBackup(crypto),
+        inspectRoomEncryption(crypto, inspection.roomId),
+        crypto.getUserDeviceInfo(userIds, true),
+      ]);
       const devices = await inspectDevices(crypto, deviceMap, userId, deviceId);
       const evidence: MatrixSecurityEvidence = Object.freeze({
         backup,
+        crossSigningIdentityExists: crossSigningStatus.publicKeysOnDevice,
         crossSigningReady,
         cryptoVersion: crypto.getVersion(),
         currentDeviceId: deviceId,
@@ -478,7 +484,7 @@ async function inspectDevices(
         deviceId: device.deviceId,
         ...(device.displayName === undefined ? {} : { displayName: device.displayName }),
         ...(fingerprint === undefined ? {} : { fingerprint }),
-        trust: deviceTrust(status),
+        trust: deviceTrust(status, userId === currentUserId),
         userId,
       });
     }),
@@ -494,9 +500,20 @@ async function inspectDevices(
   );
 }
 
-function deviceTrust(status: DeviceVerificationStatus | null): MatrixDeviceTrust {
+function deviceTrust(
+  status: DeviceVerificationStatus | null,
+  belongsToCurrentUser: boolean,
+): MatrixDeviceTrust {
   if (status === null) {
     return 'unknown';
+  }
+  // Matrix 会默认把当前设备标记为“本地可信”。这只说明本机信任自己的设备密钥，
+  // 不代表该设备已被账户的交叉签名身份签发，不能据此跳过跨设备验证。
+  if (belongsToCurrentUser) {
+    if (status.crossSigningVerified) {
+      return 'verified';
+    }
+    return status.signedByOwner ? 'signed' : 'unverified';
   }
   if (status.isVerified()) {
     return 'verified';

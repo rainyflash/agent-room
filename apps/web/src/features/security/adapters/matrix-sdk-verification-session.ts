@@ -16,16 +16,21 @@ import type {
 } from '@/features/security/domain/matrix-security';
 import { err, ok, type Result } from '@/shared/result';
 
+const REQUEST_RECONCILIATION_INTERVAL_MS = 250;
+
 export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   readonly #listeners = new Set<() => void>();
   readonly #request: VerificationRequest;
   readonly #startOnReady: boolean;
   readonly #targetDeviceId: string | undefined;
-  #disposed = false;
+  #active = false;
+  #reconciliationTimer: ReturnType<typeof setTimeout> | null = null;
   #sasCallbacks: ShowSasCallbacks | null = null;
   #snapshot: MatrixVerificationSnapshot;
   #startingSas = false;
   #verifier: Verifier | null = null;
+  #verifierEventsAttached = false;
+  #verifierStarted = false;
 
   constructor(request: VerificationRequest, targetDeviceId?: string, startOnReady = true) {
     this.#request = request;
@@ -35,8 +40,13 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   }
 
   activate(): void {
+    if (this.#active || isTerminal(this.#snapshot)) {
+      return;
+    }
+    this.#active = true;
     this.#request.on(VerificationRequestEvent.Change, this.#handleRequestChange);
     this.#advanceRequest();
+    this.#scheduleReconciliation();
   }
 
   getSnapshot = (): MatrixVerificationSnapshot => this.#snapshot;
@@ -85,10 +95,12 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
     }
   }
 
-  dispose(): void {
-    this.#disposed = true;
+  deactivate(): void {
+    if (!this.#active) {
+      return;
+    }
+    this.#active = false;
     this.#detachEvents();
-    this.#listeners.clear();
   }
 
   readonly #handleRequestChange = (): void => {
@@ -118,7 +130,7 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   };
 
   #advanceRequest(): void {
-    if (this.#disposed || isTerminal(this.#snapshot)) {
+    if (!this.#active || isTerminal(this.#snapshot)) {
       return;
     }
     switch (this.#request.phase) {
@@ -146,6 +158,17 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
     }
   }
 
+  #scheduleReconciliation(): void {
+    if (!this.#active || isTerminal(this.#snapshot) || this.#reconciliationTimer !== null) {
+      return;
+    }
+    this.#reconciliationTimer = setTimeout(() => {
+      this.#reconciliationTimer = null;
+      this.#advanceRequest();
+      this.#scheduleReconciliation();
+    }, REQUEST_RECONCILIATION_INTERVAL_MS);
+  }
+
   #startSas(): void {
     if (this.#startingSas || this.#verifier !== null) {
       return;
@@ -168,22 +191,39 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   }
 
   #attachVerifier(verifier: Verifier): void {
-    if (this.#disposed || this.#verifier === verifier) {
+    if (!this.#active) {
       return;
     }
-    this.#verifier = verifier;
-    verifier.on(VerifierEvent.Cancel, this.#handleVerifierCancel);
-    verifier.on(VerifierEvent.ShowSas, this.#handleShowSas);
+    if (this.#verifier !== verifier) {
+      this.#detachVerifierEvents();
+      this.#verifier = verifier;
+      this.#verifierStarted = false;
+    }
+    if (!this.#verifierEventsAttached) {
+      verifier.on(VerifierEvent.Cancel, this.#handleVerifierCancel);
+      verifier.on(VerifierEvent.ShowSas, this.#handleShowSas);
+      this.#verifierEventsAttached = true;
+    }
     const existingSas = verifier.getShowSasCallbacks();
     if (existingSas !== null) {
       this.#handleShowSas(existingSas);
     }
+    if (this.#verifierStarted) {
+      return;
+    }
+    this.#verifierStarted = true;
     void verifier
       .verify()
       .then(() => {
+        if (this.#verifier !== verifier) {
+          return;
+        }
         this.#finish(Object.freeze({ stage: 'verified' }));
       })
       .catch(() => {
+        if (this.#verifier !== verifier) {
+          return;
+        }
         if (this.#request.phase === VerificationPhase.Cancelled || verifier.hasBeenCancelled) {
           this.#handleVerifierCancel();
           return;
@@ -194,7 +234,7 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   }
 
   #publish(snapshot: MatrixVerificationSnapshot): void {
-    if (this.#disposed || Object.is(this.#snapshot, snapshot)) {
+    if (Object.is(this.#snapshot, snapshot)) {
       return;
     }
     this.#snapshot = snapshot;
@@ -208,13 +248,25 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
       return;
     }
     this.#publish(snapshot);
-    this.#detachEvents();
+    this.deactivate();
   }
 
   #detachEvents(): void {
+    if (this.#reconciliationTimer !== null) {
+      clearTimeout(this.#reconciliationTimer);
+      this.#reconciliationTimer = null;
+    }
     this.#request.off(VerificationRequestEvent.Change, this.#handleRequestChange);
+    this.#detachVerifierEvents();
+  }
+
+  #detachVerifierEvents(): void {
+    if (!this.#verifierEventsAttached) {
+      return;
+    }
     this.#verifier?.off(VerifierEvent.Cancel, this.#handleVerifierCancel);
     this.#verifier?.off(VerifierEvent.ShowSas, this.#handleShowSas);
+    this.#verifierEventsAttached = false;
   }
 }
 

@@ -31,10 +31,22 @@ describe('MatrixSdkSecurityGateway', () => {
         }),
       getDeviceVerificationStatus: () =>
         Promise.resolve({
+          crossSigningVerified: true,
           isVerified: () => true,
+          localVerified: true,
           signedByOwner: true,
         }),
       getSecretStorageStatus: () => Promise.resolve({ ready: true }),
+      getCrossSigningStatus: () =>
+        Promise.resolve({
+          privateKeysCachedLocally: {
+            masterKey: true,
+            selfSigningKey: true,
+            userSigningKey: true,
+          },
+          privateKeysInSecretStorage: true,
+          publicKeysOnDevice: true,
+        }),
       getUserDeviceInfo: () =>
         Promise.resolve(
           new Map([
@@ -87,6 +99,60 @@ describe('MatrixSdkSecurityGateway', () => {
     ]);
   });
 
+  it('不把当前设备对自身的本地信任冒充为账户交叉签名验证', async () => {
+    const crypto = {
+      checkKeyBackupAndEnable: () => Promise.resolve(null),
+      getDeviceVerificationStatus: () =>
+        Promise.resolve({
+          crossSigningVerified: false,
+          isVerified: () => true,
+          localVerified: true,
+          signedByOwner: false,
+        }),
+      getSecretStorageStatus: () => Promise.resolve({ ready: false }),
+      getCrossSigningStatus: () =>
+        Promise.resolve({
+          privateKeysCachedLocally: {
+            masterKey: false,
+            selfSigningKey: false,
+            userSigningKey: false,
+          },
+          privateKeysInSecretStorage: true,
+          publicKeysOnDevice: true,
+        }),
+      getUserDeviceInfo: () =>
+        Promise.resolve(
+          new Map([
+            [
+              '@alice:agent-room.test',
+              new Map([
+                [
+                  'ALICE-WEB',
+                  {
+                    deviceId: 'ALICE-WEB',
+                    displayName: 'Agent Room Web',
+                    getFingerprint: () => 'locally-trusted-only',
+                  },
+                ],
+              ]),
+            ],
+          ]),
+        ),
+      getVersion: () => 'Rust SDK test',
+      isCrossSigningReady: () => Promise.resolve(true),
+    } as unknown as CryptoApi;
+
+    const result = await gatewayFor(cryptoClient(crypto)).inspect();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.devices[0]?.trust).toBe('unverified');
+    expect(result.value.blockers).toContain('current_device_unverified');
+    expect(result.value.sendAllowed).toBe(false);
+  });
+
   it('当前设备与指定设备都通过官方交互式验证事务启动', async () => {
     const requestOwnUserVerification = vi.fn(() => Promise.resolve(pendingVerificationRequest()));
     const requestDeviceVerification = vi.fn(() => Promise.resolve(pendingVerificationRequest()));
@@ -99,12 +165,14 @@ describe('MatrixSdkSecurityGateway', () => {
     const current = await gateway.beginVerification();
     expect(current.ok).toBe(true);
     if (current.ok) {
-      current.value.dispose();
+      current.value.activate();
+      current.value.deactivate();
     }
     const other = await gateway.beginVerification({ targetDeviceId: 'ALICE-LAPTOP' });
     expect(other.ok).toBe(true);
     if (other.ok) {
-      other.value.dispose();
+      other.value.activate();
+      other.value.deactivate();
     }
 
     expect(requestOwnUserVerification).toHaveBeenCalledOnce();
@@ -150,7 +218,8 @@ describe('MatrixSdkSecurityGateway', () => {
     expect(flow.accept).toHaveBeenCalledOnce();
     expect(gateway.getIncomingVerification()).toBeNull();
     if (accepted.ok) {
-      accepted.value.dispose();
+      accepted.value.activate();
+      accepted.value.deactivate();
     }
   });
 

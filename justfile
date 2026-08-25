@@ -89,6 +89,9 @@ web-session-integration: database-migrate
 vertical-bootstrap:
   python tools/vertical.py bootstrap
 
+security-vertical:
+  python tools/vertical.py security
+
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 
