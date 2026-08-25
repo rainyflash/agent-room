@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { classNames } from './class-names.js';
 
@@ -25,18 +25,22 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   readonly tone?: ButtonTone;
 };
 
-export function Button({
-  children,
-  className,
-  icon,
-  size = 'default',
-  tone = 'primary',
-  type = 'button',
-  ...buttonProps
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    children,
+    className,
+    icon,
+    size = 'default',
+    tone = 'primary',
+    type = 'button',
+    ...buttonProps
+  },
+  ref,
+) {
   return (
     <button
       className={classNames('ar-button', toneClass[tone], sizeClass[size], className)}
+      ref={ref}
       type={type}
       {...buttonProps}
     >
@@ -44,4 +48,4 @@ export function Button({
       <span>{children}</span>
     </button>
   );
-}
+});

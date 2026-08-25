@@ -70,6 +70,15 @@ describe('SignalDock', () => {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
   });
+
+  it('自主消息在折叠标题与展开预览中都明确标记来源', async () => {
+    const user = userEvent.setup();
+    renderDock({ signals: [signal('room_message', 'Autonomous update', 'autonomous_agent')] });
+
+    expect(screen.getByLabelText('Autonomous Agent')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Expand signal timeline' }));
+    expect(screen.getAllByLabelText('Autonomous Agent')).toHaveLength(2);
+  });
 });
 
 const allKinds: readonly SignalKind[] = [
@@ -108,7 +117,11 @@ function element(
   );
 }
 
-function signal(kind: SignalKind, title: string): SignalProjection {
+function signal(
+  kind: SignalKind,
+  title: string,
+  provenance: 'autonomous_agent' | 'human_confirmed_agent' = 'human_confirmed_agent',
+): SignalProjection {
   return {
     action: { kind: 'open_message', messageId: kind },
     actor:
@@ -119,7 +132,7 @@ function signal(kind: SignalKind, title: string): SignalProjection {
             displayName: 'Build Agent',
             instanceId: '01990d9e-8400-7000-8000-000000000002',
             matrixUserId: '@build-agent:agent-room.test',
-            provenance: 'human_confirmed_agent',
+            provenance,
           },
     edited: false,
     kind,

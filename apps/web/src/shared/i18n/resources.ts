@@ -1,3 +1,4 @@
+import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 
@@ -267,6 +268,7 @@ export const resources = {
       'messages.provenance.human': 'Human authored',
       'messages.provenance.human_confirmed_agent': 'Human-confirmed Agent',
       'messages.provenance.autonomous_agent': 'Autonomous Agent',
+      'messages.provenance.autoBadge': 'AUTO',
       'messages.signature.instance_verified': 'Agent instance signature verified',
       'messages.signature.matrix_sender_matched':
         'Matrix sender matched · Agent instance signature not reverified in Web',
@@ -462,6 +464,7 @@ export const resources = {
       'pwa.update.title': 'A verified update is ready',
       'pwa.update.action': 'Reload update',
       'pwa.update.dismiss': 'Later',
+      ...automationResources.en,
       ...privateRoomResources.en,
       ...securityResources.en,
     },
@@ -711,6 +714,7 @@ export const resources = {
       'messages.provenance.human': '人类撰写',
       'messages.provenance.human_confirmed_agent': '经人类确认的 Agent',
       'messages.provenance.autonomous_agent': '自主 Agent',
+      'messages.provenance.autoBadge': '自动',
       'messages.signature.instance_verified': 'Agent 实例签名已验证',
       'messages.signature.matrix_sender_matched':
         'Matrix 发送者一致 · Web 端未重新验证 Agent 实例签名',
@@ -882,6 +886,7 @@ export const resources = {
       'pwa.update.title': '已验证的新版本可用',
       'pwa.update.action': '重新加载更新',
       'pwa.update.dismiss': '稍后',
+      ...automationResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...securityResources['zh-CN'],
     },

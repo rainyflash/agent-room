@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { AutomationGrantHub } from '@/features/automation/ui/automation-grant-hub';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
@@ -105,6 +106,7 @@ function ReadyLobby({
   selectedMessageId,
 }: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
+  const { accessManagement, automation, controlPlane } = useAppServices();
   const accountPreferences = useAccountPreferences();
   const compact = useCompactLobby();
   const listRef = useRef<ListModeRosterHandle>(null);
@@ -164,6 +166,18 @@ function ReadyLobby({
         actions={
           principal === null ? undefined : (
             <>
+              <AutomationGrantHub
+                accessManagement={accessManagement}
+                automation={automation}
+                catalogId={catalogId}
+                onReauthenticate={() => {
+                  controlPlane.beginAuthentication(
+                    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+                  );
+                }}
+                recentlyAuthenticated={principal.recentlyAuthenticated}
+                roomName={room.name}
+              />
               <Button
                 aria-label={t('security.launcher')}
                 className="security-launcher"

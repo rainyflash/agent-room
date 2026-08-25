@@ -23,7 +23,7 @@ export const automationGrantSchema = z
     grantId: uuidV7Schema,
     maxMessagesPerMinute: z.number().int().min(1).max(60),
     maxTotalMessages: z.number().int().min(1).max(10_000).nullable(),
-    messageKinds: z.array(z.enum(automationMessageKinds)).min(1).max(2),
+    messageKinds: z.array(z.enum(automationMessageKinds)).min(1).max(2).readonly(),
     messagesInCurrentMinute: z.number().int().nonnegative(),
     requiresRiskScan: z.boolean(),
     revokedAtUnixMs: timestampSchema.nullable(),
@@ -49,7 +49,7 @@ export const automationGrantSchema = z
   });
 
 export const automationGrantListSchema = z
-  .object({ grants: z.array(automationGrantSchema).max(10_000) })
+  .object({ grants: z.array(automationGrantSchema).max(10_000).readonly() })
   .strict();
 
 export const createAutomationGrantInputSchema = z
@@ -65,7 +65,7 @@ export const createAutomationGrantInputSchema = z
       .max(30 * 24 * 60 * 60),
     maxMessagesPerMinute: z.number().int().min(1).max(60),
     maxTotalMessages: z.number().int().min(1).max(10_000).optional(),
-    messageKinds: z.array(z.enum(automationMessageKinds)).min(1).max(2),
+    messageKinds: z.array(z.enum(automationMessageKinds)).min(1).max(2).readonly(),
     requiresRiskScan: z.boolean(),
     roomCatalogId: uuidV7Schema,
   })

@@ -7,6 +7,10 @@ import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
+import type {
+  AutomationGrant,
+  AutomationGrantGateway,
+} from '@/features/automation/domain/automation-grant';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import type {
@@ -93,10 +97,75 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
   leave: unavailablePrivateRoom,
 };
 const accessManagement: AccessManagementGateway = {
-  listAgentInstances: async () => ok([]),
+  listAgentInstances: async () =>
+    ok([
+      {
+        adapterType: 'codex',
+        agentAvatarContentId: null,
+        agentDisplayName: 'Fixture Codex Agent',
+        agentId: '01990d9e-8400-7000-8000-000000000001',
+        agentInstanceId: '01990d9e-8400-7000-8000-000000000201',
+        capabilityVersion: '1',
+        createdAtUnixMs: Date.now() - 60_000,
+        device: {
+          deviceId: '01990d9e-8400-7000-8000-000000000301',
+          label: 'Fixture workstation',
+          platform: 'windows',
+          trustState: 'verified',
+        },
+        lastSeenAtUnixMs: Date.now(),
+        matrixDeviceId: 'FIXTURE-MATRIX-DEVICE',
+        matrixDeviceRevokedAtUnixMs: null,
+        revokedAtUnixMs: null,
+        status: 'online',
+      },
+    ]),
   listProductDevices: async () => ok([]),
   revokeAgentInstance: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
   revokeProductDevice: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
+};
+let fixtureAutomationGrants: readonly AutomationGrant[] = Object.freeze([]);
+const automation: AutomationGrantGateway = {
+  create: async (grantId, input) => {
+    const startsAtUnixMs = Date.now();
+    const grant: AutomationGrant = Object.freeze({
+      agentId: input.agentId,
+      agentInstanceId: input.agentInstanceId ?? null,
+      audience: input.audience,
+      expiresAtUnixMs: startsAtUnixMs + input.lifetimeSeconds * 1_000,
+      grantId,
+      maxMessagesPerMinute: input.maxMessagesPerMinute,
+      maxTotalMessages: input.maxTotalMessages ?? null,
+      messageKinds: Object.freeze([...input.messageKinds]),
+      messagesInCurrentMinute: 0,
+      requiresRiskScan: input.requiresRiskScan,
+      revokedAtUnixMs: null,
+      roomCatalogId: input.roomCatalogId,
+      startsAtUnixMs,
+      status: 'active',
+      totalMessages: 0,
+    });
+    fixtureAutomationGrants = Object.freeze([grant, ...fixtureAutomationGrants]);
+    return ok(grant);
+  },
+  list: async () => ok(fixtureAutomationGrants),
+  revoke: async (grantId) => {
+    const grant = fixtureAutomationGrants.find((candidate) => candidate.grantId === grantId);
+    if (grant === undefined) {
+      return err({ code: 'automation.fixture_not_found', retryable: false });
+    }
+    const revoked = Object.freeze({
+      ...grant,
+      revokedAtUnixMs: Date.now(),
+      status: 'revoked' as const,
+    });
+    fixtureAutomationGrants = Object.freeze(
+      fixtureAutomationGrants.map((candidate) =>
+        candidate.grantId === grantId ? revoked : candidate,
+      ),
+    );
+    return ok(revoked);
+  },
 };
 const security: MatrixSecurityGateway = {
   acceptIncomingVerification: async () =>
@@ -289,6 +358,7 @@ class FixtureHandoffGateway implements HandoffGateway {
 
 const services: AppServices = {
   accessManagement,
+  automation,
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
     matrixHomeserverUrl: 'https://matrix.agent-room.test',
@@ -317,7 +387,7 @@ function LobbyFixture() {
         <AppServicesProvider services={services}>
           <AccountPreferencesProvider store={accountPreferences}>
             <LobbyPage
-              catalogId="public-builders"
+              catalogId="01990d9e-8400-7000-8000-000000000401"
               onEnterRoom={() => undefined}
               onExitRoom={() => undefined}
               onOpenSecurity={() => undefined}

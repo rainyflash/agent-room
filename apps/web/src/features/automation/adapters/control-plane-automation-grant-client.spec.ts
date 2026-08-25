@@ -21,10 +21,13 @@ describe('ControlPlaneAutomationGrantClient', () => {
     expect(result.ok).toBe(true);
     expect(fetch).toHaveBeenCalledOnce();
     const [target, init] = fetch.mock.calls[0] ?? [];
-    expect(String(target)).toBe('https://api.agent-room.test/automation-grants');
-    expect(init?.credentials).toBe('include');
-    expect(new Headers(init?.headers).get('Idempotency-Key')).toBe(GRANT_ID);
-    expect(JSON.parse(String(init?.body))).toEqual(creationInput());
+    if (!(target instanceof URL) || typeof init?.body !== 'string') {
+      throw new Error('测试请求必须使用 URL 与字符串正文。');
+    }
+    expect(target.toString()).toBe('https://api.agent-room.test/automation-grants');
+    expect(init.credentials).toBe('include');
+    expect(new Headers(init.headers).get('Idempotency-Key')).toBe(GRANT_ID);
+    expect(JSON.parse(init.body)).toEqual(creationInput());
   });
 
   it('列表响应包含未知字段时失败关闭', async () => {

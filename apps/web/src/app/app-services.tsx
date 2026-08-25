@@ -2,6 +2,7 @@ import { createContext, useContext, type PropsWithChildren } from 'react';
 
 import type { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import type { DirectSessionGateway } from '@/features/direct-sessions/domain/direct-session';
+import type { AutomationGrantGateway } from '@/features/automation/domain/automation-grant';
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -18,6 +19,7 @@ import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
 export type AppServices = {
   readonly accessManagement: AccessManagementGateway;
+  readonly automation: AutomationGrantGateway;
   readonly config: RuntimeConfig;
   readonly content: ContentGateway;
   readonly contentVerifier: ContentVerifier;

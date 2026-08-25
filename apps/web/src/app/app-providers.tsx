@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
+import { ControlPlaneAutomationGrantClient } from '@/features/automation/adapters/control-plane-automation-grant-client';
 import { ControlPlaneDirectSessionClient } from '@/features/direct-sessions/adapters/control-plane-direct-session-client';
 import { MatrixSdkDirectSessionGateway } from '@/features/direct-sessions/adapters/matrix-direct-session-gateway';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
@@ -89,6 +90,7 @@ function createRuntime(config: RuntimeConfig) {
   const accessManagement = new ControlPlaneAccessManagementClient({
     baseUrl: config.controlPlaneUrl,
   });
+  const automation = new ControlPlaneAutomationGrantClient({ baseUrl: config.controlPlaneUrl });
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
@@ -102,6 +104,7 @@ function createRuntime(config: RuntimeConfig) {
   });
   const services: AppServices = {
     accessManagement,
+    automation,
     config,
     content,
     contentVerifier,

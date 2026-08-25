@@ -26,6 +26,7 @@ import {
   type SignalKind,
   type SignalProjection,
 } from '@/features/signals/domain/signal';
+import { MessageProvenanceMark } from '@/features/messages/ui/message-provenance-mark';
 
 const MAX_VISIBLE_SIGNALS = 50;
 
@@ -222,6 +223,9 @@ function DockHeadline({
     >
       <Icon aria-hidden="true" />
       <span>{featuredSignal.title ?? t(`messages.lifecycle.${featuredSignal.lifecycle}`)}</span>
+      {featuredSignal.actor === null ? null : (
+        <MessageProvenanceMark provenance={featuredSignal.actor.provenance} />
+      )}
     </button>
   );
 }
@@ -256,7 +260,12 @@ function SignalRow({
         </span>
         <span className="message-signal__copy">
           <span className="message-signal__meta">
-            <strong>{actorName}</strong>
+            <span className="message-signal__identity">
+              <strong>{actorName}</strong>
+              {signal.actor === null ? null : (
+                <MessageProvenanceMark provenance={signal.actor.provenance} />
+              )}
+            </span>
             <time dateTime={new Date(signal.occurredAtUnixMs).toISOString()}>
               {formatter.format(signal.occurredAtUnixMs)}
             </time>
