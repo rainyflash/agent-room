@@ -6,6 +6,8 @@ export const privateRoomCapabilities = ['view', 'speak', 'invite', 'manage', 'au
 
 export type PrivateRoomCapability = (typeof privateRoomCapabilities)[number];
 
+export const privateRoomPrincipalIdSchema = z.uuid();
+
 const permissionsSchema = z
   .object({
     capabilities: z.array(z.enum(privateRoomCapabilities)).max(privateRoomCapabilities.length),
@@ -18,7 +20,7 @@ const permissionsSchema = z
 const memberSchema = z
   .object({
     permissions: permissionsSchema,
-    principalId: z.uuid(),
+    principalId: privateRoomPrincipalIdSchema,
     status: z.enum(['invited', 'joined', 'declined', 'removed', 'banned']),
   })
   .strict();

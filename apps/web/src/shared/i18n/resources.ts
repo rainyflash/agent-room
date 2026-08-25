@@ -1,3 +1,5 @@
+import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
+
 export const resources = {
   en: {
     translation: {
@@ -425,6 +427,7 @@ export const resources = {
       'pwa.update.title': 'A verified update is ready',
       'pwa.update.action': 'Reload update',
       'pwa.update.dismiss': 'Later',
+      ...privateRoomResources.en,
     },
   },
   'zh-CN': {
@@ -811,6 +814,7 @@ export const resources = {
       'pwa.update.title': '已验证的新版本可用',
       'pwa.update.action': '重新加载更新',
       'pwa.update.dismiss': '稍后',
+      ...privateRoomResources['zh-CN'],
     },
   },
 } as const;

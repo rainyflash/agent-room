@@ -1,16 +1,18 @@
 import { Radio, UsersRound } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 
 export type RoomBeaconProps = {
+  readonly actions?: ReactNode;
   readonly agentCount: number;
   readonly catalogId: string;
   readonly roomName: string;
   readonly topic?: string;
 };
 
-export function RoomBeacon({ agentCount, catalogId, roomName, topic }: RoomBeaconProps) {
+export function RoomBeacon({ actions, agentCount, catalogId, roomName, topic }: RoomBeaconProps) {
   const { t } = useTranslation();
   return (
     <header className="room-beacon">
@@ -30,6 +32,7 @@ export function RoomBeacon({ agentCount, catalogId, roomName, topic }: RoomBeaco
         <UsersRound aria-hidden="true" />
         <span>{t('lobby.room.agents', { count: agentCount })}</span>
       </div>
+      {actions === undefined ? null : <div className="room-beacon__actions">{actions}</div>}
       <LanguageControl />
     </header>
   );

@@ -19,11 +19,16 @@ import { SceneSemanticRoster } from '@/features/lobby/ui/scene-semantic-roster';
 import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock';
 import { useCompactLobby } from '@/features/lobby/ui/use-compact-lobby';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
+import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
+import type { WebSession } from '@/features/session/domain/session';
 
 export type LobbyPageProps = {
   readonly catalogId: string;
+  readonly onEnterRoom: (catalogId: string, matrixRoomId: string) => void;
+  readonly onExitRoom: () => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
+  readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
   readonly selectedMessageId: string | null;
@@ -31,8 +36,11 @@ export type LobbyPageProps = {
 
 export function LobbyPage({
   catalogId,
+  onEnterRoom,
+  onExitRoom,
   onSelectedAgentChange,
   onSelectedMessageChange,
+  principal,
   roomId,
   selectedAgentId,
   selectedMessageId,
@@ -53,8 +61,11 @@ export function LobbyPage({
     <ReadyLobby
       catalogId={catalogId}
       key={state.room.roomId}
+      onEnterRoom={onEnterRoom}
+      onExitRoom={onExitRoom}
       onSelectedAgentChange={onSelectedAgentChange}
       onSelectedMessageChange={onSelectedMessageChange}
+      principal={principal}
       room={state.room}
       selectedAgentId={selectedAgentId}
       selectedMessageId={selectedMessageId}
@@ -68,8 +79,11 @@ type ReadyLobbyProps = Omit<LobbyPageProps, 'roomId'> & {
 
 function ReadyLobby({
   catalogId,
+  onEnterRoom,
+  onExitRoom,
   onSelectedAgentChange,
   onSelectedMessageChange,
+  principal,
   room,
   selectedAgentId,
   selectedMessageId,
@@ -129,6 +143,16 @@ function ReadyLobby({
         })}
       </p>
       <RoomBeacon
+        actions={
+          principal === null ? undefined : (
+            <PrivateRoomHub
+              currentCatalogId={catalogId}
+              onEnterRoom={onEnterRoom}
+              onExitRoom={onExitRoom}
+              principal={principal}
+            />
+          )
+        }
         agentCount={room.agents.length}
         catalogId={catalogId}
         roomName={room.name}

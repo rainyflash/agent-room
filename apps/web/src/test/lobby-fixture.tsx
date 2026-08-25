@@ -217,8 +217,19 @@ function LobbyFixture() {
       <AppServicesProvider services={services}>
         <LobbyPage
           catalogId="public-builders"
+          onEnterRoom={() => undefined}
+          onExitRoom={() => undefined}
           onSelectedAgentChange={setSelectedAgentId}
           onSelectedMessageChange={setSelectedMessageId}
+          principal={{
+            authenticatedAtUnixMs: Date.now(),
+            displayName: 'Fixture operator',
+            expiresAtUnixMs: Date.now() + 60_000,
+            locale: 'en',
+            matrixUserId: '@fixture:matrix.test',
+            principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+            recentlyAuthenticated: true,
+          }}
           roomId={room.roomId}
           selectedAgentId={selectedAgentId}
           selectedMessageId={selectedMessageId}

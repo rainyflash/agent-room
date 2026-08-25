@@ -5,6 +5,7 @@ import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
+import { useSession } from '@/features/session/ui/session-provider';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
@@ -89,6 +90,7 @@ function LobbyBoundary() {
 }
 
 function LobbyInstanceBoundary() {
+  const { snapshot } = useSession();
   const { catalogId, roomId } = lobbyInstanceRoute.useParams();
   const search = lobbyInstanceRoute.useSearch();
   const navigate = lobbyInstanceRoute.useNavigate();
@@ -104,6 +106,16 @@ function LobbyInstanceBoundary() {
     >
       <LobbyPage
         catalogId={catalogId}
+        onEnterRoom={(nextCatalogId, nextRoomId) => {
+          void navigate({
+            params: { catalogId: nextCatalogId, roomId: nextRoomId },
+            search: {},
+            to: '/lobby/$catalogId/instance/$roomId',
+          });
+        }}
+        onExitRoom={() => {
+          void navigate({ to: '/connect' });
+        }}
         onSelectedAgentChange={(agentId) => {
           void navigate({
             replace: true,
@@ -116,6 +128,7 @@ function LobbyInstanceBoundary() {
             search: (previous) => lobbySearchWithMessage(previous, messageId),
           });
         }}
+        principal={snapshot.context.principal}
         roomId={roomId}
         selectedAgentId={search.agent ?? null}
         selectedMessageId={search.message ?? null}
