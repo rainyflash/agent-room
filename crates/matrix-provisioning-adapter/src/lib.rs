@@ -3,7 +3,8 @@
 use std::{net::IpAddr, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+    MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
+    MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
     MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailure, MatrixFailureKind, MatrixOperation,
     MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture, SecretValue,
 };
@@ -218,6 +219,33 @@ impl MatrixApplicationServiceProvisioner {
         ))
     }
 
+    async fn revoke_device_session_internal(
+        &self,
+        target: &MatrixAgentDeviceSessionTarget,
+    ) -> MatrixResult<()> {
+        let operation = MatrixOperation::RevokeAgentDeviceSession;
+        self.ensure_managed_user(target.user_id(), operation)?;
+        let endpoint = self.device_endpoint(target.device_id(), target.user_id(), operation)?;
+        let response = self
+            .client
+            .delete(endpoint)
+            .bearer_auth(self.access_token.expose())
+            .json(&EmptyRequest {})
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if status.is_success() {
+            return Ok(());
+        }
+        let error = decode_matrix_error(&body, operation)?;
+        if status == StatusCode::NOT_FOUND && error.errcode == "M_NOT_FOUND" {
+            return Ok(());
+        }
+        Err(map_matrix_error(operation, status, &error))
+    }
+
     fn expected_user_id(
         &self,
         registration: &MatrixAgentUserRegistration,
@@ -252,6 +280,24 @@ impl MatrixApplicationServiceProvisioner {
             .join(path)
             .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))
     }
+
+    fn device_endpoint(
+        &self,
+        device_id: &MatrixDeviceId,
+        user_id: &MatrixUserId,
+        operation: MatrixOperation,
+    ) -> MatrixResult<Url> {
+        let mut endpoint = self.endpoint("_matrix/client/v3/devices/", operation)?;
+        endpoint
+            .path_segments_mut()
+            .map_err(|()| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?
+            .pop_if_empty()
+            .push(device_id.as_str());
+        endpoint
+            .query_pairs_mut()
+            .append_pair("user_id", user_id.as_str());
+        Ok(endpoint)
+    }
 }
 
 impl MatrixAgentIdentityProvisioner for MatrixApplicationServiceProvisioner {
@@ -269,6 +315,18 @@ impl MatrixAgentIdentityProvisioner for MatrixApplicationServiceProvisioner {
         Box::pin(self.issue_device_session_internal(request))
     }
 }
+
+impl MatrixAgentDeviceSessionRevoker for MatrixApplicationServiceProvisioner {
+    fn revoke_device_session<'a>(
+        &'a self,
+        target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(self.revoke_device_session_internal(target))
+    }
+}
+
+#[derive(Serialize)]
+struct EmptyRequest {}
 
 #[derive(Serialize)]
 struct ApplicationServiceRegistrationRequest<'a> {
@@ -443,18 +501,20 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-        MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, SecretValue,
+        MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
+        MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+        MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, MatrixUserId, SecretValue,
     };
     use agent_room_domain::ids::AgentId;
     use axum::{
         Json, Router,
         body::Body,
-        extract::State,
+        extract::{Path, Query, State},
         http::{HeaderMap, StatusCode},
         response::{IntoResponse, Response},
-        routing::post,
+        routing::{delete, post},
     };
+    use serde::Deserialize;
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
     use uuid::Uuid;
@@ -521,6 +581,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 撤销设备通过受控用户冒充且安全编码路径参数() {
+        let server = TestServer::start(TestMode::Success).await;
+        let target = MatrixAgentDeviceSessionTarget::new(
+            managed_user_id(),
+            MatrixDeviceId::new("AR INSTANCE 1").expect("设备标识有效"),
+        );
+
+        provisioner(&server.url)
+            .revoke_device_session(&target)
+            .await
+            .expect("受控 Agent 设备可撤销");
+
+        server.assert_authenticated_requests(1).await;
+    }
+
+    #[tokio::test]
+    async fn matrix_设备已经不存在时撤销仍然幂等成功() {
+        let server = TestServer::start(TestMode::MissingDevice).await;
+        let target = MatrixAgentDeviceSessionTarget::new(
+            managed_user_id(),
+            MatrixDeviceId::new("AR_INSTANCE_1").expect("设备标识有效"),
+        );
+
+        provisioner(&server.url)
+            .revoke_device_session(&target)
+            .await
+            .expect("设备已不存在等价于撤销完成");
+
+        server.assert_authenticated_requests(1).await;
+    }
+
+    #[tokio::test]
+    async fn 普通_matrix_用户不能借用_application_service_撤销设备() {
+        let server = TestServer::start(TestMode::Success).await;
+        let target = MatrixAgentDeviceSessionTarget::new(
+            MatrixUserId::new("@human:matrix.agent-room.localhost").expect("用户标识有效"),
+            MatrixDeviceId::new("HUMAN_DEVICE").expect("设备标识有效"),
+        );
+
+        let failure = provisioner(&server.url)
+            .revoke_device_session(&target)
+            .await
+            .expect_err("普通用户必须在发出请求前被拒绝");
+
+        assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
+        server.assert_authenticated_requests(0).await;
+    }
+
+    #[tokio::test]
     async fn 过大响应会在_json_解析前被拒绝() {
         let server = TestServer::start(TestMode::Oversized).await;
         let failure = provisioner(&server.url)
@@ -545,6 +654,11 @@ mod tests {
         MatrixAgentUserRegistration::new(MatrixAgentLocalpart::from_agent_id(agent_id))
     }
 
+    fn managed_user_id() -> MatrixUserId {
+        MatrixUserId::new("@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost")
+            .expect("Agent 用户标识有效")
+    }
+
     fn provisioner(url: &str) -> MatrixApplicationServiceProvisioner {
         MatrixApplicationServiceProvisioner::new(configuration(url)).expect("适配器配置有效")
     }
@@ -563,6 +677,7 @@ mod tests {
     enum TestMode {
         Success,
         ExistingUser,
+        MissingDevice,
         Oversized,
     }
 
@@ -586,6 +701,10 @@ mod tests {
             let app = Router::new()
                 .route("/_matrix/client/v3/register", post(register))
                 .route("/_matrix/client/v3/login", post(login))
+                .route(
+                    "/_matrix/client/v3/devices/{device_id}",
+                    delete(revoke_device),
+                )
                 .with_state(state.clone());
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
@@ -633,6 +752,11 @@ mod tests {
                 Json(json!({ "errcode": "M_USER_IN_USE" })),
             )
                 .into_response(),
+            TestMode::MissingDevice => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "errcode": "M_UNEXPECTED_TEST_REQUEST" })),
+            )
+                .into_response(),
             TestMode::Oversized => ResponseWithBody::oversized(),
         }
     }
@@ -653,6 +777,35 @@ mod tests {
                 "access_token": "matrix-device-access"
             })),
         )
+    }
+
+    #[derive(Deserialize)]
+    struct RevokeQuery {
+        user_id: String,
+    }
+
+    async fn revoke_device(
+        State(state): State<Arc<TestState>>,
+        Path(device_id): Path<String>,
+        Query(query): Query<RevokeQuery>,
+        headers: HeaderMap,
+        Json(payload): Json<Value>,
+    ) -> impl IntoResponse {
+        record_authentication(&state, &headers).await;
+        assert!(matches!(
+            device_id.as_str(),
+            "AR INSTANCE 1" | "AR_INSTANCE_1"
+        ));
+        assert_eq!(query.user_id, managed_user_id().as_str());
+        assert_eq!(payload, json!({}));
+        if matches!(state.mode, TestMode::MissingDevice) {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "errcode": "M_NOT_FOUND" })),
+            )
+        } else {
+            (StatusCode::OK, Json(json!({})))
+        }
     }
 
     async fn record_authentication(state: &TestState, headers: &HeaderMap) {
