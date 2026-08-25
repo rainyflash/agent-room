@@ -1,12 +1,13 @@
 use std::{env, future::pending, num::NonZeroU16, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner,
-    MatrixAgentLocalpart, MatrixAgentUserRegistration, MatrixClientFactory, MatrixConnection,
-    MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
-    MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind,
-    MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId,
-    MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
+    DirectMatrixRoomCreation, DirectSessionMatrixProvisioner, MatrixAcceptedEvent,
+    MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+    MatrixAgentUserRegistration, MatrixClientFactory, MatrixConnection, MatrixCreateRoom,
+    MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind,
+    MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction,
+    MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
     MatrixSyncToken, MatrixTransactionId, MatrixUserId, PrivateMatrixMembership,
     PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
@@ -129,6 +130,110 @@ async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬�
     let scenario = prepare_private_room_scenario().await;
     verify_private_room_speaking_boundary(&scenario).await;
     verify_private_room_governance_boundary(&scenario).await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse 直接会话配置"]
+async fn 真实_synapse_幂等建立直接会话并接受私有已读回执() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
+    let peer_user = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_USER");
+    let peer_password = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_PASSWORD");
+    let provisioner = application_service_provisioner(&base_url, application_service_token);
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let creator = managed_outsider(&provisioner, &factory).await;
+    let peer = factory
+        .login(&login(&peer_user, &peer_password))
+        .await
+        .expect("直接会话对端必须能登录");
+    let creator_user_id = creator.session().metadata().user_id().clone();
+    let peer_user_id = peer.session().metadata().user_id().clone();
+    let creation = direct_room_creation(&creator_user_id, &peer_user_id);
+
+    let room_id = DirectSessionMatrixProvisioner::create(&provisioner, &creation)
+        .await
+        .expect("受管 Agent 必须能代表自己创建直接会话");
+    let repeated = DirectSessionMatrixProvisioner::create(&provisioner, &creation)
+        .await
+        .expect("重复发起必须按稳定别名复用直接会话");
+    assert_eq!(repeated, room_id);
+    assert_direct_account_data(&base_url, &creator, &peer_user_id, &room_id).await;
+
+    sync_until_room(creator.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
+    sync_until_room(peer.gateway(), &room_id, MatrixRoomSyncKind::Invited).await;
+    peer.gateway()
+        .join(&room_id)
+        .await
+        .expect("受邀对端必须能加入直接会话");
+    sync_until_room(peer.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
+    let accepted = send_with_retry(
+        creator.gateway(),
+        &room_id,
+        &message_event(unique_value("direct"), "直接会话真实消息"),
+    )
+    .await;
+    peer.gateway()
+        .send_receipt(
+            &room_id,
+            &MatrixReceipt::new(MatrixReceiptKind::PrivateRead, accepted.event_id().clone()),
+        )
+        .await
+        .expect("直接会话必须接受私有已读回执");
+    leave_with_retry(peer.gateway(), &room_id).await;
+    leave_with_retry(creator.gateway(), &room_id).await;
+}
+
+fn direct_room_creation(creator: &MatrixUserId, peer: &MatrixUserId) -> DirectMatrixRoomCreation {
+    let alias = MatrixRoomAliasLocalpart::new(format!(
+        "agent-room-direct-test-{}",
+        Uuid::now_v7().simple()
+    ))
+    .expect("直接会话稳定别名有效");
+    let request = MatrixCreateRoom::new(
+        Some("Task 26 direct session acceptance".to_owned()),
+        Some("真实 Synapse 直接会话边界验收".to_owned()),
+        MatrixRoomVisibility::Private,
+        MatrixRoomPreset::TrustedPrivateChat,
+        true,
+        vec![peer.clone()],
+    )
+    .expect("直接会话建房请求有效")
+    .with_alias_localpart(alias.clone());
+    DirectMatrixRoomCreation::new(request, alias, creator.clone(), peer.clone())
+        .expect("直接会话约束有效")
+}
+
+async fn assert_direct_account_data(
+    base_url: &str,
+    creator: &MatrixConnection,
+    peer: &MatrixUserId,
+    room_id: &MatrixRoomId,
+) {
+    let mut endpoint = reqwest::Url::parse(base_url).expect("Matrix 基础地址有效");
+    endpoint
+        .path_segments_mut()
+        .expect("Matrix 基础地址可追加路径")
+        .extend([
+            "_matrix",
+            "client",
+            "v3",
+            "user",
+            creator.session().metadata().user_id().as_str(),
+            "account_data",
+            "m.direct",
+        ]);
+    let response = reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(creator.session().access_token().expose())
+        .send()
+        .await
+        .expect("可读取直接会话账户数据")
+        .error_for_status()
+        .expect("直接会话账户数据必须存在")
+        .json::<serde_json::Value>()
+        .await
+        .expect("直接会话账户数据必须是 JSON");
+    assert_eq!(response[peer.as_str()], json!([room_id.as_str()]));
 }
 
 struct PrivateRoomScenario {
