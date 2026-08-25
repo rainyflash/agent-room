@@ -5,6 +5,10 @@ import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway } from '@/features/messages/domain/message';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
+import type {
+  PrivateRoomGateway,
+  PrivateRoomMatrixGateway,
+} from '@/features/private-rooms/domain/private-room';
 import type { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
@@ -17,6 +21,8 @@ export type AppServices = {
   readonly lobby: LobbyGateway;
   readonly messages: MessageGateway;
   readonly messagePublisher: MessagePublisher;
+  readonly privateRoomMatrix: PrivateRoomMatrixGateway;
+  readonly privateRooms: PrivateRoomGateway;
 };
 
 const AppServicesContext = createContext<AppServices | null>(null);

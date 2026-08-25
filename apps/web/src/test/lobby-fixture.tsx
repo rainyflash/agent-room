@@ -26,6 +26,10 @@ import type {
   MessagePublisher,
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
+import type {
+  PrivateRoomGateway,
+  PrivateRoomMatrixGateway,
+} from '@/features/private-rooms/domain/private-room';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -43,6 +47,26 @@ const messages: MessageGateway = {
       roomId: room.roomId,
     }),
   subscribe: () => noop,
+};
+const unavailablePrivateRoom = async () =>
+  err({ code: 'private_room.fixture_unavailable', retryable: false });
+const privateRooms: PrivateRoomGateway = {
+  accept: unavailablePrivateRoom,
+  archive: unavailablePrivateRoom,
+  ban: unavailablePrivateRoom,
+  create: unavailablePrivateRoom,
+  decline: unavailablePrivateRoom,
+  inspect: unavailablePrivateRoom,
+  invite: unavailablePrivateRoom,
+  leave: unavailablePrivateRoom,
+  list: async () => ok([]),
+  remove: unavailablePrivateRoom,
+  transferOwnership: unavailablePrivateRoom,
+  updatePermissions: unavailablePrivateRoom,
+};
+const privateRoomMatrix: PrivateRoomMatrixGateway = {
+  join: unavailablePrivateRoom,
+  leave: unavailablePrivateRoom,
 };
 const fixtureContent =
   '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
@@ -181,6 +205,8 @@ const services: AppServices = {
   lobby,
   messagePublisher: new FixtureMessagePublisher(),
   messages,
+  privateRoomMatrix,
+  privateRooms,
 };
 
 function LobbyFixture() {
