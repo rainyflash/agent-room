@@ -70,8 +70,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     }
 
     this.#app = app;
-    app.canvas.setAttribute('aria-label', this.#labels.canvas);
-    app.canvas.setAttribute('role', 'img');
+    app.canvas.setAttribute('aria-hidden', 'true');
     app.canvas.className = 'lobby-scene__canvas';
     this.#host.replaceChildren(app.canvas);
     app.stage.eventMode = 'static';
@@ -181,7 +180,6 @@ class PixiLobbyScene implements LobbySceneHandle {
     for (const node of visibleLobbyNodes(this.#projection, this.#camera.viewport())) {
       nodesLayer.addChild(
         createAgentNodeView(this.#pixi, {
-          accessibilityLabel: this.#labels.agentAccessibilityLabel(node),
           detail,
           node,
           onSelect: this.#callbacks.onSelectAgent,

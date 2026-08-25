@@ -9,13 +9,16 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  const scene = page.getByRole('application', { name: 'Interactive Agent room scene' });
+  const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
   await expect(scene.locator('canvas')).toBeVisible();
   await expect(page.locator('.room-beacon')).toContainText('200 agents');
-  await expect(page.locator('.sr-only li')).toHaveCount(200);
+  await expect(scene.getByRole('option')).toHaveCount(200);
 
   await scene.focus();
   await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await expect(scene).toHaveAttribute('aria-activedescendant', /lobby-scene-.+/u);
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary')).toBeVisible();
   await page.screenshot({
     animations: 'disabled',

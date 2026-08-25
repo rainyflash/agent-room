@@ -19,7 +19,6 @@ const STATUS_COLOR: Readonly<Record<LobbyAgentStatus, number>> = Object.freeze({
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 export type AgentNodeViewOptions = {
-  readonly accessibilityLabel: string;
   readonly detail: LobbySceneDetail;
   readonly node: LobbyAgentNodeProjection;
   readonly onSelect: (agentId: string) => void;
@@ -33,11 +32,8 @@ export function createAgentNodeView(pixi: PixiModule, options: AgentNodeViewOpti
   container.eventMode = 'static';
   container.cursor = 'pointer';
   container.hitArea = new pixi.Circle(0, 0, node.radius + 10);
-  container.accessible = true;
-  container.accessibleType = 'button';
-  container.accessibleTitle = node.displayName;
-  container.accessibleHint = options.accessibilityLabel;
-  container.tabIndex = options.selected ? 0 : -1;
+  // 可访问语义由 React DOM 映射统一提供，避免 Pixi Overlay 生成第二套重复焦点树。
+  container.accessible = false;
 
   if (options.selected) {
     container.addChild(

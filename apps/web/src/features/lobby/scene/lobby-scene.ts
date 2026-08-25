@@ -1,11 +1,6 @@
-import type {
-  LobbyAgentNodeProjection,
-  LobbySceneProjection,
-  LobbyZoneId,
-} from '@/features/lobby/domain/scene-projection';
+import type { LobbySceneProjection, LobbyZoneId } from '@/features/lobby/domain/scene-projection';
 
 export type LobbySceneLabels = {
-  readonly agentAccessibilityLabel: (agent: LobbyAgentNodeProjection) => string;
   readonly canvas: string;
   readonly zones: Readonly<Record<LobbyZoneId, string>>;
 };

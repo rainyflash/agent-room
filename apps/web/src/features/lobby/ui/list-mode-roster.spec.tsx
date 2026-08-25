@@ -58,6 +58,26 @@ describe('ListModeRoster', () => {
 
     expect(screen.getByRole('button', { name: /Alpha/u })).toHaveFocus();
   });
+
+  it('方向键、Home 和 End 在可见列表内移动焦点而不隐式打开详情', async () => {
+    const user = userEvent.setup();
+    const onSelectAgent = vi.fn();
+    renderRoster({
+      agents: [agent('alpha', 'working'), agent('beta', 'blocked'), agent('gamma', 'idle')],
+      onSelectAgent,
+      selectedAgentId: null,
+    });
+    const alpha = screen.getByRole('button', { name: /Alpha/u });
+    alpha.focus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('button', { name: /Beta/u })).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(screen.getByRole('button', { name: /Gamma/u })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(alpha).toHaveFocus();
+    expect(onSelectAgent).not.toHaveBeenCalled();
+  });
 });
 
 type RenderRosterOptions = {

@@ -28,6 +28,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
   function ListModeRoster({ agents, onSelectAgent, selectedAgentId }, forwardedRef) {
     const { t } = useTranslation();
     const selectedButtonRef = useRef<HTMLButtonElement>(null);
+    const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
     const [query, setQuery] = useState('');
     const [status, setStatus] = useState<LobbyAgentStatus | 'all'>('all');
     const filteredAgents = useMemo(() => {
@@ -101,7 +102,28 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   onClick={() => {
                     onSelectAgent(agent.agentId);
                   }}
-                  ref={agent.agentId === selectedAgentId ? selectedButtonRef : undefined}
+                  onKeyDown={(event) => {
+                    const targetAgentId = targetAgentForKey(
+                      filteredAgents,
+                      agent.agentId,
+                      event.key,
+                    );
+                    if (targetAgentId === null) {
+                      return;
+                    }
+                    event.preventDefault();
+                    buttonRefs.current.get(targetAgentId)?.focus();
+                  }}
+                  ref={(element) => {
+                    if (element === null) {
+                      buttonRefs.current.delete(agent.agentId);
+                    } else {
+                      buttonRefs.current.set(agent.agentId, element);
+                    }
+                    if (agent.agentId === selectedAgentId) {
+                      selectedButtonRef.current = element;
+                    }
+                  }}
                   type="button"
                 >
                   <span className={`roster-agent__signal roster-agent__signal--${agent.status}`}>
@@ -129,3 +151,22 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
     );
   },
 );
+
+function targetAgentForKey(
+  agents: readonly LobbyAgent[],
+  currentAgentId: string,
+  key: string,
+): string | null {
+  const currentIndex = agents.findIndex((agent) => agent.agentId === currentAgentId);
+  if (currentIndex < 0 || agents.length === 0) {
+    return null;
+  }
+  const targetIndexByKey: Readonly<Record<string, number>> = {
+    ArrowDown: Math.min(agents.length - 1, currentIndex + 1),
+    ArrowUp: Math.max(0, currentIndex - 1),
+    End: agents.length - 1,
+    Home: 0,
+  };
+  const targetIndex = targetIndexByKey[key];
+  return targetIndex === undefined ? null : (agents[targetIndex]?.agentId ?? null);
+}

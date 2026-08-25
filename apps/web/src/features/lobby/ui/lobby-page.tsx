@@ -19,9 +19,8 @@ import { LobbySceneSurface } from '@/features/lobby/ui/lobby-scene-surface';
 import type { LobbySceneSurfaceHandle } from '@/features/lobby/ui/lobby-scene-surface';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
-import { SceneSemanticRoster } from '@/features/lobby/ui/scene-semantic-roster';
 import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock';
-import { useCompactLobby } from '@/features/lobby/ui/use-compact-lobby';
+import { useListModeRequirement } from '@/features/lobby/ui/use-list-mode-requirement';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import { ModerationHub } from '@/features/moderation/ui/moderation-hub';
 import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
@@ -109,7 +108,8 @@ function ReadyLobby({
   const { i18n, t } = useTranslation();
   const { accessManagement, automation, controlPlane, moderation } = useAppServices();
   const accountPreferences = useAccountPreferences();
-  const compact = useCompactLobby();
+  const listModeRequirement = useListModeRequirement();
+  const compact = listModeRequirement === 'compact';
   const listRef = useRef<ListModeRosterHandle>(null);
   const sceneRef = useRef<LobbySceneSurfaceHandle>(null);
   const [sceneAvailable, setSceneAvailable] = useState(true);
@@ -120,17 +120,13 @@ function ReadyLobby({
     [room, selectedAgentId],
   );
   const preferredMode = accountPreferences.snapshot.values.lobbyView;
-  const mode: LobbyViewMode = compact || !sceneAvailable ? 'list' : preferredMode;
+  const mode: LobbyViewMode =
+    listModeRequirement !== null || !sceneAvailable ? 'list' : preferredMode;
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
   const languageKey = i18n.resolvedLanguage ?? i18n.language;
   const labels = useMemo<LobbySceneLabels>(
     () => ({
-      agentAccessibilityLabel: (agent) =>
-        t('lobby.agent.accessibility', {
-          name: agent.displayName,
-          status: t(`lobby.status.${agent.status}`),
-        }),
       canvas: t('lobby.scene.canvasLabel'),
       zones: {
         active: t('lobby.zone.active'),
@@ -228,10 +224,6 @@ function ReadyLobby({
               projection={projection}
               ref={sceneRef}
             />
-            <SceneSemanticRoster
-              nodes={projection.nodes}
-              selectedAgentId={projection.selectedAgentId}
-            />
             {projection.nodes.length === 0 ? <EmptyLobby /> : null}
           </>
         ) : (
@@ -250,6 +242,11 @@ function ReadyLobby({
                 >
                   {t('lobby.scene.retry')}
                 </Button>
+              </div>
+            ) : null}
+            {sceneAvailable && listModeRequirement !== null && !compact ? (
+              <div className="scene-fallback" role="status">
+                <span>{t(`lobby.scene.listMode.${listModeRequirement}`)}</span>
               </div>
             ) : null}
             <ListModeRoster
@@ -313,7 +310,7 @@ function ReadyLobby({
         <SignalDock
           mode={mode}
           onModeChange={(nextMode) => {
-            if (nextMode === 'scene' && !sceneAvailable) {
+            if (nextMode === 'scene' && (!sceneAvailable || listModeRequirement !== null)) {
               return;
             }
             accountPreferences.setLobbyView(nextMode);
@@ -324,7 +321,7 @@ function ReadyLobby({
           onZoomBy={(factor) => {
             sceneRef.current?.zoomBy(factor);
           }}
-          sceneAvailable={sceneAvailable}
+          sceneAvailable={sceneAvailable && listModeRequirement === null}
           zoom={zoom}
         />
       )}

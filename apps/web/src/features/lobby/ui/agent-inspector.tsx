@@ -54,6 +54,7 @@ export function AgentInspector({
         </div>
         <button
           aria-label={t('lobby.inspector.close')}
+          autoFocus
           className="inspector-close"
           onClick={onClose}
           type="button"

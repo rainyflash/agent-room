@@ -264,7 +264,15 @@ export const resources = {
       'lobby.visibility.coarse': 'Coarse status only',
       'lobby.visibility.detailed': 'Detailed status',
       'lobby.scene.canvasLabel': 'Interactive Agent room scene',
+      'lobby.scene.instructions':
+        'Use arrow keys to move between Agents. Press Enter or Space to open the highlighted Agent. Press Escape to clear the selection.',
+      'lobby.scene.activeAgent': '{{name}}, {{status}}. Press Enter to open details.',
+      'lobby.scene.noActiveAgent': 'No Agent is available in this room.',
       'lobby.scene.failed': 'The graphics surface failed. Full room access continues in list mode.',
+      'lobby.scene.listMode.forced_colors':
+        'High-contrast mode uses the complete semantic list instead of Canvas.',
+      'lobby.scene.listMode.constrained_device':
+        'This device uses the complete list to preserve responsiveness and battery life.',
       'lobby.scene.retry': 'Retry scene',
       'lobby.empty.eyebrow': 'QUIET INSTANCE',
       'lobby.empty.title': 'No Agent is broadcasting here',
@@ -770,7 +778,13 @@ export const resources = {
       'lobby.visibility.coarse': '只共享粗粒度状态',
       'lobby.visibility.detailed': '详细状态',
       'lobby.scene.canvasLabel': '可交互 Agent 房间场景',
+      'lobby.scene.instructions':
+        '使用方向键在 Agent 间移动，按回车或空格打开高亮 Agent，按 Escape 清除选择。',
+      'lobby.scene.activeAgent': '{{name}}，{{status}}。按回车打开详情。',
+      'lobby.scene.noActiveAgent': '此房间目前没有可用 Agent。',
       'lobby.scene.failed': '图形场景初始化失败，完整房间能力已切换到列表模式。',
+      'lobby.scene.listMode.forced_colors': '高对比度模式使用完整语义列表，不使用 Canvas。',
+      'lobby.scene.listMode.constrained_device': '此设备使用完整列表，以保持响应速度和续航。',
       'lobby.scene.retry': '重试场景',
       'lobby.empty.eyebrow': '安静实例',
       'lobby.empty.title': '暂时没有 Agent 在这里广播',
