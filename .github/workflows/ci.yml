@@ -43,6 +43,8 @@ jobs:
         run: corepack pnpm@10.28.0 build
       - name: 运行 TypeScript 测试
         run: corepack pnpm@10.28.0 test
+      - name: 运行 Python 工具测试
+        run: python -m unittest discover -s tools/tests -p 'test_*.py'
       - name: 验证 TypeScript 覆盖率
         run: corepack pnpm@10.28.0 test:coverage
       - name: 检查协议生成物

@@ -32,6 +32,9 @@ test:
   cargo test --workspace --all-features
   {{pnpm}} test
 
+python-test:
+  python -m unittest discover -s tools/tests -p "test_*.py"
+
 coverage:
   python tools/database.py coverage
   {{pnpm}} test:coverage
@@ -43,7 +46,7 @@ protocol-check:
   {{pnpm}} protocol:check
   cargo test -p agent-room-protocol-conformance
 
-check: format-check lint typecheck build test protocol-check
+check: format-check lint typecheck build test python-test protocol-check
   {{pnpm}} secrets:check
   {{pnpm}} actions:check
 
@@ -97,6 +100,15 @@ vertical-bootstrap:
 
 security-vertical:
   python tools/vertical.py security
+
+closed-test-matrix:
+  python tools/closed_test.py matrix
+
+closed-test-package:
+  python tools/closed_test.py package
+
+closed-test-verify:
+  python tools/closed_test.py verify --required-platform windows-x64 --required-platform macos-arm64
 
 control-plane-integration: database-migrate
   python tools/control-plane.py test

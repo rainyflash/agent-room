@@ -1,0 +1,101 @@
+name: M2 封闭测试发行
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'closed-test-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: closed-test-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  acceptance:
+    name: 完整验收矩阵
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 与 just
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt,llvm-tools-preview
+          cargo install just --locked --version 1.58.0
+      - name: 安装依赖与 Chromium
+        run: |
+          corepack pnpm@10.28.0 install --frozen-lockfile
+          corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 执行封闭测试矩阵
+        run: python tools/closed_test.py matrix
+      - name: 上传验收证据
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: m2-acceptance-evidence
+          path: artifacts/closed-test/
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-packages:
+    name: ${{ matrix.platform }} 测试包
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows-x64
+          - runner: macos-latest
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 构建桌面安装包
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: corepack pnpm@10.28.0 build:desktop
+      - name: 组装 Web、插件、桌面与单机制品
+        run: python tools/closed_test.py package --platform-tag ${{ matrix.platform }} --skip-build
+      - name: 上传平台制品
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: m2-${{ matrix.platform }}
+          path: artifacts/closed-test/packages/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  m2-gate:
+    name: M2 签字门
+    if: ${{ !cancelled() }}
+    needs: [acceptance, desktop-packages]
+    runs-on: ubuntu-slim
+    steps:
+      - name: 核对前置任务结果
+        env:
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
+          PACKAGES_RESULT: ${{ needs.desktop-packages.result }}
+        run: |
+          test "$ACCEPTANCE_RESULT" = success
+          test "$PACKAGES_RESULT" = success
+          printf '%s\n' 'M2 封闭测试矩阵与 Windows/macOS 制品均已通过。'
