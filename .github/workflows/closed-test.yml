@@ -76,7 +76,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: '-'
         run: corepack pnpm@10.28.0 build:desktop
       - name: 组装 Web、插件、桌面与单机制品
-        run: python tools/closed_test.py package --platform-tag ${{ matrix.platform }} --skip-build
+        run: python tools/closed_test.py package --platform-tag ${{ matrix.platform }}
       - name: 上传平台制品
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
         with:
