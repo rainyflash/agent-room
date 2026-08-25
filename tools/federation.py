@@ -703,17 +703,33 @@ def join_remote_room(user: MatrixUser, room_id: str, origin: Peer) -> None:
 
 
 def send_event(user: MatrixUser, room_id: str, body: str) -> tuple[str, str]:
-    transaction_id = f"task37-{uuid.uuid4().hex}"
+    return send_custom_event(
+        user,
+        room_id,
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        {"schemaVersion": "1.0", "body": body},
+    )
+
+
+def send_custom_event(
+    user: MatrixUser,
+    room_id: str,
+    event_type: str,
+    content: dict[str, object],
+    *,
+    transaction_id: str | None = None,
+) -> tuple[str, str]:
+    transaction_id = transaction_id or f"federation-{uuid.uuid4().hex}"
     accepted_at = utc_now()
     response = matrix_request(
         user.peer,
         "PUT",
         (
             f"/_matrix/client/v3/rooms/{encoded(room_id)}/send/"
-            f"io.github.rainyflash.agentroom.message.preview.v1/{transaction_id}"
+            f"{encoded(event_type)}/{encoded(transaction_id)}"
         ),
         token=user.access_token,
-        payload={"schemaVersion": "1.0", "body": body},
+        payload=content,
     )
     event_id = response.get("event_id")
     if not isinstance(event_id, str):
@@ -890,6 +906,52 @@ def execute_acceptance() -> dict[str, object]:
     join_remote_room(beta, room_id, ALPHA)
     beta_since = wait_for_room(beta, room_id, "join")
 
+    replay_transaction_id = f"task38-replay-{uuid.uuid4().hex}"
+    replay_payload: dict[str, object] = {
+        "schemaVersion": "1.0",
+        "body": "task 38 replay probe",
+    }
+    replay_event_id, replay_accepted_at = send_custom_event(
+        alpha,
+        room_id,
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        replay_payload,
+        transaction_id=replay_transaction_id,
+    )
+    replayed_event_id, _ = send_custom_event(
+        alpha,
+        room_id,
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        replay_payload,
+        transaction_id=replay_transaction_id,
+    )
+    if replay_event_id != replayed_event_id:
+        raise FederationFailure("相同 Matrix 事务标识产生了不同事件，重放保护失效。")
+    unknown_event_type = "io.github.rainyflash.agentroom.message.future.v9"
+    unknown_event_id, unknown_accepted_at = send_custom_event(
+        alpha,
+        room_id,
+        unknown_event_type,
+        {
+            "schemaVersion": "9.0",
+            "body": "不得被兼容视图读取",
+            "requestedAction": "invoke_tool",
+        },
+    )
+    legacy_event_type = ".".join(("org", "agentroom", "message", "preview", "v1"))
+    legacy_event_id, legacy_accepted_at = send_custom_event(
+        alpha,
+        room_id,
+        legacy_event_type,
+        {"schemaVersion": "1.0", "body": "legacy compatibility probe"},
+    )
+    beta_since, compatibility_arrivals = wait_for_event(
+        beta,
+        room_id,
+        {replay_event_id, unknown_event_id, legacy_event_id},
+        beta_since,
+    )
+
     event_id, accepted_at = send_event(alpha, room_id, "task 37 federation preview")
     beta_since, arrivals = wait_for_event(beta, room_id, {event_id}, beta_since)
     status_event_id = send_state(alpha, room_id)
@@ -947,6 +1009,29 @@ def execute_acceptance() -> dict[str, object]:
         },
         "e2ee": {"passed": True, "transport": "Megolm across two homeservers"},
         "governance": {"banRejectedRemoteSend": True, "unbanRejoined": True},
+        "compatibilityEvidence": {
+            "replay": {
+                "transactionId": replay_transaction_id,
+                "firstEventId": replay_event_id,
+                "replayedEventId": replayed_event_id,
+                "locallyAcceptedAt": replay_accepted_at,
+                "federationArrivedAt": compatibility_arrivals[replay_event_id],
+            },
+            "unknownEvent": {
+                "eventType": unknown_event_type,
+                "eventId": unknown_event_id,
+                "locallyAcceptedAt": unknown_accepted_at,
+                "federationArrivedAt": compatibility_arrivals[unknown_event_id],
+                "projectedMode": "metadata_only_read_only",
+            },
+            "legacyEvent": {
+                "eventType": legacy_event_type,
+                "eventId": legacy_event_id,
+                "locallyAcceptedAt": legacy_accepted_at,
+                "federationArrivedAt": compatibility_arrivals[legacy_event_id],
+                "projectedMode": "metadata_only_read_only",
+            },
+        },
         "outageRecovery": {
             "peerStopped": BETA.server_name,
             "localRoomEventId": local_event_id,
