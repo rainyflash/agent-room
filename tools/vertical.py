@@ -898,6 +898,8 @@ def start_web(
             "apps/web/node_modules/vite/bin/vite.js",
             "build",
             "apps/web",
+            "--mode",
+            "vertical",
         ],
         environment=web_environment,
     )

@@ -27,7 +27,7 @@ https://api.agent-room.localhost {
 https://app.agent-room.localhost {
   tls internal
   header {
-    Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
     Cross-Origin-Opener-Policy "same-origin"
     Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     Referrer-Policy "no-referrer"

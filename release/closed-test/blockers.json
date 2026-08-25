@@ -1,4 +1,29 @@
 {
   "schemaVersion": 1,
-  "issues": []
+  "issues": [
+    {
+      "id": "M2-001",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "提示注入正文夹具改变后浏览器断言仍引用旧标题",
+      "rootCause": "直接会话测试复用了安全夹具，但正文展开断言没有随受限 Markdown 标题更新。",
+      "resolution": "断言改为验证实际远端 Markdown 标题，并继续核对正文读取计数。"
+    },
+    {
+      "id": "M2-002",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "严格 CSP 阻止 Matrix SDK 的标准 well-known 探测",
+      "rootCause": "connect-src 只允许开发映射端口，没有允许 Matrix server name 的默认 TLS Origin；生产 PWA Service Worker 同时受本地测试 CA 限制。",
+      "resolution": "只加入精确 Matrix 默认 Origin；纵向验收使用不注册 Service Worker 的生产构建模式，并显式登记首次设备没有密钥备份和偏好的正常 404。"
+    },
+    {
+      "id": "M2-003",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "全局交叉签名解密策略在应用验签前丢弃 Bridge 交接",
+      "rootCause": "Matrix SDK 的 CrossSigned 策略同时作用于自定义 Olm To-Device 事件；尚未交叉签名的 Bridge 设备消息无法进入 Agent Room 的精确设备映射和签名验证。",
+      "resolution": "SDK 解密层允许 Olm 信封进入适配器；房间时间线显式携带 SDK 设备信任状态，未可信加密房间消息在应用验签前隔离，交接继续执行精确设备映射与 Agent Room 签名验证。"
+    }
+  ]
 }

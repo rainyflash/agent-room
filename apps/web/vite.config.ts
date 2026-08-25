@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => ({
     react(),
     tailwindcss(),
     VitePWA({
-      disable: mode === 'desktop',
+      disable: mode === 'desktop' || mode === 'vertical',
       injectRegister: false,
       manifest: {
         name: 'Agent Room',

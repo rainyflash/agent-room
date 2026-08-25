@@ -99,11 +99,16 @@ async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<voi
 
 function isExpectedHttpBoundary(status: number, rawUrl: string): boolean {
   const url = new URL(rawUrl);
+  const missingInitialPreferences =
+    url.pathname.startsWith('/_matrix/client/v3/user/') &&
+    url.pathname.endsWith('/account_data/org.agentroom.preferences.v1');
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
     (status === 404 &&
       url.origin === matrixOrigin &&
-      url.pathname === '/_matrix/client/unstable/org.matrix.msc4143/rtc/transports')
+      (url.pathname === '/_matrix/client/unstable/org.matrix.msc4143/rtc/transports' ||
+        url.pathname === '/_matrix/client/v3/room_keys/version' ||
+        missingInitialPreferences))
   );
 }
 

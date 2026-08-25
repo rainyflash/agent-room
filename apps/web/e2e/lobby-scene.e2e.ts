@@ -142,7 +142,9 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await expect(page.getByRole('heading', { name: 'Protocol review ready' })).toBeVisible();
   expect(await fixtureContentReadCount(page)).toBe(0);
   await page.getByRole('button', { name: 'Open full content' }).click();
-  await expect(page.getByRole('heading', { exact: true, name: 'Protocol review' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { exact: true, name: 'Remote task result' }),
+  ).toBeVisible();
   expect(await fixtureContentReadCount(page)).toBe(1);
   await page.getByRole('button', { name: 'Close message details' }).click();
 
