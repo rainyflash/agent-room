@@ -1,244 +1,288 @@
-use std::{env, num::NonZeroU16, time::Duration};
+use std::{env, time::Duration};
 
-use agent_room_application::ports::{
-    MatrixClientFactory, MatrixConnection, MatrixCreateRoom, MatrixEvent, MatrixEventType,
-    MatrixGateway, MatrixLogin, MatrixRoomId, MatrixRoomPreset, MatrixRoomSyncKind,
-    MatrixRoomVisibility, MatrixSyncRequest, MatrixSyncToken, MatrixTransactionId, MatrixUserId,
-    SecretValue,
+use matrix_sdk::{
+    Client, RoomState,
+    config::{RequestConfig, SyncSettings, SyncToken},
+    deserialized_responses::VerificationState,
+    encryption::identities::Device,
+    ruma::{
+        OwnedDeviceId, OwnedEventId, OwnedUserId, UserId,
+        api::client::room::{
+            Visibility,
+            create_room::v3::{Request as CreateRoomRequest, RoomPreset},
+        },
+        events::{InitialStateEvent, room::encryption::RoomEncryptionEventContent},
+    },
 };
-use agent_room_domain::time::DurationMillis;
-use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
-use serde_json::json;
+use matrix_sdk_base::crypto::{CollectStrategy, DecryptionSettings, LocalTrust, TrustRequirement};
+use serde_json::{Value, json};
 use tokio::time::sleep;
 use uuid::Uuid;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const SYNC_TIMEOUT_MILLIS: u64 = 500;
+const SYNC_TIMEOUT: Duration = Duration::from_millis(500);
 const FEDERATION_ATTEMPTS: u16 = 90;
+
+struct Participant {
+    client: Client,
+    user_id: OwnedUserId,
+    device_id: OwnedDeviceId,
+    since: Option<String>,
+}
 
 #[tokio::test]
 #[ignore = "需要由 tools/federation.py 提供两个真实联邦 Homeserver"]
-async fn 双_homeserver_通过_sdk_交换并解密端到端加密事件() {
-    let alpha = login(
+async fn 双_homeserver_经指纹核验后交换并解密端到端加密事件() {
+    let mut alpha = participant(
         "AGENT_ROOM_FEDERATION_ALPHA_URL",
         "AGENT_ROOM_FEDERATION_ALPHA_USER",
         "AGENT_ROOM_FEDERATION_ALPHA_PASSWORD",
     )
     .await;
-    let beta = login(
+    let mut beta = participant(
         "AGENT_ROOM_FEDERATION_BETA_URL",
         "AGENT_ROOM_FEDERATION_BETA_USER",
         "AGENT_ROOM_FEDERATION_BETA_PASSWORD",
     )
     .await;
 
-    let alpha_since = Some(sync(alpha.gateway(), None).await);
-    let mut beta_since = Some(sync(beta.gateway(), None).await);
-    let room_id = create_encrypted_room(alpha.gateway()).await;
-    invite(
-        alpha.gateway(),
-        &room_id,
-        beta.session().metadata().user_id(),
-    )
-    .await;
-
-    beta_since = Some(
-        wait_for_membership(
-            beta.gateway(),
-            &room_id,
-            MatrixRoomSyncKind::Invited,
-            beta_since,
-        )
-        .await,
-    );
-    join(beta.gateway(), &room_id).await;
-    beta_since = Some(
-        wait_for_membership(
-            beta.gateway(),
-            &room_id,
-            MatrixRoomSyncKind::Joined,
-            beta_since,
-        )
-        .await,
-    );
-    let alpha_joined_since = wait_for_membership(
-        alpha.gateway(),
-        &room_id,
-        MatrixRoomSyncKind::Joined,
-        alpha_since,
-    )
-    .await;
-
-    // 两端都完成一次入房后的同步，确保设备密钥与成员列表已进入 SDK 加密机。
-    beta_since = Some(sync(beta.gateway(), beta_since).await);
-    let _ = sync(alpha.gateway(), Some(alpha_joined_since)).await;
-
-    let event = MatrixEvent::new(
-        MatrixEventType::new("org.agentroom.message.preview.v1").expect("事件类型有效"),
-        MatrixTransactionId::new(format!("federation_{}", Uuid::now_v7().simple()))
-            .expect("事务标识有效"),
-        json!({
-            "schemaVersion": "1.0",
-            "body": "跨服务端到端加密预览",
-        }),
-    )
-    .expect("消息事件有效");
-    let accepted = alpha
-        .gateway()
-        .send_event(&room_id, &event)
+    sync(&mut alpha).await;
+    sync(&mut beta).await;
+    let room_id = create_encrypted_room(&alpha.client).await;
+    alpha
+        .client
+        .get_room(&room_id)
+        .expect("创建端必须立即持有房间")
+        .invite_user_by_id(&beta.user_id)
         .await
-        .expect("发送端必须接受加密房间事件");
+        .expect("跨服邀请必须成功");
+    wait_for_room_state(&mut beta, &room_id, RoomState::Invited).await;
+    beta.client
+        .join_room_by_id(&room_id)
+        .await
+        .expect("跨服加入必须成功");
+    wait_for_room_state(&mut beta, &room_id, RoomState::Joined).await;
+    wait_for_room_state(&mut alpha, &room_id, RoomState::Joined).await;
 
-    let received = wait_for_event(beta.gateway(), &room_id, accepted.event_id(), beta_since).await;
-    assert_eq!(received.content()["body"], "跨服务端到端加密预览");
-    assert!(received.end_to_end_encrypted());
-    assert!(
-        !received.end_to_end_sender_trusted(),
-        "未执行 SAS/交叉签名前不得把远端设备抬高为可信"
-    );
+    // OnlyTrustedDevices 不会向未知设备泄露 Megolm 会话。测试通过独立客户端持有的
+    // Ed25519/Curve25519 公钥做带外比对，完全一致后才在双方本地建立信任。
+    establish_mutual_fingerprint_trust(&alpha, &beta).await;
 
-    beta.gateway()
-        .leave(&room_id)
+    let transaction_id = format!("federation_{}", Uuid::now_v7().simple());
+    let response = alpha
+        .client
+        .get_room(&room_id)
+        .expect("发送端房间仍存在")
+        .send_raw(
+            "org.agentroom.message.preview.v1",
+            json!({
+                "schemaVersion": "1.0",
+                "body": "跨服务端端到端加密预览",
+            }),
+        )
+        .with_transaction_id(transaction_id.as_str().into())
+        .await
+        .expect("已核验设备必须能接收 Megolm 会话");
+
+    let (event, verification) =
+        wait_for_decrypted_event(&mut beta, &response.response.event_id).await;
+    assert_eq!(event["type"], "org.agentroom.message.preview.v1");
+    assert_eq!(event["content"]["body"], "跨服务端端到端加密预览");
+    assert!(matches!(verification, VerificationState::Unverified(_)));
+
+    beta.client
+        .get_room(&room_id)
+        .expect("接收端房间仍存在")
+        .leave()
         .await
         .expect("接收端离房成功");
     alpha
-        .gateway()
-        .leave(&room_id)
+        .client
+        .get_room(&room_id)
+        .expect("发送端房间仍存在")
+        .leave()
         .await
         .expect("发送端离房成功");
 }
 
-async fn login(url_name: &str, user_name: &str, password_name: &str) -> MatrixConnection {
-    let url = required_environment(url_name);
+async fn participant(url_name: &str, user_name: &str, password_name: &str) -> Participant {
     let user = required_environment(user_name);
     let password = required_environment(password_name);
-    let configuration = MatrixSdkConfiguration::new(&url, REQUEST_TIMEOUT)
-        .expect("联邦 Homeserver 地址有效")
-        .with_sync_timeline_limit(NonZeroU16::new(20).expect("时间线上限非零"))
-        .expect("时间线上限有效");
-    MatrixSdkClientFactory::new(configuration)
-        .login(
-            &MatrixLogin::new(
-                user,
-                SecretValue::new(password).expect("测试密码有效"),
-                None,
-                Some("Agent Room 联邦验收".to_owned()),
-            )
-            .expect("登录参数有效"),
+    let client = Client::builder()
+        .homeserver_url(required_environment(url_name))
+        .request_config(
+            RequestConfig::new()
+                .disable_retry()
+                .timeout(REQUEST_TIMEOUT),
         )
+        .with_room_key_recipient_strategy(CollectStrategy::OnlyTrustedDevices)
+        .with_decryption_settings(DecryptionSettings {
+            sender_device_trust_requirement: TrustRequirement::Untrusted,
+        })
+        .build()
         .await
-        .expect("联邦测试用户必须能登录")
+        .expect("联邦 Matrix 客户端必须能初始化");
+    client
+        .matrix_auth()
+        .login_username(user, &password)
+        .initial_device_display_name("Agent Room 联邦验收")
+        .send()
+        .await
+        .expect("联邦测试用户必须能登录");
+    Participant {
+        user_id: client.user_id().expect("登录后必须有用户标识").to_owned(),
+        device_id: client.device_id().expect("登录后必须有设备标识").to_owned(),
+        client,
+        since: None,
+    }
 }
 
-async fn create_encrypted_room(gateway: &dyn MatrixGateway) -> MatrixRoomId {
-    let request = MatrixCreateRoom::new(
-        Some(format!("Agent Room 联邦 E2EE {}", Uuid::now_v7().simple())),
-        Some("双 Homeserver SDK 端到端加密验收".to_owned()),
-        MatrixRoomVisibility::Private,
-        MatrixRoomPreset::PrivateChat,
-        false,
-        Vec::new(),
-    )
-    .expect("建房参数有效")
-    .with_end_to_end_encryption();
-    gateway
-        .create_room(&request)
+async fn create_encrypted_room(client: &Client) -> matrix_sdk::ruma::OwnedRoomId {
+    let mut request = CreateRoomRequest::new();
+    request.name = Some(format!("Agent Room 联邦 E2EE {}", Uuid::now_v7().simple()));
+    request.topic = Some("双 Homeserver 端到端加密验收".to_owned());
+    request.visibility = Visibility::Private;
+    request.preset = Some(RoomPreset::PrivateChat);
+    request.initial_state.push(
+        InitialStateEvent::with_empty_state_key(
+            RoomEncryptionEventContent::with_recommended_defaults(),
+        )
+        .to_raw_any(),
+    );
+    client
+        .create_room(request)
         .await
         .expect("必须能建立端到端加密房间")
+        .room_id()
+        .to_owned()
 }
 
-async fn invite(gateway: &dyn MatrixGateway, room_id: &MatrixRoomId, user_id: &MatrixUserId) {
-    for attempt in 1..=FEDERATION_ATTEMPTS {
-        match gateway.invite(room_id, user_id).await {
-            Ok(()) => return,
-            Err(error) if attempt < FEDERATION_ATTEMPTS => {
-                let _ = error;
-                sleep(Duration::from_secs(1)).await;
-            }
-            Err(error) => panic!("跨服邀请重试耗尽：{error:?}"),
-        }
-    }
-}
-
-async fn join(gateway: &dyn MatrixGateway, room_id: &MatrixRoomId) {
-    for attempt in 1..=FEDERATION_ATTEMPTS {
-        match gateway.join(room_id).await {
-            Ok(()) => return,
-            Err(error) if attempt < FEDERATION_ATTEMPTS => {
-                let _ = error;
-                sleep(Duration::from_secs(1)).await;
-            }
-            Err(error) => panic!("跨服加入重试耗尽：{error:?}"),
-        }
-    }
-}
-
-async fn wait_for_membership(
-    gateway: &dyn MatrixGateway,
-    room_id: &MatrixRoomId,
-    expected: MatrixRoomSyncKind,
-    mut since: Option<MatrixSyncToken>,
-) -> MatrixSyncToken {
+async fn wait_for_room_state(
+    participant: &mut Participant,
+    room_id: &matrix_sdk::ruma::RoomId,
+    expected: RoomState,
+) {
     for _ in 0..FEDERATION_ATTEMPTS {
-        let batch = sync_batch(gateway, since).await;
-        if batch
-            .rooms()
-            .iter()
-            .any(|room| room.room_id() == room_id && room.kind() == expected)
+        sync(participant).await;
+        if participant
+            .client
+            .get_room(room_id)
+            .is_some_and(|room| room.state() == expected)
         {
-            return batch.next_batch().clone();
+            return;
         }
-        since = Some(batch.next_batch().clone());
         sleep(Duration::from_millis(250)).await;
     }
-    panic!(
-        "联邦同步始终缺少房间 {} 的 {expected:?} 状态",
-        room_id.as_str()
-    )
+    panic!("房间 {room_id} 未在预算内进入 {expected:?} 状态")
 }
 
-async fn wait_for_event(
-    gateway: &dyn MatrixGateway,
-    room_id: &MatrixRoomId,
-    event_id: &agent_room_application::ports::MatrixEventId,
-    mut since: Option<MatrixSyncToken>,
-) -> agent_room_application::ports::MatrixTimelineEvent {
-    for _ in 0..FEDERATION_ATTEMPTS {
-        let batch = sync_batch(gateway, since).await;
-        if let Some(event) = batch
-            .rooms()
-            .iter()
-            .filter(|room| room.room_id() == room_id)
-            .flat_map(agent_room_application::ports::MatrixRoomSync::timeline)
-            .find(|event| event.event_id() == Some(event_id))
-        {
-            return event.clone();
-        }
-        since = Some(batch.next_batch().clone());
-        sleep(Duration::from_millis(250)).await;
-    }
-    panic!("接收端未在预算内解密事件 {}", event_id.as_str())
-}
+async fn establish_mutual_fingerprint_trust(alpha: &Participant, beta: &Participant) {
+    let alpha_own = own_device(alpha).await;
+    let beta_own = own_device(beta).await;
+    let alpha_view_of_beta = remote_device(alpha, &beta.user_id, &beta.device_id).await;
+    let beta_view_of_alpha = remote_device(beta, &alpha.user_id, &alpha.device_id).await;
 
-async fn sync(gateway: &dyn MatrixGateway, since: Option<MatrixSyncToken>) -> MatrixSyncToken {
-    sync_batch(gateway, since).await.next_batch().clone()
-}
-
-async fn sync_batch(
-    gateway: &dyn MatrixGateway,
-    since: Option<MatrixSyncToken>,
-) -> agent_room_application::ports::MatrixSyncBatch {
-    gateway
-        .sync_once(
-            &MatrixSyncRequest::new(
-                since,
-                DurationMillis::new(SYNC_TIMEOUT_MILLIS).expect("同步超时有效"),
-                false,
-            )
-            .expect("同步请求有效"),
-        )
+    assert_eq!(
+        alpha_view_of_beta.ed25519_key(),
+        beta_own.ed25519_key(),
+        "Alpha 观察到的 Beta 签名指纹必须与 Beta 自持指纹一致"
+    );
+    assert_eq!(
+        alpha_view_of_beta.curve25519_key(),
+        beta_own.curve25519_key(),
+        "Alpha 观察到的 Beta 加密指纹必须与 Beta 自持指纹一致"
+    );
+    assert_eq!(
+        beta_view_of_alpha.ed25519_key(),
+        alpha_own.ed25519_key(),
+        "Beta 观察到的 Alpha 签名指纹必须与 Alpha 自持指纹一致"
+    );
+    assert_eq!(
+        beta_view_of_alpha.curve25519_key(),
+        alpha_own.curve25519_key(),
+        "Beta 观察到的 Alpha 加密指纹必须与 Alpha 自持指纹一致"
+    );
+    alpha_view_of_beta
+        .set_local_trust(LocalTrust::Verified)
         .await
-        .expect("联邦同步必须成功")
+        .expect("Alpha 必须能持久化已核验的 Beta 指纹");
+    beta_view_of_alpha
+        .set_local_trust(LocalTrust::Verified)
+        .await
+        .expect("Beta 必须能持久化已核验的 Alpha 指纹");
+}
+
+async fn own_device(participant: &Participant) -> Device {
+    participant
+        .client
+        .encryption()
+        .get_own_device()
+        .await
+        .expect("必须能读取本机密码学设备")
+        .expect("本机密码学设备必须存在")
+}
+
+async fn remote_device(
+    participant: &Participant,
+    user_id: &UserId,
+    device_id: &matrix_sdk::ruma::DeviceId,
+) -> Device {
+    participant
+        .client
+        .encryption()
+        .get_device(user_id, device_id)
+        .await
+        .expect("必须能读取远端密码学设备")
+        .expect("远端密码学设备必须已通过同步发现")
+}
+
+async fn wait_for_decrypted_event(
+    participant: &mut Participant,
+    event_id: &OwnedEventId,
+) -> (Value, VerificationState) {
+    for _ in 0..FEDERATION_ATTEMPTS {
+        let response = sync_response(participant).await;
+        for event in response
+            .rooms
+            .joined
+            .values()
+            .flat_map(|room| &room.timeline.events)
+        {
+            let value: Value =
+                serde_json::from_str(event.raw().json().get()).expect("解密事件必须是 JSON");
+            if value["event_id"].as_str() != Some(event_id.as_str()) {
+                continue;
+            }
+            let verification = event
+                .encryption_info()
+                .expect("匹配事件必须携带 Matrix E2EE 元数据")
+                .verification_state
+                .clone();
+            return (value, verification);
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    panic!("接收端未在预算内解密事件 {event_id}")
+}
+
+async fn sync(participant: &mut Participant) {
+    let _ = sync_response(participant).await;
+}
+
+async fn sync_response(participant: &mut Participant) -> matrix_sdk::sync::SyncResponse {
+    let token = participant
+        .since
+        .as_ref()
+        .map_or(SyncToken::NoToken, |value| {
+            SyncToken::Specific(value.clone())
+        });
+    let response = participant
+        .client
+        .sync_once(SyncSettings::new().token(token).timeout(SYNC_TIMEOUT))
+        .await
+        .expect("联邦同步必须成功");
+    participant.since = Some(response.next_batch.clone());
+    response
 }
 
 fn required_environment(name: &str) -> String {

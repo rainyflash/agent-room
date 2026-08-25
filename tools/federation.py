@@ -154,14 +154,29 @@ def write_environment() -> dict[str, str]:
 def prepare_certificates() -> None:
     directory = RUNTIME_DIR / "certificates"
     directory.mkdir(parents=True, exist_ok=True)
+    make_container_output_writable(directory, "/certificates")
+    profile_marker = directory / "profile-v2"
     ca_certificate = directory / "ca.crt"
     server_certificate = directory / "server.crt"
-    if ca_certificate.is_file() and server_certificate.is_file():
+    if (
+        profile_marker.is_file()
+        and ca_certificate.is_file()
+        and server_certificate.is_file()
+    ):
         return
     ca_key = directory / "ca.key"
     server_key = directory / "server.key"
     server_request = directory / "server.csr"
     extensions = directory / "server.ext"
+    for generated in (
+        ca_certificate,
+        ca_key,
+        directory / "ca.srl",
+        server_certificate,
+        server_key,
+        server_request,
+    ):
+        generated.unlink(missing_ok=True)
     extensions.write_text(
         "\n".join(
             (
@@ -199,6 +214,12 @@ def prepare_certificates() -> None:
             "/certificates/ca.crt",
             "-subj",
             "/CN=Agent Room Federation Test CA",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
             "-days",
             "7",
             "-sha256",
@@ -245,6 +266,8 @@ def prepare_certificates() -> None:
         ],
         capture_output=True,
     )
+    make_container_output_writable(directory, "/certificates")
+    profile_marker.write_text("v2\n", encoding="utf-8")
 
 
 def prepare_synapse(peer: Peer, other: Peer, values: dict[str, str]) -> None:
@@ -267,8 +290,32 @@ def prepare_synapse(peer: Peer, other: Peer, values: dict[str, str]) -> None:
                 "generate",
             ]
         )
+    make_container_output_writable(directory, "/data")
     config = synapse_configuration(peer, other, values)
     (directory / "homeserver.yaml").write_text(config, encoding="utf-8")
+
+
+def make_container_output_writable(directory: Path, container_path: str) -> None:
+    """把测试容器生成物交还给当前宿主用户，避免 Linux UID 991 锁死目录。"""
+
+    if not any(directory.iterdir()):
+        return
+    run_command(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--volume",
+            f"{directory.resolve().as_posix()}:{container_path}",
+            "--entrypoint",
+            "chmod",
+            SYNAPSE_IMAGE,
+            "-R",
+            "a+rwX",
+            container_path,
+        ],
+        capture_output=True,
+    )
 
 
 def synapse_configuration(
@@ -458,6 +505,8 @@ def matrix_request(
         raw = error.read()
     except URLError as error:
         raise FederationFailure(f"{peer.label} Matrix 请求不可达：{error.reason}") from error
+    except (http.client.HTTPException, OSError) as error:
+        raise FederationFailure(f"{peer.label} Matrix 请求连接中断：{error}") from error
     if status not in expected_statuses:
         safe_error = ""
         try:

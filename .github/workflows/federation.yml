@@ -1,0 +1,57 @@
+name: M3 联邦验收
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/federation.yml'
+      - 'crates/matrix-adapter/**'
+      - 'infra/federation/**'
+      - 'tools/federation.py'
+      - 'tools/tests/test_federation.py'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/federation.yml'
+      - 'crates/matrix-adapter/**'
+      - 'infra/federation/**'
+      - 'tools/federation.py'
+      - 'tools/tests/test_federation.py'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: federation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  federation:
+    name: 双 Homeserver 协议与恢复
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 验证编排单元边界
+        run: python -m unittest tools.tests.test_federation
+      - name: 执行双 Homeserver 联邦验收
+        run: python tools/federation.py bootstrap
+      - name: 上传联邦证据
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: task-37-federation-evidence
+          path: artifacts/federation/task-37-report.json
+          if-no-files-found: error
+          retention-days: 30
