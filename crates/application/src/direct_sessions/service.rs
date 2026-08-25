@@ -82,13 +82,31 @@ impl DirectSessionService {
     ) -> DirectSessionResult<DirectSessionView> {
         const OPERATION: &str = "direct_session.open";
         let actor_matrix = active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
-        let target = self
-            .load_target(
-                request.actor.principal_id,
-                request.target_agent_id,
-                OPERATION,
-            )
-            .await?;
+        let existing = self
+            .store
+            .find_by_participants(request.actor.principal_id, request.target_agent_id)
+            .await
+            .map_err(|error| {
+                repository(OPERATION, DirectSessionFailureStage::Persistence, &error)
+            })?;
+        let target = match existing.as_ref() {
+            Some(_) => {
+                self.load_known_target(
+                    request.actor.principal_id,
+                    request.target_agent_id,
+                    OPERATION,
+                )
+                .await?
+            }
+            None => {
+                self.load_contactable_target(
+                    request.actor.principal_id,
+                    request.target_agent_id,
+                    OPERATION,
+                )
+                .await?
+            }
+        };
         let contact_policy = self
             .contact_policy(
                 request.actor.principal_id,
@@ -103,13 +121,7 @@ impl DirectSessionService {
                 DirectSessionFailureKind::Blocked,
             ));
         }
-        let record = match self
-            .store
-            .find_by_participants(request.actor.principal_id, request.target_agent_id)
-            .await
-            .map_err(|error| {
-                repository(OPERATION, DirectSessionFailureStage::Persistence, &error)
-            })? {
+        let record = match existing {
             Some(record) => record,
             None => self.reserve(&request.actor, &target, OPERATION).await?,
         };
@@ -177,7 +189,7 @@ impl DirectSessionService {
         const OPERATION: &str = "direct_session.set_block";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         let target = self
-            .load_target(
+            .load_known_target(
                 request.actor.principal_id,
                 request.target_agent_id,
                 OPERATION,
@@ -319,7 +331,7 @@ impl DirectSessionService {
         operation: &'static str,
     ) -> DirectSessionResult<DirectSessionView> {
         let target = self
-            .load_target(
+            .load_known_target(
                 actor_principal_id,
                 record.session().target_agent_id(),
                 operation,
@@ -335,7 +347,7 @@ impl DirectSessionService {
         })
     }
 
-    async fn load_target(
+    async fn load_contactable_target(
         &self,
         actor_principal_id: PrincipalId,
         target_agent_id: AgentId,
@@ -343,6 +355,25 @@ impl DirectSessionService {
     ) -> DirectSessionResult<DirectAgentProfile> {
         self.agents
             .find_contactable(actor_principal_id, target_agent_id)
+            .await
+            .map_err(|error| repository(operation, DirectSessionFailureStage::Directory, &error))?
+            .ok_or_else(|| {
+                failure(
+                    operation,
+                    DirectSessionFailureStage::Directory,
+                    DirectSessionFailureKind::NotFound,
+                )
+            })
+    }
+
+    async fn load_known_target(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+        operation: &'static str,
+    ) -> DirectSessionResult<DirectAgentProfile> {
+        self.agents
+            .find_known_contact(actor_principal_id, target_agent_id)
             .await
             .map_err(|error| repository(operation, DirectSessionFailureStage::Directory, &error))?
             .ok_or_else(|| {

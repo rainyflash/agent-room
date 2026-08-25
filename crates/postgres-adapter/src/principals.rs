@@ -165,13 +165,44 @@ impl DirectSessionAgentDirectory for PostgresRepositories {
         actor_principal_id: PrincipalId,
         target_agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>> {
-        Box::pin(async move {
-            let operation = "direct_session_agent.find_contactable";
-            let row = sqlx::query(
-                r"SELECT agent.matrix_user_id, agent.display_name, agent.avatar_content_id
-                   FROM agent_room.agent AS agent
-                   WHERE agent.id = $2
-                     AND agent.lifecycle_state = 'active'
+        Box::pin(find_direct_agent_profile(
+            &self.pool,
+            actor_principal_id,
+            target_agent_id,
+            false,
+            "direct_session_agent.find_contactable",
+        ))
+    }
+
+    fn find_known_contact(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>> {
+        Box::pin(find_direct_agent_profile(
+            &self.pool,
+            actor_principal_id,
+            target_agent_id,
+            true,
+            "direct_session_agent.find_known_contact",
+        ))
+    }
+}
+
+async fn find_direct_agent_profile(
+    pool: &sqlx::PgPool,
+    actor_principal_id: PrincipalId,
+    target_agent_id: AgentId,
+    include_known_relationship: bool,
+    operation: &'static str,
+) -> RepositoryResult<Option<DirectAgentProfile>> {
+    let row = sqlx::query(
+        r"SELECT agent.matrix_user_id, agent.display_name, agent.avatar_content_id
+           FROM agent_room.agent AS agent
+           WHERE agent.id = $2
+             AND (
+                 (
+                     agent.lifecycle_state = 'active'
                      AND (
                          agent.visibility <> 'private'
                          OR EXISTS (
@@ -181,33 +212,64 @@ impl DirectSessionAgentDirectory for PostgresRepositories {
                                AND ownership.agent_id = agent.id
                                AND ownership.revoked_at IS NULL
                          )
-                     )",
-            )
-            .bind(actor_principal_id.as_uuid())
-            .bind(target_agent_id.as_uuid())
-            .fetch_optional(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            row.map(|row| {
-                let matrix_user_id: String = row
-                    .try_get("matrix_user_id")
-                    .map_err(|error| map_sqlx_error(operation, &error))?;
-                let avatar_content_id: Option<uuid::Uuid> = row
-                    .try_get("avatar_content_id")
-                    .map_err(|error| map_sqlx_error(operation, &error))?;
-                Ok(DirectAgentProfile {
-                    agent_id: target_agent_id,
-                    matrix_user_id: MatrixUserId::new(matrix_user_id)
-                        .map_err(|_| corrupt_data(operation))?,
-                    display_name: row
-                        .try_get("display_name")
-                        .map_err(|error| map_sqlx_error(operation, &error))?,
-                    avatar_content_id: avatar_content_id.map(ContentId::from_uuid),
-                })
-            })
-            .transpose()
-        })
-    }
+                     )
+                 )
+                 OR (
+                     $3::boolean
+                     AND (
+                         EXISTS (
+                             SELECT 1
+                             FROM agent_room.direct_session AS direct_session
+                             WHERE direct_session.principal_id = $1
+                               AND direct_session.target_agent_id = agent.id
+                         )
+                         OR EXISTS (
+                             SELECT 1
+                             FROM agent_room.direct_contact_block AS contact_block
+                             WHERE contact_block.principal_id = $1
+                               AND contact_block.agent_id = agent.id
+                               AND contact_block.revoked_at IS NULL
+                         )
+                         OR EXISTS (
+                             SELECT 1
+                             FROM agent_room.agent_ownership AS ownership
+                             WHERE ownership.principal_id = $1
+                               AND ownership.agent_id = agent.id
+                               AND ownership.revoked_at IS NULL
+                         )
+                     )
+                 )
+             )",
+    )
+    .bind(actor_principal_id.as_uuid())
+    .bind(target_agent_id.as_uuid())
+    .bind(include_known_relationship)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    row.map(|row| decode_direct_agent_profile(&row, target_agent_id, operation))
+        .transpose()
+}
+
+fn decode_direct_agent_profile(
+    row: &sqlx::postgres::PgRow,
+    agent_id: AgentId,
+    operation: &'static str,
+) -> RepositoryResult<DirectAgentProfile> {
+    let matrix_user_id: String = row
+        .try_get("matrix_user_id")
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let avatar_content_id: Option<uuid::Uuid> = row
+        .try_get("avatar_content_id")
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(DirectAgentProfile {
+        agent_id,
+        matrix_user_id: MatrixUserId::new(matrix_user_id).map_err(|_| corrupt_data(operation))?,
+        display_name: row
+            .try_get("display_name")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+        avatar_content_id: avatar_content_id.map(ContentId::from_uuid),
+    })
 }
 
 async fn find_active_principal_matrix_user(

@@ -102,6 +102,14 @@ async fn 直接会话重复预留复用同一记录并完整往返屏蔽事实()
         1
     );
 
+    assert_existing_contact_survives_discovery_loss(
+        &database.runtime,
+        &repositories,
+        principal_id,
+        agent_id,
+    )
+    .await;
+
     let blocked = DirectSessionStore::set_principal_block(
         &repositories,
         principal_id,
@@ -134,6 +142,47 @@ async fn 直接会话重复预留复用同一记录并完整往返屏蔽事实()
     assert!(unblocked.delivery_allowed());
 
     database.close().await;
+}
+
+async fn assert_existing_contact_survives_discovery_loss(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    principal_id: PrincipalId,
+    agent_id: AgentId,
+) {
+    sqlx::query(
+        r"UPDATE agent_room.agent
+           SET visibility = 'private', lifecycle_state = 'retired',
+               updated_at = GREATEST(created_at, NOW())
+           WHERE id = $1",
+    )
+    .bind(agent_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("可将既有联系人转为不可发现状态");
+    sqlx::query(
+        r"UPDATE agent_room.agent_ownership
+           SET revoked_at = GREATEST(created_at, NOW())
+           WHERE principal_id = $1 AND agent_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(principal_id.as_uuid())
+    .bind(agent_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("可撤销夹具所有权");
+    assert!(
+        DirectSessionAgentDirectory::find_contactable(repositories, principal_id, agent_id)
+            .await
+            .expect("可发现性读取应成功")
+            .is_none(),
+        "退役私有 Agent 不得继续出现在新联系查询中"
+    );
+    let known =
+        DirectSessionAgentDirectory::find_known_contact(repositories, principal_id, agent_id)
+            .await
+            .expect("既有联系人读取应成功")
+            .expect("直接会话应保留既有关系授权");
+    assert_eq!(known.display_name, "直接会话目标");
 }
 
 fn reservation(principal_id: PrincipalId, agent_id: AgentId) -> DirectSessionRecord {

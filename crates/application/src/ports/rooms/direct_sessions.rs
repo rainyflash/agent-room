@@ -28,7 +28,16 @@ pub struct DirectAgentProfile {
 
 /// 从权威 Agent 目录解析可联系目标，不能信任客户端自报的 Matrix 用户标识。
 pub trait DirectSessionAgentDirectory: Send + Sync {
+    /// 仅返回当前可被新建会话或新建联系事实引用的 Agent。
     fn find_contactable(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>>;
+
+    /// 返回当前可联系目标，或与主体已有直接会话、屏蔽事实、所有权关系的 Agent。
+    /// 该读取只用于恢复既有关系，不能替代新建会话时的可发现性检查。
+    fn find_known_contact(
         &self,
         actor_principal_id: PrincipalId,
         target_agent_id: AgentId,
