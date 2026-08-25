@@ -19,6 +19,7 @@ use agent_room_application::{
         ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
         ContentTicketFailure, ContentTicketFailureKind, ObjectStoreFailureKind,
     },
+    private_rooms::{PrivateRoomFailure, PrivateRoomFailureKind},
 };
 use agent_room_domain::content::ContentLifecycleState;
 use agent_room_protocol_conformance::generated::{ErrorCategory, ErrorEnvelope};
@@ -331,6 +332,61 @@ impl ApiError {
             correlation.id = %correlation_id.as_uuid(),
             failure = ?failure,
             "Agent 大厅入口失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn private_room(failure: PrivateRoomFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            PrivateRoomFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "private_room.invalid_request",
+                ErrorCategory::Validation,
+                "私人房间请求无效。",
+            ),
+            PrivateRoomFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "private_room.forbidden",
+                ErrorCategory::Authorization,
+                "无权访问或治理该私人房间。",
+            ),
+            PrivateRoomFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "private_room.not_found",
+                ErrorCategory::Validation,
+                "私人房间或目标主体不存在。",
+            ),
+            PrivateRoomFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "private_room.conflict",
+                ErrorCategory::Conflict,
+                "私人房间状态已经变化，请刷新后重试。",
+            ),
+            PrivateRoomFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "private_room.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "私人房间依赖暂时不可用。",
+            ),
+            PrivateRoomFailureKind::UnknownCommit => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "private_room.unknown_commit",
+                ErrorCategory::UnknownCommit,
+                "私人房间操作提交状态未知，必须先对账。",
+            ),
+            PrivateRoomFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "private_room.internal",
+                ErrorCategory::Transient,
+                "私人房间服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            stage = ?failure.stage(),
+            failure = ?failure.kind(),
+            "私人房间请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

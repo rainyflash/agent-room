@@ -28,6 +28,7 @@ use agent_room_application::{
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
     ports::SecretValue,
+    private_rooms::{PrivateRoomDependencies, PrivateRoomService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
         LobbyProvisioningService,
@@ -59,6 +60,7 @@ use features::devices::{DeviceHttpDependencies, DeviceHttpState};
 use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
 use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
+use features::private_rooms::PrivateRoomHttpState;
 use observability::Observability;
 use runtime::SystemRuntime;
 
@@ -80,6 +82,7 @@ struct AgentFeatureHttpStates {
     cards: AgentCardHttpState,
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
+    private_rooms: PrivateRoomHttpState,
 }
 
 struct AgentFeatureDependencies {
@@ -173,7 +176,7 @@ fn build_router(
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::exact(origin))
         .allow_credentials(true)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
@@ -278,6 +281,9 @@ async fn build_identity_router(
         .merge(features::agents::router(agent_features.agents))
         .merge(features::handoffs::router(agent_features.handoffs))
         .merge(features::lobbies::router(agent_features.lobbies))
+        .merge(features::private_rooms::router(
+            agent_features.private_rooms,
+        ))
         .merge(features::agent_cards::router(agent_features.cards))
         .merge(content_routes);
     Ok(IdentityRuntime {
@@ -314,14 +320,22 @@ fn build_agent_feature_states(
         &config.lobby,
         dependencies.repositories.clone(),
         dependencies.system_runtime.clone(),
-        dependencies.matrix_identities,
+        dependencies.matrix_identities.clone(),
     )?;
+    let private_rooms = Arc::new(PrivateRoomService::new(PrivateRoomDependencies {
+        store: dependencies.repositories.clone(),
+        matrix_provisioner: dependencies.matrix_identities.clone(),
+        matrix: dependencies.matrix_identities,
+        principals: dependencies.repositories.clone(),
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime,
+    }));
     Ok(AgentFeatureHttpStates {
         agents: AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
                 verification,
-                authentication: dependencies.authentication,
+                authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),
                 secrets: dependencies.secrets.clone(),
             },
@@ -342,6 +356,11 @@ fn build_agent_feature_states(
             devices: dependencies.devices,
             secrets: dependencies.secrets,
         }),
+        private_rooms: PrivateRoomHttpState::new(
+            private_rooms,
+            dependencies.authentication,
+            &config.authentication.frontend_origin,
+        ),
     })
 }
 

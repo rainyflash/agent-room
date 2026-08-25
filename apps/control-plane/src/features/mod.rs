@@ -7,4 +7,5 @@ pub(crate) mod devices;
 pub(crate) mod handoffs;
 pub(crate) mod health;
 pub(crate) mod lobbies;
+pub(crate) mod private_rooms;
 mod resource_ids;
