@@ -54,6 +54,7 @@ import type { AccessManagementGateway } from '@/features/security/domain/access-
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
+import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 
 const room = testRoom(200);
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -316,12 +317,16 @@ const directSessionCoordinator = new DirectSessionCoordinator(directSessions, di
     }
   },
 });
-const fixtureContent =
-  '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
+const fixtureContent = remotePromptInjectionFixture;
 const contentReadCounts = { downloads: 0, tickets: 0 };
+const securityActionCounts = { handoffApprovals: 0, handoffTargetReads: 0, messagePublishes: 0 };
 Object.defineProperty(window, '__agentRoomFixtureContentReads', {
   configurable: true,
   get: () => ({ ...contentReadCounts }),
+});
+Object.defineProperty(window, '__agentRoomFixtureSecurityActions', {
+  configurable: true,
+  get: () => ({ ...securityActionCounts }),
 });
 const content: ContentGateway = {
   download: () => {
@@ -360,6 +365,7 @@ class FixtureMessagePublisher implements MessagePublisher {
     request: MessagePublicationRequest,
     onProgress: (stage: PublicationProgressStage) => void,
   ) {
+    securityActionCounts.messagePublishes += 1;
     onProgress('submitting');
     return Promise.resolve(
       ok({
@@ -400,6 +406,7 @@ class FixtureHandoffGateway implements HandoffGateway {
   #snapshot: HandoffSnapshot | null = null;
 
   approve(request: HandoffApprovalRequest) {
+    securityActionCounts.handoffApprovals += 1;
     this.#snapshot = {
       expiresAtUnixMs: request.expiresAtUnixMs,
       handoffId: request.handoffId,
@@ -411,6 +418,7 @@ class FixtureHandoffGateway implements HandoffGateway {
   }
 
   listTargets() {
+    securityActionCounts.handoffTargetReads += 1;
     return Promise.resolve(
       ok([
         {

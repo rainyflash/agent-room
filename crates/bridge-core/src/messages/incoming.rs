@@ -664,3 +664,54 @@ fn issue(
         reason,
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    use agent_room_application::ports::{
+        MatrixEventId, MatrixEventType, MatrixRoomId, MatrixTimelineEvent, MatrixUserId,
+    };
+    use proptest::prelude::*;
+    use serde_json::Value;
+
+    use super::{PREVIEW_EVENT_TYPE, REVISION_EVENT_TYPE, parse_pending_message};
+
+    proptest! {
+        #[test]
+        fn 任意有界_matrix_事件只能被解析或隔离(
+            content in bounded_json(),
+            preview_event in any::<bool>(),
+        ) {
+            let room_id = MatrixRoomId::new("!fuzz:matrix.test").expect("测试房间有效");
+            let event_type = if preview_event { PREVIEW_EVENT_TYPE } else { REVISION_EVENT_TYPE };
+            let event = MatrixTimelineEvent::new(
+                Some(MatrixEventId::new("$fuzz:matrix.test").expect("测试事件标识有效")),
+                Some(MatrixUserId::new("@fuzz:matrix.test").expect("测试用户有效")),
+                MatrixEventType::new(event_type).expect("测试事件类型有效"),
+                None,
+                None,
+                Some(1_000),
+                content,
+            );
+
+            if let Ok(event) = event {
+                let _ = parse_pending_message(&room_id, &event);
+            }
+        }
+    }
+
+    fn bounded_json() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            (-1_000_000_i64..=1_000_000_i64).prop_map(|value| Value::Number(value.into())),
+            ".{0,64}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(3, 64, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..8).prop_map(Value::Array),
+                prop::collection::btree_map("[a-zA-Z0-9_]{0,16}", inner, 0..8)
+                    .prop_map(|values| Value::Object(values.into_iter().collect()),),
+            ]
+        })
+    }
+}

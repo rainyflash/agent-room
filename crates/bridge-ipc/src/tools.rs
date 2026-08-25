@@ -2,18 +2,7 @@ use agent_room_bridge_core::ipc::IpcScope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-const MAX_ROOM_ID_BYTES: usize = 512;
-const MAX_EVENT_ID_BYTES: usize = 512;
-const MAX_TITLE_CHARACTERS: usize = 120;
-const MAX_SUMMARY_CHARACTERS: usize = 500;
-const MAX_TASK_SUMMARY_CHARACTERS: usize = 160;
-const MAX_MEDIA_TYPE_BYTES: usize = 255;
-const MAX_LANGUAGE_BYTES: usize = 35;
-const MAX_RISK_FLAG_BYTES: usize = 64;
-const MAX_RISK_FLAGS: usize = 16;
-const MAX_PREVIEW_PAGE_SIZE: u16 = 50;
-const MAX_PRESENCE_TARGETS: usize = 50;
-const MAX_INLINE_TEXT_BYTES: usize = 48 * 1_024;
+use crate::limits;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,15 +81,15 @@ impl IpcListPreviewsRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_optional_bounded(
             self.room_id.as_deref(),
-            MAX_ROOM_ID_BYTES,
+            limits::ROOM_ID_BYTES,
             "bridge.ipc.room_id_invalid",
         )?;
         validate_optional_bounded(
             self.before_event_id.as_deref(),
-            MAX_EVENT_ID_BYTES,
+            limits::EVENT_ID_BYTES,
             "bridge.ipc.event_id_invalid",
         )?;
-        if !(1..=MAX_PREVIEW_PAGE_SIZE).contains(&self.limit) {
+        if !(1..=limits::PREVIEW_PAGE_SIZE).contains(&self.limit) {
             return Err(failure("bridge.ipc.preview_limit_invalid"));
         }
         Ok(())
@@ -119,10 +108,10 @@ impl IpcGetPresenceRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_bounded(
             &self.room_id,
-            MAX_ROOM_ID_BYTES,
+            limits::ROOM_ID_BYTES,
             "bridge.ipc.room_id_invalid",
         )?;
-        if self.agent_ids.len() > MAX_PRESENCE_TARGETS {
+        if self.agent_ids.len() > limits::PRESENCE_TARGETS {
             return Err(failure("bridge.ipc.presence_targets_invalid"));
         }
         self.agent_ids
@@ -156,19 +145,19 @@ impl IpcPublishStatusRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_bounded(
             &self.room_id,
-            MAX_ROOM_ID_BYTES,
+            limits::ROOM_ID_BYTES,
             "bridge.ipc.room_id_invalid",
         )?;
         if let Some(summary) = &self.task_summary {
             validate_human_text(
                 summary,
-                MAX_TASK_SUMMARY_CHARACTERS,
+                limits::TASK_SUMMARY_CHARACTERS,
                 "bridge.ipc.task_summary_invalid",
             )?;
         }
         if self
             .progress_basis_points
-            .is_some_and(|progress| progress > 10_000)
+            .is_some_and(|progress| progress > limits::PROGRESS_BASIS_POINTS)
         {
             return Err(failure("bridge.ipc.progress_invalid"));
         }
@@ -208,30 +197,30 @@ impl IpcSendMessageRequest {
         }
         validate_bounded(
             &self.room_id,
-            MAX_ROOM_ID_BYTES,
+            limits::ROOM_ID_BYTES,
             "bridge.ipc.room_id_invalid",
         )?;
         validate_human_text(
             &self.title,
-            MAX_TITLE_CHARACTERS,
+            limits::TITLE_CHARACTERS,
             "bridge.ipc.message_title_invalid",
         )?;
         validate_human_text(
             &self.summary,
-            MAX_SUMMARY_CHARACTERS,
+            limits::SUMMARY_CHARACTERS,
             "bridge.ipc.message_summary_invalid",
         )?;
-        if self.body.is_empty() || self.body.len() > MAX_INLINE_TEXT_BYTES {
+        if self.body.is_empty() || self.body.len() > limits::INLINE_TEXT_BYTES {
             return Err(failure("bridge.ipc.message_body_invalid"));
         }
         validate_bounded(
             &self.media_type,
-            MAX_MEDIA_TYPE_BYTES,
+            limits::MEDIA_TYPE_BYTES,
             "bridge.ipc.media_type_invalid",
         )?;
         validate_optional_bounded(
             self.language.as_deref(),
-            MAX_LANGUAGE_BYTES,
+            limits::LANGUAGE_BYTES,
             "bridge.ipc.language_invalid",
         )?;
         validate_risk_flags(&self.risk_flags)?;
@@ -274,7 +263,7 @@ impl IpcApproveHandoffRequest {
         validate_uuid_v7(&self.principal_id, "bridge.ipc.principal_id_invalid")?;
         validate_bounded(
             &self.room_id,
-            MAX_ROOM_ID_BYTES,
+            limits::ROOM_ID_BYTES,
             "bridge.ipc.room_id_invalid",
         )?;
         validate_uuid_v7(&self.source_content_id, "bridge.ipc.content_id_invalid")?;
@@ -606,13 +595,13 @@ fn validate_uuid_v7(value: &str, code: &'static str) -> Result<(), IpcMethodVali
 }
 
 fn validate_risk_flags(flags: &[String]) -> Result<(), IpcMethodValidationFailure> {
-    if flags.len() > MAX_RISK_FLAGS {
+    if flags.len() > limits::RISK_FLAGS {
         return Err(failure("bridge.ipc.risk_flags_invalid"));
     }
     if flags.iter().any(|flag| {
         let mut bytes = flag.bytes();
         !bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
-            || flag.len() > MAX_RISK_FLAG_BYTES
+            || flag.len() > limits::RISK_FLAG_BYTES
             || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
     }) {
         return Err(failure("bridge.ipc.risk_flags_invalid"));

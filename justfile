@@ -77,6 +77,9 @@ content-integration:
 reliability:
   python tools/reliability.py
 
+security:
+  python tools/security.py
+
 control-plane: database-migrate
   python tools/control-plane.py run
 

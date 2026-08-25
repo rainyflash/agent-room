@@ -889,17 +889,28 @@ def start_web(
     log_root: Path = LOG_ROOT,
     environment_overrides: Mapping[str, str] | None = None,
 ) -> ManagedProcess:
+    """构建并启动发布形态 Web，确保 CSP 验收不依赖开发服务器特权。"""
     web_environment = os.environ.copy()
     web_environment.update(environment_overrides or {})
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/vite/bin/vite.js",
+            "build",
+            "apps/web",
+        ],
+        environment=web_environment,
+    )
     web = processes.start(
         ManagedProcess(
             name="web",
             command=[
                 executable("node"),
                 "apps/web/node_modules/vite/bin/vite.js",
+                "preview",
                 "apps/web",
                 "--host",
-                "0.0.0.0",
+                "127.0.0.1",
                 "--port",
                 "5173",
                 "--strictPort",

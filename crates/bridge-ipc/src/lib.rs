@@ -1,6 +1,7 @@
 mod authentication;
 mod client;
 mod codec;
+pub mod limits;
 mod tools;
 mod wire;
 

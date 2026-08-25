@@ -100,12 +100,13 @@ const fn failure(kind: IpcProtocolFailureKind) -> IpcProtocolFailure {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use tokio::io::{AsyncWriteExt as _, duplex};
     use uuid::Uuid;
 
     use crate::{IpcCaller, IpcFrame, IpcMethod, IpcScopeName, IpcVersion};
 
-    use super::{IpcFrameCodec, IpcProtocolFailureKind};
+    use super::{IpcFrameCodec, IpcProtocolFailureKind, MAX_FRAME_BYTES};
 
     #[tokio::test]
     async fn 帧编解码保持闭合协议结构() {
@@ -168,5 +169,49 @@ mod tests {
         let encoded = serde_json::to_value(frame).expect("测试帧可序列化");
 
         assert_eq!(encoded["method"], "bridge_status");
+    }
+
+    proptest! {
+        #[test]
+        fn 任意有界字节帧只能被接受或稳定拒绝(payload in prop::collection::vec(any::<u8>(), 0..4_096)) {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("属性测试运行时可创建");
+            let result = runtime.block_on(async {
+                let (mut client, mut server) = duplex(payload.len().saturating_add(4).max(4));
+                client
+                    .write_u32(u32::try_from(payload.len()).expect("测试载荷长度可编码"))
+                    .await
+                    .expect("长度前缀可写入");
+                client.write_all(&payload).await.expect("测试载荷可写入");
+                drop(client);
+                IpcFrameCodec::read(&mut server).await
+            });
+
+            let allowed = match result {
+                Ok(_) => true,
+                Err(failure) => matches!(
+                    failure.kind(),
+                    IpcProtocolFailureKind::InvalidFrame | IpcProtocolFailureKind::Io
+                ),
+            };
+            prop_assert!(allowed);
+        }
+
+        #[test]
+        fn 任意超限长度在分配正文前拒绝(length in (u32::try_from(MAX_FRAME_BYTES).expect("帧上限可编码") + 1)..=u32::MAX) {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("属性测试运行时可创建");
+            let failure = runtime.block_on(async {
+                let (mut client, mut server) = duplex(4);
+                client.write_u32(length).await.expect("长度前缀可写入");
+                IpcFrameCodec::read(&mut server).await.expect_err("超限帧必须失败")
+            });
+
+            prop_assert_eq!(failure.kind(), IpcProtocolFailureKind::FrameTooLarge);
+        }
     }
 }

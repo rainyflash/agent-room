@@ -23,6 +23,7 @@ url.workspace = true
 
 [dev-dependencies]
 ed25519-dalek.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]

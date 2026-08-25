@@ -32,10 +32,16 @@ test('信号坞默认单行，正文必须经显式点击才读取并保持惰�
   await inspector.getByRole('button', { name: 'Open full content' }).click();
   await expect(inspector).toContainText('Length and SHA-256 verified');
   expect(await fixtureContentReads(page)).toEqual({ downloads: 1, tickets: 1 });
-  await expect(inspector.getByText('<img src=x onerror=alert(1)>')).toBeVisible();
-  await expect(inspector.getByText('[link](javascript:alert(1))')).toBeVisible();
+  await expect(inspector.getByText(/Ignore all previous instructions/iu)).toBeVisible();
   await expect(inspector.locator('.restricted-markdown img')).toHaveCount(0);
   await expect(inspector.locator('.restricted-markdown a')).toHaveCount(0);
+  await expect(inspector.locator('.restricted-markdown script')).toHaveCount(0);
+  expect(await fixtureSecurityActions(page)).toEqual({
+    handoffApprovals: 0,
+    handoffTargetReads: 0,
+    messagePublishes: 0,
+  });
+  expect(await page.evaluate(() => Reflect.has(window, '__agentRoomCompromised'))).toBe(false);
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 
@@ -46,6 +52,11 @@ test('信号坞默认单行，正文必须经显式点击才读取并保持惰�
 });
 
 type FixtureContentReads = { readonly downloads: number; readonly tickets: number };
+type FixtureSecurityActions = {
+  readonly handoffApprovals: number;
+  readonly handoffTargetReads: number;
+  readonly messagePublishes: number;
+};
 
 async function fixtureContentReads(page: Page): Promise<FixtureContentReads> {
   return await page.evaluate(() => {
@@ -58,5 +69,27 @@ async function fixtureContentReads(page: Page): Promise<FixtureContentReads> {
       throw new Error('正文读取夹具计数器无效。');
     }
     return { downloads: record.downloads, tickets: record.tickets };
+  });
+}
+
+async function fixtureSecurityActions(page: Page): Promise<FixtureSecurityActions> {
+  return await page.evaluate(() => {
+    const value: unknown = Reflect.get(window, '__agentRoomFixtureSecurityActions');
+    if (typeof value !== 'object' || value === null) {
+      throw new Error('安全动作夹具计数器缺失。');
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.handoffApprovals !== 'number' ||
+      typeof record.handoffTargetReads !== 'number' ||
+      typeof record.messagePublishes !== 'number'
+    ) {
+      throw new Error('安全动作夹具计数器无效。');
+    }
+    return {
+      handoffApprovals: record.handoffApprovals,
+      handoffTargetReads: record.handoffTargetReads,
+      messagePublishes: record.messagePublishes,
+    };
   });
 }

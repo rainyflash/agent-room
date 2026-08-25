@@ -435,6 +435,7 @@ mod tests {
         agent_cards::{AgentCardSourceUrl, AgentCardTransport, AgentEndpointVerificationState},
         time::DurationMillis,
     };
+    use proptest::prelude::*;
 
     use super::{AgentCardNormalizationFailureKind, AgentCardNormalizer};
     use crate::JsonDocument;
@@ -507,6 +508,21 @@ mod tests {
 
         assert_ne!(original.digest(), changed_capability.digest());
         assert_eq!(original.digest(), changed_example.digest());
+    }
+
+    proptest! {
+        #[test]
+        fn 任意_agent_card_字节只能被规范化或稳定拒绝(body in prop::collection::vec(any::<u8>(), 0..16_384)) {
+            let result = AgentCardNormalizer::default().parse(&document(&body), &source_url());
+
+            if let Err(failure) = result {
+                prop_assert_ne!(
+                    failure.kind(),
+                    AgentCardNormalizationFailureKind::Internal,
+                    "不可信输入不得转化为内部错误"
+                );
+            }
+        }
     }
 
     fn fixture() -> JsonDocument {

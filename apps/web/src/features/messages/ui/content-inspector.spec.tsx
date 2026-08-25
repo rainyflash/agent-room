@@ -16,6 +16,7 @@ import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
+import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -86,6 +87,25 @@ describe('ContentInspector', () => {
         }),
       }),
     );
+  });
+
+  it('远端提示注入只能显示为惰性文本且不能自动进入上下文或触发动作', async () => {
+    const user = userEvent.setup();
+    const runtime = dependencies(remotePromptInjectionFixture);
+    const view = renderInspector(runtime);
+
+    await user.click(screen.getByRole('button', { name: 'Open full content' }));
+    await screen.findByText(/Ignore all previous instructions/iu);
+
+    expect(runtime.listTargets).not.toHaveBeenCalled();
+    expect(runtime.approve).not.toHaveBeenCalled();
+    expect(runtime.translate).not.toHaveBeenCalled();
+    expect(runtime.report).not.toHaveBeenCalled();
+    expect(runtime.onClose).not.toHaveBeenCalled();
+    expect(
+      view.container.querySelector('script, img, a, iframe, form, button[type="submit"]'),
+    ).toBeNull();
+    expect(Reflect.get(window, '__agentRoomCompromised')).toBeUndefined();
   });
 
   it('机器翻译必须显式点击，结果标记为机器生成且原文保持可见', async () => {
