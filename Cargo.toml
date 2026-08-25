@@ -3,6 +3,7 @@ members = [
   "apps/bridge",
   "apps/codex-mcp",
   "apps/control-plane",
+  "apps/desktop/src-tauri",
   "crates/a2a-adapter",
   "crates/application",
   "crates/bridge-core",
@@ -82,6 +83,14 @@ tower-http = { version = "0.7.0", features = ["cors"] }
 tracing = "0.1.44"
 tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-build = "2.6.3"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-opener = "2.5.4"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
 url = "2.5.7"
 uuid = { version = "1.25.0", features = ["serde", "v7"] }
 widestring = "1.2.1"

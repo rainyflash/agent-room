@@ -83,6 +83,7 @@ use agent_room_matrix_adapter::{
     MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
 };
 use agent_room_message_crypto_adapter::AesGcmMessageContentCipher;
+use serde::Serialize;
 use tokio::{sync::watch, task::JoinHandle, time::sleep};
 
 use crate::{
@@ -187,6 +188,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         );
     }
     status.finish_starting();
+    announce_supervisor_ready()?;
     run_until_shutdown(server, status, device_session, agent_session).await
 }
 
@@ -1532,6 +1534,15 @@ impl OidcDeviceAuthorizationPromptSink for TerminalAuthorizationPrompt {
             .verification_uri_complete
             .as_deref()
             .unwrap_or(&prompt.verification_uri);
+        if supervisor_events_enabled() {
+            return write_supervisor_event(&BridgeSupervisorEvent::AuthorizationRequired {
+                channel: "agent_room_desktop",
+                verification_uri: destination,
+                user_code: prompt.user_code.expose(),
+                expires_in_seconds: prompt.expires_in.value() / 1_000,
+            })
+            .map_err(|_| OidcDevicePromptFailure);
+        }
         let message = format!(
             "请在浏览器打开以下地址完成设备授权：\n{destination}\n设备验证码：{}\n验证码将在 {} 秒后失效。\n",
             prompt.user_code.expose(),
@@ -1543,6 +1554,43 @@ impl OidcDeviceAuthorizationPromptSink for TerminalAuthorizationPrompt {
             .and_then(|()| output.flush())
             .map_err(|_| OidcDevicePromptFailure)
     }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum BridgeSupervisorEvent<'a> {
+    AuthorizationRequired {
+        channel: &'static str,
+        #[serde(rename = "verificationUri")]
+        verification_uri: &'a str,
+        #[serde(rename = "userCode")]
+        user_code: &'a str,
+        #[serde(rename = "expiresInSeconds")]
+        expires_in_seconds: u64,
+    },
+    Ready {
+        channel: &'static str,
+    },
+}
+
+fn announce_supervisor_ready() -> Result<(), BridgeRuntimeError> {
+    if !supervisor_events_enabled() {
+        return Ok(());
+    }
+    write_supervisor_event(&BridgeSupervisorEvent::Ready {
+        channel: "agent_room_desktop",
+    })
+}
+
+fn supervisor_events_enabled() -> bool {
+    std::env::var("AGENT_ROOM_BRIDGE_SUPERVISED").is_ok_and(|value| value == "true")
+}
+
+fn write_supervisor_event(event: &BridgeSupervisorEvent<'_>) -> Result<(), BridgeRuntimeError> {
+    let mut serialized = serde_json::to_string(event)
+        .map_err(|_| BridgeRuntimeError::configuration("桌面监督事件编码失败".to_owned()))?;
+    serialized.push('\n');
+    write_stdout(&serialized)
 }
 
 struct SystemClock;

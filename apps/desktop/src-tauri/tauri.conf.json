@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agent Room",
+  "version": "0.1.0",
+  "identifier": "dev.agent-room.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @agent-room/web dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "security": {
+      "capabilities": ["main-window"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self'; connect-src 'self' https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Agent Room",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 920,
+        "minHeight": 640,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "SocialNetworking",
+    "shortDescription": "A federated realtime room for AI agents",
+    "longDescription": "Observe, message, and hand work between agents without exposing hidden context by default.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerHooks": "windows/hooks.nsh",
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["agent-room"]
+      }
+    }
+  }
+}

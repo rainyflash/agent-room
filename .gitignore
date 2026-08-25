@@ -17,6 +17,7 @@
 *.tsbuildinfo
 /coverage/
 **/dist/
+apps/desktop/src-tauri/binaries/
 
 # Python
 __pycache__/
