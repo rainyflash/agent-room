@@ -24,6 +24,7 @@ import { SessionProvider } from '@/features/session/ui/session-provider';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
+import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 
 export type AppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -46,6 +47,7 @@ export function AppProviders({ config }: AppProvidersProps) {
 function createRuntime(config: RuntimeConfig) {
   const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
   const matrixClients = new MatrixClientRegistry();
+  const secretStorageKeys = new MatrixSecretStorageKeyCache();
   const matrix = new MatrixWebGateway({
     baseUrl: config.matrixHomeserverUrl,
     onClientActivity: (client) => {
@@ -54,6 +56,7 @@ function createRuntime(config: RuntimeConfig) {
     onClientChange: (client) => {
       matrixClients.replace(client);
     },
+    secretStorageKeys,
   });
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
@@ -67,7 +70,7 @@ function createRuntime(config: RuntimeConfig) {
     directSessions,
     directSessionMatrix,
   );
-  const security = new MatrixSdkSecurityGateway(matrixClients);
+  const security = new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys);
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();

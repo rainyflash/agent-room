@@ -80,6 +80,8 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
 };
 const security: MatrixSecurityGateway = {
   inspect: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
+  recover: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
+  setupRecovery: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
   subscribe: () => noop,
 };
 let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);

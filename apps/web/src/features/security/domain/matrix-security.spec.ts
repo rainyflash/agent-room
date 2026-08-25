@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   evaluateMatrixSecurity,
+  isValidRecoveryPassphrase,
   type MatrixSecurityEvidence,
 } from '@/features/security/domain/matrix-security';
 
@@ -48,6 +49,15 @@ describe('evaluateMatrixSecurity', () => {
       kind: 'blocked',
       sendAllowed: false,
     });
+  });
+});
+
+describe('isValidRecoveryPassphrase', () => {
+  it('拒绝短口令、纯空白和异常长输入', () => {
+    expect(isValidRecoveryPassphrase('short')).toBe(false);
+    expect(isValidRecoveryPassphrase(' '.repeat(12))).toBe(false);
+    expect(isValidRecoveryPassphrase('x'.repeat(257))).toBe(false);
+    expect(isValidRecoveryPassphrase('correct horse battery staple')).toBe(true);
   });
 });
 

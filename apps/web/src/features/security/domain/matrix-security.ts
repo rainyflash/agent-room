@@ -48,7 +48,14 @@ export type MatrixSecurityFailure = {
     | 'security.crypto_unavailable'
     | 'security.identity_unavailable'
     | 'security.inspection_failed'
-    | 'security.matrix_unavailable';
+    | 'security.matrix_unavailable'
+    | 'security.recovery_already_configured'
+    | 'security.recovery_credential_invalid'
+    | 'security.recovery_failed'
+    | 'security.recovery_key_missing'
+    | 'security.recovery_key_rejected'
+    | 'security.recovery_setup_failed'
+    | 'security.verification_required';
   readonly retryable: boolean;
 };
 
@@ -60,8 +67,45 @@ export type MatrixSecurityGateway = {
   inspect(
     inspection?: MatrixSecurityInspection,
   ): Promise<Result<MatrixSecuritySnapshot, MatrixSecurityFailure>>;
+  recover(
+    request: MatrixRecoveryRequest,
+    onProgress?: (progress: MatrixRecoveryProgress) => void,
+  ): Promise<Result<MatrixRecoveryResult, MatrixSecurityFailure>>;
+  setupRecovery(
+    request: MatrixRecoverySetupRequest,
+  ): Promise<Result<MatrixRecoverySetupResult, MatrixSecurityFailure>>;
   subscribe(listener: () => void): () => void;
 };
+
+export type MatrixRecoverySetupRequest = {
+  readonly passphrase: string;
+};
+
+export type MatrixRecoverySetupResult = {
+  readonly recoveryKey: string;
+};
+
+export type MatrixRecoveryRequest = {
+  readonly credential: string;
+};
+
+export type MatrixRecoveryProgress =
+  | { readonly stage: 'fetching' }
+  | {
+      readonly failures: number;
+      readonly imported: number;
+      readonly stage: 'importing';
+      readonly total: number;
+    };
+
+export type MatrixRecoveryResult = {
+  readonly imported: number;
+  readonly total: number;
+};
+
+export function isValidRecoveryPassphrase(passphrase: string): boolean {
+  return passphrase.length >= 12 && passphrase.length <= 256 && /\S/u.test(passphrase);
+}
 
 const recoveryBlockers = new Set<MatrixSecurityBlocker>([
   'backup_locked',

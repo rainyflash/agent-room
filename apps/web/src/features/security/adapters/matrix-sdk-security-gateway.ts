@@ -3,8 +3,14 @@ import type { Device, MatrixClient } from 'matrix-js-sdk';
 
 import {
   evaluateMatrixSecurity,
+  isValidRecoveryPassphrase,
   type MatrixBackupState,
   type MatrixDeviceTrust,
+  type MatrixRecoveryProgress,
+  type MatrixRecoveryRequest,
+  type MatrixRecoveryResult,
+  type MatrixRecoverySetupRequest,
+  type MatrixRecoverySetupResult,
   type MatrixSecurityDevice,
   type MatrixSecurityEvidence,
   type MatrixSecurityFailure,
@@ -13,13 +19,16 @@ import {
   type MatrixSecuritySnapshot,
 } from '@/features/security/domain/matrix-security';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
+import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { err, ok, type Result } from '@/shared/result';
 
 export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
   readonly #clients: MatrixClientSource;
+  readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
 
-  constructor(clients: MatrixClientSource) {
+  constructor(clients: MatrixClientSource, secretStorageKeys: MatrixSecretStorageKeyCache) {
     this.#clients = clients;
+    this.#secretStorageKeys = secretStorageKeys;
   }
 
   async inspect(
@@ -68,9 +77,156 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
     }
   }
 
+  async setupRecovery(
+    request: MatrixRecoverySetupRequest,
+  ): Promise<Result<MatrixRecoverySetupResult, MatrixSecurityFailure>> {
+    if (!isValidRecoveryPassphrase(request.passphrase)) {
+      return err(failure('security.recovery_credential_invalid', false));
+    }
+    const active = activeCryptoClient(this.#clients.current());
+    if (!active.ok) {
+      return active;
+    }
+
+    try {
+      if (!(await active.value.crypto.isCrossSigningReady())) {
+        return err(failure('security.verification_required', false));
+      }
+      const secretStorageStatus = await active.value.crypto.getSecretStorageStatus();
+      if (secretStorageStatus.defaultKeyId !== null) {
+        return err(failure('security.recovery_already_configured', false));
+      }
+      const generated = await active.value.crypto.createRecoveryKeyFromPassphrase(
+        request.passphrase,
+      );
+      try {
+        await active.value.crypto.bootstrapSecretStorage({
+          createSecretStorageKey: () => Promise.resolve(generated),
+          setupNewKeyBackup: true,
+        });
+        return generated.encodedPrivateKey === undefined
+          ? err(failure('security.recovery_setup_failed', true))
+          : ok(Object.freeze({ recoveryKey: generated.encodedPrivateKey }));
+      } finally {
+        generated.privateKey.fill(0);
+      }
+    } catch {
+      return err(failure('security.recovery_setup_failed', true));
+    }
+  }
+
+  async recover(
+    request: MatrixRecoveryRequest,
+    onProgress: (progress: MatrixRecoveryProgress) => void = ignoreRecoveryProgress,
+  ): Promise<Result<MatrixRecoveryResult, MatrixSecurityFailure>> {
+    if (request.credential.length === 0 || request.credential.length > 1_024) {
+      return err(failure('security.recovery_credential_invalid', false));
+    }
+    const active = activeCryptoClient(this.#clients.current());
+    if (!active.ok) {
+      return active;
+    }
+
+    const storedKey = await active.value.client.secretStorage.getKey().catch(() => null);
+    if (storedKey === null) {
+      return err(failure('security.recovery_key_missing', false));
+    }
+    const [keyId, keyInfo] = storedKey;
+    let key: Uint8Array<ArrayBuffer> | null = null;
+    try {
+      key = await decodeRecoveryCredential(request.credential, keyInfo.passphrase);
+      if (!(await active.value.client.secretStorage.checkKey(key, keyInfo))) {
+        key.fill(0);
+        return err(failure('security.recovery_key_rejected', false));
+      }
+    } catch {
+      key?.fill(0);
+      return err(failure('security.recovery_key_rejected', false));
+    }
+
+    this.#secretStorageKeys.unlock(keyId, key);
+    key.fill(0);
+    try {
+      const { crypto, deviceId, userId } = active.value;
+      await crypto.bootstrapCrossSigning({});
+      await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+      const verification = await crypto.getDeviceVerificationStatus(userId, deviceId);
+      if (verification?.isVerified() !== true) {
+        await crypto.crossSignDevice(deviceId);
+      }
+      const restored = await crypto.restoreKeyBackup({
+        progressCallback: (progress) => {
+          onProgress(
+            progress.stage === 'fetch'
+              ? { stage: 'fetching' }
+              : {
+                  failures: progress.failures,
+                  imported: progress.successes,
+                  stage: 'importing',
+                  total: progress.total,
+                },
+          );
+        },
+      });
+      return ok(Object.freeze({ imported: restored.imported, total: restored.total }));
+    } catch {
+      return err(failure('security.recovery_failed', true));
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     return this.#clients.subscribe(listener);
   }
+}
+
+type ActiveCryptoClient = {
+  readonly client: MatrixClient;
+  readonly crypto: CryptoApi;
+  readonly deviceId: string;
+  readonly userId: string;
+};
+
+function activeCryptoClient(
+  client: MatrixClient | null,
+): Result<ActiveCryptoClient, MatrixSecurityFailure> {
+  if (client === null) {
+    return err(failure('security.matrix_unavailable', true));
+  }
+  const crypto = client.getCrypto();
+  if (crypto === undefined) {
+    return err(failure('security.crypto_unavailable', true));
+  }
+  const userId = client.getUserId();
+  const deviceId = client.getDeviceId();
+  return userId === null || deviceId === null
+    ? err(failure('security.identity_unavailable', false))
+    : ok({ client, crypto, deviceId, userId });
+}
+
+async function decodeRecoveryCredential(
+  credential: string,
+  passphrase:
+    { readonly bits?: number; readonly iterations: number; readonly salt: string } | undefined,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const { decodeRecoveryKey, deriveRecoveryKeyFromPassphrase } =
+    await import('matrix-js-sdk/lib/crypto-api/index.js');
+  try {
+    return decodeRecoveryKey(credential);
+  } catch {
+    if (passphrase === undefined) {
+      throw new Error('恢复凭据不是当前 Secret Storage 的恢复密钥。');
+    }
+    return await deriveRecoveryKeyFromPassphrase(
+      credential,
+      passphrase.salt,
+      passphrase.iterations,
+      passphrase.bits,
+    );
+  }
+}
+
+function ignoreRecoveryProgress(progress: MatrixRecoveryProgress): void {
+  void progress;
 }
 
 function participantUserIds(

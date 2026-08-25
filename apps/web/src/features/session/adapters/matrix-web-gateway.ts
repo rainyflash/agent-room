@@ -10,6 +10,7 @@ import type {
   MatrixRestoreOutcome,
   SessionFailure,
 } from '@/features/session/domain/session';
+import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { err, ok, type Result } from '@/shared/result';
 
 const MATRIX_SESSION_KEY = 'agent-room.matrix-session.v1';
@@ -48,6 +49,7 @@ export type MatrixWebGatewayOptions = {
   readonly onClientChange?: (client: MatrixClient | null) => void;
   readonly online?: () => boolean;
   readonly replaceHistory?: (url: string) => void;
+  readonly secretStorageKeys?: MatrixSecretStorageKeyCache;
   readonly sessionStorage?: Storage;
   readonly syncTimeoutMs?: number;
   readonly url?: () => URL;
@@ -62,6 +64,7 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #onClientChange: (client: MatrixClient | null) => void;
   readonly #online: () => boolean;
   readonly #replaceHistory: (url: string) => void;
+  readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
   readonly #sessionStorage: Storage;
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
@@ -80,6 +83,7 @@ export class MatrixWebGateway implements MatrixGateway {
     replaceHistory = (url) => {
       window.history.replaceState(window.history.state, '', url);
     },
+    secretStorageKeys = new MatrixSecretStorageKeyCache(),
     sessionStorage = window.sessionStorage,
     syncTimeoutMs = 20_000,
     url = () => new URL(window.location.href),
@@ -92,6 +96,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#onClientChange = onClientChange;
     this.#online = online;
     this.#replaceHistory = replaceHistory;
+    this.#secretStorageKeys = secretStorageKeys;
     this.#sessionStorage = sessionStorage;
     this.#syncTimeoutMs = syncTimeoutMs;
     this.#url = url;
@@ -123,6 +128,7 @@ export class MatrixWebGateway implements MatrixGateway {
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
+    this.#secretStorageKeys.clear();
     this.#onClientChange(null);
 
     const capturedTokenResult = this.#consumeLoginToken();
@@ -163,6 +169,7 @@ export class MatrixWebGateway implements MatrixGateway {
       const client = sdk.createClient({
         accessToken: session.accessToken,
         baseUrl: this.#baseUrl,
+        cryptoCallbacks: this.#secretStorageKeys.callbacks,
         deviceId: session.deviceId,
         localTimeoutMs: 20_000,
         ...(session.refreshToken === undefined ? {} : { refreshToken: session.refreshToken }),
@@ -203,9 +210,7 @@ export class MatrixWebGateway implements MatrixGateway {
         });
       } catch {
         client.stopClient();
-        return err(
-          failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true),
-        );
+        return err(failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true));
       }
 
       const connection = new BrowserMatrixConnection(
@@ -241,6 +246,7 @@ export class MatrixWebGateway implements MatrixGateway {
   async logout(): Promise<Result<void, SessionFailure>> {
     const active = this.#activeConnection;
     this.#activeConnection = null;
+    this.#secretStorageKeys.clear();
     this.#onClientChange(null);
     this.#clearBrowserState();
     if (active === null) {
