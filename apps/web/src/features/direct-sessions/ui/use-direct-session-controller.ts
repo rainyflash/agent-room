@@ -102,7 +102,9 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
 
   return {
     blocking: blockMutation.isPending,
-    clearFailure: () => setActionFailure(null),
+    clearFailure: () => {
+      setActionFailure(null);
+    },
     failure: actionFailure ?? listFailure,
     loading: enabled && list.isPending,
     markDisplayed,

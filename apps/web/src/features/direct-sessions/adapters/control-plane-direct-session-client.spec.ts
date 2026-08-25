@@ -22,7 +22,11 @@ describe('ControlPlaneDirectSessionClient', () => {
 
     expect(result).toMatchObject({ ok: true, value: { catalogId: CATALOG_ID } });
     const [input, init] = fetch.mock.calls[0] ?? [];
-    expect(String(input)).toBe('https://control.agent-room.test/direct-sessions');
+    expect(input).toBeInstanceOf(URL);
+    if (!(input instanceof URL)) {
+      throw new TypeError('直接会话客户端必须使用已解析 URL');
+    }
+    expect(input.href).toBe('https://control.agent-room.test/direct-sessions');
     expect(init).toMatchObject({ cache: 'no-store', credentials: 'include', method: 'POST' });
     expect(init?.body).toBe(JSON.stringify({ targetAgentId: AGENT_ID }));
   });

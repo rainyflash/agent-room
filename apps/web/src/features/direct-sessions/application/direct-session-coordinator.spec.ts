@@ -23,13 +23,13 @@ describe('DirectSessionCoordinator', () => {
 
   it('屏蔽先写服务端再写 Matrix，解除时采用相反顺序', async () => {
     const order: string[] = [];
-    const setBlocked = vi.fn().mockImplementation(async (_agentId: string, blocked: boolean) => {
+    const setBlocked = vi.fn().mockImplementation((_agentId: string, blocked: boolean) => {
       order.push(blocked ? 'server-block' : 'server-unblock');
-      return ok(contact(blocked));
+      return Promise.resolve(ok(contact(blocked)));
     });
-    const setIgnored = vi.fn().mockImplementation(async (_userId: string, ignored: boolean) => {
+    const setIgnored = vi.fn().mockImplementation((_userId: string, ignored: boolean) => {
       order.push(ignored ? 'matrix-block' : 'matrix-unblock');
-      return ok(undefined);
+      return Promise.resolve(ok(undefined));
     });
     const coordinator = new DirectSessionCoordinator(
       controlPlane({ setBlocked }),
@@ -60,19 +60,19 @@ describe('DirectSessionCoordinator', () => {
 
 function controlPlane(overrides: Partial<DirectSessionGateway>): DirectSessionGateway {
   return {
-    inspect: async () => ok(session()),
-    list: async () => ok([session()]),
-    open: async () => ok(session()),
-    setBlocked: async (_agentId, blocked) => ok(contact(blocked)),
+    inspect: () => Promise.resolve(ok(session())),
+    list: () => Promise.resolve(ok([session()])),
+    open: () => Promise.resolve(ok(session())),
+    setBlocked: (_agentId, blocked) => Promise.resolve(ok(contact(blocked))),
     ...overrides,
   };
 }
 
 function matrix(overrides: Partial<DirectSessionMatrixGateway>): DirectSessionMatrixGateway {
   return {
-    markDisplayed: async () => ok(undefined),
-    prepare: async () => ok(undefined),
-    setIgnored: async () => ok(undefined),
+    markDisplayed: () => Promise.resolve(ok(undefined)),
+    prepare: () => Promise.resolve(ok(undefined)),
+    setIgnored: () => Promise.resolve(ok(undefined)),
     ...overrides,
   };
 }
