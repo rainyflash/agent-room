@@ -28,9 +28,11 @@ describe('ControlPlaneDirectSessionClient', () => {
   });
 
   it('拒绝生命周期与房间实例互相矛盾的响应', async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-      Response.json({ ...sessionPayload(), matrixRoomId: null }, { status: 200 }),
-    );
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json({ ...sessionPayload(), matrixRoomId: null }, { status: 200 }),
+      );
     const client = new ControlPlaneDirectSessionClient({
       baseUrl: 'https://control.agent-room.test',
       fetch,

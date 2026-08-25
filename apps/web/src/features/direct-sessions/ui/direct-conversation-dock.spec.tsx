@@ -51,9 +51,7 @@ describe('DirectConversationDock', () => {
     const onActiveSessionChange = vi.fn();
     renderDock(controller(), null, onActiveSessionChange);
 
-    await user.click(
-      screen.getByRole('button', { name: 'Open conversation with Review Agent' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Open conversation with Review Agent' }));
 
     expect(onActiveSessionChange).toHaveBeenCalledWith(session.catalogId);
     expect(screen.queryByTestId('direct-message-layer')).not.toBeInTheDocument();
@@ -66,9 +64,7 @@ describe('DirectConversationDock', () => {
 
     expect(screen.getByText('Coarse presence only')).toBeInTheDocument();
     expect(screen.getByText('Delivery allowed')).toBeInTheDocument();
-    expect(screen.getByTestId('direct-message-layer')).toHaveTextContent(
-      '!direct:agent-room.test',
-    );
+    expect(screen.getByTestId('direct-message-layer')).toHaveTextContent('!direct:agent-room.test');
 
     await user.click(screen.getByRole('button', { name: 'Block' }));
 

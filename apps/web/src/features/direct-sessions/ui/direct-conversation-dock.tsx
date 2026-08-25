@@ -71,7 +71,11 @@ export function DirectConversationDock({
             >
               <X aria-hidden="true" />
             </button>
-            {controller.loading ? <LoaderCircle aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+            {controller.loading ? (
+              <LoaderCircle aria-hidden="true" />
+            ) : (
+              <EyeOff aria-hidden="true" />
+            )}
             <h2>
               {t(
                 controller.loading
@@ -241,11 +245,7 @@ function Conversation({
             size="compact"
             tone={principalBlocked ? 'quiet' : 'ghost'}
           >
-            {t(
-              principalBlocked
-                ? 'directSessions.action.unblock'
-                : 'directSessions.action.block',
-            )}
+            {t(principalBlocked ? 'directSessions.action.unblock' : 'directSessions.action.block')}
           </Button>
           <button
             aria-label={t('directSessions.action.close')}

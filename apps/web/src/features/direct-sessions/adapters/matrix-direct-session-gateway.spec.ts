@@ -1,4 +1,10 @@
-import { EventType, ReceiptType, type MatrixClient, type MatrixEvent, type Room } from 'matrix-js-sdk';
+import {
+  EventType,
+  ReceiptType,
+  type MatrixClient,
+  type MatrixEvent,
+  type Room,
+} from 'matrix-js-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MatrixSdkDirectSessionGateway } from './matrix-direct-session-gateway';
@@ -43,17 +49,17 @@ describe('MatrixSdkDirectSessionGateway', () => {
     } as unknown as MatrixClient;
     const gateway = new MatrixSdkDirectSessionGateway(source(client));
 
-    await expect(
-      gateway.setIgnored('@_agent_build:matrix.agent-room.test', true),
-    ).resolves.toEqual({ ok: true, value: undefined });
+    await expect(gateway.setIgnored('@_agent_build:matrix.agent-room.test', true)).resolves.toEqual(
+      { ok: true, value: undefined },
+    );
     expect(setIgnoredUsers).toHaveBeenCalledWith([
       '@existing:matrix.agent-room.test',
       '@_agent_build:matrix.agent-room.test',
     ]);
 
-    await expect(gateway.markDisplayed('!direct:matrix.agent-room.test', '$event')).resolves.toEqual(
-      { ok: true, value: undefined },
-    );
+    await expect(
+      gateway.markDisplayed('!direct:matrix.agent-room.test', '$event'),
+    ).resolves.toEqual({ ok: true, value: undefined });
     expect(sendReadReceipt).toHaveBeenCalledWith(event, ReceiptType.ReadPrivate, true);
   });
 });

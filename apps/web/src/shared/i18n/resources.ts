@@ -642,8 +642,7 @@ export const resources = {
       'directSessions.lifecycle.active': '活跃',
       'directSessions.lifecycle.activeDetail': 'Matrix 房间已经就绪。',
       'directSessions.lifecycle.provisioning': '正在创建',
-      'directSessions.lifecycle.provisioningDetail':
-        '持久会话已经存在，Matrix 成员关系仍在收敛。',
+      'directSessions.lifecycle.provisioningDetail': '持久会话已经存在，Matrix 成员关系仍在收敛。',
       'directSessions.lifecycle.failed': '不可用',
       'directSessions.lifecycle.failedDetail':
         '房间创建没有完成。请从 Agent 资料再次发起，以收敛到同一个会话。',

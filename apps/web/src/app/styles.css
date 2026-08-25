@@ -1774,7 +1774,11 @@
   border-radius: 18px;
   color: var(--color-paper);
   background:
-    radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--color-network) 9%, transparent), transparent 36%),
+    radial-gradient(
+      circle at 72% 24%,
+      color-mix(in srgb, var(--color-network) 9%, transparent),
+      transparent 36%
+    ),
     color-mix(in srgb, var(--color-ink) 96%, transparent);
   box-shadow: 0 28px 90px color-mix(in srgb, black 46%, transparent);
   backdrop-filter: blur(24px);

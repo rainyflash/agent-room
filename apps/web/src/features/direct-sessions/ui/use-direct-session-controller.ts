@@ -38,8 +38,7 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
   const list = useDirectSessionList(directSessions, enabled);
   const [actionFailure, setActionFailure] = useState<DirectSessionFailure | null>(null);
   const openMutation = useMutation({
-    mutationFn: async (targetAgentId: string) =>
-      await directSessionCoordinator.open(targetAgentId),
+    mutationFn: async (targetAgentId: string) => await directSessionCoordinator.open(targetAgentId),
   });
   const blockMutation = useMutation({
     mutationFn: async ({ blocked, target }: { blocked: boolean; target: DirectAgent }) =>
@@ -118,7 +117,10 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
 function mergeSessionCache(current: unknown, opened: DirectSession) {
   const sessions = isSuccessfulSessionList(current) ? current.value : [];
   return ok(
-    Object.freeze([opened, ...sessions.filter((session) => session.catalogId !== opened.catalogId)]),
+    Object.freeze([
+      opened,
+      ...sessions.filter((session) => session.catalogId !== opened.catalogId),
+    ]),
   );
 }
 

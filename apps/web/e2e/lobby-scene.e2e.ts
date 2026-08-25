@@ -123,9 +123,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  await page
-    .getByRole('button', { name: 'Open conversation with Build Agent 002' })
-    .click();
+  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
   const conversation = page.locator('.direct-conversation');
   await expect(conversation).toBeVisible();
   await expect(conversation.getByRole('heading', { name: 'Build Agent 002' })).toBeVisible();
@@ -134,7 +132,10 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   ).toBeVisible();
 
   expect(await fixtureContentReadCount(page)).toBe(0);
-  await conversation.locator('.message-signal').filter({ hasText: 'Protocol review ready' }).click();
+  await conversation
+    .locator('.message-signal')
+    .filter({ hasText: 'Protocol review ready' })
+    .click();
   await expect(page.getByRole('heading', { name: 'Protocol review ready' })).toBeVisible();
   expect(await fixtureContentReadCount(page)).toBe(0);
   await page.getByRole('button', { name: 'Open full content' }).click();

@@ -62,7 +62,10 @@ function createRuntime(config: RuntimeConfig) {
   const privateRoomMatrix = new MatrixSdkPrivateRoomGateway(matrixClients);
   const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
   const directSessionMatrix = new MatrixSdkDirectSessionGateway(matrixClients);
-  const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix);
+  const directSessionCoordinator = new DirectSessionCoordinator(
+    directSessions,
+    directSessionMatrix,
+  );
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();

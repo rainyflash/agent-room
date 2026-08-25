@@ -127,10 +127,7 @@ const directSessionMatrix: DirectSessionMatrixGateway = {
   prepare: async () => ok(undefined),
   setIgnored: async () => ok(undefined),
 };
-const directSessionCoordinator = new DirectSessionCoordinator(
-  directSessions,
-  directSessionMatrix,
-);
+const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix);
 const fixtureContent =
   '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
 const contentReadCounts = { downloads: 0, tickets: 0 };

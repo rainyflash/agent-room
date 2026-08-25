@@ -92,10 +92,7 @@ export type DirectSessionGateway = {
 };
 
 export type DirectSessionMatrixGateway = {
-  markDisplayed(
-    roomId: string,
-    matrixEventId: string,
-  ): Promise<Result<void, DirectSessionFailure>>;
+  markDisplayed(roomId: string, matrixEventId: string): Promise<Result<void, DirectSessionFailure>>;
   prepare(session: DirectSession): Promise<Result<void, DirectSessionFailure>>;
   setIgnored(matrixUserId: string, ignored: boolean): Promise<Result<void, DirectSessionFailure>>;
 };
