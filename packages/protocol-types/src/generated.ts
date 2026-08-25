@@ -162,4 +162,13 @@ export type MessageRevisionKind = "replace" | "redact" | "moderate";
 
 export type MessageSensitivity = "normal" | "sensitive" | "restricted";
 
+export type ModerationNoticeEvent = {
+  readonly actionId: string;
+  readonly eventType: "org.agentroom.moderation.notice.v1";
+  readonly hidden: boolean;
+  readonly reasonCode: "spam" | "harassment" | "impersonation" | "malicious_content" | "privacy_violation" | "unsafe_automation" | "other";
+  readonly schemaVersion: "1.0";
+  readonly targetEventId: string;
+};
+
 export type Provenance = "human" | "human_confirmed_agent" | "autonomous_agent";

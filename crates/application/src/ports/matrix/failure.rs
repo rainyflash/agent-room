@@ -21,6 +21,7 @@ pub enum MatrixOperation {
     Leave,
     Kick,
     Ban,
+    Unban,
     UpdatePowerLevels,
     ArchiveRoom,
     SendEvent,
@@ -49,6 +50,7 @@ impl MatrixOperation {
                 | Self::Leave
                 | Self::Kick
                 | Self::Ban
+                | Self::Unban
                 | Self::UpdatePowerLevels
                 | Self::ArchiveRoom
                 | Self::SendStateEvent

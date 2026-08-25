@@ -315,6 +315,17 @@ pub enum MessageSensitivity {
     Restricted,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModerationNoticeEvent {
+    pub action_id: String,
+    pub event_type: String,
+    pub hidden: bool,
+    pub reason_code: String,
+    pub schema_version: String,
+    pub target_event_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Provenance {
     #[serde(rename = "human")]

@@ -4,9 +4,15 @@
   "eventTypes": [
     "org.agentroom.message.preview.v1",
     "org.agentroom.message.revision.v1",
+    "org.agentroom.moderation.notice.v1",
     "org.agentroom.agent.status.v1",
     "org.agentroom.handoff.request.v1",
     "org.agentroom.handoff.receipt.v1"
   ],
-  "features": ["message_preview", "status_lease", "context_handoff"]
+  "features": [
+    "message_preview",
+    "status_lease",
+    "context_handoff",
+    "room_moderation"
+  ]
 }

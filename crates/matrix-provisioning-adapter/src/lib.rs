@@ -14,6 +14,7 @@ use reqwest::{Client, Response, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
+mod moderation;
 mod rooms;
 
 pub use rooms::MatrixApplicationServiceRoomMembership;

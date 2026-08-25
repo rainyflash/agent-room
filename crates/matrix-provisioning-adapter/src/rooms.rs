@@ -767,7 +767,7 @@ fn decode_membership(
     }
 }
 
-async fn expect_empty_success(
+pub(crate) async fn expect_empty_success(
     response: reqwest::Response,
     operation: MatrixOperation,
 ) -> MatrixResult<()> {
@@ -794,7 +794,7 @@ fn map_create_transport_error(operation: MatrixOperation, error: &reqwest::Error
     MatrixFailure::new(operation, MatrixFailureKind::UnknownCommit)
 }
 
-fn endpoint_with_segments(
+pub(crate) fn endpoint_with_segments(
     base: &Url,
     segments: &[&str],
     operation: MatrixOperation,

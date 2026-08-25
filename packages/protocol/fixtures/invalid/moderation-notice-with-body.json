@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "org.agentroom.moderation.notice.v1",
+  "actionId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+  "targetEventId": "$reported-event:matrix.example",
+  "hidden": true,
+  "reasonCode": "malicious_content",
+  "body": "治理事件不得夹带正文"
+}

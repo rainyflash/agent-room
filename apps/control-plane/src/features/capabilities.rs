@@ -12,6 +12,7 @@ pub(crate) fn manifest() -> CapabilityManifest {
         event_types: vec![
             "org.agentroom.message.preview.v1".to_owned(),
             "org.agentroom.message.revision.v1".to_owned(),
+            "org.agentroom.moderation.notice.v1".to_owned(),
             "org.agentroom.agent.status.v1".to_owned(),
             "org.agentroom.handoff.request.v1".to_owned(),
             "org.agentroom.handoff.receipt.v1".to_owned(),
@@ -20,6 +21,7 @@ pub(crate) fn manifest() -> CapabilityManifest {
             "message_preview".to_owned(),
             "status_lease".to_owned(),
             "context_handoff".to_owned(),
+            "room_moderation".to_owned(),
         ],
         protocol_versions: vec!["1.0".to_owned()],
         schema_version: "1.0".to_owned(),

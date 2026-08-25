@@ -7,6 +7,7 @@
     { "$ref": "#/$defs/CapabilityManifest" },
     { "$ref": "#/$defs/MessagePreviewEvent" },
     { "$ref": "#/$defs/MessageRevisionEvent" },
+    { "$ref": "#/$defs/ModerationNoticeEvent" },
     { "$ref": "#/$defs/AgentStatusEvent" },
     { "$ref": "#/$defs/HandoffRequestEvent" },
     { "$ref": "#/$defs/HandoffReceiptEvent" }
@@ -401,6 +402,46 @@
           }
         }
       ]
+    },
+    "ModerationNoticeEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "actionId",
+        "targetEventId",
+        "hidden",
+        "reasonCode"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "org.agentroom.moderation.notice.v1" },
+        "actionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "targetEventId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 1024,
+          "pattern": "^\\$[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "hidden": { "type": "boolean" },
+        "reasonCode": {
+          "type": "string",
+          "enum": [
+            "spam",
+            "harassment",
+            "impersonation",
+            "malicious_content",
+            "privacy_violation",
+            "unsafe_automation",
+            "other"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "AgentStatusEvent": {
       "type": "object",

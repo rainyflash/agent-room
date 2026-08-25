@@ -8,7 +8,7 @@ mod tests {
 
     use crate::generated::{
         AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
-        HandoffRequestEvent, MessagePreviewEvent, MessageRevisionEvent,
+        HandoffRequestEvent, MessagePreviewEvent, MessageRevisionEvent, ModerationNoticeEvent,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -48,6 +48,13 @@ mod tests {
         {
             serde_json::from_value::<MessageRevisionEvent>(value)
                 .expect("消息修订必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType")
+            == Some(&Value::String("org.agentroom.moderation.notice.v1".into()))
+        {
+            serde_json::from_value::<ModerationNoticeEvent>(value)
+                .expect("治理通知必须符合生成的 Rust 类型");
             return;
         }
         if value.get("eventType") == Some(&Value::String("org.agentroom.agent.status.v1".into())) {
