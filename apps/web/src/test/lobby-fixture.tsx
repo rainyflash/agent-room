@@ -38,7 +38,11 @@ import type {
   MessagePublisher,
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
-import type { ModerationGateway } from '@/features/moderation/domain/moderation';
+import type {
+  ModerationAction,
+  ModerationCase,
+  ModerationGateway,
+} from '@/features/moderation/domain/moderation';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -77,14 +81,75 @@ const messages: MessageGateway = {
     }),
   subscribe: () => noop,
 };
+let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
+let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
 const moderation: ModerationGateway = {
-  applyAction: async () => err({ code: 'moderation.forbidden', retryable: false }),
-  listActions: async () => ok([]),
+  applyAction: async (actionId, roomCatalogId, input) => {
+    const action: ModerationAction = Object.freeze({
+      actionId,
+      actorPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+      caseId: input.caseId ?? null,
+      expiresAtUnixMs: input.expiresAtUnixMs ?? null,
+      failureCode: null,
+      kind: input.kind,
+      reason: input.reason,
+      reversedAtUnixMs: null,
+      roomCatalogId,
+      startsAtUnixMs: Date.now(),
+      status: 'applied',
+      targetKind: input.targetKind,
+      targetReference: input.targetReference,
+    });
+    fixtureModerationActions = Object.freeze([action, ...fixtureModerationActions]);
+    return ok(action);
+  },
+  listActions: async (roomCatalogId) =>
+    ok(fixtureModerationActions.filter((action) => action.roomCatalogId === roomCatalogId)),
   listAudit: async () => err({ code: 'moderation.forbidden', retryable: false }),
-  listCases: async () => ok([]),
-  listRoomCases: async () => ok([]),
-  report: async () => err({ code: 'moderation.fixture_disabled', retryable: false }),
-  reverseAction: async () => err({ code: 'moderation.forbidden', retryable: false }),
+  listCases: async () => ok(fixtureModerationCases),
+  listRoomCases: async (roomCatalogId) =>
+    ok(
+      fixtureModerationCases.filter(
+        (moderationCase) => moderationCase.evidence.roomCatalogId === roomCatalogId,
+      ),
+    ),
+  report: async (caseId, input) => {
+    const moderationCase: ModerationCase = Object.freeze({
+      caseId,
+      createdAtUnixMs: Date.now(),
+      description: input.description,
+      evidence: Object.freeze({
+        endToEndEncrypted: input.evidence.endToEndEncrypted,
+        matrixEventId: input.evidence.matrixEventId ?? null,
+        reporterSubmittedExcerpt: input.evidence.reporterSubmittedExcerpt ?? null,
+        roomCatalogId: input.evidence.roomCatalogId ?? null,
+      }),
+      reason: input.reason,
+      resolvedAtUnixMs: null,
+      state: 'open',
+      targetKind: input.targetKind,
+      targetReference: input.targetReference,
+    });
+    fixtureModerationCases = Object.freeze([moderationCase, ...fixtureModerationCases]);
+    return ok(moderationCase);
+  },
+  reverseAction: async (actionId) => {
+    const action = fixtureModerationActions.find((candidate) => candidate.actionId === actionId);
+    if (action === undefined) {
+      return err({ code: 'moderation.action_not_found', retryable: false });
+    }
+    const reversed = Object.freeze({
+      ...action,
+      reversedAtUnixMs: Date.now(),
+      status: 'reversed' as const,
+    });
+    fixtureModerationActions = Object.freeze(
+      fixtureModerationActions.map((candidate) =>
+        candidate.actionId === actionId ? reversed : candidate,
+      ),
+    );
+    return ok(reversed);
+  },
 };
 const unavailablePrivateRoom = async () =>
   err({ code: 'private_room.fixture_unavailable', retryable: false });

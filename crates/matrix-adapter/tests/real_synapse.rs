@@ -9,11 +9,19 @@ use agent_room_application::ports::{
     MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixSyncToken, MatrixTransactionId, MatrixUserId, PrivateMatrixMembership,
-    PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
-    PrivateRoomMatrixProvisioner, RoomProvisioningGateway, SecretValue,
+    MatrixSyncToken, MatrixTransactionId, MatrixUserId, ModerationEffectGateway,
+    ModerationEffectTarget, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+    PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+    RoomProvisioningGateway, SecretValue,
 };
-use agent_room_domain::{ids::AgentId, time::DurationMillis};
+use agent_room_domain::{
+    ids::{AgentId, ModerationActionId, PrincipalId, RoomCatalogId},
+    moderation::{
+        ModerationAction, ModerationActionKind, ModerationReason, ModerationTarget,
+        ModerationTargetKind,
+    },
+    time::{DurationMillis, UtcMillis},
+};
 use agent_room_matrix_adapter::{
     MatrixRoomProvisioningAdapter, MatrixSdkClientFactory, MatrixSdkConfiguration,
 };
@@ -161,10 +169,7 @@ async fn 真实_synapse_幂等建立直接会话并接受私有已读回执() {
 
     sync_until_room(creator.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
     sync_until_room(peer.gateway(), &room_id, MatrixRoomSyncKind::Invited).await;
-    peer.gateway()
-        .join(&room_id)
-        .await
-        .expect("受邀对端必须能加入直接会话");
+    join_with_retry(peer.gateway(), &room_id).await;
     sync_until_room(peer.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
     let accepted = send_with_retry(
         creator.gateway(),
@@ -181,6 +186,132 @@ async fn 真实_synapse_幂等建立直接会话并接受私有已读回执() {
         .expect("直接会话必须接受私有已读回执");
     leave_with_retry(peer.gateway(), &room_id).await;
     leave_with_retry(creator.gateway(), &room_id).await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse 治理配置"]
+async fn 真实_synapse_治理隐藏和禁言均可撤销() {
+    let scenario = prepare_private_room_scenario().await;
+    scenario
+        .provisioner
+        .set_speaking_batch(
+            &scenario.room_id,
+            &[
+                PrivateMatrixSpeakingAssignment::new(scenario.owner_user_id.clone(), true),
+                PrivateMatrixSpeakingAssignment::new(scenario.member_user_id.clone(), true),
+            ],
+        )
+        .await
+        .expect("治理验收前应授予双方发言能力");
+
+    let accepted = send_with_retry(
+        scenario.member.gateway(),
+        &scenario.room_id,
+        &message_event(unique_value("moderation-hide"), "仅用于治理隐藏验收"),
+    )
+    .await;
+    let hide_target =
+        ModerationTarget::new(ModerationTargetKind::Event, accepted.event_id().as_str())
+            .expect("隐藏目标有效");
+    let hide_action = moderation_action(ModerationActionKind::Hide, hide_target.clone());
+    let hide_effect = ModerationEffectTarget {
+        matrix_room_id: scenario.room_id.clone(),
+        target: hide_target,
+        target_matrix_user_id: None,
+    };
+    ModerationEffectGateway::apply(&scenario.provisioner, &hide_action, &hide_effect)
+        .await
+        .expect("真实 Synapse 应接受隐藏状态");
+    assert!(
+        read_moderation_hidden(&scenario, accepted.event_id()).await,
+        "隐藏状态必须在 Matrix 中可见"
+    );
+    ModerationEffectGateway::reverse(&scenario.provisioner, &hide_action, &hide_effect)
+        .await
+        .expect("真实 Synapse 应接受隐藏撤销");
+    assert!(
+        !read_moderation_hidden(&scenario, accepted.event_id()).await,
+        "撤销后 Matrix 状态必须明确恢复"
+    );
+
+    let principal_reference = PrincipalId::from_uuid(Uuid::now_v7()).to_string();
+    let mute_target = ModerationTarget::new(ModerationTargetKind::Principal, principal_reference)
+        .expect("禁言目标有效");
+    let mute_action = moderation_action(ModerationActionKind::Mute, mute_target.clone());
+    let mute_effect = ModerationEffectTarget {
+        matrix_room_id: scenario.room_id.clone(),
+        target: mute_target,
+        target_matrix_user_id: Some(scenario.member_user_id.clone()),
+    };
+    ModerationEffectGateway::apply(&scenario.provisioner, &mute_action, &mute_effect)
+        .await
+        .expect("真实 Synapse 应执行禁言");
+    let denied = scenario
+        .member
+        .gateway()
+        .send_event(
+            &scenario.room_id,
+            &message_event(unique_value("moderation-muted"), "禁言期不得发送"),
+        )
+        .await
+        .expect_err("禁言后 Matrix 必须在服务端拒绝发送");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+    ModerationEffectGateway::reverse(&scenario.provisioner, &mute_action, &mute_effect)
+        .await
+        .expect("真实 Synapse 应撤销禁言");
+    send_with_retry(
+        scenario.member.gateway(),
+        &scenario.room_id,
+        &message_event(unique_value("moderation-unmuted"), "撤销后可再次发送"),
+    )
+    .await;
+    leave_with_retry(scenario.member.gateway(), &scenario.room_id).await;
+    leave_with_retry(scenario.owner.gateway(), &scenario.room_id).await;
+}
+
+fn moderation_action(kind: ModerationActionKind, target: ModerationTarget) -> ModerationAction {
+    ModerationAction::reserve(
+        ModerationActionId::from_uuid(Uuid::now_v7()),
+        None,
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        RoomCatalogId::from_uuid(Uuid::now_v7()),
+        kind,
+        target,
+        ModerationReason::Other,
+        UtcMillis::new(1_800_000_000_000).expect("治理验收时间有效"),
+        None,
+    )
+    .expect("治理验收动作有效")
+}
+
+async fn read_moderation_hidden(scenario: &PrivateRoomScenario, event_id: &MatrixEventId) -> bool {
+    let mut endpoint = reqwest::Url::parse(&scenario.base_url).expect("Matrix 基础地址有效");
+    endpoint
+        .path_segments_mut()
+        .expect("Matrix 基础地址可追加路径")
+        .extend([
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            scenario.room_id.as_str(),
+            "state",
+            "org.agentroom.moderation.notice.v1",
+            event_id.as_str(),
+        ]);
+    reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(scenario.owner.session().access_token().expose())
+        .send()
+        .await
+        .expect("治理状态读取必须返回 HTTP 响应")
+        .error_for_status()
+        .expect("房间成员应可读取治理状态")
+        .json::<serde_json::Value>()
+        .await
+        .expect("治理状态必须是 JSON")["hidden"]
+        .as_bool()
+        .expect("治理状态必须包含 hidden 布尔值")
 }
 
 fn direct_room_creation(creator: &MatrixUserId, peer: &MatrixUserId) -> DirectMatrixRoomCreation {
@@ -282,16 +413,8 @@ async fn prepare_private_room_scenario() -> PrivateRoomScenario {
         .await
         .expect_err("未受邀用户不得进入私人房间");
     assert_eq!(outsider_failure.kind(), MatrixFailureKind::Forbidden);
-    owner
-        .gateway()
-        .join(&room_id)
-        .await
-        .expect("受邀房主必须能加入");
-    member
-        .gateway()
-        .join(&room_id)
-        .await
-        .expect("受邀成员必须能加入");
+    join_with_retry(owner.gateway(), &room_id).await;
+    join_with_retry(member.gateway(), &room_id).await;
     assert_eq!(
         provisioner
             .membership(&room_id, &member_user_id)
@@ -680,11 +803,7 @@ async fn prepare_room(
     let invitation = sync(agent.gateway(), None).await;
     assert_room_kind(&invitation, &room_id, MatrixRoomSyncKind::Invited);
 
-    agent
-        .gateway()
-        .join(&room_id)
-        .await
-        .expect("受邀 Agent 必须能加入房间");
+    join_with_retry(agent.gateway(), &room_id).await;
     let agent_joined = sync(agent.gateway(), Some(invitation.next_batch().clone())).await;
     assert_room_kind(&agent_joined, &room_id, MatrixRoomSyncKind::Joined);
     let agent_baseline = agent_joined.next_batch().clone();
@@ -1042,6 +1161,17 @@ async fn invite_with_retry(
         }
     }
     panic!("邀请重试次数耗尽")
+}
+
+async fn join_with_retry(gateway: &dyn MatrixGateway, room_id: &MatrixRoomId) {
+    let policy = retry_policy();
+    for completed_attempts in 1..=5 {
+        match gateway.join(room_id).await {
+            Ok(()) => return,
+            Err(failure) => wait_for_retry(policy, failure, completed_attempts).await,
+        }
+    }
+    panic!("入房重试次数耗尽")
 }
 
 async fn attach_with_retry(

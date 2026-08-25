@@ -226,12 +226,16 @@ async fn apply_and_reverse_action(
     .await
     .expect("撤销终态应提交");
     assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    let audit = ModerationRepository::list_audit(repositories, Some(catalog_id), 20)
+        .await
+        .expect("房间审计应可读取");
     assert_eq!(
-        ModerationRepository::list_audit(repositories, Some(catalog_id), 20)
-            .await
-            .expect("房间审计应可读取")
-            .len(),
-        3
+        audit
+            .iter()
+            .filter(|event| event.action.starts_with("moderation.action."))
+            .count(),
+        3,
+        "举报审计不应改变动作生命周期的三个审计事实"
     );
 }
 

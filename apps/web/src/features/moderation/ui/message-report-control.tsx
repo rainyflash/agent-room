@@ -6,7 +6,10 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
-import { moderationCaseListQueryKey } from '@/features/moderation/data/moderation-queries';
+import {
+  moderationCaseListQueryKey,
+  moderationRoomCaseListQueryKey,
+} from '@/features/moderation/data/moderation-queries';
 import {
   moderationReasons,
   type ModerationGateway,
@@ -51,7 +54,10 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
       }),
     onSuccess: async (result) => {
       if (result.ok) {
-        await queryClient.invalidateQueries({ queryKey: moderationCaseListQueryKey });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: moderationCaseListQueryKey }),
+          queryClient.invalidateQueries({ queryKey: moderationRoomCaseListQueryKey(catalogId) }),
+        ]);
       }
     },
   });
