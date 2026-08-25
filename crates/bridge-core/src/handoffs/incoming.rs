@@ -19,7 +19,8 @@ use super::{
     HandoffAuthorizationRequest, HandoffConsumptionOutcome, HandoffContentFailure,
     HandoffContentGateway, HandoffInstanceDirectory, HandoffReceiptDelivery,
     HandoffReceptionOutcome, HandoffRecordOutcome, HandoffResolutionOutcome, HandoffStore,
-    HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure, OneShotHandoffPackage,
+    HandoffStoreCommand, HandoffStoreCommandOutcome, HandoffStoreFailure, HandoffStoreFailureKind,
+    OneShotHandoffPackage,
     incoming_wire::{HandoffEnvelopeFailure, parse_request},
     receipt_wire::receipt_event,
 };
@@ -208,6 +209,39 @@ impl HandoffReceptionService {
         Ok(self
             .outcome_for(stored, matches!(record, HandoffRecordOutcome::Existing(_)))
             .await)
+    }
+
+    /// 在破坏性消费前读取并校验当前实例的一次性交接元数据。
+    ///
+    /// # Errors
+    ///
+    /// 包不存在、已到期、已经终结、目标不匹配或存储不可用时返回错误。
+    pub async fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> Result<ContextHandoff, HandoffReceptionFailure> {
+        let handoff = self
+            .store
+            .find(handoff_id)
+            .await
+            .map_err(HandoffReceptionFailure::store)?
+            .ok_or_else(|| {
+                HandoffReceptionFailure::store(HandoffStoreFailure::new(
+                    HandoffStoreFailureKind::NotFound,
+                ))
+            })?;
+        self.verify_target(&handoff)?;
+        if self.clock.now() >= handoff.fields().expires_at {
+            return Err(HandoffReceptionFailure::simple(
+                HandoffReceptionFailureKind::Expired,
+            ));
+        }
+        if handoff.status() != HandoffStatus::Delivered {
+            return Err(HandoffReceptionFailure::store(HandoffStoreFailure::new(
+                HandoffStoreFailureKind::AlreadyResolved,
+            )));
+        }
+        Ok(handoff)
     }
 
     /// 原子领取并删除一个只属于当前实例的一次性上下文包。

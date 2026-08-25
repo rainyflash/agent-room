@@ -9,7 +9,7 @@ mod receipt_wire;
 mod receipts;
 mod wire;
 
-pub use content::ProjectedHandoffContentGateway;
+pub use content::{ProjectedHandoffContentGateway, handoff_source_matches_projection};
 pub use incoming::{
     HandoffReceptionDependencies, HandoffReceptionFailure, HandoffReceptionFailureKind,
     HandoffReceptionService,

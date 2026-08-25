@@ -463,6 +463,12 @@ async fn 重放不重复下载且消费正文严格只成功一次() {
     ));
     assert_eq!(fixture.content.reads.load(Ordering::SeqCst), 1);
 
+    let pending = service
+        .inspect_pending(fixture.handoff_id)
+        .await
+        .expect("消费前可读取经过目标校验的元数据");
+    assert_eq!(pending.status(), HandoffStatus::Delivered);
+
     let consumed = service
         .consume(fixture.handoff_id)
         .await
@@ -476,6 +482,15 @@ async fn 重放不重复下载且消费正文严格只成功一次() {
     assert_eq!(
         fixture.store.status(fixture.handoff_id),
         Some(HandoffStatus::Consumed)
+    );
+    let resolved = service
+        .inspect_pending(fixture.handoff_id)
+        .await
+        .expect_err("已消费交接不能再声明为待领取");
+    assert_eq!(resolved.kind(), HandoffReceptionFailureKind::Store);
+    assert_eq!(
+        resolved.store_failure().expect("保留存储失败类别").kind(),
+        HandoffStoreFailureKind::AlreadyResolved
     );
     let receipts = fixture.transport.0.lock().expect("回执记录锁可用");
     assert_eq!(

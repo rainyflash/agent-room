@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
-use agent_room_application::ports::{MatrixEventId, MatrixFailureKind, MatrixRoomId};
+use agent_room_application::ports::{MatrixEventId, MatrixFailureKind, MatrixRoomId, PortFuture};
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
+    handoffs::{
+        HandoffConsumptionOutcome, HandoffContentFailureKind, HandoffReceptionFailure,
+        HandoffReceptionFailureKind, HandoffReceptionService, HandoffResolutionOutcome,
+        HandoffStoreFailureKind, handoff_source_matches_projection,
+    },
     messages::{
-        MessageBody, MessageContentFailureKind, MessageContentReadFailureKind, MessagePreviewQuery,
-        MessagePublicationFailure, MessagePublicationFailureKind, MessagePublicationOutcome,
-        MessagePublicationService, MessageStoreFailureKind, MessageTimelineQueryFailure,
-        MessageTimelineQueryFailureKind, MessageTimelineQueryRepository, OpenMessageContentFailure,
-        OpenMessageContentFailureKind, OpenMessageContentRequest, OpenMessageContentService,
-        ProjectedMessageActor, ProjectedMessagePreview, SendMessageRequest,
+        MessageBody, MessageContentFailureKind, MessageContentReadFailureKind,
+        MessageContentSourceQuery, MessagePreviewQuery, MessagePublicationFailure,
+        MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
+        MessageStoreFailureKind, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+        MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
+        OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
+        ProjectedMessagePreview, SendMessageRequest,
     },
     status::{
         HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
@@ -17,15 +23,16 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcErrorCategory,
-    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcOpenContentRequest, IpcOpenedContent, IpcPublishStatusRequest, IpcPublishedStatus,
-    IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState,
-    IpcWorkStatus,
+    IpcActorSummary, IpcAgentSummary, IpcConsumedHandoff, IpcContentReference, IpcDeclinedHandoff,
+    IpcErrorCategory, IpcHandoffRequest, IpcHandoffStatus, IpcListPreviewsRequest,
+    IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
+    IpcOpenedContent, IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
 };
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
-    ids::{ContentId, MessageId, MessageSubmissionId},
+    handoff::{ContextHandoff, HandoffStatus},
+    ids::{ContentId, HandoffId, MessageId, MessageSubmissionId},
     messages::{
         MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
         MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
@@ -45,6 +52,7 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     granted_capabilities: Vec<String>,
     status: Option<Arc<AgentStatusPublicationHandle>>,
     publication: Option<Arc<MessagePublicationService>>,
+    handoffs: Option<Arc<dyn AgentHandoffRuntime>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -64,6 +72,7 @@ impl BridgeAgentRuntimeSnapshot {
                 .collect(),
             status: None,
             publication: None,
+            handoffs: None,
         }
     }
 
@@ -78,6 +87,51 @@ impl BridgeAgentRuntimeSnapshot {
     ) -> Self {
         self.publication = Some(publication);
         self
+    }
+
+    pub(crate) fn with_handoffs(mut self, handoffs: Arc<dyn AgentHandoffRuntime>) -> Self {
+        self.handoffs = Some(handoffs);
+        self
+    }
+}
+
+pub(crate) trait AgentHandoffRuntime: Send + Sync {
+    fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<ContextHandoff, HandoffReceptionFailure>>;
+
+    fn consume(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<HandoffConsumptionOutcome, HandoffReceptionFailure>>;
+
+    fn decline(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<HandoffResolutionOutcome, HandoffReceptionFailure>>;
+}
+
+impl AgentHandoffRuntime for HandoffReceptionService {
+    fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<ContextHandoff, HandoffReceptionFailure>> {
+        Box::pin(HandoffReceptionService::inspect_pending(self, handoff_id))
+    }
+
+    fn consume(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<HandoffConsumptionOutcome, HandoffReceptionFailure>> {
+        Box::pin(HandoffReceptionService::consume(self, handoff_id))
+    }
+
+    fn decline(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<HandoffResolutionOutcome, HandoffReceptionFailure>> {
+        Box::pin(HandoffReceptionService::decline(self, handoff_id))
     }
 }
 
@@ -271,6 +325,101 @@ impl AgentRuntimeIpcFacade {
         Ok(IpcResponse::SentMessage { message: outcome })
     }
 
+    pub(super) async fn consume_handoff(
+        &self,
+        request: IpcHandoffRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let handoffs = runtime.handoffs.ok_or_else(agent_runtime_unavailable)?;
+        let handoff_id = parse_handoff_id(&request.handoff_id)?;
+        let pending = handoffs
+            .inspect_pending(handoff_id)
+            .await
+            .map_err(map_handoff_reception_failure)?;
+        let media_type = pending.fields().content.media_type().as_str();
+        if media_type != "application/json" && !media_type.starts_with("text/") {
+            return Err(invalid_request("bridge.handoff_content_type_unsupported"));
+        }
+        let source = self.find_handoff_source(&pending).await?;
+        let consumed = handoffs
+            .consume(handoff_id)
+            .await
+            .map_err(map_handoff_reception_failure)?;
+        let context = consumed.context();
+        let handoff = context.handoff();
+        if !consumption_matches_pending(handoff, &pending) {
+            return Err(internal_failure("bridge.handoff_consumption_mismatch"));
+        }
+        let body = std::str::from_utf8(context.body().as_ref())
+            .map_err(|_| internal_failure("bridge.handoff_content_encoding_invalid"))?
+            .to_owned();
+        let fields = handoff.fields();
+        Ok(IpcResponse::ConsumedHandoff {
+            handoff: IpcConsumedHandoff {
+                handoff_id: fields.id.to_string(),
+                source_room_id: fields.source.room_id().as_str().to_owned(),
+                source_event_id: fields.source.event_id().as_str().to_owned(),
+                source_actor: ipc_actor(&source.actor),
+                purpose: fields.purpose.as_str().to_owned(),
+                risk_flags: fields
+                    .risk_flags
+                    .iter()
+                    .map(|flag| flag.as_str().to_owned())
+                    .collect(),
+                content: IpcContentReference {
+                    content_id: fields.content.content_id().to_string(),
+                    digest_sha256: encode_hex(fields.content.digest().as_bytes()),
+                    media_type: fields.content.media_type().as_str().to_owned(),
+                    size_bytes: fields.content.byte_length().value(),
+                },
+                body,
+            },
+        })
+    }
+
+    pub(super) async fn decline_handoff(
+        &self,
+        request: IpcHandoffRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let handoffs = runtime.handoffs.ok_or_else(agent_runtime_unavailable)?;
+        let outcome = handoffs
+            .decline(parse_handoff_id(&request.handoff_id)?)
+            .await
+            .map_err(map_handoff_reception_failure)?;
+        if outcome.status() != HandoffStatus::Declined {
+            return Err(internal_failure("bridge.handoff_resolution_invalid"));
+        }
+        Ok(IpcResponse::DeclinedHandoff {
+            handoff: IpcDeclinedHandoff {
+                handoff_id: outcome.handoff_id().to_string(),
+                status: IpcHandoffStatus::Declined,
+            },
+        })
+    }
+
+    async fn find_handoff_source(
+        &self,
+        handoff: &ContextHandoff,
+    ) -> Result<ProjectedMessagePreview, BridgeIpcDispatchFailure> {
+        let fields = handoff.fields();
+        let room_id = MatrixRoomId::new(fields.source.room_id().as_str().to_owned())
+            .map_err(|_| internal_failure("bridge.handoff_source_invalid"))?;
+        let source = self
+            .previews
+            .find_content_source(&MessageContentSourceQuery::new(
+                room_id,
+                fields.content.content_id(),
+            ))
+            .await
+            .map_err(map_handoff_projection_failure)?
+            .ok_or_else(|| internal_failure("bridge.handoff_source_missing"))?;
+        if !handoff_source_matches_projection(&source, handoff) {
+            return Err(internal_failure("bridge.handoff_source_mismatch"));
+        }
+        Ok(source)
+    }
+
     fn runtime_snapshot(&self) -> Result<BridgeAgentRuntimeSnapshot, BridgeIpcDispatchFailure> {
         self.runtime_reader
             .read_agent_runtime()
@@ -375,6 +524,18 @@ fn parse_message_id(value: &str) -> Result<MessageId, BridgeIpcDispatchFailure> 
     parse_uuid_v7(value, "bridge.ipc.message_id_invalid").map(MessageId::from_uuid)
 }
 
+fn parse_handoff_id(value: &str) -> Result<HandoffId, BridgeIpcDispatchFailure> {
+    parse_uuid_v7(value, "bridge.ipc.handoff_id_invalid").map(HandoffId::from_uuid)
+}
+
+fn consumption_matches_pending(consumed: &ContextHandoff, pending: &ContextHandoff) -> bool {
+    consumed.status() == HandoffStatus::Consumed
+        && consumed.fields() == pending.fields()
+        && consumed.approved_by_principal_id() == pending.approved_by_principal_id()
+        && consumed.approved_at() == pending.approved_at()
+        && consumed.delivered_at() == pending.delivered_at()
+}
+
 fn parse_uuid_v7(value: &str, code: &'static str) -> Result<Uuid, BridgeIpcDispatchFailure> {
     let id = Uuid::parse_str(value).map_err(|_| invalid_request(code))?;
     if id.get_version() != Some(Version::SortRand) || id.to_string() != value {
@@ -457,6 +618,101 @@ fn encode_hex(bytes: &[u8]) -> String {
         output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
     }
     output
+}
+
+fn map_handoff_reception_failure(failure: HandoffReceptionFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        HandoffReceptionFailureKind::InvalidEnvelope
+        | HandoffReceptionFailureKind::IntegrityMismatch => {
+            internal_failure("bridge.handoff_integrity_failed")
+        }
+        HandoffReceptionFailureKind::WrongTarget | HandoffReceptionFailureKind::Unauthorized => {
+            BridgeIpcDispatchFailure::new(
+                "bridge.handoff_forbidden",
+                IpcErrorCategory::Authorization,
+                false,
+            )
+        }
+        HandoffReceptionFailureKind::UntrustedSender => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_sender_untrusted",
+            IpcErrorCategory::Authentication,
+            false,
+        ),
+        HandoffReceptionFailureKind::AuthenticationUnavailable
+        | HandoffReceptionFailureKind::AuthorizationUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_authorization_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        HandoffReceptionFailureKind::Expired => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_expired",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        HandoffReceptionFailureKind::Content => failure.content_failure().map_or_else(
+            || internal_failure("bridge.handoff_content_internal"),
+            |content| match content.kind() {
+                HandoffContentFailureKind::Denied => BridgeIpcDispatchFailure::new(
+                    "bridge.handoff_content_denied",
+                    IpcErrorCategory::Authorization,
+                    false,
+                ),
+                HandoffContentFailureKind::NotFound => {
+                    invalid_request("bridge.handoff_content_not_found")
+                }
+                HandoffContentFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+                    "bridge.handoff_content_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    true,
+                ),
+                HandoffContentFailureKind::InvalidResponse => {
+                    internal_failure("bridge.handoff_content_internal")
+                }
+            },
+        ),
+        HandoffReceptionFailureKind::Store => failure.store_failure().map_or_else(
+            || internal_failure("bridge.handoff_store_internal"),
+            |store| match store.kind() {
+                HandoffStoreFailureKind::NotFound => invalid_request("bridge.handoff_not_found"),
+                HandoffStoreFailureKind::Expired => BridgeIpcDispatchFailure::new(
+                    "bridge.handoff_expired",
+                    IpcErrorCategory::Conflict,
+                    false,
+                ),
+                HandoffStoreFailureKind::Conflict | HandoffStoreFailureKind::AlreadyResolved => {
+                    BridgeIpcDispatchFailure::new(
+                        "bridge.handoff_already_resolved",
+                        IpcErrorCategory::Conflict,
+                        false,
+                    )
+                }
+                HandoffStoreFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+                    "bridge.handoff_store_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    true,
+                ),
+                HandoffStoreFailureKind::Corrupt => {
+                    internal_failure("bridge.handoff_store_corrupt")
+                }
+            },
+        ),
+    }
+}
+
+const fn map_handoff_projection_failure(
+    failure: MessageTimelineQueryFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        MessageTimelineQueryFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_source_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MessageTimelineQueryFailureKind::CursorNotFound
+        | MessageTimelineQueryFailureKind::Corrupt => {
+            internal_failure("bridge.handoff_source_invalid")
+        }
+    }
 }
 
 fn map_preview_query_failure(failure: MessageTimelineQueryFailure) -> BridgeIpcDispatchFailure {

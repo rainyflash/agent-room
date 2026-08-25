@@ -238,7 +238,7 @@ pub struct IpcHandoffRequest {
 
 impl IpcHandoffRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
-        validate_uuid(&self.handoff_id, "bridge.ipc.handoff_id_invalid")
+        validate_uuid_v7(&self.handoff_id, "bridge.ipc.handoff_id_invalid")
     }
 }
 
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn 每个工具方法映射到独立最小作用域() {
-        let id = Uuid::from_u128(1).to_string();
+        let id = Uuid::now_v7().to_string();
         let methods = [
             (IpcMethod::GetSelf, IpcScope::SelfRead),
             (
@@ -614,6 +614,17 @@ mod tests {
                 .expect_err("非 UUIDv7 消息标识必须失败")
                 .code(),
             "bridge.ipc.message_id_invalid"
+        );
+
+        let invalid_handoff = IpcMethod::ConsumeHandoff(IpcHandoffRequest {
+            handoff_id: "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+        });
+        assert_eq!(
+            invalid_handoff
+                .validate()
+                .expect_err("非 UUIDv7 交接标识必须失败")
+                .code(),
+            "bridge.ipc.handoff_id_invalid"
         );
     }
 

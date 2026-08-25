@@ -112,9 +112,13 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::SendMessage(request) => {
                     self.agent_runtime()?.send_message(request).await
                 }
-                IpcMethod::GetPresence(_)
-                | IpcMethod::ConsumeHandoff(_)
-                | IpcMethod::DeclineHandoff(_) => Err(agent_runtime_unavailable()),
+                IpcMethod::ConsumeHandoff(request) => {
+                    self.agent_runtime()?.consume_handoff(request).await
+                }
+                IpcMethod::DeclineHandoff(request) => {
+                    self.agent_runtime()?.decline_handoff(request).await
+                }
+                IpcMethod::GetPresence(_) => Err(agent_runtime_unavailable()),
             }
         })
     }
@@ -660,6 +664,10 @@ mod tests {
     };
     use agent_room_bridge_core::{
         agent_identity::BridgeAgentIdentity,
+        handoffs::{
+            ConsumedHandoffContext, HandoffConsumptionOutcome, HandoffReceiptDelivery,
+            HandoffReceptionFailure, HandoffResolutionOutcome,
+        },
         messages::{
             DownloadedMessageContent, MessageContentBindRequest, MessageContentFailure,
             MessageContentGateway, MessageContentReadFailure, MessageContentReadFailureKind,
@@ -680,21 +688,28 @@ mod tests {
         },
     };
     use agent_room_bridge_ipc::{
-        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcMessageProvenance,
-        IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest, IpcPublishStatusRequest,
-        IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState,
-        IpcVersion, IpcWorkStatus, create_challenge_proof,
+        IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcHandoffRequest,
+        IpcHandoffStatus, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
+        IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName,
+        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcVersion, IpcWorkStatus,
+        create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
     use agent_room_domain::{
         agent_status::AgentStatusVisibility,
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
         devices::DevicePublicSigningKey,
-        ids::{AgentId, AgentInstanceId, ContentId, MessageId},
+        handoff::{
+            ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffPermission,
+            HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
+            HandoffSourceEventId,
+        },
+        ids::{AgentId, AgentInstanceId, ContentId, HandoffId, MessageId, PrincipalId},
         messages::{
             MessageContentReference, MessagePreview, MessageProvenance, MessageRiskFlag,
             MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
         },
+        rooms::MatrixRoomReference,
         time::{DurationMillis, UtcMillis},
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -707,7 +722,8 @@ mod tests {
     use super::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
         BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
-        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, handle_connection,
+        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler,
+        agent_runtime::AgentHandoffRuntime, handle_connection,
     };
 
     struct 固定状态;
@@ -727,6 +743,54 @@ mod tests {
     impl BridgeAgentRuntimeReader for 固定Agent运行时 {
         fn read_agent_runtime(&self) -> Option<BridgeAgentRuntimeSnapshot> {
             Some(self.0.clone())
+        }
+    }
+
+    struct 固定交接运行时 {
+        pending: ContextHandoff,
+        body: Arc<[u8]>,
+    }
+
+    impl AgentHandoffRuntime for 固定交接运行时 {
+        fn inspect_pending(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<ContextHandoff, HandoffReceptionFailure>> {
+            assert_eq!(handoff_id, self.pending.fields().id);
+            let pending = self.pending.clone();
+            Box::pin(async move { Ok(pending) })
+        }
+
+        fn consume(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<HandoffConsumptionOutcome, HandoffReceptionFailure>> {
+            assert_eq!(handoff_id, self.pending.fields().id);
+            let mut consumed = self.pending.clone();
+            consumed
+                .consume(UtcMillis::new(1_100).expect("消费时间有效"))
+                .expect("已送达交接可消费");
+            let body = self.body.clone();
+            Box::pin(async move {
+                Ok(HandoffConsumptionOutcome::new(
+                    ConsumedHandoffContext::new(consumed, body),
+                    HandoffReceiptDelivery::Confirmed,
+                ))
+            })
+        }
+
+        fn decline(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<HandoffResolutionOutcome, HandoffReceptionFailure>> {
+            assert_eq!(handoff_id, self.pending.fields().id);
+            Box::pin(async move {
+                Ok(HandoffResolutionOutcome::new(
+                    handoff_id,
+                    agent_room_domain::handoff::HandoffStatus::Declined,
+                    HandoffReceiptDelivery::Confirmed,
+                ))
+            })
         }
     }
 
@@ -1161,6 +1225,67 @@ mod tests {
         assert_eq!(content.bindings.lock().expect("正文绑定锁可用").len(), 1);
     }
 
+    #[tokio::test]
+    async fn 一次性交接消费与拒绝通过运行时而正文只返回一次() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let body = Arc::<[u8]>::from("正文".as_bytes());
+        let digest = Sha256Digest::from_bytes([
+            0xd6, 0x61, 0xc3, 0xd9, 0x6d, 0x53, 0xeb, 0xc0, 0xca, 0x8a, 0x55, 0xaa, 0xe2, 0x4b,
+            0x5d, 0xf4, 0xa4, 0xd1, 0xbf, 0x28, 0xd3, 0x73, 0x37, 0xb9, 0x82, 0xfe, 0x8e, 0xbf,
+            0x54, 0x84, 0x6e, 0xeb,
+        ]);
+        let content_id = ContentId::from_uuid(Uuid::now_v7());
+        let source = 测试正文投影(room_id.clone(), content_id, digest);
+        let pending = 测试已送达交接(&source, 测试_agent_身份().agent_instance_id());
+        let handoff_id = pending.fields().id;
+        let handoffs = Arc::new(固定交接运行时 { pending, body });
+        let projections = Arc::new(固定正文投影(source));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    测试_agent_身份(),
+                    "DEVICE-1",
+                    room_id,
+                    ["handoff.consume", "handoff.decline"],
+                )
+                .with_handoffs(handoffs),
+            )),
+            projections.clone(),
+            空正文服务(projections),
+        );
+
+        let consumed = handler
+            .dispatch(IpcMethod::ConsumeHandoff(IpcHandoffRequest {
+                handoff_id: handoff_id.to_string(),
+            }))
+            .await
+            .expect("交接可经本机运行时原子消费");
+        assert!(matches!(
+            consumed,
+            IpcResponse::ConsumedHandoff { handoff }
+                if handoff.handoff_id == handoff_id.to_string()
+                    && handoff.body == "正文"
+                    && handoff.source_event_id == "$message:matrix.test"
+                    && handoff.source_actor.agent.display_name == "Codex Agent"
+                    && handoff.purpose == "summarize"
+                    && handoff.risk_flags == ["external_link"]
+        ));
+
+        let declined = handler
+            .dispatch(IpcMethod::DeclineHandoff(IpcHandoffRequest {
+                handoff_id: handoff_id.to_string(),
+            }))
+            .await
+            .expect("拒绝命令交给独立运行时用例");
+        assert!(matches!(
+            declined,
+            IpcResponse::DeclinedHandoff { handoff }
+                if handoff.handoff_id == handoff_id.to_string()
+                    && handoff.status == IpcHandoffStatus::Declined
+        ));
+    }
+
     fn 测试_agent_身份() -> BridgeAgentIdentity {
         BridgeAgentIdentity::new(
             AgentId::from_uuid(
@@ -1208,6 +1333,53 @@ mod tests {
             content: MessageContentReference::new(content_id, digest, 6).expect("正文引用有效"),
             relation: None,
         }
+    }
+
+    fn 测试已送达交接(
+        source: &ProjectedMessagePreview,
+        target_instance_id: AgentInstanceId,
+    ) -> ContextHandoff {
+        let actor = source.actor.identity();
+        let mut handoff = ContextHandoff::propose(ContextHandoffFields {
+            id: HandoffId::from_uuid(Uuid::now_v7()),
+            requester_agent_id: 测试_agent_身份().agent_id(),
+            requester_instance_id: 测试_agent_身份().agent_instance_id(),
+            source: HandoffSource::new(
+                MatrixRoomReference::new(source.room_id.as_str()).expect("房间引用有效"),
+                HandoffSourceEventId::new(source.event_id.as_str()).expect("来源事件有效"),
+                source.message_id,
+                HandoffSourceActor::new(
+                    actor.agent_id(),
+                    actor.agent_instance_id(),
+                    source.actor.provenance(),
+                ),
+            ),
+            target_agent_id: 测试_agent_身份().agent_id(),
+            target_instance_id,
+            content: HandoffContentReference::new(
+                source.content.content_id(),
+                source.content.digest(),
+                ContentByteLength::new(source.content.size_bytes()).expect("正文长度有效"),
+                source.preview.content_type().clone(),
+            ),
+            permissions: HandoffPermissions::new([HandoffPermission::ReadText])
+                .expect("交接权限有效"),
+            purpose: HandoffPurpose::Summarize,
+            risk_flags: source.preview.risk_flags().clone(),
+            proposed_at: UtcMillis::new(900).expect("提案时间有效"),
+            expires_at: UtcMillis::new(2_000).expect("到期时间有效"),
+        })
+        .expect("交接提案有效");
+        handoff
+            .approve(
+                PrincipalId::from_uuid(Uuid::now_v7()),
+                UtcMillis::new(950).expect("批准时间有效"),
+            )
+            .expect("交接可批准");
+        handoff
+            .mark_delivered(UtcMillis::new(1_000).expect("送达时间有效"))
+            .expect("交接可标记送达");
+        handoff
     }
 
     fn 空正文服务(

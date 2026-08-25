@@ -106,6 +106,25 @@ async fn 控制面返回的正文元数据再次逐项校验() {
     assert_eq!(failure.kind(), HandoffContentFailureKind::InvalidResponse);
 }
 
+#[tokio::test]
+async fn 文本交接在一次性落库前拒绝无效_utf8() {
+    let body = Arc::<[u8]>::from([0xff, 0xfe, 0xfd]);
+    let source = source(body.as_ref(), "text/plain");
+    let gateway = ProjectedHandoffContentGateway::new(
+        Arc::new(固定来源仓储(Some(source.clone()))),
+        Arc::new(固定正文网关 {
+            opened: downloaded(body, "text/plain"),
+            requests: Mutex::new(Vec::new()),
+        }),
+    );
+
+    let failure = gateway
+        .read(&handoff(&source, [HandoffPermission::ReadText]))
+        .await
+        .expect_err("MCP 文本交接不能把无效 UTF-8 写入一次性包");
+    assert_eq!(failure.kind(), HandoffContentFailureKind::InvalidResponse);
+}
+
 struct 固定来源仓储(Option<ProjectedMessagePreview>);
 
 impl MessageTimelineQueryRepository for 固定来源仓储 {

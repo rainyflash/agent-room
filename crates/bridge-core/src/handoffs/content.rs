@@ -48,7 +48,7 @@ impl ProjectedHandoffContentGateway {
             .await
             .map_err(map_projection_failure)?
             .ok_or_else(|| failure(HandoffContentFailureKind::NotFound))?;
-        if !source_matches_handoff(&source, handoff) || !scope_allows_content(handoff) {
+        if !handoff_source_matches_projection(&source, handoff) || !scope_allows_content(handoff) {
             return Err(failure(HandoffContentFailureKind::Denied));
         }
         let opened = self
@@ -63,6 +63,8 @@ impl ProjectedHandoffContentGateway {
             || opened.digest != fields.content.digest()
             || opened.media_type != *fields.content.media_type()
             || u64::try_from(opened.bytes.len()).ok() != Some(fields.content.byte_length().value())
+            || (is_text_media_type(fields.content.media_type().as_str())
+                && std::str::from_utf8(opened.bytes.as_ref()).is_err())
         {
             return Err(failure(HandoffContentFailureKind::InvalidResponse));
         }
@@ -85,7 +87,11 @@ impl HandoffContentGateway for ProjectedHandoffContentGateway {
     }
 }
 
-fn source_matches_handoff(source: &ProjectedMessagePreview, handoff: &ContextHandoff) -> bool {
+/// 判断交接声明的来源是否与本地已验签消息投影逐项一致。
+pub fn handoff_source_matches_projection(
+    source: &ProjectedMessagePreview,
+    handoff: &ContextHandoff,
+) -> bool {
     let fields = handoff.fields();
     let expected_source = &fields.source;
     let expected_actor = expected_source.actor();
@@ -110,13 +116,17 @@ fn content_reference_matches(actual: MessageContentReference, handoff: &ContextH
 
 fn scope_allows_content(handoff: &ContextHandoff) -> bool {
     let fields = handoff.fields();
-    let media_type = fields.content.media_type().as_str();
-    let is_text = media_type == "application/json" || media_type.starts_with("text/");
-    fields.permissions.contains(if is_text {
-        HandoffPermission::ReadText
-    } else {
-        HandoffPermission::ReadAttachments
-    })
+    fields.permissions.contains(
+        if is_text_media_type(fields.content.media_type().as_str()) {
+            HandoffPermission::ReadText
+        } else {
+            HandoffPermission::ReadAttachments
+        },
+    )
+}
+
+fn is_text_media_type(media_type: &str) -> bool {
+    media_type == "application/json" || media_type.starts_with("text/")
 }
 
 const fn map_projection_failure(
