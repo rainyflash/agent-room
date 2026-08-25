@@ -13,11 +13,16 @@ use crate::persistence::RepositoryResult;
 
 use super::{MatrixResult, PortFuture};
 
+mod direct_sessions;
 mod private_rooms;
 mod provisioning;
 
 use std::sync::Arc;
 
+pub use direct_sessions::{
+    DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
+    DirectSessionMatrixProvisioner, DirectSessionRecord, DirectSessionStore,
+};
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
     PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,

@@ -88,6 +88,8 @@ pub use projections::{
 };
 pub use rooms::{
     AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory,
+    DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
+    DirectSessionMatrixProvisioner, DirectSessionRecord, DirectSessionStore,
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
     PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
     PrivateRoomSnapshot, PrivateRoomStore, PublicLobbyDirectoryEntry, RoomAllocationEvidence,

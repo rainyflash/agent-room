@@ -82,10 +82,7 @@ impl DirectSession {
             DirectSessionLifecycle::Active | DirectSessionLifecycle::Failed => !version_is_initial,
         };
         if !lifecycle_matches_version {
-            return Err(invariant(
-                "direct_session",
-                "生命周期必须与乐观锁版本一致",
-            ));
+            return Err(invariant("direct_session", "生命周期必须与乐观锁版本一致"));
         }
         Ok(Self {
             catalog_id,
@@ -148,10 +145,9 @@ impl DirectSession {
     pub fn fail(&mut self) -> DomainResult<bool> {
         match self.lifecycle {
             DirectSessionLifecycle::Failed => Ok(false),
-            DirectSessionLifecycle::Active => Err(invariant(
-                "direct_session",
-                "活动会话不能回退为失败状态",
-            )),
+            DirectSessionLifecycle::Active => {
+                Err(invariant("direct_session", "活动会话不能回退为失败状态"))
+            }
             DirectSessionLifecycle::Provisioning => {
                 self.lifecycle = DirectSessionLifecycle::Failed;
                 self.version = self.version.next()?;
@@ -276,12 +272,7 @@ mod tests {
 
     #[test]
     fn 任一方向屏蔽都会停止投递并隐藏精确在线状态() {
-        let policy = DirectContactPolicy::restore(
-            principal_id(),
-            agent_id(),
-            false,
-            true,
-        );
+        let policy = DirectContactPolicy::restore(principal_id(), agent_id(), false, true);
 
         assert!(!policy.delivery_allowed());
         assert_eq!(
