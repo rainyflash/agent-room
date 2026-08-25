@@ -6,6 +6,7 @@ import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
 import { ControlPlaneAutomationGrantClient } from '@/features/automation/adapters/control-plane-automation-grant-client';
 import { ControlPlaneDirectSessionClient } from '@/features/direct-sessions/adapters/control-plane-direct-session-client';
+import { BrowserDirectBlockRegistry } from '@/features/direct-sessions/adapters/browser-direct-block-registry';
 import { MatrixSdkDirectSessionGateway } from '@/features/direct-sessions/adapters/matrix-direct-session-gateway';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-observer-handoff-gateway';
@@ -82,9 +83,11 @@ function createRuntime(config: RuntimeConfig) {
   const privateRoomMatrix = new MatrixSdkPrivateRoomGateway(matrixClients);
   const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
   const directSessionMatrix = new MatrixSdkDirectSessionGateway(matrixClients);
+  const directBlocks = new BrowserDirectBlockRegistry(window.localStorage);
   const directSessionCoordinator = new DirectSessionCoordinator(
     directSessions,
     directSessionMatrix,
+    directBlocks,
   );
   const security = new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys);
   const accessManagement = new ControlPlaneAccessManagementClient({

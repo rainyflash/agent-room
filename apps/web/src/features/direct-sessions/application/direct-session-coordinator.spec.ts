@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DirectSessionCoordinator } from './direct-session-coordinator';
 import type {
+  DirectBlockRegistry,
   DirectContact,
   DirectSession,
   DirectSessionGateway,
@@ -14,14 +15,18 @@ describe('DirectSessionCoordinator', () => {
     const value = session();
     const open = vi.fn().mockResolvedValue(ok(value));
     const prepare = vi.fn().mockResolvedValue(ok(undefined));
-    const coordinator = new DirectSessionCoordinator(controlPlane({ open }), matrix({ prepare }));
+    const coordinator = new DirectSessionCoordinator(
+      controlPlane({ open }),
+      matrix({ prepare }),
+      localBlocks(),
+    );
 
     await expect(coordinator.open(value.target.agentId)).resolves.toEqual(ok(value));
     expect(open).toHaveBeenCalledWith(value.target.agentId);
     expect(prepare).toHaveBeenCalledWith(value);
   });
 
-  it('屏蔽先写服务端再写 Matrix，解除时采用相反顺序', async () => {
+  it('屏蔽立即写本地并并行同步服务端与 Matrix，解除仅在双端成功后生效', async () => {
     const order: string[] = [];
     const setBlocked = vi.fn().mockImplementation((_agentId: string, blocked: boolean) => {
       order.push(blocked ? 'server-block' : 'server-unblock');
@@ -34,12 +39,37 @@ describe('DirectSessionCoordinator', () => {
     const coordinator = new DirectSessionCoordinator(
       controlPlane({ setBlocked }),
       matrix({ setIgnored }),
+      localBlocks(),
     );
 
     await coordinator.setBlocked(session().target, true);
     await coordinator.setBlocked(session().target, false);
 
-    expect(order).toEqual(['server-block', 'matrix-block', 'matrix-unblock', 'server-unblock']);
+    expect(order.slice(0, 2).toSorted()).toEqual(['matrix-block', 'server-block']);
+    expect(order.slice(2)).toEqual(['server-unblock', 'matrix-unblock']);
+  });
+
+  it('服务端失败也保持本地屏蔽且仍尝试 Matrix 忽略', async () => {
+    const blocks = localBlocks();
+    const target = session().target;
+    const setIgnored = vi.fn().mockResolvedValue(ok(undefined));
+    const coordinator = new DirectSessionCoordinator(
+      controlPlane({
+        setBlocked: vi
+          .fn()
+          .mockResolvedValue(err({ code: 'direct_session.unreachable', retryable: true })),
+      }),
+      matrix({ setIgnored }),
+      blocks,
+    );
+
+    const pending = coordinator.setBlocked(target, true);
+    expect(coordinator.isLocallyBlocked(target.agentId)).toBe(true);
+    await expect(pending).resolves.toEqual(
+      err({ code: 'direct_session.unreachable', retryable: true }),
+    );
+    expect(coordinator.isLocallyBlocked(target.agentId)).toBe(true);
+    expect(setIgnored).toHaveBeenCalledWith(target.matrixUserId, true);
   });
 
   it('Matrix 准备失败时不伪造已打开结果', async () => {
@@ -50,6 +80,7 @@ describe('DirectSessionCoordinator', () => {
           .fn()
           .mockResolvedValue(err({ code: 'direct_session.join_failed', retryable: true })),
       }),
+      localBlocks(),
     );
 
     await expect(coordinator.open(session().target.agentId)).resolves.toEqual(
@@ -65,6 +96,20 @@ function controlPlane(overrides: Partial<DirectSessionGateway>): DirectSessionGa
     open: () => Promise.resolve(ok(session())),
     setBlocked: (_agentId, blocked) => Promise.resolve(ok(contact(blocked))),
     ...overrides,
+  };
+}
+
+function localBlocks(): DirectBlockRegistry {
+  const blocked = new Set<string>();
+  return {
+    has: (agentId) => blocked.has(agentId),
+    set: (agentId, value) => {
+      if (value) {
+        blocked.add(agentId);
+      } else {
+        blocked.delete(agentId);
+      }
+    },
   };
 }
 

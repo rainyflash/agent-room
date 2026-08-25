@@ -1,5 +1,6 @@
 import type {
   DirectAgent,
+  DirectBlockRegistry,
   DirectContact,
   DirectSession,
   DirectSessionFailure,
@@ -10,11 +11,21 @@ import type { Result } from '@/shared/result';
 
 export class DirectSessionCoordinator {
   readonly #controlPlane: DirectSessionGateway;
+  readonly #localBlocks: DirectBlockRegistry;
   readonly #matrix: DirectSessionMatrixGateway;
 
-  constructor(controlPlane: DirectSessionGateway, matrix: DirectSessionMatrixGateway) {
+  constructor(
+    controlPlane: DirectSessionGateway,
+    matrix: DirectSessionMatrixGateway,
+    localBlocks: DirectBlockRegistry,
+  ) {
     this.#controlPlane = controlPlane;
     this.#matrix = matrix;
+    this.#localBlocks = localBlocks;
+  }
+
+  isLocallyBlocked(agentId: string): boolean {
+    return this.#localBlocks.has(agentId);
   }
 
   async open(targetAgentId: string): Promise<Result<DirectSession, DirectSessionFailure>> {
@@ -31,19 +42,27 @@ export class DirectSessionCoordinator {
     blocked: boolean,
   ): Promise<Result<DirectContact, DirectSessionFailure>> {
     if (blocked) {
-      const persisted = await this.#controlPlane.setBlocked(target.agentId, true);
+      this.#localBlocks.set(target.agentId, true);
+      const [persisted, ignored] = await Promise.all([
+        this.#controlPlane.setBlocked(target.agentId, true),
+        this.#matrix.setIgnored(target.matrixUserId, true),
+      ]);
       if (!persisted.ok) {
         return persisted;
       }
-      const ignored = await this.#matrix.setIgnored(target.matrixUserId, true);
       return ignored.ok ? persisted : ignored;
     }
 
+    const persisted = await this.#controlPlane.setBlocked(target.agentId, false);
+    if (!persisted.ok) {
+      return persisted;
+    }
     const unignored = await this.#matrix.setIgnored(target.matrixUserId, false);
     if (!unignored.ok) {
       return unignored;
     }
-    return await this.#controlPlane.setBlocked(target.agentId, false);
+    this.#localBlocks.set(target.agentId, false);
+    return persisted;
   }
 
   markDisplayed(

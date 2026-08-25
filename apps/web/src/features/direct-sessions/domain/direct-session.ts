@@ -96,3 +96,8 @@ export type DirectSessionMatrixGateway = {
   prepare(session: DirectSession): Promise<Result<void, DirectSessionFailure>>;
   setIgnored(matrixUserId: string, ignored: boolean): Promise<Result<void, DirectSessionFailure>>;
 };
+
+export type DirectBlockRegistry = {
+  has(agentId: string): boolean;
+  set(agentId: string, blocked: boolean): void;
+};

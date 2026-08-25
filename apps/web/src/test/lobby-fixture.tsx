@@ -230,7 +230,17 @@ const directSessionMatrix: DirectSessionMatrixGateway = {
   prepare: async () => ok(undefined),
   setIgnored: async () => ok(undefined),
 };
-const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix);
+const locallyBlockedAgents = new Set<string>();
+const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix, {
+  has: (agentId) => locallyBlockedAgents.has(agentId),
+  set: (agentId, blocked) => {
+    if (blocked) {
+      locallyBlockedAgents.add(agentId);
+    } else {
+      locallyBlockedAgents.delete(agentId);
+    }
+  },
+});
 const fixtureContent =
   '# Protocol review\n<img src=x onerror=alert(1)>\n[link](javascript:alert(1))';
 const contentReadCounts = { downloads: 0, tickets: 0 };

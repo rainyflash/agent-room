@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useAppServices } from '@/app/app-services';
 import {
@@ -37,6 +37,7 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
   const queryClient = useQueryClient();
   const list = useDirectSessionList(directSessions, enabled);
   const [actionFailure, setActionFailure] = useState<DirectSessionFailure | null>(null);
+  const [localBlockRevision, setLocalBlockRevision] = useState(0);
   const openMutation = useMutation({
     mutationFn: async (targetAgentId: string) => await directSessionCoordinator.open(targetAgentId),
   });
@@ -44,7 +45,18 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
     mutationFn: async ({ blocked, target }: { blocked: boolean; target: DirectAgent }) =>
       await directSessionCoordinator.setBlocked(target, blocked),
   });
-  const sessions = list.data?.ok === true ? list.data.value : [];
+  const listedSessions = list.data?.ok === true ? list.data.value : [];
+  const sessions = useMemo(
+    () =>
+      Object.freeze(
+        listedSessions.map((session) =>
+          directSessionCoordinator.isLocallyBlocked(session.target.agentId)
+            ? projectLocallyBlocked(session)
+            : session,
+        ),
+      ),
+    [directSessionCoordinator, listedSessions, localBlockRevision],
+  );
   const listFailure =
     list.data?.ok === false
       ? list.data.error
@@ -79,11 +91,16 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
       blocked: boolean,
     ): Promise<Result<DirectContact, DirectSessionFailure>> => {
       setActionFailure(null);
-      const result = await blockMutation.mutateAsync({ blocked, target });
+      const pending = blockMutation.mutateAsync({ blocked, target });
+      if (blocked) {
+        setLocalBlockRevision((revision) => revision + 1);
+      }
+      const result = await pending;
       if (!result.ok) {
         setActionFailure(result.error);
         return result;
       }
+      setLocalBlockRevision((revision) => revision + 1);
       await refresh();
       return result;
     },
@@ -114,6 +131,18 @@ export function useDirectSessionController(enabled: boolean): DirectSessionContr
     sessions,
     setBlocked,
   };
+}
+
+function projectLocallyBlocked(session: DirectSession): DirectSession {
+  return Object.freeze({
+    ...session,
+    contactPolicy: Object.freeze({
+      ...session.contactPolicy,
+      deliveryAllowed: false,
+      presenceDisclosure: 'hidden' as const,
+      principalBlocksAgent: true,
+    }),
+  });
 }
 
 function mergeSessionCache(current: unknown, opened: DirectSession) {
