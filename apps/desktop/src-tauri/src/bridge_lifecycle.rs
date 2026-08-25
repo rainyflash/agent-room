@@ -35,6 +35,7 @@ pub(crate) struct BridgeLifecycleSnapshot {
     pub(crate) phase: BridgePhase,
     pub(crate) ownership: Option<BridgeOwnership>,
     pub(crate) diagnostic_code: Option<String>,
+    pub(crate) last_failure_code: Option<String>,
     pub(crate) automatic_restart_count: usize,
     pub(crate) next_retry_at_unix_ms: Option<i64>,
     pub(crate) last_exit_code: Option<i32>,
@@ -61,6 +62,7 @@ impl BridgeRestartPolicy {
                 phase: BridgePhase::Discovering,
                 ownership: None,
                 diagnostic_code: None,
+                last_failure_code: None,
                 automatic_restart_count: 0,
                 next_retry_at_unix_ms: None,
                 last_exit_code: None,
@@ -78,6 +80,7 @@ impl BridgeRestartPolicy {
         self.snapshot.phase = BridgePhase::Ready;
         self.snapshot.ownership = Some(ownership);
         self.snapshot.diagnostic_code = None;
+        self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
@@ -94,18 +97,23 @@ impl BridgeRestartPolicy {
         self.snapshot.phase = BridgePhase::AuthorizationRequired;
         self.snapshot.ownership = Some(BridgeOwnership::Managed);
         self.snapshot.diagnostic_code = None;
+        self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
     pub(crate) fn set_diagnostic(&mut self, now_unix_ms: i64, code: impl Into<String>) {
-        self.snapshot.diagnostic_code = Some(code.into());
+        let code = code.into();
+        self.snapshot.diagnostic_code = Some(code.clone());
+        self.snapshot.last_failure_code = Some(code);
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
     pub(crate) fn halt(&mut self, now_unix_ms: i64, code: impl Into<String>) {
+        let code = code.into();
         self.snapshot.phase = BridgePhase::Halted;
-        self.snapshot.diagnostic_code = Some(code.into());
+        self.snapshot.diagnostic_code = Some(code.clone());
+        self.snapshot.last_failure_code = Some(code);
         self.snapshot.next_retry_at_unix_ms = None;
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
@@ -183,6 +191,7 @@ mod tests {
     fn 自动重启有指数退避且第四次崩溃进入停机态() {
         let mut policy = BridgeRestartPolicy::new(0);
         policy.starting(0);
+        policy.set_diagnostic(50, "bridge.identity.discovery_failed");
 
         assert_eq!(
             policy.child_exited(100, Some(10), false),
@@ -206,6 +215,10 @@ mod tests {
             Some("desktop.bridge.restart_budget_exhausted")
         );
         assert_eq!(policy.snapshot().last_exit_code, Some(13));
+        assert_eq!(
+            policy.snapshot().last_failure_code.as_deref(),
+            Some("bridge.identity.discovery_failed")
+        );
     }
 
     #[test]

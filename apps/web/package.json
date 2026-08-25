@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:desktop": "vite build --mode desktop",
     "dev": "vite",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
@@ -17,6 +18,7 @@
     "@agent-room/ui-system": "workspace:*",
     "@tanstack/react-query": "5.102.2",
     "@tanstack/react-router": "1.170.32",
+    "@tauri-apps/api": "2.11.1",
     "@xstate/react": "6.1.0",
     "i18next": "26.4.0",
     "lucide-react": "1.34.0",

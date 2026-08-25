@@ -18,7 +18,8 @@
   "scripts": {
     "actions:check": "node tools/check-actions-pinned.mjs",
     "audit:node": "pnpm audit --registry=https://registry.npmjs.org --audit-level high",
-    "build": "pnpm --recursive --if-present build",
+    "build": "pnpm --recursive --if-present --filter=!@agent-room/desktop build",
+    "build:desktop": "pnpm --filter @agent-room/desktop build",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm protocol:check",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

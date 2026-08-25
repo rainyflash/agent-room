@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.agent-room.desktop",
   "build": {
+    "beforeBuildCommand": "pnpm --filter @agent-room/web build:desktop",
     "beforeDevCommand": "pnpm --filter @agent-room/web dev",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../../web/dist"
@@ -11,7 +12,7 @@
   "app": {
     "security": {
       "capabilities": ["main-window"],
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self'; connect-src 'self' https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     },
     "windows": [
       {

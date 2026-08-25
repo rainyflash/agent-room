@@ -17,7 +17,6 @@ pub(crate) struct DeepLinkTarget {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DeepLinkKind {
     Lobby,
-    Handoff,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,10 +83,6 @@ fn parse_deep_link(raw: &str) -> Result<DeepLinkTarget, DeepLinkFailure> {
             kind: DeepLinkKind::Lobby,
             route: format!("/lobby/{catalog_id}/instance/{room_id}"),
         }),
-        ("handoff", [handoff_id]) => Ok(DeepLinkTarget {
-            kind: DeepLinkKind::Handoff,
-            route: format!("/handoffs/{handoff_id}"),
-        }),
         _ => Err(DeepLinkFailure::invalid()),
     }
 }
@@ -133,5 +128,6 @@ mod tests {
             parse_deep_link("https://evil.example/command").expect_err("外部 URL 不是深链");
         assert_eq!(invalid, super::DeepLinkFailure);
         assert!(parse_deep_link("agent-room://lobby/id?next=https://evil.example").is_err());
+        assert!(parse_deep_link("agent-room://handoff/unimplemented").is_err());
     }
 }

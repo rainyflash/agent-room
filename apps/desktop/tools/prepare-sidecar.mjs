@@ -9,9 +9,7 @@ const release = process.argv.includes('--release');
 const profile = release ? 'release' : 'debug';
 
 const rustc = run('rustc', ['-vV']);
-const hostLine = rustc.stdout
-  .split(/\r?\n/u)
-  .find((line) => line.startsWith('host: '));
+const hostLine = rustc.stdout.split(/\r?\n/u).find((line) => line.startsWith('host: '));
 if (hostLine === undefined) {
   throw new Error('无法从 rustc -vV 解析目标三元组。');
 }

@@ -6,4 +6,5 @@ node_modules
 target
 pnpm-lock.yaml
 packages/protocol-types/src/generated.ts
+apps/desktop/src-tauri/gen/schemas
 specs

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm prepare:sidecar && pnpm --filter @agent-room/web build && tauri build --config src-tauri/tauri.sidecar.conf.json",
+    "build": "pnpm prepare:sidecar && tauri build --config src-tauri/tauri.sidecar.conf.json",
     "dev": "pnpm prepare:sidecar:debug && tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "prepare:sidecar": "node tools/prepare-sidecar.mjs --release",
     "prepare:sidecar:debug": "node tools/prepare-sidecar.mjs",

@@ -8,7 +8,8 @@ repository.workspace = true
 
 [lib]
 name = "agent_room_desktop"
-crate-type = ["lib", "cdylib", "staticlib"]
+# 当前产品只交付桌面目标；移动端需要的 cdylib/staticlib 会与 Windows 可执行文件争用 PDB 名称。
+crate-type = ["lib"]
 
 [build-dependencies]
 tauri-build.workspace = true

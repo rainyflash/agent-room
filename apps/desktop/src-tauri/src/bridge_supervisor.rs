@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -55,6 +58,7 @@ pub(crate) struct BridgeSupervisor {
     input: mpsc::Sender<ActorInput>,
     state: watch::Receiver<SupervisorState>,
     child: Arc<Mutex<Option<CommandChild>>>,
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl BridgeSupervisor {
@@ -70,24 +74,26 @@ impl BridgeSupervisor {
         let (state_tx, state_rx) = watch::channel(initial);
         let (input_tx, input_rx) = mpsc::channel(ACTOR_QUEUE_CAPACITY);
         let child = Arc::new(Mutex::new(None));
+        let shutting_down = Arc::new(AtomicBool::new(false));
         let actor = BridgeSupervisorActor {
             app,
             config,
             policy,
             authorization: None,
             child: child.clone(),
+            shutting_down: shutting_down.clone(),
             input: input_tx.clone(),
             receiver: input_rx,
             state: state_tx,
             generation: 0,
             managed_child_active: false,
-            shutting_down: false,
         };
         tauri::async_runtime::spawn(actor.run());
         Self {
             input: input_tx,
             state: state_rx,
             child,
+            shutting_down,
         }
     }
 
@@ -125,6 +131,7 @@ impl BridgeSupervisor {
     }
 
     pub(crate) fn shutdown_now(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
         let _ = self.input.try_send(ActorInput::Shutdown);
         if let Ok(mut child) = self.child.lock()
             && let Some(child) = child.take()
@@ -140,12 +147,12 @@ struct BridgeSupervisorActor {
     policy: BridgeRestartPolicy,
     authorization: Option<AuthorizationPrompt>,
     child: Arc<Mutex<Option<CommandChild>>>,
+    shutting_down: Arc<AtomicBool>,
     input: mpsc::Sender<ActorInput>,
     receiver: mpsc::Receiver<ActorInput>,
     state: watch::Sender<SupervisorState>,
     generation: u64,
     managed_child_active: bool,
-    shutting_down: bool,
 }
 
 impl BridgeSupervisorActor {
@@ -186,7 +193,7 @@ impl BridgeSupervisorActor {
                 }
                 ActorInput::Resume => self.handle_resume().await,
                 ActorInput::Shutdown => {
-                    self.shutting_down = true;
+                    self.shutting_down.store(true, Ordering::SeqCst);
                     self.kill_managed_child();
                     self.policy.stop(now_unix_ms());
                     self.authorization = None;
@@ -198,6 +205,9 @@ impl BridgeSupervisorActor {
     }
 
     fn start_managed(&mut self) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
         self.generation = self.generation.saturating_add(1);
         self.policy.starting(now_unix_ms());
         self.authorization = None;
@@ -220,6 +230,7 @@ impl BridgeSupervisorActor {
         if let Ok(mut slot) = self.child.lock() {
             *slot = Some(child);
         } else {
+            let _ = child.kill();
             self.policy.halt(
                 now_unix_ms(),
                 "desktop.bridge.child_state_unavailable".to_owned(),
@@ -244,6 +255,9 @@ impl BridgeSupervisorActor {
     }
 
     fn handle_explicit_retry(&mut self) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
         if matches!(
             self.policy.snapshot().phase,
             BridgePhase::Ready | BridgePhase::Starting | BridgePhase::AuthorizationRequired
@@ -377,10 +391,11 @@ impl BridgeSupervisorActor {
         }
         self.managed_child_active = false;
         self.authorization = None;
-        match self
-            .policy
-            .child_exited(now_unix_ms(), exit_code, self.shutting_down)
-        {
+        match self.policy.child_exited(
+            now_unix_ms(),
+            exit_code,
+            self.shutting_down.load(Ordering::SeqCst),
+        ) {
             ExitDecision::RetryAfter(delay) => {
                 let sender = self.input.clone();
                 let generation = self.generation;

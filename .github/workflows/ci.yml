@@ -65,6 +65,33 @@ jobs:
       - name: 编译 Bridge 与平台安全存储适配器
         run: cargo check -p agent-room-bridge --all-targets
 
+  desktop-platforms:
+    name: 桌面壳原生构建（${{ matrix.os }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装 Node 依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 构建桌面专用 Web 产物
+        run: corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
+      - name: 构建 Bridge sidecar
+        run: corepack pnpm@10.28.0 --filter @agent-room/desktop prepare:sidecar
+      - name: 检查桌面壳与窄化 Capabilities
+        run: cargo check -p agent-room-desktop --all-targets --all-features
+      - name: 运行桌面壳领域测试
+        run: cargo test -p agent-room-desktop --all-features
+
   web-browser:
     name: Web 真实浏览器验收
     needs: quality

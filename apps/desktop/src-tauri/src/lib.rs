@@ -5,6 +5,7 @@ mod capability_tests;
 mod commands;
 mod deep_link;
 mod desktop_config;
+mod webview_migration;
 
 use commands::{
     DesktopRuntime, desktop_open_authorization, desktop_retry_bridge, desktop_runtime_snapshot,
@@ -57,6 +58,7 @@ pub fn run() {
             desktop_open_authorization,
         ])
         .setup(|app| {
+            webview_migration::retire_legacy_service_worker(app)?;
             let config = DesktopBridgeConfig::from_environment()
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
             let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config);
