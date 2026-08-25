@@ -4,6 +4,7 @@ import unittest
 
 from tools.vertical import (
     BridgeRuntimeObservation,
+    IsolatedServiceInterruption,
     LogRedactor,
     VerticalFailure,
     compose_command,
@@ -11,6 +12,7 @@ from tools.vertical import (
     new_uuid_v7,
     read_string_object,
     require_uuid_v7,
+    verify_sanitized_logs,
     windows_credential_target,
 )
 
@@ -49,6 +51,57 @@ class LogRedactorTests(unittest.TestCase):
         )
         self.assertEqual(code, "ABCD-EFGH")
         self.assertNotIn(code, redactor.redact(line))
+
+    def test_反向日志扫描接受脱敏内容(self) -> None:
+        redactor = LogRedactor({"CLIENT_SECRET": "local-secret-value"})
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "bridge.log"
+            log.write_text(
+                "设备验证码：[已脱敏]\ncallback?user_code=[已脱敏]\n",
+                encoding="utf-8",
+            )
+
+            scanned = verify_sanitized_logs(
+                (log,), redactor, additional_secrets=("ABCD-EFGH",)
+            )
+
+        self.assertEqual(scanned, ("bridge.log",))
+
+    def test_反向日志扫描拒绝任何敏感值残留(self) -> None:
+        cases = {
+            "known-secret": "local-secret-value",
+            "jwt": "eyJaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc",
+            "device-query": "callback?user_code=ABCD-EFGH",
+            "device-line": "设备验证码：ABCD-EFGH",
+        }
+        for name, content in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                log = Path(directory) / "bridge.log"
+                log.write_text(f"{content}\n", encoding="utf-8")
+                with self.assertRaises(VerticalFailure):
+                    verify_sanitized_logs(
+                        (log,),
+                        LogRedactor({"CLIENT_SECRET": "local-secret-value"}),
+                        additional_secrets=("ABCD-EFGH",),
+                    )
+
+
+class BridgeObservationTests(unittest.TestCase):
+    def test_区分首次上线与恢复后的新在线代次(self) -> None:
+        observation = BridgeRuntimeObservation()
+        process = RunningProcess()
+        observation.observe("Agent 已进入公共大厅并开始同步。\n")
+        initial = observation.wait_for_agent_online(process, timeout_seconds=0.1)
+
+        observation.observe("Agent 已进入公共大厅并开始同步。\n")
+        recovered = observation.wait_for_agent_online(
+            process,
+            after_generation=initial,
+            timeout_seconds=0.1,
+        )
+
+        self.assertEqual(initial, 1)
+        self.assertEqual(recovered, 2)
 
 
 class ResultValidationTests(unittest.TestCase):
@@ -90,6 +143,10 @@ class ComposeBoundaryTests(unittest.TestCase):
             windows_credential_target("dev.agent-room.bridge.vertical-24", "session"),
             "session.dev.agent-room.bridge.vertical-24",
         )
+
+    def test_拒绝中断未登记的基础设施服务(self) -> None:
+        with self.assertRaises(VerticalFailure):
+            IsolatedServiceInterruption("postgres")
 
 
 if __name__ == "__main__":

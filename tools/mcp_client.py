@@ -123,16 +123,22 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
         return tuple(names)
 
     def call_tool(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
-        result = self.request(
-            "tools/call",
-            {"name": name, "arguments": dict(arguments)},
-        )
+        result = self.call_tool_result(name, arguments)
         if result.get("isError") is True:
             raise McpClientFailure(f"MCP 工具 {name} 返回失败。")
         structured = result.get("structuredContent")
         if not isinstance(structured, dict):
             raise McpClientFailure(f"MCP 工具 {name} 缺少结构化响应。")
         return _string_keyed_object(structured, f"MCP 工具 {name} 的结构化响应")
+
+    def call_tool_result(
+        self, name: str, arguments: Mapping[str, object]
+    ) -> JsonObject:
+        """保留 MCP 错误结果，供故障恢复验收检查稳定错误码。"""
+        return self.request(
+            "tools/call",
+            {"name": name, "arguments": dict(arguments)},
+        )
 
     def request(self, method: str, params: Mapping[str, object]) -> JsonObject:
         request_id = self._next_request_id

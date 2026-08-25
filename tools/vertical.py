@@ -7,6 +7,7 @@ import argparse
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 import ctypes
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ import sys
 import threading
 import time
 from typing import Final, Protocol, TextIO
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import uuid
 
@@ -54,8 +55,15 @@ CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
 CATALOG_SEED_ID: Final = "019d2c44-1dc5-7a5b-9e32-2f3c1d4b5a61"
 CATALOG_SLUG: Final = "vertical-codex-lobby"
-SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24"
-BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge"
+SENDER_SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24.sender"
+TARGET_SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24.target"
+SECURE_STORAGE_SERVICES: Final = (
+    SENDER_SECURE_STORAGE_SERVICE,
+    TARGET_SECURE_STORAGE_SERVICE,
+)
+SENDER_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-sender"
+TARGET_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-target"
+BRIDGE_DATA_ROOTS: Final = (SENDER_BRIDGE_DATA_ROOT, TARGET_BRIDGE_DATA_ROOT)
 SECURE_STORAGE_ACCOUNTS: Final = (
     "device-signing-seed",
     "agent-instance-signing-seed-v1",
@@ -84,6 +92,12 @@ JWT_VALUE: Final = re.compile(
 )
 DEVICE_CODE_QUERY: Final = re.compile(r"(\buser_code=)[^&\s]+", re.IGNORECASE)
 DEVICE_CODE_LINE: Final = re.compile(r"^(设备验证码：)(\S+)\s*$", re.MULTILINE)
+UNREDACTED_DEVICE_CODE_QUERY: Final = re.compile(
+    r"\buser_code=(?!\[已脱敏\])[^&\s]+", re.IGNORECASE
+)
+UNREDACTED_DEVICE_CODE_LINE: Final = re.compile(
+    r"^设备验证码：(?!\[已脱敏\])\S+", re.MULTILINE
+)
 UUID_V7_TEXT: Final = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -126,6 +140,11 @@ class LogRedactor:
         sanitized = DEVICE_CODE_QUERY.sub(r"\1[已脱敏]", sanitized)
         return DEVICE_CODE_LINE.sub(r"\1[已脱敏]", sanitized)
 
+    @property
+    def known_secrets(self) -> tuple[str, ...]:
+        """只供落盘后的反向扫描使用，不把敏感值写入诊断信息。"""
+        return self._known_secrets
+
 
 LineObserver = Callable[[str], None]
 
@@ -140,8 +159,9 @@ class BridgeRuntimeObservation:
     def __init__(self) -> None:
         self._device_code: str | None = None
         self._device_code_ready = threading.Event()
-        self._agent_online = threading.Event()
         self._lock = threading.Lock()
+        self._milestone_changed = threading.Condition(self._lock)
+        self._agent_online_generation = 0
 
     def observe(self, line: str) -> None:
         match = DEVICE_CODE_LINE.fullmatch(line.strip())
@@ -149,8 +169,10 @@ class BridgeRuntimeObservation:
             with self._lock:
                 self._device_code = match.group(2)
             self._device_code_ready.set()
-        if "Agent 已进入公共大厅并开始同步。" in line:
-            self._agent_online.set()
+        with self._milestone_changed:
+            if "Agent 已进入公共大厅并开始同步。" in line:
+                self._agent_online_generation += 1
+                self._milestone_changed.notify_all()
 
     def wait_for_device_code(
         self, process: ProcessHealth, *, timeout_seconds: float
@@ -167,14 +189,24 @@ class BridgeRuntimeObservation:
             return self._device_code
 
     def wait_for_agent_online(
-        self, process: ProcessHealth, *, timeout_seconds: float
-    ) -> None:
-        self._wait(
-            self._agent_online,
+        self,
+        process: ProcessHealth,
+        *,
+        after_generation: int = 0,
+        timeout_seconds: float,
+    ) -> int:
+        return self._wait_for_generation(
+            lambda: self._agent_online_generation,
             process,
+            after_generation=after_generation,
             timeout_seconds=timeout_seconds,
             label="Agent 自动入厅",
         )
+
+    @property
+    def agent_online_generation(self) -> int:
+        with self._lock:
+            return self._agent_online_generation
 
     @staticmethod
     def _wait(
@@ -190,6 +222,37 @@ class BridgeRuntimeObservation:
             if event.wait(timeout=min(0.25, max(0.0, deadline - time.monotonic()))):
                 return
         raise VerticalFailure(f"{label} 未在 {timeout_seconds:.0f} 秒内出现。")
+
+    def _wait_for_generation(
+        self,
+        read_generation: Callable[[], int],
+        process: ProcessHealth,
+        *,
+        after_generation: int,
+        timeout_seconds: float,
+        label: str,
+    ) -> int:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            process.ensure_running()
+            with self._milestone_changed:
+                generation = read_generation()
+                if generation > after_generation:
+                    return generation
+                self._milestone_changed.wait(
+                    timeout=min(0.25, max(0.0, deadline - time.monotonic()))
+                )
+        raise VerticalFailure(f"{label} 未在 {timeout_seconds:.0f} 秒内出现。")
+
+
+@dataclass(frozen=True)
+class AuthorizedBridgeRuntime:
+    """纵向验收中已授权 Bridge 的唯一运行时句柄。"""
+
+    process: "ManagedProcess"
+    environment: Mapping[str, str]
+    observation: BridgeRuntimeObservation
+    device_code: str
 
 
 class ManagedProcess(AbstractContextManager["ManagedProcess"]):
@@ -398,19 +461,56 @@ class IsolatedInfrastructure(AbstractContextManager["IsolatedInfrastructure"]):
         raise VerticalFailure(message)
 
 
+class IsolatedServiceInterruption(
+    AbstractContextManager["IsolatedServiceInterruption"]
+):
+    """只允许中断纵向环境中显式登记的依赖，并保证退出时恢复。"""
+
+    _ALLOWED_SERVICES: Final = frozenset({"synapse"})
+
+    def __init__(self, service: str) -> None:
+        if service not in self._ALLOWED_SERVICES:
+            raise VerticalFailure(f"拒绝中断未经审计的纵向服务：{service}。")
+        self._service = service
+        self._interrupted = False
+
+    def __enter__(self) -> "IsolatedServiceInterruption":
+        run_checked(
+            [*compose_command(VERTICAL_PROJECT_NAME), "stop", self._service]
+        )
+        self._interrupted = True
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        if not self._interrupted:
+            return
+        try:
+            run_checked(
+                [*compose_command(VERTICAL_PROJECT_NAME), "start", self._service]
+            )
+        except (OSError, VerticalFailure, subprocess.SubprocessError) as error:
+            if exc_value is not None:
+                print(f"纵向服务 {self._service} 恢复失败：{error}", file=sys.stderr)
+                return
+            raise
+        finally:
+            self._interrupted = False
+
+
 class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
     """只清理纵向验收专属目录和凭据命名空间。"""
 
     def __enter__(self) -> "IsolatedBridgeState":
-        reset_bridge_data()
+        reset_bridge_data_roots()
         clear_vertical_secure_storage()
-        BRIDGE_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+        for data_root in BRIDGE_DATA_ROOTS:
+            data_root.mkdir(parents=True, exist_ok=True)
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         failures: list[str] = []
         try:
-            reset_bridge_data()
+            reset_bridge_data_roots()
         except (OSError, VerticalFailure) as error:
             failures.append(f"Bridge 测试目录清理失败：{error}")
         try:
@@ -499,59 +599,64 @@ def remove_vertical_infrastructure() -> None:
     )
 
 
-def reset_bridge_data() -> None:
-    target = BRIDGE_DATA_ROOT.resolve()
+def reset_bridge_data_roots() -> None:
     expected_parent = VERTICAL_ROOT.resolve()
-    if target.parent != expected_parent or target.name != "bridge":
-        raise VerticalFailure("拒绝清理未经审计的 Bridge 测试目录。")
-    if target.exists():
-        shutil.rmtree(target)
+    for data_root in BRIDGE_DATA_ROOTS:
+        target = data_root.resolve()
+        if target.parent != expected_parent or target.name not in {
+            "bridge-sender",
+            "bridge-target",
+        }:
+            raise VerticalFailure("拒绝清理未经审计的 Bridge 测试目录。")
+        if target.exists():
+            shutil.rmtree(target)
 
 
 def clear_vertical_secure_storage() -> None:
     if os.name == "nt":
-        for account in SECURE_STORAGE_ACCOUNTS:
-            delete_windows_credential(
-                windows_credential_target(SECURE_STORAGE_SERVICE, account)
-            )
+        for service in SECURE_STORAGE_SERVICES:
+            for account in SECURE_STORAGE_ACCOUNTS:
+                delete_windows_credential(windows_credential_target(service, account))
         return
     if sys.platform == "darwin":
+        for service in SECURE_STORAGE_SERVICES:
+            for account in SECURE_STORAGE_ACCOUNTS:
+                completed = subprocess.run(
+                    [
+                        executable("security"),
+                        "delete-generic-password",
+                        "-s",
+                        service,
+                        "-a",
+                        account,
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    check=False,
+                )
+                if completed.returncode not in {0, 44}:
+                    raise VerticalFailure("无法清理 macOS 纵向验收凭据。")
+        return
+    secret_tool = shutil.which("secret-tool")
+    if secret_tool is None:
+        raise VerticalFailure("Linux 纵向验收需要 secret-tool 清理隔离凭据。")
+    for service in SECURE_STORAGE_SERVICES:
         for account in SECURE_STORAGE_ACCOUNTS:
             completed = subprocess.run(
                 [
-                    executable("security"),
-                    "delete-generic-password",
-                    "-s",
-                    SECURE_STORAGE_SERVICE,
-                    "-a",
+                    secret_tool,
+                    "clear",
+                    "service",
+                    service,
+                    "username",
                     account,
                 ],
                 cwd=ROOT,
                 capture_output=True,
                 check=False,
             )
-            if completed.returncode not in {0, 44}:
-                raise VerticalFailure("无法清理 macOS 纵向验收凭据。")
-        return
-    secret_tool = shutil.which("secret-tool")
-    if secret_tool is None:
-        raise VerticalFailure("Linux 纵向验收需要 secret-tool 清理隔离凭据。")
-    for account in SECURE_STORAGE_ACCOUNTS:
-        completed = subprocess.run(
-            [
-                secret_tool,
-                "clear",
-                "service",
-                SECURE_STORAGE_SERVICE,
-                "username",
-                account,
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise VerticalFailure("无法清理 Linux 纵向验收凭据。")
+            if completed.returncode != 0:
+                raise VerticalFailure("无法清理 Linux 纵向验收凭据。")
 
 
 def windows_credential_target(service: str, account: str) -> str:
@@ -703,7 +808,7 @@ def wait_for_http(
             with urlopen(request, timeout=2) as response:
                 if http_status_is_ready(response.status):
                     return
-        except (TimeoutError, URLError):
+        except (ConnectionError, TimeoutError, URLError):
             pass
         time.sleep(0.4)
     raise VerticalFailure(f"服务 {url} 未在 {timeout_seconds:.0f} 秒内就绪。")
@@ -712,6 +817,42 @@ def wait_for_http(
 def http_status_is_ready(status: int) -> bool:
     """只把成功响应视为就绪；重定向和客户端错误都必须继续等待。"""
     return 200 <= status < 300
+
+
+def verify_error_correlation() -> str:
+    """对真实控制面触发 404，并验证请求、响应头与错误体使用同一关联 ID。"""
+    correlation_id = new_uuid_v7()
+    request = Request(
+        "http://127.0.0.1:8090/task-24/missing",
+        headers={
+            "Accept": "application/json",
+            "x-correlation-id": correlation_id,
+        },
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            raise VerticalFailure(
+                f"真实错误请求意外返回成功状态 {response.status}。"
+            )
+    except HTTPError as response:
+        if response.code != 404:
+            raise VerticalFailure(
+                f"真实错误请求应返回 404，实际为 {response.code}。"
+            ) from response
+        response_correlation_id = response.headers.get("x-correlation-id")
+        try:
+            payload: object = json.loads(response.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise VerticalFailure("真实错误响应不是有效 UTF-8 JSON。") from error
+
+    body = require_object(payload, "真实错误响应")
+    if response_correlation_id != correlation_id:
+        raise VerticalFailure("真实错误响应头没有保留请求关联 ID。")
+    if body.get("correlationId") != correlation_id:
+        raise VerticalFailure("真实错误响应体没有保留请求关联 ID。")
+    if body.get("code") != "http.route_not_found":
+        raise VerticalFailure("真实错误响应没有返回稳定错误码。")
+    return correlation_id
 
 
 def start_control_plane(
@@ -802,21 +943,30 @@ def start_authorized_bridge(
     environment: Mapping[str, str],
     catalog_id: str,
     agent_id: str,
+    runtime_name: str,
+    data_root: Path,
+    secure_storage_service: str,
     redactor: LogRedactor,
-) -> tuple[ManagedProcess, dict[str, str]]:
+) -> AuthorizedBridgeRuntime:
+    if runtime_name not in {"bridge-sender", "bridge-target"}:
+        raise VerticalFailure(f"拒绝启动未经审计的 Bridge 角色：{runtime_name}。")
+    if data_root not in BRIDGE_DATA_ROOTS:
+        raise VerticalFailure(f"拒绝使用未经审计的 Bridge 数据目录：{data_root}。")
+    if secure_storage_service not in SECURE_STORAGE_SERVICES:
+        raise VerticalFailure("拒绝使用未经审计的 Bridge 安全存储命名空间。")
     bridge_environment = bridge_runtime_environment(
-        data_root=BRIDGE_DATA_ROOT.resolve(),
+        data_root=data_root.resolve(),
         agent_id=agent_id,
         public_lobby_catalog_id=catalog_id,
-        secure_storage_service=SECURE_STORAGE_SERVICE,
+        secure_storage_service=secure_storage_service,
     )
     observation = BridgeRuntimeObservation()
     bridge = processes.start(
         ManagedProcess(
-            name="bridge",
+            name=runtime_name,
             command=[str(runtime_binary("agent-room-bridge"))],
             environment=bridge_environment,
-            log_path=LOG_ROOT / "bridge.log",
+            log_path=LOG_ROOT / f"{runtime_name}.log",
             redactor=redactor,
             on_line=observation.observe,
         )
@@ -824,7 +974,76 @@ def start_authorized_bridge(
     device_code = observation.wait_for_device_code(bridge, timeout_seconds=90)
     approve_device_grant(environment, device_code)
     observation.wait_for_agent_online(bridge, timeout_seconds=180)
-    return bridge, bridge_environment
+    return AuthorizedBridgeRuntime(
+        process=bridge,
+        environment=bridge_environment,
+        observation=observation,
+        device_code=device_code,
+    )
+
+
+def verify_matrix_disconnect_and_recovery(
+    target: AuthorizedBridgeRuntime,
+    peers: Sequence[AuthorizedBridgeRuntime],
+    redactor: LogRedactor,
+) -> int:
+    """真实停止 Synapse，验证 MCP 暂时拒绝服务并恢复到新的在线代次。"""
+    runtimes = (target, *peers)
+    online_generations = tuple(
+        runtime.observation.agent_online_generation for runtime in runtimes
+    )
+    with IsolatedServiceInterruption("synapse"):
+        wait_for_mcp_runtime_unavailable(
+            bridge_environment=target.environment,
+            bridge_process=target.process,
+            redactor=redactor,
+            timeout_seconds=45,
+        )
+    wait_for_http(
+        "http://127.0.0.1:18008/_matrix/client/versions",
+        target.process,
+        timeout_seconds=120,
+    )
+    recovered_generations = tuple(
+        runtime.observation.wait_for_agent_online(
+            runtime.process,
+            after_generation=online_generation,
+            timeout_seconds=180,
+        )
+        for runtime, online_generation in zip(
+            runtimes, online_generations, strict=True
+        )
+    )
+    return recovered_generations[0]
+
+
+def wait_for_mcp_runtime_unavailable(
+    *,
+    bridge_environment: Mapping[str, str],
+    bridge_process: ManagedProcess,
+    redactor: LogRedactor,
+    timeout_seconds: float,
+) -> None:
+    """通过真实插件边界观察断网态，禁止把日志字符串当作状态协议。"""
+    deadline = time.monotonic() + timeout_seconds
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-codex-mcp"))],
+        working_directory=ROOT,
+        environment=bridge_environment,
+        stderr_path=LOG_ROOT / "codex-mcp-reconnect.log",
+        sanitize_line=redactor.redact,
+    ) as client:
+        while time.monotonic() < deadline:
+            bridge_process.ensure_running()
+            result = client.call_tool_result("agent_room_get_self", {})
+            structured = result.get("structuredContent")
+            if result.get("isError") is True and isinstance(structured, dict):
+                if structured.get("code") == "bridge.agent_runtime_unavailable":
+                    return
+            time.sleep(0.4)
+    raise VerticalFailure(
+        f"Synapse 中断后 MCP 未在 {timeout_seconds:.0f} 秒内进入可恢复拒绝态。"
+    )
 
 
 def approve_device_grant(environment: Mapping[str, str], device_code: str) -> None:
@@ -852,18 +1071,29 @@ def approve_device_grant(environment: Mapping[str, str], device_code: str) -> No
 
 def verify_mcp_workflow(
     *,
-    bridge_environment: Mapping[str, str],
+    target_bridge_environment: Mapping[str, str],
+    sender_bridge_environment: Mapping[str, str],
     expected_agent_id: str,
+    principal_id: str,
     redactor: LogRedactor,
 ) -> dict[str, str]:
     room = active_room_for_agent(expected_agent_id)
-    with McpStdioClient(
-        command=[str(runtime_binary("agent-room-codex-mcp"))],
-        working_directory=ROOT,
-        environment=bridge_environment,
-        stderr_path=LOG_ROOT / "codex-mcp.log",
-        sanitize_line=redactor.redact,
-    ) as client:
+    with (
+        McpStdioClient(
+            command=[str(runtime_binary("agent-room-codex-mcp"))],
+            working_directory=ROOT,
+            environment=target_bridge_environment,
+            stderr_path=LOG_ROOT / "codex-mcp.log",
+            sanitize_line=redactor.redact,
+        ) as client,
+        McpStdioClient(
+            command=[str(runtime_binary("agent-room-codex-mcp"))],
+            working_directory=ROOT,
+            environment=sender_bridge_environment,
+            stderr_path=LOG_ROOT / "codex-mcp-sender.log",
+            sanitize_line=redactor.redact,
+        ) as sender_client,
+    ):
         tools = frozenset(client.list_tool_names())
         if tools != EXPECTED_MCP_TOOLS:
             missing = sorted(EXPECTED_MCP_TOOLS - tools)
@@ -873,6 +1103,11 @@ def verify_mcp_workflow(
             )
         identity_response = client.call_tool("agent_room_get_self", {})
         identity = verify_mcp_identity_response(identity_response, expected_agent_id)
+        sender_identity = verify_mcp_identity_response(
+            sender_client.call_tool("agent_room_get_self", {}), expected_agent_id
+        )
+        if sender_identity["agentInstanceId"] == identity["agentInstanceId"]:
+            raise VerticalFailure("交接发送端与 Codex 接收端错误地复用了同一实例。")
         verify_mcp_status_publication(client, room["matrixRoomId"])
         wait_for_mcp_presence(
             client,
@@ -881,7 +1116,7 @@ def verify_mcp_workflow(
             expected_instance_id=identity["agentInstanceId"],
             timeout_seconds=45,
         )
-        message = send_mcp_vertical_message(client, room["matrixRoomId"])
+        message = send_mcp_vertical_message(sender_client, room["matrixRoomId"])
         preview = wait_for_mcp_preview(
             client,
             room_id=room["matrixRoomId"],
@@ -889,13 +1124,56 @@ def verify_mcp_workflow(
             timeout_seconds=45,
         )
         verify_mcp_opened_content(client, room["matrixRoomId"], preview, message)
+        handoff_id = approve_real_handoff(
+            bridge_environment=sender_bridge_environment,
+            principal_id=principal_id,
+            room_id=room["matrixRoomId"],
+            source_content_id=require_text(
+                require_object(preview.get("content"), "MCP 正文引用").get(
+                    "contentId"
+                ),
+                "MCP 正文标识",
+            ),
+            target_agent_id=expected_agent_id,
+            target_instance_id=identity["agentInstanceId"],
+        )
+        wait_for_mcp_handoff_consumption(
+            client,
+            handoff_id=handoff_id,
+            room_id=room["matrixRoomId"],
+            source_event_id=message["eventId"],
+            expected_body=message["body"],
+            timeout_seconds=45,
+        )
+        reply = send_mcp_vertical_reply(
+            client,
+            room_id=room["matrixRoomId"],
+            reply_to_message_id=require_text(
+                preview.get("messageId"), "MCP 源消息标识"
+            ),
+            handoff_id=handoff_id,
+        )
+        reply_preview = wait_for_mcp_preview(
+            client,
+            room_id=room["matrixRoomId"],
+            submission=reply,
+            timeout_seconds=45,
+        )
+        verify_mcp_opened_content(
+            client, room["matrixRoomId"], reply_preview, reply
+        )
 
     return {
         "agentInstanceId": identity["agentInstanceId"],
+        "handoffId": handoff_id,
         "matrixDeviceId": identity["matrixDeviceId"],
+        "senderAgentInstanceId": sender_identity["agentInstanceId"],
         "roomInstanceId": room["roomInstanceId"],
         "matrixRoomId": room["matrixRoomId"],
         "messageId": require_text(preview.get("messageId"), "MCP 消息标识"),
+        "replyMessageId": require_text(
+            reply_preview.get("messageId"), "MCP 回复消息标识"
+        ),
         "contentId": require_text(
             require_object(preview.get("content"), "MCP 正文引用").get("contentId"),
             "MCP 正文标识",
@@ -1028,6 +1306,51 @@ def send_mcp_vertical_message(
     }
 
 
+def send_mcp_vertical_reply(
+    client: McpStdioClient,
+    *,
+    room_id: str,
+    reply_to_message_id: str,
+    handoff_id: str,
+) -> dict[str, str]:
+    submission_id = new_uuid_v7()
+    title = f"Task 24 handoff reply {handoff_id[-8:]}"
+    body = (
+        "Real Codex plugin reply after one-time handoff consumption. "
+        f"Handoff: `{handoff_id}`."
+    )
+    response = client.call_tool(
+        "agent_room_send_message",
+        {
+            "submissionId": submission_id,
+            "roomId": room_id,
+            "title": title,
+            "summary": "Codex consumed verified context and replied through the Bridge.",
+            "body": body,
+            "mediaType": "text/markdown",
+            "language": "en",
+            "sensitivity": "normal",
+            "riskFlags": [],
+            "provenance": "human_confirmed_agent",
+            "replyToMessageId": reply_to_message_id,
+        },
+    )
+    if response.get("type") != "sent_message":
+        raise VerticalFailure("MCP 回复发送返回了错误响应类型。")
+    reply = require_object(response.get("message"), "MCP 回复发送结果")
+    if reply.get("submissionId") != submission_id or reply.get("state") != "submitted":
+        raise VerticalFailure("MCP 回复没有确定提交。")
+    event_id = require_text(reply.get("eventId"), "MCP 回复 Matrix 事件标识")
+    if not event_id.startswith("$"):
+        raise VerticalFailure("MCP 回复 Matrix 事件标识格式无效。")
+    return {
+        "submissionId": submission_id,
+        "eventId": event_id,
+        "title": title,
+        "body": body,
+    }
+
+
 def wait_for_mcp_preview(
     client: McpStdioClient,
     *,
@@ -1080,6 +1403,101 @@ def verify_mcp_opened_content(
         raise VerticalFailure("MCP 正文来源事件与预览不一致。")
     if content.get("body") != submission["body"]:
         raise VerticalFailure("MCP 正文未保持发送时的完整字节内容。")
+
+
+def approve_real_handoff(
+    *,
+    bridge_environment: Mapping[str, str],
+    principal_id: str,
+    room_id: str,
+    source_content_id: str,
+    target_agent_id: str,
+    target_instance_id: str,
+) -> str:
+    """通过桌面壳本机 IPC 适配器批准一次性交接，不给 MCP 越权批准能力。"""
+    handoff_id = new_uuid_v7()
+    environment = dict(bridge_environment)
+    environment.update(
+        {
+            "AGENT_ROOM_TEST_HANDOFF_ID": handoff_id,
+            "AGENT_ROOM_TEST_PRINCIPAL_ID": principal_id,
+            "AGENT_ROOM_TEST_ROOM_ID": room_id,
+            "AGENT_ROOM_TEST_SOURCE_CONTENT_ID": source_content_id,
+            "AGENT_ROOM_TEST_TARGET_AGENT_ID": target_agent_id,
+            "AGENT_ROOM_TEST_TARGET_INSTANCE_ID": target_instance_id,
+        }
+    )
+    run_checked(
+        [
+            executable("cargo"),
+            "test",
+            "--locked",
+            "-p",
+            "agent-room-bridge-local-adapter",
+            "--test",
+            "desktop_handoff_real",
+            "--",
+            "--ignored",
+            "--exact",
+            "桌面壳可批准真实一次性交接",
+        ],
+        environment=environment,
+    )
+    return handoff_id
+
+
+def wait_for_mcp_handoff_consumption(
+    client: McpStdioClient,
+    *,
+    handoff_id: str,
+    room_id: str,
+    source_event_id: str,
+    expected_body: str,
+    timeout_seconds: float,
+) -> None:
+    """等待加密 To-Device 交付落库，再通过 Codex 工具原子消费并验证一次性。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = client.call_tool_result(
+            "agent_room_consume_handoff", {"handoffId": handoff_id}
+        )
+        structured = result.get("structuredContent")
+        if not isinstance(structured, dict):
+            raise VerticalFailure("MCP 交接消费缺少结构化响应。")
+        if result.get("isError") is True:
+            if structured.get("code") != "bridge.handoff_not_found":
+                raise VerticalFailure(
+                    f"MCP 交接消费返回非预期错误码 {structured.get('code')}。"
+                )
+            time.sleep(0.4)
+            continue
+        if structured.get("type") != "consumed_handoff":
+            raise VerticalFailure("MCP 交接消费返回了错误响应类型。")
+        handoff = require_object(structured.get("handoff"), "MCP 已消费交接")
+        if handoff.get("handoffId") != handoff_id:
+            raise VerticalFailure("MCP 消费了错误的一次性交接。")
+        if handoff.get("sourceRoomId") != room_id:
+            raise VerticalFailure("MCP 交接来源房间与已打开正文不一致。")
+        if handoff.get("sourceEventId") != source_event_id:
+            raise VerticalFailure("MCP 交接来源事件与已打开正文不一致。")
+        if handoff.get("body") != expected_body:
+            raise VerticalFailure("MCP 交接正文与已验证正文不一致。")
+        verify_handoff_is_one_time(client, handoff_id)
+        return
+    raise VerticalFailure(f"一次性交接未在 {timeout_seconds:.0f} 秒内到达 Codex。")
+
+
+def verify_handoff_is_one_time(client: McpStdioClient, handoff_id: str) -> None:
+    second = client.call_tool_result(
+        "agent_room_consume_handoff", {"handoffId": handoff_id}
+    )
+    structured = second.get("structuredContent")
+    if (
+        second.get("isError") is not True
+        or not isinstance(structured, dict)
+        or structured.get("code") != "bridge.handoff_already_resolved"
+    ):
+        raise VerticalFailure("一次性交接被重复消费，原子删除门禁失败。")
 
 
 def active_room_for_agent(agent_id: str) -> dict[str, str]:
@@ -1141,6 +1559,40 @@ def write_json(path: Path, payload: Mapping[str, str]) -> None:
     )
 
 
+def verify_sanitized_logs(
+    paths: Sequence[Path],
+    redactor: LogRedactor,
+    *,
+    additional_secrets: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """反向扫描真实落盘日志；任何已知凭据、JWT 或设备码残留都会失败。"""
+    forbidden_values = tuple(
+        value
+        for value in (*redactor.known_secrets, *additional_secrets)
+        if len(value) >= 4
+    )
+    issues: list[str] = []
+    scanned: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            raise VerticalFailure(f"敏感日志扫描缺少预期文件：{path}。")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        scanned.append(path.name)
+        if any(secret in text for secret in forbidden_values):
+            issues.append(f"{path.name}:known-secret")
+        if JWT_VALUE.search(text) is not None:
+            issues.append(f"{path.name}:jwt")
+        if UNREDACTED_DEVICE_CODE_QUERY.search(text) is not None:
+            issues.append(f"{path.name}:device-code-query")
+        if UNREDACTED_DEVICE_CODE_LINE.search(text) is not None:
+            issues.append(f"{path.name}:device-code-line")
+    if issues:
+        raise VerticalFailure(
+            "敏感日志扫描发现未脱敏内容：" + ", ".join(sorted(set(issues)))
+        )
+    return tuple(scanned)
+
+
 def require_uuid_v7(value: str, label: str) -> None:
     if not UUID_V7_TEXT.fullmatch(value):
         raise VerticalFailure(f"{label} 不是 UUIDv7。")
@@ -1179,19 +1631,54 @@ def bootstrap() -> None:
         with IsolatedBridgeState(), ProcessStack() as processes:
             start_control_plane(processes, environment, redactor)
             start_web(processes, redactor)
+            correlation_id = verify_error_correlation()
             agent = bootstrap_agent(environment)
-            _, bridge_environment = start_authorized_bridge(
+            sender_bridge = start_authorized_bridge(
                 processes=processes,
                 environment=environment,
                 catalog_id=catalog_id,
                 agent_id=agent["agentId"],
+                runtime_name="bridge-sender",
+                data_root=SENDER_BRIDGE_DATA_ROOT,
+                secure_storage_service=SENDER_SECURE_STORAGE_SERVICE,
                 redactor=redactor,
+            )
+            target_bridge = start_authorized_bridge(
+                processes=processes,
+                environment=environment,
+                catalog_id=catalog_id,
+                agent_id=agent["agentId"],
+                runtime_name="bridge-target",
+                data_root=TARGET_BRIDGE_DATA_ROOT,
+                secure_storage_service=TARGET_SECURE_STORAGE_SERVICE,
+                redactor=redactor,
+            )
+            recovery_generation = verify_matrix_disconnect_and_recovery(
+                target_bridge, (sender_bridge,), redactor
             )
             runtime = verify_mcp_workflow(
-                bridge_environment=bridge_environment,
+                target_bridge_environment=target_bridge.environment,
+                sender_bridge_environment=sender_bridge.environment,
                 expected_agent_id=agent["agentId"],
+                principal_id=agent["principalId"],
                 redactor=redactor,
             )
+        scanned_logs = verify_sanitized_logs(
+            (
+                LOG_ROOT / "control-plane.log",
+                LOG_ROOT / "web.log",
+                LOG_ROOT / "bridge-sender.log",
+                LOG_ROOT / "bridge-target.log",
+                LOG_ROOT / "codex-mcp-reconnect.log",
+                LOG_ROOT / "codex-mcp-sender.log",
+                LOG_ROOT / "codex-mcp.log",
+            ),
+            redactor,
+            additional_secrets=(
+                sender_bridge.device_code,
+                target_bridge.device_code,
+            ),
+        )
     print(
         json.dumps(
             {
@@ -1199,11 +1686,17 @@ def bootstrap() -> None:
                 "agentInstanceId": runtime["agentInstanceId"],
                 "catalogId": catalog_id,
                 "contentId": runtime["contentId"],
+                "correlationId": correlation_id,
+                "handoffId": runtime["handoffId"],
+                "logFilesScanned": str(len(scanned_logs)),
                 "matrixRoomId": runtime["matrixRoomId"],
                 "messageId": runtime["messageId"],
                 "principalId": agent["principalId"],
+                "recoveryGeneration": str(recovery_generation),
+                "replyMessageId": runtime["replyMessageId"],
                 "roomInstanceId": runtime["roomInstanceId"],
-                "secureStorageService": SECURE_STORAGE_SERVICE,
+                "secureStorageService": TARGET_SECURE_STORAGE_SERVICE,
+                "senderAgentInstanceId": runtime["senderAgentInstanceId"],
             },
             ensure_ascii=False,
             indent=2,
