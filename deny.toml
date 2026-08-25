@@ -2,10 +2,9 @@
 all-features = true
 
 [advisories]
+unmaintained = "workspace"
 ignore = [
   { id = "RUSTSEC-2023-0071", reason = "生产路径只使用公开 JWKS 执行 RSA 验签；隔离回环 OIDC 协议测试会即时生成临时 RSA 密钥并仅在测试进程内签名，上游当前没有修复版本，发布新版本后必须移除此例外" },
-  { id = "RUSTSEC-2026-0173", reason = "Matrix SDK 0.18.0 仅在编译期文档宏链路传递依赖已停止维护的 proc-macro-error2；该公告不含已知漏洞，Matrix SDK 主线已移除该依赖，下一稳定版发布后必须升级并删除此例外" },
-  { id = "RUSTSEC-2026-0247", reason = "Matrix SDK 0.18.0 经 eyeball-im/imbl 传递依赖已停止维护的 bitmaps；该公告不含已知漏洞且没有修复版本，必须持续跟踪上游替换进展并在可用稳定版发布后删除此例外" },
 ]
 
 [licenses]

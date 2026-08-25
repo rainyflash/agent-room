@@ -79,6 +79,11 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: '-'
         run: corepack pnpm@10.28.0 build:desktop
+      - name: 确认构建未改写源码并清理平台生成 Schema
+        shell: pwsh
+        run: |
+          git diff --exit-code -- . ':(exclude)apps/desktop/src-tauri/gen/schemas'
+          git restore --source=HEAD -- apps/desktop/src-tauri/gen/schemas
       - name: 组装 Web、插件、桌面与单机制品
         run: python tools/closed_test.py package --platform-tag ${{ matrix.platform }}
       - name: 上传平台制品
