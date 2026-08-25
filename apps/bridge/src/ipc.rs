@@ -595,7 +595,7 @@ fn private_windows_sddl(session_sid: &str) -> String {
 
 #[cfg(unix)]
 fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
-    use interprocess::local_socket::ListenerOptionsExt as _;
+    use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
 
     Ok(ListenerOptions::new()
         .name(

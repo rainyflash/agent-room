@@ -32,6 +32,14 @@
       "title": "干净 GitHub runner 无法执行嵌套 pnpm 脚本",
       "rootCause": "工作流通过 Corepack 启动根脚本，但仓库脚本内部调用裸 pnpm；未启用 Corepack shim 的干净 Windows 和 macOS runner 在编译前退出。",
       "resolution": "所有闭测 job 在安装 Node.js 后显式启用 Corepack，再由 packageManager 锁定的 pnpm 版本执行嵌套脚本。"
+    },
+    {
+      "id": "M2-005",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "Unix IPC 私有权限扩展从错误模块导入",
+      "rootCause": "Windows 条件编译没有覆盖 Unix 分支；interprocess 2.4 将 ListenerOptionsExt 暴露在 os::unix::local_socket，而实现误从通用 local_socket 模块导入。",
+      "resolution": "Unix 分支改为从平台模块导入权限扩展，并继续以 0600 创建本地 IPC 端点。"
     }
   ]
 }
