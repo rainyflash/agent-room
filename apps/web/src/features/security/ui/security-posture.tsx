@@ -9,6 +9,7 @@ import {
   postureDetailKey,
   postureTitleKey,
 } from '@/features/security/ui/security-copy';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type SecurityPostureProps = {
   readonly primaryAction: SecurityPostureAction | null;
@@ -30,7 +31,7 @@ const postureIcon: Readonly<Record<MatrixSecuritySnapshot['kind'], LucideIcon>> 
 const actionPresentation: Readonly<
   Record<
     SecurityPostureAction['kind'],
-    { readonly label: string; readonly tone: 'ghost' | 'primary' }
+    { readonly label: TranslationKey; readonly tone: 'ghost' | 'primary' }
   >
 > = {
   establish_identity: { label: 'security.identity.establish', tone: 'primary' },

@@ -3,6 +3,7 @@ import type {
   SessionContext,
 } from '@/features/session/domain/session-machine';
 import type { StatusTone } from '@agent-room/ui-system';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type SessionStateName =
   | 'authenticating'
@@ -20,23 +21,23 @@ export type ConnectionAction = 'enter' | 'login' | 'logout' | 'retry';
 export type StageStatus = 'blocked' | 'complete' | 'current' | 'pending';
 
 export type ConnectionStage = {
-  readonly detailKey: string;
+  readonly detailKey: TranslationKey;
   readonly index: number;
   readonly status: StageStatus;
-  readonly titleKey: string;
+  readonly titleKey: TranslationKey;
 };
 
 export type ConnectionViewModel = {
   readonly action: ConnectionAction | null;
-  readonly actionKey: string | null;
+  readonly actionKey: TranslationKey | null;
   readonly busy: boolean;
   readonly currentStage: number;
-  readonly detailKey: string;
-  readonly failureKey: string | null;
+  readonly detailKey: TranslationKey;
+  readonly failureKey: TranslationKey | null;
   readonly stages: readonly ConnectionStage[];
   readonly state: SessionStateName;
-  readonly statusKey: string;
-  readonly titleKey: string;
+  readonly statusKey: TranslationKey;
+  readonly titleKey: TranslationKey;
   readonly tone: StatusTone;
 };
 
@@ -73,7 +74,7 @@ const stateStage: Readonly<Record<Exclude<SessionStateName, 'degraded' | 'offlin
 };
 
 const stateCopy: Readonly<
-  Record<Exclude<SessionStateName, 'unauthenticated'>, readonly [string, string]>
+  Record<Exclude<SessionStateName, 'unauthenticated'>, readonly [TranslationKey, TranslationKey]>
 > = {
   authenticating: [
     'connection.state.authenticating.title',
@@ -89,7 +90,7 @@ const stateCopy: Readonly<
   syncing: ['connection.state.syncing.title', 'connection.state.syncing.detail'],
 };
 
-const failureCopy: Readonly<Record<string, string>> = {
+const failureCopy: Readonly<Record<string, TranslationKey>> = {
   'matrix.crypto_initialization_failed': 'connection.state.failure.matrixCrypto',
   'matrix.identity_mismatch': 'connection.state.failure.identityMismatch',
   'matrix.initial_sync_failed': 'connection.state.failure.matrixSync',
@@ -110,7 +111,7 @@ const busyStates = new Set<SessionStateName>([
   'syncing',
 ]);
 
-const statusByState: Readonly<Record<SessionStateName, readonly [string, StatusTone]>> = {
+const statusByState: Readonly<Record<SessionStateName, readonly [TranslationKey, StatusTone]>> = {
   authenticating: ['connection.status.connecting', 'network'],
   booting: ['connection.status.connecting', 'network'],
   degraded: ['connection.status.degraded', 'alert'],
@@ -169,7 +170,7 @@ export function connectionViewModel(
 function copyForState(
   state: SessionStateName,
   target: AuthenticationTarget,
-): readonly [string, string] {
+): readonly [TranslationKey, TranslationKey] {
   if (state !== 'unauthenticated') {
     return stateCopy[state];
   }
@@ -200,9 +201,9 @@ function stageForState(state: SessionStateName, context: SessionContext): number
 function actionForState(
   state: SessionStateName,
   context: SessionContext,
-): readonly [ConnectionAction | null, string | null] {
+): readonly [ConnectionAction | null, TranslationKey | null] {
   const strategies: Readonly<
-    Partial<Record<SessionStateName, readonly [ConnectionAction, string]>>
+    Partial<Record<SessionStateName, readonly [ConnectionAction, TranslationKey]>>
   > = {
     offline: ['retry', 'connection.action.retry'],
     ready: ['enter', 'connection.action.enter'],
@@ -224,7 +225,7 @@ function actionForState(
   return strategies[state] ?? [null, null];
 }
 
-function failureMessage(context: SessionContext): string | null {
+function failureMessage(context: SessionContext): TranslationKey | null {
   const failure = context.failure;
   if (failure === null) {
     return null;
@@ -233,7 +234,7 @@ function failureMessage(context: SessionContext): string | null {
   if (exact !== undefined) {
     return exact;
   }
-  const boundaryCopy: Readonly<Record<typeof failure.boundary, string>> = {
+  const boundaryCopy: Readonly<Record<typeof failure.boundary, TranslationKey>> = {
     browser: 'connection.state.failure.generic',
     'control-plane': 'connection.state.failure.control',
     identity: 'connection.state.failure.identityMismatch',

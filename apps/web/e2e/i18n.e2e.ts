@@ -65,7 +65,8 @@ test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({
 
 async function installExpandedEnglishCatalog(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    const loaded: unknown = await import('/src/shared/i18n/i18n.ts');
+    const modulePath = '/src/shared/i18n/i18n.ts';
+    const loaded: unknown = await import(modulePath);
     const module = loaded as {
       readonly i18n: {
         addResourceBundle(
@@ -94,7 +95,8 @@ async function installExpandedEnglishCatalog(page: Page): Promise<void> {
 
 async function removeChineseMessageAndUseFallback(page: Page, key: string): Promise<string> {
   return page.evaluate(async (messageKey) => {
-    const loaded: unknown = await import('/src/shared/i18n/i18n.ts');
+    const modulePath = '/src/shared/i18n/i18n.ts';
+    const loaded: unknown = await import(modulePath);
     const module = loaded as {
       readonly i18n: {
         getResourceBundle(language: string, namespace: string): unknown;

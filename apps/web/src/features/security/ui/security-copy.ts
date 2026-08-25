@@ -5,8 +5,9 @@ import type {
   MatrixSecurityFailure,
   MatrixSecurityPosture,
 } from '@/features/security/domain/matrix-security';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
-export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, string>> = {
+export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, TranslationKey>> = {
   backup_locked: 'security.blocker.backup_locked',
   backup_missing: 'security.blocker.backup_missing',
   backup_untrusted: 'security.blocker.backup_untrusted',
@@ -17,7 +18,7 @@ export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, string>> 
   secret_storage_missing: 'security.blocker.secret_storage_missing',
 };
 
-export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], string>> = {
+export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], TranslationKey>> = {
   'security.crypto_unavailable': 'security.failure.crypto_unavailable',
   'security.identity_bootstrap_failed': 'security.failure.identity_bootstrap_failed',
   'security.identity_unavailable': 'security.failure.identity_unavailable',
@@ -34,27 +35,27 @@ export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], s
   'security.verification_unavailable': 'security.failure.verification_unavailable',
 };
 
-export const trustMessageKey: Readonly<Record<MatrixDeviceTrust, string>> = {
+export const trustMessageKey: Readonly<Record<MatrixDeviceTrust, TranslationKey>> = {
   signed: 'security.trust.signed',
   unknown: 'security.trust.unknown',
   unverified: 'security.trust.unverified',
   verified: 'security.trust.verified',
 };
 
-export const recoveryMessageKey: Readonly<Record<MatrixBackupState, string>> = {
+export const recoveryMessageKey: Readonly<Record<MatrixBackupState, TranslationKey>> = {
   locked: 'security.recovery.locked',
   missing: 'security.recovery.missing',
   ready: 'security.recovery.ready',
   untrusted: 'security.recovery.untrusted',
 };
 
-export const postureTitleKey: Readonly<Record<MatrixSecurityPosture['kind'], string>> = {
+export const postureTitleKey: Readonly<Record<MatrixSecurityPosture['kind'], TranslationKey>> = {
   action_required: 'security.posture.action_required.title',
   blocked: 'security.posture.blocked.title',
   ready: 'security.posture.ready.title',
 };
 
-export const postureDetailKey: Readonly<Record<MatrixSecurityPosture['kind'], string>> = {
+export const postureDetailKey: Readonly<Record<MatrixSecurityPosture['kind'], TranslationKey>> = {
   action_required: 'security.posture.action_required.detail',
   blocked: 'security.posture.blocked.detail',
   ready: 'security.posture.ready.detail',

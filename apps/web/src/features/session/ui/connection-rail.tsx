@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { ConnectionStage } from '@/features/session/ui/connection-model';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type ConnectionRailProps = {
   readonly stages: readonly ConnectionStage[];
@@ -14,6 +15,13 @@ const toneByStage: Readonly<Record<ConnectionStage['status'], StatusTone>> = {
   complete: 'active',
   current: 'network',
   pending: 'idle',
+};
+
+const statusMessageKey: Readonly<Record<ConnectionStage['status'], TranslationKey>> = {
+  blocked: 'connection.stage.status.blocked',
+  complete: 'connection.stage.status.complete',
+  current: 'connection.stage.status.current',
+  pending: 'connection.stage.status.pending',
 };
 
 export function ConnectionRail({ stages }: ConnectionRailProps) {
@@ -39,7 +47,7 @@ export function ConnectionRail({ stages }: ConnectionRailProps) {
             <div className="connection-step__index">
               <span>{String(stage.index + 1).padStart(2, '0')}</span>
               <StatusMark
-                label={t(`connection.stage.status.${stage.status}`)}
+                label={t(statusMessageKey[stage.status])}
                 pulse={stage.status === 'current'}
                 tone={toneByStage[stage.status]}
               />

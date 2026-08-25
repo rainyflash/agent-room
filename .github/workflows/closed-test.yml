@@ -84,6 +84,12 @@ jobs:
         run: |
           git diff --exit-code -- . ':(exclude)apps/desktop/src-tauri/gen/schemas'
           git restore --source=HEAD -- apps/desktop/src-tauri/gen/schemas
+          git clean -fd -- apps/desktop/src-tauri/gen/schemas
+          $dirty = git status --porcelain
+          if ($dirty) {
+            $dirty
+            throw '桌面构建在允许的 Schema 目录之外留下了工作树变更。'
+          }
       - name: 组装 Web、插件、桌面与单机制品
         run: python tools/closed_test.py package --platform-tag ${{ matrix.platform }}
       - name: 上传平台制品

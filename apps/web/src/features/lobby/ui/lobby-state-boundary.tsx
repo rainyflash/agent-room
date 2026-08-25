@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { LobbyRoomState } from '@/features/lobby/application/lobby-room-store';
 import type { LobbyFailureCode } from '@/features/lobby/domain/lobby';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 type LobbyPendingState = Exclude<LobbyRoomState, { readonly kind: 'ready' }>;
 
@@ -13,22 +14,32 @@ export type LobbyStateBoundaryProps = {
   readonly state: LobbyPendingState;
 };
 
-const failureKeyByCode: Readonly<Record<LobbyFailureCode, string>> = Object.freeze({
-  'lobby.matrix_unavailable': 'matrixUnavailable',
-  'lobby.room_not_joined': 'roomNotJoined',
-  'lobby.room_projection_invalid': 'projectionInvalid',
+const failureCopyByCode: Readonly<
+  Record<LobbyFailureCode, { readonly detail: TranslationKey; readonly title: TranslationKey }>
+> = Object.freeze({
+  'lobby.matrix_unavailable': {
+    detail: 'lobby.failure.matrixUnavailable.detail',
+    title: 'lobby.failure.matrixUnavailable.title',
+  },
+  'lobby.room_not_joined': {
+    detail: 'lobby.failure.roomNotJoined.detail',
+    title: 'lobby.failure.roomNotJoined.title',
+  },
+  'lobby.room_projection_invalid': {
+    detail: 'lobby.failure.projectionInvalid.detail',
+    title: 'lobby.failure.projectionInvalid.title',
+  },
 });
 
 export function LobbyStateBoundary({ onRetry, state }: LobbyStateBoundaryProps) {
   const { t } = useTranslation();
   const loading = state.kind === 'loading';
-  const failureKey = state.kind === 'failed' ? failureKeyByCode[state.code] : null;
-  const title = loading
-    ? t('lobby.loading.title')
-    : t(`lobby.failure.${failureKey ?? 'projectionInvalid'}.title`);
-  const detail = loading
-    ? t('lobby.loading.detail')
-    : t(`lobby.failure.${failureKey ?? 'projectionInvalid'}.detail`);
+  const failureCopy =
+    state.kind === 'failed'
+      ? failureCopyByCode[state.code]
+      : failureCopyByCode['lobby.room_projection_invalid'];
+  const title = loading ? t('lobby.loading.title') : t(failureCopy.title);
+  const detail = loading ? t('lobby.loading.detail') : t(failureCopy.detail);
 
   return (
     <main className="lobby-boundary" id="main-content">

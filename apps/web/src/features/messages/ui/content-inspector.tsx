@@ -28,12 +28,19 @@ import { RestrictedMarkdown } from '@/features/messages/ui/restricted-markdown';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import { MessageReportControl } from '@/features/moderation/ui/message-report-control';
 import { formatBytes, formatDateTime } from '@/shared/i18n/formatters';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>> = Object.freeze({
   instance_verified: ShieldCheck,
   matrix_sender_matched: ShieldAlert,
   revoked_after_event: ShieldX,
 });
+
+const inspectionStageMessages = [
+  ['requestingTicket', 'messages.inspector.stage.requestingTicket'],
+  ['downloading', 'messages.inspector.stage.downloading'],
+  ['verifying', 'messages.inspector.stage.verifying'],
+] as const satisfies readonly (readonly [string, TranslationKey])[];
 
 export type ContentInspectorProps = {
   readonly catalogId: string;
@@ -73,6 +80,9 @@ export function ContentInspector({
     inspection.matches('requestingTicket') ||
     inspection.matches('downloading') ||
     inspection.matches('verifying');
+  const inspectionStageMessage =
+    inspectionStageMessages.find(([stage]) => inspection.matches(stage))?.[1] ??
+    'messages.inspector.stage.verifying';
 
   return (
     <motion.aside
@@ -189,7 +199,7 @@ export function ContentInspector({
             <div aria-live="polite" className="content-inspector__progress" role="status">
               <LoaderCircle aria-hidden="true" />
               <div>
-                <strong>{t(`messages.inspector.stage.${String(inspection.value)}`)}</strong>
+                <strong>{t(inspectionStageMessage)}</strong>
                 <p>{t('messages.inspector.stageDetail')}</p>
               </div>
             </div>

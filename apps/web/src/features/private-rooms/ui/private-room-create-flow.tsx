@@ -12,6 +12,7 @@ import {
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type PrivateRoomCreateFlowProps = {
   readonly failure: PrivateRoomFailure | null;
@@ -25,6 +26,12 @@ type Details = {
   readonly name: string;
   readonly retentionDays: number;
 };
+
+const privateRoomStepKeys = [
+  'privateRooms.create.step1',
+  'privateRooms.create.step2',
+  'privateRooms.create.step3',
+] as const satisfies readonly TranslationKey[];
 
 export function PrivateRoomCreateFlow({
   failure,
@@ -44,7 +51,7 @@ export function PrivateRoomCreateFlow({
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
     permissions('view', 'speak'),
   );
-  const [validationKey, setValidationKey] = useState<string | null>(null);
+  const [validationKey, setValidationKey] = useState<TranslationKey | null>(null);
 
   const move = (nextStep: number): void => {
     setDirection(nextStep > step ? 1 : -1);
@@ -99,10 +106,10 @@ export function PrivateRoomCreateFlow({
           <h2 id="private-room-create-title">{t('privateRooms.create.title')}</h2>
         </div>
         <ol aria-label={t('privateRooms.create.progress')}>
-          {[0, 1, 2].map((index) => (
+          {privateRoomStepKeys.map((key, index) => (
             <li aria-current={index === step ? 'step' : undefined} key={index}>
               <span>{String(index + 1).padStart(2, '0')}</span>
-              {t(`privateRooms.create.step${String(index + 1)}`)}
+              {t(key)}
             </li>
           ))}
         </ol>
@@ -319,7 +326,11 @@ export function PrivateRoomFailureNotice({ failure }: { readonly failure: Privat
 }
 
 type InvitationParseResult =
-  | { readonly errorKey: string; readonly ok: false; readonly principalIds: readonly string[] }
+  | {
+      readonly errorKey: TranslationKey;
+      readonly ok: false;
+      readonly principalIds: readonly string[];
+    }
   | { readonly ok: true; readonly principalIds: readonly string[] };
 
 function parseInvitations(value: string): InvitationParseResult {

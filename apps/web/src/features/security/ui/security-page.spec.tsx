@@ -35,7 +35,10 @@ describe('SecurityWorkspace', () => {
 
     renderWorkspace(gateway);
 
-    expect(await screen.findByRole('heading', { name: 'This account is protected' })).toBeVisible();
+    const heading = await screen.findByRole('heading', { name: 'This account is protected' });
+    await waitFor(() => {
+      expect(heading).toBeVisible();
+    });
     expect(screen.getByText('@alice:agent-room.test')).toBeVisible();
     expect(screen.getByText('Alice browser')).toBeVisible();
     expect(screen.getByText('ED25519 CURRENT FINGERPRINT')).toBeVisible();

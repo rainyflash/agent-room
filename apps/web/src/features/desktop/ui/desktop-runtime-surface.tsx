@@ -16,8 +16,9 @@ import { useTranslation } from 'react-i18next';
 
 import type { BridgePhase, DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
-const phaseMessage: Readonly<Record<BridgePhase, string>> = {
+const phaseMessage: Readonly<Record<BridgePhase, TranslationKey>> = {
   authorization_required: 'desktop.phase.authorizationRequired',
   discovering: 'desktop.phase.discovering',
   halted: 'desktop.phase.halted',

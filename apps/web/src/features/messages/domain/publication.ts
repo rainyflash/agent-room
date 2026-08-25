@@ -3,9 +3,11 @@ import type { Result } from '@/shared/result';
 
 export const publicationMediaTypes = ['text/markdown', 'text/plain'] as const;
 export const publicationProgressStages = ['uploading', 'submitting', 'binding'] as const;
+export const publicationRiskFlags = ['external_links', 'html_markup'] as const;
 
 export type PublicationMediaType = (typeof publicationMediaTypes)[number];
 export type PublicationProgressStage = (typeof publicationProgressStages)[number];
+export type PublicationRiskFlag = (typeof publicationRiskFlags)[number];
 
 export type MessagePublisherIdentity = {
   readonly agentId: string;
@@ -129,8 +131,8 @@ export function validatePublicationDraft(
   return Object.freeze([...issues]);
 }
 
-export function inspectPublicationRisks(body: string): readonly string[] {
-  const flags = new Set<string>();
+export function inspectPublicationRisks(body: string): readonly PublicationRiskFlag[] {
+  const flags = new Set<PublicationRiskFlag>();
   if (externalLinkPattern.test(body)) {
     flags.add('external_links');
   }

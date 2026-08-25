@@ -29,6 +29,7 @@ import {
 } from '@/features/handoffs/domain/handoff';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { BrowserUuidV7Factory, type UuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 const browserHandoffIds = new BrowserUuidV7Factory();
 const expiryMinutes = [5, 15, 60] as const;
@@ -415,7 +416,18 @@ function shortId(value: string): string {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
-function handoffFailureKey(code: HandoffFailureCode | undefined): string {
-  const suffix = code?.startsWith('handoff.') === true ? code.slice('handoff.'.length) : null;
-  return `handoff.failure.${suffix ?? 'unexpected_failure'}`;
+const handoffFailureMessageKey: Readonly<Record<HandoffFailureCode, TranslationKey>> = {
+  'handoff.already_resolved': 'handoff.failure.already_resolved',
+  'handoff.authorization_denied': 'handoff.failure.authorization_denied',
+  'handoff.bridge_unavailable': 'handoff.failure.bridge_unavailable',
+  'handoff.invalid_intent': 'handoff.failure.invalid_intent',
+  'handoff.not_found': 'handoff.failure.not_found',
+  'handoff.persistence_failed': 'handoff.failure.persistence_failed',
+  'handoff.targets_unavailable': 'handoff.failure.targets_unavailable',
+  'handoff.transport_rejected': 'handoff.failure.transport_rejected',
+  'handoff.unexpected_failure': 'handoff.failure.unexpected_failure',
+};
+
+function handoffFailureKey(code: HandoffFailureCode | undefined): TranslationKey {
+  return handoffFailureMessageKey[code ?? 'handoff.unexpected_failure'];
 }

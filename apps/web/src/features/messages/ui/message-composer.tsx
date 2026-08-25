@@ -25,11 +25,30 @@ import {
   inspectPublicationRisks,
   type MessagePublicationDraft,
   type MessagePublisher,
+  type PublicationRiskFlag,
   validatePublicationDraft,
 } from '@/features/messages/domain/publication';
 import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
+import type { TranslationKey } from '@/shared/i18n/resources';
 
 const browserSubmissionIds = new BrowserSubmissionIdFactory();
+
+const publicationStateMessages = [
+  ['resolvingIdentity', 'messages.composer.state.resolvingIdentity'],
+  ['identityUnavailable', 'messages.composer.state.identityUnavailable'],
+  ['ready', 'messages.composer.state.ready'],
+  ['publishing', 'messages.composer.state.publishing'],
+  ['acceptedBindingPending', 'messages.composer.state.acceptedBindingPending'],
+  ['unknown', 'messages.composer.state.unknown'],
+  ['reconciling', 'messages.composer.state.reconciling'],
+  ['failed', 'messages.composer.state.failed'],
+  ['published', 'messages.composer.state.published'],
+] as const satisfies readonly (readonly [string, TranslationKey])[];
+
+const publicationRiskMessageKey: Readonly<Record<PublicationRiskFlag, TranslationKey>> = {
+  external_links: 'messages.composer.risk.external_links',
+  html_markup: 'messages.composer.risk.html_markup',
+};
 
 type EditableDraft = Omit<MessagePublicationDraft, 'language' | 'riskFlags'> & {
   readonly language: string;
@@ -60,7 +79,9 @@ export function MessageComposer({
     () => validatePublicationDraft({ ...draft, riskFlags }),
     [draft, riskFlags],
   );
-  const stateName = String(publication.value);
+  const stateMessageKey =
+    publicationStateMessages.find(([state]) => publication.matches(state))?.[1] ??
+    'messages.composer.state.failed';
 
   const openComposer = (): void => {
     if (publication.matches('closed')) {
@@ -101,14 +122,12 @@ export function MessageComposer({
         type="button"
         {...(reduceMotion === true ? {} : { whileTap: { scale: 0.96 } })}
       >
-        {pending ? (
-          <StatusMark label={t(`messages.composer.state.${stateName}`)} tone="alert" />
-        ) : null}
+        {pending ? <StatusMark label={t(stateMessageKey)} tone="alert" /> : null}
         <MessageSquarePlus aria-hidden="true" />
         <span>
           {pending
             ? t('messages.composer.resume', {
-                state: t(`messages.composer.state.${stateName}`),
+                state: t(stateMessageKey),
               })
             : t('messages.composer.open')}
         </span>
@@ -274,7 +293,7 @@ export function MessageComposer({
               <p>
                 {riskFlags.length === 0
                   ? t('messages.composer.risk.clear')
-                  : riskFlags.map((flag) => t(`messages.composer.risk.${flag}`)).join(' · ')}
+                  : riskFlags.map((flag) => t(publicationRiskMessageKey[flag])).join(' · ')}
               </p>
             </div>
           </div>

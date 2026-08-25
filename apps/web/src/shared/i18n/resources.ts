@@ -1054,4 +1054,5 @@ type CatalogLanguagesMatch = ResourceLanguage extends SupportedLanguage
   : never;
 
 export const catalogLanguagesMatch: CatalogLanguagesMatch = true;
+export type TranslationKey = keyof (typeof resources)['en']['translation'];
 export type { SupportedLanguage } from '@/shared/i18n/language';
