@@ -105,7 +105,7 @@ async fn 设备撤销会原子失效_token_并写入传播事件() {
     )
     .await
     .expect("设备撤销成功");
-    assert_eq!(outcome, DeviceRevocationOutcome::Revoked);
+    assert_eq!(outcome, DeviceRevocationOutcome::Revoked(Vec::new()));
     assert!(
         DeviceSessionStore::find_active_access(
             &repositories,

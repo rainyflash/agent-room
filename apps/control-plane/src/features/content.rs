@@ -793,6 +793,7 @@ mod tests {
         devices::{
             AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
+            RevokedDevice,
         },
         ports::{
             ContentAccessMode, ContentAccessPolicy, ContentReadTicket, MatrixRoomId, PortFuture,
@@ -1066,7 +1067,7 @@ mod tests {
             &self,
             _principal_id: PrincipalId,
             _device_id: DeviceId,
-        ) -> PortFuture<'_, DeviceAuthorizationResult<()>> {
+        ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>> {
             Box::pin(async { unreachable!("内容路由不会撤销设备") })
         }
     }

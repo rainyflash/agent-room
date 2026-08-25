@@ -8,9 +8,9 @@ use agent_room_application::{
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
         AgentInstanceRevocationOutcome, AgentInstanceRevocationTransaction,
         AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
-        AgentMembershipTransaction, AgentRegistration, AgentRepository, HandoffAccessRepository,
-        OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
-        StoredAgentInstanceRegistration,
+        AgentMembershipTransaction, AgentRegistration, AgentRepository, DeviceRevocationOutcome,
+        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, OutboxMessage,
+        PrincipalRegistration, PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -530,6 +530,74 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 产品设备撤销返回待清理_matrix_设备并允许重复请求收敛() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 14).await;
+    let instance_id =
+        register_online_management_instance(&database.runtime, &repositories, &fixture).await;
+    let before =
+        AgentInstanceManagementRepository::list_for_principal(&repositories, fixture.owner_id)
+            .await
+            .expect("撤销前实例可读取");
+
+    let first = DeviceRevocationTransaction::revoke(
+        &repositories,
+        fixture.owner_id,
+        fixture.owner_device,
+        device_security_event(),
+    )
+    .await
+    .expect("产品设备本地撤销成功");
+    let DeviceRevocationOutcome::Revoked(pending) = first else {
+        panic!("首次撤销必须改变产品设备状态");
+    };
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].instance_id, instance_id);
+    assert_eq!(pending[0].matrix_user_id, before[0].agent_matrix_user_id);
+    assert_eq!(
+        pending[0].matrix_device_id,
+        before[0].instance.matrix_device_id().as_str()
+    );
+    assert_product_device_revoked(&repositories, fixture.owner_id, instance_id).await;
+
+    let repeated = DeviceRevocationTransaction::revoke(
+        &repositories,
+        fixture.owner_id,
+        fixture.owner_device,
+        device_security_event(),
+    )
+    .await
+    .expect("重复撤销可继续清理");
+    assert!(matches!(
+        repeated,
+        DeviceRevocationOutcome::AlreadyRevoked(ref pending) if pending.len() == 1
+    ));
+    AgentInstanceMatrixCleanupStore::mark_matrix_device_revoked(
+        &repositories,
+        instance_id,
+        test_time(),
+    )
+    .await
+    .expect("Matrix 清理完成状态可持久化");
+    let completed = DeviceRevocationTransaction::revoke(
+        &repositories,
+        fixture.owner_id,
+        fixture.owner_device,
+        device_security_event(),
+    )
+    .await
+    .expect("已完成清理的重复撤销保持幂等");
+    assert_eq!(
+        completed,
+        DeviceRevocationOutcome::AlreadyRevoked(Vec::new())
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn agent_实例验签材料保留历史公钥并合并设备失效边界() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -1022,6 +1090,34 @@ async fn assert_local_instance_revocation(
     .await
     .expect("应能检查撤销事件幂等性");
     assert_eq!(event_count, 1);
+}
+
+async fn assert_product_device_revoked(
+    repositories: &PostgresRepositories,
+    owner_id: PrincipalId,
+    instance_id: AgentInstanceId,
+) {
+    let instances = AgentInstanceManagementRepository::list_for_principal(repositories, owner_id)
+        .await
+        .expect("设备撤销后的实例可读取");
+    let instance = instances
+        .iter()
+        .find(|record| record.instance.id() == instance_id)
+        .expect("关联实例必须保留审计记录");
+    assert_eq!(
+        instance.instance.status(),
+        agent_room_domain::agents::AgentInstanceStatus::Revoked
+    );
+    assert_eq!(instance.instance.lease_expires_at(), None);
+    assert!(instance.revoked_at.is_some());
+    assert_eq!(instance.matrix_device_revoked_at, None);
+}
+
+fn device_security_event() -> DeviceSecurityEvent {
+    DeviceSecurityEvent {
+        id: OutboxEventId::from_uuid(Uuid::now_v7()),
+        occurred_at: test_time(),
+    }
 }
 
 async fn prepare_instance_fixture(

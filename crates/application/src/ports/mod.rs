@@ -50,7 +50,8 @@ pub use devices::{
     DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier, DeviceRefreshContext,
     DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
     DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
-    DeviceSessionStore, DeviceSignature, DeviceTokenReplacement, StoredDeviceSession,
+    DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
+    PendingAgentMatrixDeviceRevocation, StoredDeviceSession,
 };
 pub use handoffs::{
     HandoffAccessRepository, HandoffAuthorizationSnapshot, HandoffInstanceAccessRecord,

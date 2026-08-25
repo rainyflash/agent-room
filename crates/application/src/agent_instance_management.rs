@@ -8,13 +8,13 @@ use serde_json::{Map, Value};
 
 use crate::{
     authentication::AuthenticatedPrincipal,
+    matrix_device_cleanup::{MatrixDeviceCleanupFailure, revoke_agent_matrix_device},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceMatrixCleanupStore, AgentInstanceRevocationOutcome,
         AgentInstanceRevocationTransaction, Clock, IdentifierFactory,
-        MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget, MatrixDeviceId,
-        MatrixFailureKind, MatrixUserId, OutboxMessage, PortFuture,
+        MatrixAgentDeviceSessionRevoker, MatrixFailureKind, OutboxMessage, PortFuture,
     },
 };
 
@@ -172,27 +172,19 @@ impl AgentInstanceManagementService {
             });
         }
 
-        let target = match matrix_target(&instance) {
-            Ok(target) => target,
-            Err(reason) => {
-                return Ok(pending_cleanup(instance, reason));
-            }
-        };
-        if let Err(matrix_failure) = self.matrix.revoke_device_session(&target).await {
+        let cleanup = revoke_agent_matrix_device(
+            self.matrix.as_ref(),
+            self.matrix_cleanup.as_ref(),
+            request.instance_id,
+            &instance.agent_matrix_user_id,
+            instance.instance.matrix_device_id().as_str(),
+            now,
+        )
+        .await;
+        if let Err(cleanup_failure) = cleanup {
             return Ok(pending_cleanup(
                 instance,
-                map_matrix_cleanup_failure(matrix_failure.kind()),
-            ));
-        }
-        if self
-            .matrix_cleanup
-            .mark_matrix_device_revoked(request.instance_id, now)
-            .await
-            .is_err()
-        {
-            return Ok(pending_cleanup(
-                instance,
-                AgentInstanceCleanupFailureKind::StatePersistenceUnavailable,
+                map_matrix_cleanup_failure(cleanup_failure),
             ));
         }
         let mut instance = instance;
@@ -220,17 +212,21 @@ impl AgentInstanceManagementUseCases for AgentInstanceManagementService {
     }
 }
 
-fn matrix_target(
-    record: &AgentInstanceManagementRecord,
-) -> Result<MatrixAgentDeviceSessionTarget, AgentInstanceCleanupFailureKind> {
-    let user_id = MatrixUserId::new(record.agent_matrix_user_id.clone())
-        .map_err(|_| AgentInstanceCleanupFailureKind::InvalidStoredIdentity)?;
-    let device_id = MatrixDeviceId::new(record.instance.matrix_device_id().as_str().to_owned())
-        .map_err(|_| AgentInstanceCleanupFailureKind::InvalidStoredIdentity)?;
-    Ok(MatrixAgentDeviceSessionTarget::new(user_id, device_id))
+const fn map_matrix_cleanup_failure(
+    failure: MatrixDeviceCleanupFailure,
+) -> AgentInstanceCleanupFailureKind {
+    match failure {
+        MatrixDeviceCleanupFailure::InvalidStoredIdentity => {
+            AgentInstanceCleanupFailureKind::InvalidStoredIdentity
+        }
+        MatrixDeviceCleanupFailure::StatePersistenceUnavailable => {
+            AgentInstanceCleanupFailureKind::StatePersistenceUnavailable
+        }
+        MatrixDeviceCleanupFailure::Matrix(kind) => map_matrix_failure_kind(kind),
+    }
 }
 
-const fn map_matrix_cleanup_failure(kind: MatrixFailureKind) -> AgentInstanceCleanupFailureKind {
+const fn map_matrix_failure_kind(kind: MatrixFailureKind) -> AgentInstanceCleanupFailureKind {
     match kind {
         MatrixFailureKind::RateLimited
         | MatrixFailureKind::Timeout

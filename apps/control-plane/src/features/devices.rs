@@ -4,8 +4,8 @@ use agent_room_application::{
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::{
         AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationUseCases,
-        DeviceCredentials, DeviceRequestProof, DeviceRequestProofPayload, RefreshDeviceSession,
-        RegisterDevice, VerifiedDeviceAuthorization,
+        DeviceCredentials, DeviceMatrixCleanup, DeviceRequestProof, DeviceRequestProofPayload,
+        RefreshDeviceSession, RegisterDevice, VerifiedDeviceAuthorization,
     },
     ports::{
         DeviceSignature, OidcDeviceAssertionVerifier, OidcFailure, OidcFailureKind,
@@ -117,6 +117,14 @@ struct DeviceCredentialsResponse {
 #[serde(rename_all = "camelCase")]
 struct DeviceListResponse {
     devices: Vec<DeviceSummaryResponse>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingDeviceRevocationResponse {
+    local_revocation: &'static str,
+    matrix_cleanup: &'static str,
+    pending_agent_instance_count: usize,
 }
 
 #[derive(Serialize)]
@@ -297,7 +305,22 @@ async fn revoke_device(
         .revoke_device(principal.principal_id, DeviceId::from_uuid(device_id))
         .await
     {
-        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(revoked) => match revoked.matrix_cleanup {
+            DeviceMatrixCleanup::Complete => no_store(StatusCode::NO_CONTENT.into_response()),
+            DeviceMatrixCleanup::Pending {
+                agent_instance_count,
+            } => no_store(
+                (
+                    StatusCode::ACCEPTED,
+                    Json(PendingDeviceRevocationResponse {
+                        local_revocation: "complete",
+                        matrix_cleanup: "pending",
+                        pending_agent_instance_count: agent_instance_count,
+                    }),
+                )
+                    .into_response(),
+            ),
+        },
         Err(failure) => no_store(ApiError::device(failure, correlation_id).into_response()),
     }
 }
@@ -482,7 +505,8 @@ mod tests {
         },
         devices::{
             AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
-            DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
+            DeviceAuthorizationUseCases, DeviceCredentials, DeviceMatrixCleanup,
+            RefreshDeviceSession, RegisterDevice, RevokedDevice,
         },
         ports::{
             OidcDeviceAssertionVerifier, OidcResult, PortFuture, PrincipalAccount, SecretFactory,
@@ -520,6 +544,7 @@ mod tests {
         registration: Mutex<Option<RegisterDevice>>,
         refreshes: AtomicUsize,
         revocation: Mutex<Option<(PrincipalId, DeviceId)>>,
+        pending_matrix_cleanup: AtomicUsize,
     }
 
     impl DeviceAuthorizationUseCases for FakeDevices {
@@ -563,9 +588,20 @@ mod tests {
             &self,
             principal_id: PrincipalId,
             device_id: DeviceId,
-        ) -> PortFuture<'_, DeviceAuthorizationResult<()>> {
+        ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>> {
             *self.revocation.lock().expect("撤销记录锁可用") = Some((principal_id, device_id));
-            Box::pin(async { Ok(()) })
+            let pending = self.pending_matrix_cleanup.load(Ordering::SeqCst);
+            Box::pin(async move {
+                Ok(RevokedDevice {
+                    matrix_cleanup: if pending == 0 {
+                        DeviceMatrixCleanup::Complete
+                    } else {
+                        DeviceMatrixCleanup::Pending {
+                            agent_instance_count: pending,
+                        }
+                    },
+                })
+            })
         }
     }
 
@@ -873,5 +909,29 @@ mod tests {
             *devices.revocation.lock().expect("撤销记录锁可用"),
             Some((principal_id_value(), device_id()))
         );
+    }
+
+    #[tokio::test]
+    async fn 设备本地撤销完成但_matrix_清理待重试时返回_202() {
+        let devices = Arc::new(FakeDevices::default());
+        devices.pending_matrix_cleanup.store(2, Ordering::SeqCst);
+        let response = test_router(devices, Arc::new(FakeAuthentication::default()))
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/auth/devices/{DEVICE_UUID}"))
+                    .header(header::ORIGIN, "https://app.agent-room.test")
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["localRevocation"], "complete");
+        assert_eq!(body["matrixCleanup"], "pending");
+        assert_eq!(body["pendingAgentInstanceCount"], 2);
     }
 }

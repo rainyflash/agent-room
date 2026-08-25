@@ -2,7 +2,10 @@ use std::fmt;
 
 use agent_room_domain::{
     devices::{Device, DevicePublicSigningKey, DeviceTokenFamily},
-    ids::{DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, OutboxEventId, PrincipalId},
+    ids::{
+        AgentInstanceId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, OutboxEventId,
+        PrincipalId,
+    },
     time::UtcMillis,
 };
 
@@ -100,10 +103,17 @@ pub enum DeviceRefreshOutcome {
     Rejected,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAgentMatrixDeviceRevocation {
+    pub instance_id: AgentInstanceId,
+    pub matrix_user_id: String,
+    pub matrix_device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceRevocationOutcome {
-    Revoked,
-    AlreadyRevoked,
+    Revoked(Vec<PendingAgentMatrixDeviceRevocation>),
+    AlreadyRevoked(Vec<PendingAgentMatrixDeviceRevocation>),
     NotFound,
 }
 

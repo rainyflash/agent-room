@@ -4,8 +4,9 @@ use agent_room_application::{
         DeviceProofNonceStore, DeviceRefreshContext, DeviceRefreshOutcome,
         DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
         DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
-        DeviceSessionStore, DeviceTokenReplacement, OutboxMessage, PortFuture, PrincipalAccount,
-        PrincipalRegistration, SecretDigest, StoredDeviceSession,
+        DeviceSessionStore, DeviceTokenReplacement, OutboxMessage,
+        PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount, PrincipalRegistration,
+        SecretDigest, StoredDeviceSession,
     },
 };
 use agent_room_domain::{
@@ -13,7 +14,7 @@ use agent_room_domain::{
         Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily, DeviceTokenFamilyState,
         DeviceTrustState,
     },
-    ids::{DeviceId, DeviceTokenFamilyId, PrincipalId},
+    ids::{AgentInstanceId, DeviceId, DeviceTokenFamilyId, PrincipalId},
     time::UtcMillis,
 };
 use serde_json::{Map, Value};
@@ -588,34 +589,71 @@ async fn revoke_device_transaction(
         return Ok(DeviceRevocationOutcome::NotFound);
     };
     let device = decode_device(&row, operation)?;
-    if device.trust_state() == DeviceTrustState::Revoked {
-        transaction
-            .commit()
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-        return Ok(DeviceRevocationOutcome::AlreadyRevoked);
+    let already_revoked = device.trust_state() == DeviceTrustState::Revoked;
+    if !already_revoked {
+        revoke_device_and_tokens(
+            &mut transaction,
+            device.id(),
+            security_event.occurred_at,
+            operation,
+        )
+        .await?;
+        let event = device_event(
+            security_event,
+            device.id(),
+            principal_id,
+            "device.revoked.v1",
+            "user_requested",
+        )?;
+        insert_outbox_event(&mut transaction, &event).await?;
     }
-
-    revoke_device_and_tokens(
-        &mut transaction,
-        device.id(),
-        security_event.occurred_at,
-        operation,
-    )
-    .await?;
-    let event = device_event(
-        security_event,
-        device.id(),
-        principal_id,
-        "device.revoked.v1",
-        "user_requested",
-    )?;
-    insert_outbox_event(&mut transaction, &event).await?;
+    let pending =
+        pending_agent_matrix_device_revocations(&mut transaction, device.id(), operation).await?;
     transaction
         .commit()
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
-    Ok(DeviceRevocationOutcome::Revoked)
+    if already_revoked {
+        Ok(DeviceRevocationOutcome::AlreadyRevoked(pending))
+    } else {
+        Ok(DeviceRevocationOutcome::Revoked(pending))
+    }
+}
+
+async fn pending_agent_matrix_device_revocations(
+    transaction: &mut Transaction<'_, Postgres>,
+    device_id: DeviceId,
+    operation: &'static str,
+) -> RepositoryResult<Vec<PendingAgentMatrixDeviceRevocation>> {
+    let rows = sqlx::query(
+        r"SELECT instance.id, agent.matrix_user_id, instance.matrix_device_id
+           FROM agent_room.agent_instance AS instance
+           JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
+           WHERE instance.device_id = $1
+             AND instance.revoked_at IS NOT NULL
+             AND instance.matrix_device_revoked_at IS NULL
+           ORDER BY instance.id",
+    )
+    .bind(device_id.as_uuid())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    rows.iter()
+        .map(|row| {
+            Ok(PendingAgentMatrixDeviceRevocation {
+                instance_id: AgentInstanceId::from_uuid(
+                    row.try_get::<Uuid, _>("id")
+                        .map_err(|error| map_sqlx_error(operation, &error))?,
+                ),
+                matrix_user_id: row
+                    .try_get("matrix_user_id")
+                    .map_err(|error| map_sqlx_error(operation, &error))?,
+                matrix_device_id: row
+                    .try_get("matrix_device_id")
+                    .map_err(|error| map_sqlx_error(operation, &error))?,
+            })
+        })
+        .collect()
 }
 
 async fn compromise_device(

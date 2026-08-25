@@ -9,14 +9,16 @@ use agent_room_domain::{
 };
 
 use crate::{
+    matrix_device_cleanup::revoke_agent_matrix_device,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, DeviceProofNonceStore, DeviceProofVerifier, DeviceRefreshOutcome,
-        DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
-        DeviceSessionStore, DeviceSignature, DeviceTokenReplacement, IdentifierFactory, PortFuture,
-        PrincipalAccount, ProfileImportConsent, SecretDigest, SecretFactory, SecretValue,
-        StoredDeviceSession, VerifiedOidcIdentity,
+        AgentInstanceMatrixCleanupStore, Clock, DeviceProofNonceStore, DeviceProofVerifier,
+        DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository,
+        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
+        DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
+        IdentifierFactory, MatrixAgentDeviceSessionRevoker, PendingAgentMatrixDeviceRevocation,
+        PortFuture, PrincipalAccount, ProfileImportConsent, SecretDigest, SecretFactory,
+        SecretValue, StoredDeviceSession, VerifiedOidcIdentity,
     },
 };
 
@@ -312,6 +314,17 @@ impl DeviceAuthorizationFailure {
 
 pub type DeviceAuthorizationResult<T> = Result<T, DeviceAuthorizationFailure>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceMatrixCleanup {
+    Complete,
+    Pending { agent_instance_count: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RevokedDevice {
+    pub matrix_cleanup: DeviceMatrixCleanup,
+}
+
 pub trait DeviceAuthorizationUseCases: Send + Sync {
     fn register_device(
         &self,
@@ -337,7 +350,7 @@ pub trait DeviceAuthorizationUseCases: Send + Sync {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-    ) -> PortFuture<'_, DeviceAuthorizationResult<()>>;
+    ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>>;
 }
 
 pub struct DeviceAuthorizationService {
@@ -347,6 +360,8 @@ pub struct DeviceAuthorizationService {
     proof_verifier: Arc<dyn DeviceProofVerifier>,
     devices: Arc<dyn DeviceRepository>,
     revocations: Arc<dyn DeviceRevocationTransaction>,
+    matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
+    matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
     secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
@@ -360,6 +375,8 @@ pub struct DeviceAuthorizationDependencies {
     pub proof_verifier: Arc<dyn DeviceProofVerifier>,
     pub devices: Arc<dyn DeviceRepository>,
     pub revocations: Arc<dyn DeviceRevocationTransaction>,
+    pub matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
+    pub matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
     pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
@@ -377,6 +394,8 @@ impl DeviceAuthorizationService {
             proof_verifier: dependencies.proof_verifier,
             devices: dependencies.devices,
             revocations: dependencies.revocations,
+            matrix_cleanup: dependencies.matrix_cleanup,
+            matrix: dependencies.matrix,
             secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -587,7 +606,8 @@ impl DeviceAuthorizationService {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-    ) -> DeviceAuthorizationResult<()> {
+    ) -> DeviceAuthorizationResult<RevokedDevice> {
+        let now = self.clock.now();
         let outcome = self
             .revocations
             .revoke(
@@ -595,18 +615,52 @@ impl DeviceAuthorizationService {
                 device_id,
                 DeviceSecurityEvent {
                     id: self.identifiers.outbox_event_id(),
-                    occurred_at: self.clock.now(),
+                    occurred_at: now,
                 },
             )
             .await
             .map_err(|error| map_repository_failure("device.revoke", &error))?;
-        match outcome {
-            DeviceRevocationOutcome::Revoked | DeviceRevocationOutcome::AlreadyRevoked => Ok(()),
+        let pending = match outcome {
+            DeviceRevocationOutcome::Revoked(pending)
+            | DeviceRevocationOutcome::AlreadyRevoked(pending) => pending,
             DeviceRevocationOutcome::NotFound => Err(failure(
                 "device.revoke",
                 DeviceAuthorizationFailureKind::NotFound,
-            )),
+            ))?,
+        };
+        let pending_count = self.cleanup_matrix_devices(pending, now).await;
+        let matrix_cleanup = if pending_count == 0 {
+            DeviceMatrixCleanup::Complete
+        } else {
+            DeviceMatrixCleanup::Pending {
+                agent_instance_count: pending_count,
+            }
+        };
+        Ok(RevokedDevice { matrix_cleanup })
+    }
+
+    async fn cleanup_matrix_devices(
+        &self,
+        pending: Vec<PendingAgentMatrixDeviceRevocation>,
+        revoked_at: UtcMillis,
+    ) -> usize {
+        let mut pending_count = 0;
+        for target in pending {
+            if revoke_agent_matrix_device(
+                self.matrix.as_ref(),
+                self.matrix_cleanup.as_ref(),
+                target.instance_id,
+                &target.matrix_user_id,
+                &target.matrix_device_id,
+                revoked_at,
+            )
+            .await
+            .is_err()
+            {
+                pending_count += 1;
+            }
         }
+        pending_count
     }
 
     async fn verify_request_proof(
@@ -702,7 +756,7 @@ impl DeviceAuthorizationUseCases for DeviceAuthorizationService {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-    ) -> PortFuture<'_, DeviceAuthorizationResult<()>> {
+    ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>> {
         Box::pin(self.revoke_device_internal(principal_id, device_id))
     }
 }

@@ -247,6 +247,7 @@ async fn build_identity_router(
         repositories.clone(),
         secrets.clone(),
         system_runtime.clone(),
+        matrix_identities.clone(),
     )?;
     let device_state = DeviceHttpState::new(
         DeviceHttpDependencies {
@@ -471,6 +472,7 @@ fn build_device_authorization(
     repositories: Arc<PostgresRepositories>,
     secrets: Arc<SecureSecretFactory>,
     system_runtime: Arc<SystemRuntime>,
+    matrix: Arc<MatrixApplicationServiceProvisioner>,
 ) -> Result<Arc<DeviceAuthorizationService>, StartupError> {
     let policy = device_authorization_policy(config)?;
     Ok(Arc::new(DeviceAuthorizationService::new(
@@ -480,7 +482,9 @@ fn build_device_authorization(
             proof_nonces: repositories.clone(),
             proof_verifier: Arc::new(Ed25519DeviceProofVerifier),
             devices: repositories.clone(),
-            revocations: repositories,
+            revocations: repositories.clone(),
+            matrix_cleanup: repositories,
+            matrix,
             secrets,
             identifiers: system_runtime.clone(),
             clock: system_runtime,

@@ -10,18 +10,20 @@ use agent_room_application::{
     devices::{
         AuthenticateDeviceRequest, DeviceAuthorizationDependencies, DeviceAuthorizationFailureKind,
         DeviceAuthorizationPolicy, DeviceAuthorizationService, DeviceAuthorizationUseCases,
-        DeviceRequestProof, DeviceRequestProofPayload, RefreshDeviceSession, RegisterDevice,
-        VerifiedDeviceAuthorization,
+        DeviceMatrixCleanup, DeviceRequestProof, DeviceRequestProofPayload, RefreshDeviceSession,
+        RegisterDevice, VerifiedDeviceAuthorization,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, DeviceProofNonceStore, DeviceProofVerifier, DeviceRefreshContext,
-        DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository,
-        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-        DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
-        IdentifierFactory, PortFuture, PrincipalAccount, PrincipalRegistration,
-        ProfileImportConsent, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
-        StoredDeviceSession, VerifiedOidcIdentity,
+        AgentInstanceMatrixCleanupStore, Clock, DeviceProofNonceStore, DeviceProofVerifier,
+        DeviceRefreshContext, DeviceRefreshOutcome, DeviceRegistrationTransaction,
+        DeviceRepository, DeviceRevocationOutcome, DeviceRevocationTransaction,
+        DeviceSecurityEvent, DeviceSessionRegistration, DeviceSessionStore, DeviceSignature,
+        DeviceTokenReplacement, IdentifierFactory, MatrixAgentDeviceSessionRevoker,
+        MatrixAgentDeviceSessionTarget, MatrixFailure, MatrixFailureKind, MatrixOperation,
+        MatrixResult, PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount,
+        PrincipalRegistration, ProfileImportConsent, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretValue, StoredDeviceSession, VerifiedOidcIdentity,
     },
 };
 use agent_room_domain::{
@@ -48,6 +50,7 @@ struct MemoryState {
     session: Option<StoredDeviceSession>,
     access_token_digest: Option<SecretDigest>,
     refresh_tokens: HashMap<SecretDigest, bool>,
+    pending_matrix_devices: Vec<PendingAgentMatrixDeviceRevocation>,
 }
 
 impl DeviceRegistrationTransaction for MemoryDeviceStore {
@@ -192,6 +195,7 @@ impl DeviceRevocationTransaction for MemoryDeviceStore {
     ) -> PortFuture<'_, RepositoryResult<DeviceRevocationOutcome>> {
         Box::pin(async move {
             let mut state = self.state.lock().expect("测试设备仓储锁不得中毒");
+            let pending = state.pending_matrix_devices.clone();
             let Some(session) = state.session.as_mut() else {
                 return Ok(DeviceRevocationOutcome::NotFound);
             };
@@ -199,7 +203,7 @@ impl DeviceRevocationTransaction for MemoryDeviceStore {
                 return Ok(DeviceRevocationOutcome::NotFound);
             }
             if session.device.trust_state() == DeviceTrustState::Revoked {
-                return Ok(DeviceRevocationOutcome::AlreadyRevoked);
+                return Ok(DeviceRevocationOutcome::AlreadyRevoked(pending));
             }
             session
                 .device
@@ -213,7 +217,49 @@ impl DeviceRevocationTransaction for MemoryDeviceStore {
                 .map_err(|_| {
                     RepositoryError::new("device.revoke", RepositoryErrorKind::CorruptData)
                 })?;
-            Ok(DeviceRevocationOutcome::Revoked)
+            Ok(DeviceRevocationOutcome::Revoked(pending))
+        })
+    }
+}
+
+impl AgentInstanceMatrixCleanupStore for MemoryDeviceStore {
+    fn mark_matrix_device_revoked(
+        &self,
+        instance_id: AgentInstanceId,
+        _revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            self.state
+                .lock()
+                .expect("测试设备仓储锁不得中毒")
+                .pending_matrix_devices
+                .retain(|pending| pending.instance_id != instance_id);
+            Ok(())
+        })
+    }
+}
+
+struct ToggleMatrixRevoker {
+    available: AtomicBool,
+    calls: AtomicUsize,
+}
+
+impl MatrixAgentDeviceSessionRevoker for ToggleMatrixRevoker {
+    fn revoke_device_session<'a>(
+        &'a self,
+        _target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let available = self.available.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if available {
+                Ok(())
+            } else {
+                Err(MatrixFailure::new(
+                    MatrixOperation::RevokeAgentDeviceSession,
+                    MatrixFailureKind::DependencyUnavailable,
+                ))
+            }
         })
     }
 }
@@ -361,7 +407,7 @@ impl IdentifierFactory for TestIdentifiers {
 
 #[tokio::test]
 async fn 设备请求证明只能消费一次() {
-    let (service, _, secrets, _) = service(true);
+    let (service, _, secrets, _, _) = service(true);
     let credentials = service
         .register_device(registration(&secrets))
         .await
@@ -393,7 +439,7 @@ async fn 设备请求证明只能消费一次() {
 
 #[tokio::test]
 async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
-    let (service, store, secrets, _) = service(true);
+    let (service, store, secrets, _, _) = service(true);
     let credentials = service
         .register_device(registration(&secrets))
         .await
@@ -432,7 +478,7 @@ async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
 
 #[tokio::test]
 async fn 公钥持有证明失败时不会写入设备() {
-    let (service, store, secrets, _) = service(false);
+    let (service, store, secrets, _, _) = service(false);
     let failure = service
         .register_device(registration(&secrets))
         .await
@@ -449,6 +495,73 @@ async fn 公钥持有证明失败时不会写入设备() {
     );
 }
 
+#[tokio::test]
+async fn 设备撤销先关闭本地边界并在重复请求时收敛_matrix_清理() {
+    let (service, store, secrets, _, matrix) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
+    store
+        .state
+        .lock()
+        .expect("测试设备仓储锁不得中毒")
+        .pending_matrix_devices
+        .push(PendingAgentMatrixDeviceRevocation {
+            instance_id,
+            matrix_user_id: "@_agent_0198b60177a17bb883eba8fe68c97e42:matrix.example.test"
+                .to_owned(),
+            matrix_device_id: "AR_0198b60177a17bb883eba8fe68c97e43".to_owned(),
+        });
+    matrix.available.store(false, Ordering::SeqCst);
+
+    let first = service
+        .revoke_device(
+            credentials.device.account.principal.id(),
+            credentials.device.device_id,
+        )
+        .await
+        .expect("本地撤销不得被远端故障回滚");
+    assert_eq!(
+        first.matrix_cleanup,
+        DeviceMatrixCleanup::Pending {
+            agent_instance_count: 1
+        }
+    );
+    assert_eq!(
+        store
+            .state
+            .lock()
+            .expect("测试设备仓储锁不得中毒")
+            .session
+            .as_ref()
+            .expect("审计状态保留")
+            .device
+            .trust_state(),
+        DeviceTrustState::Revoked
+    );
+
+    matrix.available.store(true, Ordering::SeqCst);
+    let repeated = service
+        .revoke_device(
+            credentials.device.account.principal.id(),
+            credentials.device.device_id,
+        )
+        .await
+        .expect("重复撤销应继续远端清理");
+    assert_eq!(repeated.matrix_cleanup, DeviceMatrixCleanup::Complete);
+    assert_eq!(matrix.calls.load(Ordering::SeqCst), 2);
+    assert!(
+        store
+            .state
+            .lock()
+            .expect("测试设备仓储锁不得中毒")
+            .pending_matrix_devices
+            .is_empty()
+    );
+}
+
 fn service(
     valid_proof: bool,
 ) -> (
@@ -456,10 +569,15 @@ fn service(
     Arc<MemoryDeviceStore>,
     Arc<SequentialSecrets>,
     Arc<ToggleProofVerifier>,
+    Arc<ToggleMatrixRevoker>,
 ) {
     let store = Arc::new(MemoryDeviceStore::default());
     let secrets = Arc::new(SequentialSecrets::default());
     let proof_verifier = Arc::new(ToggleProofVerifier(AtomicBool::new(valid_proof)));
+    let matrix = Arc::new(ToggleMatrixRevoker {
+        available: AtomicBool::new(true),
+        calls: AtomicUsize::new(0),
+    });
     let service = DeviceAuthorizationService::new(
         DeviceAuthorizationDependencies {
             registrations: store.clone(),
@@ -468,6 +586,8 @@ fn service(
             proof_verifier: proof_verifier.clone(),
             devices: store.clone(),
             revocations: store.clone(),
+            matrix_cleanup: store.clone(),
+            matrix: matrix.clone(),
             secrets: secrets.clone(),
             identifiers: Arc::new(TestIdentifiers),
             clock: Arc::new(StaticClock),
@@ -482,7 +602,7 @@ fn service(
         )
         .expect("设备策略有效"),
     );
-    (service, store, secrets, proof_verifier)
+    (service, store, secrets, proof_verifier, matrix)
 }
 
 fn registration(secrets: &SequentialSecrets) -> RegisterDevice {

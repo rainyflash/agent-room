@@ -15,4 +15,5 @@ pub mod ports;
 pub mod private_rooms;
 pub mod rooms;
 
+mod matrix_device_cleanup;
 mod principal_projection;

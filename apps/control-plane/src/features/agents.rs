@@ -580,6 +580,7 @@ mod tests {
         devices::{
             AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
+            RevokedDevice,
         },
         ports::{
             AgentInstanceVerificationRecord, MatrixDeviceId, MatrixSession, MatrixSessionMetadata,
@@ -799,7 +800,7 @@ mod tests {
             &self,
             _principal_id: PrincipalId,
             _device_id: DeviceId,
-        ) -> PortFuture<'_, DeviceAuthorizationResult<()>> {
+        ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>> {
             Box::pin(async { unreachable!("Agent 路由不会撤销用户设备") })
         }
     }
