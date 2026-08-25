@@ -133,7 +133,8 @@ impl AutomationService {
             .map_err(|error| repository_failure(OPERATION, &error))?
         {
             AutomationGrantRevocationOutcome::Revoked(record)
-            | AutomationGrantRevocationOutcome::AlreadyRevoked(record) => Ok(record),
+            | AutomationGrantRevocationOutcome::AlreadyRevoked(record)
+            | AutomationGrantRevocationOutcome::AlreadyInactive(record) => Ok(record),
             AutomationGrantRevocationOutcome::NotFound => {
                 Err(failure(OPERATION, AutomationFailureKind::NotFound))
             }
@@ -159,6 +160,7 @@ impl AutomationService {
         let consumption = AutomationConsumptionRequest {
             grant_id: request.grant_id,
             submission_id: request.submission_id,
+            matrix_room_id: request.matrix_room_id.clone(),
             attempt: context.attempt,
         };
         match self

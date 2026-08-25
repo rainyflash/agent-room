@@ -112,6 +112,34 @@ pub enum AutomationRiskScanOutcome {
     NotRequested,
 }
 
+impl AutomationRiskScanOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Rejected => "rejected",
+            Self::Unavailable => "unavailable",
+            Self::NotRequested => "not_requested",
+        }
+    }
+}
+
+impl TryFrom<&str> for AutomationRiskScanOutcome {
+    type Error = DomainError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "passed" => Ok(Self::Passed),
+            "rejected" => Ok(Self::Rejected),
+            "unavailable" => Ok(Self::Unavailable),
+            "not_requested" => Ok(Self::NotRequested),
+            _ => Err(validation(
+                "automation_risk_scan_outcome",
+                "不是支持的风险扫描结果",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutomationGrantStatus {
     Active,

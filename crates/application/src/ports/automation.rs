@@ -23,6 +23,7 @@ pub struct AutomationGrantRecord {
 pub enum AutomationGrantRevocationOutcome {
     Revoked(AutomationGrantRecord),
     AlreadyRevoked(AutomationGrantRecord),
+    AlreadyInactive(AutomationGrantRecord),
     NotFound,
 }
 
@@ -30,6 +31,7 @@ pub enum AutomationGrantRevocationOutcome {
 pub struct AutomationConsumptionRequest {
     pub grant_id: AutomationGrantId,
     pub submission_id: MessageSubmissionId,
+    pub matrix_room_id: MatrixRoomId,
     pub attempt: AutomationGrantAttempt,
 }
 
