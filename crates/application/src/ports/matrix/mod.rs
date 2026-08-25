@@ -8,13 +8,13 @@ pub use failure::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixRecoveryAction, MatrixRetryPolicy,
 };
 pub use models::{
-    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentUserRegistration,
-    MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection, MatrixCreateRoom, MatrixEvent,
-    MatrixLogin, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixRoomAuthority,
-    MatrixRoomEncryption, MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset,
-    MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
-    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixTimelineEvent,
+    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionTarget,
+    MatrixAgentUserRegistration, MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection,
+    MatrixCreateRoom, MatrixEvent, MatrixLogin, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind,
+    MatrixRoomAuthority, MatrixRoomEncryption, MatrixRoomKind, MatrixRoomPowerProfile,
+    MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
+    MatrixSyncRequest, MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
@@ -37,6 +37,16 @@ pub trait MatrixAgentIdentityProvisioner: Send + Sync {
         &'a self,
         request: &'a MatrixAgentDeviceSessionRequest,
     ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
+}
+
+/// 撤销 Agent 实例专属的 Matrix 设备会话。
+///
+/// 实现必须让重复撤销保持幂等，并且不得接受受控 Agent 命名空间之外的用户。
+pub trait MatrixAgentDeviceSessionRevoker: Send + Sync {
+    fn revoke_device_session<'a>(
+        &'a self,
+        target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
 /// 创建或恢复一个与单个 Matrix 设备绑定的客户端。

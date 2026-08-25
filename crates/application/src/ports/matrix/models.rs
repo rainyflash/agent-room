@@ -42,6 +42,26 @@ pub struct MatrixAgentDeviceSessionRequest {
     initial_device_display_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixAgentDeviceSessionTarget {
+    user_id: MatrixUserId,
+    device_id: MatrixDeviceId,
+}
+
+impl MatrixAgentDeviceSessionTarget {
+    pub const fn new(user_id: MatrixUserId, device_id: MatrixDeviceId) -> Self {
+        Self { user_id, device_id }
+    }
+
+    pub const fn user_id(&self) -> &MatrixUserId {
+        &self.user_id
+    }
+
+    pub const fn device_id(&self) -> &MatrixDeviceId {
+        &self.device_id
+    }
+}
+
 impl MatrixAgentDeviceSessionRequest {
     /// 创建 Agent 实例的 Matrix 设备会话请求。
     ///

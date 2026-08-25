@@ -3,6 +3,7 @@ use agent_room_domain::{
         AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey, AgentMemberships,
         AgentRole, AgentVisibility,
     },
+    devices::{DevicePlatform, DeviceTrustState},
     ids::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
         ContentId, DeviceId, PrincipalId,
@@ -97,6 +98,30 @@ pub struct AgentInstanceVerificationRecord {
     pub invalidated_at: Option<UtcMillis>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentInstanceManagementRecord {
+    pub instance: AgentInstance,
+    pub agent_matrix_user_id: String,
+    pub agent_display_name: String,
+    pub agent_avatar_content_id: Option<ContentId>,
+    pub adapter_type: String,
+    pub capability_version: String,
+    pub device_label: String,
+    pub device_platform: DevicePlatform,
+    pub device_trust_state: DeviceTrustState,
+    pub created_at: UtcMillis,
+    pub last_seen_at: Option<UtcMillis>,
+    pub revoked_at: Option<UtcMillis>,
+    pub matrix_device_revoked_at: Option<UtcMillis>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentInstanceRevocationOutcome {
+    Revoked(AgentInstanceManagementRecord),
+    AlreadyRevoked(AgentInstanceManagementRecord),
+    NotFound,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentMembershipChange {
     pub agent_id: AgentId,
@@ -166,6 +191,30 @@ pub trait AgentInstanceVerificationRepository: Send + Sync {
         &self,
         instance_id: AgentInstanceId,
     ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceVerificationRecord>>>;
+}
+
+pub trait AgentInstanceManagementRepository: Send + Sync {
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentInstanceManagementRecord>>>;
+}
+
+pub trait AgentInstanceRevocationTransaction: Send + Sync {
+    fn revoke<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        instance_id: AgentInstanceId,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<AgentInstanceRevocationOutcome>>;
+}
+
+pub trait AgentInstanceMatrixCleanupStore: Send + Sync {
+    fn mark_matrix_device_revoked(
+        &self,
+        instance_id: AgentInstanceId,
+        revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
 }
 
 pub trait AgentInstanceSignatureVerifier: Send + Sync {
