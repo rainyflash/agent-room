@@ -9,6 +9,7 @@ pub mod handoff;
 pub mod identity;
 pub mod ids;
 pub mod messages;
+pub mod moderation;
 pub mod policy;
 pub mod private_rooms;
 pub mod rooms;

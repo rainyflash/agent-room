@@ -57,4 +57,7 @@ define_id!(MessageRevisionId);
 define_id!(MessageSubmissionId);
 define_id!(HandoffId);
 define_id!(AutomationGrantId);
+define_id!(ModerationCaseId);
+define_id!(ModerationActionId);
+define_id!(AuditEventId);
 define_id!(OutboxEventId);
