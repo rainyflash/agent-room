@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.agent-room.desktop",
   "build": {
-    "beforeBuildCommand": "corepack pnpm@10.28.0 --filter @agent-room/protocol build && corepack pnpm@10.28.0 --filter @agent-room/web build:desktop",
-    "beforeDevCommand": "corepack pnpm@10.28.0 --filter @agent-room/protocol build && corepack pnpm@10.28.0 --filter @agent-room/web dev",
+    "beforeBuildCommand": "corepack pnpm@10.28.0 --filter @agent-room/web build:desktop",
+    "beforeDevCommand": "corepack pnpm@10.28.0 --filter @agent-room/web dev",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../../web/dist"
   },
