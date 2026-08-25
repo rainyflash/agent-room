@@ -6,9 +6,11 @@ use agent_room_application::ports::{
     MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind,
     MatrixRecoveryAction, MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId,
-    MatrixRoomKind, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
-    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-    MatrixTransactionId, MatrixUserId, RoomProvisioningGateway, SecretValue,
+    MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
+    MatrixSyncToken, MatrixTransactionId, MatrixUserId, PrivateMatrixMembership,
+    PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, RoomProvisioningGateway, SecretValue,
 };
 use agent_room_domain::{ids::AgentId, time::DurationMillis};
 use agent_room_matrix_adapter::{
@@ -121,6 +123,203 @@ async fn 真实_synapse_可幂等建立独立_agent_用户和设备会话() {
     assert!(!batch.next_batch().as_str().is_empty());
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse 私人房间配置"]
+async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬边界() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
+    let owner_user = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_USER");
+    let owner_password = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_PASSWORD");
+    let member_user = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_USER");
+    let member_password = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_PASSWORD");
+    let provisioner = application_service_provisioner(&base_url, application_service_token);
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let owner = factory
+        .login(&login(&owner_user, &owner_password))
+        .await
+        .expect("私人房间房主必须能登录");
+    let member = factory
+        .login(&login(&member_user, &member_password))
+        .await
+        .expect("私人房间成员必须能登录");
+    let owner_user_id = MatrixUserId::new(owner_user).expect("房主 Matrix 用户有效");
+    let member_user_id = MatrixUserId::new(member_user).expect("成员 Matrix 用户有效");
+    let outsider = managed_outsider(&provisioner, &factory).await;
+    let alias = MatrixRoomAliasLocalpart::new(format!(
+        "agent-room-private-test-{}",
+        Uuid::now_v7().simple()
+    ))
+    .expect("私人房间稳定别名有效");
+    let request = MatrixCreateRoom::new(
+        Some("Task 25 private room acceptance".to_owned()),
+        Some("真实 Synapse 私人房间硬边界验收".to_owned()),
+        MatrixRoomVisibility::Private,
+        MatrixRoomPreset::PrivateChat,
+        false,
+        vec![owner_user_id.clone(), member_user_id.clone()],
+    )
+    .expect("私人房间建房请求有效")
+    .with_alias_localpart(alias.clone())
+    .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+    let creation = PrivateMatrixRoomCreation::new(request, alias).expect("受管私人房间请求有效");
+
+    let room_id = PrivateRoomMatrixProvisioner::create(&provisioner, &creation)
+        .await
+        .expect("Application Service 必须能创建私人房间");
+    let reconciled = PrivateRoomMatrixProvisioner::create(&provisioner, &creation)
+        .await
+        .expect("重复建房必须按稳定别名对账");
+    assert_eq!(reconciled, room_id);
+
+    let outsider_failure = outsider
+        .gateway()
+        .join(&room_id)
+        .await
+        .expect_err("未受邀用户不得进入私人房间");
+    assert_eq!(outsider_failure.kind(), MatrixFailureKind::Forbidden);
+    owner
+        .gateway()
+        .join(&room_id)
+        .await
+        .expect("受邀房主必须能加入");
+    member
+        .gateway()
+        .join(&room_id)
+        .await
+        .expect("受邀成员必须能加入");
+    assert_eq!(
+        provisioner
+            .membership(&room_id, &member_user_id)
+            .await
+            .expect("成员状态可读取"),
+        Some(PrivateMatrixMembership::Joined)
+    );
+
+    let denied = member
+        .gateway()
+        .send_event(
+            &room_id,
+            &message_event(unique_value("private-denied"), "默认查看者不得发言"),
+        )
+        .await
+        .expect_err("未授予发言硬边界时必须拒绝发送");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+
+    provisioner
+        .set_speaking_batch(
+            &room_id,
+            &[
+                PrivateMatrixSpeakingAssignment::new(owner_user_id, true),
+                PrivateMatrixSpeakingAssignment::new(member_user_id.clone(), true),
+            ],
+        )
+        .await
+        .expect("发言硬边界可原子合并");
+    send_with_retry(
+        member.gateway(),
+        &room_id,
+        &message_event(unique_value("private-allowed"), "授权后可发言"),
+    )
+    .await;
+    provisioner
+        .set_speaking(&room_id, &member_user_id, false)
+        .await
+        .expect("可收回成员发言能力");
+    let denied = member
+        .gateway()
+        .send_event(
+            &room_id,
+            &message_event(unique_value("private-revoked"), "撤权后不得发言"),
+        )
+        .await
+        .expect_err("发言能力撤销后必须立即拒绝发送");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+
+    provisioner
+        .kick(&room_id, &member_user_id)
+        .await
+        .expect("可从 Matrix 硬边界移除成员");
+    assert_eq!(
+        provisioner
+            .membership(&room_id, &member_user_id)
+            .await
+            .expect("移除后成员状态可读取"),
+        Some(PrivateMatrixMembership::Left)
+    );
+    let denied = member
+        .gateway()
+        .send_event(
+            &room_id,
+            &message_event(unique_value("private-kicked"), "移除后不得发送"),
+        )
+        .await
+        .expect_err("被移除成员不得继续写入房间");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+
+    provisioner
+        .ban(&room_id, &member_user_id)
+        .await
+        .expect("可封禁已移除成员");
+    assert_eq!(
+        provisioner
+            .membership(&room_id, &member_user_id)
+            .await
+            .expect("封禁后成员状态可读取"),
+        Some(PrivateMatrixMembership::Banned)
+    );
+    let denied = member
+        .gateway()
+        .join(&room_id)
+        .await
+        .expect_err("封禁成员不得重新加入");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+    provisioner
+        .archive(&room_id)
+        .await
+        .expect("归档必须收紧 Matrix 发言策略");
+}
+
+fn application_service_provisioner(
+    base_url: &str,
+    application_service_token: String,
+) -> MatrixApplicationServiceProvisioner {
+    let configuration = MatrixApplicationServiceConfiguration::new(
+        base_url,
+        "matrix.agent-room.localhost",
+        SecretValue::new(application_service_token).expect("Application Service Token 有效"),
+        TEST_REQUEST_TIMEOUT,
+    )
+    .expect("Application Service 配置有效");
+    MatrixApplicationServiceProvisioner::new(configuration).expect("适配器可初始化")
+}
+
+async fn managed_outsider(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    factory: &MatrixSdkClientFactory,
+) -> MatrixConnection {
+    let registration = MatrixAgentUserRegistration::new(MatrixAgentLocalpart::from_agent_id(
+        AgentId::from_uuid(Uuid::now_v7()),
+    ));
+    let user_id = provisioner
+        .ensure_user(&registration)
+        .await
+        .expect("可建立未受邀验收用户");
+    let request = MatrixAgentDeviceSessionRequest::new(
+        user_id,
+        MatrixDeviceId::new(format!("AR_{}", Uuid::now_v7().simple())).expect("设备标识有效"),
+        "Task 25 未受邀验收设备".to_owned(),
+    )
+    .expect("未受邀设备会话请求有效");
+    let session = provisioner
+        .issue_device_session(&request)
+        .await
+        .expect("可签发未受邀验收会话");
+    factory
+        .restore(&session)
+        .await
+        .expect("未受邀验收会话可恢复")
+}
+
 struct RoomScenario {
     developer: MatrixConnection,
     agent: MatrixConnection,
@@ -197,7 +396,7 @@ async fn prepare_room(
 async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &MatrixConnection) {
     let gateway = connection.gateway();
     let alias =
-        MatrixRoomAliasLocalpart::new(format!("agent-room-space-test-{}", Uuid::now_v7().simple()))
+        MatrixRoomAliasLocalpart::new(format!("sdk-space-test-{}", Uuid::now_v7().simple()))
             .expect("测试 Space 别名有效");
     let request = MatrixCreateRoom::new(
         Some("Agent Room Space 验收".to_owned()),
@@ -218,7 +417,7 @@ async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &Matri
     assert_eq!(resolved, room_id);
 
     let child_alias =
-        MatrixRoomAliasLocalpart::new(format!("agent-room-child-test-{}", Uuid::now_v7().simple()))
+        MatrixRoomAliasLocalpart::new(format!("sdk-child-test-{}", Uuid::now_v7().simple()))
             .expect("测试子房间别名有效");
     let child_request = MatrixCreateRoom::new(
         Some("Agent Room Space 子房间验收".to_owned()),

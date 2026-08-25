@@ -80,6 +80,14 @@ fn map_api_error(
     operation: MatrixOperation,
     error: &matrix_sdk::ruma::api::error::Error,
 ) -> MatrixFailure {
+    if error.status_code == reqwest::StatusCode::FORBIDDEN {
+        let kind = if operation == MatrixOperation::Login {
+            MatrixFailureKind::AuthenticationRejected
+        } else {
+            MatrixFailureKind::Forbidden
+        };
+        return MatrixFailure::new(operation, kind);
+    }
     let Some(kind) = error.error_kind() else {
         return map_status(operation, error.status_code.as_u16());
     };
@@ -171,6 +179,15 @@ mod tests {
         );
         assert_eq!(
             map_api_error(MatrixOperation::Invite, &error).kind(),
+            MatrixFailureKind::Forbidden
+        );
+    }
+
+    #[test]
+    fn 被封禁用户的_bad_state_仍按权限拒绝处理() {
+        let error = api_error(StatusCode::FORBIDDEN, ErrorKind::BadState);
+        assert_eq!(
+            map_api_error(MatrixOperation::Join, &error).kind(),
             MatrixFailureKind::Forbidden
         );
     }

@@ -367,6 +367,12 @@ fn map_matrix_error(
             .and_then(|value| DurationMillis::new(value.max(1)).ok());
         return MatrixFailure::rate_limited(operation, retry_after);
     }
+    if matches!(
+        error.errcode.as_str(),
+        "M_ROOM_IN_USE" | "M_BAD_STATE" | "M_INVALID_ROOM_STATE"
+    ) {
+        return MatrixFailure::new(operation, MatrixFailureKind::Conflict);
+    }
     let kind = match status.as_u16() {
         401 => MatrixFailureKind::Unauthenticated,
         403 => MatrixFailureKind::Forbidden,
@@ -455,8 +461,22 @@ mod tests {
 
     use super::{
         MAX_RESPONSE_BYTES, MatrixApplicationServiceConfiguration,
-        MatrixApplicationServiceProvisioner,
+        MatrixApplicationServiceProvisioner, MatrixErrorResponse, map_matrix_error,
     };
+
+    #[test]
+    fn 房间别名占用必须进入冲突对账而不是伪装协议损坏() {
+        let failure = map_matrix_error(
+            agent_room_application::ports::MatrixOperation::CreateRoom,
+            StatusCode::BAD_REQUEST,
+            &MatrixErrorResponse {
+                errcode: "M_ROOM_IN_USE".to_owned(),
+                retry_after_ms: None,
+            },
+        );
+
+        assert_eq!(failure.kind(), MatrixFailureKind::Conflict);
+    }
 
     #[tokio::test]
     async fn 已存在用户被视为幂等对账成功() {
