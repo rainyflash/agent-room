@@ -2,7 +2,9 @@ import { Button } from '@agent-room/ui-system';
 import { Focus, List, Minus, Plus, Radar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-export type LobbyViewMode = 'list' | 'scene';
+import type { LobbyViewPreference } from '@/features/preferences/domain/account-preferences';
+
+export type LobbyViewMode = LobbyViewPreference;
 
 export type SignalDockProps = {
   readonly mode: LobbyViewMode;

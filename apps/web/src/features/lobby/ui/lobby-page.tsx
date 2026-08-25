@@ -23,6 +23,7 @@ import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock'
 import { useCompactLobby } from '@/features/lobby/ui/use-compact-lobby';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
+import { useAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
 import type { WebSession } from '@/features/session/domain/session';
 
 export type LobbyPageProps = {
@@ -104,10 +105,10 @@ function ReadyLobby({
   selectedMessageId,
 }: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
+  const accountPreferences = useAccountPreferences();
   const compact = useCompactLobby();
   const listRef = useRef<ListModeRosterHandle>(null);
   const sceneRef = useRef<LobbySceneSurfaceHandle>(null);
-  const [preferredMode, setPreferredMode] = useState<LobbyViewMode>('scene');
   const [sceneAvailable, setSceneAvailable] = useState(true);
   const [zoom, setZoom] = useState(1);
   const directSessions = useDirectSessionController(principal !== null);
@@ -115,6 +116,7 @@ function ReadyLobby({
     () => projectLobbyScene(room, selectedAgentId),
     [room, selectedAgentId],
   );
+  const preferredMode = accountPreferences.snapshot.values.lobbyView;
   const mode: LobbyViewMode = compact || !sceneAvailable ? 'list' : preferredMode;
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
@@ -215,7 +217,7 @@ function ReadyLobby({
                   icon={<RotateCw aria-hidden="true" />}
                   onClick={() => {
                     setSceneAvailable(true);
-                    setPreferredMode('scene');
+                    accountPreferences.setLobbyView('scene');
                   }}
                   size="compact"
                   tone="ghost"
@@ -287,7 +289,7 @@ function ReadyLobby({
             if (nextMode === 'scene' && !sceneAvailable) {
               return;
             }
-            setPreferredMode(nextMode);
+            accountPreferences.setLobbyView(nextMode);
           }}
           onResetViewport={() => {
             sceneRef.current?.resetViewport();

@@ -48,6 +48,12 @@ export type AccountPreferencesFailure = {
   readonly retryable: boolean;
 };
 
+const languagePreferences: ReadonlySet<string> = new Set(['system', 'en', 'zh-CN']);
+
+export function isLanguagePreference(value: string): value is LanguagePreference {
+  return languagePreferences.has(value);
+}
+
 export function parseAccountPreferencesDocument(
   input: unknown,
 ): Result<AccountPreferencesDocument, AccountPreferencesFailure> {

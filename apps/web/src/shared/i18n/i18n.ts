@@ -2,6 +2,7 @@ import { createInstance } from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
 import { resources, type SupportedLanguage } from './resources';
+import type { LanguagePreference } from '@/features/preferences/domain/account-preferences';
 
 const LANGUAGE_STORAGE_KEY = 'agent-room.language';
 
@@ -12,8 +13,6 @@ const languageAliases: Readonly<Record<string, SupportedLanguage>> = {
   'zh-CN': 'zh-CN',
   'zh-Hans': 'zh-CN',
 };
-
-export type LanguagePreference = SupportedLanguage | 'system';
 
 export function resolveSystemLanguage(languages: readonly string[]): SupportedLanguage {
   for (const language of languages) {

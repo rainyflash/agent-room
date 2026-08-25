@@ -1,4 +1,4 @@
-import { ClientEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
+import type { MatrixClient, MatrixEvent } from 'matrix-js-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -64,14 +64,8 @@ describe('Matrix 账户偏好网关', () => {
     second.emit(ACCOUNT_PREFERENCES_EVENT_TYPE);
 
     expect(listener).toHaveBeenCalledTimes(3);
-    expect(first.removeListener).toHaveBeenCalledWith(
-      ClientEvent.AccountData,
-      expect.any(Function),
-    );
-    expect(second.removeListener).toHaveBeenCalledWith(
-      ClientEvent.AccountData,
-      expect.any(Function),
-    );
+    expect(first.removeListener).toHaveBeenCalledWith('accountData', expect.any(Function));
+    expect(second.removeListener).toHaveBeenCalledWith('accountData', expect.any(Function));
     expect(gateway.scope()).toEqual({
       accountId: '@other:agent-room.test',
       writerId: 'DEVICE_B',
@@ -98,18 +92,16 @@ function matrixClient(
   const accountDataListeners = new Set<(event: MatrixEvent) => void>();
   const read = vi.fn<() => Promise<unknown>>().mockResolvedValue(initialContent);
   const write = vi.fn<() => Promise<unknown>>().mockResolvedValue({});
-  const on = vi.fn((event: ClientEvent, listener: (matrixEvent: MatrixEvent) => void) => {
-    if (event === ClientEvent.AccountData) {
+  const on = vi.fn((event: string, listener: (matrixEvent: MatrixEvent) => void) => {
+    if (event === 'accountData') {
       accountDataListeners.add(listener);
     }
   });
-  const removeListener = vi.fn(
-    (event: ClientEvent, listener: (matrixEvent: MatrixEvent) => void) => {
-      if (event === ClientEvent.AccountData) {
-        accountDataListeners.delete(listener);
-      }
-    },
-  );
+  const removeListener = vi.fn((event: string, listener: (matrixEvent: MatrixEvent) => void) => {
+    if (event === 'accountData') {
+      accountDataListeners.delete(listener);
+    }
+  });
   const value = {
     getAccountDataFromServer: read,
     getDeviceId: () => deviceId,

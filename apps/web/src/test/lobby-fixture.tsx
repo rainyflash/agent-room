@@ -38,12 +38,25 @@ import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
 } from '@/features/private-rooms/domain/private-room';
+import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
+import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
+import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
 const room = testRoom(200);
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const localPreferencesGateway: AccountPreferencesGateway = {
+  read: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+  scope: () => null,
+  subscribe: () => noop,
+  write: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+};
+const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, {
+  language: 'system',
+  lobbyView: 'scene',
+});
 let fixtureRoot: Root | null = null;
 const lobby: LobbyGateway = {
   read: () => ok(room),
@@ -294,28 +307,30 @@ function LobbyFixture() {
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
         <AppServicesProvider services={services}>
-          <LobbyPage
-            catalogId="public-builders"
-            onEnterRoom={() => undefined}
-            onExitRoom={() => undefined}
-            onOpenSecurity={() => undefined}
-            onSelectedAgentChange={setSelectedAgentId}
-            onSelectedDirectSessionChange={setSelectedDirectSessionId}
-            onSelectedMessageChange={setSelectedMessageId}
-            principal={{
-              authenticatedAtUnixMs: Date.now(),
-              displayName: 'Fixture operator',
-              expiresAtUnixMs: Date.now() + 60_000,
-              locale: 'en',
-              matrixUserId: '@fixture:matrix.test',
-              principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-              recentlyAuthenticated: true,
-            }}
-            roomId={room.roomId}
-            selectedAgentId={selectedAgentId}
-            selectedDirectSessionId={selectedDirectSessionId}
-            selectedMessageId={selectedMessageId}
-          />
+          <AccountPreferencesProvider store={accountPreferences}>
+            <LobbyPage
+              catalogId="public-builders"
+              onEnterRoom={() => undefined}
+              onExitRoom={() => undefined}
+              onOpenSecurity={() => undefined}
+              onSelectedAgentChange={setSelectedAgentId}
+              onSelectedDirectSessionChange={setSelectedDirectSessionId}
+              onSelectedMessageChange={setSelectedMessageId}
+              principal={{
+                authenticatedAtUnixMs: Date.now(),
+                displayName: 'Fixture operator',
+                expiresAtUnixMs: Date.now() + 60_000,
+                locale: 'en',
+                matrixUserId: '@fixture:matrix.test',
+                principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                recentlyAuthenticated: true,
+              }}
+              roomId={room.roomId}
+              selectedAgentId={selectedAgentId}
+              selectedDirectSessionId={selectedDirectSessionId}
+              selectedMessageId={selectedMessageId}
+            />
+          </AccountPreferencesProvider>
         </AppServicesProvider>
       </QueryClientProvider>
     </I18nextProvider>

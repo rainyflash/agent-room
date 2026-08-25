@@ -1,4 +1,4 @@
-import { ClientEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
+import type { MatrixClient, MatrixEvent } from 'matrix-js-sdk';
 
 import {
   parseAccountPreferencesDocument,
@@ -13,9 +13,18 @@ import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry'
 import { err, ok, type Result } from '@/shared/result';
 
 export const ACCOUNT_PREFERENCES_EVENT_TYPE = 'org.agentroom.preferences.v1';
+const MATRIX_ACCOUNT_DATA_CLIENT_EVENT = 'accountData';
 
 type CustomAccountDataClient = {
   getAccountDataFromServer(eventType: typeof ACCOUNT_PREFERENCES_EVENT_TYPE): Promise<unknown>;
+  on(
+    eventType: typeof MATRIX_ACCOUNT_DATA_CLIENT_EVENT,
+    listener: (event: MatrixEvent) => void,
+  ): void;
+  removeListener(
+    eventType: typeof MATRIX_ACCOUNT_DATA_CLIENT_EVENT,
+    listener: (event: MatrixEvent) => void,
+  ): void;
   setAccountData(
     eventType: typeof ACCOUNT_PREFERENCES_EVENT_TYPE,
     content: AccountPreferencesDocument,
@@ -102,9 +111,19 @@ export class MatrixAccountPreferencesGateway implements AccountPreferencesGatewa
     if (client === this.#boundClient) {
       return;
     }
-    this.#boundClient?.removeListener(ClientEvent.AccountData, this.#handleAccountData);
+    if (this.#boundClient !== null) {
+      accountDataClient(this.#boundClient).removeListener(
+        MATRIX_ACCOUNT_DATA_CLIENT_EVENT,
+        this.#handleAccountData,
+      );
+    }
     this.#boundClient = client;
-    this.#boundClient?.on(ClientEvent.AccountData, this.#handleAccountData);
+    if (this.#boundClient !== null) {
+      accountDataClient(this.#boundClient).on(
+        MATRIX_ACCOUNT_DATA_CLIENT_EVENT,
+        this.#handleAccountData,
+      );
+    }
   }
 
   #notify(): void {
