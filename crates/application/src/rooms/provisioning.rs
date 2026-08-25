@@ -13,15 +13,16 @@ use agent_room_domain::{
 use crate::{
     persistence::RepositoryError,
     ports::{
-        Clock, MatrixCreateRoom, MatrixFailure, MatrixFailureKind, MatrixRoomAliasLocalpart,
-        MatrixRoomId, MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility,
-        RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
-        RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
-        RoomProvisioningTarget,
+        Clock, MatrixCreateRoom, MatrixEventType, MatrixFailure, MatrixFailureKind,
+        MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset,
+        MatrixRoomVisibility, RoomProvisioningClaim, RoomProvisioningClaimOutcome,
+        RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
+        RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget,
     },
 };
 
 const MAXIMUM_PROVISIONING_LEASE_MILLIS: u64 = 300_000;
+const AGENT_STATUS_EVENT_TYPE: &str = "org.agentroom.agent.status.v1";
 
 pub trait LobbyProvisioningIdentifierFactory: Send + Sync {
     fn room_provisioning_job_id(&self) -> RoomProvisioningJobId;
@@ -457,19 +458,28 @@ fn create_room_request(
             MatrixRoomVisibility::Private
         }
     };
-    MatrixCreateRoom::new(
+    let request = MatrixCreateRoom::new(
         Some(catalog.name().to_owned()),
         Some(catalog.description().to_owned()),
         visibility,
         MatrixRoomPreset::PublicChat,
         false,
         Vec::new(),
-    )
-    .map(|request| {
-        request
-            .with_kind(kind)
-            .with_alias_localpart(job.alias_localpart().clone())
-    })
+    )?
+    .with_kind(kind)
+    .with_alias_localpart(job.alias_localpart().clone());
+    match kind {
+        MatrixRoomKind::Conversation => {
+            let event_type = MatrixEventType::new(AGENT_STATUS_EVENT_TYPE).map_err(|_| {
+                DomainError::InvariantViolation {
+                    entity: "room_provisioning_policy",
+                    rule: "Agent 状态事件类型必须符合 Matrix 事件命名规则",
+                }
+            })?;
+            Ok(request.with_member_writable_state_event_type(event_type))
+        }
+        MatrixRoomKind::Space => Ok(request),
+    }
 }
 
 fn build_room_instance(

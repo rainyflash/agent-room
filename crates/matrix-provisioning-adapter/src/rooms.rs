@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use agent_room_application::ports::{
     AgentRoomMembershipFactory, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind,
@@ -186,6 +186,13 @@ struct CreateRoomRequest<'a> {
     creation_content: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     room_alias_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    power_level_content_override: Option<PowerLevelContentOverride<'a>>,
+}
+
+#[derive(Serialize)]
+struct PowerLevelContentOverride<'a> {
+    events: BTreeMap<&'a str, i64>,
 }
 
 impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
@@ -203,6 +210,14 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             MatrixRoomKind::Conversation => json!({}),
             MatrixRoomKind::Space => json!({ "type": "m.space" }),
         };
+        let member_writable_events = request.member_writable_state_event_types();
+        let power_level_content_override =
+            (!member_writable_events.is_empty()).then(|| PowerLevelContentOverride {
+                events: member_writable_events
+                    .iter()
+                    .map(|event_type| (event_type.as_str(), 0))
+                    .collect(),
+            });
         Self {
             name: request.name(),
             topic: request.topic(),
@@ -214,6 +229,7 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             room_alias_name: request
                 .alias_localpart()
                 .map(MatrixRoomAliasLocalpart::as_str),
+            power_level_content_override,
         }
     }
 }
@@ -314,6 +330,7 @@ mod tests {
     use super::super::{
         MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
     };
+    use super::CreateRoomRequest;
 
     #[tokio::test]
     async fn 受管_agent_通过身份断言加入和退出房间() {
@@ -350,6 +367,32 @@ mod tests {
             .expect_err("必须拒绝普通用户");
 
         assert_eq!(failure.operation(), MatrixOperation::Join);
+    }
+
+    #[test]
+    fn 建房请求只下放明确登记的状态事件权限() {
+        let request = MatrixCreateRoom::new(
+            Some("Lobby".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效")
+        .with_member_writable_state_event_type(
+            agent_room_application::ports::MatrixEventType::new("org.agentroom.agent.status.v1")
+                .expect("事件类型有效"),
+        );
+
+        let body =
+            serde_json::to_value(CreateRoomRequest::from(&request)).expect("建房请求可序列化");
+
+        assert_eq!(
+            body["power_level_content_override"]["events"]["org.agentroom.agent.status.v1"],
+            0
+        );
+        assert!(body["power_level_content_override"]["events"]["m.room.power_levels"].is_null());
     }
 
     #[tokio::test]

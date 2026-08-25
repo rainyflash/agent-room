@@ -326,6 +326,7 @@ pub struct MatrixCreateRoom {
     invite: Vec<MatrixUserId>,
     kind: MatrixRoomKind,
     alias_localpart: Option<MatrixRoomAliasLocalpart>,
+    member_writable_state_event_types: Vec<MatrixEventType>,
 }
 
 impl MatrixCreateRoom {
@@ -363,6 +364,7 @@ impl MatrixCreateRoom {
             invite,
             kind: MatrixRoomKind::Conversation,
             alias_localpart: None,
+            member_writable_state_event_types: Vec::new(),
         })
     }
 
@@ -375,6 +377,15 @@ impl MatrixCreateRoom {
     #[must_use]
     pub fn with_alias_localpart(mut self, alias_localpart: MatrixRoomAliasLocalpart) -> Self {
         self.alias_localpart = Some(alias_localpart);
+        self
+    }
+
+    /// 允许普通已加入成员写入指定状态事件类型。
+    #[must_use]
+    pub fn with_member_writable_state_event_type(mut self, event_type: MatrixEventType) -> Self {
+        if !self.member_writable_state_event_types.contains(&event_type) {
+            self.member_writable_state_event_types.push(event_type);
+        }
         self
     }
 
@@ -408,6 +419,10 @@ impl MatrixCreateRoom {
 
     pub const fn alias_localpart(&self) -> Option<&MatrixRoomAliasLocalpart> {
         self.alias_localpart.as_ref()
+    }
+
+    pub fn member_writable_state_event_types(&self) -> &[MatrixEventType] {
+        &self.member_writable_state_event_types
     }
 }
 
@@ -875,9 +890,29 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MatrixEvent, MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch,
-        MatrixSyncRequest, MatrixTimelineEvent,
+        MatrixCreateRoom, MatrixEvent, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
+        MatrixRoomVisibility, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
+        MatrixTimelineEvent,
     };
+
+    #[test]
+    fn 建房策略显式去重成员可写状态事件() {
+        let event_type =
+            MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效");
+        let request = MatrixCreateRoom::new(
+            Some("Lobby".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效")
+        .with_member_writable_state_event_type(event_type.clone())
+        .with_member_writable_state_event_type(event_type.clone());
+
+        assert_eq!(request.member_writable_state_event_types(), &[event_type]);
+    }
     use crate::ports::{
         MatrixEventId, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
         MatrixTransactionId,

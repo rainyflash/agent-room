@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 import os
 from pathlib import Path
+import re
 from typing import Final
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 ENV_FILE: Final = ROOT / ".env.local"
+SECURE_STORAGE_SERVICE: Final = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{1,126}[A-Za-z0-9])?$"
+)
 
 
 class LocalRuntimeError(RuntimeError):
@@ -103,3 +107,66 @@ def control_plane_runtime_environment(
     else:
         environment.pop("AGENT_ROOM_OTLP_TRACES_ENDPOINT", None)
     return environment
+
+
+def bridge_runtime_environment(
+    *,
+    data_root: Path,
+    agent_id: str | None = None,
+    public_lobby_catalog_id: str | None = None,
+    secure_storage_service: str | None = None,
+    base_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """生成 Bridge 唯一可信的本地运行时环境。"""
+    if not data_root.is_absolute():
+        raise LocalRuntimeError("Bridge 数据目录必须是绝对路径。")
+    if (agent_id is None) != (public_lobby_catalog_id is None):
+        raise LocalRuntimeError("Agent 与公共大厅目录必须同时配置。")
+    if secure_storage_service is not None and not SECURE_STORAGE_SERVICE.fullmatch(
+        secure_storage_service
+    ):
+        raise LocalRuntimeError("Bridge 安全存储命名空间格式无效。")
+
+    environment = dict(os.environ if base_environment is None else base_environment)
+    environment.update(
+        {
+            "AGENT_ROOM_CONTROL_PLANE_URL": "http://127.0.0.1:8090/",
+            "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
+            "AGENT_ROOM_OIDC_ISSUER_URL": (
+                "http://127.0.0.1:18080/realms/agent-room"
+            ),
+            "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID": "agent-room-bridge",
+            "AGENT_ROOM_BRIDGE_REQUEST_TIMEOUT_MS": "10000",
+            "AGENT_ROOM_BRIDGE_AUTHORIZATION_TIMEOUT_MS": "600000",
+            "AGENT_ROOM_BRIDGE_REFRESH_LEAD_MS": "120000",
+            "AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS": "1000",
+            "AGENT_ROOM_BRIDGE_RECONNECT_MAXIMUM_MS": "60000",
+            "AGENT_ROOM_BRIDGE_MATRIX_SYNC_TIMEOUT_MS": "1000",
+            "AGENT_ROOM_BRIDGE_DATA_DIR": str(data_root),
+            "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE": "false",
+            "AGENT_ROOM_BRIDGE_DEVICE_LABEL": "Agent Room 本地 Bridge",
+        }
+    )
+    _replace_optional(environment, "AGENT_ROOM_AGENT_ID", agent_id)
+    _replace_optional(
+        environment,
+        "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID",
+        public_lobby_catalog_id,
+    )
+    _replace_optional(environment, "AGENT_ROOM_LOBBY_LANGUAGE", "en" if agent_id else None)
+    _replace_optional(environment, "AGENT_ROOM_LOBBY_REGION", None)
+    _replace_optional(
+        environment,
+        "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE",
+        secure_storage_service,
+    )
+    return environment
+
+
+def _replace_optional(
+    environment: dict[str, str], name: str, value: str | None
+) -> None:
+    if value is None:
+        environment.pop(name, None)
+        return
+    environment[name] = value

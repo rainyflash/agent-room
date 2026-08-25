@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Final, TextIO
+from typing import Final, Protocol, TextIO
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 import uuid
@@ -24,17 +25,21 @@ import uuid
 if __package__:
     from .local_runtime import (
         LocalRuntimeError,
+        bridge_runtime_environment,
         control_plane_runtime_environment,
         read_environment,
         required_value,
     )
+    from .mcp_client import McpClientFailure, McpStdioClient
 else:
     from local_runtime import (
         LocalRuntimeError,
+        bridge_runtime_environment,
         control_plane_runtime_environment,
         read_environment,
         required_value,
     )
+    from mcp_client import McpClientFailure, McpStdioClient
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -49,6 +54,29 @@ LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
 CATALOG_SEED_ID: Final = "019d2c44-1dc5-7a5b-9e32-2f3c1d4b5a61"
 CATALOG_SLUG: Final = "vertical-codex-lobby"
 SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24"
+BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge"
+SECURE_STORAGE_ACCOUNTS: Final = (
+    "device-signing-seed",
+    "agent-instance-signing-seed-v1",
+    "device-session-v1",
+    "agent-runtime-session-v1",
+    "matrix-store-passphrase-v1",
+    "handoff-storage-key-v1",
+    "bridge-ipc-installation-id-v1",
+    "bridge-ipc-shared-secret-v1",
+)
+EXPECTED_MCP_TOOLS: Final = frozenset(
+    {
+        "agent_room_get_self",
+        "agent_room_list_previews",
+        "agent_room_get_presence",
+        "agent_room_open_content",
+        "agent_room_publish_status",
+        "agent_room_send_message",
+        "agent_room_consume_handoff",
+        "agent_room_decline_handoff",
+    }
+)
 SENSITIVE_NAME: Final = re.compile(r"(?:PASSWORD|SECRET|TOKEN|ACCESS_KEY)", re.IGNORECASE)
 JWT_VALUE: Final = re.compile(
     r"\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b"
@@ -99,6 +127,68 @@ class LogRedactor:
 
 
 LineObserver = Callable[[str], None]
+
+
+class ProcessHealth(Protocol):
+    def ensure_running(self) -> None: ...
+
+
+class BridgeRuntimeObservation:
+    """只在内存中捕获一次性设备码，并暴露可等待的运行时里程碑。"""
+
+    def __init__(self) -> None:
+        self._device_code: str | None = None
+        self._device_code_ready = threading.Event()
+        self._agent_online = threading.Event()
+        self._lock = threading.Lock()
+
+    def observe(self, line: str) -> None:
+        match = DEVICE_CODE_LINE.fullmatch(line.strip())
+        if match is not None:
+            with self._lock:
+                self._device_code = match.group(2)
+            self._device_code_ready.set()
+        if "Agent 已进入公共大厅并开始同步。" in line:
+            self._agent_online.set()
+
+    def wait_for_device_code(
+        self, process: ProcessHealth, *, timeout_seconds: float
+    ) -> str:
+        self._wait(
+            self._device_code_ready,
+            process,
+            timeout_seconds=timeout_seconds,
+            label="Bridge 设备码",
+        )
+        with self._lock:
+            if self._device_code is None:
+                raise VerticalFailure("Bridge 设备码观察状态不一致。")
+            return self._device_code
+
+    def wait_for_agent_online(
+        self, process: ProcessHealth, *, timeout_seconds: float
+    ) -> None:
+        self._wait(
+            self._agent_online,
+            process,
+            timeout_seconds=timeout_seconds,
+            label="Agent 自动入厅",
+        )
+
+    @staticmethod
+    def _wait(
+        event: threading.Event,
+        process: ProcessHealth,
+        *,
+        timeout_seconds: float,
+        label: str,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            process.ensure_running()
+            if event.wait(timeout=min(0.25, max(0.0, deadline - time.monotonic()))):
+                return
+        raise VerticalFailure(f"{label} 未在 {timeout_seconds:.0f} 秒内出现。")
 
 
 class ManagedProcess(AbstractContextManager["ManagedProcess"]):
@@ -307,6 +397,34 @@ class IsolatedInfrastructure(AbstractContextManager["IsolatedInfrastructure"]):
         raise VerticalFailure(message)
 
 
+class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
+    """只清理纵向验收专属目录和凭据命名空间。"""
+
+    def __enter__(self) -> "IsolatedBridgeState":
+        reset_bridge_data()
+        clear_vertical_secure_storage()
+        BRIDGE_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        failures: list[str] = []
+        try:
+            reset_bridge_data()
+        except (OSError, VerticalFailure) as error:
+            failures.append(f"Bridge 测试目录清理失败：{error}")
+        try:
+            clear_vertical_secure_storage()
+        except (OSError, VerticalFailure, subprocess.SubprocessError) as error:
+            failures.append(f"Bridge 测试凭据清理失败：{error}")
+        if not failures:
+            return
+        message = "；".join(failures)
+        if exc_value is not None:
+            print(message, file=sys.stderr)
+            return
+        raise VerticalFailure(message)
+
+
 def executable(name: str) -> str:
     resolved = shutil.which(name)
     if resolved is None:
@@ -378,6 +496,80 @@ def remove_vertical_infrastructure() -> None:
             "--remove-orphans",
         ]
     )
+
+
+def reset_bridge_data() -> None:
+    target = BRIDGE_DATA_ROOT.resolve()
+    expected_parent = VERTICAL_ROOT.resolve()
+    if target.parent != expected_parent or target.name != "bridge":
+        raise VerticalFailure("拒绝清理未经审计的 Bridge 测试目录。")
+    if target.exists():
+        shutil.rmtree(target)
+
+
+def clear_vertical_secure_storage() -> None:
+    if os.name == "nt":
+        for account in SECURE_STORAGE_ACCOUNTS:
+            delete_windows_credential(
+                windows_credential_target(SECURE_STORAGE_SERVICE, account)
+            )
+        return
+    if sys.platform == "darwin":
+        for account in SECURE_STORAGE_ACCOUNTS:
+            completed = subprocess.run(
+                [
+                    executable("security"),
+                    "delete-generic-password",
+                    "-s",
+                    SECURE_STORAGE_SERVICE,
+                    "-a",
+                    account,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
+            )
+            if completed.returncode not in {0, 44}:
+                raise VerticalFailure("无法清理 macOS 纵向验收凭据。")
+        return
+    secret_tool = shutil.which("secret-tool")
+    if secret_tool is None:
+        raise VerticalFailure("Linux 纵向验收需要 secret-tool 清理隔离凭据。")
+    for account in SECURE_STORAGE_ACCOUNTS:
+        completed = subprocess.run(
+            [
+                secret_tool,
+                "clear",
+                "service",
+                SECURE_STORAGE_SERVICE,
+                "username",
+                account,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise VerticalFailure("无法清理 Linux 纵向验收凭据。")
+
+
+def windows_credential_target(service: str, account: str) -> str:
+    """匹配 windows-native-keyring-store 的默认 user.service 映射。"""
+    return f"{account}.{service}"
+
+
+def delete_windows_credential(target: str) -> None:
+    credential_type_generic = 1
+    error_not_found = 1168
+    advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    delete = advapi32.CredDeleteW
+    delete.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32)
+    delete.restype = ctypes.c_int
+    if delete(target, credential_type_generic, 0):
+        return
+    error_code = ctypes.get_last_error()
+    if error_code != error_not_found:
+        raise VerticalFailure(f"Windows 凭据清理失败，错误码 {error_code}。")
 
 
 def prepare_environment() -> dict[str, str]:
@@ -521,72 +713,78 @@ def http_status_is_ready(status: int) -> bool:
     return 200 <= status < 300
 
 
+def start_control_plane(
+    processes: ProcessStack,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> ManagedProcess:
+    control_plane = processes.start(
+        ManagedProcess(
+            name="control-plane",
+            command=[str(runtime_binary("agent-room-control-plane"))],
+            environment=control_plane_runtime_environment(
+                environment, enable_telemetry=True
+            ),
+            log_path=LOG_ROOT / "control-plane.log",
+            redactor=redactor,
+        )
+    )
+    wait_for_http(
+        "http://127.0.0.1:8090/health/live",
+        control_plane,
+        timeout_seconds=120,
+    )
+    return control_plane
+
+
+def start_web(processes: ProcessStack, redactor: LogRedactor) -> ManagedProcess:
+    web = processes.start(
+        ManagedProcess(
+            name="web",
+            command=[
+                executable("node"),
+                "apps/web/node_modules/vite/bin/vite.js",
+                "apps/web",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "5173",
+                "--strictPort",
+            ],
+            environment=os.environ.copy(),
+            log_path=LOG_ROOT / "web.log",
+            redactor=redactor,
+        )
+    )
+    wait_for_http("http://127.0.0.1:5173/connect", web, timeout_seconds=60)
+    return web
+
+
 def bootstrap_agent(environment: Mapping[str, str]) -> dict[str, str]:
     VERTICAL_ROOT.mkdir(parents=True, exist_ok=True)
     BOOTSTRAP_RESULT.unlink(missing_ok=True)
     process_environment = os.environ.copy()
-    control_plane_environment = control_plane_runtime_environment(
-        environment, enable_telemetry=True
+    playwright_environment = process_environment.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(
+                environment, "SEED_ADMIN_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_BOOTSTRAP_RESULT": str(BOOTSTRAP_RESULT),
+        }
     )
-    redactor = LogRedactor(environment)
-    with ProcessStack() as processes:
-        control_plane = processes.start(
-            ManagedProcess(
-                name="control-plane",
-                command=[str(runtime_binary("agent-room-control-plane"))],
-                environment=control_plane_environment,
-                log_path=LOG_ROOT / "control-plane.log",
-                redactor=redactor,
-            )
-        )
-        wait_for_http(
-            "http://127.0.0.1:8090/health/live",
-            control_plane,
-            timeout_seconds=120,
-        )
-
-        node = executable("node")
-        web = processes.start(
-            ManagedProcess(
-                name="web",
-                command=[
-                    node,
-                    "apps/web/node_modules/vite/bin/vite.js",
-                    "apps/web",
-                    "--host",
-                    "0.0.0.0",
-                    "--port",
-                    "5173",
-                    "--strictPort",
-                ],
-                environment=process_environment,
-                log_path=LOG_ROOT / "web.log",
-                redactor=redactor,
-            )
-        )
-        wait_for_http("http://127.0.0.1:5173/connect", web, timeout_seconds=60)
-
-        playwright_environment = process_environment.copy()
-        playwright_environment.update(
-            {
-                "AGENT_ROOM_E2E_USERNAME": "developer",
-                "AGENT_ROOM_E2E_PASSWORD": required_value(
-                    environment, "SEED_ADMIN_PASSWORD"
-                ),
-                "AGENT_ROOM_VERTICAL_BOOTSTRAP_RESULT": str(BOOTSTRAP_RESULT),
-            }
-        )
-        run_checked(
-            [
-                node,
-                "apps/web/node_modules/@playwright/test/cli.js",
-                "test",
-                "--config",
-                "apps/web/playwright.vertical.config.ts",
-                "bootstrap.e2e.ts",
-            ],
-            environment=playwright_environment,
-        )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "bootstrap.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
 
     result = read_string_object(BOOTSTRAP_RESULT)
     for name in ("agentId", "principalId"):
@@ -595,6 +793,137 @@ def bootstrap_agent(environment: Mapping[str, str]) -> dict[str, str]:
         if not result.get(name, "").startswith("@"):
             raise VerticalFailure(f"浏览器引导结果缺少有效 {name}。")
     return result
+
+
+def start_authorized_bridge(
+    *,
+    processes: ProcessStack,
+    environment: Mapping[str, str],
+    catalog_id: str,
+    agent_id: str,
+    redactor: LogRedactor,
+) -> tuple[ManagedProcess, dict[str, str]]:
+    bridge_environment = bridge_runtime_environment(
+        data_root=BRIDGE_DATA_ROOT.resolve(),
+        agent_id=agent_id,
+        public_lobby_catalog_id=catalog_id,
+        secure_storage_service=SECURE_STORAGE_SERVICE,
+    )
+    observation = BridgeRuntimeObservation()
+    bridge = processes.start(
+        ManagedProcess(
+            name="bridge",
+            command=[str(runtime_binary("agent-room-bridge"))],
+            environment=bridge_environment,
+            log_path=LOG_ROOT / "bridge.log",
+            redactor=redactor,
+            on_line=observation.observe,
+        )
+    )
+    device_code = observation.wait_for_device_code(bridge, timeout_seconds=90)
+    approve_device_grant(environment, device_code)
+    observation.wait_for_agent_online(bridge, timeout_seconds=180)
+    return bridge, bridge_environment
+
+
+def approve_device_grant(environment: Mapping[str, str], device_code: str) -> None:
+    approval_environment = os.environ.copy()
+    approval_environment.update(
+        {
+            "AGENT_ROOM_TEST_DEVICE_USER_CODE": device_code,
+            "AGENT_ROOM_TEST_OIDC_USERNAME": "developer",
+            "AGENT_ROOM_TEST_OIDC_PASSWORD": required_value(
+                environment, "SEED_ADMIN_PASSWORD"
+            ),
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "tools/run-powershell.mjs",
+            "tools/device-grant-approve.ps1",
+            "-BaseUrl",
+            "http://127.0.0.1:18080",
+        ],
+        environment=approval_environment,
+    )
+
+
+def verify_mcp_identity(
+    *,
+    bridge_environment: Mapping[str, str],
+    expected_agent_id: str,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-codex-mcp"))],
+        working_directory=ROOT,
+        environment=bridge_environment,
+        stderr_path=LOG_ROOT / "codex-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as client:
+        tools = frozenset(client.list_tool_names())
+        if tools != EXPECTED_MCP_TOOLS:
+            missing = sorted(EXPECTED_MCP_TOOLS - tools)
+            unexpected = sorted(tools - EXPECTED_MCP_TOOLS)
+            raise VerticalFailure(
+                f"MCP 工具面不匹配；缺少 {missing}，多出 {unexpected}。"
+            )
+        response = client.call_tool("agent_room_get_self", {})
+
+    if response.get("type") != "self_summary":
+        raise VerticalFailure("MCP 当前身份返回了错误响应类型。")
+    summary = require_object(response.get("summary"), "MCP 当前身份摘要")
+    agent = require_object(summary.get("agent"), "MCP Agent 身份")
+    if agent.get("agentId") != expected_agent_id:
+        raise VerticalFailure("MCP Agent 身份与浏览器创建结果不一致。")
+    instance_id = require_text(summary.get("instanceId"), "MCP Agent 实例标识")
+    require_uuid_v7(instance_id, "MCP Agent 实例标识")
+    room = active_room_for_agent(expected_agent_id)
+    return {
+        "agentInstanceId": instance_id,
+        "matrixDeviceId": require_text(
+            summary.get("matrixDeviceId"), "MCP Matrix 设备标识"
+        ),
+        "roomInstanceId": room["roomInstanceId"],
+        "matrixRoomId": room["matrixRoomId"],
+    }
+
+
+def active_room_for_agent(agent_id: str) -> dict[str, str]:
+    result = compose_psql(
+        f"""
+SELECT room.id::text || '|' || room.matrix_room_id
+FROM agent_room.room_capacity_reservation AS reservation
+JOIN agent_room.room_instance AS room
+  ON room.id = reservation.room_instance_id
+WHERE reservation.agent_id = '{agent_id}'
+  AND reservation.state = 'committed'
+  AND room.state = 'active'
+ORDER BY reservation.finalized_at DESC, reservation.id DESC
+LIMIT 1;
+"""
+    )
+    room_instance_id, separator, matrix_room_id = result.partition("|")
+    if not separator or not matrix_room_id.startswith("!"):
+        raise VerticalFailure("Bridge 自动入厅后没有形成有效房间归属。")
+    require_uuid_v7(room_instance_id, "公共大厅分片标识")
+    return {
+        "roomInstanceId": room_instance_id,
+        "matrixRoomId": matrix_room_id,
+    }
+
+
+def require_object(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(name, str) for name in value):
+        raise VerticalFailure(f"{label} 必须是对象。")
+    return {str(name): item for name, item in value.items()}
+
+
+def require_text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise VerticalFailure(f"{label} 必须是非空文本。")
+    return value
 
 
 def read_string_object(path: Path) -> dict[str, str]:
@@ -637,13 +966,32 @@ def bootstrap() -> None:
     with IsolatedInfrastructure():
         initialize_isolated_dependencies()
         catalog_id = seed_public_catalog()
-        agent = bootstrap_agent(environment)
+        redactor = LogRedactor(environment)
+        with IsolatedBridgeState(), ProcessStack() as processes:
+            start_control_plane(processes, environment, redactor)
+            start_web(processes, redactor)
+            agent = bootstrap_agent(environment)
+            _, bridge_environment = start_authorized_bridge(
+                processes=processes,
+                environment=environment,
+                catalog_id=catalog_id,
+                agent_id=agent["agentId"],
+                redactor=redactor,
+            )
+            runtime = verify_mcp_identity(
+                bridge_environment=bridge_environment,
+                expected_agent_id=agent["agentId"],
+                redactor=redactor,
+            )
     print(
         json.dumps(
             {
                 "agentId": agent["agentId"],
+                "agentInstanceId": runtime["agentInstanceId"],
                 "catalogId": catalog_id,
+                "matrixRoomId": runtime["matrixRoomId"],
                 "principalId": agent["principalId"],
+                "roomInstanceId": runtime["roomInstanceId"],
                 "secureStorageService": SECURE_STORAGE_SERVICE,
             },
             ensure_ascii=False,
@@ -661,6 +1009,7 @@ def main() -> int:
             bootstrap()
     except (
         LocalRuntimeError,
+        McpClientFailure,
         OSError,
         VerticalFailure,
         subprocess.SubprocessError,

@@ -3,13 +3,20 @@ import tempfile
 import unittest
 
 from tools.vertical import (
+    BridgeRuntimeObservation,
     LogRedactor,
     VerticalFailure,
     compose_command,
     http_status_is_ready,
     read_string_object,
     require_uuid_v7,
+    windows_credential_target,
 )
+
+
+class RunningProcess:
+    def ensure_running(self) -> None:
+        return
 
 
 class LogRedactorTests(unittest.TestCase):
@@ -28,6 +35,19 @@ class LogRedactorTests(unittest.TestCase):
         self.assertNotIn("local-secret-value", text)
         self.assertNotIn("ABCD-EFGH", text)
         self.assertIn("[已脱敏]", text)
+
+    def test_设备码只进入内存观察器而不会进入日志(self) -> None:
+        observation = BridgeRuntimeObservation()
+        redactor = LogRedactor({})
+        line = "设备验证码：ABCD-EFGH\n"
+
+        observation.observe(line)
+
+        code = observation.wait_for_device_code(
+            RunningProcess(), timeout_seconds=0.1
+        )
+        self.assertEqual(code, "ABCD-EFGH")
+        self.assertNotIn(code, redactor.redact(line))
 
 
 class ResultValidationTests(unittest.TestCase):
@@ -58,6 +78,12 @@ class ComposeBoundaryTests(unittest.TestCase):
     def test_拒绝操作未登记的_compose_项目(self) -> None:
         with self.assertRaises(VerticalFailure):
             compose_command("agent-room-user-data")
+
+    def test_windows_凭据目标与_rust_后端映射一致(self) -> None:
+        self.assertEqual(
+            windows_credential_target("dev.agent-room.bridge.vertical-24", "session"),
+            "session.dev.agent-room.bridge.vertical-24",
+        )
 
 
 if __name__ == "__main__":
