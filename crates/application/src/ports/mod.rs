@@ -7,6 +7,7 @@ mod devices;
 mod handoffs;
 mod identity;
 mod matrix;
+mod moderation;
 mod notifications;
 mod outbox;
 mod projections;
@@ -86,6 +87,11 @@ pub use matrix::{
     MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
     MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
+};
+pub use moderation::{
+    ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
+    ModerationEffectTarget, ModerationIdentifierFactory, ModerationReportPolicy,
+    ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{

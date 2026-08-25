@@ -10,6 +10,7 @@ pub mod devices;
 pub mod direct_sessions;
 pub mod handoffs;
 pub mod health;
+pub mod moderation;
 pub mod outbox;
 pub mod persistence;
 pub mod ports;
