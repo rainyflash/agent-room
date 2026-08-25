@@ -111,6 +111,7 @@ pub(crate) async fn initialize(
             identities,
             matrix_authority: authority,
             private_rooms: dependencies.repositories.clone(),
+            direct_sessions: dependencies.repositories.clone(),
         }),
     );
     let limiter = build_download_limiter(dependencies.config, &dependencies.repositories)?;
