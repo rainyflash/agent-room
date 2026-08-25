@@ -25,6 +25,7 @@ use agent_room_application::{
     devices::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
     },
+    direct_sessions::{DirectSessionDependencies, DirectSessionService},
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
     ports::{MatrixAgentLocalpart, MatrixUserId, SecretValue},
@@ -57,6 +58,7 @@ use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
+use features::direct_sessions::DirectSessionHttpState;
 use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
 use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
@@ -83,6 +85,7 @@ struct AgentFeatureHttpStates {
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
+    direct_sessions: DirectSessionHttpState,
 }
 
 struct AgentFeatureDependencies {
@@ -284,6 +287,9 @@ async fn build_identity_router(
         .merge(features::private_rooms::router(
             agent_features.private_rooms,
         ))
+        .merge(features::direct_sessions::router(
+            agent_features.direct_sessions,
+        ))
         .merge(features::agent_cards::router(agent_features.cards))
         .merge(content_routes);
     Ok(IdentityRuntime {
@@ -325,9 +331,16 @@ fn build_agent_feature_states(
     let private_rooms = Arc::new(PrivateRoomService::new(PrivateRoomDependencies {
         store: dependencies.repositories.clone(),
         matrix_provisioner: dependencies.matrix_identities.clone(),
-        matrix: dependencies.matrix_identities,
+        matrix: dependencies.matrix_identities.clone(),
         principals: dependencies.repositories.clone(),
         trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    let direct_sessions = Arc::new(DirectSessionService::new(DirectSessionDependencies {
+        store: dependencies.repositories.clone(),
+        agents: dependencies.repositories.clone(),
+        matrix: dependencies.matrix_identities,
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime,
     }));
@@ -359,6 +372,11 @@ fn build_agent_feature_states(
         }),
         private_rooms: PrivateRoomHttpState::new(
             private_rooms,
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+        ),
+        direct_sessions: DirectSessionHttpState::new(
+            direct_sessions,
             dependencies.authentication,
             &config.authentication.frontend_origin,
         ),

@@ -13,6 +13,7 @@ use agent_room_application::{
         IssueContentReadTicketFailure, OpenContentFailure, RedactContentFailure,
     },
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
+    direct_sessions::{DirectSessionFailure, DirectSessionFailureKind},
     handoffs::{HandoffAccessFailure, HandoffAccessFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
@@ -387,6 +388,70 @@ impl ApiError {
             stage = ?failure.stage(),
             failure = ?failure.kind(),
             "私人房间请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn direct_session(
+        failure: DirectSessionFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            DirectSessionFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "direct_session.invalid_request",
+                ErrorCategory::Validation,
+                "直接会话请求无效。",
+            ),
+            DirectSessionFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "direct_session.forbidden",
+                ErrorCategory::Authorization,
+                "无权访问该直接会话。",
+            ),
+            DirectSessionFailureKind::Blocked => (
+                StatusCode::FORBIDDEN,
+                "direct_session.blocked",
+                ErrorCategory::Authorization,
+                "该联系人已被任一方屏蔽，不能建立或恢复投递。",
+            ),
+            DirectSessionFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "direct_session.not_found",
+                ErrorCategory::Validation,
+                "直接会话或目标 Agent 不存在。",
+            ),
+            DirectSessionFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "direct_session.conflict",
+                ErrorCategory::Conflict,
+                "直接会话状态已经变化，请刷新后重试。",
+            ),
+            DirectSessionFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "direct_session.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "直接会话依赖暂时不可用。",
+            ),
+            DirectSessionFailureKind::UnknownCommit => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "direct_session.unknown_commit",
+                ErrorCategory::UnknownCommit,
+                "直接会话提交状态未知，必须先对账。",
+            ),
+            DirectSessionFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "direct_session.internal",
+                ErrorCategory::Transient,
+                "直接会话服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            stage = ?failure.stage(),
+            failure = ?failure.kind(),
+            "直接会话请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }
