@@ -2,6 +2,7 @@ pub(crate) mod agent_cards;
 pub(crate) mod agent_instances;
 pub(crate) mod agents;
 pub(crate) mod authentication;
+pub(crate) mod automation;
 pub(crate) mod capabilities;
 pub(crate) mod content;
 pub(crate) mod devices;

@@ -1,6 +1,7 @@
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, AutomationGrantId, MessageSubmissionId, RoomCatalogId},
-    policy::{AutomationGrantLimits, AutomationGrantScope, AutomationRiskScanOutcome},
+    policy::{AutomationGrantScope, AutomationRiskScanOutcome},
+    time::DurationMillis,
 };
 
 use crate::{
@@ -16,7 +17,9 @@ pub struct CreateAutomationGrant {
     pub actor: AuthenticatedPrincipal,
     pub grant_id: AutomationGrantId,
     pub scope: AutomationGrantScope,
-    pub limits: AutomationGrantLimits,
+    pub max_messages_per_minute: u16,
+    pub max_total_messages: Option<u32>,
+    pub lifetime: DurationMillis,
     pub impact_acknowledged: bool,
 }
 

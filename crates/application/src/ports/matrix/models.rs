@@ -284,6 +284,14 @@ impl MatrixPowerLevel {
             Self::Infinite => true,
         }
     }
+
+    pub const fn satisfies(self, required: Self) -> bool {
+        match (self, required) {
+            (Self::Infinite, _) => true,
+            (Self::Finite(_), Self::Infinite) => false,
+            (Self::Finite(actual), Self::Finite(minimum)) => actual >= minimum,
+        }
+    }
 }
 
 /// 单次权威状态查询得到的内容读取授权证据。
@@ -291,6 +299,7 @@ impl MatrixPowerLevel {
 pub struct MatrixRoomAuthority {
     joined: bool,
     power_level: MatrixPowerLevel,
+    message_send_power_level: MatrixPowerLevel,
 }
 
 impl MatrixRoomAuthority {
@@ -298,6 +307,18 @@ impl MatrixRoomAuthority {
         Self {
             joined: true,
             power_level,
+            message_send_power_level: MatrixPowerLevel::Finite(0),
+        }
+    }
+
+    pub const fn joined_with_message_threshold(
+        power_level: MatrixPowerLevel,
+        message_send_power_level: MatrixPowerLevel,
+    ) -> Self {
+        Self {
+            joined: true,
+            power_level,
+            message_send_power_level,
         }
     }
 
@@ -305,6 +326,7 @@ impl MatrixRoomAuthority {
         Self {
             joined: false,
             power_level: MatrixPowerLevel::Finite(0),
+            message_send_power_level: MatrixPowerLevel::Finite(0),
         }
     }
 
@@ -314,6 +336,14 @@ impl MatrixRoomAuthority {
 
     pub const fn power_level(self) -> MatrixPowerLevel {
         self.power_level
+    }
+
+    pub const fn message_send_power_level(self) -> MatrixPowerLevel {
+        self.message_send_power_level
+    }
+
+    pub const fn can_send_messages(self) -> bool {
+        self.joined && self.power_level.satisfies(self.message_send_power_level)
     }
 }
 

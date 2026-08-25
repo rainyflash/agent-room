@@ -11,6 +11,7 @@ use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryFailureKind},
     agents::{AgentManagementFailure, AgentManagementFailureKind},
     authentication::{AuthenticationFailure, AuthenticationFailureKind},
+    automation::{AutomationFailure, AutomationFailureKind},
     content::{
         BeginContentUploadFailure, BindContentEventFailure, CompleteContentUploadFailure,
         IssueContentReadTicketFailure, OpenContentFailure, RedactContentFailure,
@@ -72,6 +73,54 @@ impl ApiError {
             "请求无法通过安全校验。",
             correlation_id,
         )
+    }
+
+    pub(crate) fn automation(failure: AutomationFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AutomationFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "automation.invalid_request",
+                ErrorCategory::Validation,
+                "自动发言授权请求无效。",
+            ),
+            AutomationFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "automation.forbidden",
+                ErrorCategory::Authorization,
+                "当前主体无权执行该自动发言授权操作。",
+            ),
+            AutomationFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "automation.not_found",
+                ErrorCategory::Validation,
+                "自动发言授权不存在。",
+            ),
+            AutomationFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "automation.conflict",
+                ErrorCategory::Conflict,
+                "自动发言授权状态已经变化，请刷新后重试。",
+            ),
+            AutomationFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "automation.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "自动发言授权依赖暂时不可用，发送已拒绝。",
+            ),
+            AutomationFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "automation.internal",
+                ErrorCategory::Transient,
+                "自动发言授权服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "自动发言授权请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
     }
 
     fn retry_after_seconds(mut self, seconds: u64) -> Self {

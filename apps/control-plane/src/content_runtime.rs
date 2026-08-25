@@ -49,11 +49,18 @@ const AUTHORITY_DEVICE_NAME: &str = "Agent Room 内容授权服务";
 pub(crate) struct ContentRuntime {
     routes: Router,
     cleanup: ContentCleanupWorker,
+    matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
 }
 
 impl ContentRuntime {
-    pub(crate) fn into_parts(self) -> (Router, ContentCleanupWorker) {
-        (self.routes, self.cleanup)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Router,
+        ContentCleanupWorker,
+        Arc<dyn MatrixRoomAuthorityGateway>,
+    ) {
+        (self.routes, self.cleanup, self.matrix_authority)
     }
 }
 
@@ -109,7 +116,7 @@ pub(crate) async fn initialize(
     let authorizer: Arc<dyn ContentMembershipAuthorizer> = Arc::new(
         ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
             identities,
-            matrix_authority: authority,
+            matrix_authority: authority.clone(),
             private_rooms: dependencies.repositories.clone(),
             direct_sessions: dependencies.repositories.clone(),
         }),
@@ -145,6 +152,7 @@ pub(crate) async fn initialize(
     Ok(ContentRuntime {
         routes: crate::features::content::router(state),
         cleanup,
+        matrix_authority: authority,
     })
 }
 

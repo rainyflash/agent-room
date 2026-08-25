@@ -29,7 +29,7 @@ use agent_room_domain::{
         AutomationGrantLimits, AutomationGrantScope, AutomationGrantStatus, AutomationMessageKind,
         AutomationMessageKinds, AutomationRiskScanOutcome, AutomationUsageSnapshot,
     },
-    time::UtcMillis,
+    time::{DurationMillis, UtcMillis},
 };
 use uuid::Uuid;
 
@@ -334,7 +334,10 @@ async fn 陌生受众越界在_matrix_调用之前拒绝并留存原因() {
 async fn 房间成员或发言权变化立即阻止发送() {
     let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
     *fixture.matrix.authority.lock().expect("Matrix 权威锁可用") =
-        Ok(MatrixRoomAuthority::not_joined());
+        Ok(MatrixRoomAuthority::joined_with_message_threshold(
+            MatrixPowerLevel::finite(0),
+            MatrixPowerLevel::finite(50),
+        ));
 
     let outcome = fixture
         .service
@@ -433,7 +436,9 @@ fn create_request() -> CreateAutomationGrant {
         actor: web_actor(true),
         grant_id: grant_id(),
         scope: scope(AutomationAudience::KnownRoomMembers, false),
-        limits: limits(),
+        max_messages_per_minute: 2,
+        max_total_messages: Some(3),
+        lifetime: DurationMillis::new(60_000).expect("期限有效"),
         impact_acknowledged: true,
     }
 }

@@ -25,13 +25,14 @@ use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
+    automation::{AutomationDependencies, AutomationService},
     devices::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
     },
     direct_sessions::{DirectSessionDependencies, DirectSessionService},
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
-    ports::{MatrixAgentLocalpart, MatrixUserId, SecretValue},
+    ports::{MatrixAgentLocalpart, MatrixRoomAuthorityGateway, MatrixUserId, SecretValue},
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
@@ -61,6 +62,7 @@ use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agent_instances::{AgentInstanceHttpState, AgentInstanceHttpStateDependencies};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
+use features::automation::{AutomationHttpDependencies, AutomationHttpState};
 use features::devices::{DeviceHttpDependencies, DeviceHttpState};
 use features::direct_sessions::DirectSessionHttpState;
 use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
@@ -91,6 +93,7 @@ struct AgentFeatureHttpStates {
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
     direct_sessions: DirectSessionHttpState,
+    automation: AutomationHttpState,
 }
 
 struct AgentFeatureDependencies {
@@ -100,6 +103,7 @@ struct AgentFeatureDependencies {
     matrix_identities: Arc<MatrixApplicationServiceProvisioner>,
     authentication: Arc<AuthenticationService>,
     devices: Arc<DeviceAuthorizationService>,
+    matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -258,33 +262,34 @@ async fn build_identity_router(
         },
         &authentication_config.frontend_origin,
     );
-    let agent_features = build_agent_feature_states(
-        config,
-        request_timeout,
-        AgentFeatureDependencies {
-            repositories: repositories.clone(),
-            system_runtime: system_runtime.clone(),
-            secrets: secrets.clone(),
-            matrix_identities: matrix_identities.clone(),
-            authentication: service.clone(),
-            devices: devices.clone(),
-        },
-    )?;
     let content_runtime =
         content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
             config: &config.content,
             matrix_base_url: config.dependencies.matrix_base_url.as_str(),
             matrix_request_timeout: request_timeout,
-            repositories,
-            system_runtime,
-            authentication: service,
-            devices,
-            secrets,
-            matrix_identities,
+            repositories: repositories.clone(),
+            system_runtime: system_runtime.clone(),
+            authentication: service.clone(),
+            devices: devices.clone(),
+            secrets: secrets.clone(),
+            matrix_identities: matrix_identities.clone(),
             frontend_origin: &authentication_config.frontend_origin,
         })
         .await?;
-    let (content_routes, content_cleanup) = content_runtime.into_parts();
+    let (content_routes, content_cleanup, matrix_authority) = content_runtime.into_parts();
+    let agent_features = build_agent_feature_states(
+        config,
+        request_timeout,
+        AgentFeatureDependencies {
+            repositories,
+            system_runtime,
+            secrets,
+            matrix_identities,
+            authentication: service,
+            devices,
+            matrix_authority,
+        },
+    )?;
     let routes = features::authentication::router(state)
         .merge(features::devices::router(device_state))
         .merge(features::agents::router(agent_features.agents))
@@ -298,6 +303,7 @@ async fn build_identity_router(
             agent_features.direct_sessions,
         ))
         .merge(features::agent_cards::router(agent_features.cards))
+        .merge(features::automation::router(agent_features.automation))
         .merge(content_routes);
     Ok(IdentityRuntime {
         routes,
@@ -349,6 +355,7 @@ fn build_agent_feature_states(
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
     }));
+    let automation = build_automation_http_state(config, &dependencies);
     let direct_sessions = Arc::new(DirectSessionService::new(DirectSessionDependencies {
         store: dependencies.repositories.clone(),
         agents: dependencies.repositories.clone(),
@@ -386,8 +393,8 @@ fn build_agent_feature_states(
         }),
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
-            devices: dependencies.devices,
-            secrets: dependencies.secrets,
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
         }),
         private_rooms: PrivateRoomHttpState::new(
             private_rooms,
@@ -396,10 +403,32 @@ fn build_agent_feature_states(
         ),
         direct_sessions: DirectSessionHttpState::new(
             direct_sessions,
-            dependencies.authentication,
+            dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
         ),
+        automation,
     })
+}
+
+fn build_automation_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> AutomationHttpState {
+    let automation = Arc::new(AutomationService::new(AutomationDependencies {
+        grants: dependencies.repositories.clone(),
+        authority: dependencies.repositories.clone(),
+        matrix_authority: dependencies.matrix_authority.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    AutomationHttpState::new(
+        AutomationHttpDependencies {
+            automation,
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+        },
+        &config.authentication.frontend_origin,
+    )
 }
 
 fn content_authority_matrix_user(

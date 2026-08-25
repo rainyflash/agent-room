@@ -4,7 +4,7 @@ use agent_room_domain::{
     ids::PrincipalId,
     policy::{
         AutomationGrant, AutomationGrantAttempt, AutomationGrantDecision, AutomationGrantFields,
-        AutomationMessageKind, AutomationRiskScanOutcome,
+        AutomationGrantLimits, AutomationMessageKind, AutomationRiskScanOutcome,
     },
 };
 
@@ -92,11 +92,21 @@ impl AutomationService {
         if !allowed {
             return Err(failure(OPERATION, AutomationFailureKind::Forbidden));
         }
+        let expires_at = now
+            .checked_add(request.lifetime)
+            .map_err(|_| failure(OPERATION, AutomationFailureKind::InvalidRequest))?;
+        let limits = AutomationGrantLimits::new(
+            request.max_messages_per_minute,
+            request.max_total_messages,
+            now,
+            expires_at,
+        )
+        .map_err(|_| failure(OPERATION, AutomationFailureKind::InvalidRequest))?;
         let grant = AutomationGrant::issue(AutomationGrantFields {
             id: request.grant_id,
             grantor_id: request.actor.principal_id,
             scope: request.scope,
-            limits: request.limits,
+            limits,
             created_at: now,
         })
         .map_err(|_| failure(OPERATION, AutomationFailureKind::InvalidRequest))?;
@@ -311,7 +321,7 @@ impl AutomationService {
                 AutomationFailureKind::DependencyUnavailable,
             ));
         };
-        if !matrix.is_joined() || !matrix.power_level().is_at_least(0) {
+        if !matrix.can_send_messages() {
             return self
                 .deny_preparation(
                     request,
