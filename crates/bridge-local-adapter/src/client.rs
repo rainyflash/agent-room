@@ -19,17 +19,29 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct LocalBridgeClient {
     runtime_root: PathBuf,
     credentials: Arc<dyn IpcCredentialSource>,
+    caller: IpcCallerKind,
     connect_timeout: Duration,
     operation_timeout: Duration,
 }
 
 impl LocalBridgeClient {
+    /// 创建只能以 Codex 插件身份协商作用域的本地客户端。
     pub fn system(runtime_root: PathBuf) -> Self {
+        Self::for_caller(runtime_root, IpcCallerKind::CodexPlugin)
+    }
+
+    /// 创建供受信桌面壳执行用户确认操作的本地客户端。
+    pub fn desktop_shell(runtime_root: PathBuf) -> Self {
+        Self::for_caller(runtime_root, IpcCallerKind::DesktopShell)
+    }
+
+    fn for_caller(runtime_root: PathBuf, caller: IpcCallerKind) -> Self {
         Self {
             runtime_root,
             credentials: Arc::new(OsIpcCredentialReader::system(
                 DEFAULT_SECURE_STORAGE_SERVICE,
             )),
+            caller,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
         }
@@ -57,12 +69,7 @@ impl LocalBridgeClient {
             .map_err(|_| LocalBridgeClientFailure::unavailable())?;
         let mut client = timeout(
             self.operation_timeout,
-            IpcClientSession::authenticate(
-                stream,
-                &credentials,
-                IpcCallerKind::CodexPlugin,
-                [required_scope],
-            ),
+            IpcClientSession::authenticate(stream, &credentials, self.caller, [required_scope]),
         )
         .await
         .map_err(|_| LocalBridgeClientFailure::timeout())?
