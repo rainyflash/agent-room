@@ -1,13 +1,14 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        ContentPrincipalIdentityLookup, MatrixUserId, PortFuture, PrincipalRegistration,
-        PrincipalRepository, PrivateRoomPrincipalDirectory,
+        ContentPrincipalIdentityLookup, DirectAgentProfile, DirectSessionAgentDirectory,
+        MatrixUserId, PortFuture, PrincipalRegistration, PrincipalRepository,
+        PrivateRoomPrincipalDirectory,
     },
 };
 use agent_room_domain::{
     identity::{Principal, PrincipalStatus},
-    ids::{AgentId, PrincipalId},
+    ids::{AgentId, ContentId, PrincipalId},
     version::AggregateVersion,
 };
 use sqlx::Row;
@@ -34,9 +35,7 @@ impl PrincipalRepository for PostgresRepositories {
     ) -> PortFuture<'a, RepositoryResult<Principal>> {
         Box::pin(async move {
             let principal = &registration.principal;
-            let avatar_id = registration
-                .avatar_content_id
-                .map(agent_room_domain::ids::ContentId::as_uuid);
+            let avatar_id = registration.avatar_content_id.map(ContentId::as_uuid);
             let registered_at = registration.registered_at.value();
 
             sqlx::query(
@@ -157,6 +156,57 @@ impl PrivateRoomPrincipalDirectory for PostgresRepositories {
             principal_id,
             "private_room_principal.matrix_user_id",
         ))
+    }
+}
+
+impl DirectSessionAgentDirectory for PostgresRepositories {
+    fn find_contactable(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>> {
+        Box::pin(async move {
+            let operation = "direct_session_agent.find_contactable";
+            let row = sqlx::query(
+                r"SELECT agent.matrix_user_id, agent.display_name, agent.avatar_content_id
+                   FROM agent_room.agent AS agent
+                   WHERE agent.id = $2
+                     AND agent.lifecycle_state = 'active'
+                     AND (
+                         agent.visibility <> 'private'
+                         OR EXISTS (
+                             SELECT 1
+                             FROM agent_room.agent_ownership AS ownership
+                             WHERE ownership.principal_id = $1
+                               AND ownership.agent_id = agent.id
+                               AND ownership.revoked_at IS NULL
+                         )
+                     )",
+            )
+            .bind(actor_principal_id.as_uuid())
+            .bind(target_agent_id.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| {
+                let matrix_user_id: String = row
+                    .try_get("matrix_user_id")
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                let avatar_content_id: Option<uuid::Uuid> = row
+                    .try_get("avatar_content_id")
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                Ok(DirectAgentProfile {
+                    agent_id: target_agent_id,
+                    matrix_user_id: MatrixUserId::new(matrix_user_id)
+                        .map_err(|_| corrupt_data(operation))?,
+                    display_name: row
+                        .try_get("display_name")
+                        .map_err(|error| map_sqlx_error(operation, &error))?,
+                    avatar_content_id: avatar_content_id.map(ContentId::from_uuid),
+                })
+            })
+            .transpose()
+        })
     }
 }
 
