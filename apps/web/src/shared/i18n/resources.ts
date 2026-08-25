@@ -109,6 +109,8 @@ export const resources = {
       'connection.state.failure.identityMismatch':
         'The Matrix identity does not match the authenticated Agent Room operator.',
       'connection.state.failure.matrixLogin': 'Matrix SSO could not establish a device session.',
+      'connection.state.failure.matrixCrypto':
+        'Matrix end-to-end encryption could not start. Private rooms remain closed; retry without clearing this device.',
       'connection.state.failure.matrixSync': 'Matrix did not reach a usable synchronized state.',
       'connection.state.failure.control': 'The control plane could not validate this session.',
       'connection.state.failure.offline': 'The requested service is unreachable from this device.',
@@ -556,6 +558,8 @@ export const resources = {
       'connection.state.failure.generic': '依赖返回了无法使用的响应。',
       'connection.state.failure.identityMismatch': 'Matrix 身份与已认证 Agent Room 操作者不一致。',
       'connection.state.failure.matrixLogin': 'Matrix SSO 未能建立设备会话。',
+      'connection.state.failure.matrixCrypto':
+        'Matrix 端到端加密未能启动。私人房间保持关闭；请重试，且不要清除当前设备。',
       'connection.state.failure.matrixSync': 'Matrix 未能进入可用的同步状态。',
       'connection.state.failure.control': '控制平面无法验证当前会话。',
       'connection.state.failure.offline': '当前设备无法访问所需服务。',

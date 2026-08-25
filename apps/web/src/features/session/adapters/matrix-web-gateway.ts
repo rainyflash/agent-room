@@ -1,4 +1,5 @@
 import type { ClientEvent, MatrixClient, SyncState } from 'matrix-js-sdk';
+import type { DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js';
 import { z } from 'zod';
 
 import { failure } from '@/features/session/adapters/control-plane-client';
@@ -193,6 +194,20 @@ export class MatrixWebGateway implements MatrixGateway {
         return err(failure('identity', 'matrix.identity_mismatch', false, false));
       }
 
+      try {
+        const cryptoApi = await import('matrix-js-sdk/lib/crypto-api/index.js');
+        await initializeMatrixCrypto(client, {
+          databasePrefix: `agent-room-crypto-${stableHash(`${session.userId}\u0000${session.deviceId}`)}`,
+          isolationMode: new cryptoApi.OnlySignedDevicesIsolationMode(),
+          persistent: this.#indexedDB !== undefined,
+        });
+      } catch {
+        client.stopClient();
+        return err(
+          failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true),
+        );
+      }
+
       const connection = new BrowserMatrixConnection(
         client,
         sdk.ClientEvent.Sync,
@@ -320,7 +335,7 @@ export class MatrixWebGateway implements MatrixGateway {
     try {
       this.#sessionStorage.removeItem(MATRIX_SESSION_KEY);
     } catch {
-      // The local credential is already inaccessible; no further fallback can expose it.
+      // 本地凭据已经不可访问；不再尝试任何可能暴露凭据的降级路径。
     }
   }
 
@@ -344,9 +359,33 @@ export class MatrixWebGateway implements MatrixGateway {
       });
       await client.logout(true);
     } catch {
-      // A mismatched local session is cleared even when the remote revoke is unreachable.
+      // 即使远端撤销不可达，也必须清除身份不匹配的本地会话。
     }
   }
+}
+
+type MatrixCryptoClient = Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;
+
+export type MatrixCryptoInitialization = {
+  readonly databasePrefix: string;
+  readonly isolationMode: DeviceIsolationMode;
+  readonly persistent: boolean;
+};
+
+export async function initializeMatrixCrypto(
+  client: MatrixCryptoClient,
+  initialization: MatrixCryptoInitialization,
+): Promise<void> {
+  await client.initRustCrypto({
+    cryptoDatabasePrefix: initialization.databasePrefix,
+    useIndexedDB: initialization.persistent,
+  });
+  const crypto = client.getCrypto();
+  if (crypto === undefined) {
+    throw new Error('Matrix Rust Crypto 初始化完成后仍不可用。');
+  }
+  crypto.setTrustCrossSignedDevices(true);
+  crypto.setDeviceIsolationMode(initialization.isolationMode);
 }
 
 function ignoreClientChange(client: MatrixClient | null): void {

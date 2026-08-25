@@ -2,7 +2,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { MatrixWebGateway } from './matrix-web-gateway';
+import type { MatrixClient } from 'matrix-js-sdk';
+import type {
+  CryptoApi,
+  DeviceIsolationMode,
+} from 'matrix-js-sdk/lib/crypto-api/index.js';
+
+import { initializeMatrixCrypto, MatrixWebGateway } from './matrix-web-gateway';
 
 describe('MatrixWebGateway', () => {
   it('没有当前标签页凭据时明确请求 SSO', async () => {
@@ -70,6 +76,55 @@ describe('MatrixWebGateway', () => {
     await gateway.logout();
 
     expect(observedClients).toEqual([null, null]);
+  });
+
+  it('使用独立持久库初始化 Rust Crypto 并只信任已签名设备', async () => {
+    const calls: unknown[] = [];
+    const isolationMode = { kind: 'signed-only' } as unknown as DeviceIsolationMode;
+    const crypto = {
+      setDeviceIsolationMode: (value: DeviceIsolationMode) => {
+        calls.push(['isolation', value]);
+      },
+      setTrustCrossSignedDevices: (value: boolean) => {
+        calls.push(['cross-signing', value]);
+      },
+    } as Pick<CryptoApi, 'setDeviceIsolationMode' | 'setTrustCrossSignedDevices'>;
+    const client = {
+      getCrypto: () => crypto,
+      initRustCrypto: async (options: unknown) => {
+        calls.push(['initialize', options]);
+      },
+    } as unknown as Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;
+
+    await initializeMatrixCrypto(client, {
+      databasePrefix: 'agent-room-crypto-device',
+      isolationMode,
+      persistent: true,
+    });
+
+    expect(calls).toEqual([
+      [
+        'initialize',
+        { cryptoDatabasePrefix: 'agent-room-crypto-device', useIndexedDB: true },
+      ],
+      ['cross-signing', true],
+      ['isolation', isolationMode],
+    ]);
+  });
+
+  it('Rust Crypto 初始化后不可用时失败关闭', async () => {
+    const client = {
+      getCrypto: () => undefined,
+      initRustCrypto: async () => undefined,
+    } as unknown as Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;
+
+    await expect(
+      initializeMatrixCrypto(client, {
+        databasePrefix: 'agent-room-crypto-device',
+        isolationMode: { kind: 'signed-only' } as unknown as DeviceIsolationMode,
+        persistent: true,
+      }),
+    ).rejects.toThrow('Matrix Rust Crypto 初始化完成后仍不可用。');
   });
 });
 

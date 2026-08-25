@@ -90,6 +90,7 @@ const stateCopy: Readonly<
 };
 
 const failureCopy: Readonly<Record<string, string>> = {
+  'matrix.crypto_initialization_failed': 'connection.state.failure.matrixCrypto',
   'matrix.identity_mismatch': 'connection.state.failure.identityMismatch',
   'matrix.initial_sync_failed': 'connection.state.failure.matrixSync',
   'matrix.initial_sync_timeout': 'connection.state.failure.matrixSync',
