@@ -12,6 +12,8 @@ pub enum MatrixOperation {
     Sync,
     CreateRoom,
     ResolveRoomAlias,
+    ReadAccountData,
+    SetAccountData,
     InspectMembership,
     Invite,
     Join,
@@ -37,6 +39,8 @@ impl MatrixOperation {
                 | Self::RestoreSession
                 | Self::Sync
                 | Self::ResolveRoomAlias
+                | Self::ReadAccountData
+                | Self::SetAccountData
                 | Self::InspectMembership
                 | Self::Invite
                 | Self::Join

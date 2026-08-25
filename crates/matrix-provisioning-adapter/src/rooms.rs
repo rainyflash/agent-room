@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use agent_room_application::ports::{
-    AgentRoomMembershipFactory, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind,
-    MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
-    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, RoomMembershipGateway,
-    RoomProvisioningGateway,
+    AgentRoomMembershipFactory, DirectMatrixRoomCreation, DirectSessionMatrixProvisioner,
+    MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
+    MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, MatrixRoomPowerProfile,
+    MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture, PrivateMatrixMembership,
+    PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, RoomMembershipGateway, RoomProvisioningGateway,
 };
 use agent_room_domain::rooms::MatrixRoomReference;
 use reqwest::Url;
@@ -94,20 +94,7 @@ impl RoomProvisioningGateway for MatrixApplicationServiceProvisioner {
         &'a self,
         request: &'a MatrixCreateRoom,
     ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
-        Box::pin(async move {
-            let operation = MatrixOperation::CreateRoom;
-            let response = self
-                .client
-                .post(self.endpoint("_matrix/client/v3/createRoom", operation)?)
-                .bearer_auth(self.access_token.expose())
-                .json(&CreateRoomRequest::from(request))
-                .send()
-                .await
-                .map_err(|error| map_create_transport_error(operation, &error))?;
-            let body = expect_success_body(response, operation).await?;
-            let created: CreateRoomResponse = decode_json(&body, operation)?;
-            MatrixRoomId::new(created.room_id).map_err(|_| invalid_response(operation))
-        })
+        Box::pin(create_room(self, request, None))
     }
 
     fn resolve_room_alias<'a>(
@@ -177,26 +164,31 @@ impl PrivateRoomMatrixProvisioner for MatrixApplicationServiceProvisioner {
         &'a self,
         creation: &'a PrivateMatrixRoomCreation,
     ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
-        Box::pin(async move {
-            let created = RoomProvisioningGateway::create_room(self, creation.request()).await;
-            let failure = match created {
-                Ok(room_id) => return Ok(room_id),
-                Err(failure)
-                    if matches!(
-                        failure.kind(),
-                        MatrixFailureKind::Conflict | MatrixFailureKind::UnknownCommit
-                    ) =>
-                {
-                    failure
-                }
-                Err(failure) => return Err(failure),
-            };
+        Box::pin(create_or_reconcile_room(
+            self,
+            creation.request(),
+            creation.alias(),
+            None,
+        ))
+    }
+}
 
-            match RoomProvisioningGateway::resolve_room_alias(self, creation.alias()).await {
-                Ok(room_id) => Ok(room_id),
-                Err(_) if failure.kind() == MatrixFailureKind::UnknownCommit => Err(failure),
-                Err(resolve_failure) => Err(resolve_failure),
-            }
+impl DirectSessionMatrixProvisioner for MatrixApplicationServiceProvisioner {
+    fn create<'a>(
+        &'a self,
+        creation: &'a DirectMatrixRoomCreation,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
+        Box::pin(async move {
+            self.ensure_managed_user(creation.creator(), MatrixOperation::CreateRoom)?;
+            let room_id = create_or_reconcile_room(
+                self,
+                creation.request(),
+                creation.alias(),
+                Some(creation.creator()),
+            )
+            .await?;
+            record_direct_room(self, creation.creator(), creation.peer(), &room_id).await?;
+            Ok(room_id)
         })
     }
 }
@@ -360,6 +352,133 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
 
 #[derive(Serialize)]
 struct EmptyRequest {}
+
+async fn create_room(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    request: &MatrixCreateRoom,
+    asserted_user: Option<&MatrixUserId>,
+) -> MatrixResult<MatrixRoomId> {
+    let operation = MatrixOperation::CreateRoom;
+    let mut endpoint = provisioner.endpoint("_matrix/client/v3/createRoom", operation)?;
+    if let Some(user_id) = asserted_user {
+        endpoint
+            .query_pairs_mut()
+            .append_pair("user_id", user_id.as_str());
+    }
+    let response = provisioner
+        .client
+        .post(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .json(&CreateRoomRequest::from(request))
+        .send()
+        .await
+        .map_err(|error| map_create_transport_error(operation, &error))?;
+    let body = expect_success_body(response, operation).await?;
+    let created: CreateRoomResponse = decode_json(&body, operation)?;
+    MatrixRoomId::new(created.room_id).map_err(|_| invalid_response(operation))
+}
+
+async fn create_or_reconcile_room(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    request: &MatrixCreateRoom,
+    alias: &MatrixRoomAliasLocalpart,
+    asserted_user: Option<&MatrixUserId>,
+) -> MatrixResult<MatrixRoomId> {
+    let failure = match create_room(provisioner, request, asserted_user).await {
+        Ok(room_id) => return Ok(room_id),
+        Err(failure)
+            if matches!(
+                failure.kind(),
+                MatrixFailureKind::Conflict | MatrixFailureKind::UnknownCommit
+            ) =>
+        {
+            failure
+        }
+        Err(failure) => return Err(failure),
+    };
+
+    match RoomProvisioningGateway::resolve_room_alias(provisioner, alias).await {
+        Ok(room_id) => Ok(room_id),
+        Err(_) if failure.kind() == MatrixFailureKind::UnknownCommit => Err(failure),
+        Err(resolve_failure) => Err(resolve_failure),
+    }
+}
+
+async fn record_direct_room(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    owner: &MatrixUserId,
+    peer: &MatrixUserId,
+    room_id: &MatrixRoomId,
+) -> MatrixResult<()> {
+    let mut account_data = read_direct_account_data(provisioner, owner).await?;
+    let rooms = account_data.entry(peer.as_str().to_owned()).or_default();
+    if !rooms.iter().any(|candidate| candidate == room_id.as_str()) {
+        rooms.push(room_id.as_str().to_owned());
+    }
+    write_direct_account_data(provisioner, owner, &account_data).await
+}
+
+async fn read_direct_account_data(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    owner: &MatrixUserId,
+) -> MatrixResult<BTreeMap<String, Vec<String>>> {
+    let operation = MatrixOperation::ReadAccountData;
+    let endpoint = account_data_endpoint(provisioner, owner, operation)?;
+    let response = provisioner
+        .client
+        .get(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    match expect_success_body(response, operation).await {
+        Ok(body) => decode_json(&body, operation),
+        Err(failure) if failure.kind() == MatrixFailureKind::NotFound => Ok(BTreeMap::new()),
+        Err(failure) => Err(failure),
+    }
+}
+
+async fn write_direct_account_data(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    owner: &MatrixUserId,
+    account_data: &BTreeMap<String, Vec<String>>,
+) -> MatrixResult<()> {
+    let operation = MatrixOperation::SetAccountData;
+    let endpoint = account_data_endpoint(provisioner, owner, operation)?;
+    let response = provisioner
+        .client
+        .put(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .json(account_data)
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    expect_empty_success(response, operation).await
+}
+
+fn account_data_endpoint(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    owner: &MatrixUserId,
+    operation: MatrixOperation,
+) -> MatrixResult<Url> {
+    let mut endpoint = endpoint_with_segments(
+        &provisioner.homeserver_url,
+        &[
+            "_matrix",
+            "client",
+            "v3",
+            "user",
+            owner.as_str(),
+            "account_data",
+            "m.direct",
+        ],
+        operation,
+    )?;
+    endpoint
+        .query_pairs_mut()
+        .append_pair("user_id", owner.as_str());
+    Ok(endpoint)
+}
 
 #[derive(Serialize)]
 struct CreateRoomRequest<'a> {
@@ -687,7 +806,8 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        MatrixCreateRoom, MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+        DirectMatrixRoomCreation, DirectSessionMatrixProvisioner, MatrixCreateRoom,
+        MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
         PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
         RoomMembershipGateway, RoomProvisioningGateway, SecretValue,
@@ -696,7 +816,7 @@ mod tests {
     use axum::{
         Json, Router,
         extract::{Path, Query},
-        http::HeaderMap,
+        http::{HeaderMap, StatusCode},
         response::IntoResponse,
         routing::{get, post, put},
     };
@@ -927,6 +1047,62 @@ mod tests {
         assert_eq!(server.calls().await, vec!["create", "resolve", "attach"]);
     }
 
+    #[tokio::test]
+    async fn 直接会话由受管_agent_创建并幂等写入_m_direct() {
+        let server = DirectRoomTestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let creator = MatrixUserId::new(
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost",
+        )
+        .expect("受管 Agent 标识有效");
+        let peer =
+            MatrixUserId::new("@principal:matrix.agent-room.localhost").expect("主体标识有效");
+        let alias =
+            MatrixRoomAliasLocalpart::new("agent-room-direct-session").expect("直接会话别名有效");
+        let request = MatrixCreateRoom::new(
+            None,
+            None,
+            MatrixRoomVisibility::Private,
+            MatrixRoomPreset::TrustedPrivateChat,
+            true,
+            vec![peer.clone()],
+        )
+        .expect("直接建房请求有效")
+        .with_alias_localpart(alias.clone());
+        let creation = DirectMatrixRoomCreation::new(request, alias, creator.clone(), peer.clone())
+            .expect("直接会话约束有效");
+
+        let room_id = DirectSessionMatrixProvisioner::create(&provisioner, &creation)
+            .await
+            .expect("别名冲突后应对账并同步账户数据");
+
+        assert_eq!(room_id.as_str(), "!direct:matrix.agent-room.localhost");
+        assert_eq!(
+            server.calls().await,
+            vec![
+                "create-direct",
+                "resolve-direct",
+                "read-direct",
+                "write-direct"
+            ]
+        );
+        assert_eq!(
+            server.asserted_users().await,
+            vec![creator.clone(), creator.clone(), creator]
+        );
+        let writes = server.account_data_writes().await;
+        assert_eq!(writes.len(), 1);
+        assert_eq!(
+            writes[0]["@existing:matrix.agent-room.localhost"],
+            json!(["!existing:matrix.agent-room.localhost"])
+        );
+        assert_eq!(
+            writes[0][peer.as_str()],
+            json!(["!direct:matrix.agent-room.localhost"]),
+            "重复对账不能向 m.direct 追加重复房间"
+        );
+    }
+
     fn provisioner(url: &str) -> MatrixApplicationServiceProvisioner {
         let configuration = MatrixApplicationServiceConfiguration::new(
             url,
@@ -992,6 +1168,66 @@ mod tests {
     }
 
     impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    struct DirectRoomTestServer {
+        url: String,
+        state: Arc<DirectRoomTestState>,
+        task: JoinHandle<()>,
+    }
+
+    #[derive(Default)]
+    struct DirectRoomTestState {
+        calls: tokio::sync::Mutex<Vec<&'static str>>,
+        asserted_users: tokio::sync::Mutex<Vec<MatrixUserId>>,
+        account_data_writes: tokio::sync::Mutex<Vec<Value>>,
+    }
+
+    impl DirectRoomTestServer {
+        async fn start() -> Self {
+            let state = Arc::new(DirectRoomTestState::default());
+            let app = Router::new()
+                .route("/_matrix/client/v3/createRoom", post(create_direct_room))
+                .route(
+                    "/_matrix/client/v3/directory/room/{alias}",
+                    get(resolve_direct_room),
+                )
+                .route(
+                    "/_matrix/client/v3/user/{user}/account_data/m.direct",
+                    get(read_direct_account_data).put(write_direct_account_data),
+                )
+                .with_state(state.clone());
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("测试端口可用");
+            let address = listener.local_addr().expect("测试地址有效");
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app).await.expect("测试服务可运行");
+            });
+            Self {
+                url: format!("http://{address}"),
+                state,
+                task,
+            }
+        }
+
+        async fn calls(&self) -> Vec<&'static str> {
+            self.state.calls.lock().await.clone()
+        }
+
+        async fn asserted_users(&self) -> Vec<MatrixUserId> {
+            self.state.asserted_users.lock().await.clone()
+        }
+
+        async fn account_data_writes(&self) -> Vec<Value> {
+            self.state.account_data_writes.lock().await.clone()
+        }
+    }
+
+    impl Drop for DirectRoomTestServer {
         fn drop(&mut self) {
             self.task.abort();
         }
@@ -1078,6 +1314,86 @@ mod tests {
         assert_eq!(body["creation_content"]["type"], "m.space");
         state.calls.lock().await.push("create");
         Json(json!({ "room_id": "!space:matrix.agent-room.localhost" }))
+    }
+
+    async fn create_direct_room(
+        axum::extract::State(state): axum::extract::State<Arc<DirectRoomTestState>>,
+        Query(query): Query<UserQuery>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        let creator = MatrixUserId::new(query.user_id).expect("断言创建者有效");
+        assert_eq!(
+            creator.as_str(),
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost"
+        );
+        assert_eq!(body["room_alias_name"], "agent-room-direct-session");
+        assert_eq!(body["visibility"], "private");
+        assert_eq!(body["preset"], "trusted_private_chat");
+        assert_eq!(body["is_direct"], true);
+        assert_eq!(
+            body["invite"],
+            json!(["@principal:matrix.agent-room.localhost"])
+        );
+        assert!(body.get("name").is_none());
+        state.calls.lock().await.push("create-direct");
+        state.asserted_users.lock().await.push(creator);
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "errcode": "M_ROOM_IN_USE",
+                "error": "alias already exists"
+            })),
+        )
+            .into_response()
+    }
+
+    async fn resolve_direct_room(
+        axum::extract::State(state): axum::extract::State<Arc<DirectRoomTestState>>,
+        Path(alias): Path<String>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(
+            alias,
+            "#agent-room-direct-session:matrix.agent-room.localhost"
+        );
+        state.calls.lock().await.push("resolve-direct");
+        Json(json!({ "room_id": "!direct:matrix.agent-room.localhost" }))
+    }
+
+    async fn read_direct_account_data(
+        axum::extract::State(state): axum::extract::State<Arc<DirectRoomTestState>>,
+        Path(user): Path<String>,
+        Query(query): Query<UserQuery>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(user, query.user_id);
+        let asserted = MatrixUserId::new(query.user_id).expect("断言账户数据用户有效");
+        state.calls.lock().await.push("read-direct");
+        state.asserted_users.lock().await.push(asserted);
+        Json(json!({
+            "@existing:matrix.agent-room.localhost": ["!existing:matrix.agent-room.localhost"],
+            "@principal:matrix.agent-room.localhost": ["!direct:matrix.agent-room.localhost"]
+        }))
+    }
+
+    async fn write_direct_account_data(
+        axum::extract::State(state): axum::extract::State<Arc<DirectRoomTestState>>,
+        Path(user): Path<String>,
+        Query(query): Query<UserQuery>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(user, query.user_id);
+        let asserted = MatrixUserId::new(query.user_id).expect("断言账户数据用户有效");
+        state.calls.lock().await.push("write-direct");
+        state.asserted_users.lock().await.push(asserted);
+        state.account_data_writes.lock().await.push(body);
+        Json(json!({}))
     }
 
     async fn resolve_room(
