@@ -86,6 +86,9 @@ web-browser:
 web-session-integration: database-migrate
   python tools/web.py
 
+vertical-bootstrap:
+  python tools/vertical.py bootstrap
+
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 

@@ -1,0 +1,64 @@
+from pathlib import Path
+import tempfile
+import unittest
+
+from tools.vertical import (
+    LogRedactor,
+    VerticalFailure,
+    compose_command,
+    http_status_is_ready,
+    read_string_object,
+    require_uuid_v7,
+)
+
+
+class LogRedactorTests(unittest.TestCase):
+    def test_日志在落盘前移除已知凭据和设备码(self) -> None:
+        redactor = LogRedactor(
+            {
+                "KEYCLOAK_CLIENT_SECRET": "local-secret-value",
+                "SAFE_PORT": "8090",
+            }
+        )
+
+        text = redactor.redact(
+            "local-secret-value user_code=ABCD-EFGH\n设备验证码：ABCD-EFGH\n"
+        )
+
+        self.assertNotIn("local-secret-value", text)
+        self.assertNotIn("ABCD-EFGH", text)
+        self.assertIn("[已脱敏]", text)
+
+
+class ResultValidationTests(unittest.TestCase):
+    def test_只接受字符串对象结果(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "result.json"
+            result.write_text('{"agentId": 7}\n', encoding="utf-8")
+
+            with self.assertRaises(VerticalFailure):
+                read_string_object(result)
+
+    def test_uuidv7_校验拒绝普通_uuid(self) -> None:
+        require_uuid_v7("019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a60", "测试标识")
+        with self.assertRaises(VerticalFailure):
+            require_uuid_v7("550e8400-e29b-41d4-a716-446655440000", "测试标识")
+
+
+class HttpReadinessTests(unittest.TestCase):
+    def test_只有成功状态才表示服务就绪(self) -> None:
+        self.assertTrue(http_status_is_ready(200))
+        self.assertTrue(http_status_is_ready(204))
+        self.assertFalse(http_status_is_ready(302))
+        self.assertFalse(http_status_is_ready(404))
+        self.assertFalse(http_status_is_ready(503))
+
+
+class ComposeBoundaryTests(unittest.TestCase):
+    def test_拒绝操作未登记的_compose_项目(self) -> None:
+        with self.assertRaises(VerticalFailure):
+            compose_command("agent-room-user-data")
+
+
+if __name__ == "__main__":
+    unittest.main()

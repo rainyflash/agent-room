@@ -20,9 +20,11 @@
   },
   "include": [
     "e2e-live/**/*.ts",
+    "e2e-vertical/**/*.ts",
     "e2e/**/*.ts",
     "playwright.config.ts",
     "playwright.live.config.ts",
+    "playwright.vertical.config.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
     "vite.config.ts"

@@ -4,109 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 import subprocess
 import sys
-from typing import Final
 
-
-ROOT: Final = Path(__file__).resolve().parent.parent
-ENV_FILE: Final = ROOT / ".env.local"
-
-
-def read_environment(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        raise RuntimeError("缺少 .env.local；请先运行 just dev-up。")
-
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if not separator or not key:
-            raise RuntimeError(".env.local 包含无效配置行。")
-        values[key] = value
-    return values
-
-
-def runtime_environment(values: dict[str, str], enable_telemetry: bool) -> dict[str, str]:
-    required_values = {
-        name: values.get(name)
-        for name in (
-            "AGENT_ROOM_DB_RUNTIME_PASSWORD",
-            "KEYCLOAK_CLIENT_SECRET",
-            "SYNAPSE_APPSERVICE_TOKEN",
-            "S3_ACCESS_KEY",
-            "S3_SECRET_KEY",
-            "CONTENT_TICKET_SECRET",
-            "CONTENT_MATRIX_AGENT_ID",
-        )
-    }
-    missing = [name for name, value in required_values.items() if not value]
-    if missing:
-        raise RuntimeError(f".env.local 缺少 {', '.join(missing)}。")
-
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:8090",
-            "AGENT_ROOM_DB_HOST": "127.0.0.1",
-            "AGENT_ROOM_DB_PORT": "55432",
-            "AGENT_ROOM_DB_NAME": "agent_room",
-            "AGENT_ROOM_DB_USER": "agent_room_runtime",
-            "AGENT_ROOM_DB_RUNTIME_PASSWORD": required_values[
-                "AGENT_ROOM_DB_RUNTIME_PASSWORD"
-            ],
-            "AGENT_ROOM_DB_TLS_MODE": "disable",
-            "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
-            "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN": required_values[
-                "SYNAPSE_APPSERVICE_TOKEN"
-            ],
-            "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
-                "http://127.0.0.1:19333/cluster/status"
-            ),
-            "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS": "2000",
-            "AGENT_ROOM_CONTENT_S3_ENDPOINT": "http://127.0.0.1:18333",
-            "AGENT_ROOM_CONTENT_S3_BUCKET": "agent-room-content",
-            "AGENT_ROOM_CONTENT_S3_REGION": "us-east-1",
-            "AGENT_ROOM_CONTENT_S3_ACCESS_KEY": required_values["S3_ACCESS_KEY"],
-            "AGENT_ROOM_CONTENT_S3_SECRET_KEY": required_values["S3_SECRET_KEY"],
-            "AGENT_ROOM_CONTENT_SCANNER_ADDRESS": "127.0.0.1:13310",
-            "AGENT_ROOM_CONTENT_TICKET_KEY_ID": "local-v1",
-            "AGENT_ROOM_CONTENT_TICKET_SECRET": required_values[
-                "CONTENT_TICKET_SECRET"
-            ],
-            "AGENT_ROOM_CONTENT_MATRIX_AGENT_ID": required_values[
-                "CONTENT_MATRIX_AGENT_ID"
-            ],
-            "AGENT_ROOM_OIDC_ISSUER_URL": (
-                "http://127.0.0.1:18080/realms/agent-room"
-            ),
-            "AGENT_ROOM_OIDC_CLIENT_ID": "agent-room-web",
-            "AGENT_ROOM_OIDC_DEVICE_CLIENT_ID": "agent-room-bridge",
-            "AGENT_ROOM_OIDC_CLIENT_SECRET": required_values[
-                "KEYCLOAK_CLIENT_SECRET"
-            ],
-            "AGENT_ROOM_OIDC_REDIRECT_URL": (
-                "https://api.agent-room.localhost:18443/auth/oidc/callback"
-            ),
-            "AGENT_ROOM_FRONTEND_ORIGIN": "https://app.agent-room.localhost:18443",
-            "AGENT_ROOM_MATRIX_SERVER_NAME": "matrix.agent-room.localhost",
-            "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS": "5000",
-            "AGENT_ROOM_LOG_FILTER": (
-                "agent_room_control_plane=info,sqlx=warn"
-            ),
-        }
-    )
-    if enable_telemetry:
-        environment["AGENT_ROOM_OTLP_TRACES_ENDPOINT"] = (
-            "http://127.0.0.1:14318/v1/traces"
-        )
-    else:
-        environment.pop("AGENT_ROOM_OTLP_TRACES_ENDPOINT", None)
-    return environment
+from local_runtime import (
+    ROOT,
+    LocalRuntimeError,
+    control_plane_runtime_environment,
+    read_environment,
+)
 
 
 def command_for(action: str) -> list[str]:
@@ -130,9 +36,11 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
-        values = read_environment(ENV_FILE)
-        environment = runtime_environment(values, enable_telemetry=arguments.action == "run")
-    except RuntimeError as error:
+        values = read_environment()
+        environment = control_plane_runtime_environment(
+            values, enable_telemetry=arguments.action == "run"
+        )
+    except LocalRuntimeError as error:
         print(str(error), file=sys.stderr)
         return 2
 

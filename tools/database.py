@@ -20,6 +20,14 @@ COMPOSE_FILE: Final = ROOT / "infra" / "compose" / "compose.yaml"
 PROJECT_NAME: Final = "agent-room-dev"
 TEST_DATABASE: Final = "agent_room_repository_test"
 SAFE_SECRET: Final = re.compile(r"^[A-Za-z0-9._~-]{16,256}$")
+SAFE_PROJECT_NAME: Final = re.compile(r"^[a-z0-9][a-z0-9_-]{2,62}$")
+
+
+def compose_project_name() -> str:
+    value = os.environ.get("AGENT_ROOM_COMPOSE_PROJECT_NAME", PROJECT_NAME)
+    if not SAFE_PROJECT_NAME.fullmatch(value):
+        raise RuntimeError("AGENT_ROOM_COMPOSE_PROJECT_NAME 不合法。")
+    return value
 
 
 def read_environment(path: Path) -> dict[str, str]:
@@ -52,7 +60,7 @@ def compose_psql(sql: str) -> None:
         "docker",
         "compose",
         "--project-name",
-        PROJECT_NAME,
+        compose_project_name(),
         "--env-file",
         str(ENV_FILE),
         "--file",
