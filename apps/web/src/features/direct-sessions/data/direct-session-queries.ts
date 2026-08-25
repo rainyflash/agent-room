@@ -4,8 +4,9 @@ import type { DirectSessionGateway } from '@/features/direct-sessions/domain/dir
 
 export const directSessionListQueryKey = ['control-plane', 'direct-sessions'] as const;
 
-export function directSessionListQueryOptions(gateway: DirectSessionGateway) {
+export function directSessionListQueryOptions(gateway: DirectSessionGateway, enabled = true) {
   return queryOptions({
+    enabled,
     queryKey: directSessionListQueryKey,
     queryFn: async () => await gateway.list(),
     networkMode: 'always',
@@ -14,6 +15,6 @@ export function directSessionListQueryOptions(gateway: DirectSessionGateway) {
   });
 }
 
-export function useDirectSessionList(gateway: DirectSessionGateway) {
-  return useQuery(directSessionListQueryOptions(gateway));
+export function useDirectSessionList(gateway: DirectSessionGateway, enabled = true) {
+  return useQuery(directSessionListQueryOptions(gateway, enabled));
 }

@@ -10,6 +10,8 @@ import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import type {
+  DirectAgent,
+  DirectSession,
   DirectSessionGateway,
   DirectSessionMatrixGateway,
 } from '@/features/direct-sessions/domain/direct-session';
@@ -47,11 +49,11 @@ const lobby: LobbyGateway = {
   subscribe: () => noop,
 };
 const messages: MessageGateway = {
-  read: () =>
+  read: (requestedRoomId) =>
     ok({
-      messages: testMessages(room.roomId),
+      messages: testMessages(requestedRoomId),
       observedAtUnixMs: Date.now(),
-      roomId: room.roomId,
+      roomId: requestedRoomId,
     }),
   subscribe: () => noop,
 };
@@ -75,18 +77,55 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
 };
-const unavailableDirectSession = async () =>
-  err({ code: 'direct_session.fixture_unavailable', retryable: false });
+let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);
 const directSessions: DirectSessionGateway = {
-  inspect: unavailableDirectSession,
-  list: async () => ok([]),
-  open: unavailableDirectSession,
-  setBlocked: unavailableDirectSession,
+  inspect: async (catalogId) => {
+    const session = fixtureDirectSessions.find((candidate) => candidate.catalogId === catalogId);
+    return session === undefined
+      ? err({ code: 'direct_session.fixture_not_found', retryable: false })
+      : ok(session);
+  },
+  list: async () => ok(fixtureDirectSessions),
+  open: async (targetAgentId) => {
+    const index = room.agents.findIndex((agent) => agent.agentId === targetAgentId);
+    if (index < 0) {
+      return err({ code: 'direct_session.fixture_target_not_found', retryable: false });
+    }
+    const existing = fixtureDirectSessions.find(
+      (session) => session.target.agentId === targetAgentId,
+    );
+    if (existing !== undefined) {
+      return ok(existing);
+    }
+    const opened = testDirectSession(index);
+    fixtureDirectSessions = Object.freeze([opened, ...fixtureDirectSessions]);
+    return ok(opened);
+  },
+  setBlocked: async (targetAgentId, blocked) => {
+    const lobbyAgent = room.agents.find((agent) => agent.agentId === targetAgentId);
+    if (lobbyAgent === undefined) {
+      return err({ code: 'direct_session.fixture_target_not_found', retryable: false });
+    }
+    const contactPolicy = Object.freeze({
+      agentBlocksPrincipal: false,
+      deliveryAllowed: !blocked,
+      presenceDisclosure: blocked ? ('hidden' as const) : ('coarse' as const),
+      principalBlocksAgent: blocked,
+    });
+    fixtureDirectSessions = Object.freeze(
+      fixtureDirectSessions.map((session) =>
+        session.target.agentId === targetAgentId
+          ? Object.freeze({ ...session, contactPolicy, version: session.version + 1 })
+          : session,
+      ),
+    );
+    return ok({ contactPolicy, target: toFixtureDirectAgent(lobbyAgent) });
+  },
 };
 const directSessionMatrix: DirectSessionMatrixGateway = {
-  markDisplayed: unavailableDirectSession,
-  prepare: unavailableDirectSession,
-  setIgnored: unavailableDirectSession,
+  markDisplayed: async () => ok(undefined),
+  prepare: async () => ok(undefined),
+  setIgnored: async () => ok(undefined),
 };
 const directSessionCoordinator = new DirectSessionCoordinator(
   directSessions,
@@ -237,6 +276,7 @@ const services: AppServices = {
 
 function LobbyFixture() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   return (
     <I18nextProvider i18n={i18n}>
@@ -247,6 +287,7 @@ function LobbyFixture() {
             onEnterRoom={() => undefined}
             onExitRoom={() => undefined}
             onSelectedAgentChange={setSelectedAgentId}
+            onSelectedDirectSessionChange={setSelectedDirectSessionId}
             onSelectedMessageChange={setSelectedMessageId}
             principal={{
               authenticatedAtUnixMs: Date.now(),
@@ -259,6 +300,7 @@ function LobbyFixture() {
             }}
             roomId={room.roomId}
             selectedAgentId={selectedAgentId}
+            selectedDirectSessionId={selectedDirectSessionId}
             selectedMessageId={selectedMessageId}
           />
         </AppServicesProvider>
@@ -292,7 +334,7 @@ function testAgent(index: number): LobbyAgent {
   const status = statusAt(index);
   const detailed = index % 3 !== 0;
   return Object.freeze({
-    agentId: `agent-${suffix}`,
+    agentId: `01990d9e-8400-7000-8000-000000000${suffix}`,
     displayName: `Build Agent ${suffix}`,
     instanceIds: Object.freeze(
       index % 7 === 0 ? [`instance-${suffix}-a`, `instance-${suffix}-b`] : [`instance-${suffix}`],
@@ -303,6 +345,37 @@ function testAgent(index: number): LobbyAgent {
     ...(detailed ? { summary: `Validating workspace slice ${suffix}` } : {}),
     trust: index % 5 === 0 ? 'verified' : 'unknown',
     visibility: detailed ? 'detailed' : 'coarse',
+  });
+}
+
+function testDirectSession(index: number): DirectSession {
+  const suffix = String(index + 1).padStart(3, '0');
+  const target = room.agents[index];
+  if (target === undefined) {
+    throw new Error('直接会话夹具引用了不存在的 Agent。');
+  }
+  return Object.freeze({
+    catalogId: `01990d9e-8400-7000-8000-000000001${suffix}`,
+    contactPolicy: Object.freeze({
+      agentBlocksPrincipal: false,
+      deliveryAllowed: true,
+      presenceDisclosure: 'coarse',
+      principalBlocksAgent: false,
+    }),
+    lifecycle: 'active',
+    matrixRoomId: `!direct-${suffix}:agent-room.test`,
+    roomInstanceId: `01990d9e-8400-7000-8000-000000002${suffix}`,
+    target: toFixtureDirectAgent(target),
+    version: 0,
+  });
+}
+
+function toFixtureDirectAgent(agent: LobbyAgent): DirectAgent {
+  return Object.freeze({
+    agentId: agent.agentId,
+    avatarContentId: null,
+    displayName: agent.displayName,
+    matrixUserId: agent.matrixUserId,
   });
 }
 

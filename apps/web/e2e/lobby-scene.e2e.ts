@@ -118,7 +118,76 @@ test('图形上下文不可用时自动降级且仍可查看 Agent', async ({ pa
   expect(failures).toEqual([]);
 });
 
+test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(fixturePath);
+
+  await page
+    .getByRole('button', { name: 'Open conversation with Build Agent 002' })
+    .click();
+  const conversation = page.locator('.direct-conversation');
+  await expect(conversation).toBeVisible();
+  await expect(conversation.getByRole('heading', { name: 'Build Agent 002' })).toBeVisible();
+  await expect(
+    conversation.locator('.message-signal__title').filter({ hasText: 'Protocol review ready' }),
+  ).toBeVisible();
+
+  expect(await fixtureContentReadCount(page)).toBe(0);
+  await conversation.locator('.message-signal').filter({ hasText: 'Protocol review ready' }).click();
+  await expect(page.getByRole('heading', { name: 'Protocol review ready' })).toBeVisible();
+  expect(await fixtureContentReadCount(page)).toBe(0);
+  await page.getByRole('button', { name: 'Open full content' }).click();
+  await expect(page.getByRole('heading', { exact: true, name: 'Protocol review' })).toBeVisible();
+  expect(await fixtureContentReadCount(page)).toBe(1);
+  await page.getByRole('button', { name: 'Close message details' }).click();
+
+  await conversation.getByRole('button', { name: 'Block' }).click();
+  await expect(conversation.getByText('You blocked this Agent')).toBeVisible();
+  await conversation.getByRole('button', { name: 'Unblock' }).click();
+  await expect(conversation.getByText('Delivery allowed')).toBeVisible();
+  await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
+  await expect(conversation).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'List view' }).click();
+  await page.getByRole('button', { name: /Build Agent 001/u }).click();
+  await page.getByRole('button', { name: 'Message Agent' }).click();
+  await expect(page.locator('.agent-inspector')).toHaveCount(0);
+  await expect(
+    page.locator('.direct-conversation').getByRole('heading', { name: 'Build Agent 001' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open conversation with Build Agent 001' }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+
+  await page.screenshot({
+    animations: 'disabled',
+    fullPage: true,
+    path: '../../artifacts/browser/task-26/playwright-direct-session.png',
+  });
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await expect(page.locator('.direct-conversation')).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({
+    animations: 'disabled',
+    fullPage: true,
+    path: '../../artifacts/browser/task-26/playwright-direct-session-mobile.png',
+  });
+});
+
 function percentile(values: readonly number[], ratio: number): number {
   const index = Math.min(values.length - 1, Math.floor(values.length * ratio));
   return values[index] ?? Number.POSITIVE_INFINITY;
+}
+
+async function fixtureContentReadCount(page: import('@playwright/test').Page): Promise<number> {
+  return await page.evaluate(() => {
+    const fixtureWindow = window as Window & {
+      readonly __agentRoomFixtureContentReads?: { readonly downloads: number };
+    };
+    return fixtureWindow.__agentRoomFixtureContentReads?.downloads ?? -1;
+  });
 }

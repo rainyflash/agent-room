@@ -1,5 +1,5 @@
 import { AnimatePresence } from 'motion/react';
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 import { useAppServices } from '@/app/app-services';
 import { MessageRoomStore } from '@/features/messages/application/message-room-store';
@@ -10,29 +10,34 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly roomId: string;
   readonly roomName: string;
   readonly selectedMessageId: string | null;
+  readonly variant?: 'direct' | 'room';
 };
 
 export function MessageLayer({
+  onLatestDisplayed,
   onSelectedMessageChange,
   roomId,
   roomName,
   selectedMessageId,
+  variant = 'room',
 }: MessageLayerProps) {
   const { content, contentVerifier, handoffs, messagePublisher, messages } = useAppServices();
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const projectedSignals = useMemo(
-    () => projectMessageSignals(projectedMessages, 'room'),
-    [projectedMessages],
+    () => projectMessageSignals(projectedMessages, variant === 'direct' ? 'direct' : 'room'),
+    [projectedMessages, variant],
   );
   const selectedMessage =
     projectedMessages.find((message) => message.messageId === selectedMessageId) ?? null;
   const selectedSignalId = selectedMessageId === null ? null : `message:${selectedMessageId}`;
+  const displayedEventId = useRef<string | null>(null);
 
   const handleSignalAction = (action: SignalAction): void => {
     if (action.kind === 'open_message') {
@@ -46,11 +51,25 @@ export function MessageLayer({
     }
   }, [onSelectedMessageChange, selectedMessage, selectedMessageId, state.kind]);
 
+  useEffect(() => {
+    const latestEventId = projectedMessages[0]?.matrixEventId ?? null;
+    if (
+      onLatestDisplayed === undefined ||
+      latestEventId === null ||
+      displayedEventId.current === latestEventId
+    ) {
+      return;
+    }
+    displayedEventId.current = latestEventId;
+    onLatestDisplayed(latestEventId);
+  }, [onLatestDisplayed, projectedMessages]);
+
   return (
     <>
-      <div className="message-hub">
+      <div className={`message-hub message-hub--${variant}`}>
         {state.kind === 'loading' ? null : (
           <SignalDock
+            defaultExpanded={variant === 'direct'}
             onAction={handleSignalAction}
             onRetry={store.retry}
             selectedSignalId={selectedSignalId}

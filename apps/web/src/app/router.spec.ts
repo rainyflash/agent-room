@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   lobbySearchWithAgent,
+  lobbySearchWithDirectSession,
+  lobbySearchWithMessage,
   normalizeConnectSearch,
   normalizeLobbySearch,
 } from '@/shared/routing/route-state';
@@ -12,6 +14,7 @@ describe('路由状态规范化', () => {
     expect(
       normalizeLobbySearch({
         agent: 'valid-agent',
+        direct: 'bad direct',
         directory: 'closed',
         message: 'bad message',
       }),
@@ -22,11 +25,13 @@ describe('路由状态规范化', () => {
     expect(
       normalizeLobbySearch({
         agent: 'agent-01',
+        direct: '01990d9e-8400-7000-8000-000000000020',
         directory: 'open',
         message: '$event:matrix.example',
       }),
     ).toEqual({
       agent: 'agent-01',
+      direct: '01990d9e-8400-7000-8000-000000000020',
       directory: 'open',
       message: '$event:matrix.example',
     });
@@ -43,5 +48,32 @@ describe('路由状态规范化', () => {
       agent: 'agent-02',
       directory: 'open',
     });
+  });
+
+  it('用 URL 中的直接会话替换互斥的大厅选择', () => {
+    expect(
+      lobbySearchWithDirectSession(
+        { agent: 'agent-01', directory: 'open', message: '$event:matrix.example' },
+        '01990d9e-8400-7000-8000-000000000020',
+      ),
+    ).toEqual({
+      direct: '01990d9e-8400-7000-8000-000000000020',
+      directory: 'open',
+    });
+    expect(
+      lobbySearchWithMessage(
+        { direct: '01990d9e-8400-7000-8000-000000000020' },
+        '$event:matrix.example',
+      ),
+    ).toEqual({
+      direct: '01990d9e-8400-7000-8000-000000000020',
+      message: '$event:matrix.example',
+    });
+    expect(
+      lobbySearchWithDirectSession(
+        { direct: '01990d9e-8400-7000-8000-000000000020', message: '$event:matrix.example' },
+        null,
+      ),
+    ).toEqual({});
   });
 });

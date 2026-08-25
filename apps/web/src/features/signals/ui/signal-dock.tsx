@@ -44,6 +44,7 @@ const presentationByKind: Readonly<Record<SignalKind, SignalPresentation>> = Obj
 });
 
 export type SignalDockProps = {
+  readonly defaultExpanded?: boolean;
   readonly onAction: (action: SignalAction) => void;
   readonly onRetry: () => void;
   readonly selectedSignalId: string | null;
@@ -52,6 +53,7 @@ export type SignalDockProps = {
 };
 
 export function SignalDock({
+  defaultExpanded = false,
   onAction,
   onRetry,
   selectedSignalId,
@@ -60,7 +62,7 @@ export function SignalDock({
 }: SignalDockProps) {
   const { i18n, t } = useTranslation();
   const orderedSignals = useMemo(() => orderSignalProjections(signals), [signals]);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [filter, setFilter] = useState<SignalKind | 'all'>('all');
   const [frozen, setFrozen] = useState(false);
   const [frozenSignals, setFrozenSignals] = useState<readonly SignalProjection[]>([]);

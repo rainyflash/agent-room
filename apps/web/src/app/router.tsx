@@ -9,6 +9,7 @@ import { useSession } from '@/features/session/ui/session-provider';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
+  lobbySearchWithDirectSession,
   lobbySearchWithMessage,
   normalizeConnectSearch,
   normalizeLobbySearch,
@@ -122,6 +123,12 @@ function LobbyInstanceBoundary() {
             search: (previous) => lobbySearchWithAgent(previous, agentId),
           });
         }}
+        onSelectedDirectSessionChange={(catalogId) => {
+          void navigate({
+            replace: true,
+            search: (previous) => lobbySearchWithDirectSession(previous, catalogId),
+          });
+        }}
         onSelectedMessageChange={(messageId) => {
           void navigate({
             replace: true,
@@ -131,6 +138,7 @@ function LobbyInstanceBoundary() {
         principal={snapshot.context.principal}
         roomId={roomId}
         selectedAgentId={search.agent ?? null}
+        selectedDirectSessionId={search.direct ?? null}
         selectedMessageId={search.message ?? null}
       />
     </Suspense>

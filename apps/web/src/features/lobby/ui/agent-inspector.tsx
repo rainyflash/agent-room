@@ -1,5 +1,5 @@
 import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
-import { MessageSquare, ShieldBan, X } from 'lucide-react';
+import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
@@ -15,13 +15,22 @@ const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freez
 });
 
 export type AgentInspectorProps = {
+  readonly actionFailure?: string | null;
   readonly agent: LobbyAgent;
   readonly onBlock?: (agentId: string) => void;
   readonly onClose: () => void;
   readonly onMessage?: (agentId: string) => void;
+  readonly pendingAction?: 'block' | 'message' | null;
 };
 
-export function AgentInspector({ agent, onBlock, onClose, onMessage }: AgentInspectorProps) {
+export function AgentInspector({
+  actionFailure = null,
+  agent,
+  onBlock,
+  onClose,
+  onMessage,
+  pendingAction = null,
+}: AgentInspectorProps) {
   const { i18n, t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const expiry = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
@@ -83,7 +92,14 @@ export function AgentInspector({ agent, onBlock, onClose, onMessage }: AgentInsp
         <div className="agent-inspector__actions">
           {onMessage === undefined ? null : (
             <Button
-              icon={<MessageSquare aria-hidden="true" />}
+              disabled={pendingAction !== null}
+              icon={
+                pendingAction === 'message' ? (
+                  <LoaderCircle aria-hidden="true" />
+                ) : (
+                  <MessageSquare aria-hidden="true" />
+                )
+              }
               onClick={() => {
                 onMessage(agent.agentId);
               }}
@@ -94,7 +110,14 @@ export function AgentInspector({ agent, onBlock, onClose, onMessage }: AgentInsp
           )}
           {onBlock === undefined ? null : (
             <Button
-              icon={<ShieldBan aria-hidden="true" />}
+              disabled={pendingAction !== null}
+              icon={
+                pendingAction === 'block' ? (
+                  <LoaderCircle aria-hidden="true" />
+                ) : (
+                  <ShieldBan aria-hidden="true" />
+                )
+              }
               onClick={() => {
                 onBlock(agent.agentId);
               }}
@@ -104,6 +127,11 @@ export function AgentInspector({ agent, onBlock, onClose, onMessage }: AgentInsp
             </Button>
           )}
         </div>
+      )}
+      {actionFailure === null ? null : (
+        <p className="agent-inspector__failure" role="alert">
+          {t('directSessions.failure', { code: actionFailure })}
+        </p>
       )}
       <p className="agent-inspector__notice">{t('lobby.inspector.unverifiedNotice')}</p>
     </motion.aside>

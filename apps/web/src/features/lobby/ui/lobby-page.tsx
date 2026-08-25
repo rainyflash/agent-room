@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
+import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
+import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { LobbyRoomStore } from '@/features/lobby/application/lobby-room-store';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
@@ -27,10 +30,12 @@ export type LobbyPageProps = {
   readonly onEnterRoom: (catalogId: string, matrixRoomId: string) => void;
   readonly onExitRoom: () => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
+  readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
+  readonly selectedDirectSessionId: string | null;
   readonly selectedMessageId: string | null;
 };
 
@@ -39,10 +44,12 @@ export function LobbyPage({
   onEnterRoom,
   onExitRoom,
   onSelectedAgentChange,
+  onSelectedDirectSessionChange,
   onSelectedMessageChange,
   principal,
   roomId,
   selectedAgentId,
+  selectedDirectSessionId,
   selectedMessageId,
 }: LobbyPageProps) {
   const { lobby } = useAppServices();
@@ -64,10 +71,12 @@ export function LobbyPage({
       onEnterRoom={onEnterRoom}
       onExitRoom={onExitRoom}
       onSelectedAgentChange={onSelectedAgentChange}
+      onSelectedDirectSessionChange={onSelectedDirectSessionChange}
       onSelectedMessageChange={onSelectedMessageChange}
       principal={principal}
       room={state.room}
       selectedAgentId={selectedAgentId}
+      selectedDirectSessionId={selectedDirectSessionId}
       selectedMessageId={selectedMessageId}
     />
   );
@@ -82,10 +91,12 @@ function ReadyLobby({
   onEnterRoom,
   onExitRoom,
   onSelectedAgentChange,
+  onSelectedDirectSessionChange,
   onSelectedMessageChange,
   principal,
   room,
   selectedAgentId,
+  selectedDirectSessionId,
   selectedMessageId,
 }: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
@@ -95,6 +106,7 @@ function ReadyLobby({
   const [preferredMode, setPreferredMode] = useState<LobbyViewMode>('scene');
   const [sceneAvailable, setSceneAvailable] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const directSessions = useDirectSessionController(principal !== null);
   const projection = useMemo(
     () => projectLobbyScene(room, selectedAgentId),
     [room, selectedAgentId],
@@ -208,22 +220,51 @@ function ReadyLobby({
       <AnimatePresence>
         {selectedAgent === null ? null : (
           <AgentInspector
+            actionFailure={directSessions.failure?.code ?? null}
             agent={selectedAgent}
             key={selectedAgent.agentId}
+            pendingAction={
+              directSessions.opening ? 'message' : directSessions.blocking ? 'block' : null
+            }
+            onBlock={() => {
+              void directSessions.setBlocked(toDirectAgent(selectedAgent), true).then((result) => {
+                if (result.ok) {
+                  onSelectedAgentChange(null);
+                }
+              });
+            }}
             onClose={() => {
               restoreSelectionFocus();
               onSelectedAgentChange(null);
             }}
+            onMessage={(agentId) => {
+              void directSessions.openAgent(agentId).then((result) => {
+                if (!result.ok) {
+                  return;
+                }
+                onSelectedAgentChange(null);
+                onSelectedDirectSessionChange(result.value.catalogId);
+              });
+            }}
           />
         )}
       </AnimatePresence>
-      <MessageLayer
+      {selectedDirectSessionId === null ? (
+        <MessageLayer
+          onSelectedMessageChange={onSelectedMessageChange}
+          roomId={room.roomId}
+          roomName={room.name}
+          selectedMessageId={selectedMessageId}
+        />
+      ) : null}
+      <DirectConversationDock
+        activeCatalogId={selectedDirectSessionId}
+        controller={directSessions}
+        onActiveSessionChange={onSelectedDirectSessionChange}
         onSelectedMessageChange={onSelectedMessageChange}
-        roomId={room.roomId}
-        roomName={room.name}
         selectedMessageId={selectedMessageId}
       />
-      {compact ? null : (
+      {compact || selectedDirectSessionId !== null ? null : (
         <SignalDock
           mode={mode}
           onModeChange={(nextMode) => {
@@ -244,6 +285,15 @@ function ReadyLobby({
       )}
     </main>
   );
+}
+
+function toDirectAgent(agent: LobbyRoom['agents'][number]): DirectAgent {
+  return Object.freeze({
+    agentId: agent.agentId,
+    avatarContentId: null,
+    displayName: agent.displayName,
+    matrixUserId: agent.matrixUserId,
+  });
 }
 
 function EmptyLobby() {

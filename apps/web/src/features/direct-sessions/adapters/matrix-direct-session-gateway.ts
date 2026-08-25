@@ -1,9 +1,4 @@
-import {
-  EventType,
-  ReceiptType,
-  type MatrixClient,
-  type Room,
-} from 'matrix-js-sdk';
+import type { EventType, MatrixClient, ReceiptType, Room } from 'matrix-js-sdk';
 import { z } from 'zod';
 
 import type {
@@ -13,6 +8,9 @@ import type {
 } from '@/features/direct-sessions/domain/direct-session';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { err, ok, type Result } from '@/shared/result';
+
+const DIRECT_EVENT_TYPE = 'm.direct' as EventType.Direct;
+const PRIVATE_READ_RECEIPT_TYPE = 'm.read.private' as ReceiptType;
 
 const directAccountDataSchema = z.record(
   z
@@ -46,14 +44,14 @@ export class MatrixSdkDirectSessionGateway implements DirectSessionMatrixGateway
       if (room.getMyMembership() !== 'join') {
         return err(failure('direct_session.join_failed'));
       }
-      const direct = await client.getAccountDataFromServer(EventType.Direct);
+      const direct = await client.getAccountDataFromServer(DIRECT_EVENT_TYPE);
       const parsed = directAccountDataSchema.safeParse(direct ?? {});
       if (!parsed.success) {
         return err({ code: 'direct_session.invalid_matrix_account_data', retryable: false });
       }
       const rooms = parsed.data[session.target.matrixUserId] ?? [];
       if (!rooms.includes(session.matrixRoomId)) {
-        await client.setAccountData(EventType.Direct, {
+        await client.setAccountData(DIRECT_EVENT_TYPE, {
           ...parsed.data,
           [session.target.matrixUserId]: [...rooms, session.matrixRoomId],
         });
@@ -101,7 +99,7 @@ export class MatrixSdkDirectSessionGateway implements DirectSessionMatrixGateway
       return err({ code: 'direct_session.receipt_event_missing', retryable: false });
     }
     try {
-      await client.sendReadReceipt(event, ReceiptType.ReadPrivate, true);
+      await client.sendReadReceipt(event, PRIVATE_READ_RECEIPT_TYPE, true);
       return ok(undefined);
     } catch {
       return err(failure('direct_session.receipt_failed'));
