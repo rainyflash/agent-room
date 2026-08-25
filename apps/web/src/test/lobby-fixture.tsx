@@ -38,6 +38,7 @@ import type {
   MessagePublisher,
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
+import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -75,6 +76,14 @@ const messages: MessageGateway = {
       roomId: requestedRoomId,
     }),
   subscribe: () => noop,
+};
+const moderation: ModerationGateway = {
+  applyAction: async () => err({ code: 'moderation.forbidden', retryable: false }),
+  listActions: async () => ok([]),
+  listAudit: async () => err({ code: 'moderation.forbidden', retryable: false }),
+  listCases: async () => ok([]),
+  report: async () => err({ code: 'moderation.fixture_disabled', retryable: false }),
+  reverseAction: async () => err({ code: 'moderation.forbidden', retryable: false }),
 };
 const unavailablePrivateRoom = async () =>
   err({ code: 'private_room.fixture_unavailable', retryable: false });
@@ -382,6 +391,7 @@ const services: AppServices = {
   lobby,
   messagePublisher: new FixtureMessagePublisher(),
   messages,
+  moderation,
   privateRoomMatrix,
   privateRooms,
   security,

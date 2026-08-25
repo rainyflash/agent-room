@@ -17,6 +17,7 @@ import { ControlPlaneContentClient } from '@/features/messages/adapters/control-
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
 import { WebObserverMessagePublisher } from '@/features/messages/adapters/web-observer-message-publisher';
+import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
 import { MatrixAccountPreferencesGateway } from '@/features/preferences/adapters/matrix-account-preferences-gateway';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -79,6 +80,7 @@ function createRuntime(config: RuntimeConfig) {
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   const content = new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl });
   const contentVerifier = new BrowserContentVerifier();
+  const moderation = new ControlPlaneModerationClient({ baseUrl: config.controlPlaneUrl });
   const privateRooms = new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl });
   const privateRoomMatrix = new MatrixSdkPrivateRoomGateway(matrixClients);
   const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
@@ -118,6 +120,7 @@ function createRuntime(config: RuntimeConfig) {
     lobby,
     messagePublisher,
     messages,
+    moderation,
     privateRoomMatrix,
     privateRooms,
     security,
