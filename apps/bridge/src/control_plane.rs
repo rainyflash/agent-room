@@ -40,10 +40,12 @@ use url::Url;
 use uuid::{Uuid, Version};
 
 mod content;
+mod handoffs;
 mod lobbies;
 mod message_content;
 
 pub use content::ReqwestControlPlaneContentGateway;
+pub use handoffs::ReqwestControlPlaneHandoffGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
 pub use message_content::ReqwestControlPlaneMessageContentGateway;
 

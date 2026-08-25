@@ -1,3 +1,4 @@
+mod content;
 mod incoming;
 mod incoming_wire;
 mod model;
@@ -8,6 +9,7 @@ mod receipt_wire;
 mod receipts;
 mod wire;
 
+pub use content::ProjectedHandoffContentGateway;
 pub use incoming::{
     HandoffReceptionDependencies, HandoffReceptionFailure, HandoffReceptionFailureKind,
     HandoffReceptionService,
