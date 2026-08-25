@@ -229,10 +229,10 @@ class FakePreferencesGateway implements AccountPreferencesGateway {
 class ContendedPreferencesServer {
   readonly #listeners = new Set<() => void>();
   #captureWrites = false;
-  #capturedWrites: Array<{
+  #capturedWrites: {
     readonly document: AccountPreferencesDocument;
     readonly resolve: (result: Result<void, AccountPreferencesSyncFailure>) => void;
-  }> = [];
+  }[] = [];
   #remote: AccountPreferencesDocument;
 
   constructor(initial: AccountPreferencesDocument) {
