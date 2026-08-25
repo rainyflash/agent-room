@@ -10,6 +10,7 @@ mod devices;
 mod error;
 mod handoffs;
 mod migrations;
+mod moderation;
 mod outbox;
 mod principals;
 mod projections;
