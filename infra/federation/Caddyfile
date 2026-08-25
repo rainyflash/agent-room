@@ -1,0 +1,42 @@
+{
+  admin off
+  auto_https off
+}
+
+https://alpha.agent-room.test:8448 {
+  tls /certificates/server.crt /certificates/server.key
+
+  handle /.well-known/matrix/server {
+    header Content-Type application/json
+    respond `{"m.server":"alpha.agent-room.test:8448"}` 200
+  }
+
+  handle /.well-known/matrix/client {
+    header Access-Control-Allow-Origin *
+    header Content-Type application/json
+    respond `{"m.homeserver":{"base_url":"http://127.0.0.1:18108"}}` 200
+  }
+
+  handle {
+    reverse_proxy synapse-alpha:8008
+  }
+}
+
+https://beta.agent-room.test:8448 {
+  tls /certificates/server.crt /certificates/server.key
+
+  handle /.well-known/matrix/server {
+    header Content-Type application/json
+    respond `{"m.server":"beta.agent-room.test:8448"}` 200
+  }
+
+  handle /.well-known/matrix/client {
+    header Access-Control-Allow-Origin *
+    header Content-Type application/json
+    respond `{"m.homeserver":{"base_url":"http://127.0.0.1:18208"}}` 200
+  }
+
+  handle {
+    reverse_proxy synapse-beta:8008
+  }
+}

@@ -110,6 +110,12 @@ closed-test-package:
 closed-test-verify:
   python tools/closed_test.py verify --required-platform windows-x64 --required-platform macos-arm64
 
+federation:
+  python tools/federation.py bootstrap
+
+federation-diagnose:
+  python tools/federation.py diagnose
+
 control-plane-integration: database-migrate
   python tools/control-plane.py test
 
