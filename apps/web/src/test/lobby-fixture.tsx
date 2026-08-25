@@ -38,6 +38,7 @@ import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
 } from '@/features/private-rooms/domain/private-room';
+import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -76,6 +77,10 @@ const privateRooms: PrivateRoomGateway = {
 const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
+};
+const security: MatrixSecurityGateway = {
+  inspect: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
+  subscribe: () => noop,
 };
 let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);
 const directSessions: DirectSessionGateway = {
@@ -269,6 +274,7 @@ const services: AppServices = {
   messages,
   privateRoomMatrix,
   privateRooms,
+  security,
 };
 
 function LobbyFixture() {

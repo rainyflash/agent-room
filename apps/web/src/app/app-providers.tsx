@@ -19,6 +19,7 @@ import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
+import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { SessionProvider } from '@/features/session/ui/session-provider';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
@@ -66,6 +67,7 @@ function createRuntime(config: RuntimeConfig) {
     directSessions,
     directSessionMatrix,
   );
+  const security = new MatrixSdkSecurityGateway(matrixClients);
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
@@ -90,6 +92,7 @@ function createRuntime(config: RuntimeConfig) {
     messages,
     privateRoomMatrix,
     privateRooms,
+    security,
   };
 
   return {
