@@ -26,7 +26,7 @@
 
 ## 3. 账户偏好同步与冲突规则
 
-账户偏好保存在 Matrix Account Data 事件 `org.agentroom.preferences.v1` 中，当前同步字段为：
+账户偏好保存在 Matrix Account Data 事件 `io.github.rainyflash.agentroom.preferences.v1` 中，当前同步字段为：
 
 - `language`：`system | en | zh-CN`
 - `lobbyView`：`scene | list`

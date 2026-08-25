@@ -167,7 +167,7 @@
         "plaintextSizeBytes"
       ],
       "properties": {
-        "algorithm": { "const": "org.agentroom.content.aes-256-gcm.v1" },
+        "algorithm": { "const": "io.github.rainyflash.agentroom.content.aes-256-gcm.v1" },
         "contextId": {
           "type": "string",
           "format": "uuid",
@@ -306,7 +306,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.message.preview.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.message.preview.v1" },
         "id": {
           "type": "string",
           "format": "uuid",
@@ -350,7 +350,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.message.revision.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.message.revision.v1" },
         "id": {
           "type": "string",
           "format": "uuid",
@@ -415,7 +415,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.moderation.notice.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.moderation.notice.v1" },
         "actionId": {
           "type": "string",
           "format": "uuid",
@@ -459,7 +459,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.agent.status.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.agent.status.v1" },
         "id": {
           "type": "string",
           "format": "uuid",
@@ -533,7 +533,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.handoff.request.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.handoff.request.v1" },
         "id": {
           "type": "string",
           "format": "uuid",
@@ -616,7 +616,7 @@
       ],
       "properties": {
         "schemaVersion": { "const": "1.0" },
-        "eventType": { "const": "org.agentroom.handoff.receipt.v1" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.handoff.receipt.v1" },
         "id": {
           "type": "string",
           "format": "uuid",

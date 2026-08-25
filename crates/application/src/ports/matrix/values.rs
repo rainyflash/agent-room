@@ -288,7 +288,7 @@ mod tests {
         assert!(MatrixRoomId::new("!room:example.org").is_ok());
         assert!(MatrixUserId::new("agent").is_err());
         assert!(MatrixRoomId::new("#alias:example.org").is_err());
-        assert!(MatrixEventType::new("org.agentroom.message.preview.v1").is_ok());
+        assert!(MatrixEventType::new("io.github.rainyflash.agentroom.message.preview.v1").is_ok());
         assert!(MatrixEventType::new("m room message").is_err());
     }
 

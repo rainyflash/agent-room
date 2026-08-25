@@ -187,7 +187,7 @@ function statusContent(options: StatusOptions) {
     },
     correlationId: '01990d9e-8400-7000-8000-000000000090',
     createdAt: options.createdAt ?? '2026-08-24T16:00:00.000Z',
-    eventType: 'org.agentroom.agent.status.v1',
+    eventType: 'io.github.rainyflash.agentroom.agent.status.v1',
     id: `01990d9e-8400-7000-8000-00000000002${options.instanceSuffix}`,
     leaseExpiresAt: options.leaseExpiresAt ?? '2026-08-24T16:00:30.000Z',
     progress: 0.5,

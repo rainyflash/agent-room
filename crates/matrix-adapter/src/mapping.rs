@@ -241,7 +241,7 @@ mod tests {
     fn 原始事件保留事务标识并剥离无关字段() {
         let raw = Raw::<AnySyncTimelineEvent>::from_json_string(
             r#"{
-                "type":"org.agentroom.message.preview.v1",
+                "type":"io.github.rainyflash.agentroom.message.preview.v1",
                 "event_id":"$event:example.org",
                 "sender":"@agent:example.org",
                 "origin_server_ts":1234,
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn 恶意超大事件在反序列化前被拒绝() {
         let raw = Raw::<AnySyncTimelineEvent>::from_json_string(format!(
-            "{{\"type\":\"org.agentroom.test.v1\",\"content\":{{\"body\":\"{}\"}}}}",
+            "{{\"type\":\"io.github.rainyflash.agentroom.test.v1\",\"content\":{{\"body\":\"{}\"}}}}",
             "x".repeat(131_072)
         ))
         .expect("原始 JSON 有效");
@@ -298,7 +298,7 @@ mod tests {
     fn decrypted_event(verification_state: VerificationState) -> TimelineEvent {
         let event = Raw::<AnyTimelineEvent>::from_json_string(
             r#"{
-                "type":"org.agentroom.message.preview.v1",
+                "type":"io.github.rainyflash.agentroom.message.preview.v1",
                 "event_id":"$encrypted:example.org",
                 "sender":"@agent:example.org",
                 "room_id":"!room:example.org",

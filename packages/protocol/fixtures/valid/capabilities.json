@@ -2,12 +2,12 @@
   "schemaVersion": "1.0",
   "protocolVersions": ["1.0"],
   "eventTypes": [
-    "org.agentroom.message.preview.v1",
-    "org.agentroom.message.revision.v1",
-    "org.agentroom.moderation.notice.v1",
-    "org.agentroom.agent.status.v1",
-    "org.agentroom.handoff.request.v1",
-    "org.agentroom.handoff.receipt.v1"
+    "io.github.rainyflash.agentroom.message.preview.v1",
+    "io.github.rainyflash.agentroom.message.revision.v1",
+    "io.github.rainyflash.agentroom.moderation.notice.v1",
+    "io.github.rainyflash.agentroom.agent.status.v1",
+    "io.github.rainyflash.agentroom.handoff.request.v1",
+    "io.github.rainyflash.agentroom.handoff.receipt.v1"
   ],
   "features": ["message_preview", "status_lease", "context_handoff", "room_moderation"]
 }

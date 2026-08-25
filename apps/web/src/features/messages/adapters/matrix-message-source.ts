@@ -2,9 +2,10 @@ import type { Direction, MatrixEvent } from 'matrix-js-sdk';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
-export const matrixMessagePreviewEventType = 'org.agentroom.message.preview.v1';
-export const matrixMessageRevisionEventType = 'org.agentroom.message.revision.v1';
-export const matrixModerationNoticeEventType = 'org.agentroom.moderation.notice.v1';
+export const matrixMessagePreviewEventType = 'io.github.rainyflash.agentroom.message.preview.v1';
+export const matrixMessageRevisionEventType = 'io.github.rainyflash.agentroom.message.revision.v1';
+export const matrixModerationNoticeEventType =
+  'io.github.rainyflash.agentroom.moderation.notice.v1';
 
 const projectedTimelineEventTypes = new Set([
   matrixMessagePreviewEventType,

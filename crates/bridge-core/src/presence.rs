@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-pub const AGENT_STATUS_EVENT_TYPE: &str = "org.agentroom.agent.status.v1";
+pub const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
 const ROOM_MEMBER_EVENT_TYPE: &str = "m.room.member";
 const MAXIMUM_PRESENCE_TARGETS: usize = 50;
 const MAXIMUM_STATUS_EVENTS_PER_ROOM: usize = 512;

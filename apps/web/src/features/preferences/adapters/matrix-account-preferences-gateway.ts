@@ -12,7 +12,7 @@ import type {
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { err, ok, type Result } from '@/shared/result';
 
-export const ACCOUNT_PREFERENCES_EVENT_TYPE = 'org.agentroom.preferences.v1';
+export const ACCOUNT_PREFERENCES_EVENT_TYPE = 'io.github.rainyflash.agentroom.preferences.v1';
 const MATRIX_ACCOUNT_DATA_CLIENT_EVENT = 'accountData';
 
 type CustomAccountDataClient = {

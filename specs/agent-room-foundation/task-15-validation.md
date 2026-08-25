@@ -17,7 +17,7 @@
 
 ## 2. 协议与签名
 
-- `org.agentroom.agent.status.v1` 使用 `state_key = agentInstanceId`，状态闭合为 `offline`、`idle`、`working`、`waiting_input`、`blocked` 和 `completed`。
+- `io.github.rainyflash.agentroom.agent.status.v1` 使用 `state_key = agentInstanceId`，状态闭合为 `offline`、`idle`、`working`、`waiting_input`、`blocked` 和 `completed`。
 - 粗粒度事件不得携带 `taskSummary`、`startedAt` 或 `progress`。详细模式才允许这些有界字段；任务摘要拒绝控制字符，进度在领域层以基点表达并严格限制到 0–100%。
 - 签名输入移除顶层 `signature` 后按 RFC 8785/JCS 规范化为 UTF-8，再由实例 Ed25519 密钥签名；线上字段使用不带填充的 Base64URL 字符串。协议文档、JSON Schema、Rust 和 TypeScript 生成类型保持单一结构。
 - 事件 ID 与关联 ID 强制 UUIDv7；身份展示名、Matrix User ID、事件大小和未知字段均在进入 Matrix 前校验。

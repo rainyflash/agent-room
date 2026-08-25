@@ -653,7 +653,7 @@ impl 测试夹具 {
             },
             correlation_id: self.handoff_id.to_string(),
             created_at: "1970-01-01T00:00:01.000Z".to_owned(),
-            event_type: "org.agentroom.handoff.request.v1".to_owned(),
+            event_type: "io.github.rainyflash.agentroom.handoff.request.v1".to_owned(),
             expires_at: "1970-01-01T00:00:02.000Z".to_owned(),
             id: self.handoff_id.to_string(),
             permissions: vec![
@@ -688,7 +688,8 @@ impl 测试夹具 {
         );
         DecryptedHandoffToDeviceEvent::new(
             self.requester_identity.matrix_user_id().clone(),
-            MatrixEventType::new("org.agentroom.handoff.request.v1").expect("事件类型有效"),
+            MatrixEventType::new("io.github.rainyflash.agentroom.handoff.request.v1")
+                .expect("事件类型有效"),
             content,
         )
         .expect("解密事件有效")

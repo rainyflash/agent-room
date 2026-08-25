@@ -12,7 +12,7 @@ use crate::{agent_identity::BridgeAgentIdentity, ports::DeviceSigningIdentity};
 
 use super::wire::{HandoffWireFailure, actor_ref, rfc3339, signed_event, version_seven};
 
-pub const HANDOFF_RECEIPT_EVENT_TYPE: &str = "org.agentroom.handoff.receipt.v1";
+pub const HANDOFF_RECEIPT_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.handoff.receipt.v1";
 
 pub(super) fn receipt_event(
     identity: &BridgeAgentIdentity,

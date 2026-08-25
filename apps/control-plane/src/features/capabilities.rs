@@ -10,12 +10,12 @@ pub(crate) async fn get() -> Json<CapabilityManifest> {
 pub(crate) fn manifest() -> CapabilityManifest {
     CapabilityManifest {
         event_types: vec![
-            "org.agentroom.message.preview.v1".to_owned(),
-            "org.agentroom.message.revision.v1".to_owned(),
-            "org.agentroom.moderation.notice.v1".to_owned(),
-            "org.agentroom.agent.status.v1".to_owned(),
-            "org.agentroom.handoff.request.v1".to_owned(),
-            "org.agentroom.handoff.receipt.v1".to_owned(),
+            "io.github.rainyflash.agentroom.message.preview.v1".to_owned(),
+            "io.github.rainyflash.agentroom.message.revision.v1".to_owned(),
+            "io.github.rainyflash.agentroom.moderation.notice.v1".to_owned(),
+            "io.github.rainyflash.agentroom.agent.status.v1".to_owned(),
+            "io.github.rainyflash.agentroom.handoff.request.v1".to_owned(),
+            "io.github.rainyflash.agentroom.handoff.receipt.v1".to_owned(),
         ],
         features: vec![
             "message_preview".to_owned(),

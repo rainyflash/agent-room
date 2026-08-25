@@ -301,7 +301,7 @@ pub enum ClientContentEncryptionAlgorithm {
 impl ClientContentEncryptionAlgorithm {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Aes256GcmV1 => "org.agentroom.content.aes-256-gcm.v1",
+            Self::Aes256GcmV1 => "io.github.rainyflash.agentroom.content.aes-256-gcm.v1",
         }
     }
 }
@@ -311,7 +311,7 @@ impl TryFrom<&str> for ClientContentEncryptionAlgorithm {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "org.agentroom.content.aes-256-gcm.v1" => Ok(Self::Aes256GcmV1),
+            "io.github.rainyflash.agentroom.content.aes-256-gcm.v1" => Ok(Self::Aes256GcmV1),
             _ => Err(DomainError::Validation {
                 field: "client_content_encryption_algorithm",
                 reason: "不支持的客户端正文加密算法",

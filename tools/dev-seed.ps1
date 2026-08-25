@@ -203,7 +203,7 @@ Invoke-JsonRequest @joinArguments | Out-Null
 $profileStateKey = [System.Uri]::EscapeDataString($environment.SEED_AGENT_ID)
 $profileArguments = @{
   Method = 'PUT'
-  Uri = "http://127.0.0.1:18008/_matrix/client/v3/rooms/$encodedRoomId/state/org.agentroom.agent.profile.v1/$profileStateKey"
+  Uri = "http://127.0.0.1:18008/_matrix/client/v3/rooms/$encodedRoomId/state/io.github.rainyflash.agentroom.agent.profile.v1/$profileStateKey"
   AccessToken = $adminToken
   Body = @{
     schemaVersion = '1.0'

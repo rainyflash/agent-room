@@ -74,7 +74,7 @@ async fn 双_homeserver_经指纹核验后交换并解密端到端加密事件()
         .get_room(&room_id)
         .expect("发送端房间仍存在")
         .send_raw(
-            "org.agentroom.message.preview.v1",
+            "io.github.rainyflash.agentroom.message.preview.v1",
             json!({
                 "schemaVersion": "1.0",
                 "body": "跨服务端端到端加密预览",
@@ -86,7 +86,10 @@ async fn 双_homeserver_经指纹核验后交换并解密端到端加密事件()
 
     let (event, verification) =
         wait_for_decrypted_event(&mut beta, &response.response.event_id).await;
-    assert_eq!(event["type"], "org.agentroom.message.preview.v1");
+    assert_eq!(
+        event["type"],
+        "io.github.rainyflash.agentroom.message.preview.v1"
+    );
     assert_eq!(event["content"]["body"], "跨服务端端到端加密预览");
     assert!(matches!(verification, VerificationState::Unverified(_)));
 

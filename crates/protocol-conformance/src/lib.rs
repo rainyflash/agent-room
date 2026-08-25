@@ -37,38 +37,55 @@ mod tests {
     }
 
     fn assert_generated_type_deserializes(value: Value) {
-        if value.get("eventType") == Some(&Value::String("org.agentroom.message.preview.v1".into()))
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.message.preview.v1".into(),
+            ))
         {
             serde_json::from_value::<MessagePreviewEvent>(value)
                 .expect("消息预览必须符合生成的 Rust 类型");
             return;
         }
         if value.get("eventType")
-            == Some(&Value::String("org.agentroom.message.revision.v1".into()))
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.message.revision.v1".into(),
+            ))
         {
             serde_json::from_value::<MessageRevisionEvent>(value)
                 .expect("消息修订必须符合生成的 Rust 类型");
             return;
         }
         if value.get("eventType")
-            == Some(&Value::String("org.agentroom.moderation.notice.v1".into()))
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.moderation.notice.v1".into(),
+            ))
         {
             serde_json::from_value::<ModerationNoticeEvent>(value)
                 .expect("治理通知必须符合生成的 Rust 类型");
             return;
         }
-        if value.get("eventType") == Some(&Value::String("org.agentroom.agent.status.v1".into())) {
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.agent.status.v1".into(),
+            ))
+        {
             serde_json::from_value::<AgentStatusEvent>(value)
                 .expect("状态事件必须符合生成的 Rust 类型");
             return;
         }
-        if value.get("eventType") == Some(&Value::String("org.agentroom.handoff.request.v1".into()))
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.handoff.request.v1".into(),
+            ))
         {
             serde_json::from_value::<HandoffRequestEvent>(value)
                 .expect("交付事件必须符合生成的 Rust 类型");
             return;
         }
-        if value.get("eventType") == Some(&Value::String("org.agentroom.handoff.receipt.v1".into()))
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.handoff.receipt.v1".into(),
+            ))
         {
             serde_json::from_value::<HandoffReceiptEvent>(value)
                 .expect("交付回执必须符合生成的 Rust 类型");

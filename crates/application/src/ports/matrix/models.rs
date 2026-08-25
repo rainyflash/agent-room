@@ -1048,8 +1048,8 @@ mod tests {
 
     #[test]
     fn 建房策略显式去重成员可写状态事件() {
-        let event_type =
-            MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效");
+        let event_type = MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+            .expect("事件类型有效");
         let request = MatrixCreateRoom::new(
             Some("Lobby".to_owned()),
             None,
@@ -1094,7 +1094,8 @@ mod tests {
 
     #[test]
     fn 事件拒绝非对象和超大载荷() {
-        let event_type = MatrixEventType::new("org.agentroom.test.v1").expect("事件类型有效");
+        let event_type =
+            MatrixEventType::new("io.github.rainyflash.agentroom.test.v1").expect("事件类型有效");
         let transaction_id = MatrixTransactionId::new("txn-1").expect("事务标识有效");
         assert!(MatrixEvent::new(event_type.clone(), transaction_id.clone(), json!([])).is_err());
         assert!(
@@ -1107,7 +1108,8 @@ mod tests {
         );
         assert!(
             MatrixStateEvent::new(
-                MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效"),
+                MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+                    .expect("事件类型有效"),
                 MatrixStateKey::new("instance-1").expect("状态键有效"),
                 json!([]),
             )
@@ -1174,7 +1176,7 @@ mod tests {
         MatrixTimelineEvent::new(
             Some(MatrixEventId::new(event_id).expect("事件标识有效")),
             None,
-            MatrixEventType::new("org.agentroom.test.v1").expect("事件类型有效"),
+            MatrixEventType::new("io.github.rainyflash.agentroom.test.v1").expect("事件类型有效"),
             None,
             Some(transaction_id),
             Some(1_000),

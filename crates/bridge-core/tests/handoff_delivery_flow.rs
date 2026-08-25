@@ -390,7 +390,7 @@ async fn 用户批准后只向精确设备发送签名交付请求() {
     assert_eq!(sent.target(), &fixture.target_address);
     assert_eq!(
         sent.event().event_type().as_str(),
-        "org.agentroom.handoff.request.v1"
+        "io.github.rainyflash.agentroom.handoff.request.v1"
     );
     assert_eq!(
         sent.event().content()["actor"]["provenance"],
@@ -728,7 +728,7 @@ fn signed_receipt(
         },
         correlation_id: fixture.handoff_id.to_string(),
         created_at: "1970-01-01T00:00:01.250Z".to_owned(),
-        event_type: "org.agentroom.handoff.receipt.v1".to_owned(),
+        event_type: "io.github.rainyflash.agentroom.handoff.receipt.v1".to_owned(),
         failure_code: None,
         id: fixture.handoff_id.to_string(),
         requester_instance_id: fixture.requester_identity.agent_instance_id().to_string(),
@@ -750,7 +750,8 @@ fn signed_receipt(
     );
     DecryptedHandoffToDeviceEvent::new(
         target_identity.matrix_user_id().clone(),
-        MatrixEventType::new("org.agentroom.handoff.receipt.v1").expect("回执类型有效"),
+        MatrixEventType::new("io.github.rainyflash.agentroom.handoff.receipt.v1")
+            .expect("回执类型有效"),
         content,
     )
     .expect("解密回执有效")

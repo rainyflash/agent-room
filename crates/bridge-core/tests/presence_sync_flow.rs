@@ -402,7 +402,7 @@ fn signed_status_event(
 fn status_payload(status: &str, created_at: &str, lease_expires_at: &str) -> Value {
     json!({
         "schemaVersion": "1.0",
-        "eventType": "org.agentroom.agent.status.v1",
+        "eventType": "io.github.rainyflash.agentroom.agent.status.v1",
         "id": Uuid::now_v7(),
         "createdAt": created_at,
         "actor": {
@@ -430,7 +430,8 @@ fn status_timeline_event(
     MatrixTimelineEvent::new(
         Some(MatrixEventId::new(event_id).expect("事件标识有效")),
         Some(MatrixUserId::new(ACTOR_MATRIX_ID).expect("用户标识有效")),
-        MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效"),
+        MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+            .expect("事件类型有效"),
         Some(ACTOR_INSTANCE_ID.to_owned()),
         None,
         Some(origin_server_timestamp),

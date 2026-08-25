@@ -296,7 +296,7 @@ async fn read_moderation_hidden(scenario: &PrivateRoomScenario, event_id: &Matri
             "rooms",
             scenario.room_id.as_str(),
             "state",
-            "org.agentroom.moderation.notice.v1",
+            "io.github.rainyflash.agentroom.moderation.notice.v1",
             event_id.as_str(),
         ]);
     reqwest::Client::new()
@@ -970,12 +970,12 @@ async fn verify_message_flow(scenario: &RoomScenario) -> MessageFlowResult {
         .iter()
         .rev()
         .find(|event| {
-            event.event_type().as_str() == "org.agentroom.agent.status.v1"
+            event.event_type().as_str() == "io.github.rainyflash.agentroom.agent.status.v1"
                 && event.state_key() == Some("instance-test")
         })
         .or_else(|| {
             room_delta.state().iter().find(|event| {
-                event.event_type().as_str() == "org.agentroom.agent.status.v1"
+                event.event_type().as_str() == "io.github.rainyflash.agentroom.agent.status.v1"
                     && event.state_key() == Some("instance-test")
             })
         })
@@ -1097,7 +1097,8 @@ fn room_request() -> MatrixCreateRoom {
 
 fn message_event(transaction_id: String, body: &str) -> MatrixEvent {
     MatrixEvent::new(
-        MatrixEventType::new("org.agentroom.message.preview.v1").expect("事件类型有效"),
+        MatrixEventType::new("io.github.rainyflash.agentroom.message.preview.v1")
+            .expect("事件类型有效"),
         MatrixTransactionId::new(transaction_id).expect("事务标识有效"),
         json!({
             "schemaVersion": "1.0",
@@ -1109,7 +1110,8 @@ fn message_event(transaction_id: String, body: &str) -> MatrixEvent {
 
 fn status_state_event(revision: u8) -> MatrixStateEvent {
     MatrixStateEvent::new(
-        MatrixEventType::new("org.agentroom.agent.status.v1").expect("事件类型有效"),
+        MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+            .expect("事件类型有效"),
         MatrixStateKey::new("instance-test").expect("状态键有效"),
         json!({
             "schemaVersion": "1.0",

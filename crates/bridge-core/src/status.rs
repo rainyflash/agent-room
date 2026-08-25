@@ -24,7 +24,7 @@ use crate::ports::{
     StatusEventIdentifierFactory,
 };
 
-const STATUS_EVENT_TYPE: &str = "org.agentroom.agent.status.v1";
+const STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostAgentState {

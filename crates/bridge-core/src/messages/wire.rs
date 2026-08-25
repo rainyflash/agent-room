@@ -20,8 +20,8 @@ use super::{
     SendMessageRequest,
 };
 
-pub(super) const PREVIEW_EVENT_TYPE: &str = "org.agentroom.message.preview.v1";
-pub(super) const REVISION_EVENT_TYPE: &str = "org.agentroom.message.revision.v1";
+pub(super) const PREVIEW_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.message.preview.v1";
+pub(super) const REVISION_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.message.revision.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MessageWireFailure {

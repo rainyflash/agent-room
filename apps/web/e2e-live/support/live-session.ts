@@ -101,7 +101,7 @@ function isExpectedHttpBoundary(status: number, rawUrl: string): boolean {
   const url = new URL(rawUrl);
   const missingInitialPreferences =
     url.pathname.startsWith('/_matrix/client/v3/user/') &&
-    url.pathname.endsWith('/account_data/org.agentroom.preferences.v1');
+    url.pathname.endsWith('/account_data/io.github.rainyflash.agentroom.preferences.v1');
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
     (status === 404 &&

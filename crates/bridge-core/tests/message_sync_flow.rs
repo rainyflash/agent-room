@@ -194,7 +194,7 @@ async fn 撤销前的可信历史事件进入投影并携带已撤销实例标�
     let event = signed_timeline_event(
         &fixture.signing_key,
         "$historical:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         preview_payload(
             Uuid::now_v7(),
             room_id().as_str(),
@@ -300,7 +300,7 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
         None,
     );
     encrypted_payload["content"]["encryption"] = json!({
-        "algorithm": "org.agentroom.content.aes-256-gcm.v1",
+        "algorithm": "io.github.rainyflash.agentroom.content.aes-256-gcm.v1",
         "contextId": encrypted_id,
         "keyBase64Url": URL_SAFE_NO_PAD.encode([7_u8; 32]),
         "nonceBase64Url": URL_SAFE_NO_PAD.encode([8_u8; 12]),
@@ -312,7 +312,7 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
     let encrypted = signed_timeline_event(
         &fixture.signing_key,
         "$encrypted:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         encrypted_payload,
         None,
     )
@@ -320,7 +320,7 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
     let leaked = signed_timeline_event(
         &fixture.signing_key,
         "$plaintext:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         leaked_payload,
         None,
     );
@@ -366,7 +366,7 @@ async fn 未可信设备的加密房间消息在应用验签前被隔离() {
     let event = signed_timeline_event(
         &fixture.signing_key,
         "$untrusted-encrypted:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         preview_payload(
             Uuid::now_v7(),
             room_id().as_str(),
@@ -408,7 +408,7 @@ fn mixed_sync(fixture: &测试夹具, message_id: Uuid, reply_target: Uuid) -> M
     let preview = signed_timeline_event(
         &fixture.signing_key,
         "$preview:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         preview_payload(
             message_id,
             room_id.as_str(),
@@ -426,7 +426,7 @@ fn mixed_sync(fixture: &测试夹具, message_id: Uuid, reply_target: Uuid) -> M
     sign_payload(&fixture.signing_key, &mut wrong_room_payload);
     let wrong_room = timeline_event(
         "$wrong-room:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         wrong_room_payload,
         None,
     );
@@ -440,14 +440,14 @@ fn mixed_sync(fixture: &测试夹具, message_id: Uuid, reply_target: Uuid) -> M
     bad_signature_payload["preview"]["summary"] = json!("签名后被篡改");
     let bad_signature = timeline_event(
         "$bad-signature:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         bad_signature_payload,
         None,
     );
     let revision = signed_timeline_event(
         &fixture.signing_key,
         "$revision:matrix.test",
-        "org.agentroom.message.revision.v1",
+        "io.github.rainyflash.agentroom.message.revision.v1",
         revision_payload(
             Uuid::now_v7(),
             message_id,
@@ -487,7 +487,7 @@ async fn 验签依赖不可用时绝不推进同步游标() {
     let event = signed_timeline_event(
         &fixture.signing_key,
         "$preview:matrix.test",
-        "org.agentroom.message.preview.v1",
+        "io.github.rainyflash.agentroom.message.preview.v1",
         preview_payload(
             Uuid::now_v7(),
             room_id.as_str(),
@@ -532,7 +532,7 @@ fn preview_payload(
 ) -> Value {
     let mut payload = json!({
         "schemaVersion": "1.0",
-        "eventType": "org.agentroom.message.preview.v1",
+        "eventType": "io.github.rainyflash.agentroom.message.preview.v1",
         "id": message_id,
         "createdAt": created_at,
         "actor": actor(),
@@ -571,7 +571,7 @@ fn revision_payload(
 ) -> Value {
     json!({
         "schemaVersion": "1.0",
-        "eventType": "org.agentroom.message.revision.v1",
+        "eventType": "io.github.rainyflash.agentroom.message.revision.v1",
         "id": revision_id,
         "createdAt": created_at,
         "actor": actor(),

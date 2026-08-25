@@ -17,7 +17,7 @@ export type AgentStatusEvent = {
   readonly actor: ActorRef;
   readonly correlationId: string;
   readonly createdAt: string;
-  readonly eventType: "org.agentroom.agent.status.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.agent.status.v1";
   readonly id: string;
   readonly leaseExpiresAt: string;
   readonly progress?: number;
@@ -41,7 +41,7 @@ export type CapabilityManifest = {
 } & Readonly<Record<string, unknown>>;
 
 export type ClientContentEncryption = {
-  readonly algorithm: "org.agentroom.content.aes-256-gcm.v1";
+  readonly algorithm: "io.github.rainyflash.agentroom.content.aes-256-gcm.v1";
   readonly contextId: string;
   readonly keyBase64Url: string;
   readonly nonceBase64Url: string;
@@ -77,7 +77,7 @@ export type HandoffReceiptEvent = {
   readonly actor: ActorRef;
   readonly correlationId: string;
   readonly createdAt: string;
-  readonly eventType: "org.agentroom.handoff.receipt.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.handoff.receipt.v1";
   readonly failureCode?: string;
   readonly id: string;
   readonly requesterInstanceId: string;
@@ -95,7 +95,7 @@ export type HandoffRequestEvent = {
   readonly content: ContentRef;
   readonly correlationId: string;
   readonly createdAt: string;
-  readonly eventType: "org.agentroom.handoff.request.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.handoff.request.v1";
   readonly expiresAt: string;
   readonly id: string;
   readonly permissions: ReadonlyArray<HandoffPermission>;
@@ -129,7 +129,7 @@ export type MessagePreviewEvent = {
   readonly content: ContentRef;
   readonly correlationId: string;
   readonly createdAt: string;
-  readonly eventType: "org.agentroom.message.preview.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.message.preview.v1";
   readonly id: string;
   readonly preview: MessagePreview;
   readonly relation?: MessageRelation;
@@ -148,7 +148,7 @@ export type MessageRevisionEvent = {
   readonly content?: ContentRef;
   readonly correlationId: string;
   readonly createdAt: string;
-  readonly eventType: "org.agentroom.message.revision.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.message.revision.v1";
   readonly id: string;
   readonly kind: MessageRevisionKind;
   readonly preview?: MessagePreview;
@@ -164,7 +164,7 @@ export type MessageSensitivity = "normal" | "sensitive" | "restricted";
 
 export type ModerationNoticeEvent = {
   readonly actionId: string;
-  readonly eventType: "org.agentroom.moderation.notice.v1";
+  readonly eventType: "io.github.rainyflash.agentroom.moderation.notice.v1";
   readonly hidden: boolean;
   readonly reasonCode: "spam" | "harassment" | "impersonation" | "malicious_content" | "privacy_violation" | "unsafe_automation" | "other";
   readonly schemaVersion: "1.0";

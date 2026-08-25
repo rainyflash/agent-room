@@ -95,7 +95,7 @@ describe('Agent 状态租约评估', () => {
 function statusEvent(createdAt: string, leaseExpiresAt: string): AgentStatusEvent {
   return {
     schemaVersion: '1.0',
-    eventType: 'org.agentroom.agent.status.v1',
+    eventType: 'io.github.rainyflash.agentroom.agent.status.v1',
     id: '01945c1e-7b5a-7c7f-8a28-2de53f56a9a7',
     createdAt,
     actor: {

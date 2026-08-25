@@ -2,7 +2,7 @@ import type { Direction, RoomState } from 'matrix-js-sdk';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
-export const matrixAgentStatusEventType = 'org.agentroom.agent.status.v1';
+export const matrixAgentStatusEventType = 'io.github.rainyflash.agentroom.agent.status.v1';
 const forwardTimelineDirection = 'f' as Direction;
 
 export type MatrixLobbyStateEvent = {

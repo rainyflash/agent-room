@@ -93,7 +93,7 @@ Web 在恢复 Matrix 会话后先启动持久 Crypto Store，再创建同步连�
 
 Matrix E2EE 保护事件，但正文对象仍可能独立存放，因此私密正文在上传前额外执行客户端 AEAD：
 
-- 算法标识为 `org.agentroom.content.aes-256-gcm.v1`。
+- 算法标识为 `io.github.rainyflash.agentroom.content.aes-256-gcm.v1`。
 - 设备正文根密钥由 OS 密码学随机源生成并存入 OS 安全存储。
 - 每个 UUIDv7 提交上下文通过 HMAC-SHA-256 派生正文密钥和 96-bit nonce；同一幂等提交重试得到稳定密文，不同提交使用不同材料。
 - AAD 绑定算法域、上下文标识、Matrix Room、媒体类型和明文字节数；正文摘要参与派生上下文。

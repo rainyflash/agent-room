@@ -22,7 +22,7 @@ use crate::{
 };
 
 const MAXIMUM_PROVISIONING_LEASE_MILLIS: u64 = 300_000;
-const AGENT_STATUS_EVENT_TYPE: &str = "org.agentroom.agent.status.v1";
+const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
 
 pub trait LobbyProvisioningIdentifierFactory: Send + Sync {
     fn room_provisioning_job_id(&self) -> RoomProvisioningJobId;

@@ -10,7 +10,7 @@ use crate::{
     rooms::{endpoint_with_segments, expect_empty_success},
 };
 
-const MODERATION_NOTICE_EVENT_TYPE: &str = "org.agentroom.moderation.notice.v1";
+const MODERATION_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.moderation.notice.v1";
 
 impl ModerationEffectGateway for MatrixApplicationServiceProvisioner {
     fn apply<'a>(
@@ -385,7 +385,7 @@ mod tests {
                     put(write_power),
                 )
                 .route(
-                    "/_matrix/client/v3/rooms/{room}/state/org.agentroom.moderation.notice.v1/{event}",
+                    "/_matrix/client/v3/rooms/{room}/state/io.github.rainyflash.agentroom.moderation.notice.v1/{event}",
                     put(write_notice),
                 )
                 .route(

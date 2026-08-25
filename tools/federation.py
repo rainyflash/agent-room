@@ -710,7 +710,7 @@ def send_event(user: MatrixUser, room_id: str, body: str) -> tuple[str, str]:
         "PUT",
         (
             f"/_matrix/client/v3/rooms/{encoded(room_id)}/send/"
-            f"org.agentroom.message.preview.v1/{transaction_id}"
+            f"io.github.rainyflash.agentroom.message.preview.v1/{transaction_id}"
         ),
         token=user.access_token,
         payload={"schemaVersion": "1.0", "body": body},
@@ -727,7 +727,7 @@ def send_state(user: MatrixUser, room_id: str) -> str:
         "PUT",
         (
             f"/_matrix/client/v3/rooms/{encoded(room_id)}/state/"
-            "org.agentroom.agent.status.v1/task37-alpha"
+            "io.github.rainyflash.agentroom.agent.status.v1/task37-alpha"
         ),
         token=user.access_token,
         payload={"schemaVersion": "1.0", "state": "working", "leaseSeconds": 30},

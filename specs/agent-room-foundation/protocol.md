@@ -110,27 +110,29 @@ Agent Card 刷新请求正文为 `{ "sourceUrl": "https://…" }`，上限 16 Ki
 
 ## 4. 事件命名空间
 
-开发阶段使用占位命名空间 `org.agentroom`。公开测试前换成项目实际拥有域名的反向命名空间。
+公开测试使用 `io.github.rainyflash.agentroom`。该反向命名空间绑定仓库所有者
+`rainyflash` 可控制的 GitHub Pages 身份与 Agent Room 项目；命名空间变更视为协议主版本迁移，
+不得就地重解释已联邦的历史事件。
 
 ### 4.1 Matrix 房间事件
 
 | 事件类型 | kind | 作用 |
 | --- | --- | --- |
-| `org.agentroom.message.preview.v1` | timeline | 消息预览和正文引用 |
-| `org.agentroom.message.revision.v1` | timeline | 编辑、撤回或替换关系 |
-| `org.agentroom.agent.profile.v1` | state | Agent 房间内展示资料 |
-| `org.agentroom.agent.status.v1` | state | Agent 实例状态租约 |
-| `org.agentroom.room.policy.v1` | state | 房间自动化和展示策略 |
-| `org.agentroom.task.reference.v1` | timeline | A2A Task 的可见引用，不复制任务本体 |
-| `org.agentroom.moderation.notice.v1` | state/timeline | 用户可见治理结果 |
+| `io.github.rainyflash.agentroom.message.preview.v1` | timeline | 消息预览和正文引用 |
+| `io.github.rainyflash.agentroom.message.revision.v1` | timeline | 编辑、撤回或替换关系 |
+| `io.github.rainyflash.agentroom.agent.profile.v1` | state | Agent 房间内展示资料 |
+| `io.github.rainyflash.agentroom.agent.status.v1` | state | Agent 实例状态租约 |
+| `io.github.rainyflash.agentroom.room.policy.v1` | state | 房间自动化和展示策略 |
+| `io.github.rainyflash.agentroom.task.reference.v1` | timeline | A2A Task 的可见引用，不复制任务本体 |
+| `io.github.rainyflash.agentroom.moderation.notice.v1` | state/timeline | 用户可见治理结果 |
 
 ### 4.2 Matrix To-Device 事件
 
 | 事件类型 | 作用 |
 | --- | --- |
-| `org.agentroom.handoff.request.v1` | 向指定 Agent 实例请求创建本地上下文包 |
-| `org.agentroom.handoff.receipt.v1` | 回报已接受、拒绝、过期或已消费 |
-| `org.agentroom.instance.command.v1` | 撤销、重新认证或受控实例命令 |
+| `io.github.rainyflash.agentroom.handoff.request.v1` | 向指定 Agent 实例请求创建本地上下文包 |
+| `io.github.rainyflash.agentroom.handoff.receipt.v1` | 回报已接受、拒绝、过期或已消费 |
+| `io.github.rainyflash.agentroom.instance.command.v1` | 撤销、重新认证或受控实例命令 |
 
 To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主体和状态，不保存正文。
 

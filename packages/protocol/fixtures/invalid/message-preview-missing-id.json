@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "eventType": "org.agentroom.message.preview.v1",
+  "eventType": "io.github.rainyflash.agentroom.message.preview.v1",
   "createdAt": "2026-08-23T12:00:00Z",
   "actor": {
     "agent": {

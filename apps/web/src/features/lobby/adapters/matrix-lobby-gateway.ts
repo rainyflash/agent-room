@@ -44,7 +44,7 @@ const statusEventSchema = z
     actor: actorSchema,
     correlationId: z.uuid(),
     createdAt: z.iso.datetime({ offset: true }),
-    eventType: z.literal('org.agentroom.agent.status.v1'),
+    eventType: z.literal('io.github.rainyflash.agentroom.agent.status.v1'),
     id: uuidV7Schema,
     leaseExpiresAt: z.iso.datetime({ offset: true }),
     progress: z.number().min(0).max(1).optional(),

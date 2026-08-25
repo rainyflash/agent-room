@@ -25,7 +25,7 @@
 2. 在 Matrix 执行服务端副作用。
 3. 将动作终态写为 applied 或 failed，并追加结果审计。
 
-因此 Matrix 失败不会伪装成成功，崩溃后也有持久化事实可对账。隐藏使用 `org.agentroom.moderation.notice.v1` 当前状态，不销毁原事件；撤销写入 `hidden: false`，Web 投影可恢复原预览。禁言通过 Matrix power levels 收紧发言权；移出与封禁分别走 kick 和 ban，撤销走 invite 或 unban + invite。
+因此 Matrix 失败不会伪装成成功，崩溃后也有持久化事实可对账。隐藏使用 `io.github.rainyflash.agentroom.moderation.notice.v1` 当前状态，不销毁原事件；撤销写入 `hidden: false`，Web 投影可恢复原预览。禁言通过 Matrix power levels 收紧发言权；移出与封禁分别走 kick 和 ban，撤销走 invite 或 unban + invite。
 
 ## 4. 存储与滥用防护
 

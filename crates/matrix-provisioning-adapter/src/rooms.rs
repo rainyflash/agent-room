@@ -904,15 +904,17 @@ mod tests {
         )
         .expect("建房请求有效")
         .with_member_writable_state_event_type(
-            agent_room_application::ports::MatrixEventType::new("org.agentroom.agent.status.v1")
-                .expect("事件类型有效"),
+            agent_room_application::ports::MatrixEventType::new(
+                "io.github.rainyflash.agentroom.agent.status.v1",
+            )
+            .expect("事件类型有效"),
         );
 
         let body =
             serde_json::to_value(CreateRoomRequest::from(&request)).expect("建房请求可序列化");
 
         assert_eq!(
-            body["power_level_content_override"]["events"]["org.agentroom.agent.status.v1"],
+            body["power_level_content_override"]["events"]["io.github.rainyflash.agentroom.agent.status.v1"],
             0
         );
         assert!(body["power_level_content_override"]["events"]["m.room.power_levels"].is_null());
