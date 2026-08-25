@@ -11,11 +11,13 @@ import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
 } from '@/features/private-rooms/domain/private-room';
+import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import type { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
 export type AppServices = {
+  readonly accessManagement: AccessManagementGateway;
   readonly config: RuntimeConfig;
   readonly content: ContentGateway;
   readonly contentVerifier: ContentVerifier;

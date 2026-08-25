@@ -41,6 +41,7 @@ import type {
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
+import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
@@ -90,6 +91,12 @@ const privateRooms: PrivateRoomGateway = {
 const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
+};
+const accessManagement: AccessManagementGateway = {
+  listAgentInstances: async () => ok([]),
+  listProductDevices: async () => ok([]),
+  revokeAgentInstance: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
+  revokeProductDevice: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
 };
 const security: MatrixSecurityGateway = {
   acceptIncomingVerification: async () =>
@@ -281,6 +288,7 @@ class FixtureHandoffGateway implements HandoffGateway {
 }
 
 const services: AppServices = {
+  accessManagement,
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
     matrixHomeserverUrl: 'https://matrix.agent-room.test',

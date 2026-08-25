@@ -108,13 +108,17 @@ export class ControlPlaneAccessManagementClient implements AccessManagementGatew
     init: RequestInit,
   ): Promise<Result<Response, AccessManagementFailure>> {
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), this.#timeoutMs);
+    const timeout = globalThis.setTimeout(() => {
+      controller.abort();
+    }, this.#timeoutMs);
     try {
+      const headers = new Headers(init.headers);
+      headers.set('Accept', 'application/json');
       const response = await this.#fetch(new URL(path, this.#baseUrl), {
         ...init,
         cache: 'no-store',
         credentials: 'include',
-        headers: { Accept: 'application/json', ...init.headers },
+        headers,
         signal: controller.signal,
       });
       return response.ok ? ok(response) : err(await readFailure(response));

@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type {
   MatrixSecurityGateway,
   MatrixSecuritySnapshot,
@@ -67,7 +68,7 @@ describe('SecurityWorkspace', () => {
     await user.click((await screen.findAllByRole('button', { name: 'Verify' }))[0]!);
 
     const dialog = await screen.findByRole('dialog', { name: 'Verify a Matrix device' });
-    expect(within(dialog).getByText('🐶')).toBeVisible();
+    await waitFor(() => expect(within(dialog).getByText('🐶')).toBeVisible());
     expect(within(dialog).getByText('🚀')).toBeVisible();
     expect(beginVerification).toHaveBeenCalledWith({ targetDeviceId: 'ALICE-WEB' });
 
@@ -114,19 +115,111 @@ describe('SecurityWorkspace', () => {
     await user.click(screen.getByRole('button', { name: 'I saved the recovery key' }));
     await waitFor(() => expect(screen.queryByText(recoveryKey)).not.toBeInTheDocument());
   });
+
+  it('分开展示产品设备与 Agent 实例并二次确认级联撤销', async () => {
+    const user = userEvent.setup();
+    const revokeProductDevice = vi.fn(async () =>
+      ok({ matrixCleanup: 'pending' as const, pendingAgentInstanceCount: 1 }),
+    );
+    const accessManagement = accessManagementGateway({
+      listAgentInstances: async () => ok([agentInstance()]),
+      listProductDevices: async () => ok([productDevice()]),
+      revokeProductDevice,
+    });
+
+    renderWorkspace(securityGateway(readySnapshot()), accessManagement);
+
+    const productDevices = await panelForHeading('Product devices');
+    const agentInstances = await panelForHeading('Agent instances');
+    expect(within(productDevices).getByText('Studio workstation')).toBeVisible();
+    expect(within(agentInstances).getByText('Build agent')).toBeVisible();
+    await user.click(within(productDevices).getByRole('button', { name: 'Revoke device' }));
+    await waitFor(() => expect(screen.getByText('Revoke this product device?')).toBeVisible());
+    await user.click(screen.getByRole('button', { name: 'Confirm revocation' }));
+
+    await waitFor(() => expect(revokeProductDevice).toHaveBeenCalledWith(productDevice().deviceId));
+    expect(
+      await screen.findByText(/Local access is revoked\. Matrix device cleanup is pending/u),
+    ).toBeVisible();
+  });
 });
 
-function renderWorkspace(gateway: MatrixSecurityGateway) {
+async function panelForHeading(name: string): Promise<HTMLElement> {
+  const heading = await screen.findByRole('heading', { name });
+  const panel = heading.closest('article');
+  if (!(panel instanceof HTMLElement)) {
+    throw new Error(`访问管理面板缺少 article 语义容器：${name}`);
+  }
+  return panel;
+}
+
+function renderWorkspace(
+  gateway: MatrixSecurityGateway,
+  accessManagement: AccessManagementGateway = accessManagementGateway(),
+) {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
-        <SecurityWorkspace gateway={gateway} onBack={() => undefined} />
+        <SecurityWorkspace
+          accessManagement={accessManagement}
+          gateway={gateway}
+          onBack={() => undefined}
+        />
       </QueryClientProvider>
     </I18nextProvider>,
   );
+}
+
+function accessManagementGateway(
+  overrides: Partial<AccessManagementGateway> = {},
+): AccessManagementGateway {
+  const base: AccessManagementGateway = {
+    listAgentInstances: async () => ok([]),
+    listProductDevices: async () => ok([]),
+    revokeAgentInstance: async () => err({ code: 'access.not_configured', retryable: false }),
+    revokeProductDevice: async () => err({ code: 'access.not_configured', retryable: false }),
+  };
+  return { ...base, ...overrides };
+}
+
+function productDevice() {
+  return {
+    createdAtUnixMs: 1_700_000_000_000,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+    label: 'Studio workstation',
+    lastSeenAtUnixMs: 1_700_000_010_000,
+    matrixDeviceId: 'WEB_DEVICE',
+    platform: 'windows' as const,
+    revokedAtUnixMs: null,
+    trustState: 'verified' as const,
+  };
+}
+
+function agentInstance() {
+  const device = productDevice();
+  return {
+    adapterType: 'codex',
+    agentAvatarContentId: null,
+    agentDisplayName: 'Build agent',
+    agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+    agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
+    capabilityVersion: '1.0',
+    createdAtUnixMs: 1_700_000_000_000,
+    device: {
+      deviceId: device.deviceId,
+      label: device.label,
+      platform: device.platform,
+      trustState: device.trustState,
+    },
+    lastSeenAtUnixMs: 1_700_000_010_000,
+    matrixDeviceId: 'AR_INSTANCE',
+    matrixDeviceRevokedAtUnixMs: null,
+    revokedAtUnixMs: null,
+    status: 'online' as const,
+  };
 }
 
 function securityGateway(

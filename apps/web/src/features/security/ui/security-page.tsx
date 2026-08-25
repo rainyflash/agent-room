@@ -10,6 +10,7 @@ import {
   matrixSecurityQueryKey,
   useMatrixSecurity,
 } from '@/features/security/data/matrix-security-queries';
+import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type {
   MatrixSecurityBlocker,
   MatrixSecurityDevice,
@@ -17,6 +18,7 @@ import type {
   MatrixSecurityGateway,
   MatrixVerificationSession,
 } from '@/features/security/domain/matrix-security';
+import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
 import { DeviceVerificationDialog } from '@/features/security/ui/device-verification-dialog';
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
@@ -34,11 +36,14 @@ export type SecurityPageProps = {
 };
 
 export function SecurityPage({ onBack }: SecurityPageProps) {
-  const { security } = useAppServices();
-  return <SecurityWorkspace gateway={security} onBack={onBack} />;
+  const { accessManagement, security } = useAppServices();
+  return (
+    <SecurityWorkspace accessManagement={accessManagement} gateway={security} onBack={onBack} />
+  );
 }
 
 export type SecurityWorkspaceProps = {
+  readonly accessManagement: AccessManagementGateway;
   readonly gateway: MatrixSecurityGateway;
   readonly onBack: () => void;
 };
@@ -48,7 +53,7 @@ type ActiveVerification = {
   readonly targetName: string;
 };
 
-export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
+export function SecurityWorkspace({ accessManagement, gateway, onBack }: SecurityWorkspaceProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const inspection = useMatrixSecurity(gateway);
@@ -183,6 +188,7 @@ export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
             onRetry={() => void inspection.refetch()}
           />
         )}
+        <AccessManagementLedger gateway={accessManagement} />
       </div>
 
       <AnimatePresence>

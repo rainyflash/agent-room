@@ -430,6 +430,238 @@
   color: var(--ar-ink-48);
 }
 
+.security-access {
+  padding: clamp(3rem, 6vw, 6rem) 0;
+  border-bottom: 1px solid var(--ar-ink-18);
+}
+
+.security-access__heading {
+  align-items: center;
+}
+
+.security-access__confirmation {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding: 1rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-alert) 36%, var(--ar-ink-18));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-alert) 36%, var(--ar-ink-18));
+}
+
+.security-access__confirmation > svg {
+  width: 24px;
+  height: 24px;
+  color: var(--color-alert);
+  stroke-width: 1.5;
+}
+
+.security-access__confirmation strong {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.security-access__confirmation p {
+  margin: 0.3rem 0 0;
+  color: var(--ar-ink-48);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.security-access__confirmation > div:last-child {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.security-access > .security-failure,
+.security-access__pending {
+  margin-top: 1.25rem;
+}
+
+.security-access__pending {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border-left: 3px solid var(--color-network);
+  color: color-mix(in srgb, var(--color-network) 72%, var(--color-ink));
+  background: color-mix(in srgb, var(--color-network) 6%, transparent);
+  font-size: 0.75rem;
+}
+
+.security-access__pending > svg {
+  width: 15px;
+  height: 15px;
+}
+
+.security-access__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: clamp(2rem, 4vw, 3.5rem);
+  border-top: 1px solid var(--ar-ink-18);
+  border-bottom: 1px solid var(--ar-ink-18);
+}
+
+.security-access-panel {
+  min-width: 0;
+  padding: 2rem 2rem 2rem 0;
+}
+
+.security-access-panel + .security-access-panel {
+  padding-right: 0;
+  padding-left: 2rem;
+  border-left: 1px solid var(--ar-ink-18);
+}
+
+.security-access-panel__heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.85rem;
+}
+
+.security-access-panel__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--ar-ink-18);
+  border-radius: 50%;
+}
+
+.security-access-panel__icon > svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.6;
+}
+
+.security-access-panel__heading h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.security-access-panel__heading p {
+  max-width: 420px;
+  margin: 0.35rem 0 0;
+  color: var(--ar-ink-48);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.security-access-panel__heading > span {
+  color: var(--ar-ink-48);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.security-access-list {
+  padding: 0;
+  margin: 1.5rem 0 0;
+  list-style: none;
+}
+
+.security-access-list > li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(130px, 1fr) auto minmax(130px, 0.8fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--ar-ink-09);
+}
+
+.security-access-list > li:last-child {
+  border-bottom: 1px solid var(--ar-ink-09);
+}
+
+.security-access-list__identity,
+.security-access-list__metadata {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.security-access-list__identity strong,
+.security-access-list__identity small,
+.security-access-list__metadata span,
+.security-access-list__metadata time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-access-list__identity strong {
+  font-size: 0.8rem;
+  font-weight: 620;
+}
+
+.security-access-list__identity small,
+.security-access-list__metadata time {
+  color: var(--ar-ink-48);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+
+.security-access-list__metadata span {
+  color: var(--ar-ink-72);
+  font-size: 0.7rem;
+}
+
+.security-access-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--ar-ink-48);
+  font-family: var(--font-mono);
+  font-size: 0.59rem;
+  white-space: nowrap;
+}
+
+.security-access-status::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+
+.security-access-status.is-verified,
+.security-access-status.is-online {
+  color: color-mix(in srgb, var(--color-signal) 68%, var(--color-ink));
+}
+
+.security-access-status.is-pending,
+.security-access-status.is-connecting,
+.security-access-status.is-degraded {
+  color: color-mix(in srgb, var(--color-network) 76%, var(--color-ink));
+}
+
+.security-access-status.is-revoked {
+  color: var(--color-alert);
+}
+
+.security-access-panel__boundary,
+.security-access-panel__empty {
+  display: flex;
+  min-height: 130px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 1.5rem 0 0;
+  color: var(--ar-ink-48);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.security-access-panel__boundary > svg {
+  width: 16px;
+  height: 16px;
+}
+
 .security-recovery {
   scroll-margin-top: 96px;
   padding: clamp(3rem, 6vw, 6rem) 0;
@@ -880,6 +1112,20 @@
   .security-devices {
     padding-left: 0;
   }
+
+  .security-access__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .security-access-panel,
+  .security-access-panel + .security-access-panel {
+    padding: 2rem 0;
+    border-left: 0;
+  }
+
+  .security-access-panel + .security-access-panel {
+    border-top: 1px solid var(--ar-ink-18);
+  }
 }
 
 @media (max-width: 700px) {
@@ -933,6 +1179,7 @@
 
   .security-posture,
   .security-devices,
+  .security-access,
   .security-recovery {
     padding-top: 2.5rem;
     padding-bottom: 2.5rem;
@@ -954,6 +1201,28 @@
   .security-devices__list .ar-button {
     grid-column: 3;
     grid-row: 1 / 3;
+  }
+
+  .security-access__heading,
+  .security-access__confirmation {
+    align-items: stretch;
+  }
+
+  .security-access__confirmation {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .security-access__confirmation > div:last-child {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .security-access-list > li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .security-access-list__metadata {
+    grid-column: 1;
   }
 
   .security-recovery__heading {

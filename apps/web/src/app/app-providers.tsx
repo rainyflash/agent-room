@@ -20,6 +20,7 @@ import { AccountPreferencesStore } from '@/features/preferences/application/acco
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
 import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters/control-plane-private-room-client';
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
+import { ControlPlaneAccessManagementClient } from '@/features/security/adapters/control-plane-access-management-client';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
@@ -85,6 +86,9 @@ function createRuntime(config: RuntimeConfig) {
     directSessionMatrix,
   );
   const security = new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys);
+  const accessManagement = new ControlPlaneAccessManagementClient({
+    baseUrl: config.controlPlaneUrl,
+  });
   const handoffs = new WebObserverHandoffGateway();
   const messagePublisher = new WebObserverMessagePublisher();
   const browser = new WindowBrowserGateway();
@@ -97,6 +101,7 @@ function createRuntime(config: RuntimeConfig) {
     },
   });
   const services: AppServices = {
+    accessManagement,
     config,
     content,
     contentVerifier,

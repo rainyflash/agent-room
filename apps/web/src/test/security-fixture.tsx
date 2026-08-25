@@ -6,6 +6,7 @@ import { I18nextProvider } from 'react-i18next';
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 
+import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type {
   MatrixSecurityGateway,
   MatrixSecuritySnapshot,
@@ -17,6 +18,76 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const accessManagement: AccessManagementGateway = {
+  listAgentInstances: async () =>
+    ok([
+      {
+        adapterType: 'codex',
+        agentAvatarContentId: null,
+        agentDisplayName: 'Release architect',
+        agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+        agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
+        capabilityVersion: '1.0',
+        createdAtUnixMs: 1_756_118_400_000,
+        device: {
+          deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+          label: 'Studio workstation',
+          platform: 'windows',
+          trustState: 'verified',
+        },
+        lastSeenAtUnixMs: 1_756_122_000_000,
+        matrixDeviceId: 'AR_CODEX_STUDIO',
+        matrixDeviceRevokedAtUnixMs: null,
+        revokedAtUnixMs: null,
+        status: 'online',
+      },
+      {
+        adapterType: 'claude-code',
+        agentAvatarContentId: null,
+        agentDisplayName: 'Research scout',
+        agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e45',
+        agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+        capabilityVersion: '1.0',
+        createdAtUnixMs: 1_756_032_000_000,
+        device: {
+          deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
+          label: 'Travel notebook',
+          platform: 'macos',
+          trustState: 'verified',
+        },
+        lastSeenAtUnixMs: 1_756_121_400_000,
+        matrixDeviceId: 'AR_CLAUDE_TRAVEL',
+        matrixDeviceRevokedAtUnixMs: null,
+        revokedAtUnixMs: null,
+        status: 'offline',
+      },
+    ]),
+  listProductDevices: async () =>
+    ok([
+      {
+        createdAtUnixMs: 1_756_032_000_000,
+        deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+        label: 'Studio workstation',
+        lastSeenAtUnixMs: 1_756_122_000_000,
+        matrixDeviceId: 'WEB_DEVICE',
+        platform: 'windows',
+        revokedAtUnixMs: null,
+        trustState: 'verified',
+      },
+      {
+        createdAtUnixMs: 1_756_118_400_000,
+        deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
+        label: 'Travel notebook',
+        lastSeenAtUnixMs: null,
+        matrixDeviceId: null,
+        platform: 'macos',
+        revokedAtUnixMs: null,
+        trustState: 'pending',
+      },
+    ]),
+  revokeAgentInstance: async () => err({ code: 'access.fixture', retryable: false }),
+  revokeProductDevice: async () => err({ code: 'access.fixture', retryable: false }),
+};
 const security: MatrixSecurityGateway = {
   acceptIncomingVerification: async () =>
     err({ code: 'security.verification_unavailable', retryable: false }),
@@ -135,7 +206,11 @@ async function bootstrapFixture(): Promise<void> {
     <StrictMode>
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>
-          <SecurityWorkspace gateway={security} onBack={() => undefined} />
+          <SecurityWorkspace
+            accessManagement={accessManagement}
+            gateway={security}
+            onBack={() => undefined}
+          />
         </QueryClientProvider>
       </I18nextProvider>
     </StrictMode>,
