@@ -82,6 +82,7 @@ const moderation: ModerationGateway = {
   listActions: async () => ok([]),
   listAudit: async () => err({ code: 'moderation.forbidden', retryable: false }),
   listCases: async () => ok([]),
+  listRoomCases: async () => ok([]),
   report: async () => err({ code: 'moderation.fixture_disabled', retryable: false }),
   reverseAction: async () => err({ code: 'moderation.forbidden', retryable: false }),
 };

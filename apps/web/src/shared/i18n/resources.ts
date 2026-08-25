@@ -1,4 +1,5 @@
 import { automationResources } from '@/features/automation/i18n/automation-resources';
+import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 
@@ -465,6 +466,7 @@ export const resources = {
       'pwa.update.action': 'Reload update',
       'pwa.update.dismiss': 'Later',
       ...automationResources.en,
+      ...moderationResources.en,
       ...privateRoomResources.en,
       ...securityResources.en,
     },
@@ -887,6 +889,7 @@ export const resources = {
       'pwa.update.action': '重新加载更新',
       'pwa.update.dismiss': '稍后',
       ...automationResources['zh-CN'],
+      ...moderationResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...securityResources['zh-CN'],
     },

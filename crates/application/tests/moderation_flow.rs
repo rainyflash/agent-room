@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     moderation::{
-        ApplyModerationAction, ListModerationAudit, ModerationDependencies, ModerationFailureKind,
-        ModerationService, ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
+        ApplyModerationAction, ListModerationAudit, ListRoomModerationCases,
+        ModerationDependencies, ModerationFailureKind, ModerationService, ModerationUseCases,
+        ReverseModerationAction, SubmitModerationReport,
     },
     persistence::RepositoryResult,
     ports::{
@@ -114,6 +115,21 @@ impl ModerationRepository for FakeRepository {
             .expect("案件锁可用")
             .iter()
             .filter(|case| case.reporter_principal_id() == reporter_principal_id)
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(cases) })
+    }
+
+    fn list_room_cases(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationCase>>> {
+        let cases = self
+            .cases
+            .lock()
+            .expect("案件锁可用")
+            .iter()
+            .filter(|case| case.evidence().room_catalog_id() == Some(room_catalog_id))
             .cloned()
             .collect();
         Box::pin(async move { Ok(cases) })
@@ -371,6 +387,43 @@ async fn 治理动作先持久化待执行记录再触发_matrix_并写入终态
         *fixture.calls.lock().expect("调用锁可用"),
         vec!["reserve", "effect_apply", "finalize"]
     );
+}
+
+#[tokio::test]
+async fn 房间案件队列只对当前管理者开放且不跨房泄漏() {
+    let fixture = Fixture::new();
+    let expected = fixture
+        .service
+        .submit_report(report_request())
+        .await
+        .expect("房间举报应成功");
+    let visible = fixture
+        .service
+        .list_room_cases(ListRoomModerationCases {
+            actor: actor(false),
+            room_catalog_id: room_id(),
+        })
+        .await
+        .expect("房间管理者可读取案件队列");
+    assert_eq!(visible, vec![expected]);
+
+    let other_room = fixture
+        .repository
+        .list_room_cases(RoomCatalogId::from_uuid(Uuid::from_u128(4)))
+        .await
+        .expect("其他房间查询应成功");
+    assert!(other_room.is_empty());
+
+    *fixture.authority.room_role.lock().expect("房间角色锁可用") = ModerationRole::None;
+    let failure = fixture
+        .service
+        .list_room_cases(ListRoomModerationCases {
+            actor: actor(false),
+            room_catalog_id: room_id(),
+        })
+        .await
+        .expect_err("失去当前权限后必须拒绝读取");
+    assert_eq!(failure.kind(), ModerationFailureKind::Forbidden);
 }
 
 #[tokio::test]

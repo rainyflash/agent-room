@@ -5,6 +5,6 @@ mod service;
 pub use failure::{ModerationFailure, ModerationFailureKind, ModerationResult};
 pub use models::{
     ApplyModerationAction, ListModerationAudit, ListMyModerationCases, ListRoomModeration,
-    ReverseModerationAction, SubmitModerationReport,
+    ListRoomModerationCases, ReverseModerationAction, SubmitModerationReport,
 };
 pub use service::{ModerationDependencies, ModerationService, ModerationUseCases};

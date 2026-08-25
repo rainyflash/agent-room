@@ -5,12 +5,14 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
+import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
@@ -105,6 +107,32 @@ describe('ContentInspector', () => {
     });
     expect(runtime.issueReadTicket).not.toHaveBeenCalled();
   });
+
+  it('举报只在用户勾选后附带当前预览且不读取受保护正文', async () => {
+    const user = userEvent.setup();
+    const runtime = dependencies('protected body');
+    renderInspector(runtime);
+
+    await user.click(screen.getByRole('button', { name: 'Report' }));
+    await user.click(
+      screen.getByRole('checkbox', { name: /include the visible preview summary/iu }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Create report' }));
+
+    await waitFor(() => expect(runtime.report).toHaveBeenCalledOnce());
+    expect(runtime.report).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          endToEndEncrypted: true,
+          matrixEventId: '$message',
+          reporterSubmittedExcerpt: 'Waiting for content approval',
+        }),
+      }),
+    );
+    expect(runtime.issueReadTicket).not.toHaveBeenCalled();
+    expect(runtime.download).not.toHaveBeenCalled();
+  });
 });
 
 function dependencies(text: string) {
@@ -158,6 +186,41 @@ function dependencies(text: string) {
       ok({ expiresAtUnixMs: 1_800_000_000_000, handoffId, status: 'revoked' as const }),
     ),
   );
+  const report = vi.fn<ModerationGateway['report']>((caseId, input) =>
+    Promise.resolve(
+      ok({
+        caseId,
+        createdAtUnixMs: 1_800_000_000_000,
+        description: input.description,
+        evidence: {
+          endToEndEncrypted: input.evidence.endToEndEncrypted,
+          matrixEventId: input.evidence.matrixEventId ?? null,
+          reporterSubmittedExcerpt: input.evidence.reporterSubmittedExcerpt ?? null,
+          roomCatalogId: input.evidence.roomCatalogId ?? null,
+        },
+        reason: input.reason,
+        resolvedAtUnixMs: null,
+        state: 'open',
+        targetKind: input.targetKind,
+        targetReference: input.targetReference,
+      }),
+    ),
+  );
+  const moderation = {
+    applyAction: async () =>
+      Promise.resolve().then(() => {
+        throw new Error('not used');
+      }),
+    listActions: async () => ok([]),
+    listAudit: async () => ok([]),
+    listCases: async () => ok([]),
+    listRoomCases: async () => ok([]),
+    report,
+    reverseAction: async () =>
+      Promise.resolve().then(() => {
+        throw new Error('not used');
+      }),
+  } satisfies ModerationGateway;
   return {
     approve,
     content: { download, issueReadTicket } satisfies ContentGateway,
@@ -165,7 +228,9 @@ function dependencies(text: string) {
     handoffs: { approve, listTargets, reconcile, revoke } satisfies HandoffGateway,
     issueReadTicket,
     listTargets,
+    moderation,
     onClose: vi.fn(),
+    report,
     verifier: { verify } satisfies ContentVerifier,
     verify,
   };
@@ -177,13 +242,17 @@ function renderInspector(
 ) {
   return render(
     <I18nextProvider i18n={i18n}>
-      <ContentInspector
-        contentGateway={runtime.content}
-        contentVerifier={runtime.verifier}
-        handoffGateway={runtime.handoffs}
-        message={selectedMessage}
-        onClose={runtime.onClose}
-      />
+      <QueryClientProvider client={new QueryClient()}>
+        <ContentInspector
+          catalogId="01990d9e-8400-7000-8000-000000000401"
+          contentGateway={runtime.content}
+          contentVerifier={runtime.verifier}
+          handoffGateway={runtime.handoffs}
+          message={selectedMessage}
+          moderationGateway={runtime.moderation}
+          onClose={runtime.onClose}
+        />
+      </QueryClientProvider>
     </I18nextProvider>,
   );
 }

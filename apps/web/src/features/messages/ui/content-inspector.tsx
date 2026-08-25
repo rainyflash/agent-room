@@ -23,6 +23,8 @@ import { createContentInspectionMachine } from '@/features/messages/application/
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageSignatureStatus, RoomMessageSignal } from '@/features/messages/domain/message';
 import { RestrictedMarkdown } from '@/features/messages/ui/restricted-markdown';
+import type { ModerationGateway } from '@/features/moderation/domain/moderation';
+import { MessageReportControl } from '@/features/moderation/ui/message-report-control';
 
 const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>> = Object.freeze({
   instance_verified: ShieldCheck,
@@ -31,18 +33,22 @@ const signatureIconByStatus: Readonly<Record<MessageSignatureStatus, LucideIcon>
 });
 
 export type ContentInspectorProps = {
+  readonly catalogId: string;
   readonly contentGateway: ContentGateway;
   readonly contentVerifier: ContentVerifier;
   readonly handoffGateway: HandoffGateway;
   readonly message: RoomMessageSignal;
+  readonly moderationGateway: ModerationGateway;
   readonly onClose: () => void;
 };
 
 export function ContentInspector({
+  catalogId,
   contentGateway,
   contentVerifier,
   handoffGateway,
   message,
+  moderationGateway,
   onClose,
 }: ContentInspectorProps) {
   const { i18n, t } = useTranslation();
@@ -82,14 +88,21 @@ export function ContentInspector({
             {preview?.title ?? t(`messages.lifecycle.${message.lifecycle}`)}
           </h2>
         </div>
-        <button
-          aria-label={t('messages.inspector.close')}
-          className="inspector-close"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" />
-        </button>
+        <div className="content-inspector__actions">
+          <MessageReportControl
+            catalogId={catalogId}
+            gateway={moderationGateway}
+            message={message}
+          />
+          <button
+            aria-label={t('messages.inspector.close')}
+            className="inspector-close"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
       </header>
       <div className="content-inspector__source">
         <span className="message-signal__author" aria-hidden="true">

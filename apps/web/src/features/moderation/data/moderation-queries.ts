@@ -7,6 +7,8 @@ export const moderationActionListQueryKey = (catalogId: string) =>
   ['control-plane', 'moderation', 'actions', catalogId] as const;
 export const moderationAuditListQueryKey = (catalogId: string) =>
   ['control-plane', 'moderation', 'audit', catalogId] as const;
+export const moderationRoomCaseListQueryKey = (catalogId: string) =>
+  ['control-plane', 'moderation', 'room-cases', catalogId] as const;
 
 export function moderationCaseListQueryOptions(gateway: ModerationGateway) {
   return queryOptions({
@@ -18,10 +20,7 @@ export function moderationCaseListQueryOptions(gateway: ModerationGateway) {
   });
 }
 
-export function moderationActionListQueryOptions(
-  gateway: ModerationGateway,
-  catalogId: string,
-) {
+export function moderationActionListQueryOptions(gateway: ModerationGateway, catalogId: string) {
   return queryOptions({
     queryFn: async () => await gateway.listActions(catalogId),
     queryKey: moderationActionListQueryKey(catalogId),
@@ -31,10 +30,17 @@ export function moderationActionListQueryOptions(
   });
 }
 
-export function moderationAuditListQueryOptions(
-  gateway: ModerationGateway,
-  catalogId: string,
-) {
+export function moderationRoomCaseListQueryOptions(gateway: ModerationGateway, catalogId: string) {
+  return queryOptions({
+    queryFn: async () => await gateway.listRoomCases(catalogId),
+    queryKey: moderationRoomCaseListQueryKey(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}
+
+export function moderationAuditListQueryOptions(gateway: ModerationGateway, catalogId: string) {
   return queryOptions({
     queryFn: async () => await gateway.listAudit(catalogId),
     queryKey: moderationAuditListQueryKey(catalogId),
@@ -56,10 +62,14 @@ export function useModerationActions(
   return useQuery({ ...moderationActionListQueryOptions(gateway, catalogId), enabled });
 }
 
-export function useModerationAudit(
+export function useModerationRoomCases(
   gateway: ModerationGateway,
   catalogId: string,
   enabled = true,
 ) {
+  return useQuery({ ...moderationRoomCaseListQueryOptions(gateway, catalogId), enabled });
+}
+
+export function useModerationAudit(gateway: ModerationGateway, catalogId: string, enabled = true) {
   return useQuery({ ...moderationAuditListQueryOptions(gateway, catalogId), enabled });
 }

@@ -49,6 +49,11 @@ pub trait ModerationRepository: Send + Sync {
         reporter_principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<ModerationCase>>>;
 
+    fn list_room_cases(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationCase>>>;
+
     /// 先持久化 pending 动作与 requested 审计，再允许应用层调用外部治理副作用。
     fn reserve_action<'a>(
         &'a self,

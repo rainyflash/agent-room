@@ -168,6 +168,9 @@ export type ModerationGateway = {
     roomCatalogId: string,
   ): Promise<Result<readonly ModerationAuditEvent[], ModerationFailure>>;
   listCases(): Promise<Result<readonly ModerationCase[], ModerationFailure>>;
+  listRoomCases(
+    roomCatalogId: string,
+  ): Promise<Result<readonly ModerationCase[], ModerationFailure>>;
   report(
     caseId: string,
     input: SubmitModerationReportInput,

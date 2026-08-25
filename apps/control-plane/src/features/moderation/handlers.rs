@@ -1,7 +1,8 @@
 use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement},
     moderation::{
-        ListModerationAudit, ListMyModerationCases, ListRoomModeration, ReverseModerationAction,
+        ListModerationAudit, ListMyModerationCases, ListRoomModeration, ListRoomModerationCases,
+        ReverseModerationAction,
     },
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -194,6 +195,32 @@ pub(super) async fn list_actions(
         .await
     {
         Ok(actions) => no_store(Json(ModerationActionListResponse::from(actions)).into_response()),
+        Err(failure) => no_store(ApiError::moderation(failure, correlation_id).into_response()),
+    }
+}
+
+pub(super) async fn list_room_cases(
+    State(state): State<ModerationHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Some(room_catalog_id) = catalog_id(&catalog) else {
+        return invalid("moderation.invalid_catalog_id", correlation_id);
+    };
+    let actor = match authenticate_read(&state, &jar, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .moderation
+        .list_room_cases(ListRoomModerationCases {
+            actor,
+            room_catalog_id,
+        })
+        .await
+    {
+        Ok(cases) => no_store(Json(ModerationCaseListResponse::from(cases)).into_response()),
         Err(failure) => no_store(ApiError::moderation(failure, correlation_id).into_response()),
     }
 }

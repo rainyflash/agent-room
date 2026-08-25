@@ -89,6 +89,13 @@ impl ModerationRepository for PostgresRepositories {
         Box::pin(async move { list_cases(&self.pool, reporter_principal_id).await })
     }
 
+    fn list_room_cases(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationCase>>> {
+        Box::pin(async move { list_room_cases(&self.pool, room_catalog_id).await })
+    }
+
     fn reserve_action<'a>(
         &'a self,
         action: &'a ModerationAction,
@@ -491,6 +498,26 @@ async fn list_cases(
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
         .bind(reporter_principal_id.as_uuid())
+        .fetch_all(pool)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    rows.iter().map(|row| decode_case(row, operation)).collect()
+}
+
+async fn list_room_cases(
+    pool: &PgPool,
+    room_catalog_id: RoomCatalogId,
+) -> RepositoryResult<Vec<ModerationCase>> {
+    let operation = "moderation.list_room_cases";
+    let statement = format!(
+        "SELECT {CASE_COLUMNS}
+           FROM agent_room.moderation_case
+           WHERE room_catalog_id = $1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 200"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+        .bind(room_catalog_id.as_uuid())
         .fetch_all(pool)
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;

@@ -7,7 +7,8 @@ use agent_room_application::{
     },
     moderation::{
         ApplyModerationAction, ListModerationAudit, ListMyModerationCases, ListRoomModeration,
-        ModerationResult, ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
+        ListRoomModerationCases, ModerationResult, ModerationUseCases, ReverseModerationAction,
+        SubmitModerationReport,
     },
     ports::{PortFuture, SecretValue},
 };
@@ -43,6 +44,7 @@ const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 #[derive(Default)]
 struct FakeModeration {
     report: Mutex<Option<SubmitModerationReport>>,
+    room_cases: Mutex<Option<ListRoomModerationCases>>,
     action: Mutex<Option<ApplyModerationAction>>,
     reversal: Mutex<Option<ReverseModerationAction>>,
     audit: Mutex<Option<ListModerationAudit>>,
@@ -61,6 +63,14 @@ impl ModerationUseCases for FakeModeration {
         &self,
         _request: ListMyModerationCases,
     ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>> {
+        Box::pin(async { Ok(vec![case()]) })
+    }
+
+    fn list_room_cases(
+        &self,
+        request: ListRoomModerationCases,
+    ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>> {
+        *self.room_cases.lock().expect("房间案件请求锁可用") = Some(request);
         Box::pin(async { Ok(vec![case()]) })
     }
 
@@ -241,6 +251,45 @@ async fn 治理动作和撤销都要求同源近期认证与显式影响确认()
             AuthenticationRequirement::RecentAuthentication,
             AuthenticationRequirement::RecentAuthentication,
         ]
+    );
+}
+
+#[tokio::test]
+async fn 房间案件队列使用路径房间并要求有效会话() {
+    let moderation = Arc::new(FakeModeration::default());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let response = test_router(moderation.clone(), authentication.clone())
+        .oneshot(session_request(
+            Method::GET,
+            &format!("/rooms/{CATALOG_UUID}/moderation/cases"),
+            &json!({}),
+            false,
+            None,
+        ))
+        .await
+        .expect("房间案件路由可调用");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = response_json(response).await;
+    assert_eq!(body["cases"][0]["caseId"], CASE_UUID);
+    assert_eq!(
+        moderation
+            .room_cases
+            .lock()
+            .expect("房间案件请求锁可用")
+            .as_ref()
+            .expect("房间案件用例已调用")
+            .room_catalog_id,
+        catalog_id()
+    );
+    assert_eq!(
+        authentication
+            .requirements
+            .lock()
+            .expect("认证要求锁可用")
+            .as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
     );
 }
 

@@ -22,6 +22,12 @@ pub struct ListMyModerationCases {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListRoomModerationCases {
+    pub actor: AuthenticatedPrincipal,
+    pub room_catalog_id: RoomCatalogId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyModerationAction {
     pub actor: AuthenticatedPrincipal,
     pub action_id: ModerationActionId,

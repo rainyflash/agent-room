@@ -20,8 +20,8 @@ use crate::{
 
 use super::{
     ApplyModerationAction, ListModerationAudit, ListMyModerationCases, ListRoomModeration,
-    ModerationFailure, ModerationFailureKind, ModerationResult, ReverseModerationAction,
-    SubmitModerationReport,
+    ListRoomModerationCases, ModerationFailure, ModerationFailureKind, ModerationResult,
+    ReverseModerationAction, SubmitModerationReport,
 };
 
 const MAXIMUM_AUDIT_PAGE: u16 = 200;
@@ -35,6 +35,11 @@ pub trait ModerationUseCases: Send + Sync {
     fn list_my_cases(
         &self,
         request: ListMyModerationCases,
+    ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>>;
+
+    fn list_room_cases(
+        &self,
+        request: ListRoomModerationCases,
     ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>>;
 
     fn apply_action(
@@ -152,6 +157,20 @@ impl ModerationService {
         require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         self.repository
             .list_cases_for_reporter(request.actor.principal_id)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))
+    }
+
+    async fn list_room_cases_internal(
+        &self,
+        request: ListRoomModerationCases,
+    ) -> ModerationResult<Vec<ModerationCase>> {
+        const OPERATION: &str = "moderation.list_room_cases";
+        require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        self.require_room_moderator(&request.actor, request.room_catalog_id, OPERATION)
+            .await?;
+        self.repository
+            .list_room_cases(request.room_catalog_id)
             .await
             .map_err(|error| repository_failure(OPERATION, &error))
     }
@@ -315,24 +334,35 @@ impl ModerationService {
     ) -> ModerationResult<Vec<ModerationAction>> {
         const OPERATION: &str = "moderation.list_room_actions";
         require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let target = agent_room_domain::moderation::ModerationTarget::new(
-            agent_room_domain::moderation::ModerationTargetKind::Room,
-            request.room_catalog_id.to_string(),
-        )
-        .map_err(|_| failure(OPERATION, ModerationFailureKind::Internal))?;
-        let context = self
-            .authority
-            .inspect_room(request.actor.principal_id, request.room_catalog_id, &target)
-            .await
-            .map_err(|error| repository_failure(OPERATION, &error))?
-            .ok_or_else(|| failure(OPERATION, ModerationFailureKind::NotFound))?;
-        if matches!(context.role, ModerationRole::None) {
-            return Err(failure(OPERATION, ModerationFailureKind::Forbidden));
-        }
+        self.require_room_moderator(&request.actor, request.room_catalog_id, OPERATION)
+            .await?;
         self.repository
             .list_room_actions(request.room_catalog_id)
             .await
             .map_err(|error| repository_failure(OPERATION, &error))
+    }
+
+    async fn require_room_moderator(
+        &self,
+        actor: &crate::authentication::AuthenticatedPrincipal,
+        room_catalog_id: agent_room_domain::ids::RoomCatalogId,
+        operation: &'static str,
+    ) -> ModerationResult<()> {
+        let target = agent_room_domain::moderation::ModerationTarget::new(
+            agent_room_domain::moderation::ModerationTargetKind::Room,
+            room_catalog_id.to_string(),
+        )
+        .map_err(|_| failure(operation, ModerationFailureKind::Internal))?;
+        let context = self
+            .authority
+            .inspect_room(actor.principal_id, room_catalog_id, &target)
+            .await
+            .map_err(|error| repository_failure(operation, &error))?
+            .ok_or_else(|| failure(operation, ModerationFailureKind::NotFound))?;
+        if matches!(context.role, ModerationRole::None) {
+            return Err(failure(operation, ModerationFailureKind::Forbidden));
+        }
+        Ok(())
     }
 
     async fn list_audit_internal(
@@ -437,6 +467,13 @@ impl ModerationUseCases for ModerationService {
         request: ListMyModerationCases,
     ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>> {
         Box::pin(self.list_my_cases_internal(request))
+    }
+
+    fn list_room_cases(
+        &self,
+        request: ListRoomModerationCases,
+    ) -> PortFuture<'_, ModerationResult<Vec<ModerationCase>>> {
+        Box::pin(self.list_room_cases_internal(request))
     }
 
     fn apply_action(

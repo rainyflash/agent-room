@@ -10,6 +10,7 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly roomId: string;
@@ -19,6 +20,7 @@ export type MessageLayerProps = {
 };
 
 export function MessageLayer({
+  catalogId,
   onLatestDisplayed,
   onSelectedMessageChange,
   roomId,
@@ -26,7 +28,8 @@ export function MessageLayer({
   selectedMessageId,
   variant = 'room',
 }: MessageLayerProps) {
-  const { content, contentVerifier, handoffs, messagePublisher, messages } = useAppServices();
+  const { content, contentVerifier, handoffs, messagePublisher, messages, moderation } =
+    useAppServices();
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
@@ -87,11 +90,13 @@ export function MessageLayer({
       <AnimatePresence>
         {selectedMessage === null ? null : (
           <ContentInspector
+            catalogId={catalogId}
             contentGateway={content}
             contentVerifier={contentVerifier}
             handoffGateway={handoffs}
             key={selectedMessage.messageId}
             message={selectedMessage}
+            moderationGateway={moderation}
             onClose={() => {
               onSelectedMessageChange(null);
             }}

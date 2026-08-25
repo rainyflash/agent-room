@@ -123,6 +123,26 @@ async fn 治理权限动作撤销和审计访问都读取当前事实() {
         ModerationTarget::new(ModerationTargetKind::Principal, target.to_string())
             .expect("主体目标有效");
 
+    let room_case = room_report(owner, target, catalog_id);
+    assert!(matches!(
+        ModerationRepository::submit_case(
+            &repositories,
+            &room_case,
+            &report_audit(&room_case),
+            ModerationReportPolicy {
+                maximum_reports: 10,
+                window: DurationMillis::new(60_000).expect("限速窗口有效"),
+            },
+        )
+        .await
+        .expect("房间举报应入库"),
+        ModerationReportSubmissionOutcome::Created(_)
+    ));
+    let visible_cases = ModerationRepository::list_room_cases(&repositories, catalog_id)
+        .await
+        .expect("房间案件队列应可读取");
+    assert_eq!(visible_cases, vec![room_case]);
+
     let authority =
         ModerationAuthority::inspect_room(&repositories, owner, catalog_id, &target_reference)
             .await
@@ -291,6 +311,24 @@ fn report(reporter: PrincipalId, target: PrincipalId, offset: i64) -> Moderation
         time(offset),
     )
     .expect("举报案件有效")
+}
+
+fn room_report(
+    reporter: PrincipalId,
+    target: PrincipalId,
+    catalog_id: RoomCatalogId,
+) -> ModerationCase {
+    ModerationCase::open(
+        ModerationCaseId::from_uuid(Uuid::now_v7()),
+        reporter,
+        ModerationTarget::new(ModerationTargetKind::Principal, target.to_string())
+            .expect("房间举报目标有效"),
+        ModerationReason::Harassment,
+        "仅由举报者输入的房间案件说明",
+        ModerationEvidence::new(Some(catalog_id), None, None, true).expect("房间引用式证据有效"),
+        time(100),
+    )
+    .expect("房间举报案件有效")
 }
 
 fn report_audit(case: &ModerationCase) -> ModerationAuditEvent {

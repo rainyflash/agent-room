@@ -23,6 +23,7 @@ import { SceneSemanticRoster } from '@/features/lobby/ui/scene-semantic-roster';
 import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock';
 import { useCompactLobby } from '@/features/lobby/ui/use-compact-lobby';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
+import { ModerationHub } from '@/features/moderation/ui/moderation-hub';
 import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
 import { useAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
 import type { WebSession } from '@/features/session/domain/session';
@@ -106,7 +107,7 @@ function ReadyLobby({
   selectedMessageId,
 }: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
-  const { accessManagement, automation, controlPlane } = useAppServices();
+  const { accessManagement, automation, controlPlane, moderation } = useAppServices();
   const accountPreferences = useAccountPreferences();
   const compact = useCompactLobby();
   const listRef = useRef<ListModeRosterHandle>(null);
@@ -166,6 +167,17 @@ function ReadyLobby({
         actions={
           principal === null ? undefined : (
             <>
+              <ModerationHub
+                catalogId={catalogId}
+                gateway={moderation}
+                onReauthenticate={() => {
+                  controlPlane.beginAuthentication(
+                    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+                  );
+                }}
+                recentlyAuthenticated={principal.recentlyAuthenticated}
+                roomName={room.name}
+              />
               <AutomationGrantHub
                 accessManagement={accessManagement}
                 automation={automation}
@@ -283,6 +295,7 @@ function ReadyLobby({
       </AnimatePresence>
       {selectedDirectSessionId === null ? (
         <MessageLayer
+          catalogId={catalogId}
           onSelectedMessageChange={onSelectedMessageChange}
           roomId={room.roomId}
           roomName={room.name}

@@ -280,6 +280,7 @@ function Conversation({
             <span>{t('directSessions.conversation.previewDetail')}</span>
           </div>
           <MessageLayer
+            catalogId={session.catalogId}
             onLatestDisplayed={(matrixEventId) => {
               void controller.markDisplayed(matrixRoomId, matrixEventId);
             }}

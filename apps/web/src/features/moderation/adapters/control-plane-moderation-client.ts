@@ -54,16 +54,31 @@ export class ControlPlaneModerationClient implements ModerationGateway {
     if (!parsed.success) {
       return err({ code: 'moderation.invalid_report_input', retryable: false });
     }
-    return await this.#jsonRequest('/moderation/cases', {
-      body: JSON.stringify(parsed.data),
-      headers: { 'Idempotency-Key': caseId },
-      method: 'POST',
-    }, moderationCaseSchema);
+    return await this.#jsonRequest(
+      '/moderation/cases',
+      {
+        body: JSON.stringify(parsed.data),
+        headers: { 'Idempotency-Key': caseId },
+        method: 'POST',
+      },
+      moderationCaseSchema,
+    );
   }
 
   async listCases(): Promise<Result<readonly ModerationCase[], ModerationFailure>> {
     const response = await this.#jsonRequest(
       '/moderation/cases',
+      { method: 'GET' },
+      moderationCaseListSchema,
+    );
+    return response.ok ? ok(response.value.cases) : response;
+  }
+
+  async listRoomCases(
+    roomCatalogId: string,
+  ): Promise<Result<readonly ModerationCase[], ModerationFailure>> {
+    const response = await this.#jsonRequest(
+      `/rooms/${encodeURIComponent(roomCatalogId)}/moderation/cases`,
       { method: 'GET' },
       moderationCaseListSchema,
     );
