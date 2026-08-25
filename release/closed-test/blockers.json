@@ -24,6 +24,14 @@
       "title": "全局交叉签名解密策略在应用验签前丢弃 Bridge 交接",
       "rootCause": "Matrix SDK 的 CrossSigned 策略同时作用于自定义 Olm To-Device 事件；尚未交叉签名的 Bridge 设备消息无法进入 Agent Room 的精确设备映射和签名验证。",
       "resolution": "SDK 解密层允许 Olm 信封进入适配器；房间时间线显式携带 SDK 设备信任状态，未可信加密房间消息在应用验签前隔离，交接继续执行精确设备映射与 Agent Room 签名验证。"
+    },
+    {
+      "id": "M2-004",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "干净 GitHub runner 无法执行嵌套 pnpm 脚本",
+      "rootCause": "工作流通过 Corepack 启动根脚本，但仓库脚本内部调用裸 pnpm；未启用 Corepack shim 的干净 Windows 和 macOS runner 在编译前退出。",
+      "resolution": "所有闭测 job 在安装 Node.js 后显式启用 Corepack，再由 packageManager 锁定的 pnpm 版本执行嵌套脚本。"
     }
   ]
 }
