@@ -53,6 +53,17 @@ async fn 私人房间生命周期可完整往返且不依赖房主进程() {
     PrivateRoomStore::create(&repositories, &snapshot, time(0))
         .await
         .expect("创建应原子保存目录、实例和房主");
+    let owner_rooms = PrivateRoomStore::list_for_principal(&repositories, owner)
+        .await
+        .expect("房主目录读取应成功");
+    assert_eq!(owner_rooms.len(), 1);
+    assert_eq!(owner_rooms[0].catalog().id(), catalog_id);
+    assert!(
+        PrivateRoomStore::list_for_principal(&repositories, member)
+            .await
+            .expect("未受邀成员目录读取应成功")
+            .is_empty()
+    );
     let mut loaded = PrivateRoomStore::find_by_catalog(&repositories, catalog_id)
         .await
         .expect("读取应成功")
@@ -65,6 +76,19 @@ async fn 私人房间生命周期可完整往返且不依赖房主进程() {
     PrivateRoomStore::save(&repositories, &room, expected, time(1))
         .await
         .expect("邀请应持久化");
+    let invited_rooms = PrivateRoomStore::list_for_principal(&repositories, member)
+        .await
+        .expect("受邀成员目录读取应成功");
+    assert_eq!(invited_rooms.len(), 1);
+    assert_eq!(invited_rooms[0].catalog().id(), catalog_id);
+    assert_eq!(
+        invited_rooms[0]
+            .room()
+            .member(member)
+            .expect("受邀成员事实存在")
+            .status(),
+        PrivateRoomMembershipStatus::Invited
+    );
 
     loaded =
         PrivateRoomStore::find_by_matrix_room(&repositories, snapshot.instance().matrix_room_id())
@@ -97,6 +121,13 @@ async fn 私人房间生命周期可完整往返且不依赖房主进程() {
         .await
         .expect("成员移除应持久化");
     assert!(!room.allows(owner, PrivateRoomCapability::View));
+    assert!(
+        PrivateRoomStore::list_for_principal(&repositories, owner)
+            .await
+            .expect("已移除成员目录读取应成功")
+            .is_empty(),
+        "已移除成员不得继续从权威目录发现私人房间"
+    );
 
     let expected = room.version();
     room.archive(member).expect("新房主可归档");
