@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,10 +9,14 @@ from unittest.mock import patch
 
 from tools.capacity import (
     CapacityFailure,
+    MAX_BRIDGE_RSS_BYTES,
     REQUIRED_REAL_SCENARIOS,
+    SOAK_SECONDS,
+    bridge_soak_report,
     evaluate_gate,
     percentile,
     run_model,
+    validate_bridge_executable,
 )
 
 
@@ -34,6 +39,58 @@ class CapacityMathTests(unittest.TestCase):
         metrics = report["metrics"]
         self.assertEqual(metrics["allocatedInstances"], 1_000)
         self.assertEqual(metrics["maximumRoomLoad"], 250)
+
+    def test_bridge_soak_rejects_wrappers_and_hashes_exact_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wrapper = root / "python.exe"
+            wrapper.write_bytes(b"wrapper")
+            with self.assertRaisesRegex(CapacityFailure, "拒绝包装器"):
+                validate_bridge_executable(str(wrapper))
+
+            bridge = root / "agent-room-bridge.exe"
+            bridge.write_bytes(b"bridge-binary")
+            executable, digest = validate_bridge_executable(str(bridge))
+
+        self.assertEqual(executable.name, "agent-room-bridge.exe")
+        self.assertEqual(
+            digest,
+            "b84cbf5e143f70b8261ccd04262c8775289de0aab71021ad1454589473745f49",
+        )
+
+    @patch("tools.capacity.git_revision", return_value="revision")
+    def test_bridge_soak_gate_requires_duration_session_and_memory_budget(
+        self, _git_revision: object
+    ) -> None:
+        common = {
+            "completed": True,
+            "executable": Path("agent-room-bridge.exe"),
+            "executable_digest": "a" * 64,
+            "process_id": 42,
+            "started_at": datetime.now(UTC),
+        }
+        accepted = bridge_soak_report(
+            elapsed_seconds=SOAK_SECONDS,
+            samples=[{"rssBytes": 64 * 1_024 * 1_024}],
+            active_session_configured=True,
+            **common,
+        )
+        leaking = bridge_soak_report(
+            elapsed_seconds=SOAK_SECONDS,
+            samples=[{"rssBytes": MAX_BRIDGE_RSS_BYTES + 1}],
+            active_session_configured=True,
+            **common,
+        )
+        observer_only = bridge_soak_report(
+            elapsed_seconds=SOAK_SECONDS,
+            samples=[{"rssBytes": 64 * 1_024 * 1_024}],
+            active_session_configured=False,
+            **common,
+        )
+
+        self.assertTrue(accepted["releaseGateEligible"])
+        self.assertFalse(leaking["passed"])
+        self.assertFalse(observer_only["passed"])
 
 
 class CapacityGateTests(unittest.TestCase):

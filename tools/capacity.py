@@ -24,9 +24,12 @@ ROOT: Final = Path(__file__).resolve().parent.parent
 REPORT_DIRECTORY: Final = ROOT / "artifacts" / "capacity"
 MODEL_REPORT: Final = REPORT_DIRECTORY / "model-report.json"
 SOAK_REPORT: Final = REPORT_DIRECTORY / "bridge-soak-report.json"
+SOAK_LOG: Final = REPORT_DIRECTORY / "bridge-soak.log"
 GATE_REPORT: Final = REPORT_DIRECTORY / "task-39-report.json"
 SOAK_SECONDS: Final = 72 * 60 * 60
 MIB: Final = 1_024 * 1_024
+MAX_BRIDGE_RSS_BYTES: Final = 512 * MIB
+MAX_BRIDGE_RSS_GROWTH_BYTES: Final = 128 * MIB
 
 
 @dataclass(frozen=True)
@@ -236,7 +239,8 @@ def windows_process_rss_bytes(process_id: int) -> int:
 
 
 def resolve_executable(name: str) -> str:
-    resolved = shutil.which(name)
+    candidate = Path(name)
+    resolved = str(candidate.resolve()) if candidate.is_file() else shutil.which(name)
     if resolved is None and os.name == "nt":
         resolved = shutil.which(f"{name}.exe") or shutil.which(f"{name}.cmd")
     if resolved is None:
@@ -244,24 +248,58 @@ def resolve_executable(name: str) -> str:
     return resolved
 
 
+def validate_bridge_executable(path: str) -> tuple[Path, str]:
+    executable = Path(path).resolve()
+    if not executable.is_file():
+        raise CapacityFailure("Bridge 常驻测试目标不是普通文件。")
+    expected_names = {"agent-room-bridge", "agent-room-bridge.exe"}
+    if executable.name.lower() not in expected_names:
+        raise CapacityFailure(
+            "Bridge 常驻测试只接受直接构建的 agent-room-bridge 可执行文件，拒绝包装器。"
+        )
+    digest = hashlib.sha256()
+    with executable.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(MIB), b""):
+            digest.update(chunk)
+    return executable, digest.hexdigest()
+
+
 def run_bridge_soak(
-    command: Sequence[str], duration_seconds: int, sample_seconds: int
+    command: Sequence[str],
+    duration_seconds: int,
+    sample_seconds: int,
+    *,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     if not command:
         raise CapacityFailure("Bridge 常驻测试必须提供真实启动命令。")
     if duration_seconds <= 0 or sample_seconds <= 0 or sample_seconds > 60:
         raise CapacityFailure("常驻时长必须为正数，采样间隔必须处于 1 到 60 秒。")
 
-    executable = resolve_executable(command[0])
+    executable, executable_digest = validate_bridge_executable(
+        resolve_executable(command[0])
+    )
+    effective_environment = os.environ if environment is None else environment
+    active_session_configured = all(
+        effective_environment.get(name)
+        for name in ("AGENT_ROOM_AGENT_ID", "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID")
+    )
     started_at = datetime.now(UTC)
     started = time.monotonic()
-    process = subprocess.Popen(
-        [executable, *command[1:]],
-        cwd=ROOT,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    SOAK_LOG.parent.mkdir(parents=True, exist_ok=True)
+    output = SOAK_LOG.open("w", encoding="utf-8", errors="replace")
+    try:
+        process = subprocess.Popen(
+            [str(executable), *command[1:]],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env=effective_environment,
+        )
+    except OSError:
+        output.close()
+        raise
     samples: list[dict[str, object]] = []
     try:
         while True:
@@ -269,7 +307,7 @@ def run_bridge_soak(
             return_code = process.poll()
             if return_code is not None:
                 raise CapacityFailure(
-                    f"Bridge 在 {elapsed:.1f} 秒后退出，退出码为 {return_code}。"
+                    f"Bridge 在 {elapsed:.1f} 秒后退出，退出码为 {return_code}；诊断见 {SOAK_LOG}。"
                 )
             rss = process_rss_bytes(process.pid)
             samples.append(
@@ -279,11 +317,13 @@ def run_bridge_soak(
                 }
             )
             checkpoint = bridge_soak_report(
-                command,
+                executable,
+                executable_digest,
                 started_at,
                 elapsed,
                 samples,
                 completed=False,
+                active_session_configured=active_session_configured,
                 process_id=process.pid,
             )
             write_json(SOAK_REPORT, checkpoint)
@@ -298,14 +338,17 @@ def run_bridge_soak(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=10)
+        output.close()
 
     elapsed = time.monotonic() - started
     report = bridge_soak_report(
-        command,
+        executable,
+        executable_digest,
         started_at,
         elapsed,
         samples,
         completed=elapsed >= duration_seconds,
+        active_session_configured=active_session_configured,
         process_id=process.pid,
     )
     write_json(SOAK_REPORT, report)
@@ -313,17 +356,25 @@ def run_bridge_soak(
 
 
 def bridge_soak_report(
-    command: Sequence[str],
+    executable: Path,
+    executable_digest: str,
     started_at: datetime,
     elapsed_seconds: float,
     samples: Sequence[Mapping[str, object]],
     *,
+    active_session_configured: bool,
     completed: bool,
     process_id: int,
 ) -> dict[str, object]:
     rss_samples = [int(sample["rssBytes"]) for sample in samples]
     growth = 0 if len(rss_samples) < 2 else rss_samples[-1] - rss_samples[0]
     required_duration_reached = elapsed_seconds >= SOAK_SECONDS
+    memory_budget_reached = (
+        max(rss_samples, default=0) <= MAX_BRIDGE_RSS_BYTES
+        and growth <= MAX_BRIDGE_RSS_GROWTH_BYTES
+    )
+    passed = completed and required_duration_reached and active_session_configured
+    passed = passed and memory_budget_reached
     return {
         "schemaVersion": 1,
         "scenario": "bridge_72_hour_soak",
@@ -331,19 +382,24 @@ def bridge_soak_report(
         "generatedAt": datetime.now(UTC).isoformat(),
         "revision": git_revision(),
         "startedAt": started_at.isoformat(),
-        "commandExecutable": Path(command[0]).name,
+        "commandExecutable": executable.name,
+        "executableSha256": executable_digest,
         "processId": process_id,
         "completed": completed,
-        "passed": completed and required_duration_reached,
+        "passed": passed,
         "metrics": {
             "elapsedSeconds": round(elapsed_seconds, 3),
             "requiredSeconds": SOAK_SECONDS,
             "sampleCount": len(samples),
             "maximumRssBytes": max(rss_samples, default=0),
             "rssGrowthBytes": growth,
+            "maximumRssBudgetBytes": MAX_BRIDGE_RSS_BYTES,
+            "rssGrowthBudgetBytes": MAX_BRIDGE_RSS_GROWTH_BYTES,
+            "memoryBudgetPassed": memory_budget_reached,
+            "activeSessionConfigured": active_session_configured,
         },
         "samples": list(samples),
-        "releaseGateEligible": completed and required_duration_reached,
+        "releaseGateEligible": passed,
     }
 
 
