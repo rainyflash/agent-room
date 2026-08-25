@@ -126,6 +126,21 @@ async fn 真实_synapse_可幂等建立独立_agent_用户和设备会话() {
 #[tokio::test]
 #[ignore = "需要由 tools/matrix.py 提供真实 Synapse 私人房间配置"]
 async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬边界() {
+    let scenario = prepare_private_room_scenario().await;
+    verify_private_room_speaking_boundary(&scenario).await;
+    verify_private_room_governance_boundary(&scenario).await;
+}
+
+struct PrivateRoomScenario {
+    provisioner: MatrixApplicationServiceProvisioner,
+    owner: MatrixConnection,
+    member: MatrixConnection,
+    owner_user_id: MatrixUserId,
+    member_user_id: MatrixUserId,
+    room_id: MatrixRoomId,
+}
+
+async fn prepare_private_room_scenario() -> PrivateRoomScenario {
     let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
     let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
     let owner_user = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_USER");
@@ -145,24 +160,7 @@ async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬�
     let owner_user_id = MatrixUserId::new(owner_user).expect("房主 Matrix 用户有效");
     let member_user_id = MatrixUserId::new(member_user).expect("成员 Matrix 用户有效");
     let outsider = managed_outsider(&provisioner, &factory).await;
-    let alias = MatrixRoomAliasLocalpart::new(format!(
-        "agent-room-private-test-{}",
-        Uuid::now_v7().simple()
-    ))
-    .expect("私人房间稳定别名有效");
-    let request = MatrixCreateRoom::new(
-        Some("Task 25 private room acceptance".to_owned()),
-        Some("真实 Synapse 私人房间硬边界验收".to_owned()),
-        MatrixRoomVisibility::Private,
-        MatrixRoomPreset::PrivateChat,
-        false,
-        vec![owner_user_id.clone(), member_user_id.clone()],
-    )
-    .expect("私人房间建房请求有效")
-    .with_alias_localpart(alias.clone())
-    .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
-    let creation = PrivateMatrixRoomCreation::new(request, alias).expect("受管私人房间请求有效");
-
+    let creation = private_room_creation(&owner_user_id, &member_user_id);
     let room_id = PrivateRoomMatrixProvisioner::create(&provisioner, &creation)
         .await
         .expect("Application Service 必须能创建私人房间");
@@ -195,88 +193,145 @@ async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬�
         Some(PrivateMatrixMembership::Joined)
     );
 
-    let denied = member
+    PrivateRoomScenario {
+        provisioner,
+        owner,
+        member,
+        owner_user_id,
+        member_user_id,
+        room_id,
+    }
+}
+
+fn private_room_creation(
+    owner_user_id: &MatrixUserId,
+    member_user_id: &MatrixUserId,
+) -> PrivateMatrixRoomCreation {
+    let alias = MatrixRoomAliasLocalpart::new(format!(
+        "agent-room-private-test-{}",
+        Uuid::now_v7().simple()
+    ))
+    .expect("私人房间稳定别名有效");
+    let request = MatrixCreateRoom::new(
+        Some("Task 25 private room acceptance".to_owned()),
+        Some("真实 Synapse 私人房间硬边界验收".to_owned()),
+        MatrixRoomVisibility::Private,
+        MatrixRoomPreset::PrivateChat,
+        false,
+        vec![owner_user_id.clone(), member_user_id.clone()],
+    )
+    .expect("私人房间建房请求有效")
+    .with_alias_localpart(alias.clone())
+    .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+    PrivateMatrixRoomCreation::new(request, alias).expect("受管私人房间请求有效")
+}
+
+async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
+    let denied = scenario
+        .member
         .gateway()
         .send_event(
-            &room_id,
+            &scenario.room_id,
             &message_event(unique_value("private-denied"), "默认查看者不得发言"),
         )
         .await
         .expect_err("未授予发言硬边界时必须拒绝发送");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 
-    provisioner
+    scenario
+        .provisioner
         .set_speaking_batch(
-            &room_id,
+            &scenario.room_id,
             &[
-                PrivateMatrixSpeakingAssignment::new(owner_user_id, true),
-                PrivateMatrixSpeakingAssignment::new(member_user_id.clone(), true),
+                PrivateMatrixSpeakingAssignment::new(scenario.owner_user_id.clone(), true),
+                PrivateMatrixSpeakingAssignment::new(scenario.member_user_id.clone(), true),
             ],
         )
         .await
         .expect("发言硬边界可原子合并");
     send_with_retry(
-        member.gateway(),
-        &room_id,
+        scenario.member.gateway(),
+        &scenario.room_id,
         &message_event(unique_value("private-allowed"), "授权后可发言"),
     )
     .await;
-    provisioner
-        .set_speaking(&room_id, &member_user_id, false)
+    scenario
+        .provisioner
+        .set_speaking(&scenario.room_id, &scenario.member_user_id, false)
         .await
         .expect("可收回成员发言能力");
-    let denied = member
+    let denied = scenario
+        .member
         .gateway()
         .send_event(
-            &room_id,
+            &scenario.room_id,
             &message_event(unique_value("private-revoked"), "撤权后不得发言"),
         )
         .await
         .expect_err("发言能力撤销后必须立即拒绝发送");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+}
 
-    provisioner
-        .kick(&room_id, &member_user_id)
+async fn verify_private_room_governance_boundary(scenario: &PrivateRoomScenario) {
+    scenario
+        .provisioner
+        .kick(&scenario.room_id, &scenario.member_user_id)
         .await
         .expect("可从 Matrix 硬边界移除成员");
     assert_eq!(
-        provisioner
-            .membership(&room_id, &member_user_id)
+        scenario
+            .provisioner
+            .membership(&scenario.room_id, &scenario.member_user_id)
             .await
             .expect("移除后成员状态可读取"),
         Some(PrivateMatrixMembership::Left)
     );
-    let denied = member
+    let denied = scenario
+        .member
         .gateway()
         .send_event(
-            &room_id,
+            &scenario.room_id,
             &message_event(unique_value("private-kicked"), "移除后不得发送"),
         )
         .await
         .expect_err("被移除成员不得继续写入房间");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 
-    provisioner
-        .ban(&room_id, &member_user_id)
+    scenario
+        .provisioner
+        .ban(&scenario.room_id, &scenario.member_user_id)
         .await
         .expect("可封禁已移除成员");
     assert_eq!(
-        provisioner
-            .membership(&room_id, &member_user_id)
+        scenario
+            .provisioner
+            .membership(&scenario.room_id, &scenario.member_user_id)
             .await
             .expect("封禁后成员状态可读取"),
         Some(PrivateMatrixMembership::Banned)
     );
-    let denied = member
+    let denied = scenario
+        .member
         .gateway()
-        .join(&room_id)
+        .join(&scenario.room_id)
         .await
         .expect_err("封禁成员不得重新加入");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
-    provisioner
-        .archive(&room_id)
+    scenario
+        .provisioner
+        .archive(&scenario.room_id)
         .await
         .expect("归档必须收紧 Matrix 发言策略");
+    let denied = scenario
+        .owner
+        .gateway()
+        .send_event(
+            &scenario.room_id,
+            &message_event(unique_value("private-archived"), "归档后普通房主也不得发言"),
+        )
+        .await
+        .expect_err("归档后非服务管理员必须进入只读状态");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 }
 
 fn application_service_provisioner(
