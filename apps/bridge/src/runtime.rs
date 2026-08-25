@@ -476,7 +476,7 @@ async fn compose_agent_session_runtime(
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     )));
     let message_services =
-        compose_agent_message_services(&http, paths, device_session.clone()).await?;
+        compose_agent_message_services(&http, paths, device_session.clone(), agent_id).await?;
     let handoff_gateway = Arc::new(
         ReqwestControlPlaneHandoffGateway::new(&http, device_session)
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
@@ -535,6 +535,7 @@ async fn compose_agent_message_services(
     http: &ControlPlaneHttpConfig,
     paths: &BridgeRuntimePaths,
     device_session: Arc<BridgeSessionService>,
+    actor_agent_id: AgentId,
 ) -> Result<AgentMessageServices, BridgeRuntimeError> {
     let verification = Arc::new(
         ReqwestAgentInstanceVerificationGateway::new(http, device_session.clone())
@@ -551,11 +552,11 @@ async fn compose_agent_message_services(
             .map_err(|failure| BridgeRuntimeError::message_store(&failure))?,
     );
     let outbound_content: Arc<dyn MessageContentGateway> = Arc::new(
-        ReqwestControlPlaneMessageContentGateway::new(http, device_session.clone())
+        ReqwestControlPlaneMessageContentGateway::new(http, device_session.clone(), actor_agent_id)
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let content_reader: Arc<dyn MessageContentReadGateway> = Arc::new(
-        ReqwestControlPlaneContentGateway::new(http, device_session)
+        ReqwestControlPlaneContentGateway::new(http, device_session, actor_agent_id)
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let content = Arc::new(OpenMessageContentService::new(

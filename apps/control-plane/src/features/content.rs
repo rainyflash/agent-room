@@ -18,7 +18,7 @@ use agent_room_domain::{
     content::{
         ContentByteLength, ContentEncryptionMode, ContentMediaType, ContentObject, Sha256Digest,
     },
-    ids::{ContentId, ContentUploadRequestId, PrincipalId},
+    ids::{AgentId, ContentId, ContentUploadRequestId, PrincipalId},
     time::UtcMillis,
 };
 use axum::{
@@ -105,6 +105,8 @@ pub(crate) fn router(state: ContentHttpState) -> Router {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BeginUploadBody {
+    #[serde(default)]
+    actor_agent_id: Option<String>,
     matrix_room_id: String,
     access_mode: String,
     sha256: String,
@@ -113,6 +115,13 @@ struct BeginUploadBody {
     encryption_mode: String,
     #[serde(default)]
     expires_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReadTicketBody {
+    #[serde(default)]
+    actor_agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -353,9 +362,13 @@ async fn issue_read_ticket(
     Path(content_id): Path<String>,
     headers: HeaderMap,
     jar: CookieJar,
+    body: Bytes,
 ) -> Response {
     let Ok(content_id) = parse_content_id(&content_id) else {
         return invalid_request("content.invalid_content_id", correlation_id);
+    };
+    let Ok(body_text) = std::str::from_utf8(&body) else {
+        return invalid_request("content.ticket.invalid_body", correlation_id);
     };
     let request_target = format!("/content/{content_id}/read-tickets");
     let principal_id = match authenticate_content_request(
@@ -364,7 +377,7 @@ async fn issue_read_ticket(
         &jar,
         "POST",
         &request_target,
-        "",
+        body_text,
         correlation_id,
     )
     .await
@@ -372,11 +385,23 @@ async fn issue_read_ticket(
         Ok(principal_id) => principal_id,
         Err(response) => return response,
     };
+    let body = if body.is_empty() {
+        ReadTicketBody::default()
+    } else {
+        match serde_json::from_slice::<ReadTicketBody>(&body) {
+            Ok(body) => body,
+            Err(_) => return invalid_request("content.ticket.invalid_body", correlation_id),
+        }
+    };
+    let Ok(actor_agent_id) = parse_optional_agent_id(body.actor_agent_id.as_deref()) else {
+        return invalid_request("content.ticket.invalid_body", correlation_id);
+    };
 
     match state
         .content
         .issue_read_ticket(IssueContentReadTicketRequest {
             principal_id,
+            actor_agent_id,
             content_id,
         })
         .await
@@ -541,6 +566,7 @@ fn begin_upload_request(
     Ok(BeginContentUploadRequest {
         request_id,
         owner_principal_id,
+        actor_agent_id: parse_optional_agent_id(body.actor_agent_id.as_deref())?,
         matrix_room_id: MatrixRoomId::new(body.matrix_room_id).map_err(|_| ())?,
         access_mode: ContentAccessMode::try_from(body.access_mode.as_str()).map_err(|_| ())?,
         digest: parse_sha256(&body.sha256)?,
@@ -554,6 +580,13 @@ fn begin_upload_request(
             .transpose()
             .map_err(|_| ())?,
     })
+}
+
+fn parse_optional_agent_id(value: Option<&str>) -> Result<Option<AgentId>, ()> {
+    value
+        .map(parse_uuid_v7)
+        .transpose()
+        .map(|value| value.map(AgentId::from_uuid))
 }
 
 fn idempotency_request_id(headers: &HeaderMap) -> Result<ContentUploadRequestId, ()> {
@@ -762,8 +795,8 @@ mod tests {
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
         },
         ports::{
-            ContentAccessMode, ContentAccessPolicy, MatrixRoomId, PortFuture, PrincipalAccount,
-            SecretFactory, SecretValue,
+            ContentAccessMode, ContentAccessPolicy, ContentReadTicket, MatrixRoomId, PortFuture,
+            PrincipalAccount, SecretFactory, SecretValue,
         },
     };
     use agent_room_domain::{
@@ -773,7 +806,7 @@ mod tests {
         },
         devices::Device,
         identity::Principal,
-        ids::{ContentId, DeviceId, PrincipalId},
+        ids::{AgentId, ContentId, DeviceId, PrincipalId},
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -796,6 +829,7 @@ mod tests {
     const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
     const CONTENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
     const REQUEST_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e45";
+    const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
     const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
     const SESSION_COOKIE: &str = "__Host-agent-room-session=session-secret";
     const ROOM_ID: &str = "!room:matrix.agent-room.test";
@@ -805,6 +839,7 @@ mod tests {
         content: ContentObject,
         policy: ContentAccessPolicy,
         begin_request: Mutex<Option<BeginContentUploadRequest>>,
+        ticket_request: Mutex<Option<IssueContentReadTicketRequest>>,
         uploaded_body: Mutex<Vec<u8>>,
         open_request: Mutex<Option<(PrincipalId, ContentId, String)>>,
         opened: Mutex<Option<OpenedVerifiedContent>>,
@@ -822,6 +857,7 @@ mod tests {
                 ),
                 content,
                 begin_request: Mutex::new(None),
+                ticket_request: Mutex::new(None),
                 uploaded_body: Mutex::new(Vec::new()),
                 open_request: Mutex::new(None),
                 opened: Mutex::new(Some(OpenedVerifiedContent {
@@ -885,9 +921,15 @@ mod tests {
 
         fn issue_read_ticket(
             &self,
-            _request: IssueContentReadTicketRequest,
+            request: IssueContentReadTicketRequest,
         ) -> PortFuture<'_, IssueContentReadTicketResult<IssuedContentReadTicket>> {
-            Box::pin(async { unreachable!("当前测试不会签发读取票据") })
+            *self.ticket_request.lock().expect("读取票据请求记录锁可用") = Some(request);
+            Box::pin(async {
+                Ok(IssuedContentReadTicket {
+                    ticket: ContentReadTicket::new("test-read-ticket").expect("测试票据有效"),
+                    expires_at: time(1_700_000_060_000),
+                })
+            })
         }
 
         fn open(
@@ -1034,6 +1076,7 @@ mod tests {
         let content = Arc::new(FakeContent::new());
         let authentication = Arc::new(FakeAuthentication::default());
         let body = json!({
+            "actorAgentId": AGENT_UUID,
             "matrixRoomId": ROOM_ID,
             "accessMode": "room_member",
             "sha256": DIGEST_HEX,
@@ -1078,7 +1121,50 @@ mod tests {
             .clone()
             .expect("上传用例已调用");
         assert_eq!(recorded.owner_principal_id, principal_id());
+        assert_eq!(recorded.actor_agent_id, Some(agent_id()));
         assert_eq!(recorded.request_id.to_string(), REQUEST_UUID);
+    }
+
+    #[tokio::test]
+    async fn 设备读取票据绑定显式_agent_且签名完整请求体() {
+        let content = Arc::new(FakeContent::new());
+        let devices = Arc::new(FakeDevices::default());
+        let body = json!({ "actorAgentId": AGENT_UUID }).to_string();
+        devices.expect(
+            "POST",
+            format!("/content/{CONTENT_UUID}/read-tickets"),
+            body.clone(),
+        );
+
+        let response = test_router(
+            content.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices,
+        )
+        .oneshot(device_request(
+            "POST",
+            format!("/content/{CONTENT_UUID}/read-tickets"),
+            Body::from(body),
+            None,
+        ))
+        .await
+        .expect("读取票据路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["ticket"], "test-read-ticket");
+        assert_eq!(payload["expiresAtUnixMs"], 1_700_000_060_000_i64);
+        assert_eq!(
+            *content
+                .ticket_request
+                .lock()
+                .expect("读取票据请求记录锁可用"),
+            Some(IssueContentReadTicketRequest {
+                principal_id: principal_id(),
+                actor_agent_id: Some(agent_id()),
+                content_id: content_id(),
+            })
+        );
     }
 
     #[tokio::test]
@@ -1277,6 +1363,10 @@ mod tests {
 
     fn content_id() -> ContentId {
         ContentId::from_uuid(uuid(CONTENT_UUID))
+    }
+
+    fn agent_id() -> AgentId {
+        AgentId::from_uuid(uuid(AGENT_UUID))
     }
 
     fn uuid(value: &str) -> Uuid {

@@ -10,7 +10,10 @@ use agent_room_bridge_core::{
         ControlPlaneRequestAuthorizer,
     },
 };
-use agent_room_domain::content::{ContentByteLength, ContentMediaType, Sha256Digest};
+use agent_room_domain::{
+    content::{ContentByteLength, ContentMediaType, Sha256Digest},
+    ids::AgentId,
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{Client, StatusCode, header};
 use serde::{Deserialize, Serialize};
@@ -28,6 +31,7 @@ pub struct ReqwestControlPlaneContentGateway {
     client: Client,
     base_url: Url,
     authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+    actor_agent_id: AgentId,
 }
 
 impl ReqwestControlPlaneContentGateway {
@@ -39,12 +43,14 @@ impl ReqwestControlPlaneContentGateway {
     pub fn new(
         config: &ControlPlaneHttpConfig,
         authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+        actor_agent_id: AgentId,
     ) -> Result<Self, ControlPlaneHttpConfigurationError> {
         let (client, base_url) = configured_client(config)?;
         Ok(Self {
             client,
             base_url,
             authorizer,
+            actor_agent_id,
         })
     }
 
@@ -61,14 +67,21 @@ impl ReqwestControlPlaneContentGateway {
         request: &MessageContentReadRequest,
     ) -> Result<String, MessageContentReadFailure> {
         let request_target = format!("/content/{}/read-tickets", request.content_id());
-        let authorized = self.authorize("POST", &request_target, "").await?;
+        let body = serde_json::to_string(&ReadTicketBody {
+            actor_agent_id: self.actor_agent_id.to_string(),
+        })
+        .map_err(|_| read_failure(MessageContentReadFailureKind::Internal))?;
+        let authorized = self.authorize("POST", &request_target, &body).await?;
         let response = Self::signed_request(
-            self.client.post(self.url(&request_target)?),
+            self.client
+                .post(self.url(&request_target)?)
+                .header(header::ACCEPT, "application/json")
+                .header(header::CONTENT_TYPE, "application/json"),
             &authorized,
             "POST",
             &request_target,
         )?
-        .body(Vec::new())
+        .body(body)
         .send()
         .await
         .map_err(|_| read_failure(MessageContentReadFailureKind::Unavailable))?;
@@ -161,6 +174,12 @@ impl MessageContentReadGateway for ReqwestControlPlaneContentGateway {
 struct ReadTicketResponse {
     ticket: String,
     expires_at_unix_ms: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadTicketBody {
+    actor_agent_id: String,
 }
 
 #[derive(Serialize)]
@@ -295,7 +314,10 @@ mod tests {
             AuthorizedControlPlaneRequest, BridgeSessionResult, ControlPlaneRequestAuthorizer,
         },
     };
-    use agent_room_domain::{ids::ContentId, time::UtcMillis};
+    use agent_room_domain::{
+        ids::{AgentId, ContentId},
+        time::UtcMillis,
+    };
     use agent_room_identity_adapter::SecureSecretFactory;
     use axum::{
         Json, Router,
@@ -315,6 +337,7 @@ mod tests {
     use base64::Engine as _;
 
     const CONTENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
+    const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
     const TICKET: &str = "content-read-ticket-0123456789";
 
     #[derive(Default)]
@@ -365,7 +388,7 @@ mod tests {
                     |Path(content_id): Path<String>, headers: HeaderMap, body: String| async move {
                         let valid = content_id == CONTENT_ID
                             && signed_headers_are_valid(&headers)
-                            && body.is_empty();
+                            && body == format!(r#"{{"actorAgentId":"{AGENT_ID}"}}"#);
                         if valid {
                             (
                                 StatusCode::OK,
@@ -430,7 +453,7 @@ mod tests {
                 (
                     "POST".to_owned(),
                     format!("/content/{CONTENT_ID}/read-tickets"),
-                    String::new(),
+                    format!(r#"{{"actorAgentId":"{AGENT_ID}"}}"#),
                 ),
                 (
                     "POST".to_owned(),
@@ -487,6 +510,7 @@ mod tests {
                 request_timeout: Duration::from_secs(2),
             },
             authorizer,
+            AgentId::from_uuid(Uuid::parse_str(AGENT_ID).expect("Agent 标识有效")),
         )
         .expect("本地正文网关地址有效")
     }

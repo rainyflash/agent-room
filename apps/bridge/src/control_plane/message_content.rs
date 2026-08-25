@@ -11,7 +11,10 @@ use agent_room_bridge_core::{
         ControlPlaneRequestAuthorizer,
     },
 };
-use agent_room_domain::{content::Sha256Digest, ids::ContentId};
+use agent_room_domain::{
+    content::Sha256Digest,
+    ids::{AgentId, ContentId},
+};
 use reqwest::{Client, StatusCode, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -32,6 +35,7 @@ pub struct ReqwestControlPlaneMessageContentGateway {
     client: Client,
     base_url: Url,
     authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+    actor_agent_id: AgentId,
 }
 
 impl ReqwestControlPlaneMessageContentGateway {
@@ -43,12 +47,14 @@ impl ReqwestControlPlaneMessageContentGateway {
     pub fn new(
         config: &ControlPlaneHttpConfig,
         authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+        actor_agent_id: AgentId,
     ) -> Result<Self, ControlPlaneHttpConfigurationError> {
         let (client, base_url) = configured_client(config)?;
         Ok(Self {
             client,
             base_url,
             authorizer,
+            actor_agent_id,
         })
     }
 
@@ -68,6 +74,7 @@ impl ReqwestControlPlaneMessageContentGateway {
         let target = "/content/uploads";
         let digest = encode_hex(request.digest.as_bytes());
         let body = serde_json::to_string(&BeginUploadBody {
+            actor_agent_id: self.actor_agent_id.to_string(),
             matrix_room_id: request.room_id.as_str(),
             access_mode: ACCESS_MODE,
             sha256: &digest,
@@ -280,6 +287,7 @@ impl MessageContentGateway for ReqwestControlPlaneMessageContentGateway {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BeginUploadBody<'a> {
+    actor_agent_id: String,
     matrix_room_id: &'a str,
     access_mode: &'static str,
     sha256: &'a str,

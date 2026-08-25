@@ -6,7 +6,7 @@ use agent_room_domain::{
         ContentByteLength, ContentEncryptionMode, ContentLifecycleState, ContentMediaType,
         ContentObject, ContentObjectFields, ContentScanState, Sha256Digest,
     },
-    ids::{ContentId, ContentUploadRequestId, PrincipalId},
+    ids::{AgentId, ContentId, ContentUploadRequestId, PrincipalId},
     time::UtcMillis,
 };
 use sha2::{Digest, Sha256};
@@ -28,6 +28,7 @@ use crate::{
 pub struct BeginContentUploadRequest {
     pub request_id: ContentUploadRequestId,
     pub owner_principal_id: PrincipalId,
+    pub actor_agent_id: Option<AgentId>,
     pub matrix_room_id: MatrixRoomId,
     pub access_mode: ContentAccessMode,
     pub digest: Sha256Digest,
@@ -178,6 +179,7 @@ impl BeginContentUploadService {
             .authorizer
             .authorize(&ContentAuthorizationRequest {
                 principal_id: request.owner_principal_id,
+                actor_agent_id: request.actor_agent_id,
                 owner_principal_id: request.owner_principal_id,
                 matrix_room_id: request.matrix_room_id.clone(),
                 access_mode: ContentAccessMode::RoomMember,
@@ -194,6 +196,13 @@ impl BeginContentUploadService {
 fn upload_fingerprint(request: &BeginContentUploadRequest) -> ContentUploadFingerprint {
     let mut hasher = Sha256::new();
     update_field(&mut hasher, request.owner_principal_id.as_uuid().as_bytes());
+    match request.actor_agent_id {
+        Some(agent_id) => {
+            hasher.update([1]);
+            update_field(&mut hasher, agent_id.as_uuid().as_bytes());
+        }
+        None => hasher.update([0]),
+    }
     update_field(&mut hasher, request.matrix_room_id.as_str().as_bytes());
     update_field(&mut hasher, request.access_mode.as_str().as_bytes());
     update_field(&mut hasher, request.digest.as_bytes());

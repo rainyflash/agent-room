@@ -7,7 +7,7 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     content::{ContentByteLength, ContentMediaType, Sha256Digest},
-    ids::{ContentId, PrincipalId},
+    ids::{AgentId, ContentId, PrincipalId},
     time::UtcMillis,
 };
 use jsonwebtoken::{
@@ -213,6 +213,8 @@ struct WireTicketClaims {
     iss: String,
     aud: String,
     sub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actor_agent_id: Option<String>,
     exp: u64,
     iat: u64,
     issued_at_ms: u64,
@@ -237,6 +239,7 @@ impl WireTicketClaims {
             iss: TOKEN_ISSUER.to_owned(),
             aud: TOKEN_AUDIENCE.to_owned(),
             sub: claims.principal_id.to_string(),
+            actor_agent_id: claims.actor_agent_id.map(|value| value.to_string()),
             exp: expires_at_ms.div_ceil(1_000),
             iat: issued_at_ms / 1_000,
             issued_at_ms,
@@ -280,6 +283,11 @@ impl WireTicketClaims {
         }
         Ok(ContentReadTicketClaims {
             principal_id,
+            actor_agent_id: self
+                .actor_agent_id
+                .as_deref()
+                .map(parse_agent_id)
+                .transpose()?,
             content_id: parse_content_id(&self.content_id)?,
             matrix_room_id: MatrixRoomId::new(self.matrix_room_id)
                 .map_err(|_| invalid_ticket("content.ticket.verify.claims"))?,
@@ -319,6 +327,12 @@ fn parse_content_id(value: &str) -> ContentTicketResult<ContentId> {
         .map_err(|_| invalid_ticket("content.ticket.verify.claims"))
 }
 
+fn parse_agent_id(value: &str) -> ContentTicketResult<AgentId> {
+    Uuid::parse_str(value)
+        .map(AgentId::from_uuid)
+        .map_err(|_| invalid_ticket("content.ticket.verify.claims"))
+}
+
 fn parse_time(value: u64) -> ContentTicketResult<UtcMillis> {
     i64::try_from(value)
         .ok()
@@ -338,7 +352,7 @@ mod tests {
     };
     use agent_room_domain::{
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
-        ids::{ContentId, PrincipalId},
+        ids::{AgentId, ContentId, PrincipalId},
         time::UtcMillis,
     };
     use uuid::Uuid;
@@ -433,6 +447,9 @@ mod tests {
             principal_id: PrincipalId::from_uuid(
                 Uuid::parse_str("01980000-0000-7000-8000-000000000001").expect("UUID 有效"),
             ),
+            actor_agent_id: Some(AgentId::from_uuid(
+                Uuid::parse_str("01980000-0000-7000-8000-000000000009").expect("UUID 有效"),
+            )),
             content_id: ContentId::from_uuid(
                 Uuid::parse_str("01980000-0000-7000-8000-000000000002").expect("UUID 有效"),
             ),

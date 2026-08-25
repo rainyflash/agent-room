@@ -35,12 +35,25 @@ impl ContentMembershipAuthorizationService {
         &self,
         request: &ContentAuthorizationRequest,
     ) -> ContentAuthorizationResult<ContentAuthorizationDecision> {
-        let Some(user_id) = self
-            .identities
-            .find_active_matrix_user(request.principal_id)
-            .await
-            .map_err(map_repository_failure)?
-        else {
+        if request.access_mode == ContentAccessMode::SenderOnly
+            && request.principal_id != request.owner_principal_id
+        {
+            return Ok(ContentAuthorizationDecision::Denied);
+        }
+        let user_id = match request.actor_agent_id {
+            Some(agent_id) => {
+                self.identities
+                    .find_active_agent_matrix_user(request.principal_id, agent_id)
+                    .await
+            }
+            None => {
+                self.identities
+                    .find_active_matrix_user(request.principal_id)
+                    .await
+            }
+        }
+        .map_err(map_repository_failure)?;
+        let Some(user_id) = user_id else {
             return Ok(ContentAuthorizationDecision::Denied);
         };
         let authority = self
@@ -98,7 +111,7 @@ const fn unavailable(operation: &'static str) -> ContentAuthorizationFailure {
 mod tests {
     use std::sync::Arc;
 
-    use agent_room_domain::ids::PrincipalId;
+    use agent_room_domain::ids::{AgentId, PrincipalId};
     use uuid::Uuid;
 
     use crate::{
@@ -116,7 +129,8 @@ mod tests {
     };
 
     struct StubIdentity {
-        result: RepositoryResult<Option<MatrixUserId>>,
+        principal_result: RepositoryResult<Option<MatrixUserId>>,
+        agent_result: RepositoryResult<Option<MatrixUserId>>,
     }
 
     impl ContentPrincipalIdentityLookup for StubIdentity {
@@ -124,7 +138,15 @@ mod tests {
             &self,
             _principal_id: PrincipalId,
         ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
-            Box::pin(async move { self.result.clone() })
+            Box::pin(async move { self.principal_result.clone() })
+        }
+
+        fn find_active_agent_matrix_user(
+            &self,
+            _principal_id: PrincipalId,
+            _agent_id: AgentId,
+        ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
+            Box::pin(async move { self.agent_result.clone() })
         }
     }
 
@@ -184,6 +206,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 主体持有的活跃_agent_入房即可代表主体访问内容() {
+        let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+        let agent_id = AgentId::from_uuid(Uuid::now_v7());
+        let agent_user_id =
+            MatrixUserId::new("@agent_owned:matrix.test").expect("Agent 用户 ID 有效");
+        let service = ContentMembershipAuthorizationService::new(
+            ContentMembershipAuthorizationDependencies {
+                identities: Arc::new(StubIdentity {
+                    principal_result: Ok(None),
+                    agent_result: Ok(Some(agent_user_id)),
+                }),
+                matrix_authority: Arc::new(StubAuthority {
+                    result: Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::finite(0))),
+                }),
+            },
+        );
+
+        assert_eq!(
+            service
+                .authorize(&agent_request(
+                    principal_id,
+                    agent_id,
+                    principal_id,
+                    ContentAccessMode::RoomMember,
+                ))
+                .await
+                .expect("Agent 成员资格可判定"),
+            ContentAuthorizationDecision::Allowed
+        );
+    }
+
+    #[tokio::test]
     async fn 管理员门槛使用_matrix_标准_50_并支持无限级别() {
         for (power_level, expected) in [
             (
@@ -219,7 +273,10 @@ mod tests {
         let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
         let denied = ContentMembershipAuthorizationService::new(
             ContentMembershipAuthorizationDependencies {
-                identities: Arc::new(StubIdentity { result: Ok(None) }),
+                identities: Arc::new(StubIdentity {
+                    principal_result: Ok(None),
+                    agent_result: Ok(None),
+                }),
                 matrix_authority: Arc::new(StubAuthority {
                     result: Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::Infinite)),
                 }),
@@ -240,10 +297,11 @@ mod tests {
         let failed = ContentMembershipAuthorizationService::new(
             ContentMembershipAuthorizationDependencies {
                 identities: Arc::new(StubIdentity {
-                    result: Err(RepositoryError::new(
+                    principal_result: Err(RepositoryError::new(
                         "test.identity",
                         RepositoryErrorKind::Unavailable,
                     )),
+                    agent_result: Ok(None),
                 }),
                 matrix_authority: Arc::new(StubAuthority {
                     result: Ok(MatrixRoomAuthority::not_joined()),
@@ -271,7 +329,8 @@ mod tests {
             ContentMembershipAuthorizationService::new(
                 ContentMembershipAuthorizationDependencies {
                     identities: Arc::new(StubIdentity {
-                        result: Ok(Some(user_id)),
+                        principal_result: Ok(Some(user_id.clone())),
+                        agent_result: Ok(Some(user_id)),
                     }),
                     matrix_authority: Arc::new(StubAuthority { result: authority }),
                 },
@@ -287,9 +346,22 @@ mod tests {
     ) -> ContentAuthorizationRequest {
         ContentAuthorizationRequest {
             principal_id,
+            actor_agent_id: None,
             owner_principal_id,
             matrix_room_id: MatrixRoomId::new("!authorization:matrix.test").expect("房间 ID 有效"),
             access_mode,
+        }
+    }
+
+    fn agent_request(
+        principal_id: PrincipalId,
+        actor_agent_id: AgentId,
+        owner_principal_id: PrincipalId,
+        access_mode: ContentAccessMode,
+    ) -> ContentAuthorizationRequest {
+        ContentAuthorizationRequest {
+            actor_agent_id: Some(actor_agent_id),
+            ..request(principal_id, owner_principal_id, access_mode)
         }
     }
 }

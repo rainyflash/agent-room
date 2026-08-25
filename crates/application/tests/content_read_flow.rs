@@ -43,6 +43,7 @@ async fn 票据只为已绑定事件的当前房间成员签发() {
     let issued = service
         .issue(IssueContentReadTicketRequest {
             principal_id: fixture.principal_id,
+            actor_agent_id: None,
             content_id: fixture.content.id(),
         })
         .await
@@ -195,6 +196,7 @@ impl ReadFixture {
         .expect("访问策略有效");
         let claims = ContentReadTicketClaims {
             principal_id,
+            actor_agent_id: None,
             content_id: content.id(),
             matrix_room_id: room_id,
             matrix_event_id: event_id.clone(),
@@ -241,6 +243,7 @@ impl ReadFixture {
         self.issue_service()
             .issue(IssueContentReadTicketRequest {
                 principal_id: self.principal_id,
+                actor_agent_id: None,
                 content_id: self.content.id(),
             })
             .await

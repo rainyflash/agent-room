@@ -5,7 +5,7 @@ use agent_room_domain::{
     content::{
         ContentByteLength, ContentLifecycleState, ContentMediaType, ContentObject, Sha256Digest,
     },
-    ids::{ContentId, ContentUploadRequestId, PrincipalId},
+    ids::{AgentId, ContentId, ContentUploadRequestId, PrincipalId},
     time::UtcMillis,
 };
 
@@ -231,6 +231,7 @@ impl fmt::Debug for OpenedContentObject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentAuthorizationRequest {
     pub principal_id: PrincipalId,
+    pub actor_agent_id: Option<AgentId>,
     pub owner_principal_id: PrincipalId,
     pub matrix_room_id: MatrixRoomId,
     pub access_mode: ContentAccessMode,
@@ -276,6 +277,7 @@ impl fmt::Debug for ContentReadTicket {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentReadTicketClaims {
     pub principal_id: PrincipalId,
+    pub actor_agent_id: Option<AgentId>,
     pub content_id: ContentId,
     pub matrix_room_id: MatrixRoomId,
     pub matrix_event_id: MatrixEventId,

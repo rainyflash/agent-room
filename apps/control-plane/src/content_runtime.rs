@@ -18,15 +18,18 @@ use agent_room_application::{
         ContentReadTicketCodec, ContentRepository, ContentScanner, ContentStorageKeyFactory,
         MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
         MatrixAgentUserRegistration, MatrixClientFactory, MatrixDeviceId, MatrixFailure,
-        MatrixRoomAuthorityGateway, PrivateContentObjectStore, SecretFactory, SecretValue,
+        MatrixFailureKind, MatrixOperation, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
+        MatrixRoomId, MatrixUserId, PortFuture, PrivateContentObjectStore, RoomMembershipGateway,
+        SecretFactory, SecretValue,
     },
 };
 use agent_room_content_adapter::{
     ClamAvContentScanner, ClamAvScannerConfig, ContentTicketSigningKey, HmacContentReadTicketCodec,
     S3ContentStoreConfig, S3PrivateContentObjectStore, SecureContentStorageKeyFactory,
 };
-use agent_room_domain::time::DurationMillis;
+use agent_room_domain::{rooms::MatrixRoomReference, time::DurationMillis};
 use agent_room_matrix_adapter::{MatrixSdkClientFactory, MatrixSdkConfiguration};
+use agent_room_matrix_provisioning_adapter::MatrixApplicationServiceProvisioner;
 use agent_room_postgres_adapter::{
     ContentDownloadLimitPolicy, PostgresContentDownloadLimiter, PostgresRepositories,
 };
@@ -63,7 +66,7 @@ pub(crate) struct ContentRuntimeDependencies<'a> {
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
-    pub(crate) matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
+    pub(crate) matrix_identities: Arc<MatrixApplicationServiceProvisioner>,
     pub(crate) frontend_origin: &'a url::Url,
 }
 
@@ -303,7 +306,7 @@ async fn build_matrix_authority(
     config: &ContentConfig,
     matrix_base_url: &str,
     request_timeout: Duration,
-    identities: Arc<dyn MatrixAgentIdentityProvisioner>,
+    identities: Arc<MatrixApplicationServiceProvisioner>,
 ) -> Result<Arc<dyn MatrixRoomAuthorityGateway>, StartupError> {
     let registration = MatrixAgentUserRegistration::new(MatrixAgentLocalpart::from_agent_id(
         config.matrix_authority_agent_id,
@@ -318,6 +321,11 @@ async fn build_matrix_authority(
             "内容授权设备标识无效".to_owned(),
         )
     })?;
+    let membership = identities
+        .room_membership(user_id.clone())
+        .map_err(|error| {
+            matrix_startup_failure("startup.content_matrix_membership_failed", error)
+        })?;
     let session_request =
         MatrixAgentDeviceSessionRequest::new(user_id, device_id, AUTHORITY_DEVICE_NAME.to_owned())
             .map_err(|error| {
@@ -335,7 +343,39 @@ async fn build_matrix_authority(
         .restore(&session)
         .await
         .map_err(|error| matrix_startup_failure("startup.content_matrix_restore_failed", error))?;
-    Ok(connection.room_authority_gateway_handle())
+    Ok(Arc::new(MembershipEnsuringRoomAuthority {
+        membership: Arc::new(membership),
+        authority: connection.room_authority_gateway_handle(),
+    }))
+}
+
+/// 内容授权服务用独立 Matrix 身份读取权威状态；每次检查前先幂等入房。
+///
+/// 公共房间可直接加入，私有房间则必须由建房策略预先邀请该服务身份。
+struct MembershipEnsuringRoomAuthority {
+    membership: Arc<dyn RoomMembershipGateway>,
+    authority: Arc<dyn MatrixRoomAuthorityGateway>,
+}
+
+impl MatrixRoomAuthorityGateway for MembershipEnsuringRoomAuthority {
+    fn inspect_room_authority<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, Result<MatrixRoomAuthority, MatrixFailure>> {
+        Box::pin(async move {
+            let room = MatrixRoomReference::new(room_id.as_str().to_owned()).map_err(|_| {
+                MatrixFailure::new(
+                    MatrixOperation::InspectRoomAuthority,
+                    MatrixFailureKind::InvalidResponse,
+                )
+            })?;
+            self.membership.join(&room).await?;
+            self.authority
+                .inspect_room_authority(room_id, user_id)
+                .await
+        })
+    }
 }
 
 fn application_secret(value: &crate::config::SecretValue) -> Result<SecretValue, StartupError> {

@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -849,12 +850,13 @@ def approve_device_grant(environment: Mapping[str, str], device_code: str) -> No
     )
 
 
-def verify_mcp_identity(
+def verify_mcp_workflow(
     *,
     bridge_environment: Mapping[str, str],
     expected_agent_id: str,
     redactor: LogRedactor,
 ) -> dict[str, str]:
+    room = active_room_for_agent(expected_agent_id)
     with McpStdioClient(
         command=[str(runtime_binary("agent-room-codex-mcp"))],
         working_directory=ROOT,
@@ -869,8 +871,34 @@ def verify_mcp_identity(
             raise VerticalFailure(
                 f"MCP 工具面不匹配；缺少 {missing}，多出 {unexpected}。"
             )
-        response = client.call_tool("agent_room_get_self", {})
+        identity_response = client.call_tool("agent_room_get_self", {})
+        identity = verify_mcp_identity_response(identity_response, expected_agent_id)
+        verify_mcp_status_publication(client, room["matrixRoomId"])
+        message = send_mcp_vertical_message(client, room["matrixRoomId"])
+        preview = wait_for_mcp_preview(
+            client,
+            room_id=room["matrixRoomId"],
+            submission=message,
+            timeout_seconds=45,
+        )
+        verify_mcp_opened_content(client, room["matrixRoomId"], preview, message)
 
+    return {
+        "agentInstanceId": identity["agentInstanceId"],
+        "matrixDeviceId": identity["matrixDeviceId"],
+        "roomInstanceId": room["roomInstanceId"],
+        "matrixRoomId": room["matrixRoomId"],
+        "messageId": require_text(preview.get("messageId"), "MCP 消息标识"),
+        "contentId": require_text(
+            require_object(preview.get("content"), "MCP 正文引用").get("contentId"),
+            "MCP 正文标识",
+        ),
+    }
+
+
+def verify_mcp_identity_response(
+    response: Mapping[str, object], expected_agent_id: str
+) -> dict[str, str]:
     if response.get("type") != "self_summary":
         raise VerticalFailure("MCP 当前身份返回了错误响应类型。")
     summary = require_object(response.get("summary"), "MCP 当前身份摘要")
@@ -879,15 +907,126 @@ def verify_mcp_identity(
         raise VerticalFailure("MCP Agent 身份与浏览器创建结果不一致。")
     instance_id = require_text(summary.get("instanceId"), "MCP Agent 实例标识")
     require_uuid_v7(instance_id, "MCP Agent 实例标识")
-    room = active_room_for_agent(expected_agent_id)
     return {
         "agentInstanceId": instance_id,
         "matrixDeviceId": require_text(
             summary.get("matrixDeviceId"), "MCP Matrix 设备标识"
         ),
-        "roomInstanceId": room["roomInstanceId"],
-        "matrixRoomId": room["matrixRoomId"],
     }
+
+
+def verify_mcp_status_publication(client: McpStdioClient, room_id: str) -> None:
+    response = client.call_tool(
+        "agent_room_publish_status",
+        {
+            "roomId": room_id,
+            "status": "working",
+            "taskSummary": "Task 24 vertical verification",
+            "progressBasisPoints": 5_000,
+        },
+    )
+    if response.get("type") != "published_status":
+        raise VerticalFailure("MCP 状态发布返回了错误响应类型。")
+    publication = require_object(response.get("publication"), "MCP 状态发布结果")
+    if publication.get("roomId") != room_id or publication.get("status") != "working":
+        raise VerticalFailure("MCP 状态发布结果与请求不一致。")
+    lease_expiry = publication.get("leaseExpiresAtUnixMs")
+    if not isinstance(lease_expiry, int) or lease_expiry <= int(time.time() * 1_000):
+        raise VerticalFailure("MCP 状态发布没有返回有效租约。")
+
+
+def send_mcp_vertical_message(
+    client: McpStdioClient, room_id: str
+) -> dict[str, str]:
+    submission_id = new_uuid_v7()
+    title = f"Task 24 reply {submission_id[-8:]}"
+    body = f"Real Agent Room vertical message. Submission: `{submission_id}`."
+    response = client.call_tool(
+        "agent_room_send_message",
+        {
+            "submissionId": submission_id,
+            "roomId": room_id,
+            "title": title,
+            "summary": "Bridge and Codex MCP completed a real message round trip.",
+            "body": body,
+            "mediaType": "text/markdown",
+            "language": "en",
+            "sensitivity": "normal",
+            "riskFlags": [],
+            "provenance": "human_confirmed_agent",
+            "replyToMessageId": None,
+        },
+    )
+    if response.get("type") != "sent_message":
+        raise VerticalFailure("MCP 消息发送返回了错误响应类型。")
+    message = require_object(response.get("message"), "MCP 消息发送结果")
+    if message.get("submissionId") != submission_id:
+        raise VerticalFailure("MCP 消息发送结果的幂等标识不一致。")
+    if message.get("state") != "submitted":
+        raise VerticalFailure(f"MCP 消息没有确定提交，状态为 {message.get('state')}。")
+    event_id = require_text(message.get("eventId"), "MCP Matrix 消息事件标识")
+    if not event_id.startswith("$"):
+        raise VerticalFailure("MCP Matrix 消息事件标识格式无效。")
+    return {
+        "submissionId": submission_id,
+        "eventId": event_id,
+        "title": title,
+        "body": body,
+    }
+
+
+def wait_for_mcp_preview(
+    client: McpStdioClient,
+    *,
+    room_id: str,
+    submission: Mapping[str, str],
+    timeout_seconds: float,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        response = client.call_tool(
+            "agent_room_list_previews",
+            {"roomId": room_id, "beforeEventId": None, "limit": 20},
+        )
+        if response.get("type") != "message_previews":
+            raise VerticalFailure("MCP 消息预览返回了错误响应类型。")
+        previews = response.get("previews")
+        if not isinstance(previews, list):
+            raise VerticalFailure("MCP 消息预览缺少数组。")
+        for item in previews:
+            preview = require_object(item, "MCP 消息预览")
+            if preview.get("eventId") == submission["eventId"]:
+                if preview.get("title") != submission["title"]:
+                    raise VerticalFailure("MCP 消息预览标题与已发送消息不一致。")
+                return preview
+        time.sleep(0.4)
+    raise VerticalFailure(
+        f"已发送消息未在 {timeout_seconds:.0f} 秒内进入 MCP 预览投影。"
+    )
+
+
+def verify_mcp_opened_content(
+    client: McpStdioClient,
+    room_id: str,
+    preview: Mapping[str, object],
+    submission: Mapping[str, str],
+) -> None:
+    content_reference = require_object(preview.get("content"), "MCP 正文引用")
+    content_id = require_text(content_reference.get("contentId"), "MCP 正文标识")
+    require_uuid_v7(content_id, "MCP 正文标识")
+    response = client.call_tool(
+        "agent_room_open_content",
+        {"contentId": content_id},
+    )
+    if response.get("type") != "opened_content":
+        raise VerticalFailure("MCP 正文读取返回了错误响应类型。")
+    content = require_object(response.get("content"), "MCP 已打开正文")
+    if content.get("sourceRoomId") != room_id:
+        raise VerticalFailure("MCP 正文来源房间与预览不一致。")
+    if content.get("sourceEventId") != submission["eventId"]:
+        raise VerticalFailure("MCP 正文来源事件与预览不一致。")
+    if content.get("body") != submission["body"]:
+        raise VerticalFailure("MCP 正文未保持发送时的完整字节内容。")
 
 
 def active_room_for_agent(agent_id: str) -> dict[str, str]:
@@ -960,6 +1099,23 @@ def require_uuid_v7(value: str, label: str) -> None:
         raise VerticalFailure(f"{label} 不是 UUIDv7。")
 
 
+def new_uuid_v7() -> str:
+    """生成不依赖第三方包的 RFC 9562 UUIDv7。"""
+    unix_milliseconds = int(time.time() * 1_000)
+    if not 0 <= unix_milliseconds < (1 << 48):
+        raise VerticalFailure("当前系统时间无法编码为 UUIDv7。")
+    random_a = secrets.randbits(12)
+    random_b = secrets.randbits(62)
+    value = (
+        (unix_milliseconds << 80)
+        | (0b0111 << 76)
+        | (random_a << 64)
+        | (0b10 << 62)
+        | random_b
+    )
+    return str(uuid.UUID(int=value))
+
+
 def bootstrap() -> None:
     environment = prepare_environment()
     build_runtime_binaries()
@@ -978,7 +1134,7 @@ def bootstrap() -> None:
                 agent_id=agent["agentId"],
                 redactor=redactor,
             )
-            runtime = verify_mcp_identity(
+            runtime = verify_mcp_workflow(
                 bridge_environment=bridge_environment,
                 expected_agent_id=agent["agentId"],
                 redactor=redactor,
@@ -989,7 +1145,9 @@ def bootstrap() -> None:
                 "agentId": agent["agentId"],
                 "agentInstanceId": runtime["agentInstanceId"],
                 "catalogId": catalog_id,
+                "contentId": runtime["contentId"],
                 "matrixRoomId": runtime["matrixRoomId"],
+                "messageId": runtime["messageId"],
                 "principalId": agent["principalId"],
                 "roomInstanceId": runtime["roomInstanceId"],
                 "secureStorageService": SECURE_STORAGE_SERVICE,

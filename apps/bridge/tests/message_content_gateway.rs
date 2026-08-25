@@ -19,7 +19,7 @@ use agent_room_bridge_core::{
 };
 use agent_room_domain::{
     content::{ContentByteLength, ContentEncryptionMode, ContentMediaType, Sha256Digest},
-    ids::{ContentUploadRequestId, DeviceId},
+    ids::{AgentId, ContentUploadRequestId, DeviceId},
     time::UtcMillis,
 };
 use agent_room_identity_adapter::SecureSecretFactory;
@@ -38,6 +38,7 @@ use uuid::Uuid;
 
 const CONTENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
 const REQUEST_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e49";
+const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const ROOM_ID: &str = "!lobby:matrix.test";
 const EVENT_ID: &str = "$message:matrix.test";
 
@@ -116,6 +117,7 @@ async fn 消息正文写入完整执行声明上传绑定与撤回() {
     assert_eq!(
         serde_json::from_str::<Value>(&requests[0].2).expect("声明正文是 JSON"),
         json!({
+            "actorAgentId": AGENT_ID,
             "matrixRoomId": ROOM_ID,
             "accessMode": "room_member",
             "sha256": digest,
@@ -163,6 +165,7 @@ async fn 声明上传(
         && header_value(&headers, "idempotency-key") == Some(REQUEST_ID)
         && body
             == json!({
+                "actorAgentId": AGENT_ID,
                 "matrixRoomId": ROOM_ID,
                 "accessMode": "room_member",
                 "sha256": state.digest,
@@ -309,6 +312,7 @@ fn gateway(
             request_timeout: Duration::from_secs(2),
         },
         authorizer,
+        AgentId::from_uuid(Uuid::parse_str(AGENT_ID).expect("Agent 标识有效")),
     )
     .expect("本地消息正文网关地址有效")
 }

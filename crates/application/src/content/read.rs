@@ -5,7 +5,7 @@ use agent_room_domain::{
     content::{
         ContentByteLength, ContentLifecycleState, ContentMediaType, ContentObject, Sha256Digest,
     },
-    ids::{ContentId, PrincipalId},
+    ids::{AgentId, ContentId, PrincipalId},
     time::{DurationMillis, UtcMillis},
 };
 use futures_util::{StreamExt, stream};
@@ -52,6 +52,7 @@ impl ContentReadTicketLifetime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IssueContentReadTicketRequest {
     pub principal_id: PrincipalId,
+    pub actor_agent_id: Option<AgentId>,
     pub content_id: ContentId,
 }
 
@@ -126,6 +127,7 @@ impl IssueContentReadTicketService {
         authorize(
             &*self.authorizer,
             request.principal_id,
+            request.actor_agent_id,
             &content,
             policy.matrix_room_id(),
             policy.access_mode(),
@@ -143,6 +145,7 @@ impl IssueContentReadTicketService {
             });
         let claims = ContentReadTicketClaims {
             principal_id: request.principal_id,
+            actor_agent_id: request.actor_agent_id,
             content_id: content.id(),
             matrix_room_id: policy.matrix_room_id().clone(),
             matrix_event_id: event_id,
@@ -266,6 +269,7 @@ impl OpenContentService {
         authorize(
             &*self.authorizer,
             request.principal_id,
+            claims.actor_agent_id,
             &content,
             policy.matrix_room_id(),
             policy.access_mode(),
@@ -343,6 +347,7 @@ fn ensure_readable(content: &ContentObject, now: UtcMillis) -> Result<(), Conten
 async fn authorize(
     authorizer: &dyn ContentMembershipAuthorizer,
     principal_id: PrincipalId,
+    actor_agent_id: Option<AgentId>,
     content: &ContentObject,
     matrix_room_id: &MatrixRoomId,
     access_mode: crate::ports::ContentAccessMode,
@@ -350,6 +355,7 @@ async fn authorize(
     let decision = authorizer
         .authorize(&ContentAuthorizationRequest {
             principal_id,
+            actor_agent_id,
             owner_principal_id: content.owner_principal_id(),
             matrix_room_id: matrix_room_id.clone(),
             access_mode,

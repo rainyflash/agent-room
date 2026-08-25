@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use agent_room_domain::{
     content::{ContentObject, ContentScanState, ContentStorageKey},
-    ids::{ContentId, PrincipalId},
+    ids::{AgentId, ContentId, PrincipalId},
     time::UtcMillis,
 };
 use futures_util::Stream;
@@ -110,11 +110,19 @@ pub trait ContentMembershipAuthorizer: Send + Sync {
     ) -> PortFuture<'a, ContentAuthorizationResult<ContentAuthorizationDecision>>;
 }
 
-/// 把控制平面主体解析为当前有效的 Matrix 用户；停用主体必须返回 `None`。
+/// 把主体或其明确指定的 Agent 解析为当前有效的 Matrix 用户。
+///
+/// Agent 查询必须同时验证主体仍有操作权限，不能信任客户端自报的 Matrix 用户标识。
 pub trait ContentPrincipalIdentityLookup: Send + Sync {
     fn find_active_matrix_user(
         &self,
         principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
+
+    fn find_active_agent_matrix_user(
+        &self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
 }
 

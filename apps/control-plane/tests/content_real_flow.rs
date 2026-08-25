@@ -283,6 +283,7 @@ fn upload_request(
     BeginContentUploadRequest {
         request_id,
         owner_principal_id,
+        actor_agent_id: None,
         matrix_room_id: agent_room_application::ports::MatrixRoomId::new(
             "!content-pipeline:matrix.test",
         )

@@ -278,6 +278,7 @@ fn upload_request(
     BeginContentUploadRequest {
         request_id: ContentUploadRequestId::from_uuid(Uuid::now_v7()),
         owner_principal_id: principal_id(),
+        actor_agent_id: None,
         matrix_room_id: MatrixRoomId::new("!room:example.test").expect("房间 ID 有效"),
         access_mode: ContentAccessMode::RoomMember,
         digest: digest(bytes),

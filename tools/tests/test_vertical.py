@@ -8,6 +8,7 @@ from tools.vertical import (
     VerticalFailure,
     compose_command,
     http_status_is_ready,
+    new_uuid_v7,
     read_string_object,
     require_uuid_v7,
     windows_credential_target,
@@ -51,6 +52,11 @@ class LogRedactorTests(unittest.TestCase):
 
 
 class ResultValidationTests(unittest.TestCase):
+    def test_生成标准_uuidv7(self) -> None:
+        value = new_uuid_v7()
+
+        require_uuid_v7(value, "测试标识")
+
     def test_只接受字符串对象结果(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = Path(directory) / "result.json"

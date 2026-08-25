@@ -7,7 +7,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     identity::{Principal, PrincipalStatus},
-    ids::PrincipalId,
+    ids::{AgentId, PrincipalId},
     version::AggregateVersion,
 };
 use sqlx::Row;
@@ -113,6 +113,38 @@ impl ContentPrincipalIdentityLookup for PostgresRepositories {
                 "SELECT matrix_user_id FROM agent_room.principal WHERE id = $1 AND status = 'active'",
             )
             .bind(principal_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            matrix_user_id
+                .map(MatrixUserId::new)
+                .transpose()
+                .map_err(|_| corrupt_data(operation))
+        })
+    }
+
+    fn find_active_agent_matrix_user(
+        &self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
+        Box::pin(async move {
+            let operation = "content_identity.find_active_agent_matrix_user";
+            let matrix_user_id: Option<String> = sqlx::query_scalar(
+                r"SELECT agent.matrix_user_id
+                  FROM agent_room.principal AS principal
+                  JOIN agent_room.agent_ownership AS ownership
+                    ON ownership.principal_id = principal.id
+                   AND ownership.agent_id = $2
+                   AND ownership.revoked_at IS NULL
+                   AND ownership.role IN ('owner', 'operator')
+                  JOIN agent_room.agent AS agent
+                    ON agent.id = ownership.agent_id
+                   AND agent.lifecycle_state = 'active'
+                  WHERE principal.id = $1 AND principal.status = 'active'",
+            )
+            .bind(principal_id.as_uuid())
+            .bind(agent_id.as_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
