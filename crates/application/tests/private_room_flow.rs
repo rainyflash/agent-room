@@ -57,7 +57,7 @@ async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
         PrivateRoomMembershipStatus::Invited
     );
     let creation = fixture.matrix.creation().expect("应记录真实建房请求");
-    assert_eq!(creation.request().invite().len(), 2);
+    assert_eq!(creation.request().invite().len(), 3);
     assert_eq!(
         fixture.matrix.speaking_allowed("@owner:matrix.test"),
         Some(true)
@@ -65,6 +65,12 @@ async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
     assert_eq!(
         fixture.matrix.speaking_allowed("@member:matrix.test"),
         Some(true)
+    );
+    assert_eq!(
+        fixture
+            .matrix
+            .speaking_allowed("@content-authority:matrix.test"),
+        Some(false)
     );
 }
 
@@ -279,6 +285,9 @@ impl Fixture {
             matrix_provisioner: matrix.clone(),
             matrix: matrix.clone(),
             principals,
+            trusted_matrix_readers: vec![
+                MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
+            ],
             identifiers: runtime.clone(),
             clock: runtime,
         });

@@ -15,9 +15,9 @@ use crate::{
     persistence::RepositoryError,
     ports::{
         Clock, ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
-        ContentAuthorizationFailure, ContentAuthorizationRequest, ContentByteStream,
-        ContentLifecycleTransition, ContentMembershipAuthorizer, ContentRepository,
-        ContentScanFailure, ContentScanner, ContentStorageKeyFactory,
+        ContentAuthorizationFailure, ContentAuthorizationIntent, ContentAuthorizationRequest,
+        ContentByteStream, ContentLifecycleTransition, ContentMembershipAuthorizer,
+        ContentRepository, ContentScanFailure, ContentScanner, ContentStorageKeyFactory,
         ContentStorageKeyGenerationFailure, ContentUploadClaim, ContentUploadClaimOutcome,
         ContentUploadFingerprint, IdentifierFactory, MatrixRoomId, ObjectStoreFailure,
         PrivateContentObjectStore,
@@ -183,6 +183,7 @@ impl BeginContentUploadService {
                 owner_principal_id: request.owner_principal_id,
                 matrix_room_id: request.matrix_room_id.clone(),
                 access_mode: ContentAccessMode::RoomMember,
+                intent: ContentAuthorizationIntent::Publish,
             })
             .await
             .map_err(BeginContentUploadFailure::Authorization)?;

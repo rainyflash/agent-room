@@ -27,7 +27,7 @@ use agent_room_application::{
     },
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
-    ports::SecretValue,
+    ports::{MatrixAgentLocalpart, MatrixUserId, SecretValue},
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
@@ -327,6 +327,7 @@ fn build_agent_feature_states(
         matrix_provisioner: dependencies.matrix_identities.clone(),
         matrix: dependencies.matrix_identities,
         principals: dependencies.repositories.clone(),
+        trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime,
     }));
@@ -361,6 +362,23 @@ fn build_agent_feature_states(
             dependencies.authentication,
             &config.authentication.frontend_origin,
         ),
+    })
+}
+
+fn content_authority_matrix_user(
+    config: &ControlPlaneConfig,
+) -> Result<MatrixUserId, StartupError> {
+    let localpart = MatrixAgentLocalpart::from_agent_id(config.content.matrix_authority_agent_id);
+    MatrixUserId::new(format!(
+        "@{}:{}",
+        localpart.as_str(),
+        config.authentication.matrix_server_name
+    ))
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_content_matrix_identity",
+            "内容授权 Matrix 用户标识无效".to_owned(),
+        )
     })
 }
 

@@ -235,6 +235,13 @@ pub struct ContentAuthorizationRequest {
     pub owner_principal_id: PrincipalId,
     pub matrix_room_id: MatrixRoomId,
     pub access_mode: ContentAccessMode,
+    pub intent: ContentAuthorizationIntent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentAuthorizationIntent {
+    Read,
+    Publish,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

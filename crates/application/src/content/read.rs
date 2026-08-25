@@ -15,11 +15,12 @@ use crate::{
     persistence::RepositoryError,
     ports::{
         Clock, ContentAuthorizationDecision, ContentAuthorizationFailure,
-        ContentAuthorizationRequest, ContentByteStream, ContentDownloadAttempt,
-        ContentDownloadLimiter, ContentMembershipAuthorizer, ContentRateLimitDecision,
-        ContentRateLimitFailure, ContentReadTicket, ContentReadTicketClaims,
-        ContentReadTicketCodec, ContentRepository, ContentStreamFailure, ContentStreamFailureKind,
-        ContentTicketFailure, MatrixRoomId, ObjectStoreFailure, PrivateContentObjectStore,
+        ContentAuthorizationIntent, ContentAuthorizationRequest, ContentByteStream,
+        ContentDownloadAttempt, ContentDownloadLimiter, ContentMembershipAuthorizer,
+        ContentRateLimitDecision, ContentRateLimitFailure, ContentReadTicket,
+        ContentReadTicketClaims, ContentReadTicketCodec, ContentRepository, ContentStreamFailure,
+        ContentStreamFailureKind, ContentTicketFailure, MatrixRoomId, ObjectStoreFailure,
+        PrivateContentObjectStore,
     },
 };
 
@@ -359,6 +360,7 @@ async fn authorize(
             owner_principal_id: content.owner_principal_id(),
             matrix_room_id: matrix_room_id.clone(),
             access_mode,
+            intent: ContentAuthorizationIntent::Read,
         })
         .await
         .map_err(AuthorizationFailure::Dependency)?;

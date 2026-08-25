@@ -24,8 +24,8 @@ pub use failures::{
 };
 pub use models::{
     ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
-    ContentAuthorizationRequest, ContentDownloadAttempt, ContentEventBinding,
-    ContentLifecycleTransition, ContentRateLimitDecision, ContentReadTicket,
+    ContentAuthorizationIntent, ContentAuthorizationRequest, ContentDownloadAttempt,
+    ContentEventBinding, ContentLifecycleTransition, ContentRateLimitDecision, ContentReadTicket,
     ContentReadTicketClaims, ContentUploadClaim, ContentUploadClaimOutcome,
     ContentUploadFingerprint, ObjectWriteReceipt, OpenedContentObject, ReclaimableContentQuery,
 };

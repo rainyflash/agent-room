@@ -91,6 +91,8 @@ pub struct PrivateRoomDependencies {
     pub matrix_provisioner: Arc<dyn PrivateRoomMatrixProvisioner>,
     pub matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub principals: Arc<dyn PrivateRoomPrincipalDirectory>,
+    /// 必须能读取当前 Matrix 房间状态的受信服务身份，例如内容授权服务。
+    pub trusted_matrix_readers: Vec<MatrixUserId>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -100,6 +102,7 @@ pub struct PrivateRoomService {
     matrix_provisioner: Arc<dyn PrivateRoomMatrixProvisioner>,
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     principals: Arc<dyn PrivateRoomPrincipalDirectory>,
+    trusted_matrix_readers: Vec<MatrixUserId>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -111,6 +114,7 @@ impl PrivateRoomService {
             matrix_provisioner: dependencies.matrix_provisioner,
             matrix: dependencies.matrix,
             principals: dependencies.principals,
+            trusted_matrix_readers: dependencies.trusted_matrix_readers,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
@@ -521,6 +525,14 @@ impl PrivateRoomService {
                 invitation.permissions.speak(),
             ));
             matrix_invites.push(user_id);
+        }
+
+        for reader in &self.trusted_matrix_readers {
+            if unique_matrix_users.insert(reader.as_str().to_owned()) {
+                speaking_assignments
+                    .push(PrivateMatrixSpeakingAssignment::new(reader.clone(), false));
+                matrix_invites.push(reader.clone());
+            }
         }
 
         let alias = private_room_alias(request.catalog_id, operation)?;

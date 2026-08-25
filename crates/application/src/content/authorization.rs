@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
+use agent_room_domain::{private_rooms::PrivateRoomCapability, rooms::MatrixRoomReference};
+
 use crate::{
     persistence::RepositoryError,
     ports::{
         ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationFailure,
-        ContentAuthorizationFailureKind, ContentAuthorizationRequest, ContentAuthorizationResult,
-        ContentMembershipAuthorizer, ContentPrincipalIdentityLookup, MatrixFailure,
-        MatrixRoomAuthority, MatrixRoomAuthorityGateway, PortFuture,
+        ContentAuthorizationFailureKind, ContentAuthorizationIntent, ContentAuthorizationRequest,
+        ContentAuthorizationResult, ContentMembershipAuthorizer, ContentPrincipalIdentityLookup,
+        MatrixFailure, MatrixRoomAuthority, MatrixRoomAuthorityGateway, PortFuture,
+        PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
 
@@ -15,12 +18,14 @@ const MATRIX_MODERATOR_POWER_LEVEL: i64 = 50;
 pub struct ContentMembershipAuthorizationDependencies {
     pub identities: Arc<dyn ContentPrincipalIdentityLookup>,
     pub matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    pub private_rooms: Arc<dyn PrivateRoomStore>,
 }
 
 /// 把控制平面主体映射和 Matrix 当前状态组合成内容访问决策。
 pub struct ContentMembershipAuthorizationService {
     identities: Arc<dyn ContentPrincipalIdentityLookup>,
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    private_rooms: Arc<dyn PrivateRoomStore>,
 }
 
 impl ContentMembershipAuthorizationService {
@@ -28,6 +33,7 @@ impl ContentMembershipAuthorizationService {
         Self {
             identities: dependencies.identities,
             matrix_authority: dependencies.matrix_authority,
+            private_rooms: dependencies.private_rooms,
         }
     }
 
@@ -37,6 +43,13 @@ impl ContentMembershipAuthorizationService {
     ) -> ContentAuthorizationResult<ContentAuthorizationDecision> {
         if request.access_mode == ContentAccessMode::SenderOnly
             && request.principal_id != request.owner_principal_id
+        {
+            return Ok(ContentAuthorizationDecision::Denied);
+        }
+        let private_room = self.find_private_room(request).await?;
+        if private_room
+            .as_ref()
+            .is_some_and(|snapshot| !private_policy_allows(request, snapshot))
         {
             return Ok(ContentAuthorizationDecision::Denied);
         }
@@ -61,7 +74,19 @@ impl ContentMembershipAuthorizationService {
             .inspect_room_authority(&request.matrix_room_id, &user_id)
             .await
             .map_err(map_matrix_failure)?;
-        Ok(decide_access(request, authority))
+        Ok(decide_access(request, authority, private_room.is_some()))
+    }
+
+    async fn find_private_room(
+        &self,
+        request: &ContentAuthorizationRequest,
+    ) -> ContentAuthorizationResult<Option<PrivateRoomSnapshot>> {
+        let room = MatrixRoomReference::new(request.matrix_room_id.as_str().to_owned())
+            .map_err(|_| unavailable("content.authorization.private_room_id"))?;
+        self.private_rooms
+            .find_by_matrix_room(&room)
+            .await
+            .map_err(map_private_room_failure)
     }
 }
 
@@ -77,6 +102,7 @@ impl ContentMembershipAuthorizer for ContentMembershipAuthorizationService {
 fn decide_access(
     request: &ContentAuthorizationRequest,
     authority: MatrixRoomAuthority,
+    is_private_room: bool,
 ) -> ContentAuthorizationDecision {
     if !authority.is_joined() {
         return ContentAuthorizationDecision::Denied;
@@ -84,6 +110,7 @@ fn decide_access(
     let allowed = match request.access_mode {
         ContentAccessMode::RoomMember => true,
         ContentAccessMode::SenderOnly => request.principal_id == request.owner_principal_id,
+        ContentAccessMode::Moderator if is_private_room => true,
         ContentAccessMode::Moderator => authority
             .power_level()
             .is_at_least(MATRIX_MODERATOR_POWER_LEVEL),
@@ -95,12 +122,40 @@ fn decide_access(
     }
 }
 
+fn private_policy_allows(
+    request: &ContentAuthorizationRequest,
+    snapshot: &PrivateRoomSnapshot,
+) -> bool {
+    let room = snapshot.room();
+    if !room.allows(request.principal_id, PrivateRoomCapability::View) {
+        return false;
+    }
+    match request.intent {
+        ContentAuthorizationIntent::Publish => {
+            let capability = if request.actor_agent_id.is_some() {
+                PrivateRoomCapability::Automate
+            } else {
+                PrivateRoomCapability::Speak
+            };
+            room.allows(request.principal_id, capability)
+        }
+        ContentAuthorizationIntent::Read if request.access_mode == ContentAccessMode::Moderator => {
+            room.allows(request.principal_id, PrivateRoomCapability::Manage)
+        }
+        ContentAuthorizationIntent::Read => true,
+    }
+}
+
 fn map_repository_failure(_failure: RepositoryError) -> ContentAuthorizationFailure {
     unavailable("content.authorization.identity")
 }
 
 fn map_matrix_failure(_failure: MatrixFailure) -> ContentAuthorizationFailure {
     unavailable("content.authorization.matrix")
+}
+
+fn map_private_room_failure(_failure: RepositoryError) -> ContentAuthorizationFailure {
+    unavailable("content.authorization.private_room")
 }
 
 const fn unavailable(operation: &'static str) -> ContentAuthorizationFailure {
@@ -111,16 +166,27 @@ const fn unavailable(operation: &'static str) -> ContentAuthorizationFailure {
 mod tests {
     use std::sync::Arc;
 
-    use agent_room_domain::ids::{AgentId, PrincipalId};
+    use agent_room_domain::{
+        ids::{AgentId, PrincipalId, RoomCatalogId, RoomInstanceId},
+        private_rooms::{PrivateRoom, PrivateRoomCapability, PrivateRoomPermissions},
+        rooms::{
+            MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
+            RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
+            RoomInstanceState,
+        },
+        time::UtcMillis,
+        version::AggregateVersion,
+    };
     use uuid::Uuid;
 
     use crate::{
         persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
         ports::{
             ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationFailureKind,
-            ContentAuthorizationRequest, ContentMembershipAuthorizer,
+            ContentAuthorizationIntent, ContentAuthorizationRequest, ContentMembershipAuthorizer,
             ContentPrincipalIdentityLookup, MatrixPowerLevel, MatrixResult, MatrixRoomAuthority,
             MatrixRoomAuthorityGateway, MatrixRoomId, MatrixUserId, PortFuture,
+            PrivateRoomSnapshot, PrivateRoomStore,
         },
     };
 
@@ -161,6 +227,43 @@ mod tests {
             _user_id: &'a MatrixUserId,
         ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
             Box::pin(async move { self.result })
+        }
+    }
+
+    struct StubPrivateRooms {
+        snapshot: Option<PrivateRoomSnapshot>,
+    }
+
+    impl PrivateRoomStore for StubPrivateRooms {
+        fn create<'a>(
+            &'a self,
+            _snapshot: &'a PrivateRoomSnapshot,
+            _created_at: UtcMillis,
+        ) -> PortFuture<'a, RepositoryResult<()>> {
+            Box::pin(async { unreachable!("授权只读取私人房间") })
+        }
+
+        fn find_by_catalog(
+            &self,
+            _catalog_id: RoomCatalogId,
+        ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
+            Box::pin(async { unreachable!("授权按 Matrix 房间读取") })
+        }
+
+        fn find_by_matrix_room<'a>(
+            &'a self,
+            _matrix_room_id: &'a MatrixRoomReference,
+        ) -> PortFuture<'a, RepositoryResult<Option<PrivateRoomSnapshot>>> {
+            Box::pin(async move { Ok(self.snapshot.clone()) })
+        }
+
+        fn save<'a>(
+            &'a self,
+            _room: &'a PrivateRoom,
+            _expected_version: AggregateVersion,
+            _changed_at: UtcMillis,
+        ) -> PortFuture<'a, RepositoryResult<()>> {
+            Box::pin(async { unreachable!("授权不写私人房间") })
         }
     }
 
@@ -220,6 +323,7 @@ mod tests {
                 matrix_authority: Arc::new(StubAuthority {
                     result: Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::finite(0))),
                 }),
+                private_rooms: public_room_store(),
             },
         );
 
@@ -269,6 +373,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 私人房间移除事实会覆盖尚未收敛的_matrix_成员投影() {
+        let owner = PrincipalId::from_uuid(Uuid::now_v7());
+        let member = PrincipalId::from_uuid(Uuid::now_v7());
+        let mut room = joined_private_room(owner, member, viewer_permissions());
+        room.remove_member(owner, member).expect("房主可移除成员");
+        let service = private_service(
+            Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::Infinite)),
+            private_snapshot(room),
+        );
+
+        assert_eq!(
+            service
+                .authorize(&request(member, member, ContentAccessMode::RoomMember,))
+                .await
+                .expect("移除事实可判定"),
+            ContentAuthorizationDecision::Denied
+        );
+    }
+
+    #[tokio::test]
+    async fn 私人房间读取发言治理和自动发送使用产品权限与_matrix_成员交集() {
+        let owner = PrincipalId::from_uuid(Uuid::now_v7());
+        let member = PrincipalId::from_uuid(Uuid::now_v7());
+        let viewer = private_service(
+            Ok(joined_authority()),
+            private_snapshot(joined_private_room(owner, member, viewer_permissions())),
+        );
+        assert_eq!(
+            viewer
+                .authorize(&request(member, member, ContentAccessMode::RoomMember,))
+                .await
+                .expect("查看权限可判定"),
+            ContentAuthorizationDecision::Allowed
+        );
+        assert_eq!(
+            viewer
+                .authorize(&publish_request(member, None))
+                .await
+                .expect("发言权限可判定"),
+            ContentAuthorizationDecision::Denied
+        );
+
+        let manager = private_service(
+            Ok(joined_authority()),
+            private_snapshot(joined_private_room(owner, member, manager_permissions())),
+        );
+        assert_eq!(
+            manager
+                .authorize(&request(member, member, ContentAccessMode::Moderator,))
+                .await
+                .expect("私人治理权限可判定"),
+            ContentAuthorizationDecision::Allowed,
+            "私人治理依赖产品权限，不应要求给用户 Matrix 管理员权限"
+        );
+
+        let agent_id = AgentId::from_uuid(Uuid::now_v7());
+        let speaker = private_service(
+            Ok(joined_authority()),
+            private_snapshot(joined_private_room(owner, member, speaker_permissions())),
+        );
+        assert_eq!(
+            speaker
+                .authorize(&publish_request(member, Some(agent_id)))
+                .await
+                .expect("Agent 自动发送权限可判定"),
+            ContentAuthorizationDecision::Denied
+        );
+        let automated = private_service(
+            Ok(joined_authority()),
+            private_snapshot(joined_private_room(owner, member, automated_permissions())),
+        );
+        assert_eq!(
+            automated
+                .authorize(&publish_request(member, Some(agent_id)))
+                .await
+                .expect("Agent 自动发送授权可判定"),
+            ContentAuthorizationDecision::Allowed
+        );
+    }
+
+    #[tokio::test]
     async fn 停用主体直接拒绝且依赖错误响亮失败() {
         let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
         let denied = ContentMembershipAuthorizationService::new(
@@ -280,6 +465,7 @@ mod tests {
                 matrix_authority: Arc::new(StubAuthority {
                     result: Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::Infinite)),
                 }),
+                private_rooms: public_room_store(),
             },
         );
         assert_eq!(
@@ -306,6 +492,7 @@ mod tests {
                 matrix_authority: Arc::new(StubAuthority {
                     result: Ok(MatrixRoomAuthority::not_joined()),
                 }),
+                private_rooms: public_room_store(),
             },
         );
         let failure = failed
@@ -323,20 +510,38 @@ mod tests {
         authority: MatrixResult<MatrixRoomAuthority>,
     ) -> (ContentMembershipAuthorizationService, PrincipalId) {
         let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
-        let user_id = MatrixUserId::new(format!("@user_{}:matrix.test", Uuid::now_v7().simple()))
-            .expect("用户 ID 有效");
         (
-            ContentMembershipAuthorizationService::new(
-                ContentMembershipAuthorizationDependencies {
-                    identities: Arc::new(StubIdentity {
-                        principal_result: Ok(Some(user_id.clone())),
-                        agent_result: Ok(Some(user_id)),
-                    }),
-                    matrix_authority: Arc::new(StubAuthority { result: authority }),
-                },
-            ),
+            service_with_store(authority, public_room_store()),
             principal_id,
         )
+    }
+
+    fn private_service(
+        authority: MatrixResult<MatrixRoomAuthority>,
+        snapshot: PrivateRoomSnapshot,
+    ) -> ContentMembershipAuthorizationService {
+        service_with_store(
+            authority,
+            Arc::new(StubPrivateRooms {
+                snapshot: Some(snapshot),
+            }),
+        )
+    }
+
+    fn service_with_store(
+        authority: MatrixResult<MatrixRoomAuthority>,
+        private_rooms: Arc<dyn PrivateRoomStore>,
+    ) -> ContentMembershipAuthorizationService {
+        let user_id = MatrixUserId::new(format!("@user_{}:matrix.test", Uuid::now_v7().simple()))
+            .expect("用户 ID 有效");
+        ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
+            identities: Arc::new(StubIdentity {
+                principal_result: Ok(Some(user_id.clone())),
+                agent_result: Ok(Some(user_id)),
+            }),
+            matrix_authority: Arc::new(StubAuthority { result: authority }),
+            private_rooms,
+        })
     }
 
     fn request(
@@ -350,6 +555,7 @@ mod tests {
             owner_principal_id,
             matrix_room_id: MatrixRoomId::new("!authorization:matrix.test").expect("房间 ID 有效"),
             access_mode,
+            intent: ContentAuthorizationIntent::Read,
         }
     }
 
@@ -363,5 +569,101 @@ mod tests {
             actor_agent_id: Some(actor_agent_id),
             ..request(principal_id, owner_principal_id, access_mode)
         }
+    }
+
+    fn publish_request(
+        principal_id: PrincipalId,
+        actor_agent_id: Option<AgentId>,
+    ) -> ContentAuthorizationRequest {
+        ContentAuthorizationRequest {
+            principal_id,
+            actor_agent_id,
+            owner_principal_id: principal_id,
+            matrix_room_id: MatrixRoomId::new("!authorization:matrix.test").expect("房间 ID 有效"),
+            access_mode: ContentAccessMode::RoomMember,
+            intent: ContentAuthorizationIntent::Publish,
+        }
+    }
+
+    fn joined_private_room(
+        owner: PrincipalId,
+        member: PrincipalId,
+        permissions: PrivateRoomPermissions,
+    ) -> PrivateRoom {
+        let mut room = PrivateRoom::create(RoomCatalogId::from_uuid(Uuid::now_v7()), owner);
+        room.invite(owner, member, permissions).expect("房主可邀请");
+        room.accept_invitation(member).expect("成员可接受邀请");
+        room
+    }
+
+    fn private_snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
+        let catalog_id = room.catalog_id();
+        let owner = room.owner_principal_id();
+        let catalog = RoomCatalog::new(
+            catalog_id,
+            RoomCatalogFields {
+                kind: RoomCatalogKind::PrivateRoom,
+                slug: None,
+                name: "Private authorization".to_owned(),
+                description: String::new(),
+                language: None,
+                matrix_space_id: None,
+                owner_principal_id: Some(owner),
+                visibility: RoomCatalogVisibility::Private,
+                retention_days: Some(30),
+                status: RoomCatalogStatus::Active,
+            },
+        )
+        .expect("私人目录有效");
+        let instance = RoomInstance::restore(
+            RoomInstanceId::from_uuid(Uuid::now_v7()),
+            RoomInstanceFields {
+                catalog_id,
+                matrix_room_id: MatrixRoomReference::new("!authorization:matrix.test".to_owned())
+                    .expect("Matrix 房间标识有效"),
+                region: None,
+                capacity: RoomCapacity::standard(),
+                projected_member_count: 2,
+                allocated_slots: 0,
+                activity_score_millis: 0,
+                state: RoomInstanceState::Active,
+            },
+        )
+        .expect("私人房间实例有效");
+        PrivateRoomSnapshot::new(catalog, instance, room).expect("私人房间快照有效")
+    }
+
+    fn viewer_permissions() -> PrivateRoomPermissions {
+        permissions([PrivateRoomCapability::View])
+    }
+
+    fn speaker_permissions() -> PrivateRoomPermissions {
+        permissions([PrivateRoomCapability::View, PrivateRoomCapability::Speak])
+    }
+
+    fn manager_permissions() -> PrivateRoomPermissions {
+        permissions([PrivateRoomCapability::View, PrivateRoomCapability::Manage])
+    }
+
+    fn automated_permissions() -> PrivateRoomPermissions {
+        permissions([
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Automate,
+        ])
+    }
+
+    fn permissions(
+        capabilities: impl IntoIterator<Item = PrivateRoomCapability>,
+    ) -> PrivateRoomPermissions {
+        PrivateRoomPermissions::from_capabilities(capabilities).expect("私人房间权限有效")
+    }
+
+    fn joined_authority() -> MatrixRoomAuthority {
+        MatrixRoomAuthority::joined(MatrixPowerLevel::finite(0))
+    }
+
+    fn public_room_store() -> Arc<dyn PrivateRoomStore> {
+        Arc::new(StubPrivateRooms { snapshot: None })
     }
 }

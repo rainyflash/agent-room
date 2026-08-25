@@ -110,6 +110,7 @@ pub(crate) async fn initialize(
         ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
             identities,
             matrix_authority: authority,
+            private_rooms: dependencies.repositories.clone(),
         }),
     );
     let limiter = build_download_limiter(dependencies.config, &dependencies.repositories)?;
