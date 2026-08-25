@@ -40,7 +40,7 @@ impl PrivateRoomHttpState {
 
 pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
     Router::new()
-        .route("/private-rooms", post(handlers::create))
+        .route("/private-rooms", get(handlers::list).post(handlers::create))
         .route(
             "/private-rooms/{catalog_id}",
             get(handlers::inspect).delete(handlers::archive),

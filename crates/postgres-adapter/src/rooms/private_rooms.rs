@@ -63,6 +63,43 @@ impl PrivateRoomStore for PostgresRepositories {
         })
     }
 
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomSnapshot>>> {
+        Box::pin(async move {
+            let operation = "private_room.list_for_principal";
+            let catalog_ids = sqlx::query_scalar::<_, uuid::Uuid>(
+                r"SELECT membership.catalog_entry_id
+                   FROM agent_room.private_room_membership AS membership
+                   JOIN agent_room.room_catalog_entry AS catalog
+                     ON catalog.id = membership.catalog_entry_id
+                   WHERE membership.principal_id = $1
+                     AND membership.membership_status IN ('invited', 'joined')
+                     AND catalog.kind = 'private_room'
+                   ORDER BY catalog.updated_at DESC, catalog.id DESC",
+            )
+            .bind(principal_id.as_uuid())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+
+            let mut rooms = Vec::with_capacity(catalog_ids.len());
+            for catalog_id in catalog_ids {
+                let room = load_private_room(
+                    self,
+                    Some(RoomCatalogId::from_uuid(catalog_id)),
+                    None,
+                    operation,
+                )
+                .await?
+                .ok_or_else(|| corrupt_data(operation))?;
+                rooms.push(room);
+            }
+            Ok(rooms)
+        })
+    }
+
     fn find_by_matrix_room<'a>(
         &'a self,
         matrix_room_id: &'a MatrixRoomReference,

@@ -11,7 +11,7 @@ use agent_room_application::{
     ports::{PortFuture, PrivateRoomSnapshot, SecretValue},
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
-        GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember,
+        GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
         PrivateRoomMembershipAction, PrivateRoomResult, PrivateRoomUseCases,
         TransferPrivateRoomOwnership,
     },
@@ -99,6 +99,14 @@ impl PrivateRoomUseCases for FakeRooms {
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         self.record(call("inspect", request.catalog_id, None, None))
+    }
+
+    fn list(
+        &self,
+        _request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        let snapshot = self.snapshot.clone();
+        Box::pin(async move { Ok(vec![snapshot]) })
     }
 
     fn invite(
@@ -512,6 +520,38 @@ async fn 查看邀请和权限更新分别进入正确边界() {
     assert_eq!(calls[2].operation, "permissions");
     assert_eq!(calls[1].permissions, Some(viewer_speaker_permissions()));
     assert_eq!(calls[2].permissions, Some(viewer_speaker_permissions()));
+}
+
+#[tokio::test]
+async fn 房间列表只需活动会话并返回权威快照集合() {
+    let rooms = Arc::new(FakeRooms::new());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let response = test_router(rooms, authentication.clone())
+        .oneshot(request(
+            Method::GET,
+            "/private-rooms",
+            &json!({}),
+            false,
+            false,
+        ))
+        .await
+        .expect("列表路由可调用");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+    assert_eq!(payload["rooms"][0]["catalogId"], CATALOG_UUID);
+    assert_eq!(
+        payload["rooms"][0]["matrixRoomId"],
+        "!private:matrix.agent-room.test"
+    );
+    assert_eq!(
+        authentication
+            .calls
+            .lock()
+            .expect("认证记录锁可用")
+            .as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
+    );
 }
 
 fn test_router(rooms: Arc<FakeRooms>, authentication: Arc<FakeAuthentication>) -> axum::Router {

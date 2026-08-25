@@ -288,6 +288,12 @@ pub trait PrivateRoomStore: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>>;
 
+    /// 列出主体当前受邀或已加入的房间；被移除、拒绝、离开和封禁事实不得泄露。
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomSnapshot>>>;
+
     fn find_by_matrix_room<'a>(
         &'a self,
         matrix_room_id: &'a MatrixRoomReference,

@@ -24,8 +24,9 @@ use crate::{
 
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
-    InspectPrivateRoom, InvitePrivateRoomMember, PrivateRoomFailureKind, PrivateRoomFailureStage,
-    PrivateRoomMembershipAction, PrivateRoomResult, TransferPrivateRoomOwnership,
+    InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, PrivateRoomFailureKind,
+    PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomResult,
+    TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -39,6 +40,11 @@ pub trait PrivateRoomUseCases: Send + Sync {
         &self,
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    fn list(
+        &self,
+        request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>>;
 
     fn invite(
         &self,
@@ -192,6 +198,18 @@ impl PrivateRoomService {
             ));
         }
         Ok(snapshot)
+    }
+
+    async fn list_internal(
+        &self,
+        request: ListPrivateRooms,
+    ) -> PrivateRoomResult<Vec<PrivateRoomSnapshot>> {
+        const OPERATION: &str = "private_room.list";
+        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        self.store
+            .list_for_principal(request.actor.principal_id)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))
     }
 
     async fn invite_internal(
@@ -745,6 +763,13 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.inspect_internal(request))
+    }
+
+    fn list(
+        &self,
+        request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        Box::pin(self.list_internal(request))
     }
 
     fn invite(

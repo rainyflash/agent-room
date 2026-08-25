@@ -2,7 +2,7 @@ use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement},
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, GovernPrivateRoomMember,
-        InspectPrivateRoom, InvitePrivateRoomMember, PrivateRoomMembershipAction,
+        InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, PrivateRoomMembershipAction,
         TransferPrivateRoomOwnership,
     },
 };
@@ -18,8 +18,8 @@ use axum_extra::extract::CookieJar;
 use super::{
     PrivateRoomHttpState,
     models::{
-        CreatePrivateRoomBody, InviteMemberBody, PermissionsBody, PrivateRoomResponse,
-        TransferOwnershipBody, catalog_id, principal_id,
+        CreatePrivateRoomBody, InviteMemberBody, PermissionsBody, PrivateRoomListResponse,
+        PrivateRoomResponse, TransferOwnershipBody, catalog_id, principal_id,
     },
 };
 use crate::{
@@ -97,6 +97,30 @@ pub(super) async fn inspect(
         StatusCode::OK,
         correlation_id,
     )
+}
+
+pub(super) async fn list(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    jar: CookieJar,
+) -> Response {
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state.rooms.list(ListPrivateRooms { actor }).await {
+        Ok(rooms) => {
+            no_store((StatusCode::OK, Json(PrivateRoomListResponse::from(rooms))).into_response())
+        }
+        Err(failure) => no_store(ApiError::private_room(failure, correlation_id).into_response()),
+    }
 }
 
 pub(super) async fn invite(

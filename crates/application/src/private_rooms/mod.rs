@@ -7,7 +7,7 @@ pub use failure::{
 };
 pub use models::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
-    InspectPrivateRoom, InvitePrivateRoomMember, PrivateRoomInvitation,
+    InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, PrivateRoomInvitation,
     PrivateRoomMembershipAction, TransferPrivateRoomOwnership,
 };
 pub use service::{PrivateRoomDependencies, PrivateRoomService, PrivateRoomUseCases};

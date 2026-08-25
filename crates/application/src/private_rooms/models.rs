@@ -29,6 +29,11 @@ pub struct InspectPrivateRoom {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPrivateRooms {
+    pub actor: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvitePrivateRoomMember {
     pub actor: AuthenticatedPrincipal,
     pub catalog_id: RoomCatalogId,

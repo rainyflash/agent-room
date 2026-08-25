@@ -130,6 +130,20 @@ impl From<PrivateRoomSnapshot> for PrivateRoomResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct PrivateRoomListResponse {
+    rooms: Vec<PrivateRoomResponse>,
+}
+
+impl From<Vec<PrivateRoomSnapshot>> for PrivateRoomListResponse {
+    fn from(rooms: Vec<PrivateRoomSnapshot>) -> Self {
+        Self {
+            rooms: rooms.into_iter().map(PrivateRoomResponse::from).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PrivateRoomMemberResponse {
     principal_id: String,
     status: &'static str,

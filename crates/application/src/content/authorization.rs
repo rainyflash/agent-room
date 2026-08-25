@@ -250,6 +250,13 @@ mod tests {
             Box::pin(async { unreachable!("授权按 Matrix 房间读取") })
         }
 
+        fn list_for_principal(
+            &self,
+            _principal_id: PrincipalId,
+        ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomSnapshot>>> {
+            Box::pin(async { unreachable!("授权不列举私人房间") })
+        }
+
         fn find_by_matrix_room<'a>(
             &'a self,
             _matrix_room_id: &'a MatrixRoomReference,

@@ -17,7 +17,7 @@ use agent_room_application::{
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
-        GovernPrivateRoomMember, PrivateRoomDependencies, PrivateRoomFailureKind,
+        GovernPrivateRoomMember, ListPrivateRooms, PrivateRoomDependencies, PrivateRoomFailureKind,
         PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomService,
         PrivateRoomUseCases, TransferPrivateRoomOwnership,
     },
@@ -72,6 +72,42 @@ async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
             .speaking_allowed("@content-authority:matrix.test"),
         Some(false)
     );
+}
+
+#[tokio::test]
+async fn 列表只返回当前主体受邀或已加入的权威房间() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(speaker_permissions()))
+        .await
+        .expect("创建应成功");
+
+    let invited = fixture
+        .service
+        .list(ListPrivateRooms {
+            actor: actor(fixture.member, "@member:matrix.test"),
+        })
+        .await
+        .expect("受邀成员可列出房间");
+    assert_eq!(invited.len(), 1);
+
+    fixture
+        .matrix
+        .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Left);
+    fixture
+        .service
+        .decline(fixture.member_action())
+        .await
+        .expect("拒绝邀请应成功");
+    let declined = fixture
+        .service
+        .list(ListPrivateRooms {
+            actor: actor(fixture.member, "@member:matrix.test"),
+        })
+        .await
+        .expect("拒绝后的列表应可读");
+    assert!(declined.is_empty());
 }
 
 #[tokio::test]
@@ -416,6 +452,31 @@ impl PrivateRoomStore for TestStore {
                 .as_ref()
                 .filter(|snapshot| snapshot.catalog().id() == catalog_id)
                 .cloned())
+        })
+    }
+
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomSnapshot>>> {
+        Box::pin(async move {
+            Ok(self
+                .snapshot
+                .lock()
+                .expect("快照锁正常")
+                .as_ref()
+                .filter(|snapshot| {
+                    snapshot.room().member(principal_id).is_some_and(|member| {
+                        matches!(
+                            member.status(),
+                            PrivateRoomMembershipStatus::Invited
+                                | PrivateRoomMembershipStatus::Joined
+                        )
+                    })
+                })
+                .cloned()
+                .into_iter()
+                .collect())
         })
     }
 
