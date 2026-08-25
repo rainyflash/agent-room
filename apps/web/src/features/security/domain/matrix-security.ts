@@ -55,7 +55,9 @@ export type MatrixSecurityFailure = {
     | 'security.recovery_key_missing'
     | 'security.recovery_key_rejected'
     | 'security.recovery_setup_failed'
-    | 'security.verification_required';
+    | 'security.verification_failed'
+    | 'security.verification_required'
+    | 'security.verification_unavailable';
   readonly retryable: boolean;
 };
 
@@ -64,6 +66,9 @@ export type MatrixSecurityInspection = {
 };
 
 export type MatrixSecurityGateway = {
+  beginVerification(
+    request?: MatrixVerificationRequest,
+  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>>;
   inspect(
     inspection?: MatrixSecurityInspection,
   ): Promise<Result<MatrixSecuritySnapshot, MatrixSecurityFailure>>;
@@ -101,6 +106,51 @@ export type MatrixRecoveryProgress =
 export type MatrixRecoveryResult = {
   readonly imported: number;
   readonly total: number;
+};
+
+export type MatrixVerificationRequest = {
+  readonly targetDeviceId?: string;
+};
+
+export type MatrixVerificationEmoji = {
+  readonly label: string;
+  readonly symbol: string;
+};
+
+export type MatrixVerificationSas = {
+  readonly decimals?: readonly [number, number, number];
+  readonly emojis?: readonly MatrixVerificationEmoji[];
+};
+
+export type MatrixVerificationSnapshot =
+  | {
+      readonly stage: 'cancelled';
+      readonly cancellationCode?: string;
+    }
+  | {
+      readonly failure: MatrixSecurityFailure;
+      readonly stage: 'failed';
+    }
+  | {
+      readonly sas: MatrixVerificationSas;
+      readonly stage: 'comparing' | 'confirming';
+    }
+  | {
+      readonly stage: 'verified';
+    }
+  | {
+      readonly stage: 'waiting';
+      readonly targetDeviceId?: string;
+      readonly transactionId?: string;
+    };
+
+export type MatrixVerificationSession = {
+  cancel(): Promise<Result<void, MatrixSecurityFailure>>;
+  confirm(): Promise<Result<void, MatrixSecurityFailure>>;
+  dispose(): void;
+  getSnapshot(): MatrixVerificationSnapshot;
+  mismatch(): void;
+  subscribe(listener: () => void): () => void;
 };
 
 export function isValidRecoveryPassphrase(passphrase: string): boolean {

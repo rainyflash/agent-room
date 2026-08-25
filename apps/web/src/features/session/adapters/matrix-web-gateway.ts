@@ -15,6 +15,7 @@ import { err, ok, type Result } from '@/shared/result';
 
 const MATRIX_SESSION_KEY = 'agent-room.matrix-session.v1';
 const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
+const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
 
 const storedSessionSchema = z
   .object({
@@ -192,6 +193,7 @@ export class MatrixWebGateway implements MatrixGateway {
           };
         },
         userId: session.userId,
+        verificationMethods: [MATRIX_SAS_VERIFICATION_METHOD],
       });
       await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());

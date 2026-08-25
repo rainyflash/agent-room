@@ -79,6 +79,7 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
   leave: unavailablePrivateRoom,
 };
 const security: MatrixSecurityGateway = {
+  beginVerification: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
   inspect: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
   recover: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
   setupRecovery: async () => err({ code: 'security.matrix_unavailable', retryable: true }),

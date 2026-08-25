@@ -1,6 +1,7 @@
 import type { CryptoApi, DeviceVerificationStatus } from 'matrix-js-sdk/lib/crypto-api/index.js';
 import type { Device, MatrixClient } from 'matrix-js-sdk';
 
+import { MatrixSdkVerificationSession } from '@/features/security/adapters/matrix-sdk-verification-session';
 import {
   evaluateMatrixSecurity,
   isValidRecoveryPassphrase,
@@ -17,6 +18,8 @@ import {
   type MatrixSecurityGateway,
   type MatrixSecurityInspection,
   type MatrixSecuritySnapshot,
+  type MatrixVerificationRequest,
+  type MatrixVerificationSession,
 } from '@/features/security/domain/matrix-security';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
@@ -29,6 +32,34 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
   constructor(clients: MatrixClientSource, secretStorageKeys: MatrixSecretStorageKeyCache) {
     this.#clients = clients;
     this.#secretStorageKeys = secretStorageKeys;
+  }
+
+  async beginVerification(
+    request: MatrixVerificationRequest = {},
+  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>> {
+    const active = activeCryptoClient(this.#clients.current());
+    if (!active.ok) {
+      return active;
+    }
+    const targetDeviceId = request.targetDeviceId;
+    if (targetDeviceId !== undefined && !isValidDeviceId(targetDeviceId)) {
+      return err(failure('security.verification_unavailable', false));
+    }
+
+    try {
+      const verificationRequest =
+        targetDeviceId === undefined || targetDeviceId === active.value.deviceId
+          ? await active.value.crypto.requestOwnUserVerification()
+          : await active.value.crypto.requestDeviceVerification(
+              active.value.userId,
+              targetDeviceId,
+            );
+      const session = new MatrixSdkVerificationSession(verificationRequest, targetDeviceId);
+      session.activate();
+      return ok(session);
+    } catch {
+      return err(failure('security.verification_failed', true));
+    }
   }
 
   async inspect(
@@ -227,6 +258,16 @@ async function decodeRecoveryCredential(
 
 function ignoreRecoveryProgress(progress: MatrixRecoveryProgress): void {
   void progress;
+}
+
+function isValidDeviceId(deviceId: string): boolean {
+  return (
+    deviceId.length > 0 &&
+    deviceId.length <= 255 &&
+    !deviceId.startsWith(' ') &&
+    !deviceId.endsWith(' ') &&
+    !/[\p{Cc}\p{Cf}]/u.test(deviceId)
+  );
 }
 
 function participantUserIds(

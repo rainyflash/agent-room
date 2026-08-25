@@ -1,6 +1,11 @@
 import type { MatrixClient } from 'matrix-js-sdk';
-import { ImportRoomKeyStage, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api/index.js';
-import { describe, expect, it } from 'vitest';
+import {
+  ImportRoomKeyStage,
+  VerificationPhase,
+  type CryptoApi,
+  type VerificationRequest,
+} from 'matrix-js-sdk/lib/crypto-api/index.js';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
@@ -85,6 +90,33 @@ describe('MatrixSdkSecurityGateway', () => {
         userId: '@alice:agent-room.test',
       },
     ]);
+  });
+
+  it('当前设备与指定设备都通过官方交互式验证事务启动', async () => {
+    const requestOwnUserVerification = vi.fn(() => Promise.resolve(pendingVerificationRequest()));
+    const requestDeviceVerification = vi.fn(() => Promise.resolve(pendingVerificationRequest()));
+    const crypto = {
+      requestDeviceVerification,
+      requestOwnUserVerification,
+    } as unknown as CryptoApi;
+    const gateway = gatewayFor(cryptoClient(crypto));
+
+    const current = await gateway.beginVerification();
+    expect(current.ok).toBe(true);
+    if (current.ok) {
+      current.value.dispose();
+    }
+    const other = await gateway.beginVerification({ targetDeviceId: 'ALICE-LAPTOP' });
+    expect(other.ok).toBe(true);
+    if (other.ok) {
+      other.value.dispose();
+    }
+
+    expect(requestOwnUserVerification).toHaveBeenCalledOnce();
+    expect(requestDeviceVerification).toHaveBeenCalledWith(
+      '@alice:agent-room.test',
+      'ALICE-LAPTOP',
+    );
   });
 
   it('建立恢复链后只返回一次性恢复密钥并覆写生成态私钥', async () => {
@@ -216,4 +248,18 @@ function cryptoClient(crypto: CryptoApi): MatrixClient {
     getDeviceId: () => 'ALICE-WEB',
     getUserId: () => '@alice:agent-room.test',
   } as unknown as MatrixClient;
+}
+
+function pendingVerificationRequest(): VerificationRequest {
+  const request = {
+    cancellationCode: null,
+    cancel: () => Promise.resolve(),
+    off: () => request,
+    on: () => request,
+    phase: VerificationPhase.Requested,
+    startVerification: () => Promise.reject(new Error('尚未被另一台设备接受。')),
+    transactionId: 'verification-transaction',
+    verifier: undefined,
+  };
+  return request as unknown as VerificationRequest;
 }
