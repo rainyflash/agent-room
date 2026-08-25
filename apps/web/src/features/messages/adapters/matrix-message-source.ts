@@ -1,4 +1,4 @@
-import type { MatrixEvent } from 'matrix-js-sdk';
+import type { Direction, MatrixEvent } from 'matrix-js-sdk';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
@@ -11,6 +11,7 @@ const projectedTimelineEventTypes = new Set([
   matrixMessageRevisionEventType,
   matrixModerationNoticeEventType,
 ]);
+const forwardTimelineDirection = 'f' as Direction;
 
 export type MatrixMessageTimelineEvent = {
   readonly content: unknown;
@@ -52,6 +53,10 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
     if (room === null) {
       return { kind: 'room-not-joined' };
     }
+    const state = room.getLiveTimeline().getState(forwardTimelineDirection);
+    if (state === undefined) {
+      return { kind: 'room-not-joined' };
+    }
 
     return {
       kind: 'ready',
@@ -63,9 +68,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
             .getEvents()
             .filter(isProjectedTimelineEvent)
             .map(toTimelineEvent),
-          ...room.currentState
-            .getStateEvents(matrixModerationNoticeEventType)
-            .map(toTimelineEvent),
+          ...state.getStateEvents(matrixModerationNoticeEventType).map(toTimelineEvent),
         ]),
       }),
     };

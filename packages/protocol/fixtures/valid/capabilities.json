@@ -9,10 +9,5 @@
     "org.agentroom.handoff.request.v1",
     "org.agentroom.handoff.receipt.v1"
   ],
-  "features": [
-    "message_preview",
-    "status_lease",
-    "context_handoff",
-    "room_moderation"
-  ]
+  "features": ["message_preview", "status_lease", "context_handoff", "room_moderation"]
 }

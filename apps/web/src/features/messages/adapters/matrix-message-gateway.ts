@@ -162,7 +162,12 @@ const moderationNoticeSchema = z
       'other',
     ]),
     schemaVersion: z.literal('1.0'),
-    targetEventId: z.string().min(2).max(1_024).regex(/^\$[^\u0000-\u001f\u007f]+$/u),
+    targetEventId: z
+      .string()
+      .min(2)
+      .max(1_024)
+      .startsWith('$')
+      .refine(hasNoControlCharacters, '事件标识不得包含控制字符。'),
   })
   .strict();
 
@@ -183,6 +188,13 @@ type MutableMessage = {
   serverTimestamp: number;
   signatureStatus: MessageSignatureStatus;
 };
+
+function hasNoControlCharacters(value: string): boolean {
+  return Array.from(value).every((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && codePoint >= 0x20 && codePoint !== 0x7f;
+  });
+}
 
 type ParsedRevision = {
   readonly content?: MessageContentReference;
@@ -298,9 +310,7 @@ function projectRoom(
   });
 }
 
-function parseModerationNotice(
-  event: MatrixMessageTimelineEvent,
-): ParsedModerationNotice | null {
+function parseModerationNotice(event: MatrixMessageTimelineEvent): ParsedModerationNotice | null {
   const parsed = moderationNoticeSchema.safeParse(event.content);
   if (!parsed.success || !validServerTimestamp(event.serverTimestamp)) {
     return null;

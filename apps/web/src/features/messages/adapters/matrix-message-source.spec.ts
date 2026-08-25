@@ -91,14 +91,17 @@ function matrixEvent(type: string, eventId: string, serverTimestamp: number): Ma
   } as unknown as MatrixEvent;
 }
 
-function matrixRoom(events: readonly MatrixEvent[], stateEvents: readonly MatrixEvent[] = []): Room {
+function matrixRoom(
+  events: readonly MatrixEvent[],
+  stateEvents: readonly MatrixEvent[] = [],
+): Room {
   return {
-    currentState: {
-      getStateEvents: () => [...stateEvents],
-    },
     getLiveTimeline: () =>
       ({
         getEvents: () => [...events],
+        getState: () => ({
+          getStateEvents: () => [...stateEvents],
+        }),
       }) as unknown as EventTimeline,
   } as unknown as Room;
 }

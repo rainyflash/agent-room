@@ -204,15 +204,18 @@ describe('MatrixMessageGateway', () => {
     const hiddenResult = hiddenGateway.read(ROOM_ID);
     const restoredResult = restoredGateway.read(ROOM_ID);
 
-    expect(hiddenResult.ok && hiddenResult.value.messages[0]).toEqual(
-      expect.objectContaining({ content: null, lifecycle: 'moderated', preview: null }),
-    );
-    expect(restoredResult.ok && restoredResult.value.messages[0]).toEqual(
-      expect.objectContaining({
-        lifecycle: 'active',
-        preview: expect.objectContaining({ title: '协议生成完成' }),
-      }),
-    );
+    expect(hiddenResult.ok).toBe(true);
+    expect(restoredResult.ok).toBe(true);
+    if (!hiddenResult.ok || !restoredResult.ok) {
+      return;
+    }
+    const hiddenMessage = hiddenResult.value.messages[0];
+    const restoredMessage = restoredResult.value.messages[0];
+    expect(hiddenMessage?.content).toBeNull();
+    expect(hiddenMessage?.lifecycle).toBe('moderated');
+    expect(hiddenMessage?.preview).toBeNull();
+    expect(restoredMessage?.lifecycle).toBe('active');
+    expect(restoredMessage?.preview?.title).toBe('协议生成完成');
   });
 });
 

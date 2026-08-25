@@ -47,7 +47,12 @@ describe('ControlPlaneModerationClient', () => {
     expect(result.ok).toBe(true);
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(request.headers).get('Idempotency-Key')).toBe(CASE_ID);
-    expect(JSON.parse(String(request.body))).toEqual({
+    expect(typeof request.body).toBe('string');
+    if (typeof request.body !== 'string') {
+      throw new Error('举报请求必须序列化为 JSON 字符串。');
+    }
+    const body: unknown = JSON.parse(request.body);
+    expect(body).toEqual({
       description: '可疑消息',
       evidence: {
         endToEndEncrypted: true,

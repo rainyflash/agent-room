@@ -158,7 +158,9 @@ export class ControlPlaneModerationClient implements ModerationGateway {
 
   async #request(path: string, init: RequestInit): Promise<Result<Response, ModerationFailure>> {
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), this.#timeoutMs);
+    const timeout = globalThis.setTimeout(() => {
+      controller.abort();
+    }, this.#timeoutMs);
     try {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');
