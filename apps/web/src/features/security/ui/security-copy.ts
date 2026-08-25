@@ -18,6 +18,7 @@ export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, string>> 
 
 export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], string>> = {
   'security.crypto_unavailable': 'security.failure.crypto_unavailable',
+  'security.identity_bootstrap_failed': 'security.failure.identity_bootstrap_failed',
   'security.identity_unavailable': 'security.failure.identity_unavailable',
   'security.inspection_failed': 'security.failure.inspection_failed',
   'security.matrix_unavailable': 'security.failure.matrix_unavailable',

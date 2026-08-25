@@ -11,10 +11,14 @@ import {
 } from '@/features/security/ui/security-copy';
 
 export type SecurityPostureProps = {
-  readonly onReviewRecovery: () => void;
-  readonly onVerifyCurrent: (() => void) | undefined;
+  readonly primaryAction: SecurityPostureAction | null;
   readonly snapshot: MatrixSecuritySnapshot;
-  readonly verificationPending: boolean;
+};
+
+export type SecurityPostureAction = {
+  readonly kind: 'establish_identity' | 'review_recovery' | 'verify_device';
+  readonly onSelect: () => void;
+  readonly pending: boolean;
 };
 
 const postureIcon: Readonly<Record<MatrixSecuritySnapshot['kind'], LucideIcon>> = {
@@ -23,15 +27,20 @@ const postureIcon: Readonly<Record<MatrixSecuritySnapshot['kind'], LucideIcon>> 
   ready: ShieldCheck,
 };
 
-export function SecurityPosture({
-  onReviewRecovery,
-  onVerifyCurrent,
-  snapshot,
-  verificationPending,
-}: SecurityPostureProps) {
+const actionPresentation: Readonly<
+  Record<
+    SecurityPostureAction['kind'],
+    { readonly label: string; readonly tone: 'ghost' | 'primary' }
+  >
+> = {
+  establish_identity: { label: 'security.identity.establish', tone: 'primary' },
+  review_recovery: { label: 'security.recovery.review', tone: 'ghost' },
+  verify_device: { label: 'security.devices.verify', tone: 'primary' },
+};
+
+export function SecurityPosture({ primaryAction, snapshot }: SecurityPostureProps) {
   const { t } = useTranslation();
   const PostureIcon = postureIcon[snapshot.kind];
-  const requiresVerification = onVerifyCurrent !== undefined;
 
   return (
     <motion.section
@@ -66,15 +75,15 @@ export function SecurityPosture({
           ))}
         </ul>
       )}
-      {snapshot.kind === 'ready' ? null : (
+      {primaryAction === null ? null : (
         <Button
-          disabled={verificationPending}
+          disabled={primaryAction.pending}
           icon={<KeyRound aria-hidden="true" />}
-          onClick={requiresVerification ? onVerifyCurrent : onReviewRecovery}
+          onClick={primaryAction.onSelect}
           size="large"
-          tone={requiresVerification ? 'primary' : 'ghost'}
+          tone={actionPresentation[primaryAction.kind].tone}
         >
-          {t(requiresVerification ? 'security.devices.verify' : 'security.recovery.review')}
+          {t(actionPresentation[primaryAction.kind].label)}
         </Button>
       )}
     </motion.section>

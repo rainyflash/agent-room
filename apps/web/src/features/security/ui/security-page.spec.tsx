@@ -68,6 +68,25 @@ describe('SecurityWorkspace', () => {
     expect(session.confirm).toHaveBeenCalledOnce();
   });
 
+  it('全新账户先建立交叉签名身份，不把首次设备引向无解的 SAS 请求', async () => {
+    const user = userEvent.setup();
+    const establishIdentity = vi.fn(async () => ok(undefined));
+    const gateway = securityGateway(
+      {
+        ...blockedSnapshot(),
+        blockers: ['cross_signing_missing', 'current_device_unverified'] as const,
+        crossSigningReady: false,
+      },
+      { establishIdentity },
+    );
+
+    renderWorkspace(gateway);
+    await user.click(await screen.findByRole('button', { name: 'Establish encrypted identity' }));
+
+    expect(establishIdentity).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
+  });
+
   it('恢复密钥只在当前界面显示一次且不会写入浏览器存储', async () => {
     const user = userEvent.setup();
     const recoveryKey = 'EsTc r7Cy 4abc one-time recovery key';
@@ -107,8 +126,15 @@ function securityGateway(
   overrides: Partial<MatrixSecurityGateway> = {},
 ): MatrixSecurityGateway {
   const base: MatrixSecurityGateway = {
+    acceptIncomingVerification: async () =>
+      err({ code: 'security.verification_unavailable', retryable: false }),
     beginVerification: async () =>
       err({ code: 'security.verification_unavailable', retryable: false }),
+    declineIncomingVerification: async () =>
+      err({ code: 'security.verification_unavailable', retryable: false }),
+    establishIdentity: async () =>
+      err({ code: 'security.identity_bootstrap_failed', retryable: true }),
+    getIncomingVerification: () => null,
     inspect: async () => ok(snapshot),
     recover: async () => err({ code: 'security.recovery_failed', retryable: true }),
     setupRecovery: async () => err({ code: 'security.recovery_setup_failed', retryable: true }),
@@ -130,7 +156,7 @@ function readySnapshot(): MatrixSecuritySnapshot {
         deviceId: 'ALICE-WEB',
         displayName: 'Alice browser',
         fingerprint: 'ED25519 CURRENT FINGERPRINT',
-        trust: 'verified',
+        trust: 'verified' as const,
         userId: '@alice:agent-room.test',
       },
     ],
@@ -146,11 +172,11 @@ function readySnapshot(): MatrixSecuritySnapshot {
 function blockedSnapshot(): MatrixSecuritySnapshot {
   return Object.freeze({
     ...readySnapshot(),
-    blockers: ['current_device_unverified'],
+    blockers: ['current_device_unverified'] as const,
     devices: [
       {
         ...readySnapshot().devices[0]!,
-        trust: 'unverified',
+        trust: 'unverified' as const,
       },
     ],
     kind: 'blocked',
@@ -162,7 +188,7 @@ function missingRecoverySnapshot(): MatrixSecuritySnapshot {
   return Object.freeze({
     ...readySnapshot(),
     backup: 'missing',
-    blockers: ['backup_missing', 'secret_storage_missing'],
+    blockers: ['backup_missing', 'secret_storage_missing'] as const,
     kind: 'action_required',
     secretStorageReady: false,
   });

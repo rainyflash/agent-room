@@ -792,6 +792,75 @@
   }
 }
 
+.security-verification-inbox {
+  position: fixed;
+  z-index: 105;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: grid;
+  width: min(440px, calc(100vw - 2.5rem));
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.9rem 1rem;
+  padding: 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--color-network) 38%, var(--ar-ink-18));
+  border-radius: 9px;
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  box-shadow: 0 18px 58px color-mix(in srgb, black 18%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.security-verification-inbox__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-network) 35%, var(--ar-ink-18));
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--color-network) 76%, var(--color-ink));
+  background: color-mix(in srgb, var(--color-network) 8%, transparent);
+}
+
+.security-verification-inbox__icon > svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.6;
+}
+
+.security-verification-inbox__copy > span {
+  color: var(--ar-ink-48);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.security-verification-inbox__copy h2 {
+  margin: 0.28rem 0 0;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.security-verification-inbox__copy p {
+  margin: 0.4rem 0 0;
+  color: var(--ar-ink-48);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.security-verification-inbox__actions {
+  display: flex;
+  grid-column: 2;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.security-verification-inbox > .security-failure {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 980px) {
   .security-primary-grid {
     grid-template-columns: 1fr;
@@ -814,6 +883,16 @@
 }
 
 @media (max-width: 700px) {
+  .security-verification-inbox {
+    top: 0.75rem;
+    right: 0.75rem;
+    width: calc(100vw - 1.5rem);
+  }
+
+  .security-verification-inbox__actions {
+    grid-column: 1 / -1;
+  }
+
   .security-topbar {
     min-height: 60px;
     grid-template-columns: auto 1fr auto;

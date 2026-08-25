@@ -46,6 +46,7 @@ export type MatrixSecuritySnapshot = MatrixSecurityEvidence & MatrixSecurityPost
 export type MatrixSecurityFailure = {
   readonly code:
     | 'security.crypto_unavailable'
+    | 'security.identity_bootstrap_failed'
     | 'security.identity_unavailable'
     | 'security.inspection_failed'
     | 'security.matrix_unavailable'
@@ -66,9 +67,15 @@ export type MatrixSecurityInspection = {
 };
 
 export type MatrixSecurityGateway = {
+  acceptIncomingVerification(
+    requestId: string,
+  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>>;
   beginVerification(
     request?: MatrixVerificationRequest,
   ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>>;
+  declineIncomingVerification(requestId: string): Promise<Result<void, MatrixSecurityFailure>>;
+  establishIdentity(): Promise<Result<void, MatrixSecurityFailure>>;
+  getIncomingVerification(): MatrixIncomingVerification | null;
   inspect(
     inspection?: MatrixSecurityInspection,
   ): Promise<Result<MatrixSecuritySnapshot, MatrixSecurityFailure>>;
@@ -110,6 +117,12 @@ export type MatrixRecoveryResult = {
 
 export type MatrixVerificationRequest = {
   readonly targetDeviceId?: string;
+};
+
+export type MatrixIncomingVerification = {
+  readonly requestId: string;
+  readonly sourceDeviceId?: string;
+  readonly sourceUserId: string;
 };
 
 export type MatrixVerificationEmoji = {

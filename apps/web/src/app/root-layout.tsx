@@ -1,6 +1,7 @@
 import { Outlet } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
+import { MatrixVerificationInbox } from '@/features/security/ui/matrix-verification-inbox';
 import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 
 export function RootLayout() {
@@ -11,6 +12,7 @@ export function RootLayout() {
         {t('app.skipToContent')}
       </a>
       <Outlet />
+      <MatrixVerificationInbox />
       <UpdatePrompt />
     </>
   );

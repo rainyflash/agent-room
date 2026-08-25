@@ -19,6 +19,7 @@ import { err, ok, type Result } from '@/shared/result';
 export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   readonly #listeners = new Set<() => void>();
   readonly #request: VerificationRequest;
+  readonly #startOnReady: boolean;
   readonly #targetDeviceId: string | undefined;
   #disposed = false;
   #sasCallbacks: ShowSasCallbacks | null = null;
@@ -26,8 +27,9 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
   #startingSas = false;
   #verifier: Verifier | null = null;
 
-  constructor(request: VerificationRequest, targetDeviceId?: string) {
+  constructor(request: VerificationRequest, targetDeviceId?: string, startOnReady = true) {
     this.#request = request;
+    this.#startOnReady = startOnReady;
     this.#targetDeviceId = targetDeviceId;
     this.#snapshot = waitingSnapshot(request, targetDeviceId);
   }
@@ -128,7 +130,9 @@ export class MatrixSdkVerificationSession implements MatrixVerificationSession {
         return;
       case VerificationPhase.Ready:
         this.#publish(waitingSnapshot(this.#request, this.#targetDeviceId));
-        this.#startSas();
+        if (this.#startOnReady) {
+          this.#startSas();
+        }
         return;
       case VerificationPhase.Started:
         this.#publish(waitingSnapshot(this.#request, this.#targetDeviceId));
@@ -232,7 +236,9 @@ function projectSas(callbacks: ShowSasCallbacks): MatrixVerificationSas | null {
     return null;
   }
   return Object.freeze({
-    ...(decimals === undefined ? {} : { decimals: Object.freeze([...decimals]) }),
+    ...(decimals === undefined
+      ? {}
+      : { decimals: Object.freeze([decimals[0], decimals[1], decimals[2]] as const) }),
     ...(emojis === undefined ? {} : { emojis: Object.freeze(emojis) }),
   });
 }

@@ -60,6 +60,21 @@ describe('MatrixSdkVerificationSession', () => {
       stage: 'cancelled',
     });
   });
+
+  it('响应端接受请求后等待发起端选择 SAS，避免双方争抢 start 事件', () => {
+    const flow = verificationFlow();
+    const session = new MatrixSdkVerificationSession(flow.request, 'OTHER-DEVICE', false);
+    session.activate();
+
+    flow.advance(VerificationPhase.Ready);
+    expect(flow.startVerification).not.toHaveBeenCalled();
+
+    flow.advance(VerificationPhase.Started);
+    flow.showSas();
+
+    expect(session.getSnapshot()).toMatchObject({ stage: 'comparing' });
+    expect(flow.startVerification).not.toHaveBeenCalled();
+  });
 });
 
 function verificationFlow() {
@@ -113,7 +128,9 @@ function verificationFlow() {
     },
     startVerification,
     transactionId: 'verification-transaction',
-    verifier: undefined,
+    get verifier() {
+      return phase === VerificationPhase.Started ? verifier : undefined;
+    },
     off: (_event: VerificationRequestEvent, listener: unknown) => {
       requestListeners.delete(listener as () => void);
       return requestShape;

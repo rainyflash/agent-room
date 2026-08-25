@@ -9,6 +9,7 @@ export type SecurityDeviceLedgerProps = {
   readonly devices: readonly MatrixSecurityDevice[];
   readonly onVerify: (device: MatrixSecurityDevice) => void;
   readonly pendingDeviceId: string | null;
+  readonly verificationAvailable: boolean;
   readonly verificationOpen: boolean;
 };
 
@@ -16,6 +17,7 @@ export function SecurityDeviceLedger({
   devices,
   onVerify,
   pendingDeviceId,
+  verificationAvailable,
   verificationOpen,
 }: SecurityDeviceLedgerProps) {
   const { t } = useTranslation();
@@ -37,7 +39,7 @@ export function SecurityDeviceLedger({
       ) : (
         <ol className="security-devices__list">
           {orderedDevices.map((device) => {
-            const verifiable = needsVerification(device);
+            const verifiable = verificationAvailable && needsVerification(device);
             const pending = pendingDeviceId === device.deviceId;
             return (
               <li className={device.current ? 'is-current' : undefined} key={device.deviceId}>

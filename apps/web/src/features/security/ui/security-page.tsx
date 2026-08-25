@@ -20,7 +20,10 @@ import type {
 import { DeviceVerificationDialog } from '@/features/security/ui/device-verification-dialog';
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
-import { SecurityPosture } from '@/features/security/ui/security-posture';
+import {
+  SecurityPosture,
+  type SecurityPostureAction,
+} from '@/features/security/ui/security-posture';
 import { SecurityRecoveryPanel } from '@/features/security/ui/security-recovery-panel';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 
@@ -61,6 +64,14 @@ export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
         session: result.value,
         targetName: device.displayName ?? device.deviceId,
       });
+    },
+  });
+  const establishIdentity = useMutation({
+    mutationFn: async () => await gateway.establishIdentity(),
+    onSuccess: (result) => {
+      if (result.ok) {
+        void queryClient.invalidateQueries({ queryKey: matrixSecurityQueryKey });
+      }
     },
   });
 
@@ -134,18 +145,15 @@ export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
             </div>
             <div className="security-primary-grid">
               <SecurityPosture
-                onReviewRecovery={() => {
-                  document
-                    .querySelector('#security-recovery')
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}
-                onVerifyCurrent={verificationAction(
-                  inspection.data.value.devices,
-                  inspection.data.value.blockers,
+                primaryAction={postureAction(
+                  inspection.data.value,
+                  establishIdentity.isPending,
+                  () => establishIdentity.mutate(),
+                  beginVerification.isPending,
                   (device) => beginVerification.mutate(device),
+                  reviewRecovery,
                 )}
                 snapshot={inspection.data.value}
-                verificationPending={beginVerification.isPending}
               />
               <SecurityDeviceLedger
                 devices={inspection.data.value.devices}
@@ -153,11 +161,15 @@ export function SecurityWorkspace({ gateway, onBack }: SecurityWorkspaceProps) {
                 pendingDeviceId={
                   beginVerification.isPending ? beginVerification.variables.deviceId : null
                 }
+                verificationAvailable={inspection.data.value.crossSigningReady}
                 verificationOpen={beginVerification.isPending || verification !== null}
               />
             </div>
             {beginVerification.data?.ok === false ? (
               <SecurityFailureNotice failure={beginVerification.data.error} />
+            ) : null}
+            {establishIdentity.data?.ok === false ? (
+              <SecurityFailureNotice failure={establishIdentity.data.error} />
             ) : null}
             <SecurityRecoveryPanel
               gateway={gateway}
@@ -218,15 +230,38 @@ function SecurityInspectionFailure({ failure, onRetry }: SecurityInspectionFailu
   );
 }
 
-function verificationAction(
-  devices: readonly MatrixSecurityDevice[],
-  blockers: readonly MatrixSecurityBlocker[],
+function reviewRecovery(): void {
+  document
+    .querySelector('#security-recovery')
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function postureAction(
+  snapshot: {
+    readonly blockers: readonly MatrixSecurityBlocker[];
+    readonly crossSigningReady: boolean;
+    readonly devices: readonly MatrixSecurityDevice[];
+    readonly kind: 'action_required' | 'blocked' | 'ready';
+  },
+  identityPending: boolean,
+  establishIdentity: () => void,
+  verificationPending: boolean,
   verify: (device: MatrixSecurityDevice) => void,
-): (() => void) | undefined {
-  const requiresCurrentVerification =
-    blockers.includes('current_device_unverified') || blockers.includes('cross_signing_missing');
-  const currentDevice = devices.find((device) => device.current);
-  return !requiresCurrentVerification || currentDevice === undefined
-    ? undefined
-    : () => verify(currentDevice);
+  review: () => void,
+): SecurityPostureAction | null {
+  if (snapshot.kind === 'ready') {
+    return null;
+  }
+  if (!snapshot.crossSigningReady) {
+    return { kind: 'establish_identity', onSelect: establishIdentity, pending: identityPending };
+  }
+  const currentDevice = snapshot.devices.find((device) => device.current);
+  if (snapshot.blockers.includes('current_device_unverified') && currentDevice !== undefined) {
+    return {
+      kind: 'verify_device',
+      onSelect: () => verify(currentDevice),
+      pending: verificationPending,
+    };
+  }
+  return { kind: 'review_recovery', onSelect: review, pending: false };
 }

@@ -18,10 +18,16 @@ import { err, ok } from '@/shared/result';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const security: MatrixSecurityGateway = {
+  acceptIncomingVerification: async () =>
+    err({ code: 'security.verification_unavailable', retryable: false }),
   beginVerification: async ({ targetDeviceId } = {}) =>
     targetDeviceId === undefined
       ? err({ code: 'security.verification_unavailable', retryable: false })
       : ok(createVerificationSession()),
+  declineIncomingVerification: async () =>
+    err({ code: 'security.verification_unavailable', retryable: false }),
+  establishIdentity: async () => ok(undefined),
+  getIncomingVerification: () => null,
   inspect: async () => ok(securitySnapshot),
   recover: async (_request, onProgress) => {
     onProgress?.({ stage: 'fetching' });
@@ -35,7 +41,7 @@ const security: MatrixSecurityGateway = {
 
 const securitySnapshot: MatrixSecuritySnapshot = Object.freeze({
   backup: 'locked',
-  blockers: ['backup_locked'],
+  blockers: ['backup_locked'] as const,
   crossSigningReady: true,
   cryptoVersion: 'Rust SDK 0.12.0',
   currentDeviceId: 'ALICE-WEB-2026',
@@ -77,7 +83,7 @@ function createVerificationSession(): MatrixVerificationSession {
   const listeners = new Set<() => void>();
   let snapshot: MatrixVerificationSnapshot = Object.freeze({
     sas: Object.freeze({
-      decimals: Object.freeze([1265, 6842, 4519]),
+      decimals: Object.freeze([1265, 6842, 4519] as const),
       emojis: Object.freeze([
         Object.freeze({ label: 'Dog', symbol: '🐶' }),
         Object.freeze({ label: 'Tree', symbol: '🌳' }),

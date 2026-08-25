@@ -1,4 +1,11 @@
-import type { CryptoApi, DeviceVerificationStatus } from 'matrix-js-sdk/lib/crypto-api/index.js';
+import {
+  CryptoEvent,
+  VerificationPhase,
+  VerificationRequestEvent,
+  type CryptoApi,
+  type DeviceVerificationStatus,
+  type VerificationRequest,
+} from 'matrix-js-sdk/lib/crypto-api/index.js';
 import type { Device, MatrixClient } from 'matrix-js-sdk';
 
 import { MatrixSdkVerificationSession } from '@/features/security/adapters/matrix-sdk-verification-session';
@@ -7,6 +14,7 @@ import {
   isValidRecoveryPassphrase,
   type MatrixBackupState,
   type MatrixDeviceTrust,
+  type MatrixIncomingVerification,
   type MatrixRecoveryProgress,
   type MatrixRecoveryRequest,
   type MatrixRecoveryResult,
@@ -27,11 +35,38 @@ import { err, ok, type Result } from '@/shared/result';
 
 export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
   readonly #clients: MatrixClientSource;
+  readonly #incoming = new Map<string, PendingVerification>();
+  readonly #listeners = new Set<() => void>();
   readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
+  #activeClient: MatrixClient | null = null;
 
   constructor(clients: MatrixClientSource, secretStorageKeys: MatrixSecretStorageKeyCache) {
     this.#clients = clients;
     this.#secretStorageKeys = secretStorageKeys;
+    this.#synchronizeClient();
+    this.#clients.subscribe(this.#synchronizeClient);
+  }
+
+  async acceptIncomingVerification(
+    requestId: string,
+  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>> {
+    const pending = this.#incoming.get(requestId);
+    if (pending?.request.phase !== VerificationPhase.Requested) {
+      return err(failure('security.verification_unavailable', false));
+    }
+    try {
+      await pending.request.accept();
+      this.#removeIncoming(requestId);
+      const session = new MatrixSdkVerificationSession(
+        pending.request,
+        pending.notice.sourceDeviceId,
+        false,
+      );
+      session.activate();
+      return ok(session);
+    } catch {
+      return err(failure('security.verification_failed', true));
+    }
   }
 
   async beginVerification(
@@ -60,6 +95,44 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
     } catch {
       return err(failure('security.verification_failed', true));
     }
+  }
+
+  async declineIncomingVerification(
+    requestId: string,
+  ): Promise<Result<void, MatrixSecurityFailure>> {
+    const pending = this.#incoming.get(requestId);
+    if (pending === undefined) {
+      return err(failure('security.verification_unavailable', false));
+    }
+    try {
+      await pending.request.cancel();
+      this.#removeIncoming(requestId);
+      return ok(undefined);
+    } catch {
+      return err(failure('security.verification_failed', true));
+    }
+  }
+
+  async establishIdentity(): Promise<Result<void, MatrixSecurityFailure>> {
+    const active = activeCryptoClient(this.#clients.current());
+    if (!active.ok) {
+      return active;
+    }
+    try {
+      await active.value.crypto.bootstrapCrossSigning({
+        authUploadDeviceSigningKeys: async (makeRequest) => {
+          await makeRequest(null);
+        },
+      });
+      this.#notify();
+      return ok(undefined);
+    } catch {
+      return err(failure('security.identity_bootstrap_failed', true));
+    }
+  }
+
+  getIncomingVerification(): MatrixIncomingVerification | null {
+    return this.#incoming.values().next().value?.notice ?? null;
   }
 
   async inspect(
@@ -206,9 +279,86 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
   }
 
   subscribe(listener: () => void): () => void {
-    return this.#clients.subscribe(listener);
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  readonly #handleIncomingVerification = (request: VerificationRequest): void => {
+    const userId = this.#activeClient?.getUserId();
+    if (
+      userId === null ||
+      userId === undefined ||
+      request.otherUserId !== userId ||
+      !request.isSelfVerification ||
+      request.phase !== VerificationPhase.Requested
+    ) {
+      return;
+    }
+    const requestId = incomingRequestId(request);
+    if (this.#incoming.has(requestId)) {
+      return;
+    }
+    const notice = Object.freeze({
+      requestId,
+      ...(request.otherDeviceId === undefined ? {} : { sourceDeviceId: request.otherDeviceId }),
+      sourceUserId: request.otherUserId,
+    });
+    const onChange = (): void => {
+      if (!request.pending) {
+        this.#removeIncoming(requestId);
+      }
+    };
+    request.on(VerificationRequestEvent.Change, onChange);
+    this.#incoming.set(requestId, { notice, onChange, request });
+    this.#notify();
+  };
+
+  readonly #synchronizeClient = (): void => {
+    const next = this.#clients.current();
+    if (next !== this.#activeClient) {
+      this.#activeClient?.off(
+        CryptoEvent.VerificationRequestReceived,
+        this.#handleIncomingVerification,
+      );
+      this.#clearIncoming();
+      this.#activeClient = next;
+      next?.on(CryptoEvent.VerificationRequestReceived, this.#handleIncomingVerification);
+    }
+    this.#notify();
+  };
+
+  #clearIncoming(): void {
+    for (const [requestId] of this.#incoming) {
+      this.#removeIncoming(requestId, false);
+    }
+  }
+
+  #notify(): void {
+    for (const listener of this.#listeners) {
+      listener();
+    }
+  }
+
+  #removeIncoming(requestId: string, notify = true): void {
+    const pending = this.#incoming.get(requestId);
+    if (pending === undefined) {
+      return;
+    }
+    pending.request.off(VerificationRequestEvent.Change, pending.onChange);
+    this.#incoming.delete(requestId);
+    if (notify) {
+      this.#notify();
+    }
   }
 }
+
+type PendingVerification = {
+  readonly notice: MatrixIncomingVerification;
+  readonly onChange: () => void;
+  readonly request: VerificationRequest;
+};
 
 type ActiveCryptoClient = {
   readonly client: MatrixClient;
@@ -258,6 +408,13 @@ async function decodeRecoveryCredential(
 
 function ignoreRecoveryProgress(progress: MatrixRecoveryProgress): void {
   void progress;
+}
+
+function incomingRequestId(request: VerificationRequest): string {
+  return (
+    request.transactionId ??
+    `${request.otherUserId}\u0000${request.otherDeviceId ?? 'unknown-device'}`
+  );
 }
 
 function isValidDeviceId(deviceId: string): boolean {

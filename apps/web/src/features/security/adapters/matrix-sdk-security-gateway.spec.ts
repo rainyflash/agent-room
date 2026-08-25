@@ -1,5 +1,6 @@
 import type { MatrixClient } from 'matrix-js-sdk';
 import {
+  CryptoEvent,
   ImportRoomKeyStage,
   VerificationPhase,
   type CryptoApi,
@@ -56,13 +57,7 @@ describe('MatrixSdkSecurityGateway', () => {
       isCrossSigningReady: () => Promise.resolve(true),
       isEncryptionEnabledInRoom: () => Promise.resolve(false),
     } as unknown as CryptoApi;
-    const client = {
-      getCrypto: () => crypto,
-      getDeviceId: () => 'ALICE-WEB',
-      getRoom: () => null,
-      getUserId: () => '@alice:agent-room.test',
-    } as unknown as MatrixClient;
-    const gateway = gatewayFor(client);
+    const gateway = gatewayFor(cryptoClient(crypto));
 
     const result = await gateway.inspect({ roomId: '!private:agent-room.test' });
 
@@ -117,6 +112,46 @@ describe('MatrixSdkSecurityGateway', () => {
       '@alice:agent-room.test',
       'ALICE-LAPTOP',
     );
+  });
+
+  it('首次设备通过官方认证回调建立交叉签名身份', async () => {
+    const makeRequest = vi.fn(() => Promise.resolve());
+    const bootstrapCrossSigning = vi.fn(
+      async (options: {
+        readonly authUploadDeviceSigningKeys?: (
+          callback: (authData: null) => Promise<void>,
+        ) => Promise<void>;
+      }) => {
+        await options.authUploadDeviceSigningKeys?.(makeRequest);
+      },
+    );
+    const gateway = gatewayFor(cryptoClient({ bootstrapCrossSigning } as unknown as CryptoApi));
+
+    await expect(gateway.establishIdentity()).resolves.toEqual({ ok: true, value: undefined });
+
+    expect(bootstrapCrossSigning).toHaveBeenCalledOnce();
+    expect(makeRequest).toHaveBeenCalledWith(null);
+  });
+
+  it('只把同一账户的入站设备验证交给用户显式接受', async () => {
+    const flow = incomingVerificationFlow();
+    const gateway = gatewayFor(flow.client);
+
+    flow.receive();
+
+    expect(gateway.getIncomingVerification()).toEqual({
+      requestId: 'incoming-verification',
+      sourceDeviceId: 'ALICE-LAPTOP',
+      sourceUserId: '@alice:agent-room.test',
+    });
+    const accepted = await gateway.acceptIncomingVerification('incoming-verification');
+
+    expect(accepted.ok).toBe(true);
+    expect(flow.accept).toHaveBeenCalledOnce();
+    expect(gateway.getIncomingVerification()).toBeNull();
+    if (accepted.ok) {
+      accepted.value.dispose();
+    }
   });
 
   it('建立恢复链后只返回一次性恢复密钥并覆写生成态私钥', async () => {
@@ -187,10 +222,7 @@ describe('MatrixSdkSecurityGateway', () => {
         return Promise.resolve({ imported: 7, total: 8 });
       },
     } as unknown as CryptoApi;
-    const client = {
-      getCrypto: () => crypto,
-      getDeviceId: () => 'ALICE-WEB',
-      getUserId: () => '@alice:agent-room.test',
+    const client = cryptoClient(crypto, {
       secretStorage: {
         checkKey: () => Promise.resolve(true),
         getKey: () =>
@@ -207,8 +239,8 @@ describe('MatrixSdkSecurityGateway', () => {
               },
             },
           ]),
-      },
-    } as unknown as MatrixClient;
+      } as unknown as MatrixClient['secretStorage'],
+    });
     const cache = new MatrixSecretStorageKeyCache();
     const gateway = new MatrixSdkSecurityGateway(source(client), cache);
 
@@ -242,12 +274,71 @@ function source(client: MatrixClient | null): MatrixClientSource {
   };
 }
 
-function cryptoClient(crypto: CryptoApi): MatrixClient {
-  return {
+function cryptoClient(crypto: CryptoApi, overrides: Partial<MatrixClient> = {}): MatrixClient {
+  const client = {
     getCrypto: () => crypto,
     getDeviceId: () => 'ALICE-WEB',
+    getRoom: () => null,
     getUserId: () => '@alice:agent-room.test',
-  } as unknown as MatrixClient;
+    off: () => ({}) as MatrixClient,
+    on: () => ({}) as MatrixClient,
+    ...overrides,
+  };
+  return client as unknown as MatrixClient;
+}
+
+function incomingVerificationFlow() {
+  const clientListeners = new Set<(request: VerificationRequest) => void>();
+  const requestListeners = new Set<() => void>();
+  const accept = vi.fn(() => Promise.resolve());
+  const requestShape = {
+    accept,
+    cancel: () => Promise.resolve(),
+    isSelfVerification: true,
+    off: (_event: unknown, listener: unknown) => {
+      requestListeners.delete(listener as () => void);
+      return requestShape;
+    },
+    on: (_event: unknown, listener: unknown) => {
+      requestListeners.add(listener as () => void);
+      return requestShape;
+    },
+    otherDeviceId: 'ALICE-LAPTOP',
+    otherUserId: '@alice:agent-room.test',
+    pending: true,
+    phase: VerificationPhase.Requested,
+    startVerification: () => Promise.reject(new Error('响应端等待发起端选择 SAS。')),
+    transactionId: 'incoming-verification',
+    verifier: undefined,
+  };
+  const request = requestShape as unknown as VerificationRequest;
+  const clientShape = {
+    getCrypto: () => ({}),
+    getDeviceId: () => 'ALICE-WEB',
+    getUserId: () => '@alice:agent-room.test',
+    off: (event: CryptoEvent, listener: unknown) => {
+      if (event === CryptoEvent.VerificationRequestReceived) {
+        clientListeners.delete(listener as (value: VerificationRequest) => void);
+      }
+      return clientShape;
+    },
+    on: (event: CryptoEvent, listener: unknown) => {
+      if (event === CryptoEvent.VerificationRequestReceived) {
+        clientListeners.add(listener as (value: VerificationRequest) => void);
+      }
+      return clientShape;
+    },
+  };
+
+  return {
+    accept,
+    client: clientShape as unknown as MatrixClient,
+    receive: () => {
+      for (const listener of clientListeners) {
+        listener(request);
+      }
+    },
+  };
 }
 
 function pendingVerificationRequest(): VerificationRequest {
