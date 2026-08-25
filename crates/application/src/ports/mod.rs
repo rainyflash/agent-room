@@ -1,6 +1,7 @@
 mod agent_cards;
 mod agents;
 mod audit;
+mod automation;
 mod content;
 mod devices;
 mod handoffs;
@@ -30,6 +31,12 @@ pub use agents::{
     StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
+pub use automation::{
+    AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationDecisionRecord,
+    AutomationGrantRecord, AutomationGrantRepository, AutomationGrantRevocationOutcome,
+    AutomationScopeAuthority, AutomationScopeAuthorityRequest, AutomationSendAuthority,
+    AutomationSendAuthorityRequest,
+};
 pub use content::{
     ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,
     ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentAuthorizationIntent,

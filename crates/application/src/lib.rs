@@ -4,6 +4,7 @@ pub mod agent_instance_verification;
 pub mod agent_lobbies;
 pub mod agents;
 pub mod authentication;
+pub mod automation;
 pub mod content;
 pub mod devices;
 pub mod direct_sessions;
