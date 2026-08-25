@@ -767,7 +767,9 @@ async fn revoke_device_and_tokens(
     revoke_active_families(transaction, device_id, revoked_at, operation).await?;
     sqlx::query(
         r"UPDATE agent_room.agent_instance
-           SET status = 'revoked', revoked_at = to_timestamp($2::double precision / 1000.0)
+           SET status = 'revoked',
+               lease_expires_at = NULL,
+               revoked_at = to_timestamp($2::double precision / 1000.0)
            WHERE device_id = $1 AND status <> 'revoked'",
     )
     .bind(device_id.as_uuid())

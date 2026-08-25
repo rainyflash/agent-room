@@ -4,7 +4,9 @@ use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
         AgentCardSnapshotRepository, AgentCreationClaim, AgentCreationReservation,
-        AgentCreationWorkflow, AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
+        AgentCreationWorkflow, AgentInstanceManagementRepository, AgentInstanceMatrixCleanupStore,
+        AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
+        AgentInstanceRevocationOutcome, AgentInstanceRevocationTransaction,
         AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
         AgentMembershipTransaction, AgentRegistration, AgentRepository, HandoffAccessRepository,
         OutboxMessage, PrincipalRegistration, PrincipalRepository, SecretDigest,
@@ -487,6 +489,47 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 13).await;
+    let outsider_id = PrincipalId::from_uuid(Uuid::now_v7());
+    PrincipalRepository::create(
+        &repositories,
+        &principal_registration(outsider_id, "Instance Outsider"),
+    )
+    .await
+    .expect("外部主体创建应成功");
+    let instance_id =
+        register_online_management_instance(&database.runtime, &repositories, &fixture).await;
+    assert_instance_management_visibility(&repositories, &fixture, outsider_id).await;
+    assert_hidden_instance_revocation(&repositories, outsider_id, instance_id).await;
+    assert_local_instance_revocation(
+        &database.runtime,
+        &repositories,
+        fixture.owner_id,
+        instance_id,
+    )
+    .await;
+
+    AgentInstanceMatrixCleanupStore::mark_matrix_device_revoked(
+        &repositories,
+        instance_id,
+        UtcMillis::new(test_time().value() + 1).expect("清理时间有效"),
+    )
+    .await
+    .expect("可记录 Matrix 设备清理完成");
+    let completed =
+        AgentInstanceManagementRepository::list_for_principal(&repositories, fixture.owner_id)
+            .await
+            .expect("可读取清理后的状态");
+    assert!(completed[0].matrix_device_revoked_at.is_some());
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn agent_实例验签材料保留历史公钥并合并设备失效边界() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -861,6 +904,126 @@ struct InstanceFixture {
     agent_id: AgentId,
 }
 
+async fn register_online_management_instance(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+) -> AgentInstanceId {
+    let registration = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        fixture.agent_id,
+        SecretDigest::from_array([81; 32]),
+        [82; 32],
+        [83; 32],
+    );
+    let stored = register_instance(repositories, &registration)
+        .await
+        .expect("实例注册成功");
+    sqlx::query(
+        r"UPDATE agent_room.agent_instance
+          SET status = 'online', lease_expires_at = clock_timestamp() + interval '5 minutes'
+          WHERE id = $1",
+    )
+    .bind(stored.instance.id().as_uuid())
+    .execute(pool)
+    .await
+    .expect("测试实例可进入在线状态");
+    stored.instance.id()
+}
+
+async fn assert_instance_management_visibility(
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+    outsider_id: PrincipalId,
+) {
+    let owner_instances =
+        AgentInstanceManagementRepository::list_for_principal(repositories, fixture.owner_id)
+            .await
+            .expect("Owner 可读取实例");
+    assert_eq!(owner_instances.len(), 1);
+    assert_eq!(
+        owner_instances[0].instance.status(),
+        agent_room_domain::agents::AgentInstanceStatus::Online
+    );
+    let operator_instances =
+        AgentInstanceManagementRepository::list_for_principal(repositories, fixture.operator_id)
+            .await
+            .expect("Operator 可读取实例");
+    assert_eq!(operator_instances.len(), 1);
+    let outsider_instances =
+        AgentInstanceManagementRepository::list_for_principal(repositories, outsider_id)
+            .await
+            .expect("无权主体查询返回空列表");
+    assert!(outsider_instances.is_empty());
+}
+
+async fn assert_hidden_instance_revocation(
+    repositories: &PostgresRepositories,
+    outsider_id: PrincipalId,
+    instance_id: AgentInstanceId,
+) {
+    let hidden = AgentInstanceRevocationTransaction::revoke(
+        repositories,
+        outsider_id,
+        instance_id,
+        &instance_revocation_event(instance_id),
+    )
+    .await
+    .expect("无权撤销不会泄漏实例是否存在");
+    assert_eq!(hidden, AgentInstanceRevocationOutcome::NotFound);
+}
+
+async fn assert_local_instance_revocation(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    owner_id: PrincipalId,
+    instance_id: AgentInstanceId,
+) {
+    let revoked = AgentInstanceRevocationTransaction::revoke(
+        repositories,
+        owner_id,
+        instance_id,
+        &instance_revocation_event(instance_id),
+    )
+    .await
+    .expect("Owner 可撤销实例");
+    let AgentInstanceRevocationOutcome::Revoked(revoked) = revoked else {
+        panic!("首次撤销必须改变状态");
+    };
+    assert_eq!(
+        revoked.instance.status(),
+        agent_room_domain::agents::AgentInstanceStatus::Revoked
+    );
+    assert_eq!(revoked.instance.lease_expires_at(), None);
+    assert!(revoked.revoked_at.is_some());
+    assert_eq!(revoked.matrix_device_revoked_at, None);
+
+    let repeated = AgentInstanceRevocationTransaction::revoke(
+        repositories,
+        owner_id,
+        instance_id,
+        &instance_revocation_event(instance_id),
+    )
+    .await
+    .expect("重复撤销应返回稳定状态");
+    assert!(matches!(
+        repeated,
+        AgentInstanceRevocationOutcome::AlreadyRevoked(ref record)
+            if record.instance.id() == instance_id
+    ));
+    let event_count: i64 = sqlx::query_scalar(
+        r"SELECT count(*) FROM agent_room.outbox_event
+          WHERE aggregate_id = $1 AND event_type = 'agent.instance.revoked.v1'",
+    )
+    .bind(instance_id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("应能检查撤销事件幂等性");
+    assert_eq!(event_count, 1);
+}
+
 async fn prepare_instance_fixture(
     pool: &PgPool,
     repositories: &PostgresRepositories,
@@ -980,6 +1143,18 @@ fn instance_event(registration: &AgentInstanceRegistration) -> OutboxMessage {
         test_time(),
     )
     .expect("实例注册事件有效")
+}
+
+fn instance_revocation_event(instance_id: AgentInstanceId) -> OutboxMessage {
+    OutboxMessage::new(
+        OutboxEventId::from_uuid(Uuid::now_v7()),
+        "agent_instance".to_owned(),
+        instance_id.as_uuid(),
+        "agent.instance.revoked.v1".to_owned(),
+        serde_json::Map::new(),
+        test_time(),
+    )
+    .expect("实例撤销事件有效")
 }
 
 async fn register_instance(

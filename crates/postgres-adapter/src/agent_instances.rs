@@ -1,9 +1,12 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
-        AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, OutboxMessage,
-        PortFuture, SecretDigest, StoredAgentInstanceRegistration,
+        AgentInstanceManagementRecord, AgentInstanceManagementRepository,
+        AgentInstanceMatrixCleanupStore, AgentInstanceRegistration,
+        AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
+        AgentInstanceRevocationTransaction, AgentInstanceVerificationRecord,
+        AgentInstanceVerificationRepository, OutboxMessage, PortFuture, SecretDigest,
+        StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -11,17 +14,45 @@ use agent_room_domain::{
         AdapterBinding, AdapterBindingState, AdapterSubjectHash, AgentInstance,
         AgentInstancePublicSigningKey, AgentInstanceStatus, AgentMatrixDeviceId,
     },
-    ids::{AdapterBindingId, AgentId, AgentInstanceId, DeviceId, PrincipalId},
+    devices::{DevicePlatform, DeviceTrustState},
+    ids::{AdapterBindingId, AgentId, AgentInstanceId, ContentId, DeviceId, PrincipalId},
+    time::UtcMillis,
 };
 use serde_json::{Map, Value};
 use sqlx::{Postgres, Transaction, postgres::PgRow};
 
 use crate::{
     PostgresRepositories,
-    agents::{decode_column, decode_optional_time},
+    agents::{decode_column, decode_optional_time, decode_time},
     error::map_sqlx_error,
     outbox::insert_outbox_event,
 };
+
+const MANAGEMENT_SELECT: &str = r"instance.id, instance.agent_id, instance.device_id,
+       instance.adapter_binding_id, instance.public_signing_key, instance.matrix_device_id,
+       instance.status,
+       floor(extract(epoch FROM instance.lease_expires_at) * 1000)::bigint
+           AS lease_expires_at_ms,
+       agent.matrix_user_id AS agent_matrix_user_id,
+       agent.display_name AS agent_display_name,
+       agent.avatar_content_id AS agent_avatar_content_id,
+       binding.adapter_type AS adapter_type,
+       binding.capability_version AS capability_version,
+       device.label AS device_label,
+       device.platform AS device_platform,
+       device.trust_state AS device_trust_state,
+       floor(extract(epoch FROM instance.created_at) * 1000)::bigint AS instance_created_at_ms,
+       floor(extract(epoch FROM instance.last_seen_at) * 1000)::bigint AS last_seen_at_ms,
+       floor(extract(epoch FROM instance.revoked_at) * 1000)::bigint AS revoked_at_ms,
+       floor(extract(epoch FROM instance.matrix_device_revoked_at) * 1000)::bigint
+           AS matrix_device_revoked_at_ms";
+
+const MANAGEMENT_FROM: &str = r"FROM agent_room.agent_instance AS instance
+       JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
+       JOIN agent_room.adapter_binding AS binding ON binding.id = instance.adapter_binding_id
+       JOIN agent_room.device AS device ON device.id = instance.device_id
+       JOIN agent_room.agent_ownership AS ownership ON ownership.agent_id = instance.agent_id
+       JOIN agent_room.principal AS principal ON principal.id = ownership.principal_id";
 
 impl AgentInstanceRegistrationTransaction for PostgresRepositories {
     fn register_with_event<'a>(
@@ -79,6 +110,84 @@ impl AgentInstanceVerificationRepository for PostgresRepositories {
     }
 }
 
+impl AgentInstanceManagementRepository for PostgresRepositories {
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentInstanceManagementRecord>>> {
+        Box::pin(async move {
+            let operation = "agent_instance.management.list";
+            let query = format!(
+                r"SELECT {MANAGEMENT_SELECT}
+                   {MANAGEMENT_FROM}
+                   WHERE ownership.principal_id = $1
+                     AND ownership.revoked_at IS NULL
+                     AND ownership.role IN ('owner', 'operator')
+                     AND principal.status = 'active'
+                   ORDER BY (instance.revoked_at IS NOT NULL),
+                            instance.last_seen_at DESC NULLS LAST,
+                            instance.created_at DESC,
+                            instance.id"
+            );
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(principal_id.as_uuid())
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_management_record(row, operation))
+                .collect()
+        })
+    }
+}
+
+impl AgentInstanceRevocationTransaction for PostgresRepositories {
+    fn revoke<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        instance_id: AgentInstanceId,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<AgentInstanceRevocationOutcome>> {
+        Box::pin(async move {
+            self.revoke_agent_instance(principal_id, instance_id, event)
+                .await
+        })
+    }
+}
+
+impl AgentInstanceMatrixCleanupStore for PostgresRepositories {
+    fn mark_matrix_device_revoked(
+        &self,
+        instance_id: AgentInstanceId,
+        revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "agent_instance.matrix_cleanup.complete";
+            let result = sqlx::query(
+                r"UPDATE agent_room.agent_instance
+                   SET matrix_device_revoked_at = COALESCE(
+                       matrix_device_revoked_at,
+                       to_timestamp($2::double precision / 1000.0)
+                   )
+                   WHERE id = $1 AND revoked_at IS NOT NULL",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(revoked_at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            if result.rows_affected() == 1 {
+                Ok(())
+            } else {
+                Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ))
+            }
+        })
+    }
+}
+
 impl PostgresRepositories {
     async fn register_agent_instance(
         &self,
@@ -121,6 +230,67 @@ impl PostgresRepositories {
         }
         .await;
 
+        crate::transaction::finish(transaction, result, operation).await
+    }
+
+    async fn revoke_agent_instance(
+        &self,
+        principal_id: PrincipalId,
+        instance_id: AgentInstanceId,
+        event: &OutboxMessage,
+    ) -> RepositoryResult<AgentInstanceRevocationOutcome> {
+        let operation = "agent_instance.management.revoke";
+        let mut transaction = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        let result = async {
+            let query = format!(
+                r"SELECT {MANAGEMENT_SELECT}
+                   {MANAGEMENT_FROM}
+                   WHERE instance.id = $1
+                     AND ownership.principal_id = $2
+                     AND ownership.revoked_at IS NULL
+                     AND ownership.role IN ('owner', 'operator')
+                     AND principal.status = 'active'
+                   FOR UPDATE OF instance, ownership"
+            );
+            let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(instance_id.as_uuid())
+                .bind(principal_id.as_uuid())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?
+            else {
+                return Ok(AgentInstanceRevocationOutcome::NotFound);
+            };
+            let mut record = decode_management_record(&row, operation)?;
+            if record.instance.status() == AgentInstanceStatus::Revoked {
+                return Ok(AgentInstanceRevocationOutcome::AlreadyRevoked(record));
+            }
+            ensure_revocation_event_contract(instance_id, event)?;
+            let update = sqlx::query(
+                r"UPDATE agent_room.agent_instance
+                   SET status = 'revoked',
+                       lease_expires_at = NULL,
+                       revoked_at = to_timestamp($2::double precision / 1000.0)
+                   WHERE id = $1 AND status <> 'revoked'",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(event.occurred_at().value())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            if update.rows_affected() != 1 {
+                return Err(corrupt_data(operation));
+            }
+            insert_outbox_event(&mut transaction, event).await?;
+            record.instance.revoke();
+            record.revoked_at = Some(event.occurred_at());
+            Ok(AgentInstanceRevocationOutcome::Revoked(record))
+        }
+        .await;
         crate::transaction::finish(transaction, result, operation).await
     }
 }
@@ -369,7 +539,7 @@ async fn insert_instance(
     transaction: &mut Transaction<'_, Postgres>,
     instance: &AgentInstance,
     binding: &AdapterBinding,
-    registered_at: agent_room_domain::time::UtcMillis,
+    registered_at: UtcMillis,
 ) -> RepositoryResult<()> {
     sqlx::query(
         r"INSERT INTO agent_room.agent_instance (
@@ -523,10 +693,46 @@ fn decode_verification_record(
         agent_id: AgentId::from_uuid(agent_id),
         public_signing_key: AgentInstancePublicSigningKey::new(signing_key)
             .map_err(|_| corrupt_data(operation))?,
-        registered_at: agent_room_domain::time::UtcMillis::new(registered_at_ms)
-            .map_err(|_| corrupt_data(operation))?,
+        registered_at: UtcMillis::new(registered_at_ms).map_err(|_| corrupt_data(operation))?,
         invalidated_at: decode_optional_time(row, "invalidated_at_ms", operation)?,
     })
+}
+
+fn decode_management_record(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<AgentInstanceManagementRecord> {
+    let avatar_content_id: Option<uuid::Uuid> =
+        decode_column(row, "agent_avatar_content_id", operation)?;
+    let platform: String = decode_column(row, "device_platform", operation)?;
+    let trust_state: String = decode_column(row, "device_trust_state", operation)?;
+    let record = AgentInstanceManagementRecord {
+        instance: decode_instance(row, operation)?,
+        agent_matrix_user_id: decode_column(row, "agent_matrix_user_id", operation)?,
+        agent_display_name: decode_column(row, "agent_display_name", operation)?,
+        agent_avatar_content_id: avatar_content_id.map(ContentId::from_uuid),
+        adapter_type: decode_column(row, "adapter_type", operation)?,
+        capability_version: decode_column(row, "capability_version", operation)?,
+        device_label: decode_column(row, "device_label", operation)?,
+        device_platform: DevicePlatform::try_from(platform.as_str())
+            .map_err(|_| corrupt_data(operation))?,
+        device_trust_state: DeviceTrustState::try_from(trust_state.as_str())
+            .map_err(|_| corrupt_data(operation))?,
+        created_at: decode_time(row, "instance_created_at_ms", operation)?,
+        last_seen_at: decode_optional_time(row, "last_seen_at_ms", operation)?,
+        revoked_at: decode_optional_time(row, "revoked_at_ms", operation)?,
+        matrix_device_revoked_at: decode_optional_time(
+            row,
+            "matrix_device_revoked_at_ms",
+            operation,
+        )?,
+    };
+    if (record.instance.status() == AgentInstanceStatus::Revoked) != record.revoked_at.is_some()
+        || (record.matrix_device_revoked_at.is_some() && record.revoked_at.is_none())
+    {
+        return Err(corrupt_data(operation));
+    }
+    Ok(record)
 }
 
 fn ensure_registration_coherence(registration: &AgentInstanceRegistration) -> RepositoryResult<()> {
@@ -554,6 +760,23 @@ fn ensure_event_contract(instance: &AgentInstance, event: &OutboxMessage) -> Rep
     } else {
         Err(RepositoryError::new(
             "agent_instance.register.event_contract",
+            RepositoryErrorKind::Constraint,
+        ))
+    }
+}
+
+fn ensure_revocation_event_contract(
+    instance_id: AgentInstanceId,
+    event: &OutboxMessage,
+) -> RepositoryResult<()> {
+    if event.aggregate_type() == "agent_instance"
+        && event.aggregate_id() == instance_id.as_uuid()
+        && event.event_type() == "agent.instance.revoked.v1"
+    {
+        Ok(())
+    } else {
+        Err(RepositoryError::new(
+            "agent_instance.revoke.event_contract",
             RepositoryErrorKind::Constraint,
         ))
     }
