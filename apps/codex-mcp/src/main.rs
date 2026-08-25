@@ -2,6 +2,7 @@ use std::{process::ExitCode, sync::Arc};
 
 use agent_room_bridge_local_adapter::{
     BridgeLocationFailure, bridge_data_root_from_environment, bridge_runtime_root,
+    secure_storage_service_from_environment,
 };
 use agent_room_codex_mcp::agent_room::{AgentRoomMcpServer, LocalBridgeToolClient};
 use rmcp::{ServiceExt, transport::stdio};
@@ -19,9 +20,12 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     let data_root = bridge_data_root_from_environment().map_err(format_location_failure)?;
-    let backend = Arc::new(LocalBridgeToolClient::system(bridge_runtime_root(
-        &data_root,
-    )));
+    let secure_storage_service = secure_storage_service_from_environment()
+        .map_err(|_| "Bridge 安全存储命名空间无效".to_owned())?;
+    let backend = Arc::new(LocalBridgeToolClient::system_with_secure_storage_service(
+        bridge_runtime_root(&data_root),
+        secure_storage_service,
+    ));
     let service = AgentRoomMcpServer::new(backend)
         .serve(stdio())
         .await

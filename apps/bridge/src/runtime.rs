@@ -62,7 +62,6 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
-use agent_room_bridge_local_adapter::DEFAULT_SECURE_STORAGE_SERVICE;
 use agent_room_bridge_storage_adapter::SqliteHandoffStore;
 use agent_room_domain::{
     agent_status::AgentStatusVisibility,
@@ -129,9 +128,10 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         .map_err(BridgeRuntimeError::instance_lock)?;
     let _matrix_store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
         .map_err(BridgeRuntimeError::matrix_store_lock)?;
-    let runtime_secrets = OsBridgeRuntimeSecretVault::system(DEFAULT_SECURE_STORAGE_SERVICE)
-        .load_or_create()
-        .map_err(BridgeRuntimeError::runtime_secrets)?;
+    let runtime_secrets =
+        OsBridgeRuntimeSecretVault::system(config.secure_storage_service.as_str())
+            .load_or_create()
+            .map_err(BridgeRuntimeError::runtime_secrets)?;
     let matrix = initialize_matrix(&config, &paths, &runtime_secrets).await?;
     let handoff_store = initialize_handoff_store(&paths, &runtime_secrets).await?;
     let device_session = initialize_device_session(&config).await?;
@@ -355,10 +355,10 @@ async fn initialize_device_session(
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let signing_identities = Arc::new(OsDeviceSigningIdentityStore::system(
-        DEFAULT_SECURE_STORAGE_SERVICE,
+        config.secure_storage_service.as_str(),
     ));
     let credentials = Arc::new(OsDeviceCredentialVault::system(
-        DEFAULT_SECURE_STORAGE_SERVICE,
+        config.secure_storage_service.as_str(),
     ));
     let secrets = Arc::new(SecureSecretFactory);
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -456,14 +456,14 @@ async fn compose_agent_session_runtime(
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
     let signing_identities: Arc<dyn DeviceSigningIdentityStore> = Arc::new(
-        OsAgentInstanceSigningIdentityStore::system(DEFAULT_SECURE_STORAGE_SERVICE),
+        OsAgentInstanceSigningIdentityStore::system(config.secure_storage_service.as_str()),
     );
     let service = Arc::new(AgentRuntimeSessionService::new(
         AgentRuntimeSessionDependencies {
             signing_identities: signing_identities.clone(),
             control_plane,
             credentials: Arc::new(OsAgentRuntimeCredentialVault::system(
-                DEFAULT_SECURE_STORAGE_SERVICE,
+                config.secure_storage_service.as_str(),
             )),
             identifiers: Arc::new(SystemAgentRuntimeIdentifiers),
         },

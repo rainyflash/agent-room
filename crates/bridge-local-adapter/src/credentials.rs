@@ -5,7 +5,6 @@ use agent_room_bridge_ipc::{IpcClientCredentials, IpcSharedSecret};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use keyring::{Entry, Error as KeyringError};
 
-pub const DEFAULT_SECURE_STORAGE_SERVICE: &str = "dev.agent-room.bridge";
 pub const IPC_INSTALLATION_ID_ACCOUNT: &str = "bridge-ipc-installation-id-v1";
 pub const IPC_SHARED_SECRET_ACCOUNT: &str = "bridge-ipc-shared-secret-v1";
 const IPC_SHARED_SECRET_BYTES: usize = 32;

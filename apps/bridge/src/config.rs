@@ -1,6 +1,9 @@
 use std::{env, path::PathBuf, time::Duration};
 
-use agent_room_bridge_local_adapter::{BridgeLocationFailureKind, resolve_bridge_data_root};
+use agent_room_bridge_local_adapter::{
+    BridgeLocationFailureKind, SecureStorageService, resolve_bridge_data_root,
+    resolve_secure_storage_service,
+};
 use agent_room_domain::{
     ids::{AgentId, RoomCatalogId},
     rooms::{RoomLanguage, RoomRegion},
@@ -46,6 +49,7 @@ pub(crate) struct BridgeConfig {
     pub(crate) matrix_sync_timeout: Duration,
     pub(crate) import_oidc_profile: bool,
     pub(crate) data_root: PathBuf,
+    pub(crate) secure_storage_service: SecureStorageService,
 }
 
 impl BridgeConfig {
@@ -113,6 +117,7 @@ impl BridgeConfig {
             )?,
             import_oidc_profile: read_bool(source, "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE", false)?,
             data_root: read_data_root(source)?,
+            secure_storage_service: read_secure_storage_service(source)?,
         })
     }
 }
@@ -204,6 +209,17 @@ fn read_data_root(source: &impl EnvironmentSource) -> Result<PathBuf, BridgeConf
         BridgeLocationFailureKind::Invalid => {
             BridgeConfigError::invalid(failure.variable(), "必须是安全的绝对路径")
         }
+    })
+}
+
+fn read_secure_storage_service(
+    source: &impl EnvironmentSource,
+) -> Result<SecureStorageService, BridgeConfigError> {
+    resolve_secure_storage_service(|name| source.read(name)).map_err(|_| {
+        BridgeConfigError::invalid(
+            "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE",
+            "必须为 3 到 128 位、首尾为字母数字且仅含字母数字、点、连字符或下划线",
+        )
     })
 }
 
@@ -377,6 +393,10 @@ mod tests {
         assert!(config.lobby_region.is_none());
         assert!(!config.device_label.is_empty());
         assert!(config.data_root.is_absolute());
+        assert_eq!(
+            config.secure_storage_service.as_str(),
+            "dev.agent-room.bridge"
+        );
     }
 
     #[test]
@@ -419,6 +439,32 @@ mod tests {
             BridgeConfig::from_source(&environment),
             Err(BridgeConfigError::Invalid {
                 name: "AGENT_ROOM_BRIDGE_DATA_DIR",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 安全存储命名空间支持隔离且拒绝危险文本() {
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE",
+            "dev.agent-room.bridge.vertical-24".to_owned(),
+        );
+        let config = BridgeConfig::from_source(&environment).expect("隔离命名空间有效");
+        assert_eq!(
+            config.secure_storage_service.as_str(),
+            "dev.agent-room.bridge.vertical-24"
+        );
+
+        environment.0.insert(
+            "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE",
+            "dev.agent-room.bridge/vertical".to_owned(),
+        );
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE",
                 ..
             })
         ));

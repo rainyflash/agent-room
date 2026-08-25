@@ -8,7 +8,9 @@ use agent_room_bridge_ipc::{
     IpcApproveHandoffRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffSubmission,
     IpcMethod, IpcResponse,
 };
-use agent_room_bridge_local_adapter::{LocalBridgeClient, bridge_runtime_root};
+use agent_room_bridge_local_adapter::{
+    LocalBridgeClient, bridge_runtime_root, secure_storage_service_from_environment,
+};
 
 #[tokio::test]
 #[ignore = "需要真实 Bridge、控制平面、Synapse 与当前用户的 OS 安全存储"]
@@ -33,16 +35,21 @@ async fn 桌面壳可批准真实一次性交接() {
         expires_at_unix_ms,
     };
     let expected_handoff_id = request.handoff_id.clone();
-    let response = LocalBridgeClient::desktop_shell(bridge_runtime_root(&data_root))
-        .invoke(IpcMethod::ApproveHandoff(request))
-        .await
-        .unwrap_or_else(|failure| {
-            panic!(
-                "桌面批准交接失败 [{}，可重试={}]",
-                failure.code(),
-                failure.retryable()
-            )
-        });
+    let secure_storage_service =
+        secure_storage_service_from_environment().expect("安全存储命名空间必须有效");
+    let response = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        bridge_runtime_root(&data_root),
+        secure_storage_service,
+    )
+    .invoke(IpcMethod::ApproveHandoff(request))
+    .await
+    .unwrap_or_else(|failure| {
+        panic!(
+            "桌面批准交接失败 [{}，可重试={}]",
+            failure.code(),
+            failure.retryable()
+        )
+    });
 
     assert!(matches!(
         response,

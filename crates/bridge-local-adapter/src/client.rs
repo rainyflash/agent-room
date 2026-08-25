@@ -9,8 +9,8 @@ use interprocess::local_socket::tokio::{Stream, prelude::*};
 use tokio::time::timeout;
 
 use crate::{
-    DEFAULT_SECURE_STORAGE_SERVICE, IpcCredentialFailure, IpcCredentialFailureKind,
-    IpcCredentialSource, LocalIpcEndpoint, OsIpcCredentialReader,
+    IpcCredentialFailure, IpcCredentialFailureKind, IpcCredentialSource, LocalIpcEndpoint,
+    OsIpcCredentialReader, SecureStorageService,
 };
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -27,20 +27,41 @@ pub struct LocalBridgeClient {
 impl LocalBridgeClient {
     /// 创建只能以 Codex 插件身份协商作用域的本地客户端。
     pub fn system(runtime_root: PathBuf) -> Self {
-        Self::for_caller(runtime_root, IpcCallerKind::CodexPlugin)
+        Self::system_with_secure_storage_service(runtime_root, SecureStorageService::default())
+    }
+
+    /// 使用显式安全存储命名空间创建 Codex 插件客户端。
+    pub fn system_with_secure_storage_service(
+        runtime_root: PathBuf,
+        service: SecureStorageService,
+    ) -> Self {
+        Self::for_caller(runtime_root, IpcCallerKind::CodexPlugin, service)
     }
 
     /// 创建供受信桌面壳执行用户确认操作的本地客户端。
     pub fn desktop_shell(runtime_root: PathBuf) -> Self {
-        Self::for_caller(runtime_root, IpcCallerKind::DesktopShell)
+        Self::desktop_shell_with_secure_storage_service(
+            runtime_root,
+            SecureStorageService::default(),
+        )
     }
 
-    fn for_caller(runtime_root: PathBuf, caller: IpcCallerKind) -> Self {
+    /// 使用显式安全存储命名空间创建受信桌面壳客户端。
+    pub fn desktop_shell_with_secure_storage_service(
+        runtime_root: PathBuf,
+        service: SecureStorageService,
+    ) -> Self {
+        Self::for_caller(runtime_root, IpcCallerKind::DesktopShell, service)
+    }
+
+    fn for_caller(
+        runtime_root: PathBuf,
+        caller: IpcCallerKind,
+        service: SecureStorageService,
+    ) -> Self {
         Self {
             runtime_root,
-            credentials: Arc::new(OsIpcCredentialReader::system(
-                DEFAULT_SECURE_STORAGE_SERVICE,
-            )),
+            credentials: Arc::new(OsIpcCredentialReader::system(service.into_string())),
             caller,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,

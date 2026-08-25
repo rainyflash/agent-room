@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin};
 
 use agent_room_bridge_ipc::{IpcErrorCategory, IpcMethod, IpcResponse};
-use agent_room_bridge_local_adapter::{LocalBridgeClient, LocalBridgeClientFailure};
+use agent_room_bridge_local_adapter::{
+    LocalBridgeClient, LocalBridgeClientFailure, SecureStorageService,
+};
 
 pub type BridgeToolFuture<'a> =
     Pin<Box<dyn Future<Output = Result<IpcResponse, BridgeToolFailure>> + Send + 'a>>;
@@ -21,6 +23,15 @@ impl LocalBridgeToolClient {
     pub fn system(runtime_root: PathBuf) -> Self {
         Self {
             client: LocalBridgeClient::system(runtime_root),
+        }
+    }
+
+    pub fn system_with_secure_storage_service(
+        runtime_root: PathBuf,
+        service: SecureStorageService,
+    ) -> Self {
+        Self {
+            client: LocalBridgeClient::system_with_secure_storage_service(runtime_root, service),
         }
     }
 }
