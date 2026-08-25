@@ -549,6 +549,7 @@ function testMessage(
       sizeBytes: new TextEncoder().encode(fixtureContent).byteLength,
     }),
     edited: false,
+    endToEndEncrypted: false,
     lifecycle: 'active',
     matrixEventId: `$fixture-${messageId}`,
     messageId,

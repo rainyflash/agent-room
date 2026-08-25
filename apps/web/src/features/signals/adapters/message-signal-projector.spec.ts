@@ -56,6 +56,7 @@ function roomMessage(): RoomMessageSignal {
       sizeBytes: 128,
     },
     edited: false,
+    endToEndEncrypted: false,
     lifecycle: 'active',
     matrixEventId: '$message',
     messageId: '01990d9e-8400-7000-8000-000000000003',

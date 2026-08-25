@@ -47,6 +47,7 @@ export type RoomMessageSignal = {
   readonly actor: MessageActor;
   readonly content: MessageContentReference | null;
   readonly edited: boolean;
+  readonly endToEndEncrypted: boolean;
   readonly lifecycle: MessageLifecycle;
   readonly matrixEventId: string;
   readonly messageId: string;

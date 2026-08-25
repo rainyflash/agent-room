@@ -4,6 +4,7 @@ import { MatrixMessageGateway } from './matrix-message-gateway';
 import {
   matrixMessagePreviewEventType,
   matrixMessageRevisionEventType,
+  matrixModerationNoticeEventType,
   type MatrixMessageRoomSnapshot,
   type MatrixMessageSource,
   type MatrixMessageSourceRead,
@@ -188,6 +189,31 @@ describe('MatrixMessageGateway', () => {
     expect(subscribe).toHaveBeenCalledWith(ROOM_ID, listener);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
+
+  it('按当前治理状态隐藏消息且撤销通知不会销毁原始预览', () => {
+    const base = previewEvent({ eventId: '$base', messageId: MESSAGE_ID });
+    const hidden = moderationNotice('$base', true, 200);
+    const restored = moderationNotice('$base', false, 300);
+    const hiddenGateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([base, hidden]) }),
+    );
+    const restoredGateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([base, hidden, restored]) }),
+    );
+
+    const hiddenResult = hiddenGateway.read(ROOM_ID);
+    const restoredResult = restoredGateway.read(ROOM_ID);
+
+    expect(hiddenResult.ok && hiddenResult.value.messages[0]).toEqual(
+      expect.objectContaining({ content: null, lifecycle: 'moderated', preview: null }),
+    );
+    expect(restoredResult.ok && restoredResult.value.messages[0]).toEqual(
+      expect.objectContaining({
+        lifecycle: 'active',
+        preview: expect.objectContaining({ title: '协议生成完成' }),
+      }),
+    );
+  });
 });
 
 function source(read: MatrixMessageSourceRead): MatrixMessageSource {
@@ -215,6 +241,7 @@ function previewEvent(
       id: options.messageId ?? '01990d9e-8400-7000-8000-000000000020',
       ...(options.title === undefined ? {} : { title: options.title }),
     }),
+    endToEndEncrypted: false,
     eventId: options.eventId,
     sender: MATRIX_USER_ID,
     serverTimestamp: options.serverTimestamp ?? 100,
@@ -248,10 +275,33 @@ function revisionEvent(
       signature: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
       targetMessageId: options.targetMessageId,
     },
+    endToEndEncrypted: false,
     eventId: options.eventId,
     sender: MATRIX_USER_ID,
     serverTimestamp: 150,
     type: matrixMessageRevisionEventType,
+  };
+}
+
+function moderationNotice(
+  targetEventId: string,
+  hidden: boolean,
+  serverTimestamp: number,
+): MatrixMessageTimelineEvent {
+  return {
+    content: {
+      actionId: '01990d9e-8400-7000-8000-000000000040',
+      eventType: matrixModerationNoticeEventType,
+      hidden,
+      reasonCode: 'spam',
+      schemaVersion: '1.0',
+      targetEventId,
+    },
+    endToEndEncrypted: false,
+    eventId: `$moderation-${String(serverTimestamp)}`,
+    sender: '@moderator:agent-room.test',
+    serverTimestamp,
+    type: matrixModerationNoticeEventType,
   };
 }
 

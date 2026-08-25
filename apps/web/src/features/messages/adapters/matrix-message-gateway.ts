@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   matrixMessagePreviewEventType,
   matrixMessageRevisionEventType,
+  matrixModerationNoticeEventType,
   type MatrixMessageRoomSnapshot,
   type MatrixMessageSource,
   type MatrixMessageTimelineEvent,
@@ -146,6 +147,24 @@ const revisionEventSchema = z
       context.addIssue({ code: 'custom', message: '非替换修订不得携带正文引用。' });
     }
   });
+const moderationNoticeSchema = z
+  .object({
+    actionId: uuidV7Schema,
+    eventType: z.literal(matrixModerationNoticeEventType),
+    hidden: z.boolean(),
+    reasonCode: z.enum([
+      'spam',
+      'harassment',
+      'impersonation',
+      'malicious_content',
+      'privacy_violation',
+      'unsafe_automation',
+      'other',
+    ]),
+    schemaVersion: z.literal('1.0'),
+    targetEventId: z.string().min(2).max(1_024).regex(/^\$[^\u0000-\u001f\u007f]+$/u),
+  })
+  .strict();
 
 type ParsedPreviewEvent = z.output<typeof previewEventSchema>;
 type ParsedRevisionEvent = z.output<typeof revisionEventSchema>;
@@ -154,6 +173,7 @@ type MutableMessage = {
   actor: MessageActor;
   content: MessageContentReference | null;
   edited: boolean;
+  endToEndEncrypted: boolean;
   lifecycle: RoomMessageSignal['lifecycle'];
   matrixEventId: string;
   messageId: string;
@@ -170,6 +190,10 @@ type ParsedRevision = {
   readonly preview?: MessagePreview;
   readonly sender: string;
   readonly targetMessageId: string;
+};
+
+type ParsedModerationNotice = z.output<typeof moderationNoticeSchema> & {
+  readonly serverTimestamp: number;
 };
 
 export class MatrixMessageGateway implements MessageGateway {
@@ -207,6 +231,7 @@ function projectRoom(
 ): MessageRoomProjection {
   const messages = new Map<string, MutableMessage>();
   const pendingRevisions = new Map<string, ParsedRevision[]>();
+  const moderationNotices = new Map<string, ParsedModerationNotice>();
   const seenMatrixEventIds = new Set<string>();
 
   for (const timelineEvent of room.timelineEvents) {
@@ -240,6 +265,25 @@ function projectRoom(
       } else {
         applyRevision(target, revision);
       }
+      continue;
+    }
+    if (timelineEvent.type === matrixModerationNoticeEventType) {
+      const notice = parseModerationNotice(timelineEvent);
+      if (notice !== null) {
+        const current = moderationNotices.get(notice.targetEventId);
+        if (current === undefined || current.serverTimestamp <= notice.serverTimestamp) {
+          moderationNotices.set(notice.targetEventId, notice);
+        }
+      }
+    }
+  }
+
+  for (const message of messages.values()) {
+    const notice = moderationNotices.get(message.matrixEventId);
+    if (notice?.hidden === true && message.lifecycle === 'active') {
+      message.preview = null;
+      message.content = null;
+      message.lifecycle = 'moderated';
     }
   }
 
@@ -252,6 +296,16 @@ function projectRoom(
     observedAtUnixMs,
     roomId: room.roomId,
   });
+}
+
+function parseModerationNotice(
+  event: MatrixMessageTimelineEvent,
+): ParsedModerationNotice | null {
+  const parsed = moderationNoticeSchema.safeParse(event.content);
+  if (!parsed.success || !validServerTimestamp(event.serverTimestamp)) {
+    return null;
+  }
+  return { ...parsed.data, serverTimestamp: event.serverTimestamp };
 }
 
 function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): MutableMessage | null {
@@ -270,6 +324,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
     actor: toActor(parsed.data),
     content: toContent(parsed.data.content),
     edited: false,
+    endToEndEncrypted: event.endToEndEncrypted,
     lifecycle: 'active',
     matrixEventId: event.eventId,
     messageId: parsed.data.id,
@@ -360,6 +415,7 @@ function freezeMessage(message: MutableMessage): RoomMessageSignal {
     actor: message.actor,
     content: message.content,
     edited: message.edited,
+    endToEndEncrypted: message.endToEndEncrypted,
     lifecycle: message.lifecycle,
     matrixEventId: message.matrixEventId,
     messageId: message.messageId,

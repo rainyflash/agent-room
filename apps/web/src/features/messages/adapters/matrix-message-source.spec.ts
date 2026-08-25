@@ -5,6 +5,7 @@ import {
   MatrixSdkMessageSource,
   matrixMessagePreviewEventType,
   matrixMessageRevisionEventType,
+  matrixModerationNoticeEventType,
 } from './matrix-message-source';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
@@ -13,8 +14,9 @@ describe('MatrixSdkMessageSource', () => {
     const preview = matrixEvent(matrixMessagePreviewEventType, '$preview', 20);
     const revision = matrixEvent(matrixMessageRevisionEventType, '$revision', 30);
     const ordinary = matrixEvent('m.room.message', '$ordinary', 10);
+    const moderation = matrixEvent(matrixModerationNoticeEventType, '$moderation', 40);
     const registry = new MatrixClientRegistry();
-    registry.replace(matrixClient(matrixRoom([ordinary, preview, revision])));
+    registry.replace(matrixClient(matrixRoom([ordinary, preview, revision], [moderation])));
 
     const source = new MatrixSdkMessageSource(registry);
 
@@ -25,6 +27,7 @@ describe('MatrixSdkMessageSource', () => {
         timelineEvents: [
           {
             content: { eventType: matrixMessagePreviewEventType },
+            endToEndEncrypted: false,
             eventId: '$preview',
             sender: '@agent:agent-room.test',
             serverTimestamp: 20,
@@ -32,10 +35,19 @@ describe('MatrixSdkMessageSource', () => {
           },
           {
             content: { eventType: matrixMessageRevisionEventType },
+            endToEndEncrypted: false,
             eventId: '$revision',
             sender: '@agent:agent-room.test',
             serverTimestamp: 30,
             type: matrixMessageRevisionEventType,
+          },
+          {
+            content: { eventType: matrixModerationNoticeEventType },
+            endToEndEncrypted: false,
+            eventId: '$moderation',
+            sender: '@agent:agent-room.test',
+            serverTimestamp: 40,
+            type: matrixModerationNoticeEventType,
           },
         ],
       },
@@ -72,14 +84,18 @@ function matrixEvent(type: string, eventId: string, serverTimestamp: number): Ma
   return {
     getContent: () => ({ eventType: type }),
     getId: () => eventId,
+    isEncrypted: () => false,
     getSender: () => '@agent:agent-room.test',
     getTs: () => serverTimestamp,
     getType: () => type,
   } as unknown as MatrixEvent;
 }
 
-function matrixRoom(events: readonly MatrixEvent[]): Room {
+function matrixRoom(events: readonly MatrixEvent[], stateEvents: readonly MatrixEvent[] = []): Room {
   return {
+    currentState: {
+      getStateEvents: () => [...stateEvents],
+    },
     getLiveTimeline: () =>
       ({
         getEvents: () => [...events],

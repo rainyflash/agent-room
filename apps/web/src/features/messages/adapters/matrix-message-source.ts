@@ -4,14 +4,17 @@ import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry'
 
 export const matrixMessagePreviewEventType = 'org.agentroom.message.preview.v1';
 export const matrixMessageRevisionEventType = 'org.agentroom.message.revision.v1';
+export const matrixModerationNoticeEventType = 'org.agentroom.moderation.notice.v1';
 
 const projectedTimelineEventTypes = new Set([
   matrixMessagePreviewEventType,
   matrixMessageRevisionEventType,
+  matrixModerationNoticeEventType,
 ]);
 
 export type MatrixMessageTimelineEvent = {
   readonly content: unknown;
+  readonly endToEndEncrypted: boolean;
   readonly eventId: string | undefined;
   readonly sender: string | undefined;
   readonly serverTimestamp: number;
@@ -54,9 +57,16 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
       kind: 'ready',
       room: Object.freeze({
         roomId,
-        timelineEvents: Object.freeze(
-          room.getLiveTimeline().getEvents().filter(isProjectedTimelineEvent).map(toTimelineEvent),
-        ),
+        timelineEvents: Object.freeze([
+          ...room
+            .getLiveTimeline()
+            .getEvents()
+            .filter(isProjectedTimelineEvent)
+            .map(toTimelineEvent),
+          ...room.currentState
+            .getStateEvents(matrixModerationNoticeEventType)
+            .map(toTimelineEvent),
+        ]),
       }),
     };
   }
@@ -74,6 +84,7 @@ function isProjectedTimelineEvent(event: MatrixEvent): boolean {
 function toTimelineEvent(event: MatrixEvent): MatrixMessageTimelineEvent {
   return Object.freeze({
     content: event.getContent(),
+    endToEndEncrypted: event.isEncrypted(),
     eventId: event.getId(),
     sender: event.getSender(),
     serverTimestamp: event.getTs(),
