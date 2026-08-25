@@ -12,9 +12,14 @@ pub enum MatrixOperation {
     Sync,
     CreateRoom,
     ResolveRoomAlias,
+    InspectMembership,
     Invite,
     Join,
     Leave,
+    Kick,
+    Ban,
+    UpdatePowerLevels,
+    ArchiveRoom,
     SendEvent,
     SendStateEvent,
     SendReceipt,
@@ -32,9 +37,14 @@ impl MatrixOperation {
                 | Self::RestoreSession
                 | Self::Sync
                 | Self::ResolveRoomAlias
+                | Self::InspectMembership
                 | Self::Invite
                 | Self::Join
                 | Self::Leave
+                | Self::Kick
+                | Self::Ban
+                | Self::UpdatePowerLevels
+                | Self::ArchiveRoom
                 | Self::SendStateEvent
                 | Self::SendReceipt
                 | Self::Backfill

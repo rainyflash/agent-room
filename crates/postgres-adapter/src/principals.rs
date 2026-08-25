@@ -2,7 +2,7 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         ContentPrincipalIdentityLookup, MatrixUserId, PortFuture, PrincipalRegistration,
-        PrincipalRepository,
+        PrincipalRepository, PrivateRoomPrincipalDirectory,
     },
 };
 use agent_room_domain::{
@@ -107,20 +107,11 @@ impl ContentPrincipalIdentityLookup for PostgresRepositories {
         &self,
         principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
-        Box::pin(async move {
-            let operation = "content_identity.find_active_matrix_user";
-            let matrix_user_id: Option<String> = sqlx::query_scalar(
-                "SELECT matrix_user_id FROM agent_room.principal WHERE id = $1 AND status = 'active'",
-            )
-            .bind(principal_id.as_uuid())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            matrix_user_id
-                .map(MatrixUserId::new)
-                .transpose()
-                .map_err(|_| corrupt_data(operation))
-        })
+        Box::pin(find_active_principal_matrix_user(
+            &self.pool,
+            principal_id,
+            "content_identity.find_active_matrix_user",
+        ))
     }
 
     fn find_active_agent_matrix_user(
@@ -154,6 +145,37 @@ impl ContentPrincipalIdentityLookup for PostgresRepositories {
                 .map_err(|_| corrupt_data(operation))
         })
     }
+}
+
+impl PrivateRoomPrincipalDirectory for PostgresRepositories {
+    fn matrix_user_id(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
+        Box::pin(find_active_principal_matrix_user(
+            &self.pool,
+            principal_id,
+            "private_room_principal.matrix_user_id",
+        ))
+    }
+}
+
+async fn find_active_principal_matrix_user(
+    pool: &sqlx::PgPool,
+    principal_id: PrincipalId,
+    operation: &'static str,
+) -> RepositoryResult<Option<MatrixUserId>> {
+    let matrix_user_id: Option<String> = sqlx::query_scalar(
+        "SELECT matrix_user_id FROM agent_room.principal WHERE id = $1 AND status = 'active'",
+    )
+    .bind(principal_id.as_uuid())
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    matrix_user_id
+        .map(MatrixUserId::new)
+        .transpose()
+        .map_err(|_| corrupt_data(operation))
 }
 
 pub(crate) fn decode_principal_row(

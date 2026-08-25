@@ -18,7 +18,11 @@ mod provisioning;
 
 use std::sync::Arc;
 
-pub use private_rooms::{PrivateRoomSnapshot, PrivateRoomStore};
+pub use private_rooms::{
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
+    PrivateRoomStore,
+};
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
     RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,

@@ -3,13 +3,14 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use agent_room_application::ports::{
     AgentRoomMembershipFactory, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind,
     MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture, RoomMembershipGateway,
-    RoomProvisioningGateway,
+    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, RoomMembershipGateway, RoomProvisioningGateway,
 };
 use agent_room_domain::rooms::MatrixRoomReference;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{
     MatrixApplicationServiceProvisioner, decode_json, decode_matrix_error, map_matrix_error,
@@ -170,6 +171,142 @@ impl RoomProvisioningGateway for MatrixApplicationServiceProvisioner {
     }
 }
 
+impl PrivateRoomMatrixProvisioner for MatrixApplicationServiceProvisioner {
+    fn create<'a>(
+        &'a self,
+        creation: &'a PrivateMatrixRoomCreation,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
+        Box::pin(async move {
+            let created = RoomProvisioningGateway::create_room(self, creation.request()).await;
+            let failure = match created {
+                Ok(room_id) => return Ok(room_id),
+                Err(failure)
+                    if matches!(
+                        failure.kind(),
+                        MatrixFailureKind::Conflict | MatrixFailureKind::UnknownCommit
+                    ) =>
+                {
+                    failure
+                }
+                Err(failure) => return Err(failure),
+            };
+
+            match RoomProvisioningGateway::resolve_room_alias(self, creation.alias()).await {
+                Ok(room_id) => Ok(room_id),
+                Err(_) if failure.kind() == MatrixFailureKind::UnknownCommit => Err(failure),
+                Err(resolve_failure) => Err(resolve_failure),
+            }
+        })
+    }
+}
+
+impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
+    fn membership<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<Option<PrivateMatrixMembership>>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::InspectMembership;
+            let endpoint = endpoint_with_segments(
+                &self.homeserver_url,
+                &[
+                    "_matrix",
+                    "client",
+                    "v3",
+                    "rooms",
+                    room_id.as_str(),
+                    "state",
+                    "m.room.member",
+                    user_id.as_str(),
+                ],
+                operation,
+            )?;
+            let response = self
+                .client
+                .get(endpoint)
+                .bearer_auth(self.access_token.expose())
+                .send()
+                .await
+                .map_err(|error| map_transport_error(operation, &error))?;
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            let body = expect_success_body(response, operation).await?;
+            let membership: MembershipResponse = decode_json(&body, operation)?;
+            decode_membership(&membership.membership, operation).map(Some)
+        })
+    }
+
+    fn invite<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(send_membership_action(
+            self,
+            room_id,
+            user_id,
+            "invite",
+            None,
+            MatrixOperation::Invite,
+        ))
+    }
+
+    fn kick<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(send_membership_action(
+            self,
+            room_id,
+            user_id,
+            "kick",
+            Some("Agent Room 私人房间权限已撤销"),
+            MatrixOperation::Kick,
+        ))
+    }
+
+    fn ban<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(send_membership_action(
+            self,
+            room_id,
+            user_id,
+            "ban",
+            Some("Agent Room 私人房间成员已被封禁"),
+            MatrixOperation::Ban,
+        ))
+    }
+
+    fn set_speaking<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+        allowed: bool,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::UpdatePowerLevels;
+            let mut content = read_power_levels(self, room_id, operation).await?;
+            apply_active_private_policy(&mut content, Some((user_id, allowed)), operation)?;
+            write_power_levels(self, room_id, &content, operation).await
+        })
+    }
+
+    fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::ArchiveRoom;
+            let mut content = read_power_levels(self, room_id, operation).await?;
+            apply_archived_private_policy(&mut content);
+            write_power_levels(self, room_id, &content, operation).await
+        })
+    }
+}
+
 #[derive(Serialize)]
 struct EmptyRequest {}
 
@@ -193,6 +330,20 @@ struct CreateRoomRequest<'a> {
 #[derive(Serialize)]
 struct PowerLevelContentOverride<'a> {
     events: BTreeMap<&'a str, i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    events_default: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_default: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    users_default: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invite: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kick: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ban: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact: Option<i64>,
 }
 
 impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
@@ -211,12 +362,20 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             MatrixRoomKind::Space => json!({ "type": "m.space" }),
         };
         let member_writable_events = request.member_writable_state_event_types();
-        let power_level_content_override =
-            (!member_writable_events.is_empty()).then(|| PowerLevelContentOverride {
+        let managed_private = request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate;
+        let power_level_content_override = (managed_private || !member_writable_events.is_empty())
+            .then(|| PowerLevelContentOverride {
                 events: member_writable_events
                     .iter()
                     .map(|event_type| (event_type.as_str(), 0))
                     .collect(),
+                events_default: managed_private.then_some(PRIVATE_SPEAKER_POWER_LEVEL),
+                state_default: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
+                users_default: managed_private.then_some(PRIVATE_VIEWER_POWER_LEVEL),
+                invite: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
+                kick: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
+                ban: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
+                redact: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
             });
         Self {
             name: request.name(),
@@ -247,6 +406,170 @@ struct ResolveRoomAliasResponse {
 #[derive(Deserialize)]
 struct StateEventResponse {
     event_id: String,
+}
+
+#[derive(Deserialize)]
+struct MembershipResponse {
+    membership: String,
+}
+
+#[derive(Serialize)]
+struct MembershipMutationRequest<'a> {
+    user_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+const PRIVATE_VIEWER_POWER_LEVEL: i64 = 0;
+const PRIVATE_SPEAKER_POWER_LEVEL: i64 = 10;
+const PRIVATE_ADMIN_POWER_LEVEL: i64 = 100;
+
+async fn send_membership_action(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    user_id: &MatrixUserId,
+    action: &'static str,
+    reason: Option<&'static str>,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
+    let endpoint = endpoint_with_segments(
+        &provisioner.homeserver_url,
+        &["_matrix", "client", "v3", "rooms", room_id.as_str(), action],
+        operation,
+    )?;
+    let response = provisioner
+        .client
+        .post(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .json(&MembershipMutationRequest {
+            user_id: user_id.as_str(),
+            reason,
+        })
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    expect_empty_success(response, operation).await
+}
+
+async fn read_power_levels(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    operation: MatrixOperation,
+) -> MatrixResult<Map<String, Value>> {
+    let endpoint = endpoint_with_segments(
+        &provisioner.homeserver_url,
+        &[
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id.as_str(),
+            "state",
+            "m.room.power_levels",
+        ],
+        operation,
+    )?;
+    let response = provisioner
+        .client
+        .get(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    let body = expect_success_body(response, operation).await?;
+    let value: Value = decode_json(&body, operation)?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid_response(operation))
+}
+
+async fn write_power_levels(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    content: &Map<String, Value>,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
+    let endpoint = endpoint_with_segments(
+        &provisioner.homeserver_url,
+        &[
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id.as_str(),
+            "state",
+            "m.room.power_levels",
+            "",
+        ],
+        operation,
+    )?;
+    let response = provisioner
+        .client
+        .put(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .json(content)
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    expect_empty_success(response, operation).await
+}
+
+fn apply_active_private_policy(
+    content: &mut Map<String, Value>,
+    speaking_change: Option<(&MatrixUserId, bool)>,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
+    set_private_policy_thresholds(content, PRIVATE_SPEAKER_POWER_LEVEL);
+    let Some((user_id, allowed)) = speaking_change else {
+        return Ok(());
+    };
+    let users = content
+        .entry("users".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| invalid_response(operation))?;
+    users.insert(
+        user_id.as_str().to_owned(),
+        Value::from(if allowed {
+            PRIVATE_SPEAKER_POWER_LEVEL
+        } else {
+            PRIVATE_VIEWER_POWER_LEVEL
+        }),
+    );
+    Ok(())
+}
+
+fn apply_archived_private_policy(content: &mut Map<String, Value>) {
+    set_private_policy_thresholds(content, PRIVATE_ADMIN_POWER_LEVEL);
+}
+
+fn set_private_policy_thresholds(content: &mut Map<String, Value>, events_default: i64) {
+    for (key, value) in [
+        ("events_default", events_default),
+        ("state_default", PRIVATE_ADMIN_POWER_LEVEL),
+        ("users_default", PRIVATE_VIEWER_POWER_LEVEL),
+        ("invite", PRIVATE_ADMIN_POWER_LEVEL),
+        ("kick", PRIVATE_ADMIN_POWER_LEVEL),
+        ("ban", PRIVATE_ADMIN_POWER_LEVEL),
+        ("redact", PRIVATE_ADMIN_POWER_LEVEL),
+    ] {
+        content.insert(key.to_owned(), Value::from(value));
+    }
+}
+
+fn decode_membership(
+    membership: &str,
+    operation: MatrixOperation,
+) -> MatrixResult<PrivateMatrixMembership> {
+    match membership {
+        "invite" => Ok(PrivateMatrixMembership::Invited),
+        "join" => Ok(PrivateMatrixMembership::Joined),
+        "leave" => Ok(PrivateMatrixMembership::Left),
+        "ban" => Ok(PrivateMatrixMembership::Banned),
+        "knock" => Ok(PrivateMatrixMembership::Knocked),
+        _ => Err(invalid_response(operation)),
+    }
 }
 
 async fn expect_empty_success(
@@ -312,7 +635,8 @@ mod tests {
 
     use agent_room_application::ports::{
         MatrixCreateRoom, MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-        MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, RoomMembershipGateway,
+        MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
+        PrivateMatrixMembership, PrivateRoomMatrixGateway, RoomMembershipGateway,
         RoomProvisioningGateway, SecretValue,
     };
     use agent_room_domain::rooms::MatrixRoomReference;
@@ -330,7 +654,10 @@ mod tests {
     use super::super::{
         MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
     };
-    use super::CreateRoomRequest;
+    use super::{
+        CreateRoomRequest, apply_active_private_policy, apply_archived_private_policy,
+        decode_membership,
+    };
 
     #[tokio::test]
     async fn 受管_agent_通过身份断言加入和退出房间() {
@@ -393,6 +720,117 @@ mod tests {
             0
         );
         assert!(body["power_level_content_override"]["events"]["m.room.power_levels"].is_null());
+    }
+
+    #[test]
+    fn 私人房间建房请求使用查看者与发言者分离的硬边界() {
+        let request = MatrixCreateRoom::new(
+            Some("Private project".to_owned()),
+            None,
+            MatrixRoomVisibility::Private,
+            MatrixRoomPreset::PrivateChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效")
+        .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+
+        let body =
+            serde_json::to_value(CreateRoomRequest::from(&request)).expect("建房请求可序列化");
+        let levels = &body["power_level_content_override"];
+
+        assert_eq!(levels["users_default"], 0);
+        assert_eq!(levels["events_default"], 10);
+        assert_eq!(levels["state_default"], 100);
+        assert_eq!(levels["invite"], 100);
+        assert_eq!(levels["kick"], 100);
+        assert_eq!(levels["ban"], 100);
+        assert_eq!(levels["redact"], 100);
+    }
+
+    #[test]
+    fn 发言与归档策略保留未知_matrix_字段且不会授予管理权() {
+        let user = MatrixUserId::new("@member:matrix.test").expect("用户标识有效");
+        let mut content = json!({
+            "users": { "@service:matrix.test": 100 },
+            "notifications": { "room": 50 },
+            "custom_extension": { "keep": true }
+        })
+        .as_object()
+        .expect("对象有效")
+        .clone();
+
+        apply_active_private_policy(
+            &mut content,
+            Some((&user, true)),
+            MatrixOperation::UpdatePowerLevels,
+        )
+        .expect("发言策略有效");
+        assert_eq!(content["users"][user.as_str()], 10);
+        assert_eq!(content["users"]["@service:matrix.test"], 100);
+        assert_eq!(content["custom_extension"]["keep"], true);
+        assert_eq!(content["events_default"], 10);
+        assert_eq!(content["invite"], 100);
+
+        apply_archived_private_policy(&mut content);
+        assert_eq!(content["events_default"], 100);
+        assert_eq!(content["custom_extension"]["keep"], true);
+    }
+
+    #[test]
+    fn matrix_成员状态只接受协议定义值() {
+        assert_eq!(
+            decode_membership("join", MatrixOperation::InspectMembership).expect("状态有效"),
+            PrivateMatrixMembership::Joined
+        );
+        assert_eq!(
+            decode_membership("ban", MatrixOperation::InspectMembership).expect("状态有效"),
+            PrivateMatrixMembership::Banned
+        );
+        assert!(decode_membership("owner", MatrixOperation::InspectMembership).is_err());
+    }
+
+    #[tokio::test]
+    async fn 私人房间成员与权限操作走真实_matrix_端点() {
+        let server = PrivateRoomTestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let room = MatrixRoomId::new("!private:matrix.agent-room.localhost").expect("房间有效");
+        let member = MatrixUserId::new("@member:matrix.agent-room.localhost").expect("成员有效");
+
+        assert_eq!(
+            provisioner
+                .membership(&room, &member)
+                .await
+                .expect("可读成员状态"),
+            Some(PrivateMatrixMembership::Joined)
+        );
+        provisioner.invite(&room, &member).await.expect("可邀请");
+        provisioner
+            .set_speaking(&room, &member, true)
+            .await
+            .expect("可授予发言硬边界");
+        provisioner.kick(&room, &member).await.expect("可移除");
+        provisioner.ban(&room, &member).await.expect("可封禁");
+        provisioner.archive(&room).await.expect("可归档");
+
+        assert_eq!(
+            server.actions().await,
+            vec![
+                "membership",
+                "invite",
+                "read-power",
+                "write-power",
+                "kick",
+                "ban",
+                "read-power",
+                "write-power"
+            ]
+        );
+        let writes = server.power_level_writes().await;
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0]["users"][member.as_str()], 10);
+        assert_eq!(writes[0]["custom_extension"]["keep"], true);
+        assert_eq!(writes[1]["events_default"], 100);
     }
 
     #[tokio::test]
@@ -500,6 +938,68 @@ mod tests {
         }
     }
 
+    struct PrivateRoomTestServer {
+        url: String,
+        state: Arc<PrivateRoomTestState>,
+        task: JoinHandle<()>,
+    }
+
+    #[derive(Default)]
+    struct PrivateRoomTestState {
+        actions: tokio::sync::Mutex<Vec<&'static str>>,
+        power_level_writes: tokio::sync::Mutex<Vec<Value>>,
+    }
+
+    impl PrivateRoomTestServer {
+        async fn start() -> Self {
+            let state = Arc::new(PrivateRoomTestState::default());
+            let app = Router::new()
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/state/m.room.member/{user}",
+                    get(private_membership),
+                )
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/state/m.room.power_levels",
+                    get(read_private_power_levels),
+                )
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/state/m.room.power_levels/",
+                    put(write_private_power_levels),
+                )
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/{action}",
+                    post(private_membership_action),
+                )
+                .with_state(state.clone());
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("测试端口可用");
+            let address = listener.local_addr().expect("测试地址有效");
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app).await.expect("测试服务可运行");
+            });
+            Self {
+                url: format!("http://{address}"),
+                state,
+                task,
+            }
+        }
+
+        async fn actions(&self) -> Vec<&'static str> {
+            self.state.actions.lock().await.clone()
+        }
+
+        async fn power_level_writes(&self) -> Vec<Value> {
+            self.state.power_level_writes.lock().await.clone()
+        }
+    }
+
+    impl Drop for PrivateRoomTestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
     fn assert_authentication(headers: &HeaderMap) {
         assert_eq!(
             headers
@@ -573,5 +1073,77 @@ mod tests {
             .await
             .push(MatrixUserId::new(query.user_id).expect("断言用户有效"));
         Json(json!({}))
+    }
+
+    async fn private_membership(
+        axum::extract::State(state): axum::extract::State<Arc<PrivateRoomTestState>>,
+        Path((room, user)): Path<(String, String)>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(room, "!private:matrix.agent-room.localhost");
+        assert_eq!(user, "@member:matrix.agent-room.localhost");
+        state.actions.lock().await.push("membership");
+        Json(json!({ "membership": "join" }))
+    }
+
+    async fn private_membership_action(
+        axum::extract::State(state): axum::extract::State<Arc<PrivateRoomTestState>>,
+        Path((room, action)): Path<(String, String)>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(room, "!private:matrix.agent-room.localhost");
+        assert_eq!(body["user_id"], "@member:matrix.agent-room.localhost");
+        let action = match action.as_str() {
+            "invite" => "invite",
+            "kick" => {
+                assert!(
+                    body["reason"]
+                        .as_str()
+                        .is_some_and(|reason| !reason.is_empty())
+                );
+                "kick"
+            }
+            "ban" => {
+                assert!(
+                    body["reason"]
+                        .as_str()
+                        .is_some_and(|reason| !reason.is_empty())
+                );
+                "ban"
+            }
+            unexpected => panic!("未知私人房间动作 {unexpected}"),
+        };
+        state.actions.lock().await.push(action);
+        Json(json!({}))
+    }
+
+    async fn read_private_power_levels(
+        axum::extract::State(state): axum::extract::State<Arc<PrivateRoomTestState>>,
+        Path(room): Path<String>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(room, "!private:matrix.agent-room.localhost");
+        state.actions.lock().await.push("read-power");
+        Json(json!({
+            "users": { "@service:matrix.agent-room.localhost": 100 },
+            "custom_extension": { "keep": true }
+        }))
+    }
+
+    async fn write_private_power_levels(
+        axum::extract::State(state): axum::extract::State<Arc<PrivateRoomTestState>>,
+        Path(room): Path<String>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(room, "!private:matrix.agent-room.localhost");
+        state.actions.lock().await.push("write-power");
+        state.power_level_writes.lock().await.push(body);
+        Json(json!({ "event_id": "$power-level" }))
     }
 }

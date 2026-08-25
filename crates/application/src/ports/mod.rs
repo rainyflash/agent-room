@@ -69,10 +69,10 @@ pub use matrix::{
     MatrixLogin, MatrixOperation, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind,
     MatrixRecoveryAction, MatrixResult, MatrixRetryPolicy, MatrixRoomAliasLocalpart,
     MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
-    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey,
-    MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
-    MatrixUserId, MatrixValueError,
+    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
+    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+    MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{
@@ -87,12 +87,13 @@ pub use projections::{
 };
 pub use rooms::{
     AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory,
-    PrivateRoomSnapshot, PrivateRoomStore, PublicLobbyDirectoryEntry, RoomAllocationEvidence,
-    RoomAllocationMode, RoomAllocationStore, RoomDirectory, RoomDirectoryQuery,
-    RoomMembershipGateway, RoomProvisioningClaim, RoomProvisioningClaimOutcome,
-    RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
-    RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget, RoomReservationClaim,
-    RoomReservationOutcome,
+    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
+    PrivateRoomStore, PublicLobbyDirectoryEntry, RoomAllocationEvidence, RoomAllocationMode,
+    RoomAllocationStore, RoomDirectory, RoomDirectoryQuery, RoomMembershipGateway,
+    RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
+    RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
+    RoomProvisioningTarget, RoomReservationClaim, RoomReservationOutcome,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

@@ -1,6 +1,6 @@
 use agent_room_domain::{
     DomainError, DomainResult,
-    ids::RoomCatalogId,
+    ids::{PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
     rooms::{
         MatrixRoomReference, RoomCatalog, RoomCatalogKind, RoomCatalogStatus, RoomInstance,
@@ -10,7 +10,117 @@ use agent_room_domain::{
     version::AggregateVersion,
 };
 
-use crate::{persistence::RepositoryResult, ports::PortFuture};
+use crate::{
+    persistence::RepositoryResult,
+    ports::{
+        MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
+        MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
+    },
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivateMatrixMembership {
+    Invited,
+    Joined,
+    Left,
+    Banned,
+    Knocked,
+}
+
+impl PrivateMatrixMembership {
+    pub const fn is_joined(self) -> bool {
+        matches!(self, Self::Joined)
+    }
+}
+
+/// 从受信任账户投影解析 Matrix 用户，拒绝接受客户端自报的 Matrix 身份。
+pub trait PrivateRoomPrincipalDirectory: Send + Sync {
+    fn matrix_user_id(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
+}
+
+/// 私人房间在 Matrix 上的最小硬边界能力。
+///
+/// 邀请、管理和自动发送仍由产品权限表裁决；实现不得把这些能力粗暴映射为 Matrix 管理员。
+pub trait PrivateRoomMatrixGateway: Send + Sync {
+    fn membership<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<Option<PrivateMatrixMembership>>>;
+
+    fn invite<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn kick<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn ban<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn set_speaking<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+        allowed: bool,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
+    fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateMatrixRoomCreation {
+    request: MatrixCreateRoom,
+    alias: MatrixRoomAliasLocalpart,
+}
+
+impl PrivateMatrixRoomCreation {
+    /// 固化邀请制、不可公开列出且由服务端治理的 Matrix 建房请求。
+    ///
+    /// # Errors
+    ///
+    /// 请求不满足私人房间硬边界时返回错误。
+    pub fn new(request: MatrixCreateRoom, alias: MatrixRoomAliasLocalpart) -> DomainResult<Self> {
+        let valid = request.visibility() == MatrixRoomVisibility::Private
+            && request.preset() == MatrixRoomPreset::PrivateChat
+            && request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate
+            && request.alias_localpart() == Some(&alias);
+        if !valid {
+            return Err(invariant(
+                "private_matrix_room_creation",
+                "私人 Matrix 房间必须隐藏、邀请制、受管且带稳定别名",
+            ));
+        }
+        Ok(Self { request, alias })
+    }
+
+    pub const fn request(&self) -> &MatrixCreateRoom {
+        &self.request
+    }
+
+    pub const fn alias(&self) -> &MatrixRoomAliasLocalpart {
+        &self.alias
+    }
+}
+
+/// 创建私人 Matrix Room，并在未知提交或别名冲突时按稳定别名对账。
+pub trait PrivateRoomMatrixProvisioner: Send + Sync {
+    fn create<'a>(
+        &'a self,
+        creation: &'a PrivateMatrixRoomCreation,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>>;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateRoomSnapshot {
@@ -129,7 +239,41 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::PrivateRoomSnapshot;
+    use crate::ports::{
+        MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomPowerProfile, MatrixRoomPreset,
+        MatrixRoomVisibility,
+    };
+
+    use super::{PrivateMatrixRoomCreation, PrivateRoomSnapshot};
+
+    #[test]
+    fn 私人_matrix_建房约束拒绝公开或非受管请求() {
+        let alias = MatrixRoomAliasLocalpart::new("agent-room-private-1").expect("别名有效");
+        let public = MatrixCreateRoom::new(
+            Some("项目室".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("基础请求有效")
+        .with_alias_localpart(alias.clone());
+        assert!(PrivateMatrixRoomCreation::new(public, alias.clone()).is_err());
+
+        let private = MatrixCreateRoom::new(
+            Some("项目室".to_owned()),
+            None,
+            MatrixRoomVisibility::Private,
+            MatrixRoomPreset::PrivateChat,
+            false,
+            Vec::new(),
+        )
+        .expect("基础请求有效")
+        .with_alias_localpart(alias.clone())
+        .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+        assert!(PrivateMatrixRoomCreation::new(private, alias).is_ok());
+    }
 
     #[test]
     fn 快照拒绝把不同房间的事实拼接到一起() {

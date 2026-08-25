@@ -440,7 +440,6 @@ fn ensure_creatable(
         || snapshot.catalog().status() != RoomCatalogStatus::Active
         || snapshot.instance().state() != RoomInstanceState::Active
         || snapshot.room().status() != PrivateRoomLifecycleStatus::Active
-        || snapshot.room().version() != AggregateVersion::INITIAL
     {
         return Err(constraint(operation));
     }

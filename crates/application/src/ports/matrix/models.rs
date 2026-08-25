@@ -316,6 +316,16 @@ pub enum MatrixRoomKind {
     Space,
 }
 
+/// Matrix 建房时采用的协议权限基线。
+///
+/// 产品权限仍由 Agent Room 自己持久化；该配置只负责把 Matrix 收紧为不可绕过的硬边界。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatrixRoomPowerProfile {
+    #[default]
+    Standard,
+    ManagedPrivate,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixCreateRoom {
     name: Option<String>,
@@ -325,6 +335,7 @@ pub struct MatrixCreateRoom {
     direct: bool,
     invite: Vec<MatrixUserId>,
     kind: MatrixRoomKind,
+    power_profile: MatrixRoomPowerProfile,
     alias_localpart: Option<MatrixRoomAliasLocalpart>,
     member_writable_state_event_types: Vec<MatrixEventType>,
 }
@@ -363,6 +374,7 @@ impl MatrixCreateRoom {
             direct,
             invite,
             kind: MatrixRoomKind::Conversation,
+            power_profile: MatrixRoomPowerProfile::Standard,
             alias_localpart: None,
             member_writable_state_event_types: Vec::new(),
         })
@@ -371,6 +383,12 @@ impl MatrixCreateRoom {
     #[must_use]
     pub fn with_kind(mut self, kind: MatrixRoomKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub fn with_power_profile(mut self, power_profile: MatrixRoomPowerProfile) -> Self {
+        self.power_profile = power_profile;
         self
     }
 
@@ -415,6 +433,10 @@ impl MatrixCreateRoom {
 
     pub const fn kind(&self) -> MatrixRoomKind {
         self.kind
+    }
+
+    pub const fn power_profile(&self) -> MatrixRoomPowerProfile {
+        self.power_profile
     }
 
     pub const fn alias_localpart(&self) -> Option<&MatrixRoomAliasLocalpart> {
@@ -908,9 +930,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MatrixCreateRoom, MatrixEvent, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
-        MatrixRoomVisibility, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
-        MatrixTimelineEvent,
+        MatrixCreateRoom, MatrixEvent, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync,
+        MatrixRoomSyncKind, MatrixRoomVisibility, MatrixStateEvent, MatrixSyncBatch,
+        MatrixSyncRequest, MatrixTimelineEvent,
     };
 
     #[test]
@@ -930,6 +952,28 @@ mod tests {
         .with_member_writable_state_event_type(event_type.clone());
 
         assert_eq!(request.member_writable_state_event_types(), &[event_type]);
+    }
+
+    #[test]
+    fn 建房默认不会意外启用私人房间权限基线() {
+        let standard = MatrixCreateRoom::new(
+            Some("Lobby".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效");
+        let private = standard
+            .clone()
+            .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+
+        assert_eq!(standard.power_profile(), MatrixRoomPowerProfile::Standard);
+        assert_eq!(
+            private.power_profile(),
+            MatrixRoomPowerProfile::ManagedPrivate
+        );
     }
     use crate::ports::{
         MatrixEventId, MatrixEventType, MatrixRoomId, MatrixStateKey, MatrixSyncToken,
