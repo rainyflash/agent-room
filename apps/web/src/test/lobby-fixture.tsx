@@ -1,6 +1,7 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
@@ -34,6 +35,7 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
 const room = testRoom(200);
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let fixtureRoot: Root | null = null;
 const lobby: LobbyGateway = {
   read: () => ok(room),
@@ -214,27 +216,29 @@ function LobbyFixture() {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   return (
     <I18nextProvider i18n={i18n}>
-      <AppServicesProvider services={services}>
-        <LobbyPage
-          catalogId="public-builders"
-          onEnterRoom={() => undefined}
-          onExitRoom={() => undefined}
-          onSelectedAgentChange={setSelectedAgentId}
-          onSelectedMessageChange={setSelectedMessageId}
-          principal={{
-            authenticatedAtUnixMs: Date.now(),
-            displayName: 'Fixture operator',
-            expiresAtUnixMs: Date.now() + 60_000,
-            locale: 'en',
-            matrixUserId: '@fixture:matrix.test',
-            principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-            recentlyAuthenticated: true,
-          }}
-          roomId={room.roomId}
-          selectedAgentId={selectedAgentId}
-          selectedMessageId={selectedMessageId}
-        />
-      </AppServicesProvider>
+      <QueryClientProvider client={queryClient}>
+        <AppServicesProvider services={services}>
+          <LobbyPage
+            catalogId="public-builders"
+            onEnterRoom={() => undefined}
+            onExitRoom={() => undefined}
+            onSelectedAgentChange={setSelectedAgentId}
+            onSelectedMessageChange={setSelectedMessageId}
+            principal={{
+              authenticatedAtUnixMs: Date.now(),
+              displayName: 'Fixture operator',
+              expiresAtUnixMs: Date.now() + 60_000,
+              locale: 'en',
+              matrixUserId: '@fixture:matrix.test',
+              principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+              recentlyAuthenticated: true,
+            }}
+            roomId={room.roomId}
+            selectedAgentId={selectedAgentId}
+            selectedMessageId={selectedMessageId}
+          />
+        </AppServicesProvider>
+      </QueryClientProvider>
     </I18nextProvider>
   );
 }

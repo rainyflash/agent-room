@@ -120,6 +120,7 @@ export function PrivateRoomHub({
   return (
     <>
       <Button
+        aria-label={t('privateRooms.launcher')}
         className="private-room-launcher"
         icon={<LockKeyhole aria-hidden="true" />}
         onClick={openHub}
