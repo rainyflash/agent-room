@@ -1,4 +1,4 @@
-use std::{env, fmt, net::SocketAddr, time::Duration};
+use std::{env, fmt, fs, net::SocketAddr, time::Duration};
 
 use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
 use thiserror::Error;
@@ -30,13 +30,13 @@ const DEFAULT_CONTENT_CLEANUP_BATCH: u16 = 100;
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
-    fn read(&self, name: &'static str) -> Option<String>;
+    fn read(&self, name: &str) -> Option<String>;
 }
 
 struct ProcessEnvironment;
 
 impl EnvironmentSource for ProcessEnvironment {
-    fn read(&self, name: &'static str) -> Option<String> {
+    fn read(&self, name: &str) -> Option<String> {
         env::var(name).ok()
     }
 }
@@ -449,11 +449,34 @@ fn read_required_secret(
     source: &impl EnvironmentSource,
     name: &'static str,
 ) -> Result<String, ConfigError> {
-    let value = source.read(name).ok_or(ConfigError::Missing { name })?;
+    let direct = source.read(name);
+    let file_name = format!("{name}_FILE");
+    let file = source
+        .read(&file_name)
+        .filter(|value| !value.trim().is_empty());
+    if direct.is_some() && file.is_some() {
+        return Err(ConfigError::invalid(
+            name,
+            "不得同时设置值与对应的 _FILE 配置",
+        ));
+    }
+
+    let value = match (direct, file) {
+        (Some(value), None) => value,
+        (None, Some(path)) => read_secret_file(name, &path)?,
+        (None, None) => return Err(ConfigError::Missing { name }),
+        (Some(_), Some(_)) => unreachable!("上方已拒绝歧义 Secret 来源"),
+    };
     if value.trim().is_empty() || value.len() > MAX_TEXT_LENGTH || value.contains('\0') {
         return Err(ConfigError::invalid(name, "必须是非空且长度受限的值"));
     }
     Ok(value)
+}
+
+fn read_secret_file(name: &'static str, path: &str) -> Result<String, ConfigError> {
+    validate_text(name, path)?;
+    let value = fs::read_to_string(path).map_err(|_| ConfigError::SecretFileUnreadable { name })?;
+    Ok(value.trim_end_matches(['\r', '\n']).to_owned())
 }
 
 fn read_required_u16(
@@ -618,6 +641,8 @@ pub(crate) enum ConfigError {
         name: &'static str,
         reason: &'static str,
     },
+    #[error("无法读取配置 {name} 指向的 Secret 文件")]
+    SecretFileUnreadable { name: &'static str },
 }
 
 impl ConfigError {
@@ -636,7 +661,7 @@ mod tests {
     struct MapEnvironment(BTreeMap<&'static str, String>);
 
     impl EnvironmentSource for MapEnvironment {
-        fn read(&self, name: &'static str) -> Option<String> {
+        fn read(&self, name: &str) -> Option<String> {
             self.0.get(name).cloned()
         }
     }
@@ -792,6 +817,43 @@ mod tests {
             ControlPlaneConfig::from_source(&environment),
             Err(ConfigError::Invalid {
                 name: "AGENT_ROOM_CONTENT_DOWNLOAD_MAX_BYTES",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 生产_secret_可以从只读文件加载() {
+        let directory = tempfile::tempdir().expect("可创建临时目录");
+        let path = directory.path().join("database-password");
+        std::fs::write(&path, "file-backed-secret\n").expect("可写入测试 Secret");
+        let mut environment = valid_environment();
+        environment.0.remove("AGENT_ROOM_DB_RUNTIME_PASSWORD");
+        environment.0.insert(
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD_FILE",
+            path.to_string_lossy().into_owned(),
+        );
+
+        let config = ControlPlaneConfig::from_source(&environment).expect("文件 Secret 有效");
+
+        assert_eq!(
+            config.dependencies.database.password.expose(),
+            "file-backed-secret"
+        );
+    }
+
+    #[test]
+    fn 同时设置_secret_值和文件时立即失败() {
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_DB_RUNTIME_PASSWORD_FILE",
+            "C:/run/secrets/database-password".to_owned(),
+        );
+
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Invalid {
+                name: "AGENT_ROOM_DB_RUNTIME_PASSWORD",
                 ..
             })
         ));
