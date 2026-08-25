@@ -1,25 +1,20 @@
-import { EventType, Preset, Visibility, type MatrixClient } from 'matrix-js-sdk';
+import { EventType, MsgType, Preset, Visibility, type MatrixClient } from 'matrix-js-sdk';
+import type { RoomMessageEventContent } from 'matrix-js-sdk/lib/@types/events.js';
 import { z } from 'zod';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
 const driverProperty = '__agentRoomVerticalSecurityDriver' as const;
-const recoverySampleEventType = 'org.agentroom.test.recovery_sample.v1';
 const megolmAlgorithm = 'm.megolm.v1.aes-sha2';
+const recoverySampleBody = 'Agent Room 加密恢复验证';
 const waitStepMilliseconds = 250;
 const roomPreparationTimeoutMilliseconds = 20_000;
 const keyBackupTimeoutMilliseconds = 30_000;
 
-declare module 'matrix-js-sdk' {
-  interface TimelineEvents {
-    [recoverySampleEventType]: {
-      readonly nonce: string;
-    };
-  }
-}
-
 const recoverySampleContentSchema = z
   .object({
+    body: z.literal(recoverySampleBody),
+    msgtype: z.literal(MsgType.Text),
     nonce: z.uuid(),
   })
   .strict();
@@ -35,21 +30,20 @@ export type VerticalSecurityDriver = {
   decryptRecoverySample(sample: VerticalSecuritySample): Promise<void>;
 };
 
-declare global {
-  interface Window {
-    __agentRoomVerticalSecurityDriver?: VerticalSecurityDriver;
-  }
-}
+export type VerticalSecurityWindow = Window & {
+  readonly __agentRoomVerticalSecurityDriver?: VerticalSecurityDriver;
+};
 
 export function installVerticalSecurityDriver(clients: MatrixClientSource): () => void {
   const driver = createVerticalSecurityDriver(clients);
-  Object.defineProperty(window, driverProperty, {
+  const testWindow = window as VerticalSecurityWindow;
+  Object.defineProperty(testWindow, driverProperty, {
     configurable: true,
     value: driver,
   });
   return () => {
-    if (window[driverProperty] === driver) {
-      Reflect.deleteProperty(window, driverProperty);
+    if (testWindow[driverProperty] === driver) {
+      Reflect.deleteProperty(testWindow, driverProperty);
     }
   };
 }
@@ -81,7 +75,7 @@ async function createRecoverySample(client: MatrixClient): Promise<VerticalSecur
         type: EventType.RoomEncryption,
       },
     ],
-    name: 'Agent Room encrypted recovery verification',
+    name: 'Agent Room 加密恢复验证',
     preset: Preset.PrivateChat,
     visibility: Visibility.Private,
   });
@@ -94,7 +88,12 @@ async function createRecoverySample(client: MatrixClient): Promise<VerticalSecur
   );
 
   const nonce = cryptoRandomUuid();
-  const sent = await client.sendEvent(created.room_id, recoverySampleEventType, { nonce });
+  const content: RoomMessageEventContent & { readonly nonce: string } = {
+    body: recoverySampleBody,
+    msgtype: MsgType.Text,
+    nonce,
+  };
+  const sent = await client.sendEvent(created.room_id, EventType.RoomMessage, content);
   const rawEvent = await client.fetchRoomEvent(created.room_id, sent.event_id);
   if (rawEvent.type !== EventType.RoomMessageEncrypted) {
     throw new Error('恢复样本被明文写入 Matrix，纵向验收立即失败。');
@@ -123,7 +122,8 @@ async function decryptRecoverySample(
   }
   const event = client.getEventMapper({ decrypt: false, preventReEmit: true })(rawEvent);
   await client.decryptEventIfNeeded(event);
-  if (event.isDecryptionFailure() || event.getType() !== recoverySampleEventType) {
+  const eventType = z.literal(EventType.RoomMessage).safeParse(event.getType());
+  if (event.isDecryptionFailure() || !eventType.success) {
     throw new Error('新设备无法使用恢复后的房间密钥解密验证事件。');
   }
   const content = recoverySampleContentSchema.safeParse(event.getContent());

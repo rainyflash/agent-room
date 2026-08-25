@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { connectLiveSession } from '../e2e-live/support/live-session';
-import type { VerticalSecuritySample } from '../src/test/vertical-security-driver';
+import type {
+  VerticalSecuritySample,
+  VerticalSecurityWindow,
+} from '../src/test/vertical-security-driver';
 
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
@@ -137,7 +140,7 @@ async function recoverNewDevice(page: Page, passphrase: string): Promise<void> {
 async function createRecoverySample(page: Page): Promise<VerticalSecuritySample> {
   await waitForVerticalSecurityDriver(page);
   return await page.evaluate(async () => {
-    const driver = window.__agentRoomVerticalSecurityDriver;
+    const driver = (window as VerticalSecurityWindow).__agentRoomVerticalSecurityDriver;
     if (driver === undefined) {
       throw new Error('纵向安全驱动没有安装。');
     }
@@ -148,7 +151,7 @@ async function createRecoverySample(page: Page): Promise<VerticalSecuritySample>
 async function decryptRecoverySample(page: Page, sample: VerticalSecuritySample): Promise<void> {
   await waitForVerticalSecurityDriver(page);
   await page.evaluate(async (candidate) => {
-    const driver = window.__agentRoomVerticalSecurityDriver;
+    const driver = (window as VerticalSecurityWindow).__agentRoomVerticalSecurityDriver;
     if (driver === undefined) {
       throw new Error('纵向安全驱动没有安装。');
     }
@@ -159,7 +162,10 @@ async function decryptRecoverySample(page: Page, sample: VerticalSecuritySample)
 async function waitForVerticalSecurityDriver(page: Page): Promise<void> {
   await expect
     .poll(
-      async () => await page.evaluate(() => window.__agentRoomVerticalSecurityDriver !== undefined),
+      async () =>
+        await page.evaluate(
+          () => (window as VerticalSecurityWindow).__agentRoomVerticalSecurityDriver !== undefined,
+        ),
       { timeout: 20_000 },
     )
     .toBe(true);
