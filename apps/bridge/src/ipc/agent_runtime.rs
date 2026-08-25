@@ -21,6 +21,7 @@ use agent_room_bridge_core::{
         OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
         ProjectedMessagePreview, SendMessageRequest,
     },
+    presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
     status::{
         HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
         StatusPublicationOutcome,
@@ -28,14 +29,15 @@ use agent_room_bridge_core::{
 };
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcConsumedHandoff,
-    IpcContentReference, IpcDeclinedHandoff, IpcErrorCategory, IpcHandoffPermission,
-    IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
-    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcOpenContentRequest, IpcOpenedContent, IpcPublishStatusRequest, IpcPublishedStatus,
-    IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState,
-    IpcWorkStatus,
+    IpcContentReference, IpcDeclinedHandoff, IpcErrorCategory, IpcGetPresenceRequest,
+    IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus,
+    IpcHandoffSubmission, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance,
+    IpcMessageSensitivity, IpcOpenContentRequest, IpcOpenedContent, IpcPresenceSummary,
+    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
 };
 use agent_room_domain::{
+    agent_status::AgentWorkStatus,
     content::{ContentByteLength, ContentEncryptionMode, ContentMediaType},
     handoff::{
         ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffPermission,
@@ -70,6 +72,7 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     publication: Option<Arc<MessagePublicationService>>,
     handoff_delivery: Option<Arc<dyn AgentHandoffDeliveryRuntime>>,
     handoffs: Option<Arc<dyn AgentHandoffRuntime>>,
+    presence: Option<Arc<dyn PresenceProjectionRepository>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -91,6 +94,7 @@ impl BridgeAgentRuntimeSnapshot {
             publication: None,
             handoff_delivery: None,
             handoffs: None,
+            presence: None,
         }
     }
 
@@ -117,6 +121,11 @@ impl BridgeAgentRuntimeSnapshot {
         handoff_delivery: Arc<dyn AgentHandoffDeliveryRuntime>,
     ) -> Self {
         self.handoff_delivery = Some(handoff_delivery);
+        self
+    }
+
+    pub(crate) fn with_presence(mut self, presence: Arc<dyn PresenceProjectionRepository>) -> Self {
+        self.presence = Some(presence);
         self
     }
 }
@@ -241,6 +250,43 @@ impl AgentRuntimeIpcFacade {
             previews: page.previews().iter().map(ipc_preview).collect(),
             next_cursor: page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
         })
+    }
+
+    pub(super) async fn get_presence(
+        &self,
+        request: IpcGetPresenceRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
+        let agent_ids = request
+            .agent_ids
+            .iter()
+            .map(|value| {
+                parse_uuid_v7(value, "bridge.ipc.agent_id_invalid").map(AgentId::from_uuid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let query = PresenceQuery::new(room_id, agent_ids, self.clock.now())
+            .map_err(|_| invalid_request("bridge.ipc.presence_targets_invalid"))?;
+        let entries = runtime
+            .presence
+            .ok_or_else(agent_runtime_unavailable)?
+            .list(&query)
+            .await
+            .map_err(map_presence_projection_failure)?
+            .iter()
+            .map(|observation| {
+                let presence = observation.presence();
+                IpcPresenceSummary {
+                    room_id: presence.room_id().as_str().to_owned(),
+                    agent: ipc_agent(presence.identity()),
+                    instance_id: presence.identity().agent_instance_id().to_string(),
+                    status: ipc_work_status(observation.status()),
+                    observed_at_unix_ms: observation.observed_at().value(),
+                    lease_expires_at_unix_ms: presence.lease_expires_at().value(),
+                }
+            })
+            .collect();
+        Ok(IpcResponse::Presence { entries })
     }
 
     pub(super) async fn publish_status(
@@ -668,6 +714,34 @@ fn ipc_agent(identity: &BridgeAgentIdentity) -> IpcAgentSummary {
         display_name: identity.display_name().to_owned(),
         matrix_user_id: identity.matrix_user_id().as_str().to_owned(),
         avatar_url: identity.avatar_url().map(str::to_owned),
+    }
+}
+
+const fn ipc_work_status(status: AgentWorkStatus) -> IpcWorkStatus {
+    match status {
+        AgentWorkStatus::Offline => IpcWorkStatus::Offline,
+        AgentWorkStatus::Idle => IpcWorkStatus::Idle,
+        AgentWorkStatus::Working => IpcWorkStatus::Working,
+        AgentWorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
+        AgentWorkStatus::Blocked => IpcWorkStatus::Blocked,
+        AgentWorkStatus::Completed => IpcWorkStatus::Completed,
+    }
+}
+
+const fn map_presence_projection_failure(
+    failure: agent_room_bridge_core::presence::PresenceProjectionFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        PresenceProjectionFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.presence_projection_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        PresenceProjectionFailureKind::Corrupt => BridgeIpcDispatchFailure::new(
+            "bridge.presence_projection_corrupt",
+            IpcErrorCategory::Internal,
+            false,
+        ),
     }
 }
 

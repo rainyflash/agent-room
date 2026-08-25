@@ -7,6 +7,7 @@ pub mod ipc;
 pub mod lobby_session;
 pub mod messages;
 pub mod ports;
+pub mod presence;
 pub mod reconnect;
 pub mod session;
 pub mod status;

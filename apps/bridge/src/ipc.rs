@@ -124,7 +124,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::DeclineHandoff(request) => {
                     self.agent_runtime()?.decline_handoff(request).await
                 }
-                IpcMethod::GetPresence(_) => Err(agent_runtime_unavailable()),
+                IpcMethod::GetPresence(request) => {
+                    self.agent_runtime()?.get_presence(request).await
+                }
             }
         })
     }
@@ -689,6 +691,11 @@ mod tests {
             AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
             StatusEventIdentifierFactory,
         },
+        presence::{
+            PresenceObservation, PresenceProjectionBatch, PresenceProjectionFailure,
+            PresenceProjectionRepository, PresenceQuery, ProjectedAgentPresence,
+            ProjectedAgentPresenceFields,
+        },
         status::{
             AgentStatusLeasePolicy, AgentStatusPublicationDependencies,
             AgentStatusPublicationService, AgentStatusRoomTarget, HostAgentState,
@@ -696,15 +703,15 @@ mod tests {
     };
     use agent_room_bridge_ipc::{
         IpcApproveHandoffRequest, IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame,
-        IpcFrameCodec, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
-        IpcHandoffStatus, IpcHandoffSubmission, IpcMessageProvenance, IpcMessageSensitivity,
-        IpcMethod, IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName,
-        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcVersion, IpcWorkStatus,
-        create_challenge_proof,
+        IpcFrameCodec, IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose,
+        IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission, IpcMessageProvenance,
+        IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest, IpcPublishStatusRequest,
+        IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState,
+        IpcVersion, IpcWorkStatus, create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
     use agent_room_domain::{
-        agent_status::AgentStatusVisibility,
+        agent_status::{AgentStatusVisibility, AgentWorkStatus},
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
         devices::DevicePublicSigningKey,
         handoff::{
@@ -842,6 +849,36 @@ mod tests {
         ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>
         {
             Box::pin(async { Ok(None) })
+        }
+    }
+
+    struct 固定Presence投影 {
+        presence: ProjectedAgentPresence,
+        queries: Mutex<Vec<PresenceQuery>>,
+    }
+
+    impl PresenceProjectionRepository for 固定Presence投影 {
+        fn apply<'a>(
+            &'a self,
+            _batch: &'a PresenceProjectionBatch,
+        ) -> PortFuture<'a, Result<(), PresenceProjectionFailure>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn list<'a>(
+            &'a self,
+            query: &'a PresenceQuery,
+        ) -> PortFuture<'a, Result<Vec<PresenceObservation>, PresenceProjectionFailure>> {
+            self.queries
+                .lock()
+                .expect("Presence 查询记录锁可用")
+                .push(query.clone());
+            let observation = PresenceObservation::new(
+                self.presence.clone(),
+                self.presence.status(),
+                query.observed_at(),
+            );
+            Box::pin(async move { Ok(vec![observation]) })
         }
     }
 
@@ -1054,6 +1091,63 @@ mod tests {
         let queries = previews.0.lock().expect("查询记录锁可用");
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].room_id(), &room_id);
+    }
+
+    #[tokio::test]
+    async fn presence_读取只查询当前大厅并映射已验证投影() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let presence = Arc::new(固定Presence投影 {
+            presence: ProjectedAgentPresence::from_verified_fields(ProjectedAgentPresenceFields {
+                event_id: MatrixEventId::new("$presence:matrix.test").expect("事件标识有效"),
+                room_id: room_id.clone(),
+                identity: identity.clone(),
+                status: AgentWorkStatus::Working,
+                observed_at: UtcMillis::new(900).expect("观察时间有效"),
+                lease_expires_at: UtcMillis::new(2_000).expect("租约时间有效"),
+                origin_server_timestamp: 900,
+            }),
+            queries: Mutex::new(Vec::new()),
+        });
+        let previews = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity.clone(),
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["presence.read"],
+                )
+                .with_presence(presence.clone()),
+            )),
+            previews.clone(),
+            空正文服务(previews),
+            Arc::new(固定时钟),
+        );
+
+        let response = handler
+            .dispatch(IpcMethod::GetPresence(IpcGetPresenceRequest {
+                room_id: room_id.as_str().to_owned(),
+                agent_ids: vec![identity.agent_id().to_string()],
+            }))
+            .await
+            .expect("当前大厅 Presence 可读");
+
+        assert!(matches!(
+            response,
+            IpcResponse::Presence { entries }
+                if entries.len() == 1
+                    && entries[0].room_id == room_id.as_str()
+                    && entries[0].agent.agent_id == identity.agent_id().to_string()
+                    && entries[0].status == IpcWorkStatus::Working
+                    && entries[0].observed_at_unix_ms == 1_000
+                    && entries[0].lease_expires_at_unix_ms == 2_000
+        ));
+        let queries = presence.queries.lock().expect("Presence 查询记录锁可用");
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].room_id(), &room_id);
+        assert!(queries[0].agent_ids().contains(&identity.agent_id()));
     }
 
     #[tokio::test]

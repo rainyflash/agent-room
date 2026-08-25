@@ -606,6 +606,12 @@ pub enum MatrixRoomSyncKind {
     Knocked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixRoomStatePosition {
+    BeforeTimeline,
+    AfterTimeline,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixRoomSync {
     room_id: MatrixRoomId,
@@ -614,6 +620,7 @@ pub struct MatrixRoomSync {
     previous_batch: Option<MatrixBackfillToken>,
     timeline: Vec<MatrixTimelineEvent>,
     state: Vec<MatrixTimelineEvent>,
+    state_position: MatrixRoomStatePosition,
 }
 
 impl MatrixRoomSync {
@@ -632,7 +639,14 @@ impl MatrixRoomSync {
             previous_batch,
             timeline,
             state,
+            state_position: MatrixRoomStatePosition::BeforeTimeline,
         }
+    }
+
+    #[must_use]
+    pub const fn with_state_position(mut self, position: MatrixRoomStatePosition) -> Self {
+        self.state_position = position;
+        self
     }
 
     pub const fn room_id(&self) -> &MatrixRoomId {
@@ -657,6 +671,10 @@ impl MatrixRoomSync {
 
     pub fn state(&self) -> &[MatrixTimelineEvent] {
         &self.state
+    }
+
+    pub const fn state_position(&self) -> MatrixRoomStatePosition {
+        self.state_position
     }
 }
 

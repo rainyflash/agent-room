@@ -1,8 +1,8 @@
 use agent_room_application::ports::{
     MatrixBackfillPage, MatrixBackfillToken, MatrixEventId, MatrixEventType, MatrixFailure,
-    MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
-    MatrixUserId,
+    MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomStatePosition,
+    MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
+    MatrixTransactionId, MatrixUserId,
 };
 use matrix_sdk::{
     deserialized_responses::TimelineEvent,
@@ -47,14 +47,18 @@ fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> 
         updates.joined.len() + updates.invited.len() + updates.left.len() + updates.knocked.len(),
     );
     for (room_id, update) in &updates.joined {
-        rooms.push(MatrixRoomSync::new(
-            map_room_id(room_id.as_str())?,
-            MatrixRoomSyncKind::Joined,
-            update.timeline.limited,
-            map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
-            map_timeline(&update.timeline.events)?,
-            map_state(&update.state)?,
-        ));
+        let (state_position, state) = map_state(&update.state)?;
+        rooms.push(
+            MatrixRoomSync::new(
+                map_room_id(room_id.as_str())?,
+                MatrixRoomSyncKind::Joined,
+                update.timeline.limited,
+                map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
+                map_timeline(&update.timeline.events)?,
+                state,
+            )
+            .with_state_position(state_position),
+        );
     }
     for (room_id, update) in &updates.invited {
         rooms.push(MatrixRoomSync::new(
@@ -67,14 +71,18 @@ fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> 
         ));
     }
     for (room_id, update) in &updates.left {
-        rooms.push(MatrixRoomSync::new(
-            map_room_id(room_id.as_str())?,
-            MatrixRoomSyncKind::Left,
-            update.timeline.limited,
-            map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
-            map_timeline(&update.timeline.events)?,
-            map_state(&update.state)?,
-        ));
+        let (state_position, state) = map_state(&update.state)?;
+        rooms.push(
+            MatrixRoomSync::new(
+                map_room_id(room_id.as_str())?,
+                MatrixRoomSyncKind::Left,
+                update.timeline.limited,
+                map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
+                map_timeline(&update.timeline.events)?,
+                state,
+            )
+            .with_state_position(state_position),
+        );
     }
     for (room_id, update) in &updates.knocked {
         rooms.push(MatrixRoomSync::new(
@@ -103,11 +111,16 @@ fn map_timeline_event(
     map_raw_event(event.raw(), operation)
 }
 
-fn map_state(state: &State) -> MatrixResult<Vec<MatrixTimelineEvent>> {
+fn map_state(state: &State) -> MatrixResult<(MatrixRoomStatePosition, Vec<MatrixTimelineEvent>)> {
     match state {
-        State::Before(events) | State::After(events) => {
-            map_raw_events(events, MatrixOperation::Sync)
-        }
+        State::Before(events) => Ok((
+            MatrixRoomStatePosition::BeforeTimeline,
+            map_raw_events(events, MatrixOperation::Sync)?,
+        )),
+        State::After(events) => Ok((
+            MatrixRoomStatePosition::AfterTimeline,
+            map_raw_events(events, MatrixOperation::Sync)?,
+        )),
     }
 }
 

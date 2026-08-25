@@ -50,6 +50,11 @@ use agent_room_bridge_core::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
         StatusEventIdentifierFactory,
     },
+    presence::{
+        PresenceLeasePolicy, PresenceProjectionFailureKind, PresenceProjectionRepository,
+        PresenceSyncDependencies, PresenceSyncFailure, PresenceSyncFailureKind,
+        PresenceSyncService,
+    },
     reconnect::{ReconnectBackoff, ReconnectPolicy, SessionRefreshPlan},
     session::{
         ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailure,
@@ -62,7 +67,7 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
-use agent_room_bridge_storage_adapter::SqliteHandoffStore;
+use agent_room_bridge_storage_adapter::{InMemoryPresenceProjectionRepository, SqliteHandoffStore};
 use agent_room_domain::{
     agent_status::AgentStatusVisibility,
     devices::DevicePlatform,
@@ -106,9 +111,10 @@ use agent_room_bridge_storage_adapter::{
 };
 
 const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 7] = [
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
     "self.read",
     "previews.read",
+    "presence.read",
     "content.read",
     "status.publish",
     "message.send",
@@ -118,6 +124,7 @@ const FOUNDATION_AGENT_CAPABILITIES: [&str; 7] = [
 const STATUS_LEASE_LIFETIME_MILLIS: u64 = 300_000;
 const STATUS_RENEWAL_INTERVAL_MILLIS: u64 = 120_000;
 const STATUS_RENEWAL_JITTER_MILLIS: u64 = 15_000;
+const STATUS_ALLOWED_CLOCK_SKEW_MILLIS: u64 = 15_000;
 
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
@@ -195,6 +202,8 @@ struct AgentSessionRuntime {
     lobby_config: AgentLobbySessionConfig,
     matrix: Arc<MatrixSdkClientFactory>,
     messages: Arc<MessageSyncService>,
+    presence: Arc<PresenceSyncService>,
+    presence_projections: Arc<dyn PresenceProjectionRepository>,
     previews: Arc<SqliteMessageTimelineRepository>,
     content: Arc<OpenMessageContentService>,
     outbound_content: Arc<dyn MessageContentGateway>,
@@ -215,6 +224,8 @@ struct AgentMessageServices {
     submissions: Arc<SqliteMessageSubmissionRepository>,
     authenticator: Arc<dyn AgentEventAuthenticator>,
     handoff_content: Arc<dyn HandoffContentGateway>,
+    presence: Arc<PresenceSyncService>,
+    presence_projections: Arc<dyn PresenceProjectionRepository>,
 }
 
 struct AgentHandoffServices {
@@ -235,6 +246,7 @@ struct AgentOnlineSession {
     handoffs: Arc<HandoffReceptionService>,
     handoff_delivery: Arc<HandoffDeliveryService>,
     handoff_worker: HandoffEventWorker,
+    presence_projections: Arc<dyn PresenceProjectionRepository>,
     next_batch: Option<MatrixSyncToken>,
 }
 
@@ -275,7 +287,8 @@ impl BridgeAgentRuntimeState {
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
             .with_handoff_delivery(online.handoff_delivery.clone())
-            .with_handoffs(online.handoffs.clone()),
+            .with_handoffs(online.handoffs.clone())
+            .with_presence(online.presence_projections.clone()),
         ));
     }
 
@@ -299,6 +312,7 @@ enum AgentOnlineFailure {
     Matrix(MatrixFailure),
     SigningIdentity(BridgeCredentialFailure),
     Status(StatusPublicationFailure),
+    PresenceSync(PresenceSyncFailure),
     MessageSync(MessageSyncFailure),
     HandoffTransport(HandoffTransportFailureKind),
     InvalidRoom,
@@ -313,6 +327,7 @@ enum AgentOnlineFailureKind {
     Matrix,
     SigningIdentity,
     Status,
+    PresenceSync,
     MessageSync,
     HandoffTransport(HandoffTransportFailureKind),
     InvalidRoom,
@@ -328,6 +343,7 @@ impl AgentOnlineFailure {
             Self::Matrix(_) => AgentOnlineFailureKind::Matrix,
             Self::SigningIdentity(_) => AgentOnlineFailureKind::SigningIdentity,
             Self::Status(_) => AgentOnlineFailureKind::Status,
+            Self::PresenceSync(_) => AgentOnlineFailureKind::PresenceSync,
             Self::MessageSync(_) => AgentOnlineFailureKind::MessageSync,
             Self::HandoffTransport(failure) => AgentOnlineFailureKind::HandoffTransport(failure),
             Self::InvalidRoom => AgentOnlineFailureKind::InvalidRoom,
@@ -514,6 +530,8 @@ async fn compose_agent_session_runtime(
         lobby_config,
         matrix,
         messages: message_services.sync,
+        presence: message_services.presence,
+        presence_projections: message_services.presence_projections,
         previews: message_services.projections,
         content: message_services.content,
         outbound_content: message_services.outbound_content,
@@ -576,6 +594,22 @@ async fn compose_agent_message_services(
         projections: projections.clone(),
         submissions: submissions.clone(),
     }));
+    let presence_projections: Arc<dyn PresenceProjectionRepository> =
+        Arc::new(InMemoryPresenceProjectionRepository::default());
+    let presence = Arc::new(PresenceSyncService::new(
+        PresenceSyncDependencies {
+            authenticator: authenticator.clone(),
+            projections: presence_projections.clone(),
+            clock: Arc::new(SystemClock),
+        },
+        PresenceLeasePolicy::new(
+            DurationMillis::new(STATUS_LEASE_LIFETIME_MILLIS)
+                .map_err(|_| BridgeRuntimeError::presence_policy())?,
+            DurationMillis::new(STATUS_ALLOWED_CLOCK_SKEW_MILLIS)
+                .map_err(|_| BridgeRuntimeError::presence_policy())?,
+        )
+        .map_err(|_| BridgeRuntimeError::presence_policy())?,
+    ));
     let handoff_content: Arc<dyn HandoffContentGateway> = Arc::new(
         ProjectedHandoffContentGateway::new(projections.clone(), content_reader),
     );
@@ -587,6 +621,8 @@ async fn compose_agent_message_services(
         submissions,
         authenticator,
         handoff_content,
+        presence,
+        presence_projections,
     })
 }
 
@@ -598,20 +634,7 @@ async fn establish_agent_online(
         .ensure_session(&runtime.config)
         .await
         .map_err(AgentOnlineFailure::AgentRuntime)?;
-    let lobby = match runtime
-        .lobby
-        .enter(registered.identity(), &runtime.lobby_config)
-        .await
-        .map_err(AgentOnlineFailure::Lobby)?
-    {
-        ControlPlaneLobbyEntryOutcome::Joined(lobby) => lobby,
-        ControlPlaneLobbyEntryOutcome::ProvisioningBusy { retry_at } => {
-            return Err(AgentOnlineFailure::ProvisioningBusy(retry_at));
-        }
-        ControlPlaneLobbyEntryOutcome::CapacityChanged { .. } => {
-            return Err(AgentOnlineFailure::CapacityChanged);
-        }
-    };
+    let lobby = enter_agent_lobby(runtime, &registered).await?;
     let room_id = MatrixRoomId::new(lobby.matrix_room_id().as_str().to_owned())
         .map_err(|_| AgentOnlineFailure::InvalidRoom)?;
     let connection = runtime
@@ -687,10 +710,31 @@ async fn establish_agent_online(
         handoffs,
         handoff_delivery,
         handoff_worker,
+        presence_projections: runtime.presence_projections.clone(),
         next_batch: None,
     };
     sync_agent_online(runtime, &mut online, true).await?;
     Ok(online)
+}
+
+async fn enter_agent_lobby(
+    runtime: &AgentSessionRuntime,
+    registered: &RegisteredAgentRuntime,
+) -> Result<JoinedAgentLobby, AgentOnlineFailure> {
+    match runtime
+        .lobby
+        .enter(registered.identity(), &runtime.lobby_config)
+        .await
+        .map_err(AgentOnlineFailure::Lobby)?
+    {
+        ControlPlaneLobbyEntryOutcome::Joined(lobby) => Ok(lobby),
+        ControlPlaneLobbyEntryOutcome::ProvisioningBusy { retry_at } => {
+            Err(AgentOnlineFailure::ProvisioningBusy(retry_at))
+        }
+        ControlPlaneLobbyEntryOutcome::CapacityChanged { .. } => {
+            Err(AgentOnlineFailure::CapacityChanged)
+        }
+    }
 }
 
 fn spawn_handoff_event_worker(
@@ -763,6 +807,17 @@ async fn sync_agent_online(
         .sync_once(&request)
         .await
         .map_err(AgentOnlineFailure::Matrix)?;
+    let presence = runtime
+        .presence
+        .process(&batch, full_state)
+        .await
+        .map_err(AgentOnlineFailure::PresenceSync)?;
+    tracing::debug!(
+        accepted_statuses = presence.accepted_statuses(),
+        membership_changes = presence.membership_changes(),
+        isolated_events = presence.issues().len(),
+        "Agent Matrix Presence 投影已刷新"
+    );
     let outcome = runtime
         .messages
         .process(&batch)
@@ -1182,6 +1237,17 @@ fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
             failure.kind() == BridgeCredentialFailureKind::Unavailable
         }
         AgentOnlineFailure::Status(failure) => reconnectable_status_publication(failure),
+        AgentOnlineFailure::PresenceSync(failure) => match failure.kind() {
+            PresenceSyncFailureKind::Authentication => failure
+                .authentication_failure()
+                .is_some_and(|failure| {
+                    failure.kind()
+                        == agent_room_bridge_core::agent_verification::AgentEventAuthenticationFailureKind::Unavailable
+                }),
+            PresenceSyncFailureKind::Projection => failure
+                .projection_failure()
+                .is_some_and(|failure| failure.kind() == PresenceProjectionFailureKind::Unavailable),
+        },
         AgentOnlineFailure::MessageSync(failure) => reconnectable_message_sync(failure),
         AgentOnlineFailure::HandoffTransport(failure) => matches!(
             failure,
@@ -1479,6 +1545,13 @@ impl BridgeRuntimeError {
 
     fn status_policy() -> Self {
         Self::new("bridge.status_policy_invalid", "Agent 状态租约策略无效")
+    }
+
+    fn presence_policy() -> Self {
+        Self::new(
+            "bridge.presence_policy_invalid",
+            "Agent Presence 接收租约策略无效",
+        )
     }
 
     fn terminal() -> Self {
@@ -1793,6 +1866,10 @@ impl BridgeRuntimeError {
             AgentOnlineFailure::Status(failure) => Self::new(
                 "bridge.agent_status_publication_failed",
                 format!("Agent 状态无法安全发布：{:?}", failure.kind()),
+            ),
+            AgentOnlineFailure::PresenceSync(failure) => Self::new(
+                "bridge.presence_sync_failed",
+                format!("Agent Presence 无法安全同步：{:?}", failure.kind()),
             ),
             AgentOnlineFailure::MessageSync(failure) => Self::new(
                 "bridge.message_sync_failed",

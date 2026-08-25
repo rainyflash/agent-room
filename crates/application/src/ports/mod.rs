@@ -69,9 +69,10 @@ pub use matrix::{
     MatrixLogin, MatrixOperation, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind,
     MatrixRecoveryAction, MatrixResult, MatrixRetryPolicy, MatrixRoomAliasLocalpart,
     MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession,
-    MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
+    MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey,
+    MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
+    MatrixUserId, MatrixValueError,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{

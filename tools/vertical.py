@@ -874,6 +874,13 @@ def verify_mcp_workflow(
         identity_response = client.call_tool("agent_room_get_self", {})
         identity = verify_mcp_identity_response(identity_response, expected_agent_id)
         verify_mcp_status_publication(client, room["matrixRoomId"])
+        wait_for_mcp_presence(
+            client,
+            room_id=room["matrixRoomId"],
+            expected_agent_id=expected_agent_id,
+            expected_instance_id=identity["agentInstanceId"],
+            timeout_seconds=45,
+        )
         message = send_mcp_vertical_message(client, room["matrixRoomId"])
         preview = wait_for_mcp_preview(
             client,
@@ -933,6 +940,52 @@ def verify_mcp_status_publication(client: McpStdioClient, room_id: str) -> None:
     lease_expiry = publication.get("leaseExpiresAtUnixMs")
     if not isinstance(lease_expiry, int) or lease_expiry <= int(time.time() * 1_000):
         raise VerticalFailure("MCP 状态发布没有返回有效租约。")
+
+
+def wait_for_mcp_presence(
+    client: McpStdioClient,
+    *,
+    room_id: str,
+    expected_agent_id: str,
+    expected_instance_id: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """等待发布事件经过 Matrix 同步、验签和租约投影后重新可读。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        response = client.call_tool(
+            "agent_room_get_presence",
+            {"roomId": room_id, "agentIds": [expected_agent_id]},
+        )
+        if response.get("type") != "presence":
+            raise VerticalFailure("MCP Presence 返回了错误响应类型。")
+        entries = response.get("entries")
+        if not isinstance(entries, list):
+            raise VerticalFailure("MCP Presence 缺少状态数组。")
+        for item in entries:
+            entry = require_object(item, "MCP Presence 状态")
+            agent = require_object(entry.get("agent"), "MCP Presence Agent 身份")
+            if (
+                agent.get("agentId") != expected_agent_id
+                or entry.get("instanceId") != expected_instance_id
+            ):
+                continue
+            if entry.get("roomId") != room_id:
+                raise VerticalFailure("MCP Presence 返回了错误房间的状态。")
+            lease_expiry = entry.get("leaseExpiresAtUnixMs")
+            observed_at = entry.get("observedAtUnixMs")
+            if not isinstance(observed_at, int):
+                raise VerticalFailure("MCP Presence 缺少有效观察时间。")
+            if (
+                entry.get("status") == "working"
+                and isinstance(lease_expiry, int)
+                and lease_expiry > int(time.time() * 1_000)
+            ):
+                return entry
+        time.sleep(0.4)
+    raise VerticalFailure(
+        f"已发布状态未在 {timeout_seconds:.0f} 秒内经过 Matrix 验签投影重新可读。"
+    )
 
 
 def send_mcp_vertical_message(
