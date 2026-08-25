@@ -86,7 +86,8 @@ pub use matrix::{
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
     MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-    MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, MatrixValueError,
+    MatrixTimelineEncryption, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
+    MatrixValueError,
 };
 pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,

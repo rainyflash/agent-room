@@ -109,8 +109,11 @@ impl MatrixSdkClientFactory {
             .homeserver_url(self.configuration.homeserver_url().clone())
             .request_config(self.request_config())
             .with_room_key_recipient_strategy(CollectStrategy::OnlyTrustedDevices)
+            // 自定义 Olm To-Device 交接必须先进入应用层，才能按控制面精确设备映射和
+            // Agent Room 签名进行验证。房间事件的交叉签名信任在 mapping 适配器中保留，
+            // 不允许这个 SDK 级兼容设置把未可信房间消息抬高为可信消息。
             .with_decryption_settings(DecryptionSettings {
-                sender_device_trust_requirement: TrustRequirement::CrossSigned,
+                sender_device_trust_requirement: TrustRequirement::Untrusted,
             });
         let builder = match &self.store {
             MatrixSdkStore::Memory => builder,

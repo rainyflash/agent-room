@@ -14,7 +14,7 @@ pub use models::{
     MatrixRoomAuthority, MatrixRoomEncryption, MatrixRoomKind, MatrixRoomPowerProfile,
     MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
-    MatrixSyncRequest, MatrixTimelineEvent,
+    MatrixSyncRequest, MatrixTimelineEncryption, MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,

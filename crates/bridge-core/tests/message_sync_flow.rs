@@ -316,7 +316,7 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
         encrypted_payload,
         None,
     )
-    .with_end_to_end_encryption();
+    .with_trusted_end_to_end_encryption();
     let leaked = signed_timeline_event(
         &fixture.signing_key,
         "$plaintext:matrix.test",
@@ -357,6 +357,49 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
     assert_eq!(
         batches[0].issues()[0].reason,
         MessageSyncIssueReason::InvalidEnvelope
+    );
+}
+
+#[tokio::test]
+async fn 未可信设备的加密房间消息在应用验签前被隔离() {
+    let fixture = 测试夹具::new();
+    let event = signed_timeline_event(
+        &fixture.signing_key,
+        "$untrusted-encrypted:matrix.test",
+        "org.agentroom.message.preview.v1",
+        preview_payload(
+            Uuid::now_v7(),
+            room_id().as_str(),
+            "2026-08-24T12:00:00.000Z",
+            None,
+        ),
+        None,
+    )
+    .with_untrusted_end_to_end_encryption();
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("untrusted-encrypted-sync").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![event],
+            Vec::new(),
+        )],
+    );
+
+    let outcome = fixture
+        .service()
+        .process(&sync)
+        .await
+        .expect("坏事件应被隔离");
+
+    assert_eq!(outcome.accepted_events, 0);
+    assert_eq!(outcome.isolated_events, 1);
+    let batches = fixture.projections.batches.lock().expect("投影记录锁可用");
+    assert_eq!(
+        batches[0].issues()[0].reason,
+        MessageSyncIssueReason::UntrustedEncryptedSender
     );
 }
 

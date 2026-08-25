@@ -5,7 +5,7 @@ use agent_room_application::ports::{
     MatrixTransactionId, MatrixUserId,
 };
 use matrix_sdk::{
-    deserialized_responses::TimelineEvent,
+    deserialized_responses::{TimelineEvent, VerificationState},
     ruma::serde::Raw,
     sync::{RoomUpdates, State, SyncResponse},
 };
@@ -109,10 +109,12 @@ fn map_timeline_event(
     operation: MatrixOperation,
 ) -> MatrixResult<MatrixTimelineEvent> {
     let mapped = map_raw_event(event.raw(), operation)?;
-    Ok(if event.encryption_info().is_some() {
-        mapped.with_end_to_end_encryption()
-    } else {
-        mapped
+    Ok(match event.encryption_info() {
+        Some(info) if matches!(info.verification_state, VerificationState::Verified) => {
+            mapped.with_trusted_end_to_end_encryption()
+        }
+        Some(_) => mapped.with_untrusted_end_to_end_encryption(),
+        None => mapped,
     })
 }
 
@@ -219,9 +221,21 @@ struct EventUnsigned {
 
 #[cfg(test)]
 mod tests {
-    use matrix_sdk::ruma::{events::AnySyncTimelineEvent, serde::Raw};
+    use std::{collections::BTreeMap, sync::Arc};
 
-    use super::{MatrixOperation, map_raw_event};
+    use matrix_sdk::{
+        deserialized_responses::{
+            AlgorithmInfo, DecryptedRoomEvent, EncryptionInfo, TimelineEvent, VerificationLevel,
+            VerificationState,
+        },
+        ruma::{
+            OwnedDeviceId, UserId,
+            events::{AnySyncTimelineEvent, AnyTimelineEvent},
+            serde::Raw,
+        },
+    };
+
+    use super::{MatrixOperation, map_raw_event, map_timeline_event};
 
     #[test]
     fn 原始事件保留事务标识并剥离无关字段() {
@@ -258,5 +272,59 @@ mod tests {
         .expect("原始 JSON 有效");
 
         assert!(map_raw_event(&raw, MatrixOperation::Sync).is_err());
+    }
+
+    #[test]
+    fn 解密事件保留_sdk_给出的发送设备信任状态() {
+        let trusted = map_timeline_event(
+            &decrypted_event(VerificationState::Verified),
+            MatrixOperation::Sync,
+        )
+        .expect("可信加密事件可映射");
+        let untrusted = map_timeline_event(
+            &decrypted_event(VerificationState::Unverified(
+                VerificationLevel::UnsignedDevice,
+            )),
+            MatrixOperation::Sync,
+        )
+        .expect("未可信加密事件仍应进入隔离边界");
+
+        assert!(trusted.end_to_end_encrypted());
+        assert!(trusted.end_to_end_sender_trusted());
+        assert!(untrusted.end_to_end_encrypted());
+        assert!(!untrusted.end_to_end_sender_trusted());
+    }
+
+    fn decrypted_event(verification_state: VerificationState) -> TimelineEvent {
+        let event = Raw::<AnyTimelineEvent>::from_json_string(
+            r#"{
+                "type":"org.agentroom.message.preview.v1",
+                "event_id":"$encrypted:example.org",
+                "sender":"@agent:example.org",
+                "room_id":"!room:example.org",
+                "origin_server_ts":1234,
+                "content":{"schemaVersion":"1.0"}
+            }"#
+            .to_owned(),
+        )
+        .expect("解密事件 JSON 有效");
+        TimelineEvent::from_decrypted(
+            DecryptedRoomEvent {
+                event,
+                encryption_info: Arc::new(EncryptionInfo {
+                    sender: UserId::parse("@agent:example.org").expect("用户标识有效"),
+                    sender_device: Some(OwnedDeviceId::from("AGENT_DEVICE")),
+                    forwarder: None,
+                    algorithm_info: AlgorithmInfo::MegolmV1AesSha2 {
+                        curve25519_key: "curve-key".to_owned(),
+                        sender_claimed_keys: BTreeMap::new(),
+                        session_id: Some("session-id".to_owned()),
+                    },
+                    verification_state,
+                }),
+                unsigned_encryption_info: None,
+            },
+            None,
+        )
     }
 }

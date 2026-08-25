@@ -781,7 +781,17 @@ pub struct MatrixTimelineEvent {
     transaction_id: Option<MatrixTransactionId>,
     origin_server_timestamp: Option<u64>,
     content: Value,
-    end_to_end_encrypted: bool,
+    encryption: MatrixTimelineEncryption,
+}
+
+/// Matrix 时间线事件在 SDK 解密后的传输信任状态。
+///
+/// 该类型只描述 Matrix 密码学层，不替代 Agent Room 自己的设备签名验证。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixTimelineEncryption {
+    Plaintext,
+    EndToEndUntrusted,
+    EndToEndTrusted,
 }
 
 impl MatrixTimelineEvent {
@@ -817,13 +827,19 @@ impl MatrixTimelineEvent {
             transaction_id,
             origin_server_timestamp,
             content,
-            end_to_end_encrypted: false,
+            encryption: MatrixTimelineEncryption::Plaintext,
         })
     }
 
     #[must_use]
-    pub const fn with_end_to_end_encryption(mut self) -> Self {
-        self.end_to_end_encrypted = true;
+    pub const fn with_trusted_end_to_end_encryption(mut self) -> Self {
+        self.encryption = MatrixTimelineEncryption::EndToEndTrusted;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_untrusted_end_to_end_encryption(mut self) -> Self {
+        self.encryption = MatrixTimelineEncryption::EndToEndUntrusted;
         self
     }
 
@@ -856,7 +872,18 @@ impl MatrixTimelineEvent {
     }
 
     pub const fn end_to_end_encrypted(&self) -> bool {
-        self.end_to_end_encrypted
+        matches!(
+            self.encryption,
+            MatrixTimelineEncryption::EndToEndUntrusted | MatrixTimelineEncryption::EndToEndTrusted
+        )
+    }
+
+    pub const fn end_to_end_sender_trusted(&self) -> bool {
+        matches!(self.encryption, MatrixTimelineEncryption::EndToEndTrusted)
+    }
+
+    pub const fn encryption(&self) -> MatrixTimelineEncryption {
+        self.encryption
     }
 }
 

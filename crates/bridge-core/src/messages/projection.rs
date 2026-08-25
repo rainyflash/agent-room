@@ -136,6 +136,7 @@ pub enum MessageSyncIssueReason {
     AgentInstanceMismatch,
     InvalidSignature,
     OutsideInstanceValidityWindow,
+    UntrustedEncryptedSender,
 }
 
 impl MessageSyncIssueReason {
@@ -150,6 +151,7 @@ impl MessageSyncIssueReason {
             Self::AgentInstanceMismatch => "agent_instance_mismatch",
             Self::InvalidSignature => "invalid_signature",
             Self::OutsideInstanceValidityWindow => "outside_instance_validity_window",
+            Self::UntrustedEncryptedSender => "untrusted_encrypted_sender",
         }
     }
 }

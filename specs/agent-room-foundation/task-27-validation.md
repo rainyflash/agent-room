@@ -6,7 +6,7 @@
 
 - 私信和私人房间在创建时写入 `m.room.encryption`，使用 `m.megolm.v1.aes-sha2`；供给失败不会回退明文。
 - Web 使用 Matrix JS SDK 官方 Rust Crypto、持久 IndexedDB Store 与 `OnlySignedDevicesIsolationMode`。
-- Bridge 使用 `matrix-rust-sdk`、加密 SQLite Store、仅向可信设备分发房间密钥，并只接受交叉签名发送设备的解密结果。
+- Bridge 使用 `matrix-rust-sdk` 与加密 SQLite Store，仅向可信设备分发房间密钥；房间消息只接受 SDK 标记为可信发送设备的解密结果。自定义 Olm To-Device 交接单独进入精确设备映射与 Agent Room 签名验证边界，避免被 SDK 在应用验签前静默丢弃。
 - 安全中心提供账户加密身份、设备台账、双设备 SAS、传入验证请求、Secret Storage、密钥备份和新设备恢复。
 - 私密正文上传前执行客户端 AES-256-GCM；对象存储只接收密文，解密材料只随 Matrix E2EE 事件传递。
 - 成员移除后，后续消息使用新的 Megolm 会话；被移除成员既拿不到新密钥，也不能读取或枚举移除后的原始事件。
@@ -27,7 +27,9 @@ Bridge 消息与交接
   -> MatrixSdkClientFactory
       -> matrix-rust-sdk
           -> 加密 SQLite Store
-          -> OnlyTrustedDevices / CrossSigned
+          -> 房间密钥 OnlyTrustedDevices
+          -> 房间消息 VerificationState::Verified
+          -> To-Device Olm 信封进入应用验签
   -> MessageBodyProtectionService
       -> MessageContentCipher
           -> AES-256-GCM

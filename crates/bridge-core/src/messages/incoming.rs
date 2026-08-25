@@ -256,6 +256,9 @@ fn parse_pending_message(
     room_id: &MatrixRoomId,
     event: &MatrixTimelineEvent,
 ) -> Result<PendingMessage, MessageSyncIssueReason> {
+    if event.end_to_end_encrypted() && !event.end_to_end_sender_trusted() {
+        return Err(MessageSyncIssueReason::UntrustedEncryptedSender);
+    }
     if event.event_id().is_none() || event.sender().is_none() || event.state_key().is_some() {
         return Err(MessageSyncIssueReason::MissingEnvelope);
     }
