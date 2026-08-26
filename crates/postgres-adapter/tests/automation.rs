@@ -335,7 +335,7 @@ async fn seed_principal_and_device(pool: &PgPool, fixture: &AutomationFixture) {
                id, oidc_issuer, oidc_subject, matrix_user_id, display_name,
                locale, status, created_at, updated_at, version
            ) VALUES ($1, 'https://issuer.test', $2, $3, '自动化测试主体',
-                     'zh-CN', 'active', clock_timestamp(), clock_timestamp(), 0)",
+                     'zh-CN', 'active', statement_timestamp(), statement_timestamp(), 0)",
     )
     .bind(fixture.principal.as_uuid())
     .bind(format!(
@@ -354,8 +354,8 @@ async fn seed_principal_and_device(pool: &PgPool, fixture: &AutomationFixture) {
                id, principal_id, label, platform, public_signing_key,
                matrix_device_id, trust_state, last_seen_at, created_at, verified_at
            ) VALUES ($1, $2, '自动化测试设备', 'windows', $3,
-                     'AUTOMATION-DEVICE', 'verified', clock_timestamp(),
-                     clock_timestamp(), clock_timestamp())",
+                     'AUTOMATION-DEVICE', 'verified', statement_timestamp(),
+                     statement_timestamp(), statement_timestamp())",
     )
     .bind(fixture.device.as_uuid())
     .bind(fixture.principal.as_uuid())
@@ -370,8 +370,8 @@ async fn seed_agent_instance(pool: &PgPool, fixture: &AutomationFixture, binding
         r"INSERT INTO agent_room.agent (
                id, matrix_user_id, slug, display_name, description, visibility,
                lifecycle_state, created_at, updated_at, version
-           ) VALUES ($1, $2, $3, '自动化测试 Agent', '', 'private',
-                     'suspended', clock_timestamp(), clock_timestamp(), 0)",
+            ) VALUES ($1, $2, $3, '自动化测试 Agent', '', 'private',
+                      'suspended', statement_timestamp(), statement_timestamp(), 0)",
     )
     .bind(fixture.agent.as_uuid())
     .bind(format!(
@@ -401,8 +401,8 @@ async fn seed_agent_instance(pool: &PgPool, fixture: &AutomationFixture, binding
         r"INSERT INTO agent_room.adapter_binding (
                id, agent_id, adapter_type, capability_version, configuration,
                state, created_at, updated_at
-           ) VALUES ($1, $2, 'codex', '1', '{}'::jsonb,
-                     'active', clock_timestamp(), clock_timestamp())",
+            ) VALUES ($1, $2, 'codex', '1', '{}'::jsonb,
+                      'active', statement_timestamp(), statement_timestamp())",
     )
     .bind(binding_id)
     .bind(fixture.agent.as_uuid())
@@ -413,8 +413,8 @@ async fn seed_agent_instance(pool: &PgPool, fixture: &AutomationFixture, binding
         r"INSERT INTO agent_room.agent_instance (
                id, agent_id, device_id, adapter_binding_id, public_signing_key,
                matrix_device_id, status, lease_expires_at, last_seen_at, created_at
-           ) VALUES ($1, $2, $3, $4, $5, 'AUTOMATION-INSTANCE', 'online',
-                     clock_timestamp() + interval '5 minutes', clock_timestamp(), clock_timestamp())",
+            ) VALUES ($1, $2, $3, $4, $5, 'AUTOMATION-INSTANCE', 'online',
+                      statement_timestamp() + interval '5 minutes', statement_timestamp(), statement_timestamp())",
     )
     .bind(fixture.instance.as_uuid())
     .bind(fixture.agent.as_uuid())
@@ -431,8 +431,8 @@ async fn seed_public_room(pool: &PgPool, fixture: &AutomationFixture, room_insta
         r"INSERT INTO agent_room.room_catalog_entry (
                id, kind, slug, name, description, visibility, status,
                created_at, updated_at
-           ) VALUES ($1, 'public_lobby', $2, '自动化测试大厅', '', 'public',
-                     'active', clock_timestamp(), clock_timestamp())",
+            ) VALUES ($1, 'public_lobby', $2, '自动化测试大厅', '', 'public',
+                      'active', statement_timestamp(), statement_timestamp())",
     )
     .bind(fixture.catalog.as_uuid())
     .bind(format!("automation-{}", fixture.catalog.as_uuid().simple()))
@@ -443,8 +443,8 @@ async fn seed_public_room(pool: &PgPool, fixture: &AutomationFixture, room_insta
         r"INSERT INTO agent_room.room_instance (
                id, catalog_entry_id, matrix_room_id, soft_capacity, hard_capacity,
                member_count_projection, activity_score, state, created_at, updated_at, version
-           ) VALUES ($1, $2, $3, 180, 250, 1, 0, 'active',
-                     clock_timestamp(), clock_timestamp(), 0)",
+            ) VALUES ($1, $2, $3, 180, 250, 1, 0, 'active',
+                      statement_timestamp(), statement_timestamp(), 0)",
     )
     .bind(room_instance_id)
     .bind(fixture.catalog.as_uuid())
