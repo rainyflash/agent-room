@@ -82,7 +82,7 @@ impl BridgeRuntimePaths {
 
 #[derive(Debug)]
 pub(crate) struct BridgeExclusiveLock {
-    _file: File,
+    file: File,
 }
 
 impl BridgeExclusiveLock {
@@ -113,7 +113,15 @@ impl BridgeExclusiveLock {
         file.seek(SeekFrom::Start(0)).map_err(map_io_failure)?;
         writeln!(file, "pid={}", std::process::id()).map_err(map_io_failure)?;
         file.flush().map_err(map_io_failure)?;
-        Ok(Self { _file: file })
+        Ok(Self { file })
+    }
+}
+
+impl Drop for BridgeExclusiveLock {
+    fn drop(&mut self) {
+        // Unix 的 fork 会短暂继承文件描述符；只关闭当前句柄可能让锁残留到子进程 exec。
+        // 显式解锁作用于底层锁，确保守卫结束后可以同步重新获取。
+        let _ = self.file.unlock();
     }
 }
 
@@ -213,8 +221,11 @@ mod tests {
             .expect_err("第二个进程锁必须失败");
 
         assert_eq!(failure.kind(), BridgeRuntimeFileFailureKind::AlreadyHeld);
+        let inherited_handle = first.file.try_clone().expect("锁文件句柄可复制");
         drop(first);
-        BridgeExclusiveLock::acquire(paths.instance_lock_path()).expect("释放后可再次获取锁");
+        BridgeExclusiveLock::acquire(paths.instance_lock_path())
+            .expect("即使复制句柄仍存活，显式释放后也可再次获取锁");
+        drop(inherited_handle);
     }
 
     #[test]
