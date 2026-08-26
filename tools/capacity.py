@@ -19,6 +19,11 @@ import sys
 import time
 from typing import Final, Iterable, Mapping, Sequence
 
+if __package__:
+    from .source_revision import SourceRevisionFailure, clean_git_revision
+else:
+    from source_revision import SourceRevisionFailure, clean_git_revision
+
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 REPORT_DIRECTORY: Final = ROOT / "artifacts" / "capacity"
@@ -75,18 +80,10 @@ def percentile(values: Sequence[float], ratio: float) -> float:
 
 
 def git_revision() -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        raise CapacityFailure("无法读取当前 Git 修订。")
-    return result.stdout.strip()
+    try:
+        return clean_git_revision(ROOT)
+    except SourceRevisionFailure as error:
+        raise CapacityFailure(str(error)) from error
 
 
 def write_json(path: Path, value: Mapping[str, object]) -> None:

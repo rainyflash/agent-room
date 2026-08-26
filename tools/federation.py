@@ -24,6 +24,11 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 import uuid
 
+if __package__:
+    from .source_revision import SourceRevisionFailure, clean_git_revision
+else:
+    from source_revision import SourceRevisionFailure, clean_git_revision
+
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 COMPOSE_FILE: Final = ROOT / "infra" / "federation" / "compose.yaml"
@@ -1103,9 +1108,10 @@ def execute_acceptance() -> dict[str, object]:
 
 
 def git_revision() -> str:
-    return run_command(
-        ["git", "rev-parse", "HEAD"], capture_output=True
-    ).stdout.strip()
+    try:
+        return clean_git_revision(ROOT)
+    except SourceRevisionFailure as error:
+        raise FederationFailure(str(error)) from error
 
 
 def write_report(report: dict[str, object]) -> None:
