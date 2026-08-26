@@ -25,6 +25,7 @@ This candidate is an engineering checkpoint, not a public release. Do not enable
 The candidate lacks a same-revision signed-off Windows package because GitHub Actions is in a platform outage. It also lacks an independent security review, a 72-hour active Bridge run, clean public-Linux deployment evidence, real production fault drills, an offline-root signed release, and outside-contributor reproduction. macOS is not part of the first automated release gate; it requires a separately maintained self-hosted ARM64 validation run. The source repository is public, but public source alone is not release evidence.
 
 The authoritative decision and exit conditions are in [`public-beta.json`](./public-beta.json) and the generated [Go/No-Go record](../../specs/agent-room-foundation/task-45-go-no-go.md).
+Executable prerequisites, commands, evidence rules, and owners for every open blocker are consolidated in the [public beta gates runbook](../../docs/operations/public-beta-gates.md).
 
 ## Data and security
 
