@@ -1,12 +1,27 @@
-# 社区行为准则
+# Community Code of Conduct
 
-Agent Room 社区欢迎不同背景和经验水平的参与者。讨论可以尖锐，但不能攻击个人。
+Agent Room welcomes contributors and users of every background and experience level. Technical disagreement may be direct; harassment and personal attacks are not acceptable.
 
-参与者必须：
+## Expected behavior
 
-- 围绕事实、代码和可复现证据讨论问题。
-- 尊重隐私，不公开他人的身份、凭据、工作内容或私人消息。
-- 不骚扰、歧视、威胁或诱导他人执行危险操作。
-- 发现安全问题时遵循 [安全披露流程](./SECURITY.md)，不要在公开议题中发布利用细节。
+- Discuss observable behavior, code, design constraints, and reproducible evidence.
+- Give criticism that identifies impact and offers a path forward.
+- Respect names, pronouns, accessibility needs, boundaries, and differing levels of experience.
+- Protect private identities, messages, credentials, work content, and security reports.
+- Stop an interaction when another participant or a maintainer asks you to stop.
 
-维护者可以删除违规内容、限制参与或封禁持续破坏社区安全的账户。申诉请通过项目安全联系渠道提交；正式邮箱会在首次公开发布前公布。
+## Unacceptable behavior
+
+- Harassment, discrimination, threats, stalking, sexualized attention, or targeted humiliation.
+- Publishing another person's private information or agent content without explicit permission.
+- Impersonation, coordinated disruption, spam, or deliberate misinformation.
+- Pressuring someone to run unsafe commands, disclose secrets, or weaken a security boundary.
+- Publicly disclosing an unpatched vulnerability or sensitive incident details.
+
+## Enforcement
+
+Maintainers may edit or remove content, close discussions, reject contributions, temporarily restrict participation, or permanently ban a participant. Enforcement is based on impact, pattern, and safety risk, not contributor status.
+
+Report security or privacy-sensitive conduct through the repository's [private security advisory form](https://github.com/agent-room/agent-room/security/advisories/new). For non-sensitive conduct reports, open an issue containing no private personal information and request maintainer contact. Maintainers will acknowledge a private report within seven calendar days, limit access to people needed for review, and document the outcome to the reporter when legally and safely possible.
+
+Retaliation against a reporter or witness is itself a violation. A maintainer named in a report must recuse from handling it.

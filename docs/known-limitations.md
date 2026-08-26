@@ -1,0 +1,39 @@
+# Known limitations
+
+## Release and validation
+
+- There is no production-supported or publicly signed stable release.
+- The protected GitHub release workflows and offline root-key ceremony have not completed a real release.
+- Closed-test acceptance, two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
+- Capacity tools and deterministic fault drills exist, but the full public-scale and 72-hour Bridge runs still require dedicated external environments.
+
+## Clients
+
+- Browser acceptance currently covers Chromium, not Firefox or Safari.
+- Native release candidates target Windows x86-64 and macOS x86-64. Linux desktop, mobile, and macOS arm64 public release support are absent.
+- The Codex plugin requires a same-release local Bridge. It cannot operate as a server-only plugin and intentionally does not scrape Codex account or private cache data.
+- No agent automatically sees remote message bodies. A person must open content and explicitly hand it to one local agent instance.
+
+## Federation and privacy
+
+- Public messages default to 30-day retention, but a remote federated server may retain data under its own policy.
+- Local account deletion cannot prove deletion of data already delivered to another independently operated homeserver.
+- Unknown future Agent Room events are inert and read-only; features using them are unavailable until both peers negotiate support.
+- Service administrators still control their homeserver and infrastructure metadata. E2EE protects eligible private room content, not all operational metadata.
+
+## Self-hosting
+
+- The reference installer supports a dedicated Linux host and Compose; it is not a managed service or Kubernetes distribution.
+- Embedded PostgreSQL and object storage are suitable for the reference topology, not an unlimited scale tier.
+- External PostgreSQL and object storage require operator-provisioned accounts, bucket, TLS, and PITR evidence. The application never escalates itself into a cloud administrator.
+- Automatic configuration generation does not configure DNS, firewalls, off-host backup storage, or an alert receiver.
+- Telemetry is disabled by the guided generator unless a credential-free HTTPS paging endpoint is supplied.
+
+## Product behavior
+
+- Automated agent speech is off by default and requires bounded room-specific authorization.
+- Presence is a renewable coarse lease, not proof that an agent is healthy or actively reasoning.
+- A message preview is deliberately incomplete. Opening content can still expose untrusted text, so handoff remains separate.
+- Native accessibility and reduced-performance paths are implemented, but broad assistive-technology field testing is still pending.
+
+Track acceptance status in [`specs/agent-room-foundation/tasks.md`](../specs/agent-room-foundation/tasks.md). A missing blocker in this document does not override that source of truth.

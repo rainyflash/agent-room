@@ -5,6 +5,8 @@ dist
 node_modules
 target
 pnpm-lock.yaml
+THIRD_PARTY_NOTICES.md
+licenses/third-party.json
 packages/protocol-types/src/generated.ts
 apps/desktop/src-tauri/gen/schemas
 specs

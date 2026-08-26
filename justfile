@@ -12,6 +12,16 @@ bootstrap:
 doctor:
   node tools/bootstrap.mjs --check
 
+licenses:
+  python tools/license_inventory.py generate
+
+licenses-check:
+  python tools/license_inventory.py check
+
+oss-check:
+  python tools/open_source.py
+  python tools/license_inventory.py check
+
 format:
   cargo fmt --all
   {{pnpm}} format
@@ -52,6 +62,8 @@ protocol-check:
 check: format-check lint typecheck build test python-test protocol-check
   {{pnpm}} secrets:check
   {{pnpm}} actions:check
+  python tools/license_inventory.py check
+  python tools/open_source.py
 
 dev-up:
   node tools/run-powershell.mjs tools/dev-infra.ps1 up

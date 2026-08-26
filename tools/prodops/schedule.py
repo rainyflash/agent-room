@@ -60,7 +60,7 @@ class BackupScheduleInstaller:
         )
         service = f"""[Unit]
 Description=Agent Room 一致性生产备份
-Documentation=https://github.com/rainyflash/agent-room
+Documentation=https://github.com/agent-room/agent-room
 Requires=docker.service
 After=docker.service network-online.target
 
