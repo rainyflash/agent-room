@@ -43,7 +43,10 @@ jobs:
           corepack pnpm@10.28.0 install --frozen-lockfile
           corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
       - name: 执行封闭测试矩阵
-        run: python tools/closed_test.py matrix
+        run: >-
+          dbus-run-session --
+          bash tools/run-linux-secret-service.sh
+          python tools/closed_test.py matrix
       - name: 上传验收证据
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
