@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from tools.release import ReleaseFailure
-from tools.release_assets import collect_native, merge_tauri, parse_args
+from tools.release_assets import attest_image, collect_native, merge_tauri, parse_args
 
 
 class ReleaseAssetTests(unittest.TestCase):
@@ -136,6 +136,33 @@ class ReleaseAssetTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ReleaseFailure, "平台重复"):
             merge_tauri(args)
+
+    def test_attest_image_rejects_mutable_or_mismatched_reference_before_signing(self) -> None:
+        manifest = self.root / "candidate" / "control-plane.oci-manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_bytes(b'{"schemaVersion":2}')
+        args = parse_args(
+            [
+                "attest-image",
+                "--root",
+                str(self.root),
+                "--manifest-path",
+                manifest.relative_to(self.root).as_posix(),
+                "--image-ref",
+                "ghcr.io/example/control-plane:latest",
+                "--name",
+                "control-plane",
+                "--platform",
+                "linux-amd64",
+                "--descriptor",
+                str(self.root / "control-plane.artifact.json"),
+                "--release-base-url",
+                "https://releases.example/v0.1.0",
+            ]
+        )
+
+        with self.assertRaisesRegex(ReleaseFailure, "摘要"):
+            attest_image(args)
 
 
 if __name__ == "__main__":

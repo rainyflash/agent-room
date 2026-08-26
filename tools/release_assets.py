@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -49,6 +50,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     attest_parser.add_argument("--descriptor-root", type=Path, required=True)
     attest_parser.add_argument("--syft", default="syft")
     attest_parser.add_argument("--cosign", default="cosign")
+
+    blob_parser = subcommands.add_parser("attest-blob", help="证明并描述一个普通发布文件")
+    blob_parser.add_argument("--root", type=Path, required=True)
+    blob_parser.add_argument("--path", required=True)
+    blob_parser.add_argument("--name", required=True)
+    blob_parser.add_argument(
+        "--kind",
+        choices=("bridge", "desktop", "codex-plugin", "update-manifest"),
+        required=True,
+    )
+    blob_parser.add_argument("--platform", required=True)
+    blob_parser.add_argument("--url", required=True)
+    blob_parser.add_argument("--descriptor", type=Path, required=True)
+    blob_parser.add_argument("--syft", default="syft")
+    blob_parser.add_argument("--cosign", default="cosign")
+
+    image_parser = subcommands.add_parser("attest-image", help="证明并描述一个 OCI 镜像")
+    image_parser.add_argument("--root", type=Path, required=True)
+    image_parser.add_argument("--manifest-path", required=True)
+    image_parser.add_argument("--image-ref", required=True)
+    image_parser.add_argument("--name", required=True)
+    image_parser.add_argument("--platform", required=True)
+    image_parser.add_argument("--descriptor", type=Path, required=True)
+    image_parser.add_argument("--release-base-url", required=True)
+    image_parser.add_argument("--syft", default="syft")
+    image_parser.add_argument("--cosign", default="cosign")
 
     merge_parser = subcommands.add_parser("merge-tauri", help="合并各平台 Tauri 更新条目")
     merge_parser.add_argument("--metadata-root", type=Path, required=True)
@@ -280,6 +307,101 @@ def attest_blobs(args: argparse.Namespace) -> None:
         create_descriptor(descriptor_args)
 
 
+def attest_blob(args: argparse.Namespace) -> None:
+    root = args.root.resolve(strict=True)
+    path = require_file(root / Path(args.path), "发布文件")
+    sbom = path.with_name(f"{path.name}.cdx.json")
+    signature = path.with_name(f"{path.name}.sigstore.json")
+    run_capture(
+        (args.syft, "scan", str(path), "-o", f"cyclonedx-json={sbom}"),
+        f"生成 {args.name} SBOM",
+    )
+    run_capture(
+        (args.cosign, "sign-blob", str(path), "--bundle", str(signature), "--yes"),
+        f"签名 {args.name}",
+    )
+    descriptor_args = parse_release_args(
+        [
+            "descriptor",
+            "--root",
+            str(root),
+            "--output",
+            str(args.descriptor),
+            "--name",
+            args.name,
+            "--kind",
+            args.kind,
+            "--platform",
+            args.platform,
+            "--path",
+            path.relative_to(root).as_posix(),
+            "--url",
+            args.url,
+            "--sbom-path",
+            sbom.relative_to(root).as_posix(),
+            "--sbom-url",
+            f"{args.url}.cdx.json",
+            "--signature-path",
+            signature.relative_to(root).as_posix(),
+            "--signature-url",
+            f"{args.url}.sigstore.json",
+            "--signature-mode",
+            "blob",
+        ]
+    )
+    create_descriptor(descriptor_args)
+
+
+def attest_image(args: argparse.Namespace) -> None:
+    root = args.root.resolve(strict=True)
+    manifest = require_file(root / Path(args.manifest_path), "OCI manifest")
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    expected_suffix = f"@sha256:{digest}"
+    if not args.image_ref.endswith(expected_suffix):
+        raise ReleaseFailure("OCI manifest 摘要与不可变镜像引用不一致。")
+    sbom = manifest.with_name(f"{manifest.name}.cdx.json")
+    signature = manifest.with_name(f"{manifest.name}.sigstore.json")
+    run_capture(
+        (args.syft, "scan", args.image_ref, "-o", f"cyclonedx-json={sbom}"),
+        f"生成 {args.name} 镜像 SBOM",
+    )
+    run_capture(
+        (args.cosign, "sign", args.image_ref, "--bundle", str(signature), "--yes"),
+        f"签名 {args.name} 镜像",
+    )
+    manifest_url = release_url(args.release_base_url, manifest.name)
+    descriptor_args = parse_release_args(
+        [
+            "descriptor",
+            "--root",
+            str(root),
+            "--output",
+            str(args.descriptor),
+            "--name",
+            args.name,
+            "--kind",
+            "oci-image",
+            "--platform",
+            args.platform,
+            "--path",
+            manifest.relative_to(root).as_posix(),
+            "--url",
+            f"oci://{args.image_ref}",
+            "--sbom-path",
+            sbom.relative_to(root).as_posix(),
+            "--sbom-url",
+            f"{manifest_url}.cdx.json",
+            "--signature-path",
+            signature.relative_to(root).as_posix(),
+            "--signature-url",
+            f"{manifest_url}.sigstore.json",
+            "--signature-mode",
+            "oci",
+        ]
+    )
+    create_descriptor(descriptor_args)
+
+
 def merge_tauri(args: argparse.Namespace) -> None:
     if args.published_at_unix_seconds < 0:
         raise ReleaseFailure("Tauri 发布时间不能为负数。")
@@ -326,6 +448,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             collect_native(args)
         elif args.command == "attest-blobs":
             attest_blobs(args)
+        elif args.command == "attest-blob":
+            attest_blob(args)
+        elif args.command == "attest-image":
+            attest_image(args)
         else:
             merge_tauri(args)
         return 0
