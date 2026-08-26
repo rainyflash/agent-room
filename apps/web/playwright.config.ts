@@ -11,7 +11,7 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
   timeout: 30_000,
-  ...(process.env.CI ? { workers: 1 } : {}),
+  workers: process.env.CI ? 1 : 4,
   use: {
     baseURL: 'http://127.0.0.1:14173',
     browserName: 'chromium',
