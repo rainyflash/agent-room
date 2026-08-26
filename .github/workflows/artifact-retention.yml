@@ -1,0 +1,38 @@
+name: Actions 制品保留
+
+on:
+  workflow_run:
+    workflows:
+      - 持续集成
+      - M2 封闭测试发行
+      - M3 联邦验收
+    types: [completed]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: actions-artifact-retention
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: 删除过时临时制品
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - name: 检出当前默认分支
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 执行保留策略
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/actions_artifacts.py prune --repository "$GITHUB_REPOSITORY" --apply
