@@ -18,6 +18,18 @@ services:
       POSTGRES_DB: postgres
       POSTGRES_USER: agent_room_bootstrap
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_bootstrap_password
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=${AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS:-900}s
+      - -c
+      - archive_command=test ! -f /archive/%f && cp %p /archive/%f
+      - -c
+      - hba_file=/etc/postgresql/agent-room-pg-hba.conf
     secrets:
       - postgres_bootstrap_password
       - agent_room_db_migration_password
@@ -26,7 +38,9 @@ services:
       - keycloak_db_password
     volumes:
       - ${AGENT_ROOM_STATE_DIR:?缺少 AGENT_ROOM_STATE_DIR}/data/postgres:/var/lib/postgresql
+      - ${AGENT_ROOM_BACKUP_REPOSITORY:?缺少 AGENT_ROOM_BACKUP_REPOSITORY}/wal:/archive
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/001-agent-room.sh:ro
+      - ./postgres-pg-hba.conf:/etc/postgresql/agent-room-pg-hba.conf:ro
     healthcheck:
       test: [CMD-SHELL, pg_isready -U agent_room_bootstrap -d postgres]
       interval: 5s
@@ -189,6 +203,105 @@ services:
     secrets: [s3_access_key, s3_secret_key]
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    networks: [backend]
+
+  backup-permissions:
+    image: postgres:18.6-alpine
+    profiles: [backup]
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - install -d -o 70 -g 70 -m 0750 /backup/wal
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
+  database-backup:
+    image: postgres:18.6-alpine
+    profiles: [backup]
+    user: "${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}"
+    entrypoint: [/bin/sh, /scripts/database-backup.sh]
+    environment:
+      AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
+      AGENT_ROOM_DB_PORT: ${AGENT_ROOM_DB_PORT}
+      AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
+      AGENT_ROOM_DB_NAME: ${AGENT_ROOM_DB_NAME}
+      AGENT_ROOM_DB_MIGRATION_USER: ${AGENT_ROOM_DB_MIGRATION_USER}
+      SYNAPSE_DB_NAME: ${SYNAPSE_DB_NAME}
+      SYNAPSE_DB_USER: ${SYNAPSE_DB_USER}
+      KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER}
+    secrets:
+      - agent_room_db_migration_password
+      - synapse_db_password
+      - keycloak_db_password
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+      - ./database-backup.sh:/scripts/database-backup.sh:ro
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  postgres-base-backup:
+    image: postgres:18.6-alpine
+    profiles: [backup]
+    user: "0:0"
+    entrypoint: [/bin/sh, /scripts/postgres-base-backup.sh]
+    environment:
+      AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
+      AGENT_ROOM_DB_PORT: ${AGENT_ROOM_DB_PORT}
+      AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
+    secrets: [postgres_bootstrap_password]
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}/wal:/archive:ro
+      - ./postgres-base-backup.sh:/scripts/postgres-base-backup.sh:ro
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  backup-ownership:
+    image: postgres:18.6-alpine
+    profiles: [backup]
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        case "$$AGENT_ROOM_BACKUP_ID" in
+          [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+          *) echo '备份 ID 无效' >&2; exit 1 ;;
+        esac
+        chown -R "$$AGENT_ROOM_HOST_UID:$$AGENT_ROOM_HOST_GID" "/backup/.partial-$$AGENT_ROOM_BACKUP_ID"
+        chmod 0700 "/backup/.partial-$$AGENT_ROOM_BACKUP_ID"
+    environment:
+      AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      AGENT_ROOM_HOST_UID: ${AGENT_ROOM_HOST_UID:-0}
+      AGENT_ROOM_HOST_GID: ${AGENT_ROOM_HOST_GID:-0}
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
+  object-backup:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: [backup]
+    user: "${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}"
+    entrypoint: [/bin/sh, /scripts/object-backup.sh]
+    environment:
+      AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
+      AGENT_ROOM_CONTENT_S3_BUCKET: ${AGENT_ROOM_CONTENT_S3_BUCKET}
+    secrets: [s3_access_key, s3_secret_key]
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+      - ./object-backup.sh:/scripts/object-backup.sh:ro
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
     networks: [backend]
 
   control-plane:

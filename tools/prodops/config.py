@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import ipaddress
 import json
 from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Final
 from urllib.parse import urlparse
@@ -82,6 +83,19 @@ class CapacityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BackupConfig:
+    repository: str
+    retention_days: int
+    rpo_minutes: int
+    base_backup_interval_hours: int
+    provider_pitr_evidence_file: str | None
+
+    @property
+    def archive_timeout_seconds(self) -> int:
+        return self.rpo_minutes * 60
+
+
+@dataclass(frozen=True, slots=True)
 class DeploymentConfig:
     schema_version: int
     project_name: str
@@ -89,6 +103,7 @@ class DeploymentConfig:
     database: DatabaseConfig
     object_store: ObjectStoreConfig
     capacity: CapacityConfig
+    backup: BackupConfig
     telemetry_enabled: bool
 
     @classmethod
@@ -104,6 +119,7 @@ class DeploymentConfig:
                 "database",
                 "objectStore",
                 "capacity",
+                "backup",
                 "telemetry",
             },
             "根配置",
@@ -124,6 +140,7 @@ class DeploymentConfig:
             database=_parse_database(root.get("database")),
             object_store=_parse_object_store(root.get("objectStore")),
             capacity=_parse_capacity(root.get("capacity")),
+            backup=_parse_backup(root.get("backup"), root.get("database")),
             telemetry_enabled=_parse_telemetry(root.get("telemetry")),
         )
 
@@ -255,6 +272,53 @@ def _parse_capacity(value: object) -> CapacityConfig:
     return CapacityConfig(control_plane_replicas, synapse_workers)
 
 
+def _parse_backup(value: object, database_value: object) -> BackupConfig:
+    source = _mapping(value, "backup")
+    _reject_unknown(
+        source,
+        {
+            "repository",
+            "retentionDays",
+            "rpoMinutes",
+            "baseBackupIntervalHours",
+            "providerPitrEvidenceFile",
+        },
+        "backup",
+    )
+    repository = _absolute_host_path(_text(source, "repository"), "backup.repository")
+    retention_days = _optional_integer(source, "retentionDays", 30)
+    rpo_minutes = _optional_integer(source, "rpoMinutes", 15)
+    base_backup_interval_hours = _optional_integer(source, "baseBackupIntervalHours", 24)
+    if not 7 <= retention_days <= 365:
+        raise DeploymentConfigError("backup.retentionDays 必须在 7–365 之间。")
+    if not 1 <= rpo_minutes <= 15:
+        raise DeploymentConfigError("backup.rpoMinutes 必须在 1–15 之间。")
+    if not 1 <= base_backup_interval_hours <= 168:
+        raise DeploymentConfigError("backup.baseBackupIntervalHours 必须在 1–168 之间。")
+
+    database = _mapping(database_value, "database")
+    database_mode = _enum(database, "mode", DATABASE_MODES)
+    evidence = source.get("providerPitrEvidenceFile")
+    if evidence is not None and not isinstance(evidence, str):
+        raise DeploymentConfigError("backup.providerPitrEvidenceFile 必须是绝对 POSIX 路径。")
+    evidence_path = (
+        _absolute_host_path(evidence, "backup.providerPitrEvidenceFile")
+        if isinstance(evidence, str)
+        else None
+    )
+    if database_mode == "external" and evidence_path is None:
+        raise DeploymentConfigError("外部 PostgreSQL 必须配置供应商 PITR 证据文件。")
+    if database_mode == "embedded" and evidence_path is not None:
+        raise DeploymentConfigError("内置 PostgreSQL 不接受外部 PITR 证据文件。")
+    return BackupConfig(
+        repository=repository,
+        retention_days=retention_days,
+        rpo_minutes=rpo_minutes,
+        base_backup_interval_hours=base_backup_interval_hours,
+        provider_pitr_evidence_file=evidence_path,
+    )
+
+
 def _parse_telemetry(value: object) -> bool:
     source = _mapping(value, "telemetry")
     _reject_unknown(source, {"enabled"}, "telemetry")
@@ -366,3 +430,13 @@ def _safe_token(value: str, label: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
         raise DeploymentConfigError(f"{label} 格式无效。")
     return value
+
+
+def _absolute_host_path(value: str, label: str) -> str:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if posix.is_absolute() and posix != PurePosixPath("/") and ".." not in posix.parts:
+        return posix.as_posix()
+    if windows.is_absolute() and windows.anchor != str(windows) and ".." not in windows.parts:
+        return windows.as_posix()
+    raise DeploymentConfigError(f"{label} 必须是非根绝对主机路径。")

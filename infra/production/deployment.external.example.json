@@ -27,6 +27,13 @@
     "controlPlaneReplicas": 2,
     "synapseWorkers": 2
   },
+  "backup": {
+    "repository": "/var/backups/agent-room",
+    "retentionDays": 30,
+    "rpoMinutes": 15,
+    "baseBackupIntervalHours": 24,
+    "providerPitrEvidenceFile": "/etc/agent-room/provider-pitr-evidence.json"
+  },
   "telemetry": {
     "enabled": true
   }

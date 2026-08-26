@@ -24,6 +24,8 @@ class ProductionConfigTests(unittest.TestCase):
 
         self.assertEqual(config.schema_version, 1)
         self.assertEqual(config.database.mode, "embedded")
+        self.assertEqual(config.backup.rpo_minutes, 15)
+        self.assertEqual(config.backup.archive_timeout_seconds, 900)
         self.assertEqual(config.compose_profiles, ("embedded-database", "embedded-object-store"))
         self.assertEqual(json.loads(SCHEMA.read_text(encoding="utf-8"))["$schema"], "https://json-schema.org/draft/2020-12/schema")
 
@@ -44,6 +46,18 @@ class ProductionConfigTests(unittest.TestCase):
         }
 
         with self.assertRaises(DeploymentConfigError):
+            DeploymentConfig.from_mapping(value)
+
+    def test_external_database_requires_provider_pitr_evidence(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["database"] = {
+            "mode": "external",
+            "host": "postgres.agent-room.example",
+            "port": 5432,
+            "tlsMode": "verify-full",
+        }
+
+        with self.assertRaisesRegex(DeploymentConfigError, "PITR"):
             DeploymentConfig.from_mapping(value)
 
     def test_external_scale_example_disables_embedded_profiles(self) -> None:
@@ -88,6 +102,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertNotIn(runtime_password, environment)
         self.assertIn("COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry", environment)
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
+        self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("sslmode=disable", self.secrets.read("migration_database_url"))
 
     def test_rendered_identity_and_synapse_share_the_same_oidc_contract(self) -> None:
@@ -121,6 +136,25 @@ class ProductionRenderingTests(unittest.TestCase):
 
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
+
+    def test_embedded_database_allows_only_backup_role_to_replicate(self) -> None:
+        rules = ROOT.joinpath("infra", "production", "postgres-pg-hba.conf").read_text(
+            encoding="utf-8"
+        )
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("replication     agent_room_bootstrap", rules)
+        self.assertNotIn("replication     all", rules)
+        self.assertIn("hba_file=/etc/postgresql/agent-room-pg-hba.conf", compose)
+
+    def test_projection_rebuild_uses_server_side_copy(self) -> None:
+        script = ROOT.joinpath("infra", "production", "projection-rebuild.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("COPY (", script)
+        self.assertIn("COPY restored_matrix_membership FROM", script)
+        self.assertNotIn("\\copy", script)
 
     def test_external_object_store_is_verified_without_creation_rights(self) -> None:
         config = load_deployment_config(EXTERNAL_EXAMPLE)

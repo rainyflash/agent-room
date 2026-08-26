@@ -130,6 +130,7 @@ def _compose_environment(
     database = config.database
     public = config.public
     object_store = config.object_store
+    backup = config.backup
     profiles = [*config.compose_profiles]
     if config.telemetry_enabled:
         profiles.append("telemetry")
@@ -137,6 +138,10 @@ def _compose_environment(
         profiles.append("workers")
     values = {
         "AGENT_ROOM_STATE_DIR": paths.state.as_posix(),
+        "AGENT_ROOM_BACKUP_REPOSITORY": backup.repository,
+        "AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS": str(backup.archive_timeout_seconds),
+        "AGENT_ROOM_HOST_UID": str(os.getuid() if hasattr(os, "getuid") else 0),
+        "AGENT_ROOM_HOST_GID": str(os.getgid() if hasattr(os, "getgid") else 0),
         "AGENT_ROOM_PROJECT_NAME": config.project_name,
         "AGENT_ROOM_SERVER_NAME": public.server_name,
         "AGENT_ROOM_APP_DOMAIN": public.app_domain,

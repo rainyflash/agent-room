@@ -24,6 +24,12 @@
     "controlPlaneReplicas": 1,
     "synapseWorkers": 0
   },
+  "backup": {
+    "repository": "/var/backups/agent-room",
+    "retentionDays": 30,
+    "rpoMinutes": 15,
+    "baseBackupIntervalHours": 24
+  },
   "telemetry": {
     "enabled": true
   }

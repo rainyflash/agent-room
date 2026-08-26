@@ -7,9 +7,11 @@ import argparse
 from pathlib import Path
 import sys
 
+from prodops.backup import BackupError
 from prodops.config import DeploymentConfigError, load_deployment_config
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
+from prodops.restore import RestoreDrillError
 from prodops.secrets import SecretStoreError
 
 
@@ -17,10 +19,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=("render", "validate", "preflight", "install", "upgrade", "health", "federation", "down"),
+        choices=(
+            "render",
+            "validate",
+            "preflight",
+            "install",
+            "upgrade",
+            "health",
+            "federation",
+            "backup",
+            "backup-verify",
+            "backup-prune",
+            "restore-drill",
+            "down",
+        ),
     )
     parser.add_argument("--config", type=Path, required=True, help="部署 JSON 配置")
     parser.add_argument("--state-dir", type=Path, required=True, help="持久状态与 Secret 目录")
+    parser.add_argument("--backup-id", help="要校验或恢复的备份 ID")
     return parser
 
 
@@ -48,11 +64,37 @@ def main() -> int:
                 runtime.health(timeout_seconds=30)
             case "federation":
                 runtime.federation(timeout_seconds=15)
+            case "backup":
+                manifest = runtime.backup()
+                print(f"备份已原子发布：{manifest.backup_id}")
+            case "backup-verify":
+                if not arguments.backup_id:
+                    raise ValueError("backup-verify 必须提供 --backup-id。")
+                manifest = runtime.verify_backup(arguments.backup_id)
+                print(f"备份完整性验证通过：{manifest.backup_id}")
+            case "backup-prune":
+                removed = runtime.prune_backups()
+                print(f"已清理 {len(removed)} 个过期备份。")
+            case "restore-drill":
+                if not arguments.backup_id:
+                    raise ValueError("restore-drill 必须提供 --backup-id。")
+                report = runtime.restore_drill(arguments.backup_id)
+                print(
+                    f"隔离恢复演练通过：{report.backup_id}，"
+                    f"耗时 {report.duration_seconds:.3f} 秒。"
+                )
             case "down":
                 runtime.down()
             case _:
                 raise AssertionError("argparse 已约束 action")
-    except (DeploymentConfigError, ProductionRuntimeError, SecretStoreError, ValueError) as error:
+    except (
+        BackupError,
+        DeploymentConfigError,
+        ProductionRuntimeError,
+        RestoreDrillError,
+        SecretStoreError,
+        ValueError,
+    ) as error:
         print(str(error), file=sys.stderr)
         return 1
     except KeyboardInterrupt:

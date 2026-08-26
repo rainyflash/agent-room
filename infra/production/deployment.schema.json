@@ -11,6 +11,7 @@
     "database",
     "objectStore",
     "capacity",
+    "backup",
     "telemetry"
   ],
   "properties": {
@@ -98,6 +99,23 @@
         "synapseWorkers": { "type": "integer", "minimum": 0, "maximum": 8 }
       }
     },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "retentionDays",
+        "rpoMinutes",
+        "baseBackupIntervalHours"
+      ],
+      "properties": {
+        "repository": { "$ref": "#/$defs/absoluteHostPath" },
+        "retentionDays": { "type": "integer", "minimum": 7, "maximum": 365 },
+        "rpoMinutes": { "type": "integer", "minimum": 1, "maximum": 15 },
+        "baseBackupIntervalHours": { "type": "integer", "minimum": 1, "maximum": 168 },
+        "providerPitrEvidenceFile": { "$ref": "#/$defs/absoluteHostPath" }
+      }
+    },
     "telemetry": {
       "type": "object",
       "additionalProperties": false,
@@ -105,10 +123,48 @@
       "properties": { "enabled": { "type": "boolean" } }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "database": {
+            "properties": { "mode": { "const": "external" } },
+            "required": ["mode"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "backup": { "required": ["providerPitrEvidenceFile"] }
+        }
+      },
+      "else": {
+        "properties": {
+          "backup": {
+            "not": { "required": ["providerPitrEvidenceFile"] }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "dnsName": {
       "type": "string",
       "pattern": "^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "absoluteHostPath": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^/(?!$)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+$",
+          "maxLength": 1024
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z]:[\\\\/](?!$)(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))[^\\u0000]+$",
+          "maxLength": 1024
+        }
+      ]
     }
   }
 }

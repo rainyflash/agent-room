@@ -1,0 +1,20 @@
+{
+  "backupId": "20260826T013813481124Z-c725603d",
+  "database": {
+    "databasesVerified": [
+      "agent_room",
+      "keycloak",
+      "synapse"
+    ],
+    "logicalArchivesVerified": 3,
+    "projectionMemberships": 0,
+    "projectionRooms": 0,
+    "replayReachedTarget": true
+  },
+  "durationSeconds": 30.68,
+  "objectCount": 1,
+  "rpoTargetMinutes": 15,
+  "rtoMet": true,
+  "rtoTargetSeconds": 14400,
+  "schemaVersion": 1
+}
