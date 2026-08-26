@@ -34,6 +34,12 @@ go-no-go-record:
 go-no-go-assert:
   python tools/go_no_go.py assert-go
 
+go-no-go-issues:
+  python tools/readiness_issues.py plan
+
+go-no-go-issues-sync:
+  python tools/readiness_issues.py sync
+
 format:
   cargo fmt --all
   {{pnpm}} format
