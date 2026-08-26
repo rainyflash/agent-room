@@ -22,6 +22,9 @@ oss-check:
   python tools/open_source.py
   python tools/license_inventory.py check
 
+oss-acceptance:
+  python tools/open_source_acceptance.py
+
 format:
   cargo fmt --all
   {{pnpm}} format

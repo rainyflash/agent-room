@@ -173,9 +173,9 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal
-      - name: 安装 Node 依赖与 Chromium
+      - name: 从干净检出引导贡献者环境并安装 Chromium
         run: |
-          corepack pnpm@10.28.0 install --frozen-lockfile
+          node tools/bootstrap.mjs
           corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
       - name: 启动真实外部依赖
         shell: pwsh
@@ -190,6 +190,10 @@ jobs:
           python tools/database.py coverage
       - name: 应用控制平面数据库迁移
         run: python tools/database.py migrate
+      - name: 生成默认自托管配置并验证生产 Compose
+        run: |
+          python tools/self_host.py init --domain room.example.com --email operator@example.com --output "${RUNNER_TEMP}/agent-room-deployment.json"
+          python tools/production.py validate --config "${RUNNER_TEMP}/agent-room-deployment.json" --state-dir "${RUNNER_TEMP}/agent-room-state"
       - name: 再次执行种子验证幂等性
         shell: pwsh
         run: ./tools/dev-infra.ps1 seed
