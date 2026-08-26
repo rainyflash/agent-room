@@ -55,6 +55,7 @@ class FederationConfigurationTests(unittest.TestCase):
         self.assertNotIn("alpha-database-secret", beta)
         self.assertIn("federation_custom_ca_list:", alpha)
         self.assertIn("federation_custom_ca_list:", beta)
+        self.assertIn("rc_joins_per_room:\n  per_second: 20\n  burst_count: 40", alpha)
 
     def test_sensitive_runtime_files_are_replaced_with_private_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -47,6 +47,8 @@ PROJECT_NAME: Final = "agent-room-federation-test"
 SYNAPSE_IMAGE: Final = "matrixdotorg/synapse:v1.159.0"
 FEDERATION_PORT: Final = 18448
 HTTP_TIMEOUT_SECONDS: Final = 15
+TEST_JOIN_PER_ROOM_RATE: Final = 20
+TEST_JOIN_PER_ROOM_BURST: Final = 40
 
 
 class FederationFailure(RuntimeError):
@@ -442,6 +444,9 @@ rc_joins:
   remote:
     per_second: 20
     burst_count: 40
+rc_joins_per_room:
+  per_second: {TEST_JOIN_PER_ROOM_RATE}
+  burst_count: {TEST_JOIN_PER_ROOM_BURST}
 rc_message:
   per_second: 50
   burst_count: 100
