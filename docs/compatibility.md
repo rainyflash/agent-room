@@ -19,9 +19,9 @@ Do not combine files from separate release archives. Stable and testing channels
 | Platform                                     | Engineering status                                                 | Public support status                    |
 | -------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------- |
 | Chromium-based desktop browser               | Automated Playwright acceptance                                    | Not yet supported for production         |
-| Windows x86-64 Tauri + Bridge + Codex plugin | Native build/test and release-candidate pipeline                   | Pending signed external release evidence |
-| macOS x86-64 Tauri + Bridge + Codex plugin   | Native build/test and release-candidate pipeline                   | Pending signed external release evidence |
-| macOS arm64                                  | Closed-test packaging path exists; final release path not accepted | Unsupported                              |
+| Windows x86-64 Tauri + Bridge + Codex plugin | Automated M2 build, package, and same-revision verification passed | Pending signed external release evidence |
+| macOS arm64                                  | Manual maintainer-owned self-hosted build path only                | Unsupported                              |
+| macOS x86-64                                 | No maintained build or release path                                | Unsupported                              |
 | Linux desktop                                | Workspace compilation only; no release bundle                      | Unsupported                              |
 | Firefox and Safari                           | No browser acceptance matrix yet                                   | Unsupported                              |
 | iOS and Android                              | No native client                                                   | Unsupported                              |

@@ -337,8 +337,8 @@ Bridge：
 
 - 控制平面 OCI 镜像，多架构并带 SBOM/签名。
 - Web 静态产物，内容哈希文件名和完整性清单。
-- Bridge：Windows x64/arm64、macOS universal/对应架构、Linux x64/arm64。
-- Tauri：Windows 和 macOS 首发，Linux 标记实验性。
+- Bridge：首发只生成 Windows x86-64；Linux 保持服务器/工作区可编译，macOS ARM64 仅允许维护者自托管手动验证。
+- Tauri：Windows x86-64 首发；Linux 与 macOS 不进入首发签名候选。
 - Codex 插件包及独立 manifest/schema 校验报告。
 - Compose 参考部署和版本化迁移说明。
 
