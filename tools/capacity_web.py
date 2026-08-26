@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 from typing import Final, Sequence
@@ -22,6 +23,17 @@ ROOT: Final = Path(__file__).resolve().parent.parent
 REPORT: Final = ROOT / "artifacts" / "capacity" / "web-report.json"
 
 
+def allocate_available_loopback_port() -> int:
+    """让操作系统选择当前可绑定的回环端口，避免固定端口与本机软件冲突。"""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    if not isinstance(port, int) or not 1 <= port <= 65_535:
+        raise RuntimeError("操作系统没有返回有效的浏览器容量端口。")
+    return port
+
+
 def run() -> dict[str, object]:
     executable = shutil.which("corepack.cmd" if os.name == "nt" else "corepack")
     if executable is None:
@@ -30,6 +42,7 @@ def run() -> dict[str, object]:
     environment = os.environ.copy()
     environment["AGENT_ROOM_CAPACITY_REPORT"] = "1"
     environment["AGENT_ROOM_CAPACITY_REVISION"] = revision
+    environment["AGENT_ROOM_E2E_PORT"] = str(allocate_available_loopback_port())
     REPORT.unlink(missing_ok=True)
     build = subprocess.run(
         [

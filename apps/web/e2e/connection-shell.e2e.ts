@@ -14,12 +14,16 @@ const readyReport = {
   version: '0.1.0',
 };
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ baseURL, page }) => {
+  if (!baseURL) {
+    throw new Error('Playwright baseURL 未配置。');
+  }
+  const browserOrigin = new URL(baseURL).origin;
   await page.route(`${apiOrigin}/**`, async (route) => {
     const url = new URL(route.request().url());
     const headers = {
       'access-control-allow-credentials': 'true',
-      'access-control-allow-origin': 'http://127.0.0.1:14173',
+      'access-control-allow-origin': browserOrigin,
       'content-type': 'application/json',
     };
     if (url.pathname === '/auth/session') {
