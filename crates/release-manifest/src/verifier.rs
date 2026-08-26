@@ -189,8 +189,15 @@ fn validate_artifacts(manifest: &ReleaseManifest) -> ReleaseManifestResult<()> {
     let mut identities = HashSet::new();
     let mut contains_desktop = false;
     for artifact in &manifest.artifacts {
-        if !identities.insert((artifact.kind, artifact.platform.as_str())) {
+        if !identities.insert((
+            artifact.kind,
+            artifact.platform.as_str(),
+            artifact.name.as_str(),
+        )) {
             return Err(ReleaseManifestError::DuplicateArtifact);
+        }
+        if !is_artifact_name(&artifact.name) {
+            return Err(ReleaseManifestError::InvalidArtifactName);
         }
         contains_desktop |= artifact.kind == ArtifactKind::Desktop;
         if !is_artifact_url(&artifact.url) {
@@ -237,6 +244,14 @@ fn is_lowercase_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn is_artifact_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -277,6 +292,7 @@ mod tests {
             rollback_from: None,
             tauri_manifest_url: Some("https://releases.example/tauri/stable.json".to_owned()),
             artifacts: vec![ReleaseArtifact {
+                name: "desktop".to_owned(),
                 kind: ArtifactKind::Desktop,
                 platform: "windows-x86_64".to_owned(),
                 url: "https://releases.example/agent-room_1.5.0_x64.exe".to_owned(),

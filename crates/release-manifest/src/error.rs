@@ -36,8 +36,10 @@ pub enum ReleaseManifestError {
     UnauthorizedRollback,
     #[error("发布清单没有产物")]
     MissingArtifacts,
-    #[error("发布产物类型和平台必须唯一")]
+    #[error("发布产物名称、类型和平台的组合必须唯一")]
     DuplicateArtifact,
+    #[error("发布产物名称无效")]
+    InvalidArtifactName,
     #[error("发布产物地址无效")]
     InvalidArtifactUrl,
     #[error("发布产物摘要无效")]

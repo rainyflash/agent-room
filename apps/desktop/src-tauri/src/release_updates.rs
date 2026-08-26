@@ -400,6 +400,7 @@ mod tests {
                     output
                 });
         let mut artifact = ReleaseArtifact {
+            name: "desktop".to_owned(),
             kind: ArtifactKind::Desktop,
             platform: "windows-x86_64".to_owned(),
             url: "https://releases.example/update.exe".to_owned(),

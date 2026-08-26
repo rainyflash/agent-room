@@ -20,6 +20,7 @@ pub enum ArtifactKind {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReleaseArtifact {
+    pub name: String,
     pub kind: ArtifactKind,
     pub platform: String,
     pub url: String,

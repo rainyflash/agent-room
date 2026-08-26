@@ -116,6 +116,7 @@ mod tests {
             rollback_from: None,
             tauri_manifest_url: None,
             artifacts: vec![ReleaseArtifact {
+                name: "bridge".to_owned(),
                 kind: ArtifactKind::Bridge,
                 platform: "windows-x86_64".to_owned(),
                 url: "https://releases.example/bridge.exe".to_owned(),
