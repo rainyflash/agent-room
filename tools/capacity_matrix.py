@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -49,6 +50,8 @@ REPORT: Final = ROOT / "artifacts" / "capacity" / "matrix-report.json"
 MEMBER_COUNT: Final = 250
 SUSTAINED_RATE: Final = 10
 BURST_COUNT: Final = 50
+RATE_LIMIT_ATTEMPTS: Final = 24
+RATE_LIMIT_JITTER_SECONDS: Final = 0.4
 T = TypeVar("T")
 CapacityMessageSender: TypeAlias = Callable[[MatrixUser, str, str], tuple[str, float]]
 
@@ -88,7 +91,7 @@ def create_public_room(owner: MatrixUser) -> str:
 
 def join_room(user: MatrixUser, room_id: str) -> float:
     started = time.perf_counter()
-    for attempt in range(12):
+    for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             user.peer,
             "POST",
@@ -99,7 +102,7 @@ def join_room(user: MatrixUser, room_id: str) -> float:
         )
         if response.get("_status") == 200:
             break
-        time.sleep(retry_delay(response, attempt))
+        time.sleep(retry_delay(response, attempt, user.user_id))
     else:
         raise MatrixCapacityFailure("加入大厅持续被 Homeserver 限流。")
     return (time.perf_counter() - started) * 1_000.0
@@ -120,7 +123,8 @@ def joined_member_count(owner: MatrixUser, room_id: str) -> int:
 
 def renew_state(owner: MatrixUser, room_id: str, ordinal: int) -> float:
     started = time.perf_counter()
-    for attempt in range(12):
+    discriminator = f"state:{ordinal}"
+    for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             owner.peer,
             "PUT",
@@ -140,7 +144,7 @@ def renew_state(owner: MatrixUser, room_id: str, ordinal: int) -> float:
         )
         if response.get("_status") == 200:
             break
-        time.sleep(retry_delay(response, attempt))
+        time.sleep(retry_delay(response, attempt, discriminator))
     else:
         raise MatrixCapacityFailure("状态续租持续被 Homeserver 限流。")
     return (time.perf_counter() - started) * 1_000.0
@@ -150,7 +154,7 @@ def send_capacity_message(owner: MatrixUser, room_id: str, label: str) -> tuple[
     started = time.perf_counter()
     transaction_id = f"capacity-{uuid.uuid4().hex}"
     event_id: str | None = None
-    for attempt in range(12):
+    for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             owner.peer,
             "PUT",
@@ -169,17 +173,23 @@ def send_capacity_message(owner: MatrixUser, room_id: str, label: str) -> tuple[
                 raise MatrixCapacityFailure("消息接受响应缺少 event_id。")
             event_id = candidate
             break
-        time.sleep(retry_delay(response, attempt))
+        time.sleep(retry_delay(response, attempt, transaction_id))
     if event_id is None:
         raise MatrixCapacityFailure("消息发送持续被 Homeserver 限流。")
     return event_id, (time.perf_counter() - started) * 1_000.0
 
 
-def retry_delay(response: dict[str, object], attempt: int) -> float:
+def retry_delay(
+    response: dict[str, object], attempt: int, discriminator: str = ""
+) -> float:
     retry_after_ms = response.get("retry_after_ms")
     if isinstance(retry_after_ms, int) and retry_after_ms > 0:
-        return min(5.0, retry_after_ms / 1_000.0)
-    return min(5.0, 0.1 * (2**attempt))
+        base_delay = min(30.0, retry_after_ms / 1_000.0)
+    else:
+        base_delay = min(5.0, 0.1 * (2**attempt))
+    digest = hashlib.sha256(f"{discriminator}:{attempt}".encode("utf-8")).digest()
+    jitter = int.from_bytes(digest[:2], "big") / 65_535
+    return base_delay + jitter * RATE_LIMIT_JITTER_SECONDS
 
 
 def send_sustained(
