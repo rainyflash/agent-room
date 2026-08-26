@@ -55,4 +55,4 @@ jobs:
           name: task-37-federation-evidence
           path: artifacts/federation/task-37-report.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7

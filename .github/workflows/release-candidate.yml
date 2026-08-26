@@ -74,7 +74,7 @@ jobs:
           name: release-metadata
           path: candidate/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   native:
     name: ${{ matrix.target }} 原生发行
@@ -156,7 +156,7 @@ jobs:
           name: release-native-${{ matrix.target }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   images:
     name: ${{ matrix.name }} 多架构镜像
@@ -231,7 +231,7 @@ jobs:
           name: release-image-${{ matrix.name }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   draft:
     name: 聚合并创建私有草稿发行
@@ -290,4 +290,4 @@ jobs:
           name: release-candidate-${{ needs.metadata.outputs.tag }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7

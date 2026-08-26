@@ -58,7 +58,7 @@ jobs:
             artifacts/reliability/
             artifacts/security/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   desktop-packages:
     name: ${{ matrix.platform }} 测试包
@@ -97,7 +97,7 @@ jobs:
           name: m2-${{ matrix.platform }}
           path: artifacts/closed-test/packages/${{ matrix.platform }}/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   m2-gate:
     name: M2 签字门

@@ -129,7 +129,7 @@ jobs:
             artifacts/browser/task-19/
             artifacts/playwright/task-19-results/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
 
   supply-chain:
     name: 供应链与物料清单
@@ -208,7 +208,7 @@ jobs:
           name: task-39-database-capacity-evidence
           path: artifacts/capacity/database-report.json
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
       - name: 应用控制平面数据库迁移
         run: python tools/database.py migrate
       - name: 生成默认自托管配置并验证生产 Compose
