@@ -9,6 +9,9 @@ default:
 bootstrap:
   node tools/bootstrap.mjs
 
+doctor:
+  node tools/bootstrap.mjs --check
+
 format:
   cargo fmt --all
   {{pnpm}} format
