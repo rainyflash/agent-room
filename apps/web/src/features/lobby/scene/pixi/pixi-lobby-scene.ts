@@ -122,6 +122,9 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#worldLayer = null;
     this.#nodesLayer = null;
     delete this.#host.dataset.agentRoomRenderedNodes;
+    delete this.#host.dataset.agentRoomRenderMilliseconds;
+    delete this.#host.dataset.agentRoomRenderSequence;
+    delete this.#host.dataset.agentRoomUpdateMilliseconds;
     delete this.#host.dataset.agentRoomTextureCount;
     app?.destroy({ removeView: true }, { children: true, context: true });
   }
@@ -178,6 +181,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     if (app === null || nodesLayer === null || worldLayer === null) {
       return;
     }
+    const startedAt = performance.now();
     const camera = this.#camera.snapshot();
     worldLayer.position.set(camera.x, camera.y);
     worldLayer.scale.set(camera.scale);
@@ -196,11 +200,16 @@ class PixiLobbyScene implements LobbySceneHandle {
         }),
       );
     }
+    this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - startedAt);
     app.render();
     const renderer = app.renderer as TextureAwareRenderer;
     this.#host.dataset.agentRoomRenderedNodes = String(visibleNodes.length);
     this.#host.dataset.agentRoomTextureCount = String(
       renderer.texture?.managedTextures?.length ?? 0,
+    );
+    this.#host.dataset.agentRoomRenderMilliseconds = String(performance.now() - startedAt);
+    this.#host.dataset.agentRoomRenderSequence = String(
+      Number(this.#host.dataset.agentRoomRenderSequence ?? '0') + 1,
     );
   }
 

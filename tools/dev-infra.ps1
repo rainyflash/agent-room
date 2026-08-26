@@ -42,6 +42,19 @@ function Convert-ToComposePath {
   return ([System.IO.Path]::GetFullPath($Path)).Replace('\', '/')
 }
 
+function Get-HostContainerIdentity {
+  if (-not $IsLinux) {
+    return @{ UserId = '991'; GroupId = '991' }
+  }
+
+  $userId = (& id -u).Trim()
+  $groupId = (& id -g).Trim()
+  if ($LASTEXITCODE -ne 0 -or $userId -notmatch '^\d+$' -or $groupId -notmatch '^\d+$') {
+    throw '无法读取 Linux 用户或用户组 ID。'
+  }
+  return @{ UserId = $userId; GroupId = $groupId }
+}
+
 function Repair-LinuxBindMountOwnership {
   param(
     [Parameter(Mandatory)][string]$Directory,
@@ -52,11 +65,9 @@ function Repair-LinuxBindMountOwnership {
     return
   }
 
-  $userId = (& id -u).Trim()
-  $groupId = (& id -g).Trim()
-  if ($LASTEXITCODE -ne 0 -or $userId -notmatch '^\d+$' -or $groupId -notmatch '^\d+$') {
-    throw '无法读取 Linux 用户或用户组 ID。'
-  }
+  $identity = Get-HostContainerIdentity
+  $userId = $identity.UserId
+  $groupId = $identity.GroupId
 
   $mount = (Convert-ToComposePath -Path $Directory) + ':/data'
   $dockerArguments = @(
@@ -92,11 +103,18 @@ function Read-Environment {
 }
 
 function Write-Environment {
+  $hostIdentity = Get-HostContainerIdentity
   if (Test-Path -LiteralPath $EnvFile) {
     $current = Read-Environment
     $missingValues = [ordered]@{}
     if (-not $current.ContainsKey('AGENT_ROOM_DB_RUNTIME_PASSWORD')) {
       $missingValues.AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
+    }
+    if (-not $current.ContainsKey('AGENT_ROOM_HOST_UID')) {
+      $missingValues.AGENT_ROOM_HOST_UID = $hostIdentity.UserId
+    }
+    if (-not $current.ContainsKey('AGENT_ROOM_HOST_GID')) {
+      $missingValues.AGENT_ROOM_HOST_GID = $hostIdentity.GroupId
     }
     if (-not $current.ContainsKey('SYNAPSE_APPSERVICE_TOKEN')) {
       $missingValues.SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
@@ -127,6 +145,8 @@ function Write-Environment {
   $values = [ordered]@{
     AGENT_ROOM_ROOT = Convert-ToComposePath -Path $Root
     AGENT_ROOM_LOCAL_DIR = Convert-ToComposePath -Path $LocalDirectory
+    AGENT_ROOM_HOST_UID = $hostIdentity.UserId
+    AGENT_ROOM_HOST_GID = $hostIdentity.GroupId
     POSTGRES_BOOTSTRAP_PASSWORD = New-RandomSecret
     AGENT_ROOM_DB_PASSWORD = New-RandomSecret
     AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret

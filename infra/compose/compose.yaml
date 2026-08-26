@@ -25,6 +25,7 @@ services:
 
   synapse:
     image: matrixdotorg/synapse:v1.159.0
+    user: '${AGENT_ROOM_HOST_UID:-991}:${AGENT_ROOM_HOST_GID:-991}'
     depends_on:
       postgres:
         condition: service_healthy
