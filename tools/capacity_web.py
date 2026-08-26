@@ -13,9 +13,9 @@ import sys
 from typing import Final, Sequence
 
 if __package__:
-    from .capacity import git_revision
+    from .capacity import git_revision, require_git_revision
 else:
-    from capacity import git_revision
+    from capacity import git_revision, require_git_revision
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -76,6 +76,7 @@ def run() -> dict[str, object]:
         raise RuntimeError("浏览器容量报告不是当前 Git 修订。")
     if report.get("passed") is not True:
         raise RuntimeError("浏览器容量报告未通过。")
+    require_git_revision(revision)
     return report
 
 

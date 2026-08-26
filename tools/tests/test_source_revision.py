@@ -5,7 +5,11 @@ import subprocess
 import unittest
 from unittest.mock import call, patch
 
-from tools.source_revision import SourceRevisionFailure, clean_git_revision
+from tools.source_revision import (
+    SourceRevisionFailure,
+    clean_git_revision,
+    require_clean_git_revision,
+)
 
 
 class CleanGitRevisionTests(unittest.TestCase):
@@ -68,6 +72,13 @@ class CleanGitRevisionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SourceRevisionFailure, "完整 Git 提交"):
             clean_git_revision(Path("repository"))
+
+    @patch("tools.source_revision.clean_git_revision", return_value="b" * 40)
+    def test_rejects_revision_changed_during_acceptance(self, clean_revision) -> None:
+        with self.assertRaisesRegex(SourceRevisionFailure, f"开始 {'a' * 40}"):
+            require_clean_git_revision(Path("repository"), "a" * 40)
+
+        clean_revision.assert_called_once_with(Path("repository"))
 
 
 if __name__ == "__main__":

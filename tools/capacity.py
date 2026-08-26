@@ -20,9 +20,17 @@ import time
 from typing import Final, Iterable, Mapping, Sequence
 
 if __package__:
-    from .source_revision import SourceRevisionFailure, clean_git_revision
+    from .source_revision import (
+        SourceRevisionFailure,
+        clean_git_revision,
+        require_clean_git_revision,
+    )
 else:
-    from source_revision import SourceRevisionFailure, clean_git_revision
+    from source_revision import (
+        SourceRevisionFailure,
+        clean_git_revision,
+        require_clean_git_revision,
+    )
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -86,6 +94,15 @@ def git_revision() -> str:
         raise CapacityFailure(str(error)) from error
 
 
+def require_git_revision(expected: str) -> None:
+    """拒绝把运行期间切换过源码的结果记到另一个提交名下。"""
+
+    try:
+        require_clean_git_revision(ROOT, expected)
+    except SourceRevisionFailure as error:
+        raise CapacityFailure(str(error)) from error
+
+
 def write_json(path: Path, value: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -102,6 +119,7 @@ def target_map() -> dict[str, int]:
 def run_model(seed: int) -> dict[str, object]:
     """快速暴露算法级退化；该结果永远不能满足真实容量门。"""
 
+    revision = git_revision()
     generator = random.Random(seed)
     started = time.perf_counter()
     agents = tuple(
@@ -164,12 +182,13 @@ def run_model(seed: int) -> dict[str, object]:
         and len(room_loads) == 4
         and metrics["digestAgreement"] is True
     )
+    require_git_revision(revision)
     report: dict[str, object] = {
         "schemaVersion": 1,
         "scenario": "capacity_algorithm_model",
         "evidenceLevel": "model_only",
         "generatedAt": datetime.now(UTC).isoformat(),
-        "revision": git_revision(),
+        "revision": revision,
         "seed": seed,
         "passed": passed,
         "targets": [asdict(target) for target in TARGETS],
@@ -273,6 +292,7 @@ def run_bridge_soak(
     if duration_seconds <= 0 or sample_seconds <= 0 or sample_seconds > 60:
         raise CapacityFailure("常驻时长必须为正数，采样间隔必须处于 1 到 60 秒。")
 
+    revision = git_revision()
     executable, executable_digest = validate_bridge_executable(
         resolve_executable(command[0])
     )
@@ -313,6 +333,7 @@ def run_bridge_soak(
                     "rssBytes": rss,
                 }
             )
+            require_git_revision(revision)
             checkpoint = bridge_soak_report(
                 executable,
                 executable_digest,
@@ -322,6 +343,7 @@ def run_bridge_soak(
                 completed=False,
                 active_session_configured=active_session_configured,
                 process_id=process.pid,
+                revision=revision,
             )
             write_json(SOAK_REPORT, checkpoint)
             if elapsed >= duration_seconds:
@@ -338,6 +360,7 @@ def run_bridge_soak(
         output.close()
 
     elapsed = time.monotonic() - started
+    require_git_revision(revision)
     report = bridge_soak_report(
         executable,
         executable_digest,
@@ -347,6 +370,7 @@ def run_bridge_soak(
         completed=elapsed >= duration_seconds,
         active_session_configured=active_session_configured,
         process_id=process.pid,
+        revision=revision,
     )
     write_json(SOAK_REPORT, report)
     return report
@@ -362,6 +386,7 @@ def bridge_soak_report(
     active_session_configured: bool,
     completed: bool,
     process_id: int,
+    revision: str,
 ) -> dict[str, object]:
     rss_samples = [int(sample["rssBytes"]) for sample in samples]
     growth = 0 if len(rss_samples) < 2 else rss_samples[-1] - rss_samples[0]
@@ -377,7 +402,7 @@ def bridge_soak_report(
         "scenario": "bridge_72_hour_soak",
         "evidenceLevel": "real_process",
         "generatedAt": datetime.now(UTC).isoformat(),
-        "revision": git_revision(),
+        "revision": revision,
         "startedAt": started_at.isoformat(),
         "commandExecutable": executable.name,
         "executableSha256": executable_digest,
@@ -437,6 +462,7 @@ def evaluate_gate(paths: Iterable[Path]) -> dict[str, object]:
         if report.get("releaseGateEligible") is not True:
             failures.append(f"场景 {scenario} 不具备发布门资格")
 
+    require_git_revision(revision)
     report: dict[str, object] = {
         "schemaVersion": 1,
         "scenario": "task_39_capacity_gate",

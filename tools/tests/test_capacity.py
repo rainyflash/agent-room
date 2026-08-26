@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from tools.source_revision import SourceRevisionFailure
 from tools.capacity import (
     CapacityFailure,
     MAX_BRIDGE_RSS_BYTES,
@@ -15,6 +16,7 @@ from tools.capacity import (
     bridge_soak_report,
     evaluate_gate,
     percentile,
+    require_git_revision,
     run_model,
     validate_bridge_executable,
 )
@@ -28,9 +30,13 @@ class CapacityMathTests(unittest.TestCase):
             percentile([], 0.95)
 
     @patch("tools.capacity.git_revision", return_value="revision")
+    @patch("tools.capacity.require_clean_git_revision")
     @patch("tools.capacity.write_json")
     def test_model_is_reproducible_but_never_release_eligible(
-        self, _write_json: object, _git_revision: object
+        self,
+        _write_json: object,
+        _require_revision: object,
+        _git_revision: object,
     ) -> None:
         report = run_model(39)
         self.assertTrue(report["passed"])
@@ -68,6 +74,7 @@ class CapacityMathTests(unittest.TestCase):
             "executable_digest": "a" * 64,
             "process_id": 42,
             "started_at": datetime.now(UTC),
+            "revision": "revision",
         }
         accepted = bridge_soak_report(
             elapsed_seconds=SOAK_SECONDS,
@@ -92,12 +99,28 @@ class CapacityMathTests(unittest.TestCase):
         self.assertFalse(leaking["passed"])
         self.assertFalse(observer_only["passed"])
 
+    @patch(
+        "tools.capacity.require_clean_git_revision",
+        side_effect=SourceRevisionFailure(
+            "Git 修订在验收期间发生变化：开始 starting-revision，结束 ending-revision。"
+        ),
+    )
+    def test_revision_guard_rejects_source_changes_during_acceptance(
+        self, _require_revision: object
+    ) -> None:
+        with self.assertRaisesRegex(CapacityFailure, "开始 starting-revision"):
+            require_git_revision("starting-revision")
+
 
 class CapacityGateTests(unittest.TestCase):
     @patch("tools.capacity.git_revision", return_value="revision")
+    @patch("tools.capacity.require_clean_git_revision")
     @patch("tools.capacity.write_json")
     def test_gate_rejects_missing_model_and_stale_evidence(
-        self, _write_json: object, _git_revision: object
+        self,
+        _write_json: object,
+        _require_revision: object,
+        _git_revision: object,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -136,9 +159,13 @@ class CapacityGateTests(unittest.TestCase):
         self.assertIn("缺少场景 bridge_72_hour_soak", failures)
 
     @patch("tools.capacity.git_revision", return_value="revision")
+    @patch("tools.capacity.require_clean_git_revision")
     @patch("tools.capacity.write_json")
     def test_gate_accepts_only_complete_current_real_evidence(
-        self, _write_json: object, _git_revision: object
+        self,
+        _write_json: object,
+        _require_revision: object,
+        _git_revision: object,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths: list[Path] = []

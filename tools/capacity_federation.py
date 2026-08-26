@@ -143,6 +143,7 @@ def execute(outage_seconds: int, event_count: int, *, keep_running: bool) -> dic
     if event_count <= 0 or event_count > 100:
         raise CapacityFederationFailure("回填事件数必须处于 1 到 100。")
 
+    revision = federation.git_revision()
     federation.down(volumes=True)
     federation.prepare()
     peer_stopped = False
@@ -217,12 +218,13 @@ def execute(outage_seconds: int, event_count: int, *, keep_running: bool) -> dic
             actual_outage_seconds=actual_outage_seconds,
             requested_outage_seconds=outage_seconds,
         )
+        federation.require_git_revision(revision)
         report: dict[str, object] = {
             "schemaVersion": 1,
             "scenario": "federation_outage_backfill",
             "evidenceLevel": "real_service",
             "generatedAt": datetime.now(UTC).isoformat(),
-            "revision": federation.git_revision(),
+            "revision": revision,
             "passed": assessment["passed"],
             "releaseGateEligible": assessment["releaseGateEligible"],
             "topology": federation.diagnose(),

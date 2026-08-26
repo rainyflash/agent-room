@@ -14,9 +14,9 @@ import sys
 from typing import Final, Sequence
 
 if __package__:
-    from .capacity import git_revision, write_json
+    from .capacity import git_revision, require_git_revision, write_json
 else:
-    from capacity import git_revision, write_json
+    from capacity import git_revision, require_git_revision, write_json
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -89,6 +89,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
 def main(arguments: Sequence[str] | None = None) -> int:
     parse_args(arguments)
     try:
+        revision = git_revision()
         values = read_environment()
         environment = os.environ.copy()
         environment.update(
@@ -132,6 +133,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         output = (result.stdout or "") + (result.stderr or "")
         metrics = parse_capacity_observation(output)
+        require_git_revision(revision)
         write_json(
             REPORT,
             {
@@ -139,7 +141,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "scenario": "content_25_mib_concurrency",
                 "evidenceLevel": "real_s3_compatible_store",
                 "generatedAt": datetime.now(UTC).isoformat(),
-                "revision": git_revision(),
+                "revision": revision,
                 "passed": True,
                 "releaseGateEligible": True,
                 "topology": "SeaweedFS S3 compatibility path through the production adapter",

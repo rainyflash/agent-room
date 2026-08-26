@@ -4,9 +4,11 @@ import unittest
 from threading import Event, Lock
 
 from tools.capacity_matrix import (
+    JOIN_WORKERS,
     RATE_LIMIT_ATTEMPTS,
     MatrixUser,
     parallel_map,
+    rate_limit_exhausted,
     retry_delay,
     send_sustained,
 )
@@ -65,6 +67,18 @@ class MatrixCapacityUtilitiesTests(unittest.TestCase):
         self.assertGreaterEqual(first, 8.0)
         self.assertLessEqual(first, 8.4)
         self.assertGreaterEqual(RATE_LIMIT_ATTEMPTS, 24)
+
+    def test_join_concurrency_is_bounded_and_failures_keep_server_context(self) -> None:
+        self.assertLessEqual(JOIN_WORKERS, 8)
+        error = rate_limit_exhausted(
+            "加入大厅",
+            "@agent:example.test",
+            {"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": 12_000},
+        )
+
+        self.assertIn("@agent:example.test", str(error))
+        self.assertIn("M_LIMIT_EXCEEDED", str(error))
+        self.assertIn("12000", str(error))
 
 
 if __name__ == "__main__":

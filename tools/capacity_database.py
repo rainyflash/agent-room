@@ -13,7 +13,7 @@ import sys
 from typing import Final, Sequence
 
 if __package__:
-    from .capacity import git_revision, write_json
+    from .capacity import git_revision, require_git_revision, write_json
     from .database import (
         ENV_FILE,
         TEST_DATABASE,
@@ -25,7 +25,7 @@ if __package__:
         reset_test_database,
     )
 else:
-    from capacity import git_revision, write_json
+    from capacity import git_revision, require_git_revision, write_json
     from database import (
         ENV_FILE,
         TEST_DATABASE,
@@ -83,6 +83,7 @@ def capacity_test_command() -> list[str]:
 
 
 def run() -> dict[str, object]:
+    revision = git_revision()
     values = read_environment(ENV_FILE)
     migration_password = required_value(values, "AGENT_ROOM_DB_PASSWORD")
     runtime_password = required_value(values, "AGENT_ROOM_DB_RUNTIME_PASSWORD")
@@ -117,12 +118,13 @@ def run() -> dict[str, object]:
     finally:
         drop_test_database()
 
+    require_git_revision(revision)
     report: dict[str, object] = {
         "schemaVersion": 1,
         "scenario": "database_directory_and_allocation",
         "evidenceLevel": "real_postgresql",
         "generatedAt": datetime.now(UTC).isoformat(),
-        "revision": git_revision(),
+        "revision": revision,
         "passed": True,
         "releaseGateEligible": True,
         "topology": {

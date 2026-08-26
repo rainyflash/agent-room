@@ -16,7 +16,13 @@ from urllib.parse import urlencode
 import uuid
 
 if __package__:
-    from .capacity import git_revision, percentile, write_json
+    from .capacity import (
+        CapacityFailure,
+        git_revision,
+        percentile,
+        require_git_revision,
+        write_json,
+    )
     from .federation import (
         ALPHA,
         FederationFailure,
@@ -30,7 +36,13 @@ if __package__:
         up,
     )
 else:
-    from capacity import git_revision, percentile, write_json
+    from capacity import (
+        CapacityFailure,
+        git_revision,
+        percentile,
+        require_git_revision,
+        write_json,
+    )
     from federation import (
         ALPHA,
         FederationFailure,
@@ -52,6 +64,9 @@ SUSTAINED_RATE: Final = 10
 BURST_COUNT: Final = 50
 RATE_LIMIT_ATTEMPTS: Final = 24
 RATE_LIMIT_JITTER_SECONDS: Final = 0.4
+REGISTRATION_WORKERS: Final = 24
+JOIN_WORKERS: Final = 8
+STATE_WORKERS: Final = 24
 T = TypeVar("T")
 CapacityMessageSender: TypeAlias = Callable[[MatrixUser, str, str], tuple[str, float]]
 
@@ -91,6 +106,7 @@ def create_public_room(owner: MatrixUser) -> str:
 
 def join_room(user: MatrixUser, room_id: str) -> float:
     started = time.perf_counter()
+    last_response: dict[str, object] = {}
     for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             user.peer,
@@ -102,9 +118,10 @@ def join_room(user: MatrixUser, room_id: str) -> float:
         )
         if response.get("_status") == 200:
             break
+        last_response = response
         time.sleep(retry_delay(response, attempt, user.user_id))
     else:
-        raise MatrixCapacityFailure("加入大厅持续被 Homeserver 限流。")
+        raise rate_limit_exhausted("加入大厅", user.user_id, last_response)
     return (time.perf_counter() - started) * 1_000.0
 
 
@@ -124,6 +141,7 @@ def joined_member_count(owner: MatrixUser, room_id: str) -> int:
 def renew_state(owner: MatrixUser, room_id: str, ordinal: int) -> float:
     started = time.perf_counter()
     discriminator = f"state:{ordinal}"
+    last_response: dict[str, object] = {}
     for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             owner.peer,
@@ -144,9 +162,10 @@ def renew_state(owner: MatrixUser, room_id: str, ordinal: int) -> float:
         )
         if response.get("_status") == 200:
             break
+        last_response = response
         time.sleep(retry_delay(response, attempt, discriminator))
     else:
-        raise MatrixCapacityFailure("状态续租持续被 Homeserver 限流。")
+        raise rate_limit_exhausted("状态续租", discriminator, last_response)
     return (time.perf_counter() - started) * 1_000.0
 
 
@@ -154,6 +173,7 @@ def send_capacity_message(owner: MatrixUser, room_id: str, label: str) -> tuple[
     started = time.perf_counter()
     transaction_id = f"capacity-{uuid.uuid4().hex}"
     event_id: str | None = None
+    last_response: dict[str, object] = {}
     for attempt in range(RATE_LIMIT_ATTEMPTS):
         response = matrix_request(
             owner.peer,
@@ -173,9 +193,10 @@ def send_capacity_message(owner: MatrixUser, room_id: str, label: str) -> tuple[
                 raise MatrixCapacityFailure("消息接受响应缺少 event_id。")
             event_id = candidate
             break
+        last_response = response
         time.sleep(retry_delay(response, attempt, transaction_id))
     if event_id is None:
-        raise MatrixCapacityFailure("消息发送持续被 Homeserver 限流。")
+        raise rate_limit_exhausted("消息发送", transaction_id, last_response)
     return event_id, (time.perf_counter() - started) * 1_000.0
 
 
@@ -190,6 +211,20 @@ def retry_delay(
     digest = hashlib.sha256(f"{discriminator}:{attempt}".encode("utf-8")).digest()
     jitter = int.from_bytes(digest[:2], "big") / 65_535
     return base_delay + jitter * RATE_LIMIT_JITTER_SECONDS
+
+
+def rate_limit_exhausted(
+    operation: str, discriminator: str, response: dict[str, object]
+) -> MatrixCapacityFailure:
+    """保留服务端最后一次 429 细节，避免容量失败只剩一句废话。"""
+
+    errcode = response.get("errcode", "unknown")
+    retry_after_ms = response.get("retry_after_ms", "unknown")
+    return MatrixCapacityFailure(
+        f"{operation}持续被 Homeserver 限流：目标={discriminator}，"
+        f"尝试={RATE_LIMIT_ATTEMPTS}，errcode={errcode}，"
+        f"retry_after_ms={retry_after_ms}。"
+    )
 
 
 def send_sustained(
@@ -266,6 +301,7 @@ def observed_event_ids(user: MatrixUser, room_id: str, maximum_pages: int = 20) 
 def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
     if sustained_seconds <= 0:
         raise MatrixCapacityFailure("持续消息时长必须为正数。")
+    revision = git_revision()
     down(volumes=True)
     prepare()
     try:
@@ -282,7 +318,7 @@ def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
                 administrator=ordinal == 0,
             ),
             range(MEMBER_COUNT),
-            workers=24,
+            workers=REGISTRATION_WORKERS,
         )
         registration_seconds = time.perf_counter() - registration_started
         owner = next(user for user in users if user.user_id.endswith("-000:alpha.agent-room.test"))
@@ -293,7 +329,7 @@ def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
         join_latencies = parallel_map(
             lambda ordinal: join_room(members[ordinal], room_id),
             range(len(members)),
-            workers=24,
+            workers=JOIN_WORKERS,
         )
         join_seconds = time.perf_counter() - join_started
         actual_members = joined_member_count(owner, room_id)
@@ -302,7 +338,7 @@ def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
         state_latencies = parallel_map(
             lambda ordinal: renew_state(owner, room_id, ordinal),
             range(MEMBER_COUNT),
-            workers=24,
+            workers=STATE_WORKERS,
         )
         state_seconds = time.perf_counter() - state_started
 
@@ -350,12 +386,13 @@ def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
             and delivery_ratio == 1.0
         )
         release_eligible = passed and sustained_seconds >= 60
+        require_git_revision(revision)
         report: dict[str, object] = {
             "schemaVersion": 1,
             "scenario": "matrix_lobby_and_messages",
             "evidenceLevel": "real_synapse_client_api",
             "generatedAt": datetime.now(UTC).isoformat(),
-            "revision": git_revision(),
+            "revision": revision,
             "passed": passed,
             "releaseGateEligible": release_eligible,
             "topology": {
@@ -386,7 +423,7 @@ def main() -> int:
         print(f"Matrix 容量报告：{REPORT}")
         print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))
         return 0
-    except (FederationFailure, MatrixCapacityFailure) as error:
+    except (CapacityFailure, FederationFailure, MatrixCapacityFailure) as error:
         print(str(error), file=sys.stderr)
         return 1
     except KeyboardInterrupt:

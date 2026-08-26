@@ -25,9 +25,17 @@ from urllib.request import Request, urlopen
 import uuid
 
 if __package__:
-    from .source_revision import SourceRevisionFailure, clean_git_revision
+    from .source_revision import (
+        SourceRevisionFailure,
+        clean_git_revision,
+        require_clean_git_revision,
+    )
 else:
-    from source_revision import SourceRevisionFailure, clean_git_revision
+    from source_revision import (
+        SourceRevisionFailure,
+        clean_git_revision,
+        require_clean_git_revision,
+    )
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -948,6 +956,7 @@ def start_peer(peer: Peer) -> None:
 
 
 def execute_acceptance() -> dict[str, object]:
+    revision = git_revision()
     values = read_environment()
     topology = diagnose()
     suffix = uuid.uuid4().hex[:10]
@@ -1048,10 +1057,11 @@ def execute_acceptance() -> dict[str, object]:
     _, recovered_arrivals = wait_for_event(
         beta, room_id, set(queued), beta_since, timeout_seconds=90
     )
+    require_git_revision(revision)
     return {
         "schemaVersion": 1,
         "task": 37,
-        "revision": git_revision(),
+        "revision": revision,
         "generatedAt": utc_now(),
         "passed": True,
         "topology": topology,
@@ -1110,6 +1120,15 @@ def execute_acceptance() -> dict[str, object]:
 def git_revision() -> str:
     try:
         return clean_git_revision(ROOT)
+    except SourceRevisionFailure as error:
+        raise FederationFailure(str(error)) from error
+
+
+def require_git_revision(expected: str) -> None:
+    """确保联邦验收从头到尾绑定同一个干净提交。"""
+
+    try:
+        require_clean_git_revision(ROOT, expected)
     except SourceRevisionFailure as error:
         raise FederationFailure(str(error)) from error
 

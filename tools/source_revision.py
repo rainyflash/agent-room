@@ -61,3 +61,13 @@ def clean_git_revision(root: Path) -> str:
         )
         raise SourceRevisionFailure(f"无法读取完整 Git 提交：{detail}")
     return revision
+
+
+def require_clean_git_revision(root: Path, expected: str) -> None:
+    """确保长时间验收结束时仍处于开始时的干净源码修订。"""
+
+    actual = clean_git_revision(root)
+    if actual != expected:
+        raise SourceRevisionFailure(
+            f"Git 修订在验收期间发生变化：开始 {expected}，结束 {actual}。"
+        )
