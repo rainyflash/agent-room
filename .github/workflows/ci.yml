@@ -21,6 +21,7 @@ jobs:
   quality:
     name: 格式、类型与测试
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -62,6 +63,7 @@ jobs:
       matrix:
         os: [windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -77,6 +79,7 @@ jobs:
       matrix:
         os: [windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -101,6 +104,7 @@ jobs:
     name: Web 真实浏览器验收
     needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -128,6 +132,7 @@ jobs:
   supply-chain:
     name: 供应链与物料清单
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -163,6 +168,7 @@ jobs:
     name: PostgreSQL、Matrix、对象存储与协议集成
     needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1

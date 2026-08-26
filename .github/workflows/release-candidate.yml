@@ -38,6 +38,7 @@ jobs:
     name: 校验候选元数据
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       tag: ${{ steps.metadata.outputs.tag }}
@@ -92,6 +93,7 @@ jobs:
             bridge: target/release/agent-room-bridge.exe
             mcp: target/release/agent-room-codex-mcp.exe
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -174,6 +176,7 @@ jobs:
           - name: web
             file: infra/production/Containerfile.web
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -238,6 +241,7 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1

@@ -35,6 +35,7 @@ jobs:
       contents: write
       packages: read
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: 检出受保护主分支
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1

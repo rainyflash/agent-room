@@ -104,6 +104,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [acceptance, desktop-packages]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: 核对前置任务结果
         env:
