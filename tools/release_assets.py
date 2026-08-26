@@ -405,7 +405,9 @@ def attest_image(args: argparse.Namespace) -> None:
 def merge_tauri(args: argparse.Namespace) -> None:
     if args.published_at_unix_seconds < 0:
         raise ReleaseFailure("Tauri 发布时间不能为负数。")
-    metadata_paths = sorted(args.metadata_root.resolve(strict=True).rglob("native-metadata.json"))
+    metadata_paths = sorted(
+        args.metadata_root.resolve(strict=True).rglob("native-metadata-*.json")
+    )
     if not metadata_paths:
         raise ReleaseFailure("没有找到原生平台元数据。")
     platforms: dict[str, object] = {}

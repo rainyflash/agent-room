@@ -102,7 +102,7 @@ class ReleaseAssetTests(unittest.TestCase):
             archive.write_bytes(b"desktop")
             signature = directory / f"desktop-{name}.zip.sig"
             signature.write_text("signature", encoding="utf-8")
-            (directory / "native-metadata.json").write_text(
+            (directory / f"native-metadata-{name}.json").write_text(
                 json.dumps(
                     {
                         "updaterTarget": "windows-x86_64",
