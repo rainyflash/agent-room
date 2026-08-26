@@ -66,8 +66,8 @@ services:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://${AGENT_ROOM_DB_HOST:?缺少数据库主机}:${AGENT_ROOM_DB_PORT:?缺少数据库端口}/${KEYCLOAK_DB_NAME:?缺少身份数据库名}
       KC_DB_USERNAME: ${KEYCLOAK_DB_USER:?缺少身份数据库用户}
-      KC_HEALTH_ENABLED: "true"
-      KC_METRICS_ENABLED: "true"
+      KC_HEALTH_ENABLED: 'true'
+      KC_METRICS_ENABLED: 'true'
       KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
       KC_BOOTSTRAP_ADMIN_USERNAME: agent-room-admin
     secrets:
@@ -108,7 +108,7 @@ services:
     read_only: true
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   content-scanner:
@@ -127,7 +127,7 @@ services:
   redis:
     profiles: [workers]
     image: redis:8.2.2-alpine
-    command: [redis-server, --save, "", --appendonly, "no"]
+    command: [redis-server, --save, '', --appendonly, 'no']
     healthcheck:
       test: [CMD, redis-cli, ping]
       interval: 5s
@@ -136,7 +136,7 @@ services:
     read_only: true
     restart: unless-stopped
     <<: *common-security
-    tmpfs: ["/data:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/data:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   synapse:
@@ -151,7 +151,7 @@ services:
       test:
         [
           CMD-SHELL,
-          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/_matrix/client/versions', timeout=3)\"",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://127.0.0.1:8008/_matrix/client/versions'', timeout=3)"',
         ]
       interval: 10s
       timeout: 5s
@@ -159,7 +159,7 @@ services:
     read_only: true
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=128m']
     networks: [backend]
 
   telemetry:
@@ -176,7 +176,7 @@ services:
     read_only: true
     restart: unless-stopped
     <<: *common-security
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   prometheus:
@@ -220,7 +220,7 @@ services:
     read_only: true
     restart: unless-stopped
     <<: *common-security
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   postgres-exporter:
@@ -235,7 +235,7 @@ services:
     read_only: true
     restart: unless-stopped
     <<: *common-security
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   recovery-metrics:
@@ -250,19 +250,19 @@ services:
     read_only: true
     restart: unless-stopped
     <<: *common-security
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   grafana:
     profiles: [telemetry]
     image: grafana/grafana:13.1.0
     environment:
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_SECURITY_ADMIN_USER: agent-room-admin
       GF_SERVER_DOMAIN: localhost
-      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_SIGN_UP: 'false'
     secrets: [grafana_admin_password]
     ports:
       - 127.0.0.1:${AGENT_ROOM_GRAFANA_PORT:-3000}:3000
@@ -282,7 +282,7 @@ services:
       AGENT_ROOM_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
     secrets: [migration_database_url]
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m']
     networks: [backend]
 
   object-store-init:
@@ -298,7 +298,7 @@ services:
       AGENT_ROOM_CONTENT_S3_CREATE_BUCKET: ${AGENT_ROOM_CONTENT_S3_CREATE_BUCKET}
     secrets: [s3_access_key, s3_secret_key]
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m']
     networks: [backend]
 
   synapse-admin-bootstrap:
@@ -316,26 +316,26 @@ services:
       - ${AGENT_ROOM_STATE_DIR}/secrets:/output
     read_only: true
     <<: *common-security
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   backup-permissions:
     image: postgres:18.6-alpine
     profiles: [backup]
-    user: "0:0"
+    user: '0:0'
     entrypoint: [/bin/sh, -ec]
     command:
       - install -d -o 70 -g 70 -m 0750 /backup/wal
     volumes:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   database-backup:
     image: postgres:18.6-alpine
     profiles: [backup]
-    user: "${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}"
+    user: '${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}'
     entrypoint: [/bin/sh, /scripts/database-backup.sh]
     environment:
       AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
@@ -356,13 +356,13 @@ services:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
       - ./database-backup.sh:/scripts/database-backup.sh:ro
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   postgres-base-backup:
     image: postgres:18.6-alpine
     profiles: [backup]
-    user: "0:0"
+    user: '0:0'
     entrypoint: [/bin/sh, /scripts/postgres-base-backup.sh]
     environment:
       AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
@@ -375,13 +375,13 @@ services:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}/wal:/archive:ro
       - ./postgres-base-backup.sh:/scripts/postgres-base-backup.sh:ro
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   backup-ownership:
     image: postgres:18.6-alpine
     profiles: [backup]
-    user: "0:0"
+    user: '0:0'
     entrypoint: [/bin/sh, -ec]
     command:
       - |
@@ -398,13 +398,13 @@ services:
     volumes:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
   object-backup:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     profiles: [backup]
-    user: "${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}"
+    user: '${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}'
     entrypoint: [/bin/sh, /scripts/object-backup.sh]
     environment:
       AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
@@ -415,7 +415,7 @@ services:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
       - ./object-backup.sh:/scripts/object-backup.sh:ro
     read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]
 
   control-plane:
@@ -433,16 +433,16 @@ services:
       AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE: /run/secrets/synapse_lifecycle_admin_token
       AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET_FILE: /run/secrets/account_deletion_receipt_secret
       AGENT_ROOM_OBJECT_STORE_HEALTH_URL: ${AGENT_ROOM_OBJECT_STORE_HEALTH_URL}
-      AGENT_ROOM_DEPENDENCY_TIMEOUT_MS: "5000"
+      AGENT_ROOM_DEPENDENCY_TIMEOUT_MS: '5000'
       AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
       AGENT_ROOM_CONTENT_S3_BUCKET: ${AGENT_ROOM_CONTENT_S3_BUCKET}
       AGENT_ROOM_CONTENT_S3_REGION: ${AGENT_ROOM_CONTENT_S3_REGION}
       AGENT_ROOM_CONTENT_S3_ACCESS_KEY_FILE: /run/secrets/s3_access_key
       AGENT_ROOM_CONTENT_S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
-      AGENT_ROOM_CONTENT_S3_TIMEOUT_MS: "30000"
+      AGENT_ROOM_CONTENT_S3_TIMEOUT_MS: '30000'
       AGENT_ROOM_CONTENT_SCANNER_ADDRESS: content-scanner:3310
-      AGENT_ROOM_CONTENT_SCANNER_CONNECT_TIMEOUT_MS: "3000"
-      AGENT_ROOM_CONTENT_SCANNER_TIMEOUT_MS: "60000"
+      AGENT_ROOM_CONTENT_SCANNER_CONNECT_TIMEOUT_MS: '3000'
+      AGENT_ROOM_CONTENT_SCANNER_TIMEOUT_MS: '60000'
       AGENT_ROOM_CONTENT_TICKET_KEY_ID: production-v1
       AGENT_ROOM_CONTENT_TICKET_SECRET_FILE: /run/secrets/content_ticket_secret
       AGENT_ROOM_CONTENT_MATRIX_AGENT_ID: ${AGENT_ROOM_CONTENT_MATRIX_AGENT_ID}
@@ -455,8 +455,8 @@ services:
       AGENT_ROOM_MATRIX_SERVER_NAME: ${AGENT_ROOM_SERVER_NAME}
       AGENT_ROOM_OTLP_TRACES_ENDPOINT: ${AGENT_ROOM_OTLP_TRACES_ENDPOINT:-}
       AGENT_ROOM_OTLP_METRICS_ENDPOINT: ${AGENT_ROOM_OTLP_METRICS_ENDPOINT:-}
-      AGENT_ROOM_OPERATIONAL_METRICS_INTERVAL_MS: "15000"
-      AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS: "5000"
+      AGENT_ROOM_OPERATIONAL_METRICS_INTERVAL_MS: '15000'
+      AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS: '5000'
       AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn
     secrets:
       - agent_room_db_runtime_password
@@ -476,7 +476,7 @@ services:
       replicas: ${AGENT_ROOM_CONTROL_PLANE_REPLICAS:-1}
     read_only: true
     restart: unless-stopped
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m']
     networks: [backend]
 
   gateway:

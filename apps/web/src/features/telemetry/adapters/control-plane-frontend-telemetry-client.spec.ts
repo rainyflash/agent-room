@@ -4,9 +4,9 @@ import { ControlPlaneFrontendTelemetryClient } from './control-plane-frontend-te
 
 describe('ControlPlaneFrontendTelemetryClient', () => {
   it('只发送固定指标、表面和数值，不携带身份或页面地址', async () => {
-    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(null, { status: 204 }),
-    );
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
     const client = new ControlPlaneFrontendTelemetryClient({
       baseUrl: 'https://api.agent-room.test',
       fetch: fetchImplementation,
