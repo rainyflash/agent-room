@@ -611,6 +611,7 @@ fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<List
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BridgeIpcFailureKind {
     InvalidEndpoint,
+    #[cfg(windows)]
     AccessControl,
     Bind,
     Accept,
@@ -643,6 +644,7 @@ impl BridgeIpcFailure {
     const fn code(self) -> &'static str {
         match self.kind {
             BridgeIpcFailureKind::InvalidEndpoint => "bridge.ipc.endpoint_invalid",
+            #[cfg(windows)]
             BridgeIpcFailureKind::AccessControl => "bridge.ipc.access_control_failed",
             BridgeIpcFailureKind::Bind => "bridge.ipc.bind_failed",
             BridgeIpcFailureKind::Accept => "bridge.ipc.accept_failed",

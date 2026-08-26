@@ -7007,13 +7007,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@cdxgen/cdxgen-plugins-bin-windows-amd64",
-      "version": "2.5.1",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@cdxgen/cdxgen-plugins-bin-windows-amd64/v/2.5.1"
-    },
-    {
-      "ecosystem": "npm",
       "name": "@cdxgen/safer-exec",
       "version": "0.15.0",
       "license": "MIT",
@@ -7067,13 +7060,6 @@
       "version": "12.8.4",
       "license": "Apache-2.0",
       "source": "https://www.npmjs.com/package/@cyclonedx/cdxgen/v/12.8.4"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@esbuild/win32-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@esbuild/win32-x64/v/0.28.2"
     },
     {
       "ecosystem": "npm",
@@ -7343,13 +7329,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.2.5",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@rolldown/binding-win32-x64-msvc/v/1.2.5"
-    },
-    {
-      "ecosystem": "npm",
       "name": "@rolldown/pluginutils",
       "version": "1.0.1",
       "license": "MIT",
@@ -7392,20 +7371,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@rollup/rollup-win32-x64-gnu",
-      "version": "4.62.5",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@rollup/rollup-win32-x64-gnu/v/4.62.5"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@rollup/rollup-win32-x64-msvc",
-      "version": "4.62.5",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@rollup/rollup-win32-x64-msvc/v/4.62.5"
-    },
-    {
-      "ecosystem": "npm",
       "name": "@standard-schema/spec",
       "version": "1.1.0",
       "license": "MIT",
@@ -7424,13 +7389,6 @@
       "version": "4.3.3",
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@tailwindcss/oxide/v/4.3.3"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@tailwindcss/oxide-win32-x64-msvc",
-      "version": "4.3.3",
-      "license": "MIT",
-      "source": "https://www.npmjs.com/package/@tailwindcss/oxide-win32-x64-msvc/v/4.3.3"
     },
     {
       "ecosystem": "npm",
@@ -7501,13 +7459,6 @@
       "version": "2.11.1",
       "license": "Apache-2.0 OR MIT",
       "source": "https://www.npmjs.com/package/@tauri-apps/cli/v/2.11.1"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@tauri-apps/cli-win32-x64-msvc",
-      "version": "2.11.1",
-      "license": "Apache-2.0 OR MIT",
-      "source": "https://www.npmjs.com/package/@tauri-apps/cli-win32-x64-msvc/v/2.11.1"
     },
     {
       "ecosystem": "npm",
@@ -9524,20 +9475,6 @@
       "version": "1.33.0",
       "license": "MPL-2.0",
       "source": "https://www.npmjs.com/package/lightningcss/v/1.33.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "lightningcss-win32-x64-msvc",
-      "version": "1.32.0",
-      "license": "MPL-2.0",
-      "source": "https://www.npmjs.com/package/lightningcss-win32-x64-msvc/v/1.32.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "lightningcss-win32-x64-msvc",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "source": "https://www.npmjs.com/package/lightningcss-win32-x64-msvc/v/1.33.0"
     },
     {
       "ecosystem": "npm",

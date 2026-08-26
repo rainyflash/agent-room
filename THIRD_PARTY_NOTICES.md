@@ -7,8 +7,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 888
-- npm packages: 721
-- Total locked package versions: 1609
+- npm packages: 712
+- Total locked package versions: 1600
 - `Cargo.lock` SHA-256: `3a173c09ebfa1b72f905ee95d9904fdb041d5e1c2ce846dbb6034ee5064744f1`
 - `pnpm-lock.yaml` SHA-256: `bd20fde2351f1b8e288a1c861b28ea881572d181a2247a13c4981631c237b9d1`
 
@@ -30,7 +30,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `Apache-2.0 OR BSL-1.0` | 2 |
 | `Apache-2.0 OR BSL-1.0 OR MIT` | 1 |
 | `Apache-2.0 OR ISC OR MIT` | 3 |
-| `Apache-2.0 OR MIT` | 88 |
+| `Apache-2.0 OR MIT` | 87 |
 | `Apache-2.0 WITH LLVM-exception` | 1 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 5 |
 | `Apache-2.0/MIT` | 7 |
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 771 |
+| `MIT` | 765 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 378 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -60,7 +60,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `MIT OR Zlib OR Apache-2.0` | 1 |
 | `MIT-0` | 3 |
 | `MIT/Apache-2.0` | 42 |
-| `MPL-2.0` | 16 |
+| `MPL-2.0` | 14 |
 | `MPL-2.0+` | 3 |
 | `OFL-1.1` | 3 |
 | `Unicode-3.0` | 18 |
@@ -1074,7 +1074,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@cdxgen/cdx-hbom](https://www.npmjs.com/package/@cdxgen/cdx-hbom/v/0.5.1) | 0.5.1 | `MIT` |
 | npm | [@cdxgen/cdx-proto](https://www.npmjs.com/package/@cdxgen/cdx-proto/v/2.2.0) | 2.2.0 | `MIT` |
 | npm | [@cdxgen/cdxgen-plugins-bin](https://www.npmjs.com/package/@cdxgen/cdxgen-plugins-bin/v/2.5.1) | 2.5.1 | `MIT` |
-| npm | [@cdxgen/cdxgen-plugins-bin-windows-amd64](https://www.npmjs.com/package/@cdxgen/cdxgen-plugins-bin-windows-amd64/v/2.5.1) | 2.5.1 | `MIT` |
 | npm | [@cdxgen/safer-exec](https://www.npmjs.com/package/@cdxgen/safer-exec/v/0.15.0) | 0.15.0 | `MIT` |
 | npm | [@csstools/color-helpers](https://www.npmjs.com/package/@csstools/color-helpers/v/6.1.1) | 6.1.1 | `MIT-0` |
 | npm | [@csstools/css-calc](https://www.npmjs.com/package/@csstools/css-calc/v/3.3.0) | 3.3.0 | `MIT` |
@@ -1083,7 +1082,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@csstools/css-syntax-patches-for-csstree](https://www.npmjs.com/package/@csstools/css-syntax-patches-for-csstree/v/1.1.8) | 1.1.8 | `MIT-0` |
 | npm | [@csstools/css-tokenizer](https://www.npmjs.com/package/@csstools/css-tokenizer/v/4.0.0) | 4.0.0 | `MIT` |
 | npm | [@cyclonedx/cdxgen](https://www.npmjs.com/package/@cyclonedx/cdxgen/v/12.8.4) | 12.8.4 | `Apache-2.0` |
-| npm | [@esbuild/win32-x64](https://www.npmjs.com/package/@esbuild/win32-x64/v/0.28.2) | 0.28.2 | `MIT` |
 | npm | [@eslint-community/eslint-utils](https://www.npmjs.com/package/@eslint-community/eslint-utils/v/4.10.1) | 4.10.1 | `MIT` |
 | npm | [@eslint-community/regexpp](https://www.npmjs.com/package/@eslint-community/regexpp/v/4.12.2) | 4.12.2 | `MIT` |
 | npm | [@eslint/config-array](https://www.npmjs.com/package/@eslint/config-array/v/0.23.5) | 0.23.5 | `Apache-2.0` |
@@ -1122,19 +1120,15 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@oxc-project/types](https://www.npmjs.com/package/@oxc-project/types/v/0.146.0) | 0.146.0 | `MIT` |
 | npm | [@pixi/colord](https://www.npmjs.com/package/@pixi/colord/v/2.9.6) | 2.9.6 | `MIT` |
 | npm | [@playwright/test](https://www.npmjs.com/package/@playwright/test/v/1.62.1) | 1.62.1 | `Apache-2.0` |
-| npm | [@rolldown/binding-win32-x64-msvc](https://www.npmjs.com/package/@rolldown/binding-win32-x64-msvc/v/1.2.5) | 1.2.5 | `MIT` |
 | npm | [@rolldown/pluginutils](https://www.npmjs.com/package/@rolldown/pluginutils/v/1.0.1) | 1.0.1 | `MIT` |
 | npm | [@rollup/plugin-babel](https://www.npmjs.com/package/@rollup/plugin-babel/v/6.1.0) | 6.1.0 | `MIT` |
 | npm | [@rollup/plugin-node-resolve](https://www.npmjs.com/package/@rollup/plugin-node-resolve/v/16.0.3) | 16.0.3 | `MIT` |
 | npm | [@rollup/plugin-replace](https://www.npmjs.com/package/@rollup/plugin-replace/v/6.0.3) | 6.0.3 | `MIT` |
 | npm | [@rollup/plugin-terser](https://www.npmjs.com/package/@rollup/plugin-terser/v/1.0.0) | 1.0.0 | `MIT` |
 | npm | [@rollup/pluginutils](https://www.npmjs.com/package/@rollup/pluginutils/v/5.4.0) | 5.4.0 | `MIT` |
-| npm | [@rollup/rollup-win32-x64-gnu](https://www.npmjs.com/package/@rollup/rollup-win32-x64-gnu/v/4.62.5) | 4.62.5 | `MIT` |
-| npm | [@rollup/rollup-win32-x64-msvc](https://www.npmjs.com/package/@rollup/rollup-win32-x64-msvc/v/4.62.5) | 4.62.5 | `MIT` |
 | npm | [@standard-schema/spec](https://www.npmjs.com/package/@standard-schema/spec/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [@tailwindcss/node](https://www.npmjs.com/package/@tailwindcss/node/v/4.3.3) | 4.3.3 | `MIT` |
 | npm | [@tailwindcss/oxide](https://www.npmjs.com/package/@tailwindcss/oxide/v/4.3.3) | 4.3.3 | `MIT` |
-| npm | [@tailwindcss/oxide-win32-x64-msvc](https://www.npmjs.com/package/@tailwindcss/oxide-win32-x64-msvc/v/4.3.3) | 4.3.3 | `MIT` |
 | npm | [@tailwindcss/vite](https://www.npmjs.com/package/@tailwindcss/vite/v/4.3.3) | 4.3.3 | `MIT` |
 | npm | [@tanstack/history](https://www.npmjs.com/package/@tanstack/history/v/1.162.1) | 1.162.1 | `MIT` |
 | npm | [@tanstack/query-core](https://www.npmjs.com/package/@tanstack/query-core/v/5.102.2) | 5.102.2 | `MIT` |
@@ -1145,7 +1139,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@tanstack/store](https://www.npmjs.com/package/@tanstack/store/v/0.9.3) | 0.9.3 | `MIT` |
 | npm | [@tauri-apps/api](https://www.npmjs.com/package/@tauri-apps/api/v/2.11.1) | 2.11.1 | `Apache-2.0 OR MIT` |
 | npm | [@tauri-apps/cli](https://www.npmjs.com/package/@tauri-apps/cli/v/2.11.1) | 2.11.1 | `Apache-2.0 OR MIT` |
-| npm | [@tauri-apps/cli-win32-x64-msvc](https://www.npmjs.com/package/@tauri-apps/cli-win32-x64-msvc/v/2.11.1) | 2.11.1 | `Apache-2.0 OR MIT` |
 | npm | [@testing-library/dom](https://www.npmjs.com/package/@testing-library/dom/v/10.4.1) | 10.4.1 | `MIT` |
 | npm | [@testing-library/jest-dom](https://www.npmjs.com/package/@testing-library/jest-dom/v/6.9.1) | 6.9.1 | `MIT` |
 | npm | [@testing-library/react](https://www.npmjs.com/package/@testing-library/react/v/16.3.2) | 16.3.2 | `MIT` |
@@ -1434,8 +1427,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [levn](https://www.npmjs.com/package/levn/v/0.4.1) | 0.4.1 | `MIT` |
 | npm | [lightningcss](https://www.npmjs.com/package/lightningcss/v/1.32.0) | 1.32.0 | `MPL-2.0` |
 | npm | [lightningcss](https://www.npmjs.com/package/lightningcss/v/1.33.0) | 1.33.0 | `MPL-2.0` |
-| npm | [lightningcss-win32-x64-msvc](https://www.npmjs.com/package/lightningcss-win32-x64-msvc/v/1.32.0) | 1.32.0 | `MPL-2.0` |
-| npm | [lightningcss-win32-x64-msvc](https://www.npmjs.com/package/lightningcss-win32-x64-msvc/v/1.33.0) | 1.33.0 | `MPL-2.0` |
 | npm | [locate-path](https://www.npmjs.com/package/locate-path/v/6.0.0) | 6.0.0 | `MIT` |
 | npm | [lodash.debounce](https://www.npmjs.com/package/lodash.debounce/v/4.0.8) | 4.0.8 | `MIT` |
 | npm | [loglevel](https://www.npmjs.com/package/loglevel/v/1.9.2) | 1.9.2 | `MIT` |

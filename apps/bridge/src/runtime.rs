@@ -1700,6 +1700,7 @@ impl BridgeRuntimeError {
             BridgeIpcFailureKind::InvalidEndpoint => {
                 ("bridge.ipc_endpoint_invalid", "本地 IPC 端点名称无效")
             }
+            #[cfg(windows)]
             BridgeIpcFailureKind::AccessControl => (
                 "bridge.ipc_access_control_failed",
                 "无法把本地 IPC 限制到当前登录会话",

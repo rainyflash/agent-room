@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from tools.license_inventory import (
@@ -7,6 +10,7 @@ from tools.license_inventory import (
     build_inventory,
     parse_cargo_metadata,
     parse_pnpm_licenses,
+    platform_specific_pnpm_keys,
     render_markdown,
 )
 
@@ -106,6 +110,52 @@ class LicenseInventoryTests(unittest.TestCase):
                     ]
                 }
             )
+
+    def test_platform_specific_packages_are_excluded_from_root_inventory(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            common = root / "node_modules" / ".pnpm" / "common" / "node_modules" / "common"
+            binary = root / "node_modules" / ".pnpm" / "binary" / "node_modules" / "binary-linux"
+            common.mkdir(parents=True)
+            binary.mkdir(parents=True)
+            (common / "package.json").write_text(
+                json.dumps({"name": "common", "version": "1.0.0", "license": "MIT"}),
+                encoding="utf-8",
+            )
+            (binary / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "binary-linux",
+                        "version": "2.0.0",
+                        "license": "MIT",
+                        "os": ["linux"],
+                        "cpu": ["x64"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = {
+                "MIT": [
+                    {
+                        "name": "common",
+                        "versions": ["1.0.0"],
+                        "paths": [str(common)],
+                        "license": "MIT",
+                    },
+                    {
+                        "name": "binary-linux",
+                        "versions": ["2.0.0"],
+                        "paths": [str(binary)],
+                        "license": "MIT",
+                    },
+                ]
+            }
+
+            excluded = platform_specific_pnpm_keys(payload, workspace_root=root)
+            records = parse_pnpm_licenses(payload, excluded=excluded)
+
+            self.assertEqual(excluded, frozenset({("binary-linux", "2.0.0")}))
+            self.assertEqual([record.name for record in records], ["common"])
 
 
 if __name__ == "__main__":

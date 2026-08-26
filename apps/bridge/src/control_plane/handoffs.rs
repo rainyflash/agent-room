@@ -492,6 +492,7 @@ mod tests {
 
     #[tokio::test]
     async fn 目录明确区分不存在与畸形响应且授权拒绝保持业务结果() {
+        const MALFORMED_INSTANCE_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e40";
         let app = Router::new()
             .route(
                 "/handoffs/authorization",
@@ -500,7 +501,7 @@ mod tests {
             .route(
                 "/agent-instances/{instance_id}/handoff-address",
                 get(|Path(instance_id): Path<String>| async move {
-                    if instance_id.ends_with('0') {
+                    if instance_id == MALFORMED_INSTANCE_ID {
                         Json(json!({ "unexpected": true })).into_response()
                     } else {
                         StatusCode::NOT_FOUND.into_response()
@@ -523,7 +524,7 @@ mod tests {
         assert_eq!(missing.kind(), HandoffDirectoryFailureKind::NotFound);
 
         let malformed_id = AgentInstanceId::from_uuid(
-            Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e40").expect("测试 UUID 有效"),
+            Uuid::parse_str(MALFORMED_INSTANCE_ID).expect("测试 UUID 有效"),
         );
         let malformed = gateway
             .resolve(malformed_id)

@@ -57,8 +57,13 @@ def parse_cargo_metadata(value: object) -> tuple[DependencyLicense, ...]:
     return _unique(records)
 
 
-def parse_pnpm_licenses(value: object) -> tuple[DependencyLicense, ...]:
+def parse_pnpm_licenses(
+    value: object,
+    *,
+    excluded: Iterable[tuple[str, str]] = (),
+) -> tuple[DependencyLicense, ...]:
     root = _mapping(value, "pnpm licenses")
+    excluded_keys = frozenset(excluded)
     records: list[DependencyLicense] = []
     for grouped_license, packages in root.items():
         if not isinstance(packages, list):
@@ -76,12 +81,65 @@ def parse_pnpm_licenses(value: object) -> tuple[DependencyLicense, ...]:
                 if not isinstance(raw_version, str) or not raw_version.strip():
                     raise LicenseInventoryError(f"pnpm package {name} 含无效版本。")
                 version = raw_version.strip()
+                if (name, version) in excluded_keys:
+                    continue
                 source = (
                     "https://www.npmjs.com/package/"
                     f"{quote(name, safe='@/')}/v/{quote(version, safe='.-')}"
                 )
                 records.append(DependencyLicense("npm", name, version, license_name, source))
     return _unique(records)
+
+
+def platform_specific_pnpm_keys(
+    value: object,
+    *,
+    workspace_root: Path = ROOT,
+) -> frozenset[tuple[str, str]]:
+    """识别仅服务某个 OS/CPU/libc 的可选二进制包。
+
+    根级 notices 描述跨平台共有的源码依赖；平台二进制由各发行制品的 SBOM 记录。
+    """
+
+    root = _mapping(value, "pnpm licenses")
+    node_modules = (workspace_root / "node_modules").resolve()
+    constraints: dict[tuple[str, str], list[bool]] = {}
+    for packages in root.values():
+        if not isinstance(packages, list):
+            raise LicenseInventoryError("pnpm 许可证组不是数组。")
+        for package in packages:
+            entry = _mapping(package, "pnpm package")
+            name = _text(entry, "name", "pnpm package")
+            if name == "agent-room" or name.startswith("@agent-room/"):
+                continue
+            paths = entry.get("paths")
+            if not isinstance(paths, list) or not paths:
+                raise LicenseInventoryError(f"pnpm package {name} 缺少 paths。")
+            for raw_path in paths:
+                if not isinstance(raw_path, str) or not raw_path:
+                    raise LicenseInventoryError(f"pnpm package {name} 含无效路径。")
+                package_path = Path(raw_path).resolve()
+                if package_path != node_modules and node_modules not in package_path.parents:
+                    raise LicenseInventoryError(f"pnpm package {name} 的路径越过 node_modules。")
+                manifest_path = package_path / "package.json"
+                try:
+                    manifest = _mapping(
+                        json.loads(manifest_path.read_text(encoding="utf-8")),
+                        f"pnpm package {name} manifest",
+                    )
+                except json.JSONDecodeError as error:
+                    raise LicenseInventoryError(
+                        f"pnpm package {name} 的 package.json 无效。"
+                    ) from error
+                manifest_name = _text(manifest, "name", f"pnpm package {name} manifest")
+                version = _text(manifest, "version", f"pnpm package {name} manifest")
+                if manifest_name != name:
+                    raise LicenseInventoryError(
+                        f"pnpm package 路径声明 {manifest_name}，预期 {name}。"
+                    )
+                constrained = any(_has_platform_constraint(manifest.get(key)) for key in ("os", "cpu", "libc"))
+                constraints.setdefault((name, version), []).append(constrained)
+    return frozenset(key for key, values in constraints.items() if values and all(values))
 
 
 def build_inventory(
@@ -162,7 +220,10 @@ def collect_inventory() -> dict[str, object]:
     pnpm_licenses = _run_json(_pnpm_command())
     return build_inventory(
         parse_cargo_metadata(cargo_metadata),
-        parse_pnpm_licenses(pnpm_licenses),
+        parse_pnpm_licenses(
+            pnpm_licenses,
+            excluded=platform_specific_pnpm_keys(pnpm_licenses),
+        ),
         cargo_lock_digest=_digest(ROOT / "Cargo.lock"),
         pnpm_lock_digest=_digest(ROOT / "pnpm-lock.yaml"),
     )
@@ -275,6 +336,14 @@ def _license(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise LicenseInventoryError(f"{label} 没有声明许可证。")
     return " ".join(value.split())
+
+
+def _has_platform_constraint(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(isinstance(item, str) and item.strip() for item in value)
+    return False
 
 
 def _digest(path: Path) -> str:

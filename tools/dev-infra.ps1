@@ -42,6 +42,37 @@ function Convert-ToComposePath {
   return ([System.IO.Path]::GetFullPath($Path)).Replace('\', '/')
 }
 
+function Repair-LinuxBindMountOwnership {
+  param(
+    [Parameter(Mandatory)][string]$Directory,
+    [Parameter(Mandatory)][string]$Image
+  )
+
+  if (-not $IsLinux) {
+    return
+  }
+
+  $userId = (& id -u).Trim()
+  $groupId = (& id -g).Trim()
+  if ($LASTEXITCODE -ne 0 -or $userId -notmatch '^\d+$' -or $groupId -notmatch '^\d+$') {
+    throw '无法读取 Linux 用户或用户组 ID。'
+  }
+
+  $mount = (Convert-ToComposePath -Path $Directory) + ':/data'
+  $dockerArguments = @(
+    'run', '--rm',
+    '--user', '0:0',
+    '--entrypoint', '/bin/sh',
+    '--volume', $mount,
+    $Image,
+    '-c', "chown -R ${userId}:${groupId} /data"
+  )
+  & docker @dockerArguments
+  if ($LASTEXITCODE -ne 0) {
+    throw '无法恢复 Synapse 生成目录的 Linux 主机所有权。'
+  }
+}
+
 function Read-Environment {
   if (-not (Test-Path -LiteralPath $EnvFile)) {
     throw "缺少本地环境文件：$EnvFile"
@@ -250,6 +281,7 @@ function Write-SynapseConfig {
       throw 'Synapse 初始密钥生成失败。'
     }
   }
+  Repair-LinuxBindMountOwnership -Directory $directory -Image 'matrixdotorg/synapse:v1.159.0'
 
   $appserviceTemplate = @'
 id: "agent-room"

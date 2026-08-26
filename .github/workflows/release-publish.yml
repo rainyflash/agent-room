@@ -23,6 +23,9 @@ concurrency:
   group: release-publish-${{ inputs.tag }}
   cancel-in-progress: false
 
+env:
+  PYTHONUTF8: '1'
+
 jobs:
   publish:
     name: 最终密码学门禁与发布

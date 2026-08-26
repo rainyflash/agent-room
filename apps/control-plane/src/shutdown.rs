@@ -6,17 +6,14 @@ pub(crate) async fn signal() {
         use tokio::signal::unix::{SignalKind, signal};
 
         let terminate = async {
-            match signal(SignalKind::terminate()) {
-                Ok(mut stream) => {
-                    stream.recv().await;
-                }
-                Err(_) => {
-                    tracing::error!(
-                        code = "shutdown.sigterm_listener_failed",
-                        "无法监听 SIGTERM"
-                    );
-                    pending::<()>().await;
-                }
+            if let Ok(mut stream) = signal(SignalKind::terminate()) {
+                stream.recv().await;
+            } else {
+                tracing::error!(
+                    code = "shutdown.sigterm_listener_failed",
+                    "无法监听 SIGTERM"
+                );
+                pending::<()>().await;
             }
         };
 

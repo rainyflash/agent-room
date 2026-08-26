@@ -15,6 +15,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  PYTHONUTF8: '1'
   RUST_BACKTRACE: '1'
 
 jobs:
@@ -35,6 +36,8 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt,llvm-tools-preview
           cargo install just --locked --version 1.58.0
+      - name: 安装 Linux 桌面编译依赖
+        run: bash tools/install-linux-desktop-deps.sh
       - name: 安装依赖与 Chromium
         run: |
           corepack pnpm@10.28.0 install --frozen-lockfile
@@ -46,7 +49,11 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
         with:
           name: m2-acceptance-evidence
-          path: artifacts/closed-test/
+          path: |
+            artifacts/closed-test/
+            artifacts/browser/
+            artifacts/reliability/
+            artifacts/security/
           if-no-files-found: error
           retention-days: 30
 
