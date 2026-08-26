@@ -1,0 +1,54 @@
+name: macOS 自托管验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-self-hosted-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONUTF8: '1'
+  RUST_BACKTRACE: '1'
+
+jobs:
+  verify:
+    name: macOS ARM64 自托管构建与打包
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装固定依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 编译 Bridge 与桌面壳
+        run: |
+          cargo check -p agent-room-bridge --all-targets
+          corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
+          corepack pnpm@10.28.0 --filter @agent-room/desktop prepare:sidecar
+          cargo test -p agent-room-desktop --all-features
+      - name: 构建未签名测试包
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: corepack pnpm@10.28.0 build:desktop
+      - name: 检查构建卫生
+        run: python tools/build_hygiene.py
+      - name: 组装 macOS ARM64 测试包
+        run: python tools/closed_test.py package --platform-tag macos-arm64
+      - name: 上传自托管验证产物
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: macos-self-hosted-arm64
+          path: artifacts/closed-test/packages/macos-arm64/
+          if-no-files-found: error
+          retention-days: 7

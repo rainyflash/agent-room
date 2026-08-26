@@ -60,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: 检出代码
@@ -75,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: 检出代码
@@ -214,6 +214,14 @@ jobs:
         run: python tools/control-plane.py test
       - name: 验证 OIDC、Matrix SSO 与浏览器会话恢复
         run: python tools/web.py
+      - name: 上传 OIDC 浏览器失败证据
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: task-19-live-session-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/playwright/task-19-live-results
+          if-no-files-found: warn
+          retention-days: 7
       - name: 停止外部依赖
         if: always()
         shell: pwsh

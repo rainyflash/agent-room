@@ -28,11 +28,11 @@ export default defineConfig({
     },
     {
       command:
-        'corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 0.0.0.0 --port 5173 --strictPort',
+        'corepack pnpm@10.28.0 --filter @agent-room/web exec vite preview --host 0.0.0.0 --port 4173 --strictPort',
       cwd: '../..',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
-      url: 'http://127.0.0.1:5173/connect',
+      url: 'http://127.0.0.1:4173/connect',
     },
   ],
 });

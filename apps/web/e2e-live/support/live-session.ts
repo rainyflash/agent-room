@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 export const apiOrigin = 'https://api.agent-room.localhost:18443';
 export const matrixOrigin = 'https://matrix.agent-room.localhost:18443';
@@ -8,11 +8,16 @@ export async function connectLiveSession(
   username: string,
   password: string,
 ): Promise<string> {
-  await page.goto('/connect');
-  await page.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u }).click();
+  const login = page.getByRole('button', {
+    name: /Sign in to Agent Room|登录 Agent Room/u,
+  });
+  await openConnectionPage(page, login);
+  await login.click();
 
   await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u);
-  await page.locator('input[name="username"]').fill(username);
+  const usernameInput = page.locator('input[name="username"]');
+  await waitForVisibleSurface(page, usernameInput, 'OIDC 登录表单');
+  await usernameInput.fill(username);
   await page.locator('input[name="password"]').fill(password);
   await page.locator('input[type="submit"], button[type="submit"]').click();
 
@@ -35,6 +40,53 @@ export async function connectLiveSession(
   await expect(page).not.toHaveURL(/loginToken=/u);
   expect(await hasUsableMatrixSession(page)).toBe(true);
   return matrixUserId ?? '';
+}
+
+async function openConnectionPage(page: Page, login: Locator): Promise<void> {
+  const runtimeErrors: string[] = [];
+  const captureRuntimeError = (error: Error): void => {
+    runtimeErrors.push(error.message);
+  };
+  page.on('pageerror', captureRuntimeError);
+  try {
+    await page.goto('/connect');
+    await waitForVisibleSurface(page, login, '连接页', runtimeErrors);
+  } finally {
+    page.off('pageerror', captureRuntimeError);
+  }
+}
+
+async function waitForVisibleSurface(
+  page: Page,
+  locator: Locator,
+  surfaceName: string,
+  runtimeErrors: readonly string[] = [],
+): Promise<void> {
+  try {
+    await locator.waitFor({ state: 'visible', timeout: 20_000 });
+  } catch (error: unknown) {
+    const heading = await page
+      .getByRole('heading', { level: 1 })
+      .first()
+      .textContent({ timeout: 1_000 })
+      .catch(() => null);
+    const body = await page
+      .locator('body')
+      .innerText({ timeout: 1_000 })
+      .catch(() => '');
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      [
+        `${surfaceName}未进入可交互状态。`,
+        `URL: ${page.url()}`,
+        `标题: ${heading?.trim() ?? '无'}`,
+        `页面: ${body.trim().slice(0, 500) || '空白'}`,
+        `运行时错误: ${runtimeErrors.join(' | ') || '无'}`,
+        `等待失败: ${cause}`,
+      ].join('\n'),
+      { cause: error },
+    );
+  }
 }
 
 export function collectUnhandledFailures(page: Page): string[] {

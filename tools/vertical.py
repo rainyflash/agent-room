@@ -953,7 +953,7 @@ def web_preview_command() -> list[str]:
         "--host",
         "0.0.0.0",
         "--port",
-        "5173",
+        "4173",
         "--strictPort",
     ]
 
@@ -987,7 +987,7 @@ def start_web(
             redactor=redactor,
         )
     )
-    wait_for_http("http://127.0.0.1:5173/connect", web, timeout_seconds=60)
+    wait_for_http("http://127.0.0.1:4173/connect", web, timeout_seconds=60)
     wait_for_local_https(
         "https://app.agent-room.localhost:18443/connect",
         web,

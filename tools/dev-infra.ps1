@@ -134,6 +134,18 @@ function Write-Environment {
     if (-not $current.ContainsKey('KEYCLOAK_MATRIX_CLIENT_SECRET')) {
       $missingValues.KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
     }
+    if (-not $current.ContainsKey('KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID')) {
+      $missingValues.KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID = 'agent-room-bootstrap'
+    }
+    if (-not $current.ContainsKey('KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_SECRET')) {
+      $missingValues.KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_SECRET = New-RandomSecret
+    }
+    if (-not $current.ContainsKey('KEYCLOAK_LOCAL_ADMIN_CLIENT_ID')) {
+      $missingValues.KEYCLOAK_LOCAL_ADMIN_CLIENT_ID = 'agent-room-local-admin'
+    }
+    if (-not $current.ContainsKey('KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET')) {
+      $missingValues.KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET = New-RandomSecret
+    }
     if ($missingValues.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
       $appended = ($missingValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
@@ -152,8 +164,10 @@ function Write-Environment {
     AGENT_ROOM_DB_RUNTIME_PASSWORD = New-RandomSecret
     SYNAPSE_DB_PASSWORD = New-RandomSecret
     KEYCLOAK_DB_PASSWORD = New-RandomSecret
-    KEYCLOAK_ADMIN = 'local-admin'
-    KEYCLOAK_ADMIN_PASSWORD = New-RandomSecret
+    KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID = 'agent-room-bootstrap'
+    KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_SECRET = New-RandomSecret
+    KEYCLOAK_LOCAL_ADMIN_CLIENT_ID = 'agent-room-local-admin'
+    KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET = New-RandomSecret
     KEYCLOAK_CLIENT_SECRET = New-RandomSecret
     KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
     SYNAPSE_REGISTRATION_SECRET = New-RandomSecret
@@ -202,7 +216,7 @@ function Write-KeycloakRealm {
           'https://api.agent-room.localhost:18443/auth/oidc/callback',
           'http://127.0.0.1:8090/auth/oidc/callback'
         )
-        webOrigins = @('https://app.agent-room.localhost:18443', 'http://localhost:5173')
+        webOrigins = @('https://app.agent-room.localhost:18443', 'http://localhost:4173')
         attributes = @{ 'pkce.code.challenge.method' = 'S256' }
       }
       [ordered]@{
@@ -412,141 +426,240 @@ function Invoke-Compose {
   }
 }
 
+function Request-KeycloakClientHeaders {
+  param(
+    [Parameter(Mandatory)][string]$ClientId,
+    [Parameter(Mandatory)][string]$ClientSecret
+  )
+  $tokenResponse = Invoke-RestMethod `
+    -Method Post `
+    -Uri 'http://127.0.0.1:18080/realms/master/protocol/openid-connect/token' `
+    -ContentType 'application/x-www-form-urlencoded' `
+    -Body @{
+      grant_type = 'client_credentials'
+      client_id = $ClientId
+      client_secret = $ClientSecret
+    }
+  if ([string]::IsNullOrWhiteSpace($tokenResponse.access_token)) {
+    throw '本地 Keycloak 未签发管理访问令牌。'
+  }
+  return @{ Authorization = "Bearer $($tokenResponse.access_token)" }
+}
+
+function Test-KeycloakAdminHeaders {
+  param([Parameter(Mandatory)][hashtable]$Headers)
+
+  Invoke-RestMethod `
+    -Method Get `
+    -Uri 'http://127.0.0.1:18080/admin/realms/master' `
+    -Headers $Headers | Out-Null
+}
+
+function Install-KeycloakLocalAdmin {
+  param(
+    [Parameter(Mandatory)][hashtable]$Headers,
+    [Parameter(Mandatory)][hashtable]$Environment
+  )
+
+  $client = Sync-KeycloakClient `
+    -Realm 'master' `
+    -Headers $Headers `
+    -Expected ([ordered]@{
+      clientId = $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_ID
+      name = 'Agent Room Local Administration'
+      enabled = $true
+      publicClient = $false
+      secret = $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET
+      protocol = 'openid-connect'
+      standardFlowEnabled = $false
+      implicitFlowEnabled = $false
+      directAccessGrantsEnabled = $false
+      serviceAccountsEnabled = $true
+      redirectUris = @()
+      webOrigins = @()
+    })
+  $serviceAccount = Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:18080/admin/realms/master/clients/$($client.id)/service-account-user" `
+    -Headers $Headers
+  $adminRole = Invoke-RestMethod `
+    -Method Get `
+    -Uri 'http://127.0.0.1:18080/admin/realms/master/roles/admin' `
+    -Headers $Headers
+  Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:18080/admin/realms/master/users/$($serviceAccount.id)/role-mappings/realm" `
+    -Headers $Headers `
+    -ContentType 'application/json' `
+    -Body (ConvertTo-Json -InputObject @($adminRole) -Depth 8) | Out-Null
+}
+
+function Get-KeycloakAdminHeaders {
+  param([Parameter(Mandatory)][hashtable]$Environment)
+
+  try {
+    $headers = Request-KeycloakClientHeaders `
+      -ClientId $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_ID `
+      -ClientSecret $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET
+    Test-KeycloakAdminHeaders -Headers $headers
+    return $headers
+  } catch {
+    try {
+      $bootstrapHeaders = Request-KeycloakClientHeaders `
+        -ClientId $Environment.KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID `
+        -ClientSecret $Environment.KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_SECRET
+      Test-KeycloakAdminHeaders -Headers $bootstrapHeaders
+      Install-KeycloakLocalAdmin -Headers $bootstrapHeaders -Environment $Environment
+      $headers = Request-KeycloakClientHeaders `
+        -ClientId $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_ID `
+        -ClientSecret $Environment.KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET
+      Test-KeycloakAdminHeaders -Headers $headers
+      return $headers
+    } catch {
+      throw [System.InvalidOperationException]::new(
+        '无法建立持久的本地 Keycloak 管理身份；请运行 ./tools/dev-infra.ps1 reset 后重新执行 up。',
+        $_.Exception
+      )
+    }
+  }
+}
+
+function Find-KeycloakClient {
+  param(
+    [Parameter(Mandatory)][string]$Realm,
+    [Parameter(Mandatory)][hashtable]$Headers,
+    [Parameter(Mandatory)][string]$ClientId
+  )
+
+  $encodedClientId = [System.Uri]::EscapeDataString($ClientId)
+  $encodedRealm = [System.Uri]::EscapeDataString($Realm)
+  $clients = @(
+    Invoke-RestMethod `
+      -Method Get `
+      -Uri "http://127.0.0.1:18080/admin/realms/$encodedRealm/clients?clientId=$encodedClientId" `
+      -Headers $Headers
+  )
+  if ($clients.Count -gt 1) {
+    throw "本地 Keycloak 存在多个 $ClientId 客户端。"
+  }
+  if ($clients.Count -eq 0) {
+    return $null
+  }
+  return $clients[0]
+}
+
+function Sync-KeycloakClient {
+  param(
+    [Parameter(Mandatory)][string]$Realm,
+    [Parameter(Mandatory)][hashtable]$Headers,
+    [Parameter(Mandatory)][System.Collections.IDictionary]$Expected
+  )
+
+  $existing = Find-KeycloakClient -Realm $Realm -Headers $Headers -ClientId $Expected.clientId
+  $encodedRealm = [System.Uri]::EscapeDataString($Realm)
+  $representation = [ordered]@{}
+  foreach ($entry in $Expected.GetEnumerator()) {
+    $representation[$entry.Key] = $entry.Value
+  }
+  if ($null -eq $existing) {
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri "http://127.0.0.1:18080/admin/realms/$encodedRealm/clients" `
+      -Headers $Headers `
+      -ContentType 'application/json' `
+      -Body ($representation | ConvertTo-Json -Depth 8) | Out-Null
+  } else {
+    $representation['id'] = $existing.id
+    Invoke-RestMethod `
+      -Method Put `
+      -Uri "http://127.0.0.1:18080/admin/realms/$encodedRealm/clients/$($existing.id)" `
+      -Headers $Headers `
+      -ContentType 'application/json' `
+      -Body ($representation | ConvertTo-Json -Depth 8) | Out-Null
+  }
+  return Find-KeycloakClient -Realm $Realm -Headers $Headers -ClientId $Expected.clientId
+}
+
+function Assert-KeycloakStringSet {
+  param(
+    [Parameter(Mandatory)][string]$Name,
+    [AllowEmptyCollection()][string[]]$Actual = @(),
+    [AllowEmptyCollection()][string[]]$Expected = @()
+  )
+
+  $actualValue = (@($Actual) | Sort-Object) -join "`n"
+  $expectedValue = (@($Expected) | Sort-Object) -join "`n"
+  if ($actualValue -cne $expectedValue) {
+    throw "本地 Keycloak 的 $Name 未同步到预期值。"
+  }
+}
+
 function Sync-KeycloakClients {
   $environment = Read-Environment
-  $compose = @(
-    'compose', '--project-name', $ProjectName, '--env-file', $EnvFile,
-    '--file', $ComposeFile, 'exec', '-T', 'identity'
+  $headers = Get-KeycloakAdminHeaders -Environment $environment
+
+  $webRedirectUris = @(
+    'https://api.agent-room.localhost:18443/auth/oidc/callback',
+    'http://127.0.0.1:8090/auth/oidc/callback'
   )
-  $admin = '/opt/keycloak/bin/kcadm.sh'
-  $adminConfig = '/tmp/agent-room-kcadm.config'
+  $webOrigins = @(
+    'https://app.agent-room.localhost:18443',
+    'http://localhost:4173'
+  )
+  $webClient = Sync-KeycloakClient -Realm 'agent-room' -Headers $headers -Expected ([ordered]@{
+    clientId = 'agent-room-web'
+    name = 'Agent Room Web'
+    enabled = $true
+    publicClient = $false
+    secret = $environment.KEYCLOAK_CLIENT_SECRET
+    protocol = 'openid-connect'
+    standardFlowEnabled = $true
+    implicitFlowEnabled = $false
+    directAccessGrantsEnabled = $false
+    serviceAccountsEnabled = $false
+    redirectUris = $webRedirectUris
+    webOrigins = $webOrigins
+    attributes = @{ 'pkce.code.challenge.method' = 'S256' }
+  })
+  Assert-KeycloakStringSet -Name 'Web 回调地址' -Actual $webClient.redirectUris -Expected $webRedirectUris
+  Assert-KeycloakStringSet -Name 'Web 来源' -Actual $webClient.webOrigins -Expected $webOrigins
 
-  & docker @compose $admin config credentials `
-    --config $adminConfig `
-    --server 'http://127.0.0.1:8080' `
-    --realm 'master' `
-    --user $environment.KEYCLOAK_ADMIN `
-    --password $environment.KEYCLOAK_ADMIN_PASSWORD | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw '无法登录本地 Keycloak 管理接口。'
-  }
-
-  $clientJson = & docker @compose $admin get clients `
-    --config $adminConfig `
-    --realm 'agent-room' `
-    --query 'clientId=agent-room-web'
-  if ($LASTEXITCODE -ne 0) {
-    & docker @compose rm -f $adminConfig | Out-Null
-    Write-Warning '现有 Keycloak 数据卷的管理凭据与 .env.local 不一致，无法自动迁移回调地址；全新环境不受影响。'
-    return
-  }
-  $clients = ($clientJson -join "`n") | ConvertFrom-Json
-  if ($clients.Count -ne 1) {
-    throw '本地 Keycloak 必须且只能存在一个 agent-room-web 客户端。'
-  }
-
-  $redirectUris = 'redirectUris=["https://api.agent-room.localhost:18443/auth/oidc/callback","http://127.0.0.1:8090/auth/oidc/callback"]'
-  $webOrigins = 'webOrigins=["https://app.agent-room.localhost:18443","http://localhost:5173"]'
-  & docker @compose $admin update "clients/$($clients[0].id)" `
-    --config $adminConfig `
-    --realm 'agent-room' `
-    --set $redirectUris `
-    --set $webOrigins | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw '无法同步本地 Keycloak 回调地址。'
-  }
-
-  $bridgeClientJson = & docker @compose $admin get clients `
-    --config $adminConfig `
-    --realm 'agent-room' `
-    --query 'clientId=agent-room-bridge'
-  if ($LASTEXITCODE -ne 0) {
-    throw '无法查询本地 Keycloak Bridge 客户端。'
-  }
-  $bridgeClients = @(($bridgeClientJson -join "`n") | ConvertFrom-Json)
-  $deviceGrantAttribute = 'attributes."oauth2.device.authorization.grant.enabled"=true'
-  if ($bridgeClients.Count -eq 0) {
-    & docker @compose $admin create clients `
-      --config $adminConfig `
-      --realm 'agent-room' `
-      --set 'clientId=agent-room-bridge' `
-      --set 'name=Agent Room Bridge' `
-      --set 'enabled=true' `
-      --set 'publicClient=true' `
-      --set 'protocol=openid-connect' `
-      --set 'standardFlowEnabled=false' `
-      --set 'implicitFlowEnabled=false' `
-      --set 'directAccessGrantsEnabled=false' `
-      --set 'serviceAccountsEnabled=false' `
-      --set $deviceGrantAttribute | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw '无法创建本地 Keycloak Bridge 客户端。'
-    }
-  } elseif ($bridgeClients.Count -eq 1) {
-    & docker @compose $admin update "clients/$($bridgeClients[0].id)" `
-      --config $adminConfig `
-      --realm 'agent-room' `
-      --set 'enabled=true' `
-      --set 'publicClient=true' `
-      --set 'standardFlowEnabled=false' `
-      --set 'implicitFlowEnabled=false' `
-      --set 'directAccessGrantsEnabled=false' `
-      --set 'serviceAccountsEnabled=false' `
-      --set $deviceGrantAttribute | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw '无法同步本地 Keycloak Bridge 客户端。'
-    }
-  } else {
-    throw '本地 Keycloak 必须至多存在一个 agent-room-bridge 客户端。'
+  $bridgeClient = Sync-KeycloakClient -Realm 'agent-room' -Headers $headers -Expected ([ordered]@{
+    clientId = 'agent-room-bridge'
+    name = 'Agent Room Bridge'
+    enabled = $true
+    publicClient = $true
+    protocol = 'openid-connect'
+    standardFlowEnabled = $false
+    implicitFlowEnabled = $false
+    directAccessGrantsEnabled = $false
+    serviceAccountsEnabled = $false
+    redirectUris = @()
+    webOrigins = @()
+    attributes = @{ 'oauth2.device.authorization.grant.enabled' = 'true' }
+  })
+  if ($bridgeClient.attributes.'oauth2.device.authorization.grant.enabled' -cne 'true') {
+    throw '本地 Keycloak 的 Bridge 设备授权未启用。'
   }
 
-  $matrixClientJson = & docker @compose $admin get clients `
-    --config $adminConfig `
-    --realm 'agent-room' `
-    --query 'clientId=agent-room-matrix'
-  if ($LASTEXITCODE -ne 0) {
-    throw '无法查询本地 Keycloak Matrix 客户端。'
-  }
-  $matrixClients = @(($matrixClientJson -join "`n") | ConvertFrom-Json)
-  $matrixRedirectUris = 'redirectUris=["https://matrix.agent-room.localhost:18443/_synapse/client/oidc/callback"]'
-  if ($matrixClients.Count -eq 0) {
-    & docker @compose $admin create clients `
-      --config $adminConfig `
-      --realm 'agent-room' `
-      --set 'clientId=agent-room-matrix' `
-      --set 'name=Agent Room Matrix' `
-      --set 'enabled=true' `
-      --set 'publicClient=false' `
-      --set "secret=$($environment.KEYCLOAK_MATRIX_CLIENT_SECRET)" `
-      --set 'protocol=openid-connect' `
-      --set 'standardFlowEnabled=true' `
-      --set 'implicitFlowEnabled=false' `
-      --set 'directAccessGrantsEnabled=false' `
-      --set 'serviceAccountsEnabled=false' `
-      --set $matrixRedirectUris | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw '无法创建本地 Keycloak Matrix 客户端。'
-    }
-  } elseif ($matrixClients.Count -eq 1) {
-    & docker @compose $admin update "clients/$($matrixClients[0].id)" `
-      --config $adminConfig `
-      --realm 'agent-room' `
-      --set 'enabled=true' `
-      --set 'publicClient=false' `
-      --set "secret=$($environment.KEYCLOAK_MATRIX_CLIENT_SECRET)" `
-      --set 'standardFlowEnabled=true' `
-      --set 'implicitFlowEnabled=false' `
-      --set 'directAccessGrantsEnabled=false' `
-      --set 'serviceAccountsEnabled=false' `
-      --set $matrixRedirectUris | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw '无法同步本地 Keycloak Matrix 客户端。'
-    }
-  } else {
-    throw '本地 Keycloak 必须至多存在一个 agent-room-matrix 客户端。'
-  }
-
-  & docker @compose rm -f $adminConfig | Out-Null
+  $matrixRedirectUris = @(
+    'https://matrix.agent-room.localhost:18443/_synapse/client/oidc/callback'
+  )
+  $matrixClient = Sync-KeycloakClient -Realm 'agent-room' -Headers $headers -Expected ([ordered]@{
+    clientId = 'agent-room-matrix'
+    name = 'Agent Room Matrix'
+    enabled = $true
+    publicClient = $false
+    secret = $environment.KEYCLOAK_MATRIX_CLIENT_SECRET
+    protocol = 'openid-connect'
+    standardFlowEnabled = $true
+    implicitFlowEnabled = $false
+    directAccessGrantsEnabled = $false
+    serviceAccountsEnabled = $false
+    redirectUris = $matrixRedirectUris
+    webOrigins = @()
+  })
+  Assert-KeycloakStringSet -Name 'Matrix 回调地址' -Actual $matrixClient.redirectUris -Expected $matrixRedirectUris
 }
 
 function Test-HttpEndpoint {

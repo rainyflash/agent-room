@@ -91,11 +91,6 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             bridge: target/release/agent-room-bridge.exe
             mcp: target/release/agent-room-codex-mcp.exe
-          - runner: macos-15-intel
-            target: darwin-x86_64
-            rust_target: x86_64-apple-darwin
-            bridge: target/release/agent-room-bridge
-            mcp: target/release/agent-room-codex-mcp
     runs-on: ${{ matrix.runner }}
     steps:
       - name: 检出候选提交
