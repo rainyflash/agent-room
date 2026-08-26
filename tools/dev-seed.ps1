@@ -180,6 +180,11 @@ $adminArguments = @{
   DisplayName = 'Local Developer'
 }
 $adminToken = Get-OrCreateMatrixToken @adminArguments
+$lifecycleSecretDirectory = Join-Path $LocalDirectory 'secrets'
+New-Item -ItemType Directory -Path $lifecycleSecretDirectory -Force | Out-Null
+$lifecycleSecretPath = Join-Path $lifecycleSecretDirectory 'synapse-lifecycle-admin-token'
+$utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($lifecycleSecretPath, "$adminToken`n", $utf8WithoutBom)
 $agentArguments = @{
   Environment = $environment
   Username = 'agent-alpha'
@@ -222,6 +227,7 @@ $result = [ordered]@{
   agentId = $environment.SEED_AGENT_ID
   agentMatrixId = $agentMatrixId
   content = 's3://agent-room-content/seed/welcome.md'
+  lifecycleAdminToken = 'stored-in-local-secret-file'
 }
 $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $LocalDirectory 'seed-result.json') -Encoding UTF8
 Write-Host '本地测试用户、Agent、大厅和内容对象已幂等创建。'

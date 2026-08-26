@@ -57,7 +57,31 @@ PGPASSWORD=$(read_secret /run/secrets/synapse_db_password) \
 dump_database "$KEYCLOAK_DB_NAME" "$KEYCLOAK_DB_USER" \
   /run/secrets/keycloak_db_password keycloak.dump
 
+privacy_target="/backup/.partial-${AGENT_ROOM_BACKUP_ID}/privacy"
+mkdir -p "$privacy_target"
+PGPASSWORD=$(read_secret /run/secrets/agent_room_db_migration_password) \
+  psql \
+    --host "$AGENT_ROOM_DB_HOST" \
+    --port "$AGENT_ROOM_DB_PORT" \
+    --username "$AGENT_ROOM_DB_MIGRATION_USER" \
+    --dbname "$AGENT_ROOM_DB_NAME" \
+    --no-password \
+    --tuples-only \
+    --no-align \
+    --set ON_ERROR_STOP=1 \
+    --command "SELECT jsonb_build_object(
+      'schemaVersion', 1,
+      'entries', coalesce(jsonb_agg(jsonb_build_object(
+        'jobId', id::text,
+        'principalId', principal_id::text,
+        'matrixUserId', matrix_user_id,
+        'completedAt', to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+      ) ORDER BY id::text), '[]'::jsonb)
+    ) FROM agent_room.account_deletion_job WHERE stage = 'completed'" \
+    >"$privacy_target/account-deletions.json"
+
 cat >"$target/README.txt" <<'EOF'
 三个自定义格式归档分别是 Agent Room、Synapse 和 Keycloak 的权威逻辑快照。
 Synapse 的一次性 E2EE 密钥表按官方恢复建议排除；Keycloak CLI 在线导出不是权威备份。
+privacy/account-deletions.json 是恢复前必须重放的最小删除墓碑，不含显示资料或消息正文。
 EOF

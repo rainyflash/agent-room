@@ -1,16 +1,18 @@
 use std::{error::Error, time::Duration};
 
 use agent_room_application::ports::{
-    AgentInstanceSignatureVerifier, DeviceProofVerifier, DeviceSignature, OidcAuthorizationOptions,
-    OidcAuthorizationRequest, OidcCodeExchange, OidcFailure, OidcFailureKind, OidcGateway,
-    OidcResult, PortFuture, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
-    VerifiedOidcIdentity,
+    AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier, DeviceProofVerifier,
+    DeviceSignature, OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,
+    OidcFailure, OidcFailureKind, OidcGateway, OidcResult, PortFuture, SecretDigest, SecretFactory,
+    SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
 };
 use agent_room_domain::{
-    agents::AgentInstancePublicSigningKey, devices::DevicePublicSigningKey, time::UtcMillis,
+    agents::AgentInstancePublicSigningKey, devices::DevicePublicSigningKey,
+    ids::AccountDeletionJobId, time::UtcMillis,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
+use hmac::{Hmac, Mac as _};
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, DiscoveryError,
     IssuerUrl, JsonWebKey, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier,
@@ -24,6 +26,7 @@ use openidconnect::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::OnceCell;
+use zeroize::Zeroizing;
 
 mod device_grant;
 
@@ -33,6 +36,7 @@ pub use device_grant::{
 
 const SECRET_ENTROPY_BYTES: usize = 32;
 const ED25519_SEED_BYTES: usize = 32;
+const ACCOUNT_DELETION_KEY_BYTES: usize = 32;
 
 /// Ed25519 设备持有证明的服务端验签适配器。
 pub struct Ed25519DeviceProofVerifier;
@@ -159,6 +163,48 @@ impl SecretFactory for SecureSecretFactory {
     fn digest(&self, value: &str) -> SecretDigest {
         SecretDigest::from_array(Sha256::digest(value.as_bytes()).into())
     }
+}
+
+pub struct HmacAccountDeletionReceiptIssuer {
+    key: Zeroizing<Vec<u8>>,
+}
+
+impl HmacAccountDeletionReceiptIssuer {
+    /// 创建可重放但不可伪造的账户删除回执派生器。
+    ///
+    /// # Errors
+    ///
+    /// 密钥少于 256 位时拒绝启动。
+    pub fn new(key: impl Into<Vec<u8>>) -> Result<Self, AccountDeletionReceiptConfigurationError> {
+        let key = key.into();
+        if key.len() < ACCOUNT_DELETION_KEY_BYTES {
+            return Err(AccountDeletionReceiptConfigurationError::WeakKey);
+        }
+        Ok(Self {
+            key: Zeroizing::new(key),
+        })
+    }
+}
+
+impl AccountDeletionReceiptIssuer for HmacAccountDeletionReceiptIssuer {
+    fn issue(&self, job_id: AccountDeletionJobId) -> Result<SecretValue, SecretGenerationFailure> {
+        let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(&self.key)
+            .map_err(|_| SecretGenerationFailure::EntropyUnavailable)?;
+        mac.update(b"agent-room/account-deletion-receipt/v1\0");
+        mac.update(job_id.as_uuid().as_bytes());
+        SecretValue::new(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+            .map_err(|_| SecretGenerationFailure::EntropyUnavailable)
+    }
+
+    fn digest(&self, value: &str) -> SecretDigest {
+        SecretDigest::from_array(Sha256::digest(value.as_bytes()).into())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum AccountDeletionReceiptConfigurationError {
+    #[error("账户删除回执密钥必须至少包含 256 位熵")]
+    WeakKey,
 }
 
 pub struct OidcAdapterConfig {
@@ -412,13 +458,15 @@ pub enum OidcAdapterConfigurationError {
 #[cfg(test)]
 mod tests {
     use agent_room_application::ports::{
-        AgentInstanceSignatureVerifier, DeviceProofVerifier, SecretFactory, SecretValue,
+        AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier, DeviceProofVerifier,
+        SecretFactory, SecretValue,
     };
-    use agent_room_domain::agents::AgentInstancePublicSigningKey;
+    use agent_room_domain::{agents::AgentInstancePublicSigningKey, ids::AccountDeletionJobId};
+    use uuid::Uuid;
 
     use super::{
         Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey,
-        OidcAdapterConfig, SecureSecretFactory,
+        HmacAccountDeletionReceiptIssuer, OidcAdapterConfig, SecureSecretFactory,
     };
 
     #[test]
@@ -434,6 +482,19 @@ mod tests {
             factory.digest(first.expose()),
             factory.digest(second.expose())
         );
+    }
+
+    #[test]
+    fn 账户删除回执对同一幂等任务稳定且不同任务隔离() {
+        let issuer = HmacAccountDeletionReceiptIssuer::new(vec![17; 32]).expect("256 位密钥有效");
+        let first_id = AccountDeletionJobId::from_uuid(Uuid::now_v7());
+        let second_id = AccountDeletionJobId::from_uuid(Uuid::now_v7());
+        let first = issuer.issue(first_id).expect("回执可派生");
+
+        assert_eq!(first, issuer.issue(first_id).expect("回执可重放"));
+        assert_ne!(first, issuer.issue(second_id).expect("另一任务可派生"));
+        assert_eq!(format!("{first:?}"), "[已脱敏]");
+        assert!(HmacAccountDeletionReceiptIssuer::new(vec![1; 31]).is_err());
     }
 
     #[test]

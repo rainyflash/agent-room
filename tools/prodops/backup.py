@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 from typing import Callable, Final, Iterator, Protocol
+from uuid import UUID
 
 from .config import DeploymentConfig
 from .render import DeploymentPaths
@@ -23,6 +24,8 @@ BACKUP_ID: Final = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}$")
 SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 LOCK_STALE_AFTER: Final = timedelta(hours=24)
 MANIFEST_NAME: Final = "manifest.json"
+ACCOUNT_DELETION_ARTIFACT: Final = "privacy/account-deletions.json"
+ACCOUNT_DELETION_LEDGER_NAME: Final = "ACCOUNT_DELETION_LEDGER.json"
 
 
 class BackupError(RuntimeError):
@@ -32,6 +35,94 @@ class BackupError(RuntimeError):
 class BackupCapture(Protocol):
     def capture_backup_payload(self, backup_id: str) -> None:
         """把外部依赖快照写入指定的临时备份目录。"""
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class AccountDeletionLedgerEntry:
+    job_id: str
+    principal_id: str
+    matrix_user_id: str
+    completed_at: str
+
+    @classmethod
+    def from_mapping(cls, value: object) -> "AccountDeletionLedgerEntry":
+        root = _mapping(value, "账户删除账本条目")
+        if set(root) != {"jobId", "principalId", "matrixUserId", "completedAt"}:
+            raise BackupError("账户删除账本条目字段不完整或包含未知字段。")
+        job_id = _uuid_text(root.get("jobId"), "jobId", version=7)
+        principal_id = _uuid_text(root.get("principalId"), "principalId")
+        matrix_user_id = _text(root.get("matrixUserId"), "matrixUserId")
+        if not 4 <= len(matrix_user_id) <= 512 or not matrix_user_id.startswith("@"):
+            raise BackupError("账户删除账本的 Matrix 用户 ID 无效。")
+        completed_at = _text(root.get("completedAt"), "completedAt")
+        _parse_utc(completed_at)
+        return cls(job_id, principal_id, matrix_user_id, completed_at)
+
+    def to_mapping(self) -> dict[str, str]:
+        return {
+            "jobId": self.job_id,
+            "principalId": self.principal_id,
+            "matrixUserId": self.matrix_user_id,
+            "completedAt": self.completed_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AccountDeletionLedger:
+    entries: tuple[AccountDeletionLedgerEntry, ...]
+
+    @classmethod
+    def empty(cls) -> "AccountDeletionLedger":
+        return cls(())
+
+    @classmethod
+    def from_mapping(cls, value: object) -> "AccountDeletionLedger":
+        root = _mapping(value, "账户删除账本")
+        if set(root) != {"schemaVersion", "entries"}:
+            raise BackupError("账户删除账本字段不完整或包含未知字段。")
+        if _integer(root.get("schemaVersion"), "schemaVersion") != 1:
+            raise BackupError("账户删除账本版本不受支持。")
+        raw_entries = root.get("entries")
+        if not isinstance(raw_entries, list):
+            raise BackupError("账户删除账本 entries 必须是数组。")
+        entries = tuple(AccountDeletionLedgerEntry.from_mapping(item) for item in raw_entries)
+        if entries != tuple(sorted(entries, key=lambda item: item.job_id)):
+            raise BackupError("账户删除账本必须按 jobId 排序。")
+        job_ids = {entry.job_id for entry in entries}
+        principal_ids = {entry.principal_id for entry in entries}
+        if len(job_ids) != len(entries) or len(principal_ids) != len(entries):
+            raise BackupError("账户删除账本包含重复任务或主体。")
+        return cls(entries)
+
+    @classmethod
+    def load(cls, path: Path) -> "AccountDeletionLedger":
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError as error:
+            raise BackupError(f"账户删除账本不存在：{path.name}。") from error
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise BackupError("账户删除账本不是有效 UTF-8 JSON。") from error
+        return cls.from_mapping(value)
+
+    def to_mapping(self) -> dict[str, object]:
+        return {
+            "schemaVersion": 1,
+            "entries": [entry.to_mapping() for entry in self.entries],
+        }
+
+    def merge(self, newer: "AccountDeletionLedger") -> "AccountDeletionLedger":
+        by_job = {entry.job_id: entry for entry in self.entries}
+        by_principal = {entry.principal_id: entry for entry in self.entries}
+        for entry in newer.entries:
+            existing_job = by_job.get(entry.job_id)
+            existing_principal = by_principal.get(entry.principal_id)
+            if existing_job is not None and existing_job != entry:
+                raise BackupError("账户删除账本试图改写既有任务。")
+            if existing_principal is not None and existing_principal != entry:
+                raise BackupError("账户删除账本试图为同一主体写入第二个任务。")
+            by_job[entry.job_id] = entry
+            by_principal[entry.principal_id] = entry
+        return AccountDeletionLedger(tuple(sorted(by_job.values(), key=lambda item: item.job_id)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +249,23 @@ class BackupRepository:
         os.replace(temporary, latest)
         return destination
 
+    @property
+    def account_deletion_ledger_path(self) -> Path:
+        return self.root / ACCOUNT_DELETION_LEDGER_NAME
+
+    def load_account_deletion_ledger(self) -> AccountDeletionLedger:
+        path = self.account_deletion_ledger_path
+        if not path.exists():
+            return AccountDeletionLedger.empty()
+        if path.is_symlink() or not path.is_file():
+            raise BackupError("账户删除账本不是安全的常规文件。")
+        return AccountDeletionLedger.load(path)
+
+    def merge_account_deletion_ledger(self, snapshot: AccountDeletionLedger) -> AccountDeletionLedger:
+        merged = self.load_account_deletion_ledger().merge(snapshot)
+        _write_json(self.account_deletion_ledger_path, merged.to_mapping())
+        return merged
+
     def load(self, backup_id: str) -> BackupManifest:
         _validate_backup_id(backup_id)
         path = self.root / backup_id / MANIFEST_NAME
@@ -238,6 +346,8 @@ class BackupCoordinator:
             try:
                 self._copy_identity_artifacts(staging)
                 self.capture.capture_backup_payload(backup_id)
+                deletion_snapshot = AccountDeletionLedger.load(staging / ACCOUNT_DELETION_ARTIFACT)
+                self.repository.merge_account_deletion_ledger(deletion_snapshot)
                 self._copy_provider_evidence(staging, created_at)
                 artifacts = _inventory(staging)
                 manifest = BackupManifest(
@@ -315,6 +425,7 @@ def _require_restore_contract(manifest: BackupManifest) -> None:
         "identity/synapse.signing.key",
         "identity/keycloak-realm.json",
         "objects/source-inventory.ndjson",
+        ACCOUNT_DELETION_ARTIFACT,
     }
     if manifest.database_mode == "embedded":
         required.update({"postgres/base/backup_manifest", "postgres/restore-point.json"})
@@ -325,6 +436,17 @@ def _require_restore_contract(manifest: BackupManifest) -> None:
     missing = sorted(required - paths)
     if missing:
         raise BackupError(f"备份恢复契约不完整：{missing}。")
+
+
+def _uuid_text(value: object, name: str, *, version: int | None = None) -> str:
+    text = _text(value, name)
+    try:
+        parsed = UUID(text)
+    except ValueError as error:
+        raise BackupError(f"{name} 不是有效 UUID。") from error
+    if str(parsed) != text.lower() or (version is not None and parsed.version != version):
+        raise BackupError(f"{name} 不是规范 UUID" + (f"v{version}" if version else "") + "。")
+    return str(parsed)
 
 
 def _load_provider_evidence(path: Path, now: datetime, required_rpo: int) -> dict[str, object]:

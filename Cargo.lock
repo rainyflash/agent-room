@@ -301,6 +301,7 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hmac 0.13.0",
  "openidconnect",
  "rand 0.8.7",
  "rsa",
@@ -311,6 +312,8 @@ dependencies = [
  "tokio",
  "tower",
  "url",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

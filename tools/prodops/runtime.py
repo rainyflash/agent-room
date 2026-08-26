@@ -150,6 +150,7 @@ class ProductionRuntime:
             _wait_tcp(self.config.database.host, self.config.database.port, timeout_seconds=60)
         self.initialize_object_store()
         self._run([*self.compose_command(), "run", "--rm", "migrate"])
+        self.provision_synapse_administrator()
         self._run([*self.compose_command(), "up", "--detach", "--wait"])
         self.health(timeout_seconds=180)
         self.federation(timeout_seconds=60)
@@ -162,6 +163,7 @@ class ProductionRuntime:
         self._run([*self.compose_command(), "pull", "--ignore-buildable"])
         self.initialize_object_store()
         self._run([*self.compose_command(), "run", "--rm", "migrate"])
+        self.provision_synapse_administrator()
         self._run([*self.compose_command(), "up", "--detach", "--wait", "--remove-orphans"])
         self.health(timeout_seconds=180)
 
@@ -223,6 +225,7 @@ class ProductionRuntime:
         drill_directory: Path,
         restore_point_name: str,
         restore_point_lsn: str,
+        account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
         database_directory = backup_directory / "database"
         for archive in ("agent-room.dump", "synapse.dump", "keycloak.dump"):
@@ -261,6 +264,7 @@ class ProductionRuntime:
         data_volume = f"{container_name}-data"
         wal_volume = f"{container_name}-wal"
         projection_script = ROOT / "infra" / "production" / "projection-rebuild.sh"
+        deletion_replay_script = ROOT / "infra" / "production" / "account-deletion-replay.sh"
         created_volumes: list[str] = []
         started = False
         try:
@@ -283,6 +287,8 @@ class ProductionRuntime:
                     "--volume",
                     f"{wal_target.as_posix()}:/source-wal:ro",
                     "--volume",
+                    f"{account_deletion_ledger.as_posix()}:/source-account-deletions.json:ro",
+                    "--volume",
                     f"{data_volume}:/target-data",
                     "--volume",
                     f"{wal_volume}:/target-wal",
@@ -291,6 +297,7 @@ class ProductionRuntime:
                     "set -eu; "
                     "cp -a /source-data/. /target-data/; "
                     "cp -a /source-wal/. /target-wal/; "
+                    "cp /source-account-deletions.json /target-wal/account-deletions.json; "
                     "chown -R 70:70 /target-data /target-wal; "
                     "chmod 0700 /target-data /target-wal",
                 ],
@@ -318,6 +325,8 @@ class ProductionRuntime:
                     f"{wal_volume}:/wal:ro",
                     "--volume",
                     f"{projection_script.as_posix()}:/scripts/projection-rebuild.sh:ro",
+                    "--volume",
+                    f"{deletion_replay_script.as_posix()}:/scripts/account-deletion-replay.sh:ro",
                     "--tmpfs",
                     "/tmp:rw,noexec,nosuid,size=128m,uid=70,gid=70",
                     "postgres:18.6-alpine",
@@ -353,6 +362,20 @@ class ProductionRuntime:
             )
             if databases != ("agent_room", "keycloak", "synapse"):
                 raise RestoreDrillError(f"隔离恢复缺少核心数据库：{databases}。")
+            deletion_output = self._run(
+                [
+                    "docker",
+                    "exec",
+                    "--user",
+                    "postgres",
+                    container_name,
+                    "/bin/sh",
+                    "/scripts/account-deletion-replay.sh",
+                ],
+                capture=True,
+            )
+            deletion_entries = _named_integer(deletion_output, "deletion_ledger_entries")
+            deletion_replays = _named_integer(deletion_output, "deletion_replays_queued")
             projection_output = self._run(
                 [
                     "docker",
@@ -375,6 +398,8 @@ class ProductionRuntime:
                 databases_verified=databases,
                 projection_memberships=memberships,
                 projection_rooms=rooms,
+                deletion_ledger_entries=deletion_entries,
+                deletion_replays_queued=deletion_replays,
             )
         finally:
             if started:
@@ -470,6 +495,11 @@ class ProductionRuntime:
         if self.config.object_store.mode == "embedded":
             self._run([*self.compose_command(), "up", "--detach", "object-store"])
         self._run([*self.compose_command(), "run", "--rm", "object-store-init"])
+
+    def provision_synapse_administrator(self) -> None:
+        self._run([*self.compose_command(), "up", "--detach", "--wait", "synapse"])
+        self._run([*self.compose_command(), "run", "--rm", "synapse-admin-bootstrap"])
+        self.secrets.read("synapse_lifecycle_admin_token")
 
     def health(self, *, timeout_seconds: int) -> None:
         endpoints = {

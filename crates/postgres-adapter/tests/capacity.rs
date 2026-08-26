@@ -20,26 +20,7 @@ async fn 设计容量下的目录实例租约与大厅投影达到预算() {
     seed_dataset(&migration).await;
     let seed_milliseconds = seed_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let agent_count: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_room.agent")
-        .fetch_one(&runtime)
-        .await
-        .expect("运行时角色可统计 Agent");
-    let instance_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.agent_instance WHERE status = 'online'",
-    )
-    .fetch_one(&runtime)
-    .await
-    .expect("运行时角色可统计在线实例");
-    let lobby_member_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.room_membership_projection WHERE matrix_membership = 'join'",
-    )
-    .fetch_one(&runtime)
-    .await
-    .expect("运行时角色可统计大厅成员");
-
-    assert_eq!(agent_count, AGENT_COUNT);
-    assert_eq!(instance_count, INSTANCE_COUNT);
-    assert_eq!(lobby_member_count, LOBBY_MEMBER_COUNT);
+    let (agent_count, instance_count, lobby_member_count) = assert_seed_counts(&runtime).await;
 
     let directory_samples = directory_samples(&runtime).await;
     let directory_p95 = percentile(&directory_samples, 95, 100);
@@ -50,7 +31,7 @@ async fn 设计容量下的目录实例租约与大厅投影达到预算() {
         "UPDATE agent_room.agent_instance \
          SET last_seen_at = clock_timestamp(), \
              lease_expires_at = clock_timestamp() + interval '90 seconds' \
-         WHERE status = 'online'",
+         WHERE status = 'online' AND matrix_device_id LIKE 'CAPACITY_INSTANCE_%'",
     )
     .execute(&runtime)
     .await
@@ -131,6 +112,33 @@ async fn connect(name: &str, maximum_connections: u32) -> PgPool {
         .unwrap_or_else(|error| panic!("无法连接容量数据库：{error}"))
 }
 
+async fn assert_seed_counts(pool: &PgPool) -> (i64, i64, i64) {
+    let agent_count = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("运行时角色可统计 Agent");
+    let instance_count = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.agent_instance \
+         WHERE status = 'online' AND matrix_device_id LIKE 'CAPACITY_INSTANCE_%'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("运行时角色可统计在线实例");
+    let lobby_member_count = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.room_membership_projection \
+         WHERE matrix_membership = 'join' AND last_event_id LIKE '$capacity-%'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("运行时角色可统计大厅成员");
+    assert_eq!(agent_count, AGENT_COUNT);
+    assert_eq!(instance_count, INSTANCE_COUNT);
+    assert_eq!(lobby_member_count, LOBBY_MEMBER_COUNT);
+    (agent_count, instance_count, lobby_member_count)
+}
+
 async fn seed_dataset(pool: &PgPool) {
     let mut transaction = pool.begin().await.expect("容量种子事务可启动");
     seed_principals_and_agents(&mut transaction).await;
@@ -180,9 +188,10 @@ async fn seed_ownership(transaction: &mut Transaction<'_, Postgres>) {
         "WITH principals AS ( \
              SELECT id, row_number() OVER (ORDER BY oidc_subject) AS ordinal \
              FROM agent_room.principal \
+             WHERE oidc_issuer = 'https://identity.agent-room.test/realms/capacity' \
          ), agents AS ( \
              SELECT id, row_number() OVER (ORDER BY slug) AS ordinal \
-             FROM agent_room.agent \
+             FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%' \
          ) \
          INSERT INTO agent_room.agent_ownership ( \
              principal_id, agent_id, role, granted_by, created_at \
@@ -199,7 +208,9 @@ async fn seed_devices_and_bindings(transaction: &mut Transaction<'_, Postgres>) 
     sqlx::query(
         "WITH principals AS ( \
              SELECT id, row_number() OVER (ORDER BY oidc_subject) AS ordinal \
-             FROM agent_room.principal LIMIT 1000 \
+             FROM agent_room.principal \
+             WHERE oidc_issuer = 'https://identity.agent-room.test/realms/capacity' \
+             LIMIT 1000 \
          ) \
          INSERT INTO agent_room.device ( \
              id, principal_id, label, platform, public_signing_key, matrix_device_id, \
@@ -218,7 +229,7 @@ async fn seed_devices_and_bindings(transaction: &mut Transaction<'_, Postgres>) 
     sqlx::query(
         "WITH agents AS ( \
              SELECT id, row_number() OVER (ORDER BY slug) AS ordinal \
-             FROM agent_room.agent LIMIT 1000 \
+             FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%' LIMIT 1000 \
          ) \
          INSERT INTO agent_room.adapter_binding ( \
              id, agent_id, adapter_type, capability_version, configuration, state, \
@@ -238,7 +249,7 @@ async fn seed_online_instances(transaction: &mut Transaction<'_, Postgres>) {
     sqlx::query(
         "WITH agents AS ( \
              SELECT id, row_number() OVER (ORDER BY slug) AS ordinal \
-             FROM agent_room.agent LIMIT 1000 \
+             FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%' LIMIT 1000 \
          ), devices AS ( \
              SELECT id, substring(label FROM '[0-9]+$')::bigint AS ordinal \
              FROM agent_room.device WHERE label LIKE 'capacity-device-%' \
@@ -301,7 +312,7 @@ async fn seed_rooms(transaction: &mut Transaction<'_, Postgres>) {
     sqlx::query(
         "WITH agents AS ( \
              SELECT id, row_number() OVER (ORDER BY slug) AS ordinal \
-             FROM agent_room.agent LIMIT 250 \
+             FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%' LIMIT 250 \
          ), room AS ( \
              SELECT id FROM agent_room.room_instance \
              WHERE matrix_room_id = '!capacity-1:agent-room.test' \
@@ -340,13 +351,16 @@ async fn directory_samples(pool: &PgPool) -> Vec<f64> {
 }
 
 async fn concurrent_instance_lookups(pool: &PgPool) -> (f64, f64) {
-    let ids = sqlx::query("SELECT id FROM agent_room.agent_instance ORDER BY matrix_device_id")
-        .fetch_all(pool)
-        .await
-        .expect("读取实例标识成功")
-        .into_iter()
-        .map(|row| row.get::<uuid::Uuid, _>("id"))
-        .collect::<Vec<_>>();
+    let ids = sqlx::query(
+        "SELECT id FROM agent_room.agent_instance \
+         WHERE matrix_device_id LIKE 'CAPACITY_INSTANCE_%' ORDER BY matrix_device_id",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("读取实例标识成功")
+    .into_iter()
+    .map(|row| row.get::<uuid::Uuid, _>("id"))
+    .collect::<Vec<_>>();
     assert_eq!(
         ids.len(),
         usize::try_from(INSTANCE_COUNT).expect("数量可转换")

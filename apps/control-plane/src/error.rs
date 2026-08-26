@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use agent_room_application::{
+    account_lifecycle::{AccountLifecycleFailure, AccountLifecycleFailureKind},
     agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
     agent_instance_management::{
         AgentInstanceManagementFailure, AgentInstanceManagementFailureKind,
@@ -74,6 +75,54 @@ impl ApiError {
             "请求无法通过安全校验。",
             correlation_id,
         )
+    }
+
+    pub(crate) fn account(failure: AccountLifecycleFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AccountLifecycleFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "account.invalid_request",
+                ErrorCategory::Validation,
+                "账户生命周期请求无效。",
+            ),
+            AccountLifecycleFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "account.forbidden",
+                ErrorCategory::Authorization,
+                "当前会话无权执行该账户操作。",
+            ),
+            AccountLifecycleFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "account.not_found",
+                ErrorCategory::Validation,
+                "账户导出或删除回执不存在。",
+            ),
+            AccountLifecycleFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "account.conflict",
+                ErrorCategory::Conflict,
+                "账户删除已开始；请使用首次返回的删除回执查询进度。",
+            ),
+            AccountLifecycleFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "account.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "账户生命周期依赖暂时不可用。",
+            ),
+            AccountLifecycleFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "account.internal",
+                ErrorCategory::Transient,
+                "账户生命周期服务发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "账户生命周期请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
     }
 
     pub(crate) fn automation(failure: AutomationFailure, correlation_id: CorrelationId) -> Self {

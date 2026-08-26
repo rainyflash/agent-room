@@ -205,6 +205,24 @@ services:
     tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
     networks: [backend]
 
+  synapse-admin-bootstrap:
+    image: matrixdotorg/synapse:v1.159.0
+    profiles: [provisioning]
+    entrypoint: [python, /scripts/synapse-admin-bootstrap.py]
+    depends_on:
+      synapse:
+        condition: service_healthy
+    secrets:
+      - synapse_registration_secret
+      - synapse_lifecycle_admin_password
+    volumes:
+      - ./synapse-admin-bootstrap.py:/scripts/synapse-admin-bootstrap.py:ro
+      - ${AGENT_ROOM_STATE_DIR}/secrets:/output
+    read_only: true
+    <<: *common-security
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
   backup-permissions:
     image: postgres:18.6-alpine
     profiles: [backup]
@@ -316,6 +334,8 @@ services:
       AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
       AGENT_ROOM_MATRIX_BASE_URL: http://synapse:8008
       AGENT_ROOM_MATRIX_APPSERVICE_TOKEN_FILE: /run/secrets/synapse_appservice_token
+      AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE: /run/secrets/synapse_lifecycle_admin_token
+      AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET_FILE: /run/secrets/account_deletion_receipt_secret
       AGENT_ROOM_OBJECT_STORE_HEALTH_URL: ${AGENT_ROOM_OBJECT_STORE_HEALTH_URL}
       AGENT_ROOM_DEPENDENCY_TIMEOUT_MS: "5000"
       AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
@@ -342,11 +362,13 @@ services:
       AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn
     secrets:
       - agent_room_db_runtime_password
+      - account_deletion_receipt_secret
       - content_ticket_secret
       - keycloak_web_client_secret
       - s3_access_key
       - s3_secret_key
       - synapse_appservice_token
+      - synapse_lifecycle_admin_token
     healthcheck:
       test: [CMD, curl, --fail, --silent, --show-error, http://127.0.0.1:8090/health/ready]
       interval: 10s
@@ -411,11 +433,19 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_web_client_secret
   synapse_appservice_token:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_appservice_token
+  synapse_registration_secret:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_registration_secret
+  synapse_lifecycle_admin_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_lifecycle_admin_password
+  synapse_lifecycle_admin_token:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_lifecycle_admin_token
   s3_access_key:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/s3_access_key
   s3_secret_key:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/s3_secret_key
   content_ticket_secret:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/content_ticket_secret
+  account_deletion_receipt_secret:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/account_deletion_receipt_secret
   migration_database_url:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/migration_database_url

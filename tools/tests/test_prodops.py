@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import tempfile
@@ -163,6 +164,43 @@ class ProductionRenderingTests(unittest.TestCase):
         environment = self.paths.compose_environment.read_text(encoding="utf-8")
 
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=false", environment)
+
+    def test_account_lifecycle_admin_is_provisioned_without_public_admin_api(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(
+            encoding="utf-8"
+        )
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("synapse-admin-bootstrap:", compose)
+        self.assertIn(
+            "AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE: /run/secrets/synapse_lifecycle_admin_token",
+            compose,
+        )
+        self.assertTrue(self.secrets.read("synapse_lifecycle_admin_password"))
+        self.assertIn("synapse_lifecycle_admin_password", compose)
+        self.assertLess(
+            caddyfile.index("respond /_synapse/admin/* 404"),
+            caddyfile.index("reverse_proxy synapse:8008"),
+        )
+
+    def test_synapse_shared_secret_registration_mac_matches_protocol(self) -> None:
+        script = ROOT / "infra" / "production" / "synapse-admin-bootstrap.py"
+        specification = importlib.util.spec_from_file_location(
+            "agent_room_synapse_admin_bootstrap", script
+        )
+        self.assertIsNotNone(specification)
+        self.assertIsNotNone(specification.loader if specification else None)
+        module = importlib.util.module_from_spec(specification)
+        assert specification is not None and specification.loader is not None
+        specification.loader.exec_module(module)
+
+        self.assertEqual(
+            module.registration_mac("secret", "nonce", "alice", "password", True),
+            "013c5738fc920e1110110046fc346bb5e30c53f2",
+        )
 
 
 if __name__ == "__main__":

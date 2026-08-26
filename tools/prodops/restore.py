@@ -33,6 +33,8 @@ class DatabaseRestoreEvidence:
     databases_verified: tuple[str, ...]
     projection_memberships: int
     projection_rooms: int
+    deletion_ledger_entries: int
+    deletion_replays_queued: int
 
 
 class RestoreBackend(Protocol):
@@ -42,6 +44,7 @@ class RestoreBackend(Protocol):
         drill_directory: Path,
         restore_point_name: str,
         restore_point_lsn: str,
+        account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
         """在隔离运行时恢复数据库并重建派生投影。"""
 
@@ -82,6 +85,8 @@ class RestoreDrillReport:
                 "databasesVerified": list(self.database.databases_verified),
                 "projectionMemberships": self.database.projection_memberships,
                 "projectionRooms": self.database.projection_rooms,
+                "deletionLedgerEntries": self.database.deletion_ledger_entries,
+                "deletionReplaysQueued": self.database.deletion_replays_queued,
             },
         }
 
@@ -116,6 +121,7 @@ class RestoreDrillCoordinator:
                 drill_directory,
                 restore_name,
                 restore_lsn,
+                self._stage_account_deletion_ledger(drill_directory),
             )
             completed = self.clock().astimezone(UTC)
             duration = max(0.0, (completed - started).total_seconds())
@@ -140,6 +146,13 @@ class RestoreDrillCoordinator:
         except BaseException:
             _write_failure_marker(drill_directory)
             raise
+
+    def _stage_account_deletion_ledger(self, drill_directory: Path) -> Path:
+        ledger = self.repository.load_account_deletion_ledger()
+        target = drill_directory / "privacy" / "account-deletions.json"
+        target.parent.mkdir(mode=0o700)
+        _write_json(target, ledger.to_mapping())
+        return target
 
     def _create_drill_directory(self, backup_id: str, started: datetime) -> Path:
         root = self.paths.state / "restore-drills"

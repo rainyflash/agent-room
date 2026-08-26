@@ -27,6 +27,10 @@ const DEFAULT_CONTENT_DOWNLOAD_MAX_BYTES: u64 = 250 * 1_024 * 1_024;
 const DEFAULT_CONTENT_CLEANUP_INTERVAL_MILLIS: u64 = 60_000;
 const DEFAULT_CONTENT_ORPHAN_GRACE_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_CONTENT_CLEANUP_BATCH: u16 = 100;
+const DEFAULT_ACCOUNT_DELETION_INTERVAL_MILLIS: u64 = 5_000;
+const DEFAULT_ACCOUNT_DELETION_LEASE_MILLIS: u64 = 2 * 60 * 1_000;
+const DEFAULT_ACCOUNT_DELETION_RETRY_INITIAL_MILLIS: u64 = 30_000;
+const DEFAULT_ACCOUNT_DELETION_RETRY_MAXIMUM_MILLIS: u64 = 60 * 60 * 1_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
@@ -115,6 +119,16 @@ pub(crate) struct AgentIdentityConfig {
 }
 
 #[derive(Clone)]
+pub(crate) struct AccountLifecycleConfig {
+    pub(crate) matrix_admin_access_token: SecretValue,
+    pub(crate) receipt_secret: SecretValue,
+    pub(crate) worker_interval: Duration,
+    pub(crate) lease_duration: Duration,
+    pub(crate) retry_initial: Duration,
+    pub(crate) retry_maximum: Duration,
+}
+
+#[derive(Clone)]
 pub(crate) struct LobbyConfig {
     pub(crate) reservation_lifetime: Duration,
     pub(crate) provisioning_lease_lifetime: Duration,
@@ -149,6 +163,7 @@ pub(crate) struct ControlPlaneConfig {
     pub(crate) dependencies: DependencyConfig,
     pub(crate) authentication: AuthenticationConfig,
     pub(crate) agent_identity: AgentIdentityConfig,
+    pub(crate) account_lifecycle: AccountLifecycleConfig,
     pub(crate) lobby: LobbyConfig,
     pub(crate) content: ContentConfig,
     pub(crate) observability: ObservabilityConfig,
@@ -165,11 +180,59 @@ impl ControlPlaneConfig {
             dependencies: read_dependency_config(source)?,
             authentication: read_authentication_config(source)?,
             agent_identity: read_agent_identity_config(source)?,
+            account_lifecycle: read_account_lifecycle_config(source)?,
             lobby: read_lobby_config(source)?,
             content: read_content_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_account_lifecycle_config(
+    source: &impl EnvironmentSource,
+) -> Result<AccountLifecycleConfig, ConfigError> {
+    let retry_initial = read_bounded_duration(
+        source,
+        "AGENT_ROOM_ACCOUNT_DELETION_RETRY_INITIAL_MS",
+        DEFAULT_ACCOUNT_DELETION_RETRY_INITIAL_MILLIS,
+        1_000..=60 * 60 * 1_000,
+    )?;
+    let retry_maximum = read_bounded_duration(
+        source,
+        "AGENT_ROOM_ACCOUNT_DELETION_RETRY_MAXIMUM_MS",
+        DEFAULT_ACCOUNT_DELETION_RETRY_MAXIMUM_MILLIS,
+        1_000..=24 * 60 * 60 * 1_000,
+    )?;
+    if retry_initial > retry_maximum {
+        return Err(ConfigError::invalid(
+            "AGENT_ROOM_ACCOUNT_DELETION_RETRY_INITIAL_MS",
+            "不得大于最大退避时间",
+        ));
+    }
+    Ok(AccountLifecycleConfig {
+        matrix_admin_access_token: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN",
+        )?),
+        receipt_secret: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET",
+        )?),
+        worker_interval: read_bounded_duration(
+            source,
+            "AGENT_ROOM_ACCOUNT_DELETION_INTERVAL_MS",
+            DEFAULT_ACCOUNT_DELETION_INTERVAL_MILLIS,
+            1_000..=5 * 60 * 1_000,
+        )?,
+        lease_duration: read_bounded_duration(
+            source,
+            "AGENT_ROOM_ACCOUNT_DELETION_LEASE_MS",
+            DEFAULT_ACCOUNT_DELETION_LEASE_MILLIS,
+            30_000..=30 * 60 * 1_000,
+        )?,
+        retry_initial,
+        retry_maximum,
+    })
 }
 
 fn read_lobby_config(source: &impl EnvironmentSource) -> Result<LobbyConfig, ConfigError> {
@@ -701,6 +764,14 @@ mod tests {
             (
                 "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN",
                 "local-application-service-token".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN",
+                "local-matrix-admin-token".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET",
+                "local-account-deletion-receipt-secret-with-256-bit-minimum".to_owned(),
             ),
             (
                 "AGENT_ROOM_CONTENT_S3_ENDPOINT",

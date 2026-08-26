@@ -1,3 +1,4 @@
+mod accounts;
 mod agent_cards;
 mod agents;
 mod audit;
@@ -16,6 +17,11 @@ mod runtime;
 
 use std::{future::Future, pin::Pin};
 
+pub use accounts::{
+    AccountDeletionClaim, AccountDeletionReceiptIssuer, AccountDeletionRepository,
+    AccountDeletionRequest, AccountDeletionRequestOutcome, AccountDeletionStage,
+    AccountDeletionStatus, AccountExportSnapshot,
+};
 pub use agent_cards::{
     AgentCardFetchFailure, AgentCardFetchFailureKind, AgentCardFetchResult,
     AgentCardSnapshotRepository, AgentCardSource, FetchedAgentCard,
@@ -75,19 +81,19 @@ pub use identity::{
     WebSessionRegistration, WebSessionStore,
 };
 pub use matrix::{
-    MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
-    MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-    MatrixAgentUserRegistration, MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken,
-    MatrixClientFactory, MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
-    MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixLogin,
-    MatrixOperation, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction,
-    MatrixResult, MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
-    MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-    MatrixTimelineEncryption, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
-    MatrixValueError,
+    MatrixAcceptedEvent, MatrixAccountLifecycleGateway, MatrixAgentDeviceSessionRequest,
+    MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget,
+    MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
+    MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken, MatrixClientFactory,
+    MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId,
+    MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation,
+    MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction, MatrixResult,
+    MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
+    MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind, MatrixRoomPowerProfile, MatrixRoomPreset,
+    MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
+    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch,
+    MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEncryption, MatrixTimelineEvent,
+    MatrixTransactionId, MatrixUserId, MatrixValueError,
 };
 pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,

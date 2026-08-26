@@ -3,13 +3,15 @@ use std::{borrow::Cow, collections::BTreeSet, env};
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        AgentCardSnapshotRepository, AgentCreationClaim, AgentCreationReservation,
-        AgentCreationWorkflow, AgentInstanceManagementRepository, AgentInstanceMatrixCleanupStore,
-        AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
-        AgentInstanceRevocationOutcome, AgentInstanceRevocationTransaction,
-        AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
-        AgentMembershipTransaction, AgentRegistration, AgentRepository, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, OutboxMessage,
+        AccountDeletionRepository, AccountDeletionRequest, AccountDeletionRequestOutcome,
+        AccountDeletionStage, AgentCardSnapshotRepository, AgentCreationClaim,
+        AgentCreationReservation, AgentCreationWorkflow, AgentInstanceManagementRepository,
+        AgentInstanceMatrixCleanupStore, AgentInstanceRegistration,
+        AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
+        AgentInstanceRevocationTransaction, AgentInstanceVerificationRepository,
+        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
+        AgentRegistration, AgentRepository, DeviceRevocationOutcome, DeviceRevocationTransaction,
+        DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId, OutboxMessage,
         PrincipalRegistration, PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
@@ -26,16 +28,18 @@ use agent_room_domain::{
     },
     identity::Principal,
     ids::{
-        AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
-        AgentInstanceRegistrationRequestId, DeviceId, OutboxEventId, PrincipalId,
+        AccountDeletionJobId, AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId,
+        AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId, OutboxEventId,
+        PrincipalId,
     },
-    time::UtcMillis,
+    time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 44] = [
+const EXPECTED_TABLES: [&str; 45] = [
+    "account_deletion_job",
     "adapter_binding",
     "agent",
     "agent_card_snapshot",
@@ -137,6 +141,101 @@ async fn 迁移可重复执行且运行时角色没有建表权限() {
         .await
         .expect_err("运行时角色不得执行 DDL");
     assert_eq!(database_code(&error).as_deref(), Some("42501"));
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 账户导出与删除状态机在真实事务中完成() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let registration = principal_registration(principal_id, "待删除主体");
+    PrincipalRepository::create(&repositories, &registration)
+        .await
+        .expect("主体创建应成功");
+    let exported = AccountDeletionRepository::export(&repositories, principal_id, test_time())
+        .await
+        .expect("账户导出应成功")
+        .expect("活动账户必须存在");
+    assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
+
+    let job_id = AccountDeletionJobId::from_uuid(Uuid::now_v7());
+    let receipt_digest = SecretDigest::from_array([91; 32]);
+    let request = AccountDeletionRequest {
+        job_id,
+        principal_id,
+        matrix_user_id: MatrixUserId::new(registration.matrix_user_id.clone())
+            .expect("测试 MXID 有效"),
+        receipt_digest,
+        requested_at: test_time(),
+    };
+    let created = AccountDeletionRepository::request(&repositories, &request)
+        .await
+        .expect("删除请求应原子入队");
+    assert!(matches!(created, AccountDeletionRequestOutcome::Created(_)));
+    let deleting_status: String =
+        sqlx::query_scalar("SELECT status FROM agent_room.principal WHERE id = $1")
+            .bind(principal_id.as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .expect("主体状态应可读");
+    assert_eq!(deleting_status, "deleting");
+
+    let lease_expires_at = test_time()
+        .checked_add(DurationMillis::new(30_000).expect("租约有效"))
+        .expect("租约时间有效");
+    let claimed =
+        AccountDeletionRepository::claim_due(&repositories, test_time(), lease_expires_at)
+            .await
+            .expect("应能领取删除任务")
+            .expect("应有到期删除任务");
+    assert_eq!(claimed.stage, AccountDeletionStage::FederatedDeactivation);
+    let local_claim = AccountDeletionRepository::record_federated_deactivation(
+        &repositories,
+        &claimed,
+        test_time(),
+    )
+    .await
+    .expect("Matrix 停用结果应被记录");
+    assert_eq!(local_claim.stage, AccountDeletionStage::LocalErasure);
+    let completed =
+        AccountDeletionRepository::finalize_local(&repositories, &local_claim, test_time())
+            .await
+            .expect("本地匿名化应完成");
+    assert_eq!(completed.stage, AccountDeletionStage::Completed);
+    assert_eq!(
+        AccountDeletionRepository::find_by_receipt(&repositories, &receipt_digest)
+            .await
+            .expect("删除回执应可读")
+            .expect("删除回执应存在")
+            .stage,
+        AccountDeletionStage::Completed
+    );
+
+    let tombstone: (String, String, String, String) = sqlx::query_as(
+        "SELECT status, oidc_issuer, display_name, locale FROM agent_room.principal WHERE id = $1",
+    )
+    .bind(principal_id.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("匿名化墓碑应可读");
+    assert_eq!(
+        tombstone,
+        (
+            "deleted".to_owned(),
+            "urn:agent-room:deleted".to_owned(),
+            "Deleted account".to_owned(),
+            "en".to_owned(),
+        )
+    );
+    assert!(
+        AccountDeletionRepository::export(&repositories, principal_id, test_time())
+            .await
+            .expect("删除后的导出查询应成功")
+            .is_none()
+    );
 
     database.close().await;
 }

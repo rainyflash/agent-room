@@ -503,6 +503,7 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \trequest_body {{
 \t\tmax_size 64MB
 \t}}
+\trespond /_synapse/admin/* 404
 {worker_route}\treverse_proxy synapse:8008
 }}
 

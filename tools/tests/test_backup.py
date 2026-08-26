@@ -34,6 +34,7 @@ class FakeBackupCapture:
             write(staging / "database" / name, name.encode())
         write(staging / "objects" / "source-inventory.ndjson", b'{"key":"content/1"}\n')
         write(staging / "objects" / "data" / "content" / "1", b"payload")
+        write(staging / "privacy" / "account-deletions.json", b'{"schemaVersion":1,"entries":[]}\n')
         if self.embedded:
             write(staging / "postgres" / "base" / "backup_manifest", b"{}")
             write(staging / "postgres" / "restore-point.json", b"{}")
@@ -133,6 +134,40 @@ class BackupCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(removed, (first.backup_id,))
         self.assertTrue((self.repository_path / second.backup_id).is_dir())
+
+    def test_account_deletion_ledger_is_monotonic_and_survives_pruning(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        capture = FakeBackupCapture(self.repository_path)
+        first = BackupCoordinator(
+            self.config, self.paths, capture, repository, clock=lambda: FIXED_NOW - timedelta(days=40)
+        ).create()
+        entry = {
+            "jobId": "019d2b8c-9100-7000-8000-000000000001",
+            "principalId": "019d2b8c-9100-7000-8000-000000000002",
+            "matrixUserId": "@deleted:agent-room.example",
+            "completedAt": "2026-08-25T12:00:00Z",
+        }
+
+        class DeletionCapture(FakeBackupCapture):
+            def capture_backup_payload(self, backup_id: str) -> None:
+                super().capture_backup_payload(backup_id)
+                write(
+                    self.repository / f".partial-{backup_id}" / "privacy" / "account-deletions.json",
+                    (json.dumps({"schemaVersion": 1, "entries": [entry]}) + "\n").encode(),
+                )
+
+        second = BackupCoordinator(
+            self.config,
+            self.paths,
+            DeletionCapture(self.repository_path),
+            repository,
+            clock=lambda: FIXED_NOW,
+        ).create()
+        repository.prune(30, now=FIXED_NOW)
+
+        self.assertFalse((self.repository_path / first.backup_id).exists())
+        self.assertTrue((self.repository_path / second.backup_id).exists())
+        self.assertEqual(repository.load_account_deletion_ledger().entries[0].job_id, entry["jobId"])
 
     def test_external_backup_requires_fresh_provider_evidence(self) -> None:
         evidence_path = Path(self.temporary.name) / "provider.json"

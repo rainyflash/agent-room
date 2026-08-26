@@ -1,3 +1,4 @@
+mod account_deletion;
 mod config;
 mod content_cleanup;
 mod content_runtime;
@@ -15,6 +16,10 @@ use agent_room_a2a_adapter::{
     RemoteAgentCardSource, SystemDnsResolver,
 };
 use agent_room_application::{
+    account_lifecycle::{
+        AccountDeletionWorker, AccountDeletionWorkerDependencies, AccountLifecycleDependencies,
+        AccountLifecycleService,
+    },
     agent_cards::{AgentCardDependencies, AgentCardService},
     agent_instance_management::{
         AgentInstanceManagementDependencies, AgentInstanceManagementService,
@@ -43,10 +48,12 @@ use agent_room_application::{
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
     DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519DeviceProofVerifier,
-    OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
+    HmacAccountDeletionReceiptIssuer, OidcAdapterConfig, OidcDeviceGrantConfig,
+    SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
+    SynapseAccountLifecycleConfiguration, SynapseAccountLifecycleGateway,
 };
 use agent_room_postgres_adapter::PostgresRepositories;
 use axum::{
@@ -58,7 +65,8 @@ use axum::{
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use config::{AuthenticationConfig, ControlPlaneConfig, LobbyConfig};
+use config::{AccountLifecycleConfig, AuthenticationConfig, ControlPlaneConfig, LobbyConfig};
+use features::accounts::AccountHttpState;
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agent_instances::{AgentInstanceHttpState, AgentInstanceHttpStateDependencies};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
@@ -85,6 +93,7 @@ pub(crate) struct AppState {
 struct IdentityRuntime {
     routes: Router,
     content_cleanup: content_cleanup::ContentCleanupWorker,
+    account_deletion: account_deletion::AccountDeletionRuntime,
 }
 
 struct AgentFeatureHttpStates {
@@ -148,6 +157,7 @@ pub async fn run() -> Result<(), StartupError> {
     let IdentityRuntime {
         routes,
         content_cleanup,
+        account_deletion,
     } = identity_runtime;
     let app = build_router(
         runtime.readiness.clone(),
@@ -166,6 +176,7 @@ pub async fn run() -> Result<(), StartupError> {
         .await;
 
     content_cleanup.shutdown().await;
+    account_deletion.shutdown().await;
     runtime.shutdown().await;
     observability.shutdown();
     result.map_err(|error| {
@@ -280,6 +291,24 @@ async fn build_identity_router(
         })
         .await?;
     let (content_routes, content_cleanup, matrix_authority) = content_runtime.into_parts();
+    let account_lifecycle = build_account_lifecycle_service(
+        &config.account_lifecycle,
+        repositories.clone(),
+        system_runtime.clone(),
+    )?;
+    let account_deletion = build_account_deletion_worker(
+        &config.account_lifecycle,
+        &config.dependencies.matrix_base_url,
+        &authentication_config.matrix_server_name,
+        request_timeout,
+        repositories.clone(),
+        system_runtime.clone(),
+    )?;
+    let account_state = AccountHttpState::new(
+        account_lifecycle,
+        service.clone(),
+        &authentication_config.frontend_origin,
+    );
     let agent_features = build_agent_feature_states(
         config,
         request_timeout,
@@ -293,26 +322,120 @@ async fn build_identity_router(
             matrix_authority,
         },
     )?;
-    let routes = features::authentication::router(state)
-        .merge(features::devices::router(device_state))
-        .merge(features::agents::router(agent_features.agents))
-        .merge(features::agent_instances::router(agent_features.instances))
-        .merge(features::handoffs::router(agent_features.handoffs))
-        .merge(features::lobbies::router(agent_features.lobbies))
-        .merge(features::private_rooms::router(
-            agent_features.private_rooms,
-        ))
-        .merge(features::direct_sessions::router(
-            agent_features.direct_sessions,
-        ))
-        .merge(features::agent_cards::router(agent_features.cards))
-        .merge(features::automation::router(agent_features.automation))
-        .merge(features::moderation::router(agent_features.moderation))
-        .merge(content_routes);
+    let routes = compose_identity_routes(
+        state,
+        account_state,
+        device_state,
+        agent_features,
+        content_routes,
+    );
     Ok(IdentityRuntime {
         routes,
         content_cleanup,
+        account_deletion,
     })
+}
+
+fn compose_identity_routes(
+    authentication: AuthenticationHttpState,
+    accounts: AccountHttpState,
+    devices: DeviceHttpState,
+    agents: AgentFeatureHttpStates,
+    content: Router,
+) -> Router {
+    features::authentication::router(authentication)
+        .merge(features::accounts::router(accounts))
+        .merge(features::devices::router(devices))
+        .merge(features::agents::router(agents.agents))
+        .merge(features::agent_instances::router(agents.instances))
+        .merge(features::handoffs::router(agents.handoffs))
+        .merge(features::lobbies::router(agents.lobbies))
+        .merge(features::private_rooms::router(agents.private_rooms))
+        .merge(features::direct_sessions::router(agents.direct_sessions))
+        .merge(features::agent_cards::router(agents.cards))
+        .merge(features::automation::router(agents.automation))
+        .merge(features::moderation::router(agents.moderation))
+        .merge(content)
+}
+
+fn build_account_deletion_worker(
+    config: &AccountLifecycleConfig,
+    matrix_base_url: &url::Url,
+    matrix_server_name: &str,
+    request_timeout: Duration,
+    repositories: Arc<PostgresRepositories>,
+    runtime: Arc<SystemRuntime>,
+) -> Result<account_deletion::AccountDeletionRuntime, StartupError> {
+    let matrix = Arc::new(
+        SynapseAccountLifecycleGateway::new(
+            SynapseAccountLifecycleConfiguration::new(
+                matrix_base_url.as_str(),
+                matrix_server_name.to_owned(),
+                SecretValue::new(config.matrix_admin_access_token.expose().to_owned()).map_err(
+                    |_| {
+                        StartupError::new(
+                            "startup.invalid_account_lifecycle_config",
+                            "Matrix 管理令牌无效".to_owned(),
+                        )
+                    },
+                )?,
+                request_timeout,
+            )
+            .map_err(|error| {
+                StartupError::new(
+                    "startup.invalid_account_lifecycle_config",
+                    error.to_string(),
+                )
+            })?,
+        )
+        .map_err(|error| {
+            StartupError::new(
+                "startup.invalid_account_lifecycle_config",
+                error.to_string(),
+            )
+        })?,
+    );
+    let worker = Arc::new(AccountDeletionWorker::new(
+        AccountDeletionWorkerDependencies {
+            repository: repositories,
+            matrix,
+            clock: runtime,
+            lease_duration: domain_duration(config.lease_duration)?,
+            initial_retry_delay: domain_duration(config.retry_initial)?,
+            maximum_retry_delay: domain_duration(config.retry_maximum)?,
+        },
+    ));
+    account_deletion::AccountDeletionRuntime::start(worker, config.worker_interval).map_err(
+        |error| {
+            StartupError::new(
+                "startup.invalid_account_lifecycle_config",
+                error.to_string(),
+            )
+        },
+    )
+}
+
+fn build_account_lifecycle_service(
+    config: &AccountLifecycleConfig,
+    repositories: Arc<PostgresRepositories>,
+    runtime: Arc<SystemRuntime>,
+) -> Result<Arc<AccountLifecycleService>, StartupError> {
+    let receipts = Arc::new(
+        HmacAccountDeletionReceiptIssuer::new(config.receipt_secret.expose().as_bytes().to_vec())
+            .map_err(|error| {
+            StartupError::new(
+                "startup.invalid_account_lifecycle_config",
+                error.to_string(),
+            )
+        })?,
+    );
+    Ok(Arc::new(AccountLifecycleService::new(
+        AccountLifecycleDependencies {
+            repository: repositories,
+            receipts,
+            clock: runtime,
+        },
+    )))
 }
 
 fn build_agent_feature_states(

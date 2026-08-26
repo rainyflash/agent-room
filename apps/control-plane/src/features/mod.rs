@@ -1,3 +1,4 @@
+pub(crate) mod accounts;
 pub(crate) mod agent_cards;
 pub(crate) mod agent_instances;
 pub(crate) mod agents;

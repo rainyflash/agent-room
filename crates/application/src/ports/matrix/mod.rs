@@ -49,6 +49,16 @@ pub trait MatrixAgentDeviceSessionRevoker: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
+/// 由受限后台工作流擦除一个本地 Matrix 人类账户。
+///
+/// 实现必须验证目标属于本 Homeserver，并把“已经停用”视为幂等成功。管理员凭据不得暴露给前端。
+pub trait MatrixAccountLifecycleGateway: Send + Sync {
+    fn deactivate_and_erase<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
 /// 创建或恢复一个与单个 Matrix 设备绑定的客户端。
 pub trait MatrixClientFactory: Send + Sync {
     fn login<'a>(

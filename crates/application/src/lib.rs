@@ -1,3 +1,4 @@
+pub mod account_lifecycle;
 pub mod agent_cards;
 pub mod agent_instance_management;
 pub mod agent_instance_verification;

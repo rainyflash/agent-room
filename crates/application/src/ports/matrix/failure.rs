@@ -8,6 +8,7 @@ pub enum MatrixOperation {
     ProvisionAgentUser,
     IssueAgentDeviceSession,
     RevokeAgentDeviceSession,
+    DeactivateAccount,
     Login,
     RestoreSession,
     Sync,
@@ -38,6 +39,7 @@ impl MatrixOperation {
             Self::InitializeStore
                 | Self::ProvisionAgentUser
                 | Self::RevokeAgentDeviceSession
+                | Self::DeactivateAccount
                 | Self::Login
                 | Self::RestoreSession
                 | Self::Sync

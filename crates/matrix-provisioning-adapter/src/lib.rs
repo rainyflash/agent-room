@@ -14,9 +14,14 @@ use reqwest::{Client, Response, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
+mod accounts;
 mod moderation;
 mod rooms;
 
+pub use accounts::{
+    SynapseAccountLifecycleConfiguration, SynapseAccountLifecycleConfigurationError,
+    SynapseAccountLifecycleGateway,
+};
 pub use rooms::MatrixApplicationServiceRoomMembership;
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1_024;

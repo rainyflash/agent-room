@@ -11,6 +11,9 @@ from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 ENV_FILE: Final = ROOT / ".env.local"
+MATRIX_LIFECYCLE_TOKEN_FILE: Final = (
+    ROOT / ".local" / "secrets" / "synapse-lifecycle-admin-token"
+)
 SECURE_STORAGE_SERVICE: Final = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{1,126}[A-Za-z0-9])?$"
 )
@@ -44,8 +47,13 @@ def required_value(values: Mapping[str, str], name: str) -> str:
 
 
 def control_plane_runtime_environment(
-    values: Mapping[str, str], *, enable_telemetry: bool
+    values: Mapping[str, str],
+    *,
+    enable_telemetry: bool,
+    matrix_lifecycle_token_file: Path = MATRIX_LIFECYCLE_TOKEN_FILE,
 ) -> dict[str, str]:
+    if not matrix_lifecycle_token_file.is_file():
+        raise LocalRuntimeError("缺少 Matrix 生命周期管理令牌；请先运行 just dev-seed。")
     environment = os.environ.copy()
     environment.update(
         {
@@ -61,6 +69,12 @@ def control_plane_runtime_environment(
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:18008",
             "AGENT_ROOM_MATRIX_APPSERVICE_TOKEN": required_value(
                 values, "SYNAPSE_APPSERVICE_TOKEN"
+            ),
+            "AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE": str(
+                matrix_lifecycle_token_file
+            ),
+            "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET": required_value(
+                values, "ACCOUNT_DELETION_RECEIPT_SECRET"
             ),
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
                 "http://127.0.0.1:19333/cluster/status"

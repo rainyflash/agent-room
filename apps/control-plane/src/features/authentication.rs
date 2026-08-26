@@ -302,7 +302,7 @@ fn expired_cookie(name: &'static str) -> Cookie<'static> {
     cookie
 }
 
-fn expired_session_jar(jar: CookieJar) -> CookieJar {
+pub(crate) fn expired_session_jar(jar: CookieJar) -> CookieJar {
     jar.add(expired_cookie(SESSION_COOKIE))
 }
 

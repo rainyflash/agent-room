@@ -22,6 +22,7 @@ SECRET_NAMES: Final = (
     "keycloak_web_client_secret",
     "keycloak_matrix_client_secret",
     "synapse_registration_secret",
+    "synapse_lifecycle_admin_password",
     "synapse_appservice_token",
     "synapse_appservice_hs_token",
     "synapse_macaroon_secret",
@@ -29,9 +30,13 @@ SECRET_NAMES: Final = (
     "s3_access_key",
     "s3_secret_key",
     "content_ticket_secret",
+    "account_deletion_receipt_secret",
     "worker_replication_secret",
 )
-DERIVED_SECRET_NAMES: Final = ("migration_database_url",)
+DERIVED_SECRET_NAMES: Final = (
+    "migration_database_url",
+    "synapse_lifecycle_admin_token",
+)
 MAX_SECRET_BYTES: Final = 4_096
 
 

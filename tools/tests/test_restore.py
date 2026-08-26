@@ -32,6 +32,7 @@ class RestoreFixtureCapture:
             write(staging / "database" / name, name.encode())
         write(staging / "objects" / "source-inventory.ndjson", b"{}\n")
         write(staging / "objects" / "data" / "content.bin", b"object")
+        write(staging / "privacy" / "account-deletions.json", b'{"schemaVersion":1,"entries":[]}\n')
         write(staging / "postgres" / "base" / "backup_manifest", b"{}")
         write(
             staging / "postgres" / "restore-point.json",
@@ -48,9 +49,11 @@ class FakeRestoreBackend:
         drill_directory: Path,
         restore_point_name: str,
         restore_point_lsn: str,
+        account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
         self.backup_directory = backup_directory
         self.drill_directory = drill_directory
+        self.account_deletion_ledger = account_deletion_ledger
         return DatabaseRestoreEvidence(
             restore_point_name,
             restore_point_lsn,
@@ -59,6 +62,8 @@ class FakeRestoreBackend:
             ("agent_room", "keycloak", "synapse"),
             2,
             1,
+            0,
+            0,
         )
 
 
@@ -109,6 +114,7 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertEqual(report.database.projection_memberships, 2)
         self.assertTrue((backend.drill_directory / "report.json").is_file())
         self.assertTrue((backend.drill_directory / "identity" / "synapse.signing.key").is_file())
+        self.assertTrue(backend.account_deletion_ledger.is_file())
 
     def test_external_database_cannot_claim_local_pitr_drill(self) -> None:
         external = replace(self.config, database=replace(self.config.database, mode="external"))

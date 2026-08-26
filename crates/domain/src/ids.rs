@@ -32,6 +32,7 @@ macro_rules! define_id {
 }
 
 define_id!(PrincipalId);
+define_id!(AccountDeletionJobId);
 define_id!(LoginAttemptId);
 define_id!(WebSessionId);
 define_id!(DeviceId);

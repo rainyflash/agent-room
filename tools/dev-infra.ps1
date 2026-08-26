@@ -76,6 +76,9 @@ function Write-Environment {
     if (-not $current.ContainsKey('CONTENT_TICKET_SECRET')) {
       $missingValues.CONTENT_TICKET_SECRET = New-RandomSecret
     }
+    if (-not $current.ContainsKey('ACCOUNT_DELETION_RECEIPT_SECRET')) {
+      $missingValues.ACCOUNT_DELETION_RECEIPT_SECRET = New-RandomSecret
+    }
     if (-not $current.ContainsKey('CONTENT_MATRIX_AGENT_ID')) {
       $missingValues.CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     }
@@ -110,6 +113,7 @@ function Write-Environment {
     S3_ACCESS_KEY = 'agentroomlocal'
     S3_SECRET_KEY = New-RandomSecret
     CONTENT_TICKET_SECRET = New-RandomSecret
+    ACCOUNT_DELETION_RECEIPT_SECRET = New-RandomSecret
     CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     SEED_ADMIN_PASSWORD = New-RandomSecret
     SEED_AGENT_PASSWORD = New-RandomSecret

@@ -163,6 +163,8 @@ OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精
 
 内容服务额外要求私有 S3 端点、桶、区域与独立凭据，受信私网 ClamAV 地址，HMAC 票据 Key ID/Secret，以及稳定 UUIDv7 `AGENT_ROOM_CONTENT_MATRIX_AGENT_ID`。票据密钥不得与 OIDC、Matrix Application Service 或对象存储密钥复用；轮换时必须至少保留旧密钥至既有票据的最大有效期结束。内容授权 Matrix 身份必须保持在每个受管房间中，才能读取当前成员与 Power Level 状态；离开房间后的 state-at-leave 不得用于授权。建房流程必须由该身份创建房间或显式邀请并确认加入，缺失成员关系时内容服务应失败关闭。
 
+账户删除额外要求独立的 `AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET` 和仅后端可见的 `AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN`。前者只派生可重放删除回执，后者只允许生命周期 Worker 调用内部 Synapse Admin API；二者不得复用。生产安装通过一次性引导容器生成专用 Synapse 管理员与令牌，公网代理必须封锁整个 `/_synapse/admin/*`。
+
 ### 7.2 密钥管理
 
 - 开发：本地 `.env.local` 与生成密钥，已加入忽略规则。
@@ -306,6 +308,16 @@ Bridge：
 3. 恢复对象引用并随机校验摘要。
 4. 重建可丢失投影并比较计数。
 5. 验证新部署不会向真实联邦对端发送测试事件。
+
+### 13.4 删除与恢复边界
+
+- 删除前允许用户下载 Agent Room 本地结构化导出；Matrix timeline 使用 Matrix 客户端单独导出。
+- 删除请求必须经过近期认证、精确确认联邦残留并携带 UUIDv7 幂等键。
+- 删除进度回执不得写日志；响应丢失时只允许同一幂等键取回同一回执。
+- Synapse 擦除之后必须清除 SSO external IDs 和本地媒体；远端事件副本无法由本服务保证删除。
+- 内容对象先撤销授权并标记回收，再由幂等清理 Worker 物理删除；状态页不得提前声称物理删除完成。
+- 加密备份在保留期内可能包含删除前数据。恢复必须在隔离环境执行，并在对外开放前重放删除账本、完成内容回收和核对匿名化墓碑。
+- `ACCOUNT_DELETION_LEDGER.json` 位于备份仓库根目录，不随普通快照轮换；它只能由备份协调器单调合并。恢复工具会把账本复制到隔离卷，并在投影重建前重新排队旧快照中仍存活的主体。该步骤失败即判定恢复失败。
 
 ## 14. 发布流水线
 
