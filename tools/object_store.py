@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 from datetime import UTC, datetime
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Final
+from typing import Final, Sequence
 
 if __package__:
     from .capacity import git_revision, write_json
@@ -80,7 +81,13 @@ def parse_capacity_observation(output: str) -> dict[str, object]:
     return value
 
 
-def main() -> int:
+def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    return parser.parse_args(arguments)
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    parse_args(arguments)
     try:
         values = read_environment()
         environment = os.environ.copy()

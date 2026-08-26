@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Final
+from typing import Final, Sequence
 
 if __package__:
     from .capacity import git_revision
@@ -78,7 +79,13 @@ def run() -> dict[str, object]:
     return report
 
 
-def main() -> int:
+def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    return parser.parse_args(arguments)
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    parse_args(arguments)
     try:
         report = run()
         print(f"浏览器容量报告：{REPORT}")
