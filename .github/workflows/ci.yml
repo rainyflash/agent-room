@@ -172,6 +172,8 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装 Linux 桌面编译依赖
+        run: bash tools/install-linux-desktop-deps.sh
       - name: 从干净检出引导贡献者环境并安装 Chromium
         run: |
           node tools/bootstrap.mjs
