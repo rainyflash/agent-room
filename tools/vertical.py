@@ -900,9 +900,7 @@ def start_control_plane(
         ManagedProcess(
             name="control-plane",
             command=[str(runtime_binary("agent-room-control-plane"))],
-            environment=control_plane_runtime_environment(
-                environment, enable_telemetry=True
-            ),
+            environment=vertical_control_plane_environment(environment),
             log_path=log_root / "control-plane.log",
             redactor=redactor,
         )
@@ -913,6 +911,17 @@ def start_control_plane(
         timeout_seconds=120,
     )
     return control_plane
+
+
+def vertical_control_plane_environment(
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """仅为隔离纵向环境开放宿主监听，使 Docker Caddy 可访问控制平面。"""
+    runtime_environment = control_plane_runtime_environment(
+        environment, enable_telemetry=True
+    )
+    runtime_environment["AGENT_ROOM_BIND_ADDRESS"] = "0.0.0.0:8090"
+    return runtime_environment
 
 
 def web_preview_command() -> list[str]:

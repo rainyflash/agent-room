@@ -14,6 +14,7 @@ from tools.vertical import (
     read_string_object,
     require_uuid_v7,
     verify_sanitized_logs,
+    vertical_control_plane_environment,
     web_preview_command,
     windows_credential_target,
 )
@@ -140,6 +141,15 @@ class HttpReadinessTests(unittest.TestCase):
 
         host_index = command.index("--host")
         self.assertEqual(command[host_index + 1], "0.0.0.0")
+
+    def test_纵向控制平面监听容器可达地址(self) -> None:
+        with patch(
+            "tools.vertical.control_plane_runtime_environment",
+            return_value={"AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:8090"},
+        ):
+            environment = vertical_control_plane_environment({})
+
+        self.assertEqual(environment["AGENT_ROOM_BIND_ADDRESS"], "0.0.0.0:8090")
 
 
 class ComposeBoundaryTests(unittest.TestCase):
