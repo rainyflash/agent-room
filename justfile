@@ -155,6 +155,18 @@ production-upgrade config state:
 production-health config state:
   python tools/production.py health --config {{config}} --state-dir {{state}}
 
+self-host-init domain email output:
+  python tools/self_host.py init --domain {{domain}} --email {{email}} --output {{output}}
+
+self-host-doctor config state:
+  python tools/self_host.py doctor --config {{config}} --state-dir {{state}}
+
+self-host-install config state:
+  python tools/self_host.py install --config {{config}} --state-dir {{state}}
+
+self-host-upgrade config state:
+  python tools/self_host.py upgrade --config {{config}} --state-dir {{state}}
+
 observability-validate:
   python tools/observability.py validate
 
