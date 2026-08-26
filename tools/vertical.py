@@ -817,6 +817,38 @@ def wait_for_http(
     raise VerticalFailure(f"服务 {url} 未在 {timeout_seconds:.0f} 秒内就绪。")
 
 
+def wait_for_local_https(
+    url: str,
+    process: ManagedProcess,
+    *,
+    timeout_seconds: float,
+) -> None:
+    """通过本机 Caddy 自签证书入口验证真实浏览器路由。"""
+    curl = executable("curl")
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        process.ensure_running()
+        completed = subprocess.run(
+            [
+                curl,
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--insecure",
+                "--max-time",
+                "2",
+                url,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return
+        time.sleep(0.4)
+    raise VerticalFailure(f"本机 HTTPS 服务 {url} 未在 {timeout_seconds:.0f} 秒内就绪。")
+
+
 def http_status_is_ready(status: int) -> bool:
     """只把成功响应视为就绪；重定向和客户端错误都必须继续等待。"""
     return 200 <= status < 300
@@ -883,6 +915,21 @@ def start_control_plane(
     return control_plane
 
 
+def web_preview_command() -> list[str]:
+    """返回可被宿主机与 Docker 网关共同访问的发布预览命令。"""
+    return [
+        executable("node"),
+        "apps/web/node_modules/vite/bin/vite.js",
+        "preview",
+        "apps/web",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5173",
+        "--strictPort",
+    ]
+
+
 def start_web(
     processes: ProcessStack,
     redactor: LogRedactor,
@@ -906,23 +953,18 @@ def start_web(
     web = processes.start(
         ManagedProcess(
             name="web",
-            command=[
-                executable("node"),
-                "apps/web/node_modules/vite/bin/vite.js",
-                "preview",
-                "apps/web",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "5173",
-                "--strictPort",
-            ],
+            command=web_preview_command(),
             environment=web_environment,
             log_path=log_root / "web.log",
             redactor=redactor,
         )
     )
     wait_for_http("http://127.0.0.1:5173/connect", web, timeout_seconds=60)
+    wait_for_local_https(
+        "https://app.agent-room.localhost:18443/connect",
+        web,
+        timeout_seconds=60,
+    )
     return web
 
 

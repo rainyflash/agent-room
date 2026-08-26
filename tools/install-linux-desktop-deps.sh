@@ -6,5 +6,6 @@ sudo apt-get update
 sudo apt-get install --yes \
   libappindicator3-dev \
   libgtk-3-dev \
+  libsecret-tools \
   librsvg2-dev \
   libwebkit2gtk-4.1-dev

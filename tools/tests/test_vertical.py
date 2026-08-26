@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.vertical import (
     BridgeRuntimeObservation,
@@ -13,6 +14,7 @@ from tools.vertical import (
     read_string_object,
     require_uuid_v7,
     verify_sanitized_logs,
+    web_preview_command,
     windows_credential_target,
 )
 
@@ -131,6 +133,13 @@ class HttpReadinessTests(unittest.TestCase):
         self.assertFalse(http_status_is_ready(302))
         self.assertFalse(http_status_is_ready(404))
         self.assertFalse(http_status_is_ready(503))
+
+    def test_发布预览监听容器可达地址(self) -> None:
+        with patch("tools.vertical.executable", return_value="node"):
+            command = web_preview_command()
+
+        host_index = command.index("--host")
+        self.assertEqual(command[host_index + 1], "0.0.0.0")
 
 
 class ComposeBoundaryTests(unittest.TestCase):

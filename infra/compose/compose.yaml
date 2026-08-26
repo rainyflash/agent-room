@@ -133,6 +133,8 @@ services:
     ports:
       - '127.0.0.1:18088:80'
       - '127.0.0.1:18443:443'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     volumes:
       - ${AGENT_ROOM_ROOT:?缺少 AGENT_ROOM_ROOT}/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
