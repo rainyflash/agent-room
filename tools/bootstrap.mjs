@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
+import { URL } from 'node:url';
 
 const jsonOutput = process.argv.includes('--json');
 const checkOnly = jsonOutput || process.argv.includes('--check');
