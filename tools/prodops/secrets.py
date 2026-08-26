@@ -16,6 +16,7 @@ SECRET_NAMES: Final = (
     "postgres_bootstrap_password",
     "agent_room_db_migration_password",
     "agent_room_db_runtime_password",
+    "postgres_metrics_password",
     "synapse_db_password",
     "keycloak_db_password",
     "keycloak_admin_password",
@@ -32,6 +33,8 @@ SECRET_NAMES: Final = (
     "content_ticket_secret",
     "account_deletion_receipt_secret",
     "worker_replication_secret",
+    "alertmanager_webhook_token",
+    "grafana_admin_password",
 )
 DERIVED_SECRET_NAMES: Final = (
     "migration_database_url",

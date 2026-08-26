@@ -34,6 +34,7 @@ services:
       - postgres_bootstrap_password
       - agent_room_db_migration_password
       - agent_room_db_runtime_password
+      - postgres_metrics_password
       - synapse_db_password
       - keycloak_db_password
     volumes:
@@ -176,6 +177,101 @@ services:
     restart: unless-stopped
     <<: *common-security
     tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  prometheus:
+    profiles: [telemetry]
+    image: prom/prometheus:v3.13.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=45d
+      - --storage.tsdb.wal-compression
+    ports:
+      - 127.0.0.1:${AGENT_ROOM_PROMETHEUS_PORT:-9090}:9090
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/generated/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./observability-rules.yaml:/etc/prometheus/rules.yaml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  alertmanager:
+    profiles: [telemetry]
+    image: prom/alertmanager:v0.33.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yaml
+      - --storage.path=/alertmanager
+    secrets: [alertmanager_webhook_token]
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/generated/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  blackbox:
+    profiles: [telemetry]
+    image: prom/blackbox-exporter:v0.28.0
+    command: [--config.file=/etc/blackbox/blackbox.yaml]
+    volumes:
+      - ./blackbox.yaml:/etc/blackbox/blackbox.yaml:ro
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
+  postgres-exporter:
+    profiles: [telemetry]
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    environment:
+      DATA_SOURCE_URI: ${AGENT_ROOM_DB_HOST}:${AGENT_ROOM_DB_PORT}/postgres?sslmode=${AGENT_ROOM_DB_TLS_MODE}
+      DATA_SOURCE_USER: ${AGENT_ROOM_DB_METRICS_USER}
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_metrics_password
+      PG_EXPORTER_COLLECTION_TIMEOUT: 10s
+    secrets: [postgres_metrics_password]
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
+  recovery-metrics:
+    profiles: [telemetry]
+    image: quay.io/prometheus/node-exporter:v1.12.1
+    command:
+      - --collector.disable-defaults
+      - --collector.textfile.directory=/metrics
+      - --web.listen-address=:9100
+    volumes:
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}/metrics:/metrics:ro
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    networks: [backend]
+
+  grafana:
+    profiles: [telemetry]
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_ADMIN_USER: agent-room-admin
+      GF_SERVER_DOMAIN: localhost
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets: [grafana_admin_password]
+    ports:
+      - 127.0.0.1:${AGENT_ROOM_GRAFANA_PORT:-3000}:3000
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
     networks: [backend]
 
   migrate:
@@ -425,6 +521,8 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/agent_room_db_migration_password
   agent_room_db_runtime_password:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/agent_room_db_runtime_password
+  postgres_metrics_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/postgres_metrics_password
   synapse_db_password:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_db_password
   keycloak_db_password:
@@ -451,3 +549,12 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/account_deletion_receipt_secret
   migration_database_url:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/migration_database_url
+  alertmanager_webhook_token:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/alertmanager_webhook_token
+  grafana_admin_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/grafana_admin_password
+
+volumes:
+  alertmanager-data:
+  grafana-data:
+  prometheus-data:

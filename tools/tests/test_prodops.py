@@ -27,6 +27,10 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(config.database.mode, "embedded")
         self.assertEqual(config.backup.rpo_minutes, 15)
         self.assertEqual(config.backup.archive_timeout_seconds, 900)
+        self.assertEqual(
+            config.telemetry.alert_webhook_url,
+            "https://alerts.agent-room.example/v1/events",
+        )
         self.assertEqual(config.compose_profiles, ("embedded-database", "embedded-object-store"))
         self.assertEqual(json.loads(SCHEMA.read_text(encoding="utf-8"))["$schema"], "https://json-schema.org/draft/2020-12/schema")
 
@@ -75,6 +79,17 @@ class ProductionConfigTests(unittest.TestCase):
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(value)
 
+    def test_enabled_telemetry_requires_secret_free_https_receiver(self) -> None:
+        missing = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        missing["telemetry"].pop("alertWebhookUrl")
+        insecure = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        insecure["telemetry"]["alertWebhookUrl"] = "http://alerts.example/events"
+
+        with self.assertRaises(DeploymentConfigError):
+            DeploymentConfig.from_mapping(missing)
+        with self.assertRaises(DeploymentConfigError):
+            DeploymentConfig.from_mapping(insecure)
+
 
 class ProductionRenderingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -105,6 +120,31 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("sslmode=disable", self.secrets.read("migration_database_url"))
+
+    def test_observability_render_has_paging_and_fixed_probe_names(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        prometheus = self.paths.generated.joinpath(
+            "observability", "prometheus.yaml"
+        ).read_text(encoding="utf-8")
+        alertmanager = self.paths.generated.joinpath(
+            "observability", "alertmanager.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('probe_name: "federation-version"', prometheus)
+        self.assertIn("alertmanager:9093", prometheus)
+        self.assertIn("/run/secrets/alertmanager_webhook_token", alertmanager)
+        self.assertIn(self.config.telemetry.alert_webhook_url or "", alertmanager)
+        self.assertNotIn(self.secrets.read("alertmanager_webhook_token"), alertmanager)
+
+    def test_disabled_telemetry_does_not_render_observability_secrets(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["telemetry"] = {"enabled": False}
+        config = DeploymentConfig.from_mapping(value)
+
+        render_deployment(config, self.paths, self.secrets)
+
+        self.assertFalse(self.paths.generated.joinpath("observability", "prometheus.yaml").exists())
+        self.assertNotIn("telemetry", self.paths.compose_environment.read_text(encoding="utf-8"))
 
     def test_rendered_identity_and_synapse_share_the_same_oidc_contract(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)

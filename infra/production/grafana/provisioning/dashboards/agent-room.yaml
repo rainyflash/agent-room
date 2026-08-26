@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: Agent Room
+    folder: Agent Room
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

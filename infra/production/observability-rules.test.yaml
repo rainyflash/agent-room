@@ -1,0 +1,198 @@
+rule_files:
+  - observability-rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: agent_room_api_server_requests_total{http_response_status_code="200"}
+        values: 0+80x40
+      - series: agent_room_api_server_requests_total{http_response_status_code="500"}
+        values: 0+20x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="0.5"}
+        values: 0+1x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="1"}
+        values: 0+10x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="+Inf"}
+        values: 0+10x40
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentRoomApiAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: { severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 控制平面 API 正在快速消耗错误预算
+              impact: 用户登录、状态同步或消息操作可能失败
+              diagnostic: 检查控制平面 5xx、依赖可用性与数据库连接池
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapiavailabilityfastburn
+      - eval_time: 20m
+        alertname: AgentRoomApiLatencyHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 控制平面 API P95 延迟持续超过 800ms
+              impact: 大厅、私信与状态操作出现可感知卡顿
+              diagnostic: 对照数据库、Matrix、对象存储依赖探测耗时
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
+  - interval: 1m
+    input_series:
+      - series: agent_room_dependency_available{dependency="matrix"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AgentRoomDependencyUnavailable
+        exp_alerts:
+          - exp_labels: { dependency: matrix, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 控制平面核心依赖不可用
+              impact: 依赖相关业务路径会失败关闭
+              diagnostic: 按 dependency 标签检查 PostgreSQL、Matrix、OIDC 或对象存储
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
+  - interval: 1m
+    input_series:
+      - series: agent_room_operational_value{metric="outbox_pending"}
+        values: 1500+0x30
+      - series: agent_room_operational_value{metric="outbox_dead_lettered"}
+        values: 2+0x30
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentRoomOutboxBacklog
+        exp_alerts:
+          - exp_labels: { metric: outbox_pending, severity: warning, service: agent-room }
+            exp_annotations:
+              summary: Outbox 发布持续积压
+              impact: 控制平面已接受的变更不能及时投影到 Matrix
+              diagnostic: 检查发布进程、Matrix 可用性与最旧待发布年龄
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxbacklog
+      - eval_time: 20m
+        alertname: AgentRoomOutboxDeadLetters
+        exp_alerts:
+          - exp_labels: { metric: outbox_dead_lettered, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: Outbox 出现死信
+              impact: 至少一个业务事件已停止自动发布
+              diagnostic: 按 Runbook 查询结构化日志并执行受控重放
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxdeadletters
+  - interval: 1m
+    input_series:
+      - series: agent_room_operational_value{metric="projection_unhealthy"}
+        values: 1+0x20
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AgentRoomProjectionStalled
+        exp_alerts:
+          - exp_labels: { metric: projection_unhealthy, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: Matrix 投影停滞或不健康
+              impact: 大厅和成员状态可能不再反映权威事件
+              diagnostic: 检查投影游标、Matrix 同步与重建工具
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomprojectionstalled
+  - interval: 1m
+    input_series:
+      - series: probe_success{instance="matrix",job="endpoint-probes"}
+        values: 0+0x20
+      - series: probe_success{instance="federation-version",job="endpoint-probes"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentRoomCoreEndpointUnavailable
+        exp_alerts:
+          - exp_labels:
+              { instance: matrix, job: endpoint-probes, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 核心服务端点不可达
+              impact: 对应核心能力对用户不可用
+              diagnostic: 按 instance 标签检查容器健康、网络和上游日志
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomcoreendpointunavailable
+      - eval_time: 10m
+        alertname: AgentRoomFederationEndpointUnavailable
+        exp_alerts:
+          - exp_labels:
+              {
+                instance: federation-version,
+                job: endpoint-probes,
+                severity: critical,
+                service: agent-room,
+              }
+            exp_annotations:
+              summary: Matrix 联邦公开入口不可达
+              impact: 其他 homeserver 无法发现或连接本站
+              diagnostic: 检查 well-known、TLS、DNS 与 federation version 入口
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
+  - interval: 1m
+    input_series:
+      - series: agent_room_frontend_score_sum{metric="bridge_availability",surface="desktop"}
+        values: 0+8x40
+      - series: agent_room_frontend_score_count{metric="bridge_availability",surface="desktop"}
+        values: 0+10x40
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: AgentRoomBridgeAvailabilityLow
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 桌面 Bridge 群体可用率低于 95%
+              impact: Agent 状态上报和本机消息投递可能中断
+              diagnostic: 检查 Bridge 版本、认证与重连时延聚合指标
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombridgeavailabilitylow
+  - interval: 1m
+    input_series:
+      - series: up{job="postgres"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AgentRoomPostgresExporterDown
+        exp_alerts:
+          - exp_labels: { job: postgres, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: PostgreSQL 指标采集失败
+              impact: 数据库容量与连接故障变为不可观测
+              diagnostic: 检查指标专用角色、TLS 和 exporter 容器
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompostgresexporterdown
+  - interval: 1m
+    input_series:
+      - series: agent_room_backup_last_success_timestamp_seconds
+        values: 0+0x40
+      - series: agent_room_backup_rpo_target_seconds
+        values: 900+0x40
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AgentRoomBackupRpoBreached
+        exp_alerts:
+          - exp_labels: { severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 最近成功备份已超过 RPO
+              impact: 故障时的数据丢失窗口超过承诺值
+              diagnostic: 检查定时器、备份仓库空间和 PostgreSQL 归档
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombackuprpobreached
+  - interval: 1m
+    input_series:
+      - series: agent_room_restore_drill_last_success_timestamp_seconds
+        values: 0+0x10300
+    alert_rule_test:
+      - eval_time: 170h
+        alertname: AgentRoomRestoreDrillStale
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 一周内没有成功恢复演练
+              impact: 备份可恢复性已经失去新鲜证据
+              diagnostic: 运行隔离恢复演练并核对签名证据
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomrestoredrillstale
+  - interval: 1m
+    input_series:
+      - series: agent_room_restore_drill_duration_seconds
+        values: 1000+0x20
+      - series: agent_room_restore_rto_target_seconds
+        values: 900+0x20
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AgentRoomRestoreRtoExceeded
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 最近恢复演练超过 RTO
+              impact: 真实灾难恢复可能无法按目标时间完成
+              diagnostic: 分解数据库、对象和身份恢复阶段耗时
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomrestorertoexceeded

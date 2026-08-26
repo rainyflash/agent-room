@@ -102,11 +102,7 @@
     "backup": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "repository",
-        "retentionDays",
-        "rpoMinutes"
-      ],
+      "required": ["repository", "retentionDays", "rpoMinutes"],
       "properties": {
         "repository": { "$ref": "#/$defs/absoluteHostPath" },
         "retentionDays": { "type": "integer", "minimum": 7, "maximum": 365 },
@@ -118,7 +114,25 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["enabled"],
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "alertWebhookUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "maxLength": 1024
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": { "required": ["alertWebhookUrl"] },
+          "else": { "not": { "required": ["alertWebhookUrl"] } }
+        }
+      ]
     }
   },
   "allOf": [

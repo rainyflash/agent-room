@@ -54,6 +54,7 @@ class DeploymentPaths:
             self.generated / "keycloak",
             self.generated / "seaweedfs",
             self.generated / "synapse" / "workers",
+            self.generated / "observability",
             self.data / "caddy-data",
             self.data / "caddy-config",
             self.data / "clamav",
@@ -120,6 +121,17 @@ def render_deployment(
         _caddyfile(config),
         PUBLIC_FILE_MODE,
     )
+    if config.telemetry_enabled:
+        _write_text(
+            paths.generated / "observability" / "prometheus.yaml",
+            _prometheus_config(config),
+            PUBLIC_FILE_MODE,
+        )
+        _write_text(
+            paths.generated / "observability" / "alertmanager.yaml",
+            _alertmanager_config(config),
+            GENERATED_FILE_MODE,
+        )
 
 
 def _compose_environment(
@@ -155,6 +167,7 @@ def _compose_environment(
         "AGENT_ROOM_DB_NAME": database.control_database,
         "AGENT_ROOM_DB_MIGRATION_USER": database.control_migration_user,
         "AGENT_ROOM_DB_RUNTIME_USER": database.control_runtime_user,
+        "AGENT_ROOM_DB_METRICS_USER": database.metrics_user,
         "SYNAPSE_DB_NAME": database.synapse_database,
         "SYNAPSE_DB_USER": database.synapse_user,
         "KEYCLOAK_DB_NAME": database.identity_database,
@@ -513,6 +526,104 @@ def _caddyfile(config: DeploymentConfig) -> str:
 {public.identity_domain} {{
 \treverse_proxy identity:8080
 }}
+'''
+
+
+def _prometheus_config(config: DeploymentConfig) -> str:
+    public = config.public
+    targets = (
+        ("control-plane", "http://control-plane:8090/health/ready"),
+        ("matrix", "http://synapse:8008/_matrix/client/versions"),
+        ("oidc", "http://identity:9000/health/ready"),
+        ("object-store", config.object_store.health_url),
+        ("web", f"{public.app_origin}/_agent-room/healthz"),
+        ("federation-well-known", f"https://{public.server_name}/.well-known/matrix/server"),
+        ("federation-version", f"{public.matrix_origin}/_matrix/federation/v1/version"),
+    )
+    blackbox_targets = "\n".join(
+        f"      - targets: [{_yaml(url)}]\n        labels:\n          probe_name: {_yaml(name)}"
+        for name, url in targets
+    )
+    return f'''global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: agent-room
+
+rule_files:
+  - /etc/prometheus/rules.yaml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+  - job_name: control-plane-otel
+    static_configs:
+      - targets: ["telemetry:8889"]
+  - job_name: synapse
+    metrics_path: /_synapse/metrics
+    static_configs:
+      - targets: ["synapse:9001"]
+  - job_name: keycloak
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["identity:9000"]
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+  - job_name: recovery
+    static_configs:
+      - targets: ["recovery-metrics:9100"]
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: ["blackbox:9115"]
+  - job_name: endpoint-probes
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+{blackbox_targets}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [probe_name]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+      - action: labeldrop
+        regex: probe_name
+'''
+
+
+def _alertmanager_config(config: DeploymentConfig) -> str:
+    webhook = config.telemetry.alert_webhook_url
+    if webhook is None:
+        raise ValueError("启用 telemetry 时缺少告警接收端。")
+    return f'''global:
+  resolve_timeout: 5m
+
+route:
+  receiver: primary
+  group_by: [alertname, service, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: primary
+    webhook_configs:
+      - url: {_yaml(webhook)}
+        send_resolved: true
+        max_alerts: 50
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alertmanager_webhook_token
 '''
 
 

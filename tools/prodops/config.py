@@ -65,6 +65,7 @@ class DatabaseConfig:
     synapse_user: str
     identity_database: str
     identity_user: str
+    metrics_user: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,12 @@ class BackupConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TelemetryConfig:
+    enabled: bool
+    alert_webhook_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class DeploymentConfig:
     schema_version: int
     project_name: str
@@ -103,7 +110,7 @@ class DeploymentConfig:
     object_store: ObjectStoreConfig
     capacity: CapacityConfig
     backup: BackupConfig
-    telemetry_enabled: bool
+    telemetry: TelemetryConfig
 
     @classmethod
     def from_mapping(cls, value: object) -> "DeploymentConfig":
@@ -140,8 +147,12 @@ class DeploymentConfig:
             object_store=_parse_object_store(root.get("objectStore")),
             capacity=_parse_capacity(root.get("capacity")),
             backup=_parse_backup(root.get("backup"), root.get("database")),
-            telemetry_enabled=_parse_telemetry(root.get("telemetry")),
+            telemetry=_parse_telemetry(root.get("telemetry")),
         )
+
+    @property
+    def telemetry_enabled(self) -> bool:
+        return self.telemetry.enabled
 
     @property
     def compose_profiles(self) -> tuple[str, ...]:
@@ -232,6 +243,7 @@ def _parse_database(value: object) -> DatabaseConfig:
         synapse_user="synapse",
         identity_database="keycloak",
         identity_user="identity",
+        metrics_user="agent_room_metrics",
     )
 
 
@@ -313,13 +325,25 @@ def _parse_backup(value: object, database_value: object) -> BackupConfig:
     )
 
 
-def _parse_telemetry(value: object) -> bool:
+def _parse_telemetry(value: object) -> TelemetryConfig:
     source = _mapping(value, "telemetry")
-    _reject_unknown(source, {"enabled"}, "telemetry")
+    _reject_unknown(source, {"enabled", "alertWebhookUrl"}, "telemetry")
     enabled = source.get("enabled", True)
     if not isinstance(enabled, bool):
         raise DeploymentConfigError("telemetry.enabled 必须是布尔值。")
-    return enabled
+    raw_webhook = source.get("alertWebhookUrl")
+    if raw_webhook is not None and not isinstance(raw_webhook, str):
+        raise DeploymentConfigError("telemetry.alertWebhookUrl 必须是 HTTPS URL。")
+    webhook = (
+        _https_url(raw_webhook, "telemetry.alertWebhookUrl")
+        if isinstance(raw_webhook, str)
+        else None
+    )
+    if enabled and webhook is None:
+        raise DeploymentConfigError("启用 telemetry 时必须配置 HTTPS 告警接收端。")
+    if not enabled and webhook is not None:
+        raise DeploymentConfigError("关闭 telemetry 时不得配置告警接收端。")
+    return TelemetryConfig(enabled=enabled, alert_webhook_url=webhook)
 
 
 def _mapping(value: object, label: str) -> dict[str, object]:
@@ -418,6 +442,13 @@ def _http_url(value: str, label: str) -> str:
     ):
         raise DeploymentConfigError(f"{label} 必须是无凭据、查询和片段的 HTTP(S) URL。")
     return value.rstrip("/")
+
+
+def _https_url(value: str, label: str) -> str:
+    normalized = _http_url(value, label)
+    if urlparse(normalized).scheme != "https":
+        raise DeploymentConfigError(f"{label} 必须使用 HTTPS。")
+    return normalized
 
 
 def _safe_token(value: str, label: str) -> str:

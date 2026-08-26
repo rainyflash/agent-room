@@ -30,6 +30,7 @@
     "rpoMinutes": 15
   },
   "telemetry": {
-    "enabled": true
+    "enabled": true,
+    "alertWebhookUrl": "https://alerts.agent-room.example/v1/events"
   }
 }
