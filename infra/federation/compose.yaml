@@ -11,7 +11,8 @@ services:
     volumes:
       - alpha-database:/var/lib/postgresql
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U synapse -d synapse']
+      test:
+        ['CMD-SHELL', 'test "$$(cat /proc/1/comm)" = postgres && pg_isready -U synapse -d synapse']
       interval: 2s
       timeout: 3s
       retries: 45
@@ -26,7 +27,8 @@ services:
     volumes:
       - beta-database:/var/lib/postgresql
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U synapse -d synapse']
+      test:
+        ['CMD-SHELL', 'test "$$(cat /proc/1/comm)" = postgres && pg_isready -U synapse -d synapse']
       interval: 2s
       timeout: 3s
       retries: 45

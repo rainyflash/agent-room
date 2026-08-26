@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import sys
 import time
-from typing import Callable, Final, Iterable, TypeVar
+from typing import Callable, Final, Iterable, TypeAlias, TypeVar
 from urllib.parse import urlencode
 import uuid
 
@@ -50,6 +50,7 @@ MEMBER_COUNT: Final = 250
 SUSTAINED_RATE: Final = 10
 BURST_COUNT: Final = 50
 T = TypeVar("T")
+CapacityMessageSender: TypeAlias = Callable[[MatrixUser, str, str], tuple[str, float]]
 
 
 class MatrixCapacityFailure(RuntimeError):
@@ -182,21 +183,32 @@ def retry_delay(response: dict[str, object], attempt: int) -> float:
 
 
 def send_sustained(
-    owner: MatrixUser, room_id: str, duration_seconds: int
+    owner: MatrixUser,
+    room_id: str,
+    duration_seconds: int,
+    *,
+    rate: int = SUSTAINED_RATE,
+    workers: int | None = None,
+    sender: CapacityMessageSender | None = None,
 ) -> tuple[list[str], list[float], float]:
-    event_ids: list[str] = []
-    latencies: list[float] = []
+    if rate <= 0:
+        raise MatrixCapacityFailure("持续消息速率必须为正数。")
+    send = sender or send_capacity_message
+    worker_count = workers or max(4, rate * 2)
+    futures = []
     started = time.perf_counter()
-    for ordinal in range(duration_seconds * SUSTAINED_RATE):
-        deadline = started + ordinal / SUSTAINED_RATE
-        delay = deadline - time.perf_counter()
-        if delay > 0:
-            time.sleep(delay)
-        event_id, latency = send_capacity_message(owner, room_id, f"sustained-{ordinal}")
-        event_ids.append(event_id)
-        latencies.append(latency)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for ordinal in range(duration_seconds * rate):
+            deadline = started + ordinal / rate
+            delay = deadline - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
+            futures.append(
+                executor.submit(send, owner, room_id, f"sustained-{ordinal}")
+            )
+        results = [future.result() for future in futures]
     elapsed = time.perf_counter() - started
-    return event_ids, latencies, elapsed
+    return [result[0] for result in results], [result[1] for result in results], elapsed
 
 
 def send_burst(owner: MatrixUser, room_id: str) -> tuple[list[str], list[float], float]:
@@ -246,8 +258,8 @@ def execute(sustained_seconds: int, *, keep_running: bool) -> dict[str, object]:
         raise MatrixCapacityFailure("持续消息时长必须为正数。")
     down(volumes=True)
     prepare()
-    up()
     try:
+        up()
         values = read_environment()
         suffix = uuid.uuid4().hex[:8]
         registration_started = time.perf_counter()

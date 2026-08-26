@@ -17,7 +17,11 @@ services:
       - postgres-data:/var/lib/postgresql
       - ${AGENT_ROOM_ROOT:?缺少 AGENT_ROOM_ROOT}/infra/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U agent_room_bootstrap -d postgres']
+      test:
+        [
+          'CMD-SHELL',
+          'test "$$(cat /proc/1/comm)" = postgres && pg_isready -U agent_room_bootstrap -d postgres',
+        ]
       interval: 3s
       timeout: 3s
       retries: 30

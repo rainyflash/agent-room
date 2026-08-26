@@ -656,8 +656,20 @@ def clear_vertical_secure_storage() -> None:
                 capture_output=True,
                 check=False,
             )
-            if completed.returncode != 0:
-                raise VerticalFailure("无法清理 Linux 纵向验收凭据。")
+            if not linux_secret_clear_succeeded(completed):
+                raise VerticalFailure(
+                    "无法清理 Linux 纵向验收凭据"
+                    f"（secret-tool 退出码 {completed.returncode}）。"
+                )
+
+
+def linux_secret_clear_succeeded(
+    completed: subprocess.CompletedProcess[bytes],
+) -> bool:
+    """区分 libsecret 的无匹配结果与真正的 Secret Service 错误。"""
+    if completed.returncode == 0:
+        return True
+    return completed.returncode == 1 and not completed.stderr.strip()
 
 
 def windows_credential_target(service: str, account: str) -> str:

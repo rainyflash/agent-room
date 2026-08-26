@@ -43,7 +43,11 @@ services:
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/001-agent-room.sh:ro
       - ./postgres-pg-hba.conf:/etc/postgresql/agent-room-pg-hba.conf:ro
     healthcheck:
-      test: [CMD-SHELL, pg_isready -U agent_room_bootstrap -d postgres]
+      test:
+        [
+          CMD-SHELL,
+          'test "$$(cat /proc/1/comm)" = postgres && pg_isready -U agent_room_bootstrap -d postgres',
+        ]
       interval: 5s
       timeout: 5s
       retries: 30

@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from tools.vertical import (
     VerticalFailure,
     compose_command,
     http_status_is_ready,
+    linux_secret_clear_succeeded,
     new_uuid_v7,
     read_string_object,
     require_uuid_v7,
@@ -161,6 +163,22 @@ class ComposeBoundaryTests(unittest.TestCase):
         self.assertEqual(
             windows_credential_target("dev.agent-room.bridge.vertical-24", "session"),
             "session.dev.agent-room.bridge.vertical-24",
+        )
+
+    def test_linux_凭据清理把无匹配视为幂等成功(self) -> None:
+        self.assertTrue(
+            linux_secret_clear_succeeded(
+                subprocess.CompletedProcess([], 1, stdout=b"", stderr=b"")
+            )
+        )
+
+    def test_linux_凭据清理不会吞掉_secret_service_错误(self) -> None:
+        self.assertFalse(
+            linux_secret_clear_succeeded(
+                subprocess.CompletedProcess(
+                    [], 1, stdout=b"", stderr=b"D-Bus service unavailable"
+                )
+            )
         )
 
     def test_拒绝中断未登记的基础设施服务(self) -> None:
