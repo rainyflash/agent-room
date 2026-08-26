@@ -22,7 +22,7 @@ This candidate is an engineering checkpoint, not a public release. Do not enable
 
 ## Why it is not released
 
-The candidate lacks same-revision Windows/macOS signed-off packages, an independent security review, a 72-hour active Bridge run, clean public-Linux deployment evidence, real production fault drills, an offline-root signed release, and outside-contributor reproduction. The repository is also still private.
+The candidate lacks same-revision Windows/macOS signed-off packages, an independent security review, a 72-hour active Bridge run, clean public-Linux deployment evidence, real production fault drills, an offline-root signed release, and outside-contributor reproduction. The source repository is public, but public source alone is not release evidence.
 
 The authoritative decision and exit conditions are in [`public-beta.json`](./public-beta.json) and the generated [Go/No-Go record](../../specs/agent-room-foundation/task-45-go-no-go.md).
 

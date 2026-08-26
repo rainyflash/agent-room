@@ -320,9 +320,9 @@
       "id": "GNG-007",
       "severity": "blocking",
       "status": "open",
-      "title": "仓库尚未公开且没有外部贡献者复现",
+      "title": "仓库已公开，但没有外部贡献者完成干净复现",
       "owner": "仓库维护者与外部贡献者",
-      "exitCondition": "在维护者批准后公开仓库，并由无开发缓存的外部贡献者按 README 完成开发启动；运营者在公网 Linux 按自托管指南部署且不手改数据库。",
+      "exitCondition": "由无开发缓存的外部贡献者从公开仓库按 README 完成开发启动；独立运营者在公网 Linux 按自托管指南部署且不手改数据库，并留下可核验的提交、工作流或评审证据。",
       "evidence": ["specs/agent-room-foundation/task-44-validation.md"]
     }
   ],
