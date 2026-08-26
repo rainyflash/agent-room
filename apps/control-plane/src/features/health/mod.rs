@@ -64,6 +64,13 @@ pub(crate) async fn ready(
         .readiness
         .check(&correlation_id.as_uuid().to_string())
         .await;
+    for check in report.checks() {
+        state.metrics.record_dependency(
+            check.dependency().as_str(),
+            check.state() != DependencyState::Unavailable,
+            check.latency_millis(),
+        );
+    }
     record_degraded_dependencies(&report, correlation_id);
 
     let status = if report.is_ready() {

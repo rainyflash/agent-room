@@ -473,6 +473,9 @@ const services: AppServices = {
   privateRoomMatrix,
   privateRooms,
   security,
+  telemetry: {
+    record: async () => undefined,
+  },
 };
 
 function LobbyFixture() {

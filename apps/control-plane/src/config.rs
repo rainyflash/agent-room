@@ -91,7 +91,9 @@ pub(crate) struct DependencyConfig {
 pub(crate) struct ObservabilityConfig {
     pub(crate) log_filter: String,
     pub(crate) otlp_traces_endpoint: Option<Url>,
+    pub(crate) otlp_metrics_endpoint: Option<Url>,
     pub(crate) export_timeout: Duration,
+    pub(crate) operational_sample_interval: Duration,
 }
 
 #[derive(Clone)]
@@ -485,11 +487,20 @@ fn read_observability_config(
         otlp_traces_endpoint: read_optional(source, "AGENT_ROOM_OTLP_TRACES_ENDPOINT")
             .map(|value| parse_http_url("AGENT_ROOM_OTLP_TRACES_ENDPOINT", &value))
             .transpose()?,
+        otlp_metrics_endpoint: read_optional(source, "AGENT_ROOM_OTLP_METRICS_ENDPOINT")
+            .map(|value| parse_http_url("AGENT_ROOM_OTLP_METRICS_ENDPOINT", &value))
+            .transpose()?,
         export_timeout: read_bounded_duration(
             source,
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS",
             DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS,
             100..=30_000,
+        )?,
+        operational_sample_interval: read_bounded_duration(
+            source,
+            "AGENT_ROOM_OPERATIONAL_METRICS_INTERVAL_MS",
+            15_000,
+            5_000..=5 * 60 * 1_000,
         )?,
     })
 }

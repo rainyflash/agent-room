@@ -14,3 +14,4 @@ pub(crate) mod lobbies;
 pub(crate) mod moderation;
 pub(crate) mod private_rooms;
 mod resource_ids;
+pub(crate) mod telemetry;

@@ -118,8 +118,12 @@ def control_plane_runtime_environment(
         environment["AGENT_ROOM_OTLP_TRACES_ENDPOINT"] = (
             "http://127.0.0.1:14318/v1/traces"
         )
+        environment["AGENT_ROOM_OTLP_METRICS_ENDPOINT"] = (
+            "http://127.0.0.1:14318/v1/metrics"
+        )
     else:
         environment.pop("AGENT_ROOM_OTLP_TRACES_ENDPOINT", None)
+        environment.pop("AGENT_ROOM_OTLP_METRICS_ENDPOINT", None)
     return environment
 
 

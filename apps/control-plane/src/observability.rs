@@ -1,13 +1,18 @@
 use opentelemetry::{global, trace::TracerProvider as _};
 use opentelemetry_otlp::{Protocol, WithExportConfig};
-use opentelemetry_sdk::{Resource, propagation::TraceContextPropagator, trace::SdkTracerProvider};
+use opentelemetry_sdk::{
+    Resource, metrics::SdkMeterProvider, propagation::TraceContextPropagator,
+    trace::SdkTracerProvider,
+};
 use thiserror::Error;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{SERVICE_NAME, config::ObservabilityConfig};
+use crate::{SERVICE_NAME, config::ObservabilityConfig, telemetry_metrics::TelemetryMetrics};
 
 pub(crate) struct Observability {
     tracer_provider: Option<SdkTracerProvider>,
+    meter_provider: Option<SdkMeterProvider>,
+    metrics: TelemetryMetrics,
     shutdown_timeout: std::time::Duration,
 }
 
@@ -16,6 +21,26 @@ impl Observability {
         global::set_text_map_propagator(TraceContextPropagator::new());
         let filter = EnvFilter::try_new(&config.log_filter)
             .map_err(|_| ObservabilityError::InvalidFilter)?;
+        let meter_provider = config
+            .otlp_metrics_endpoint
+            .as_ref()
+            .map(|endpoint| {
+                let exporter = opentelemetry_otlp::MetricExporter::builder()
+                    .with_http()
+                    .with_protocol(Protocol::HttpBinary)
+                    .with_endpoint(endpoint.to_string())
+                    .with_timeout(config.export_timeout)
+                    .build()
+                    .map_err(|_| ObservabilityError::Exporter)?;
+                let provider = SdkMeterProvider::builder()
+                    .with_resource(Resource::builder().with_service_name(SERVICE_NAME).build())
+                    .with_periodic_exporter(exporter)
+                    .build();
+                global::set_meter_provider(provider.clone());
+                Ok(provider)
+            })
+            .transpose()?;
+        let metrics = TelemetryMetrics::new();
 
         if let Some(endpoint) = &config.otlp_traces_endpoint {
             let exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -47,6 +72,8 @@ impl Observability {
 
             return Ok(Self {
                 tracer_provider: Some(provider),
+                meter_provider,
+                metrics,
                 shutdown_timeout: config.export_timeout,
             });
         }
@@ -64,11 +91,22 @@ impl Observability {
 
         Ok(Self {
             tracer_provider: None,
+            meter_provider,
+            metrics,
             shutdown_timeout: config.export_timeout,
         })
     }
 
+    pub(crate) fn metrics(&self) -> TelemetryMetrics {
+        self.metrics.clone()
+    }
+
     pub(crate) fn shutdown(self) {
+        if let Some(provider) = self.meter_provider
+            && provider.shutdown().is_err()
+        {
+            eprintln!("OpenTelemetry 指标关闭失败：telemetry.metrics_shutdown_failed");
+        }
         if let Some(provider) = self.tracer_provider
             && provider
                 .shutdown_with_timeout(self.shutdown_timeout)

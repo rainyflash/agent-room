@@ -142,6 +142,14 @@ class RestoreDrillCoordinator:
             if not report.rto_met or not database.replay_reached_target:
                 raise RestoreDrillError("恢复演练未达到 RTO 或 PITR 恢复点门禁。")
             _write_json(drill_directory / "report.json", report.to_mapping())
+            self.repository.write_metric_snapshot(
+                "restore",
+                (
+                    f"agent_room_restore_drill_last_success_timestamp_seconds {completed.timestamp():.3f}",
+                    f"agent_room_restore_drill_duration_seconds {duration:.3f}",
+                    f"agent_room_restore_rto_target_seconds {report.rto_target_seconds}",
+                ),
+            )
             return report
         except BaseException:
             _write_failure_marker(drill_directory)

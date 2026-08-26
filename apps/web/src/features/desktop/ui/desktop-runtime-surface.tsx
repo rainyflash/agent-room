@@ -11,11 +11,12 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { BridgePhase, DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { TranslationKey } from '@/shared/i18n/resources';
 
 const phaseMessage: Readonly<Record<BridgePhase, TranslationKey>> = {
@@ -30,14 +31,17 @@ const phaseMessage: Readonly<Record<BridgePhase, TranslationKey>> = {
 
 export type DesktopRuntimeSurfaceProps = {
   readonly gateway?: DesktopRuntimeGateway;
+  readonly telemetry?: FrontendTelemetryGateway;
 };
 
-export function DesktopRuntimeSurface({ gateway }: DesktopRuntimeSurfaceProps) {
+export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurfaceProps) {
   const { i18n, t } = useTranslation();
   const controller = useDesktopRuntime(gateway);
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
+  const previousPhase = useRef<BridgePhase | null>(null);
+  const reconnectStartedAt = useRef<number | null>(null);
   const authorization = controller.snapshot?.bridge.authorization ?? null;
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
@@ -51,6 +55,30 @@ export function DesktopRuntimeSurface({ gateway }: DesktopRuntimeSurfaceProps) {
       minute: '2-digit',
     }).format(new Date(authorization.expiresAtUnixMs));
   }, [authorization, i18n.resolvedLanguage]);
+
+  useEffect(() => {
+    if (!controller.available || telemetry === undefined || previousPhase.current === phase) {
+      return;
+    }
+    const now = performance.now();
+    if (phase === 'retry_scheduled' || phase === 'starting') {
+      reconnectStartedAt.current ??= now;
+    }
+    if (phase === 'ready' && reconnectStartedAt.current !== null) {
+      void telemetry.record({
+        metric: 'bridge_reconnect',
+        surface: 'desktop',
+        value: now - reconnectStartedAt.current,
+      });
+      reconnectStartedAt.current = null;
+    }
+    void telemetry.record({
+      metric: 'bridge_availability',
+      surface: 'desktop',
+      value: phase === 'ready' ? 1 : 0,
+    });
+    previousPhase.current = phase;
+  }, [controller.available, phase, telemetry]);
 
   if (!controller.available) {
     return null;

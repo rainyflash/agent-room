@@ -172,6 +172,9 @@ def _compose_environment(
         "AGENT_ROOM_OTLP_TRACES_ENDPOINT": (
             "http://telemetry:4318/v1/traces" if config.telemetry_enabled else ""
         ),
+        "AGENT_ROOM_OTLP_METRICS_ENDPOINT": (
+            "http://telemetry:4318/v1/metrics" if config.telemetry_enabled else ""
+        ),
         "COMPOSE_PROFILES": ",".join(profiles),
     }
     return "".join(f"{name}={value}\n" for name, value in values.items())

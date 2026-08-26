@@ -17,6 +17,7 @@ import type {
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import type { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
 export type AppServices = {
@@ -37,6 +38,7 @@ export type AppServices = {
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
   readonly security: MatrixSecurityGateway;
+  readonly telemetry: FrontendTelemetryGateway;
 };
 
 const AppServicesContext = createContext<AppServices | null>(null);

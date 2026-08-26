@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 
+import { useAppServices } from '@/app/app-services';
 import type { LobbySceneLabels } from '@/features/lobby/scene/lobby-scene';
 import type { LobbySceneHandle } from '@/features/lobby/scene/lobby-scene';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
@@ -16,6 +17,7 @@ import {
   SceneSelectionAnnouncement,
   SceneSemanticRoster,
 } from '@/features/lobby/ui/scene-semantic-roster';
+import { resolveFrontendSurface } from '@/features/telemetry/adapters/runtime-surface';
 
 export type LobbySceneSurfaceHandle = {
   focus(): void;
@@ -37,6 +39,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
     { labels, languageKey, onFailure, onSelectAgent, onZoomChange, projection },
     forwardedRef,
   ) {
+    const { telemetry } = useAppServices();
     const hostRef = useRef<HTMLDivElement>(null);
     const canvasHostRef = useRef<HTMLDivElement>(null);
     const handleRef = useRef<LobbySceneHandle | null>(null);
@@ -80,6 +83,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
       if (host === null) {
         return undefined;
       }
+      const startedAt = performance.now();
       let disposed = false;
       void import('@/features/lobby/scene/pixi/pixi-lobby-scene')
         .then(async ({ mountPixiLobbyScene }) => {
@@ -98,6 +102,11 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             handle.destroy();
           } else {
             handleRef.current = handle;
+            void telemetry.record({
+              metric: 'scene_initialization',
+              surface: resolveFrontendSurface(),
+              value: performance.now() - startedAt,
+            });
           }
         })
         .catch(() => {
@@ -110,7 +119,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         handleRef.current?.destroy();
         handleRef.current = null;
       };
-    }, [labels, languageKey]);
+    }, [labels, languageKey, telemetry]);
 
     useEffect(() => {
       handleRef.current?.update(sceneProjection);

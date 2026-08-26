@@ -36,7 +36,10 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
     def test_遥测开关不会残留旧端点(self) -> None:
         with patch.dict(
             os.environ,
-            {"AGENT_ROOM_OTLP_TRACES_ENDPOINT": "https://stale.invalid"},
+            {
+                "AGENT_ROOM_OTLP_TRACES_ENDPOINT": "https://stale.invalid",
+                "AGENT_ROOM_OTLP_METRICS_ENDPOINT": "https://stale.invalid",
+            },
         ):
             disabled = control_plane_runtime_environment(
                 REQUIRED_VALUES,
@@ -50,9 +53,14 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
             )
 
         self.assertNotIn("AGENT_ROOM_OTLP_TRACES_ENDPOINT", disabled)
+        self.assertNotIn("AGENT_ROOM_OTLP_METRICS_ENDPOINT", disabled)
         self.assertEqual(
             enabled["AGENT_ROOM_OTLP_TRACES_ENDPOINT"],
             "http://127.0.0.1:14318/v1/traces",
+        )
+        self.assertEqual(
+            enabled["AGENT_ROOM_OTLP_METRICS_ENDPOINT"],
+            "http://127.0.0.1:14318/v1/metrics",
         )
 
     def test_缺失凭据时立即失败(self) -> None:

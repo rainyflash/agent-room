@@ -60,9 +60,9 @@ jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust
 keyring = "4.1.6"
 matrix-sdk = { version = "0.18.0", default-features = false }
 matrix-sdk-base = { version = "0.18.0", default-features = false }
-opentelemetry = { version = "0.32.0", features = ["trace"] }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
-opentelemetry_sdk = { version = "0.32.1", features = ["trace"] }
+opentelemetry = { version = "0.32.0", features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "trace"] }
+opentelemetry_sdk = { version = "0.32.1", features = ["metrics", "trace"] }
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 proptest = "1.11.0"
 rand = "0.8.7"

@@ -115,6 +115,8 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertTrue((backend.drill_directory / "report.json").is_file())
         self.assertTrue((backend.drill_directory / "identity" / "synapse.signing.key").is_file())
         self.assertTrue(backend.account_deletion_ledger.is_file())
+        metrics = (self.repository_path / "metrics" / "restore.prom").read_text(encoding="utf-8")
+        self.assertIn("agent_room_restore_drill_duration_seconds 12.000", metrics)
 
     def test_external_database_cannot_claim_local_pitr_drill(self) -> None:
         external = replace(self.config, database=replace(self.config.database, mode="external"))

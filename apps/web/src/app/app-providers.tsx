@@ -29,6 +29,8 @@ import { ControlPlaneClient } from '@/features/session/adapters/control-plane-cl
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { SessionProvider } from '@/features/session/ui/session-provider';
+import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
+import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { readLanguagePreference } from '@/shared/i18n/i18n';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
@@ -48,6 +50,7 @@ export function AppProviders({ config }: AppProvidersProps) {
       <AppServicesProvider services={runtime.services}>
         <AccountPreferencesProvider store={runtime.accountPreferences}>
           <SessionProvider dependencies={runtime.sessionDependencies}>
+            <FrontendTelemetryObserver gateway={runtime.frontendTelemetry} />
             <RouterProvider router={router} />
           </SessionProvider>
         </AccountPreferencesProvider>
@@ -58,6 +61,9 @@ export function AppProviders({ config }: AppProvidersProps) {
 
 function createRuntime(config: RuntimeConfig) {
   const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
+  const frontendTelemetry = new ControlPlaneFrontendTelemetryClient({
+    baseUrl: config.controlPlaneUrl,
+  });
   const matrixClients = new MatrixClientRegistry();
   const secretStorageKeys = new MatrixSecretStorageKeyCache();
   const matrix = new MatrixWebGateway({
@@ -127,10 +133,12 @@ function createRuntime(config: RuntimeConfig) {
     privateRoomMatrix,
     privateRooms,
     security,
+    telemetry: frontendTelemetry,
   };
 
   return {
     accountPreferences,
+    frontendTelemetry,
     matrixClients,
     queryClient,
     services,

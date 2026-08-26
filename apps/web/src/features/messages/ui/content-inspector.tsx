@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
@@ -26,6 +26,8 @@ import type { MachineTranslationGateway } from '@/features/messages/domain/machi
 import { ExplicitMachineTranslation } from '@/features/messages/ui/explicit-machine-translation';
 import { RestrictedMarkdown } from '@/features/messages/ui/restricted-markdown';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
+import { resolveFrontendSurface } from '@/features/telemetry/adapters/runtime-surface';
+import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import { MessageReportControl } from '@/features/moderation/ui/message-report-control';
 import { formatBytes, formatDateTime } from '@/shared/i18n/formatters';
 import type { TranslationKey } from '@/shared/i18n/resources';
@@ -51,6 +53,7 @@ export type ContentInspectorProps = {
   readonly moderationGateway: ModerationGateway;
   readonly onClose: () => void;
   readonly translationGateway: MachineTranslationGateway;
+  readonly telemetryGateway?: FrontendTelemetryGateway;
 };
 
 export function ContentInspector({
@@ -61,6 +64,7 @@ export function ContentInspector({
   message,
   moderationGateway,
   onClose,
+  telemetryGateway,
   translationGateway,
 }: ContentInspectorProps) {
   const { i18n, t } = useTranslation();
@@ -71,6 +75,7 @@ export function ContentInspector({
   );
   const [inspection, send] = useMachine(machine);
   const [handoffOpen, setHandoffOpen] = useState(false);
+  const openStartedAt = useRef<number | null>(null);
   const createdAt = formatDateTime(message.serverTimestamp, i18n.resolvedLanguage);
   const preview = message.preview;
   const reference = message.content;
@@ -83,6 +88,19 @@ export function ContentInspector({
   const inspectionStageMessage =
     inspectionStageMessages.find(([stage]) => inspection.matches(stage))?.[1] ??
     'messages.inspector.stage.verifying';
+
+  useEffect(() => {
+    if (!inspection.matches('ready') || openStartedAt.current === null) {
+      return;
+    }
+    const startedAt = openStartedAt.current;
+    openStartedAt.current = null;
+    void telemetryGateway?.record({
+      metric: 'message_open',
+      surface: resolveFrontendSurface(),
+      value: performance.now() - startedAt,
+    });
+  }, [inspection, telemetryGateway]);
 
   return (
     <motion.aside
@@ -180,6 +198,7 @@ export function ContentInspector({
               <Button
                 icon={<Eye aria-hidden="true" />}
                 onClick={() => {
+                  openStartedAt.current = performance.now();
                   send({
                     request: {
                       matrixEventId: message.matrixEventId,

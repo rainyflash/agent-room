@@ -38,6 +38,7 @@ export function MessageLayer({
     messages,
     messageTranslation,
     moderation,
+    telemetry,
   } = useAppServices();
   const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
@@ -112,6 +113,7 @@ export function MessageLayer({
               onSelectedMessageChange(null);
             }}
             translationGateway={messageTranslation}
+            telemetryGateway={telemetry}
           />
         )}
       </AnimatePresence>

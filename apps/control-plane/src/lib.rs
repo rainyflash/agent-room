@@ -6,8 +6,10 @@ mod correlation;
 mod error;
 mod features;
 mod observability;
+mod operational_metrics;
 mod runtime;
 mod shutdown;
+mod telemetry_metrics;
 
 use std::{error::Error, fmt, sync::Arc, time::Duration};
 
@@ -79,8 +81,10 @@ use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
 use features::moderation::ModerationHttpState;
 use features::private_rooms::PrivateRoomHttpState;
+use features::telemetry::FrontendTelemetryHttpState;
 use observability::Observability;
 use runtime::SystemRuntime;
+use telemetry_metrics::TelemetryMetrics;
 
 pub(crate) const SERVICE_NAME: &str = "agent-room-control-plane";
 pub(crate) const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -88,12 +92,14 @@ pub(crate) const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone)]
 pub(crate) struct AppState {
     readiness: Arc<ReadinessService>,
+    metrics: TelemetryMetrics,
 }
 
 struct IdentityRuntime {
     routes: Router,
     content_cleanup: content_cleanup::ContentCleanupWorker,
     account_deletion: account_deletion::AccountDeletionRuntime,
+    operational_metrics: operational_metrics::OperationalMetricsRuntime,
 }
 
 struct AgentFeatureHttpStates {
@@ -146,7 +152,8 @@ pub async fn run() -> Result<(), StartupError> {
             ));
         }
     };
-    let identity_runtime = match build_identity_router(&config, &runtime).await {
+    let metrics = observability.metrics();
+    let identity_runtime = match build_identity_router(&config, &runtime, metrics.clone()).await {
         Ok(runtime) => runtime,
         Err(error) => {
             runtime.shutdown().await;
@@ -158,11 +165,13 @@ pub async fn run() -> Result<(), StartupError> {
         routes,
         content_cleanup,
         account_deletion,
+        operational_metrics,
     } = identity_runtime;
     let app = build_router(
         runtime.readiness.clone(),
         routes,
         &config.authentication.frontend_origin,
+        metrics,
     )?;
 
     tracing::info!(
@@ -177,6 +186,7 @@ pub async fn run() -> Result<(), StartupError> {
 
     content_cleanup.shutdown().await;
     account_deletion.shutdown().await;
+    operational_metrics.shutdown().await;
     runtime.shutdown().await;
     observability.shutdown();
     result.map_err(|error| {
@@ -191,6 +201,7 @@ fn build_router(
     readiness: Arc<ReadinessService>,
     feature_routes: Router,
     frontend_origin: &url::Url,
+    metrics: TelemetryMetrics,
 ) -> Result<Router, StartupError> {
     let origin =
         HeaderValue::from_str(&frontend_origin.origin().ascii_serialization()).map_err(|_| {
@@ -227,15 +238,23 @@ fn build_router(
         .route("/capabilities", get(features::capabilities::get))
         .fallback(error::not_found)
         .method_not_allowed_fallback(error::method_not_allowed)
-        .with_state(AppState { readiness })
+        .with_state(AppState {
+            readiness,
+            metrics: metrics.clone(),
+        })
         .merge(feature_routes)
         .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            metrics,
+            telemetry_metrics::record_http_request,
+        ))
         .layer(middleware::from_fn(correlation::attach)))
 }
 
 async fn build_identity_router(
     config: &ControlPlaneConfig,
     runtime: &HealthRuntime,
+    metrics: TelemetryMetrics,
 ) -> Result<IdentityRuntime, StartupError> {
     let authentication_config = &config.authentication;
     let request_timeout = config.dependencies.timeout;
@@ -260,6 +279,7 @@ async fn build_identity_router(
         policy,
     ));
     let state = build_authentication_http_state(service.clone(), authentication_config)?;
+    let telemetry_state = build_frontend_telemetry_state(config, service.clone(), metrics.clone());
     let devices = build_device_authorization(
         authentication_config,
         repositories.clone(),
@@ -304,11 +324,8 @@ async fn build_identity_router(
         repositories.clone(),
         system_runtime.clone(),
     )?;
-    let account_state = AccountHttpState::new(
-        account_lifecycle,
-        service.clone(),
-        &authentication_config.frontend_origin,
-    );
+    let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
+    let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let agent_features = build_agent_feature_states(
         config,
         request_timeout,
@@ -324,6 +341,7 @@ async fn build_identity_router(
     )?;
     let routes = compose_identity_routes(
         state,
+        telemetry_state,
         account_state,
         device_state,
         agent_features,
@@ -333,17 +351,20 @@ async fn build_identity_router(
         routes,
         content_cleanup,
         account_deletion,
+        operational_metrics,
     })
 }
 
 fn compose_identity_routes(
     authentication: AuthenticationHttpState,
+    telemetry: FrontendTelemetryHttpState,
     accounts: AccountHttpState,
     devices: DeviceHttpState,
     agents: AgentFeatureHttpStates,
     content: Router,
 ) -> Router {
     features::authentication::router(authentication)
+        .merge(features::telemetry::router(telemetry))
         .merge(features::accounts::router(accounts))
         .merge(features::devices::router(devices))
         .merge(features::agents::router(agents.agents))
@@ -356,6 +377,43 @@ fn compose_identity_routes(
         .merge(features::automation::router(agents.automation))
         .merge(features::moderation::router(agents.moderation))
         .merge(content)
+}
+
+fn start_operational_metrics(
+    config: &ControlPlaneConfig,
+    repositories: &PostgresRepositories,
+    metrics: TelemetryMetrics,
+) -> Result<operational_metrics::OperationalMetricsRuntime, StartupError> {
+    operational_metrics::OperationalMetricsRuntime::start(
+        repositories.pool().clone(),
+        metrics,
+        config.observability.operational_sample_interval,
+    )
+    .map_err(|error| StartupError::new("startup.invalid_observability_config", error.to_string()))
+}
+
+fn build_frontend_telemetry_state(
+    config: &ControlPlaneConfig,
+    authentication: Arc<AuthenticationService>,
+    metrics: TelemetryMetrics,
+) -> FrontendTelemetryHttpState {
+    FrontendTelemetryHttpState::new(
+        authentication,
+        &config.authentication.frontend_origin,
+        metrics,
+    )
+}
+
+fn build_account_http_state(
+    config: &ControlPlaneConfig,
+    accounts: Arc<AccountLifecycleService>,
+    authentication: Arc<AuthenticationService>,
+) -> AccountHttpState {
+    AccountHttpState::new(
+        accounts,
+        authentication,
+        &config.authentication.frontend_origin,
+    )
 }
 
 fn build_account_deletion_worker(
@@ -919,7 +977,9 @@ mod tests {
     use tower::ServiceExt;
     use uuid::{Uuid, Version};
 
-    use super::{build_router, correlation::CORRELATION_ID_HEADER};
+    use super::{
+        build_router, correlation::CORRELATION_ID_HEADER, telemetry_metrics::TelemetryMetrics,
+    };
 
     const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 
@@ -953,6 +1013,7 @@ mod tests {
             Arc::new(readiness),
             axum::Router::new(),
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
+            TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")
     }
@@ -1126,6 +1187,7 @@ mod real_dependency_tests {
         build_router,
         config::{ControlPlaneConfig, DependencyConfig},
         features::health::HealthRuntime,
+        telemetry_metrics::TelemetryMetrics,
     };
 
     async fn ready_response(config: &DependencyConfig) -> (StatusCode, Value) {
@@ -1136,6 +1198,7 @@ mod real_dependency_tests {
             runtime.readiness.clone(),
             axum::Router::new(),
             &frontend_origin,
+            TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")
         .oneshot(

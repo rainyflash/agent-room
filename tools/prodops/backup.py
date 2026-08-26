@@ -222,6 +222,9 @@ class BackupRepository:
         resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
         _restrict_directory(resolved)
         (resolved / "wal").mkdir(mode=0o750, exist_ok=True)
+        metrics = resolved / "metrics"
+        metrics.mkdir(mode=0o755, exist_ok=True)
+        metrics.chmod(0o755)
 
     def create_staging(self, backup_id: str) -> Path:
         _validate_backup_id(backup_id)
@@ -265,6 +268,18 @@ class BackupRepository:
         merged = self.load_account_deletion_ledger().merge(snapshot)
         _write_json(self.account_deletion_ledger_path, merged.to_mapping())
         return merged
+
+    def write_metric_snapshot(self, name: str, lines: tuple[str, ...]) -> None:
+        if name not in {"backup", "restore"}:
+            raise BackupError("运行指标快照名称无效。")
+        self.prepare()
+        metrics = self.root / "metrics"
+        destination = metrics / f"{name}.prom"
+        temporary = metrics / f".{name}.prom.tmp"
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        temporary.chmod(0o644)
+        os.replace(temporary, destination)
+        destination.chmod(0o644)
 
     def load(self, backup_id: str) -> BackupManifest:
         _validate_backup_id(backup_id)
@@ -364,6 +379,13 @@ class BackupCoordinator:
                 _require_restore_contract(manifest)
                 self.repository.publish(manifest)
                 self.repository.verify(backup_id)
+                self.repository.write_metric_snapshot(
+                    "backup",
+                    (
+                        f"agent_room_backup_last_success_timestamp_seconds {created_at.timestamp():.3f}",
+                        f"agent_room_backup_rpo_target_seconds {manifest.rpo_minutes * 60}",
+                    ),
+                )
                 return manifest
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)

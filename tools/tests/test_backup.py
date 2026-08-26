@@ -81,6 +81,9 @@ class BackupCoordinatorTests(unittest.TestCase):
             manifest.backup_id,
         )
         self.assertFalse((self.repository_path / f".partial-{manifest.backup_id}").exists())
+        metrics = (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+        self.assertIn("agent_room_backup_last_success_timestamp_seconds", metrics)
+        self.assertIn("agent_room_backup_rpo_target_seconds 900", metrics)
 
     def test_tampered_artifact_is_rejected(self) -> None:
         repository = BackupRepository(self.repository_path)
