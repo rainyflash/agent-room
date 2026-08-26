@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "federation_outage_backfill",
+  "generatedAt": "2026-08-26T05:04:24.765381+00:00",
+  "revision": "f5867fe2ac04511f1d77f7d8bee11f3938e7a274",
+  "passed": true,
+  "releaseGateEligible": true,
+  "topology": {
+    "alpha": {
+      "serverName": "alpha.agent-room.test",
+      "implementation": "Synapse 1.159.0"
+    },
+    "beta": {
+      "serverName": "beta.agent-room.test",
+      "implementation": "Synapse 1.159.0"
+    }
+  },
+  "metrics": {
+    "requestedOutageSeconds": 1800,
+    "actualOutageSeconds": 1800.0,
+    "queuedEvents": 10,
+    "deliveredEvents": 10,
+    "deliveryRatio": 1.0,
+    "duplicateEvents": 0,
+    "eventOrderPreserved": true,
+    "localWriteMilliseconds": 79.853,
+    "peerRestartMilliseconds": 4993.077,
+    "backfillMilliseconds": 1054.357
+  },
+  "nextCapacityThreshold": {
+    "outageSeconds": 3600,
+    "queuedEvents": 100
+  }
+}

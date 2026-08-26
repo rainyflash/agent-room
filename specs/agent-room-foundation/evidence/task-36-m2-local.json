@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "m2_local_acceptance",
+  "generatedAt": "2026-08-26T05:08:48.308019+00:00",
+  "revision": "f5867fe2ac04511f1d77f7d8bee11f3938e7a274",
+  "passed": true,
+  "scenarioPassRate": {
+    "passed": 6,
+    "total": 6
+  },
+  "openBlockers": 0,
+  "sensitiveOutputViolations": 0,
+  "scenarios": [
+    {
+      "identifier": "quality",
+      "passed": true,
+      "durationSeconds": 112.4
+    },
+    {
+      "identifier": "browser-journeys",
+      "passed": true,
+      "durationSeconds": 19.858
+    },
+    {
+      "identifier": "multi-user-agent",
+      "passed": true,
+      "durationSeconds": 187.135
+    },
+    {
+      "identifier": "multi-device-e2ee",
+      "passed": true,
+      "durationSeconds": 132.087
+    },
+    {
+      "identifier": "recovery",
+      "passed": true,
+      "durationSeconds": 8.29
+    },
+    {
+      "identifier": "privacy-security",
+      "passed": true,
+      "durationSeconds": 9.344
+    }
+  ]
+}
