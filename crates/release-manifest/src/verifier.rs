@@ -12,6 +12,26 @@ use crate::{
 pub const MAX_CLOCK_SKEW_SECONDS: u64 = 300;
 pub const MAX_MANIFEST_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 
+/// 验证准备签名的发布文档是否满足静态策略。
+///
+/// # Errors
+///
+/// 当架构、时效、版本或产物元数据无效时返回错误。
+pub fn validate_release_document(
+    manifest: &ReleaseManifest,
+    now_unix_seconds: u64,
+) -> ReleaseManifestResult<()> {
+    if manifest.schema_version != 1 {
+        return Err(ReleaseManifestError::UnsupportedSchema);
+    }
+    validate_time_window(manifest, now_unix_seconds)?;
+    Version::parse(&manifest.version).map_err(|_| ReleaseManifestError::InvalidVersion)?;
+    if let Some(rollback_from) = &manifest.rollback_from {
+        Version::parse(rollback_from).map_err(|_| ReleaseManifestError::InvalidVersion)?;
+    }
+    validate_artifacts(manifest)
+}
+
 /// 验证离线签名的发布清单，但不改变本地可信状态。
 ///
 /// # Errors
@@ -66,18 +86,14 @@ fn validate_manifest(
     trust_state: &ReleaseTrustState,
     now_unix_seconds: u64,
 ) -> ReleaseManifestResult<()> {
-    if manifest.schema_version != 1 {
-        return Err(ReleaseManifestError::UnsupportedSchema);
-    }
     if manifest.channel != expected_channel || trust_state.channel != expected_channel {
         return Err(ReleaseManifestError::ChannelMismatch);
     }
-    validate_time_window(manifest, now_unix_seconds)?;
+    validate_release_document(manifest, now_unix_seconds)?;
     if manifest.sequence <= trust_state.highest_sequence {
         return Err(ReleaseManifestError::StaleSequence);
     }
     validate_version_transition(manifest, trust_state)?;
-    validate_artifacts(manifest)?;
     Ok(())
 }
 

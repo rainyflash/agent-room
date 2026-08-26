@@ -7,4 +7,7 @@ pub use model::{
     ArtifactKind, ReleaseArtifact, ReleaseChannel, ReleaseManifest, ReleaseTrustState,
     SignedReleaseManifest, TrustedReleaseKey, VerifiedRelease,
 };
-pub use verifier::{MAX_CLOCK_SKEW_SECONDS, MAX_MANIFEST_LIFETIME_SECONDS, verify_release};
+pub use verifier::{
+    MAX_CLOCK_SKEW_SECONDS, MAX_MANIFEST_LIFETIME_SECONDS, validate_release_document,
+    verify_release,
+};

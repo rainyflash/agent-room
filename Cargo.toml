@@ -4,6 +4,7 @@ members = [
   "apps/codex-mcp",
   "apps/control-plane",
   "apps/desktop/src-tauri",
+  "apps/release-tool",
   "crates/a2a-adapter",
   "crates/application",
   "crates/bridge-core",
@@ -52,6 +53,7 @@ aws-sdk-s3 = { version = "1.143.0", default-features = false, features = ["behav
 base64 = "0.22.1"
 chrono = "0.4.45"
 chacha20poly1305 = "0.10.1"
+clap = { version = "4.6.6", features = ["derive"] }
 ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
 futures-util = "0.3.32"
 getrandom = "0.3.4"
