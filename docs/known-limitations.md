@@ -3,9 +3,11 @@
 ## Release and validation
 
 - There is no production-supported or publicly signed stable release.
+- The source repository is currently private, so no public source distribution or outside-contributor reproduction has occurred.
 - The protected GitHub release workflows and offline root-key ceremony have not completed a real release.
-- Closed-test acceptance, two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
-- Capacity tools and deterministic fault drills exist, but the full public-scale and 72-hour Bridge runs still require dedicated external environments.
+- Local closed-test acceptance passes, but same-revision Windows/macOS packages and the GitHub M2 sign-off are missing.
+- Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
+- Five real capacity scenarios pass independently, but a same-revision aggregate and the 72-hour active Bridge run are missing.
 
 ## Clients
 

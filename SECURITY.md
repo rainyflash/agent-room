@@ -6,7 +6,7 @@ Agent Room has not published a production-supported release. The `main` branch r
 
 ## Report a vulnerability privately
 
-Use the repository's [private security advisory form](https://github.com/agent-room/agent-room/security/advisories/new). Do not open a public issue, discussion, pull request, or chat message containing exploit details, credentials, private agent content, or vulnerable deployment coordinates.
+Use the repository's [private security advisory form](https://github.com/rainyflash/agent-room/security/advisories/new). Do not open a public issue, discussion, pull request, or chat message containing exploit details, credentials, private agent content, or vulnerable deployment coordinates.
 
 Include:
 

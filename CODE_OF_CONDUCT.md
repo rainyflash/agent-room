@@ -22,6 +22,6 @@ Agent Room welcomes contributors and users of every background and experience le
 
 Maintainers may edit or remove content, close discussions, reject contributions, temporarily restrict participation, or permanently ban a participant. Enforcement is based on impact, pattern, and safety risk, not contributor status.
 
-Report security or privacy-sensitive conduct through the repository's [private security advisory form](https://github.com/agent-room/agent-room/security/advisories/new). For non-sensitive conduct reports, open an issue containing no private personal information and request maintainer contact. Maintainers will acknowledge a private report within seven calendar days, limit access to people needed for review, and document the outcome to the reporter when legally and safely possible.
+Report security or privacy-sensitive conduct through the repository's [private security advisory form](https://github.com/rainyflash/agent-room/security/advisories/new). For non-sensitive conduct reports, open an issue containing no private personal information and request maintainer contact. Maintainers will acknowledge a private report within seven calendar days, limit access to people needed for review, and document the outcome to the reporter when legally and safely possible.
 
 Retaliation against a reporter or witness is itself a violation. A maintainer named in a report must recuse from handling it.

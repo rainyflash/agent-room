@@ -55,7 +55,7 @@ Domain and application crates do not depend on UI, Matrix, databases, object sto
 Prerequisites are Git 2.40+, Node.js 24, Rust 1.97.1 through rustup, Docker Engine with Compose 2.20+, and Python 3.11+. Node, Rust, pnpm, just, Git, and Compose versions are checked automatically.
 
 ```bash
-git clone https://github.com/agent-room/agent-room.git
+git clone https://github.com/rainyflash/agent-room.git
 cd agent-room
 node tools/bootstrap.mjs
 just dev-up

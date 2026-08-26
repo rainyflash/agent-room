@@ -19,7 +19,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 需要 Git 2.40+、Node.js 24、Rust 1.97.1、Docker Compose 2.20+ 和 Python 3.11+。
 
 ```bash
-git clone https://github.com/agent-room/agent-room.git
+git clone https://github.com/rainyflash/agent-room.git
 cd agent-room
 node tools/bootstrap.mjs
 just dev-up
