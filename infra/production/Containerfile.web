@@ -1,0 +1,20 @@
+FROM node:24.13.0-bookworm-slim AS builder
+
+WORKDIR /source
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY apps/web/package.json apps/web/package.json
+COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/ui-system/package.json packages/ui-system/package.json
+RUN corepack pnpm@10.28.0 install --frozen-lockfile --filter @agent-room/web...
+COPY apps/web apps/web
+COPY packages/protocol packages/protocol
+COPY packages/ui-system packages/ui-system
+ARG VITE_AGENT_ROOM_CONTROL_PLANE_URL
+ARG VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL
+ENV VITE_AGENT_ROOM_CONTROL_PLANE_URL=${VITE_AGENT_ROOM_CONTROL_PLANE_URL}
+ENV VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=${VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL}
+RUN corepack pnpm@10.28.0 --filter @agent-room/web build
+
+FROM caddy:2.11.4-alpine
+COPY --from=builder /source/apps/web/dist /srv/web

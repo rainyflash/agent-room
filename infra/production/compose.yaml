@@ -1,0 +1,308 @@
+name: ${AGENT_ROOM_PROJECT_NAME:?缺少 AGENT_ROOM_PROJECT_NAME}
+
+x-common-security: &common-security
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+x-control-plane-runtime: &control-plane-runtime
+  image: ${AGENT_ROOM_CONTROL_PLANE_IMAGE:-agent-room-control-plane:local}
+  build:
+    context: ../..
+    dockerfile: infra/production/Containerfile.control-plane
+
+services:
+  postgres:
+    profiles: [embedded-database]
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: agent_room_bootstrap
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_bootstrap_password
+    secrets:
+      - postgres_bootstrap_password
+      - agent_room_db_migration_password
+      - agent_room_db_runtime_password
+      - synapse_db_password
+      - keycloak_db_password
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR:?缺少 AGENT_ROOM_STATE_DIR}/data/postgres:/var/lib/postgresql
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/001-agent-room.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U agent_room_bootstrap -d postgres]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    stop_grace_period: 60s
+    networks: [backend]
+
+  identity:
+    build:
+      context: ../..
+      dockerfile: infra/production/Containerfile.identity
+    command:
+      - start
+      - --optimized
+      - --import-realm
+      - --http-enabled=true
+      - --proxy-headers=xforwarded
+      - --server-async-bootstrap=false
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://${AGENT_ROOM_DB_HOST:?缺少数据库主机}:${AGENT_ROOM_DB_PORT:?缺少数据库端口}/${KEYCLOAK_DB_NAME:?缺少身份数据库名}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:?缺少身份数据库用户}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
+      KC_BOOTSTRAP_ADMIN_USERNAME: agent-room-admin
+    secrets:
+      - keycloak_db_password
+      - keycloak_admin_password
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/generated/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    read_only: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /opt/keycloak/data/tmp:rw,noexec,nosuid,size=128m
+      - /opt/keycloak/data/transaction-logs:rw,noexec,nosuid,size=64m
+    networks: [backend]
+
+  object-store:
+    profiles: [embedded-object-store]
+    image: ghcr.io/chrislusf/seaweedfs:4.44
+    command:
+      - server
+      - -s3
+      - -dir=/data
+      - -ip.bind=0.0.0.0
+      - -s3.config=/config/s3.json
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/data/object-store:/data
+      - ${AGENT_ROOM_STATE_DIR}/generated/seaweedfs:/config:ro
+    read_only: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  content-scanner:
+    image: clamav/clamav:1.5.4
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/data/clamav:/var/lib/clamav
+    healthcheck:
+      test: [CMD-SHELL, clamdscan --ping 1]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  redis:
+    profiles: [workers]
+    image: redis:8.2.2-alpine
+    command: [redis-server, --save, "", --appendonly, "no"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ["/data:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  synapse:
+    image: matrixdotorg/synapse:v1.159.0
+    environment:
+      PYTHONPATH: /config
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/generated/synapse:/config:ro
+      - ${AGENT_ROOM_STATE_DIR}/data/synapse:/data
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/_matrix/client/versions', timeout=3)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    read_only: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    networks: [backend]
+
+  telemetry:
+    profiles: [telemetry]
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    healthcheck:
+      test: [CMD, /otelcol-contrib, validate, --config=/etc/otelcol/config.yaml]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [backend]
+
+  migrate:
+    <<: [*control-plane-runtime, *common-security]
+    profiles: [migration]
+    entrypoint: [/usr/local/bin/agent-room-migrate]
+    environment:
+      AGENT_ROOM_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+    secrets: [migration_database_url]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    networks: [backend]
+
+  object-store-init:
+    <<: [*control-plane-runtime, *common-security]
+    profiles: [provisioning]
+    entrypoint: [/usr/local/bin/agent-room-provision-bucket]
+    environment:
+      AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
+      AGENT_ROOM_CONTENT_S3_BUCKET: ${AGENT_ROOM_CONTENT_S3_BUCKET}
+      AGENT_ROOM_CONTENT_S3_REGION: ${AGENT_ROOM_CONTENT_S3_REGION}
+      AGENT_ROOM_CONTENT_S3_ACCESS_KEY_FILE: /run/secrets/s3_access_key
+      AGENT_ROOM_CONTENT_S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
+      AGENT_ROOM_CONTENT_S3_CREATE_BUCKET: ${AGENT_ROOM_CONTENT_S3_CREATE_BUCKET}
+    secrets: [s3_access_key, s3_secret_key]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    networks: [backend]
+
+  control-plane:
+    <<: [*control-plane-runtime, *common-security]
+    environment:
+      AGENT_ROOM_BIND_ADDRESS: 0.0.0.0:8090
+      AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
+      AGENT_ROOM_DB_PORT: ${AGENT_ROOM_DB_PORT}
+      AGENT_ROOM_DB_NAME: ${AGENT_ROOM_DB_NAME}
+      AGENT_ROOM_DB_USER: ${AGENT_ROOM_DB_RUNTIME_USER}
+      AGENT_ROOM_DB_RUNTIME_PASSWORD_FILE: /run/secrets/agent_room_db_runtime_password
+      AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
+      AGENT_ROOM_MATRIX_BASE_URL: http://synapse:8008
+      AGENT_ROOM_MATRIX_APPSERVICE_TOKEN_FILE: /run/secrets/synapse_appservice_token
+      AGENT_ROOM_OBJECT_STORE_HEALTH_URL: ${AGENT_ROOM_OBJECT_STORE_HEALTH_URL}
+      AGENT_ROOM_DEPENDENCY_TIMEOUT_MS: "5000"
+      AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
+      AGENT_ROOM_CONTENT_S3_BUCKET: ${AGENT_ROOM_CONTENT_S3_BUCKET}
+      AGENT_ROOM_CONTENT_S3_REGION: ${AGENT_ROOM_CONTENT_S3_REGION}
+      AGENT_ROOM_CONTENT_S3_ACCESS_KEY_FILE: /run/secrets/s3_access_key
+      AGENT_ROOM_CONTENT_S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
+      AGENT_ROOM_CONTENT_S3_TIMEOUT_MS: "30000"
+      AGENT_ROOM_CONTENT_SCANNER_ADDRESS: content-scanner:3310
+      AGENT_ROOM_CONTENT_SCANNER_CONNECT_TIMEOUT_MS: "3000"
+      AGENT_ROOM_CONTENT_SCANNER_TIMEOUT_MS: "60000"
+      AGENT_ROOM_CONTENT_TICKET_KEY_ID: production-v1
+      AGENT_ROOM_CONTENT_TICKET_SECRET_FILE: /run/secrets/content_ticket_secret
+      AGENT_ROOM_CONTENT_MATRIX_AGENT_ID: ${AGENT_ROOM_CONTENT_MATRIX_AGENT_ID}
+      AGENT_ROOM_OIDC_ISSUER_URL: https://${AGENT_ROOM_IDENTITY_DOMAIN}/realms/agent-room
+      AGENT_ROOM_OIDC_CLIENT_ID: agent-room-web
+      AGENT_ROOM_OIDC_DEVICE_CLIENT_ID: agent-room-bridge
+      AGENT_ROOM_OIDC_CLIENT_SECRET_FILE: /run/secrets/keycloak_web_client_secret
+      AGENT_ROOM_OIDC_REDIRECT_URL: https://${AGENT_ROOM_API_DOMAIN}/auth/oidc/callback
+      AGENT_ROOM_FRONTEND_ORIGIN: https://${AGENT_ROOM_APP_DOMAIN}
+      AGENT_ROOM_MATRIX_SERVER_NAME: ${AGENT_ROOM_SERVER_NAME}
+      AGENT_ROOM_OTLP_TRACES_ENDPOINT: ${AGENT_ROOM_OTLP_TRACES_ENDPOINT:-}
+      AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS: "5000"
+      AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn
+    secrets:
+      - agent_room_db_runtime_password
+      - content_ticket_secret
+      - keycloak_web_client_secret
+      - s3_access_key
+      - s3_secret_key
+      - synapse_appservice_token
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --show-error, http://127.0.0.1:8090/health/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    deploy:
+      replicas: ${AGENT_ROOM_CONTROL_PLANE_REPLICAS:-1}
+    read_only: true
+    restart: unless-stopped
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    networks: [backend]
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infra/production/Containerfile.web
+      args:
+        VITE_AGENT_ROOM_CONTROL_PLANE_URL: https://${AGENT_ROOM_API_DOMAIN}
+        VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://${AGENT_ROOM_MATRIX_DOMAIN}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/generated/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AGENT_ROOM_STATE_DIR}/data/caddy-data:/data
+      - ${AGENT_ROOM_STATE_DIR}/data/caddy-config:/config
+    healthcheck:
+      test: [CMD, caddy, validate, --config, /etc/caddy/Caddyfile]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    networks:
+      backend:
+        aliases:
+          - ${AGENT_ROOM_SERVER_NAME}
+          - ${AGENT_ROOM_APP_DOMAIN}
+          - ${AGENT_ROOM_API_DOMAIN}
+          - ${AGENT_ROOM_MATRIX_DOMAIN}
+          - ${AGENT_ROOM_IDENTITY_DOMAIN}
+
+networks:
+  backend:
+    driver: bridge
+    internal: false
+
+secrets:
+  postgres_bootstrap_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/postgres_bootstrap_password
+  agent_room_db_migration_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/agent_room_db_migration_password
+  agent_room_db_runtime_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/agent_room_db_runtime_password
+  synapse_db_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_db_password
+  keycloak_db_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_db_password
+  keycloak_admin_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_admin_password
+  keycloak_web_client_secret:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_web_client_secret
+  synapse_appservice_token:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_appservice_token
+  s3_access_key:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/s3_access_key
+  s3_secret_key:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/s3_secret_key
+  content_ticket_secret:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/content_ticket_secret
+  migration_database_url:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/migration_database_url

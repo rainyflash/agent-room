@@ -128,7 +128,7 @@ pub(crate) struct ContentConfig {
     pub(crate) object_store_access_key: SecretValue,
     pub(crate) object_store_secret_key: SecretValue,
     pub(crate) object_store_timeout: Duration,
-    pub(crate) scanner_address: SocketAddr,
+    pub(crate) scanner_address: String,
     pub(crate) scanner_connect_timeout: Duration,
     pub(crate) scanner_timeout: Duration,
     pub(crate) ticket_key_id: String,
@@ -229,7 +229,7 @@ fn read_content_config(source: &impl EnvironmentSource) -> Result<ContentConfig,
             DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS,
             100..=5 * 60 * 1_000,
         )?,
-        scanner_address: read_socket_address(source, "AGENT_ROOM_CONTENT_SCANNER_ADDRESS")?,
+        scanner_address: read_required_text(source, "AGENT_ROOM_CONTENT_SCANNER_ADDRESS")?,
         scanner_connect_timeout,
         scanner_timeout,
         ticket_key_id: read_required_text(source, "AGENT_ROOM_CONTENT_TICKET_KEY_ID")?,
@@ -550,15 +550,6 @@ fn read_bounded_u16(
         return Err(ConfigError::invalid(name, "超出允许的安全范围"));
     }
     Ok(value)
-}
-
-fn read_socket_address(
-    source: &impl EnvironmentSource,
-    name: &'static str,
-) -> Result<SocketAddr, ConfigError> {
-    read_required_text(source, name)?
-        .parse::<SocketAddr>()
-        .map_err(|_| ConfigError::invalid(name, "必须是 IP:端口"))
 }
 
 fn read_agent_id(

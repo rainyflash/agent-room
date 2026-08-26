@@ -469,7 +469,7 @@ fn validate_homeserver_url(url: &Url) -> Result<(), MatrixApplicationServiceConf
     }
     match url.scheme() {
         "https" => Ok(()),
-        "http" if is_loopback(url) => Ok(()),
+        "http" if is_loopback(url) || is_internal_service_name(url) => Ok(()),
         _ => Err(MatrixApplicationServiceConfigurationError::InsecureHomeserverUrl),
     }
 }
@@ -495,6 +495,24 @@ fn is_loopback(url: &Url) -> bool {
         || host
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_internal_service_name(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        !host.contains('.')
+            && host.len() <= 63
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && host
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && host
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    })
 }
 
 #[cfg(test)]
@@ -646,6 +664,17 @@ mod tests {
         let rendered = format!("{configuration:?}");
         assert!(!rendered.contains("application-service-secret"));
         assert!(rendered.contains("已脱敏"));
+    }
+
+    #[test]
+    fn 容器内部服务名允许使用明文私网传输() {
+        MatrixApplicationServiceConfiguration::new(
+            "http://synapse:8008",
+            "matrix.agent-room.example",
+            SecretValue::new("application-service-secret").expect("测试密钥有效"),
+            Duration::from_secs(10),
+        )
+        .expect("容器内部服务名有效");
     }
 
     fn registration() -> MatrixAgentUserRegistration {

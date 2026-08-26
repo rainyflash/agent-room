@@ -12,9 +12,9 @@ const MAX_BUCKET_LENGTH: usize = 63;
 const MAX_REGION_LENGTH: usize = 64;
 const MAX_SCANNER_TIMEOUT: Duration = Duration::from_mins(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClamAvScannerConfig {
-    address: SocketAddr,
+    address: String,
     connect_timeout: Duration,
     scan_timeout: Duration,
 }
@@ -26,11 +26,12 @@ impl ClamAvScannerConfig {
     ///
     /// 公网地址、零端口、零超时或超过五分钟的扫描预算会被拒绝。
     pub fn new(
-        address: SocketAddr,
+        address: impl AsRef<str>,
         connect_timeout: Duration,
         scan_timeout: Duration,
     ) -> Result<Self, ClamAvScannerConfigError> {
-        if address.port() == 0 || !is_private_address(address.ip()) {
+        let address = address.as_ref().to_owned();
+        if !is_safe_scanner_address(&address) {
             return Err(ClamAvScannerConfigError::InsecureAddress);
         }
         if connect_timeout.is_zero()
@@ -47,15 +48,15 @@ impl ClamAvScannerConfig {
         })
     }
 
-    pub const fn address(self) -> SocketAddr {
-        self.address
+    pub fn address(&self) -> &str {
+        &self.address
     }
 
-    pub const fn connect_timeout(self) -> Duration {
+    pub const fn connect_timeout(&self) -> Duration {
         self.connect_timeout
     }
 
-    pub const fn scan_timeout(self) -> Duration {
+    pub const fn scan_timeout(&self) -> Duration {
         self.scan_timeout
     }
 }
@@ -181,10 +182,52 @@ fn validate_endpoint(endpoint: &Url) -> Result<(), S3ContentStoreConfigError> {
 
     match endpoint.scheme() {
         "https" => Ok(()),
-        "http" if is_loopback(endpoint) => Ok(()),
+        "http" if is_loopback(endpoint) || is_internal_service_name(endpoint) => Ok(()),
         "http" => Err(S3ContentStoreConfigError::InsecureEndpoint),
         _ => Err(S3ContentStoreConfigError::InvalidEndpoint),
     }
+}
+
+fn is_internal_service_name(endpoint: &Url) -> bool {
+    endpoint.host_str().is_some_and(|host| {
+        !host.contains('.')
+            && host.len() <= 63
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && host
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && host
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    })
+}
+
+fn is_safe_scanner_address(address: &str) -> bool {
+    if let Ok(address) = address.parse::<SocketAddr>() {
+        return address.port() != 0 && is_private_address(address.ip());
+    }
+    let Some((host, port)) = address.rsplit_once(':') else {
+        return false;
+    };
+    !host.is_empty()
+        && !host.contains('.')
+        && host.len() <= 63
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && host
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && host
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && port.parse::<u16>().is_ok_and(|port| port != 0)
 }
 
 fn validate_bucket(bucket: &str) -> Result<(), S3ContentStoreConfigError> {
@@ -231,7 +274,7 @@ fn is_loopback(endpoint: &Url) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-const fn is_private_address(address: IpAddr) -> bool {
+pub(crate) const fn is_private_address(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => {
             address.is_loopback() || address.is_private() || address.is_link_local()
@@ -254,9 +297,10 @@ mod tests {
     };
 
     #[test]
-    fn 仅允许_https_或本机开发端点() {
+    fn 仅允许_https_本机或容器内部端点() {
         assert!(configuration("https://objects.example.com").is_ok());
         assert!(configuration("http://127.0.0.1:8333").is_ok());
+        assert!(configuration("http://object-store:8333").is_ok());
         assert_eq!(
             configuration("http://objects.example.com").expect_err("公网明文端点必须失败"),
             S3ContentStoreConfigError::InsecureEndpoint
@@ -276,18 +320,38 @@ mod tests {
     fn clamav_只接受私网端点和有界超时() {
         let local = "127.0.0.1:3310".parse::<SocketAddr>().expect("地址有效");
         assert!(
-            ClamAvScannerConfig::new(local, Duration::from_secs(1), Duration::from_secs(30))
-                .is_ok()
+            ClamAvScannerConfig::new(
+                local.to_string(),
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+            )
+            .is_ok()
+        );
+        assert!(
+            ClamAvScannerConfig::new(
+                "content-scanner:3310",
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+            )
+            .is_ok()
         );
         let public = "8.8.8.8:3310".parse::<SocketAddr>().expect("地址有效");
         assert_eq!(
-            ClamAvScannerConfig::new(public, Duration::from_secs(1), Duration::from_secs(30))
-                .expect_err("公网明文扫描端点必须失败"),
+            ClamAvScannerConfig::new(
+                public.to_string(),
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+            )
+            .expect_err("公网明文扫描端点必须失败"),
             ClamAvScannerConfigError::InsecureAddress
         );
         assert_eq!(
-            ClamAvScannerConfig::new(local, Duration::from_secs(30), Duration::from_secs(1))
-                .expect_err("连接预算不能大于总扫描预算"),
+            ClamAvScannerConfig::new(
+                local.to_string(),
+                Duration::from_secs(30),
+                Duration::from_secs(1),
+            )
+            .expect_err("连接预算不能大于总扫描预算"),
             ClamAvScannerConfigError::InvalidTimeout
         );
     }

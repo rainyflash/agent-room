@@ -139,3 +139,18 @@ infra-config:
 
 sbom:
   node tools/run-powershell.mjs tools/sbom.ps1
+
+production-render config state:
+  python tools/production.py render --config {{config}} --state-dir {{state}}
+
+production-validate config state:
+  python tools/production.py validate --config {{config}} --state-dir {{state}}
+
+production-install config state:
+  python tools/production.py install --config {{config}} --state-dir {{state}}
+
+production-upgrade config state:
+  python tools/production.py upgrade --config {{config}} --state-dir {{state}}
+
+production-health config state:
+  python tools/production.py health --config {{config}} --state-dir {{state}}

@@ -455,6 +455,8 @@ M0 的命令、测试数量、真实依赖和供应链验收结果记录在 [M0 
   - _依赖：5、36、37、39_
   - _需求：13、15_
 
+  实现与 Docker Linux 容器验证已完成；干净 Linux、公网 DNS/ACME、外部依赖联调及前置任务 36/39 仍为阻断项，详见 [任务 40 验证记录](task-40-validation.md)。
+
 - [ ] 41. 完成备份、恢复与数据删除
   - 自动备份 Agent Room PostgreSQL、Synapse 数据库/signing key、OIDC 和对象元数据。
   - 在隔离环境演练 PITR、Homeserver 身份恢复、对象摘要校验和投影重建。

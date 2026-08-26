@@ -262,7 +262,7 @@ fn build_scanner(
     object_store: Arc<dyn PrivateContentObjectStore>,
 ) -> Result<Arc<dyn ContentScanner>, StartupError> {
     let configuration = ClamAvScannerConfig::new(
-        config.scanner_address,
+        config.scanner_address.as_str(),
         config.scanner_connect_timeout,
         config.scanner_timeout,
     )

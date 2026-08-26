@@ -1,0 +1,14 @@
+.git
+.github
+.local
+.venv
+artifacts
+coverage
+node_modules
+target
+**/node_modules
+**/dist
+*.log
+.env
+.env.*
+!.env.example

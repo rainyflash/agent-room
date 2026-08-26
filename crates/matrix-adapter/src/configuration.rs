@@ -84,7 +84,7 @@ fn validate_homeserver_url(url: &Url) -> Result<(), MatrixSdkConfigurationError>
     }
     match url.scheme() {
         "https" => Ok(()),
-        "http" if is_loopback(url) => Ok(()),
+        "http" if is_loopback(url) || is_internal_service_name(url) => Ok(()),
         _ => Err(MatrixSdkConfigurationError::InsecureHomeserverUrl),
     }
 }
@@ -97,6 +97,24 @@ fn is_loopback(url: &Url) -> bool {
         || host
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_internal_service_name(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        !host.contains('.')
+            && host.len() <= 63
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && host
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && host
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -166,13 +184,16 @@ mod tests {
     };
 
     #[test]
-    fn 只允许_https_或严格回环_http() {
+    fn 只允许_https_回环或容器内部_http() {
         assert!(
             MatrixSdkConfiguration::new("https://matrix.example.org", Duration::from_secs(10))
                 .is_ok()
         );
         assert!(
             MatrixSdkConfiguration::new("http://127.0.0.1:8008", Duration::from_secs(10)).is_ok()
+        );
+        assert!(
+            MatrixSdkConfiguration::new("http://synapse:8008", Duration::from_secs(10)).is_ok()
         );
         assert_eq!(
             MatrixSdkConfiguration::new("http://matrix.example.org", Duration::from_secs(10))

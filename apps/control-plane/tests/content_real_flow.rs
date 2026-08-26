@@ -271,8 +271,12 @@ fn scanner_configuration() -> ClamAvScannerConfig {
     let address = required("AGENT_ROOM_TEST_CLAMAV_ADDRESS")
         .parse::<SocketAddr>()
         .expect("ClamAV 地址有效");
-    ClamAvScannerConfig::new(address, Duration::from_secs(2), Duration::from_secs(30))
-        .expect("扫描配置有效")
+    ClamAvScannerConfig::new(
+        address.to_string(),
+        Duration::from_secs(2),
+        Duration::from_secs(30),
+    )
+    .expect("扫描配置有效")
 }
 
 fn upload_request(

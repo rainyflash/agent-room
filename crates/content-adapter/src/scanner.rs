@@ -9,11 +9,11 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpStream, lookup_host},
     time::timeout,
 };
 
-use crate::ClamAvScannerConfig;
+use crate::{ClamAvScannerConfig, config::is_private_address};
 
 const INSTREAM_COMMAND: &[u8] = b"zINSTREAM\0";
 const MAX_PROTOCOL_CHUNK_BYTES: usize = 64 * 1_024;
@@ -47,13 +47,24 @@ impl ClamAvContentScanner {
             return Err(invalid_response("content.scan.object_metadata"));
         }
 
-        let connection = timeout(
-            self.configuration.connect_timeout(),
-            TcpStream::connect(self.configuration.address()),
-        )
+        let connection = timeout(self.configuration.connect_timeout(), async {
+            let addresses = lookup_host(self.configuration.address())
+                .await
+                .map_err(|_| unavailable("content.scan.resolve"))?
+                .collect::<Vec<_>>();
+            if addresses.is_empty()
+                || addresses
+                    .iter()
+                    .any(|address| !is_private_address(address.ip()))
+            {
+                return Err(unavailable("content.scan.resolve"));
+            }
+            TcpStream::connect(addresses[0])
+                .await
+                .map_err(|_| unavailable("content.scan.connect"))
+        })
         .await
-        .map_err(|_| unavailable("content.scan.connect"))?
-        .map_err(|_| unavailable("content.scan.connect"))?;
+        .map_err(|_| unavailable("content.scan.connect"))??;
         timeout(
             self.configuration.scan_timeout(),
             scan_stream(connection, opened.body, content),
@@ -289,8 +300,12 @@ mod tests {
             }
         });
         (
-            ClamAvScannerConfig::new(address, Duration::from_secs(1), Duration::from_secs(2))
-                .expect("测试配置有效"),
+            ClamAvScannerConfig::new(
+                address.to_string(),
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+            )
+            .expect("测试配置有效"),
             task,
         )
     }

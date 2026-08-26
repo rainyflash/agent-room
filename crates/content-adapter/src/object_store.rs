@@ -15,6 +15,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
 };
 use futures_util::stream;
+use thiserror::Error;
 
 use crate::{
     S3ContentStoreConfig,
@@ -63,6 +64,44 @@ impl S3PrivateContentObjectStore {
         Self {
             client: Client::from_conf(sdk_configuration),
             bucket: configuration.bucket().to_owned(),
+        }
+    }
+
+    /// 核验内容桶，并在明确授权时创建缺失桶。
+    ///
+    /// # Errors
+    ///
+    /// 桶缺失但未授权创建，或 S3 兼容端点不可用时返回错误。
+    pub async fn ensure_bucket(
+        &self,
+        create_if_missing: bool,
+    ) -> Result<(), S3BucketProvisionError> {
+        match self.client.head_bucket().bucket(&self.bucket).send().await {
+            Ok(_) => return Ok(()),
+            Err(error) if response_status(&error) == Some(404) && create_if_missing => {}
+            Err(error) if response_status(&error) == Some(404) => {
+                return Err(S3BucketProvisionError::Missing);
+            }
+            Err(_) => return Err(S3BucketProvisionError::Unavailable),
+        }
+
+        match self
+            .client
+            .create_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if response_status(&error) == Some(409) => self
+                .client
+                .head_bucket()
+                .bucket(&self.bucket)
+                .send()
+                .await
+                .map(|_| ())
+                .map_err(|_| S3BucketProvisionError::Unavailable),
+            Err(_) => Err(S3BucketProvisionError::CreateRejected),
         }
     }
 
@@ -176,6 +215,16 @@ impl S3PrivateContentObjectStore {
             .map_err(|_| unavailable("删除私有对象"))?;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum S3BucketProvisionError {
+    #[error("对象存储桶不存在，且当前部署未授权自动创建")]
+    Missing,
+    #[error("对象存储端点不可用或凭据无权核验桶")]
+    Unavailable,
+    #[error("对象存储拒绝创建内容桶")]
+    CreateRejected,
 }
 
 impl PrivateContentObjectStore for S3PrivateContentObjectStore {

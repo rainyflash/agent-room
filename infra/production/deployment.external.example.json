@@ -1,0 +1,33 @@
+{
+  "$schema": "./deployment.schema.json",
+  "schemaVersion": 1,
+  "projectName": "agent-room",
+  "public": {
+    "serverName": "agent-room.example",
+    "appDomain": "app.agent-room.example",
+    "apiDomain": "api.agent-room.example",
+    "matrixDomain": "matrix.agent-room.example",
+    "identityDomain": "id.agent-room.example",
+    "acmeEmail": "operator@example.com"
+  },
+  "database": {
+    "mode": "external",
+    "host": "postgres.agent-room.example",
+    "port": 5432,
+    "tlsMode": "verify-full"
+  },
+  "objectStore": {
+    "mode": "external",
+    "endpoint": "https://objects.agent-room.example",
+    "healthUrl": "https://objects.agent-room.example/healthz",
+    "bucket": "agent-room-content",
+    "region": "us-east-1"
+  },
+  "capacity": {
+    "controlPlaneReplicas": 2,
+    "synapseWorkers": 2
+  },
+  "telemetry": {
+    "enabled": true
+  }
+}
