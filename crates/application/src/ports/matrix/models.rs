@@ -17,6 +17,7 @@ const MAX_ROOM_NAME_LENGTH: usize = 255;
 const MAX_ROOM_TOPIC_LENGTH: usize = 2_048;
 const MAX_EVENT_PAYLOAD_BYTES: usize = 65_536;
 const MAX_ROOM_INVITES: usize = 250;
+const MAX_ROOM_RETENTION_DAYS: u16 = 3_650;
 const MAX_SYNC_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_BACKFILL_EVENTS: u16 = 1_000;
 
@@ -398,6 +399,7 @@ pub struct MatrixCreateRoom {
     encryption: MatrixRoomEncryption,
     power_profile: MatrixRoomPowerProfile,
     alias_localpart: Option<MatrixRoomAliasLocalpart>,
+    retention_days: Option<u16>,
     member_writable_state_event_types: Vec<MatrixEventType>,
 }
 
@@ -438,6 +440,7 @@ impl MatrixCreateRoom {
             encryption: MatrixRoomEncryption::Unencrypted,
             power_profile: MatrixRoomPowerProfile::Standard,
             alias_localpart: None,
+            retention_days: None,
             member_writable_state_event_types: Vec::new(),
         })
     }
@@ -464,6 +467,22 @@ impl MatrixCreateRoom {
     pub fn with_alias_localpart(mut self, alias_localpart: MatrixRoomAliasLocalpart) -> Self {
         self.alias_localpart = Some(alias_localpart);
         self
+    }
+
+    /// 为房间声明 Matrix 消息保留天数。
+    ///
+    /// # Errors
+    ///
+    /// 零天或超过十年的配置会被拒绝。
+    pub fn with_retention_days(mut self, retention_days: u16) -> DomainResult<Self> {
+        if !(1..=MAX_ROOM_RETENTION_DAYS).contains(&retention_days) {
+            return Err(DomainError::Validation {
+                field: "matrix_room_retention_days",
+                reason: "必须在 1 到 3650 天之间",
+            });
+        }
+        self.retention_days = Some(retention_days);
+        Ok(self)
     }
 
     /// 允许普通已加入成员写入指定状态事件类型。
@@ -513,6 +532,10 @@ impl MatrixCreateRoom {
 
     pub const fn alias_localpart(&self) -> Option<&MatrixRoomAliasLocalpart> {
         self.alias_localpart.as_ref()
+    }
+
+    pub const fn retention_days(&self) -> Option<u16> {
+        self.retention_days
     }
 
     pub fn member_writable_state_event_types(&self) -> &[MatrixEventType] {
@@ -1084,6 +1107,29 @@ mod tests {
         assert_eq!(
             private.power_profile(),
             MatrixRoomPowerProfile::ManagedPrivate
+        );
+    }
+
+    #[test]
+    fn 建房保留策略使用有界天数() {
+        let request = MatrixCreateRoom::new(
+            Some("Lobby".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效");
+
+        assert!(request.clone().with_retention_days(0).is_err());
+        assert!(request.clone().with_retention_days(3_651).is_err());
+        assert_eq!(
+            request
+                .with_retention_days(30)
+                .expect("三十天保留策略有效")
+                .retention_days(),
+            Some(30)
         );
     }
 

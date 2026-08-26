@@ -206,9 +206,15 @@ impl RoomProvisioningStore for 测试Store {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MatrixCall {
-    Create(String),
+    Create {
+        alias: String,
+        retention_days: Option<u16>,
+    },
     Resolve(String),
-    Attach { space: String, child: String },
+    Attach {
+        space: String,
+        child: String,
+    },
 }
 
 struct 测试Matrix {
@@ -252,13 +258,14 @@ impl RoomProvisioningGateway for 测试Matrix {
             self.calls
                 .lock()
                 .expect("Matrix 调用锁可用")
-                .push(MatrixCall::Create(
-                    request
+                .push(MatrixCall::Create {
+                    alias: request
                         .alias_localpart()
                         .expect("建房必须携带别名")
                         .as_str()
                         .to_owned(),
-                ));
+                    retention_days: request.retention_days(),
+                });
             self.create_results
                 .lock()
                 .expect("建房结果锁可用")
@@ -335,26 +342,30 @@ async fn 首次建房对未知提交按别名对账并在挂载后才发布实�
     assert_eq!(
         matrix.calls(),
         vec![
-            MatrixCall::Create(format!(
-                "agent-room-space-{}",
-                catalog.slug().expect("目录短名存在").as_str()
-            )),
+            MatrixCall::Create {
+                alias: format!(
+                    "agent-room-space-{}",
+                    catalog.slug().expect("目录短名存在").as_str()
+                ),
+                retention_days: None,
+            },
             MatrixCall::Resolve(format!(
                 "agent-room-space-{}",
                 catalog.slug().expect("目录短名存在").as_str()
             )),
-            MatrixCall::Create(
-                matrix
+            MatrixCall::Create {
+                alias: matrix
                     .calls()
                     .iter()
                     .find_map(|call| match call {
-                        MatrixCall::Create(alias) if !alias.contains("space") => {
+                        MatrixCall::Create { alias, .. } if !alias.contains("space") => {
                             Some(alias.clone())
                         }
                         _ => None,
                     })
-                    .expect("实例使用确定性别名")
-            ),
+                    .expect("实例使用确定性别名"),
+                retention_days: Some(30),
+            },
             MatrixCall::Attach {
                 space: "!space:matrix.test".to_owned(),
                 child: "!instance:matrix.test".to_owned(),

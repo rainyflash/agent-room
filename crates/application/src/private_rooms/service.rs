@@ -554,7 +554,7 @@ impl PrivateRoomService {
         }
 
         let alias = private_room_alias(request.catalog_id, operation)?;
-        let matrix_request = MatrixCreateRoom::new(
+        let mut matrix_request = MatrixCreateRoom::new(
             Some(request.name.clone()),
             (!request.description.is_empty()).then(|| request.description.clone()),
             MatrixRoomVisibility::Private,
@@ -566,6 +566,11 @@ impl PrivateRoomService {
         .with_alias_localpart(alias.clone())
         .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+        if let Some(retention_days) = request.retention_days {
+            matrix_request = matrix_request
+                .with_retention_days(retention_days)
+                .map_err(|error| domain(operation, &error))?;
+        }
         let matrix = PrivateMatrixRoomCreation::new(matrix_request, alias)
             .map_err(|error| domain(operation, &error))?;
         Ok(PreparedPrivateRoomCreation {

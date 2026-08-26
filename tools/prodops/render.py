@@ -348,6 +348,15 @@ rc_login:
   failed_attempts:
     per_second: 1
     burst_count: 5
+retention:
+  enabled: true
+  default_policy:
+    max_lifetime: 30d
+  allowed_lifetime_min: 1d
+  allowed_lifetime_max: 3650d
+  purge_jobs:
+    - longest_max_lifetime: 3650d
+      interval: 1d
 '''
 
 

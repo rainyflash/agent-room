@@ -100,6 +100,8 @@ class ProductionRenderingTests(unittest.TestCase):
         matrix_client = next(client for client in realm["clients"] if client["clientId"] == "agent-room-matrix")
         self.assertIn(matrix_client["secret"], homeserver)
         self.assertIn(self.config.public.identity_origin, homeserver)
+        self.assertIn("retention:\n  enabled: true", homeserver)
+        self.assertIn("max_lifetime: 30d", homeserver)
 
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

@@ -542,7 +542,7 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             MatrixRoomKind::Space => json!({ "type": "m.space" }),
         };
         let member_writable_events = request.member_writable_state_event_types();
-        let initial_state = match request.encryption() {
+        let mut initial_state = match request.encryption() {
             MatrixRoomEncryption::Unencrypted => Vec::new(),
             MatrixRoomEncryption::EndToEnd => vec![InitialStateEventRequest {
                 event_type: "m.room.encryption",
@@ -554,6 +554,15 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
                 }),
             }],
         };
+        if let Some(retention_days) = request.retention_days() {
+            initial_state.push(InitialStateEventRequest {
+                event_type: "m.room.retention",
+                state_key: "",
+                content: json!({
+                    "max_lifetime": u64::from(retention_days) * 86_400_000,
+                }),
+            });
+        }
         let managed_private = request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate;
         let power_level_content_override = (managed_private || !member_writable_events.is_empty())
             .then(|| PowerLevelContentOverride {
@@ -950,6 +959,30 @@ mod tests {
         assert_eq!(
             body["initial_state"][0]["content"]["algorithm"],
             "m.megolm.v1.aes-sha2"
+        );
+    }
+
+    #[test]
+    fn 建房请求把保留天数转换成_matrix_毫秒状态事件() {
+        let request = MatrixCreateRoom::new(
+            Some("Retained lobby".to_owned()),
+            None,
+            MatrixRoomVisibility::Public,
+            MatrixRoomPreset::PublicChat,
+            false,
+            Vec::new(),
+        )
+        .expect("建房请求有效")
+        .with_retention_days(30)
+        .expect("保留策略有效");
+
+        let body =
+            serde_json::to_value(CreateRoomRequest::from(&request)).expect("建房请求可序列化");
+
+        assert_eq!(body["initial_state"][0]["type"], "m.room.retention");
+        assert_eq!(
+            body["initial_state"][0]["content"]["max_lifetime"],
+            2_592_000_000_u64
         );
     }
 

@@ -22,6 +22,7 @@ use crate::{
 };
 
 const MAXIMUM_PROVISIONING_LEASE_MILLIS: u64 = 300_000;
+const DEFAULT_PUBLIC_RETENTION_DAYS: u16 = 30;
 const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
 
 pub trait LobbyProvisioningIdentifierFactory: Send + Sync {
@@ -470,6 +471,11 @@ fn create_room_request(
     .with_alias_localpart(job.alias_localpart().clone());
     match kind {
         MatrixRoomKind::Conversation => {
+            let request = request.with_retention_days(
+                catalog
+                    .retention_days()
+                    .unwrap_or(DEFAULT_PUBLIC_RETENTION_DAYS),
+            )?;
             let event_type = MatrixEventType::new(AGENT_STATUS_EVENT_TYPE).map_err(|_| {
                 DomainError::InvariantViolation {
                     entity: "room_provisioning_policy",
