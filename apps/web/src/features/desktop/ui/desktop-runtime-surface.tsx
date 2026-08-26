@@ -3,18 +3,24 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  Download,
   ExternalLink,
   KeyRound,
   MonitorCog,
   RefreshCw,
   RotateCcw,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { BridgePhase, DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
+import type {
+  BridgePhase,
+  DesktopRuntimeGateway,
+  ReleaseUpdateChannel,
+} from '@/features/desktop/domain/desktop-runtime';
 import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { TranslationKey } from '@/shared/i18n/resources';
@@ -39,6 +45,7 @@ export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurf
   const controller = useDesktopRuntime(gateway);
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
+  const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const previousPhase = useRef<BridgePhase | null>(null);
   const reconnectStartedAt = useRef<number | null>(null);
@@ -46,6 +53,7 @@ export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurf
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
   const open = expanded || needsAttention;
+  const selectedUpdate = controller.update?.channel === updateChannel ? controller.update : null;
   const expiry = useMemo(() => {
     if (authorization === null) {
       return null;
@@ -239,6 +247,70 @@ export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurf
                     ? t('desktop.autostart.on')
                     : t('desktop.autostart.off')}
                 </button>
+              </section>
+            ) : null}
+
+            {controller.snapshot?.updatesConfigured === true &&
+            authorization === null &&
+            phase !== 'halted' ? (
+              <section className="desktop-runtime__updates">
+                <ShieldCheck aria-hidden="true" />
+                <div className="desktop-runtime__update-copy">
+                  <h2>{t('desktop.update.title')}</h2>
+                  <p>{t('desktop.update.description')}</p>
+                  <div
+                    aria-label={t('desktop.update.channel')}
+                    className="desktop-runtime__channels"
+                    role="group"
+                  >
+                    {(['stable', 'testing'] as const).map((channel) => (
+                      <button
+                        aria-pressed={updateChannel === channel}
+                        disabled={controller.busy !== null}
+                        key={channel}
+                        onClick={() => setUpdateChannel(channel)}
+                        type="button"
+                      >
+                        {t(`desktop.update.channel.${channel}`)}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedUpdate === null ? null : (
+                    <p className="desktop-runtime__update-version">
+                      {selectedUpdate.available
+                        ? t('desktop.update.available', {
+                            current: selectedUpdate.currentVersion,
+                            target: selectedUpdate.targetVersion,
+                          })
+                        : t('desktop.update.current', {
+                            version: selectedUpdate.currentVersion,
+                          })}
+                    </p>
+                  )}
+                </div>
+                <Button
+                  disabled={controller.busy !== null}
+                  icon={
+                    selectedUpdate?.available === true ? (
+                      <Download aria-hidden="true" />
+                    ) : (
+                      <RefreshCw aria-hidden="true" />
+                    )
+                  }
+                  onClick={() =>
+                    selectedUpdate?.available === true
+                      ? void controller.installUpdate()
+                      : void controller.checkUpdate(updateChannel)
+                  }
+                  size="compact"
+                  tone={selectedUpdate?.rollback === true ? 'alert' : 'network'}
+                >
+                  {selectedUpdate?.available === true
+                    ? selectedUpdate.rollback
+                      ? t('desktop.update.rollback')
+                      : t('desktop.update.install')
+                    : t('desktop.update.check')}
+                </Button>
               </section>
             ) : null}
           </motion.div>

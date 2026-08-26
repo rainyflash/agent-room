@@ -4,10 +4,10 @@ mod verifier;
 
 pub use error::{ReleaseManifestError, ReleaseManifestResult};
 pub use model::{
-    ArtifactKind, ReleaseArtifact, ReleaseChannel, ReleaseManifest, ReleaseTrustState,
-    SignedReleaseManifest, TrustedReleaseKey, VerifiedRelease,
+    ArtifactKind, ReleaseArtifact, ReleaseChannel, ReleaseInspection, ReleaseManifest,
+    ReleaseTrustState, SignedReleaseManifest, TrustedReleaseKey, VerifiedRelease,
 };
 pub use verifier::{
-    MAX_CLOCK_SKEW_SECONDS, MAX_MANIFEST_LIFETIME_SECONDS, validate_release_document,
-    verify_release,
+    MAX_CLOCK_SKEW_SECONDS, MAX_MANIFEST_LIFETIME_SECONDS, inspect_release,
+    validate_release_document, verify_release,
 };

@@ -17,8 +17,15 @@ tauri-build.workspace = true
 [dependencies]
 agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
+agent-room-release-manifest.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+minisign-verify.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tauri.workspace = true
 tauri-plugin-autostart.workspace = true
 tauri-plugin-deep-link.workspace = true
@@ -26,8 +33,12 @@ tauri-plugin-notification.workspace = true
 tauri-plugin-opener.workspace = true
 tauri-plugin-shell.workspace = true
 tauri-plugin-single-instance.workspace = true
+tauri-plugin-updater.workspace = true
 tokio.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

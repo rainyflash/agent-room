@@ -1235,7 +1235,8 @@
 
 .desktop-runtime__authorization,
 .desktop-runtime__failure,
-.desktop-runtime__command-failure {
+.desktop-runtime__command-failure,
+.desktop-runtime__updates {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.7rem;
@@ -1243,7 +1244,8 @@
 
 .desktop-runtime__authorization > svg,
 .desktop-runtime__failure > svg,
-.desktop-runtime__command-failure > svg {
+.desktop-runtime__command-failure > svg,
+.desktop-runtime__updates > svg {
   width: 18px;
   height: 18px;
   margin-top: 0.05rem;
@@ -1254,6 +1256,55 @@
 .desktop-runtime__failure > svg,
 .desktop-runtime__command-failure > svg {
   color: var(--color-alert);
+}
+
+.desktop-runtime__updates {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.desktop-runtime__update-copy {
+  min-width: 0;
+}
+
+.desktop-runtime__channels {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  margin-top: 0.62rem;
+  padding: 2px;
+  border: 1px solid var(--ar-paper-18);
+  border-radius: 7px;
+  background: var(--ar-paper-10);
+}
+
+.desktop-runtime__channels > button {
+  min-height: 25px;
+  cursor: pointer;
+  padding: 0.2rem 0.52rem;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ar-paper-48);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+
+.desktop-runtime__channels > button[aria-pressed='true'] {
+  color: var(--color-paper);
+  background: var(--ar-paper-18);
+  box-shadow: var(--ar-shadow-short);
+}
+
+.desktop-runtime__channels > button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.desktop-runtime__update-version {
+  color: var(--color-network) !important;
+  font-family: var(--font-mono);
+  font-size: 0.61rem !important;
 }
 
 .desktop-runtime h2,
@@ -1401,6 +1452,15 @@
   .desktop-runtime__settings {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .desktop-runtime__updates {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .desktop-runtime__updates > .ar-button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .desktop-runtime__switch {

@@ -70,6 +70,12 @@ pub struct VerifiedRelease {
     manifest: ReleaseManifest,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReleaseInspection {
+    Current(ReleaseManifest),
+    Update(VerifiedRelease),
+}
+
 impl VerifiedRelease {
     pub fn manifest(&self) -> &ReleaseManifest {
         &self.manifest

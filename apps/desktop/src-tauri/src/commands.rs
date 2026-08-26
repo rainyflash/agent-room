@@ -6,11 +6,15 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::{
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
     deep_link::{DeepLinkInbox, DeepLinkTarget},
+    release_updates::{
+        ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
+    },
 };
 
 #[derive(Clone)]
 pub(crate) struct DesktopRuntime {
     pub(crate) bridge: BridgeSupervisor,
+    pub(crate) updates: ReleaseUpdateRuntime,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,6 +24,7 @@ pub(crate) struct DesktopRuntimeSnapshot {
     autostart_enabled: bool,
     platform: &'static str,
     deep_link: Option<DeepLinkTarget>,
+    updates_configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +49,12 @@ impl From<SupervisorFailure> for DesktopCommandFailure {
     }
 }
 
+impl From<ReleaseUpdateFailure> for DesktopCommandFailure {
+    fn from(failure: ReleaseUpdateFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
 #[tauri::command]
 // Tauri 命令宏按值提取 AppHandle 与 State；改成借用会破坏命令参数解析。
 #[allow(clippy::needless_pass_by_value)]
@@ -61,7 +72,34 @@ pub(crate) fn desktop_runtime_snapshot(
         autostart_enabled,
         platform: current_platform(),
         deep_link: deep_links.latest(),
+        updates_configured: runtime.updates.configured(),
     })
+}
+
+#[tauri::command]
+// Tauri 命令宏按值提取 State 并反序列化渠道；克隆运行时后才跨越 await。
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_check_update(
+    runtime: State<'_, DesktopRuntime>,
+    channel: String,
+) -> Result<ReleaseUpdateCheck, DesktopCommandFailure> {
+    let updates = runtime.updates.clone();
+    Ok(updates.check(parse_channel(&channel)?).await?)
+}
+
+#[tauri::command]
+// Tauri 命令宏按值提取 State 并反序列化参数；克隆运行时后才跨越 await。
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_install_update(
+    runtime: State<'_, DesktopRuntime>,
+    channel: String,
+    expected_sequence: u64,
+) -> Result<(), DesktopCommandFailure> {
+    let updates = runtime.updates.clone();
+    updates
+        .install(parse_channel(&channel)?, expected_sequence)
+        .await?;
+    Ok(())
 }
 
 #[tauri::command]

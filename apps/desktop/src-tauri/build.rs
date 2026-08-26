@@ -3,6 +3,8 @@ const COMMANDS: &[&str] = &[
     "desktop_retry_bridge",
     "desktop_set_autostart",
     "desktop_open_authorization",
+    "desktop_check_update",
+    "desktop_install_update",
 ];
 
 fn main() {

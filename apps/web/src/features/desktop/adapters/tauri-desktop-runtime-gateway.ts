@@ -5,12 +5,15 @@ import { z } from 'zod';
 import {
   bridgeRuntimeSchema,
   desktopDeepLinkSchema,
+  releaseUpdateCheckSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
   type DesktopRuntimeEventHandlers,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
+  type ReleaseUpdateChannel,
+  type ReleaseUpdateCheck,
 } from '@/features/desktop/domain/desktop-runtime';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -28,6 +31,8 @@ const commandFailureSchema = z
 const desktopCommands = {
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
+  checkUpdate: 'desktop_check_update',
+  installUpdate: 'desktop_install_update',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
 } as const;
@@ -80,6 +85,26 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     return this.invokeValidated(
       desktopCommands.authorization,
       { promptId },
+      z
+        .undefined()
+        .or(z.null())
+        .transform(() => undefined),
+    );
+  }
+
+  async checkUpdate(
+    channel: ReleaseUpdateChannel,
+  ): Promise<Result<ReleaseUpdateCheck, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.checkUpdate, { channel }, releaseUpdateCheckSchema);
+  }
+
+  async installUpdate(
+    channel: ReleaseUpdateChannel,
+    expectedSequence: number,
+  ): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.installUpdate,
+      { channel, expectedSequence },
       z
         .undefined()
         .or(z.null())

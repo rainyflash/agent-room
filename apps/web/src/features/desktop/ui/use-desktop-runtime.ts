@@ -9,21 +9,27 @@ import {
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
+  type ReleaseUpdateChannel,
+  type ReleaseUpdateCheck,
 } from '@/features/desktop/domain/desktop-runtime';
 
 const defaultGateway = new TauriDesktopRuntimeGateway();
 
-type DesktopOperation = 'authorization' | 'autostart' | 'refresh' | 'retry';
+type DesktopOperation =
+  'authorization' | 'autostart' | 'refresh' | 'retry' | 'update-check' | 'update-install';
 
 export type DesktopRuntimeController = {
   readonly available: boolean;
   readonly busy: DesktopOperation | null;
   readonly failure: DesktopRuntimeFailure | null;
   readonly snapshot: DesktopRuntimeSnapshot | null;
+  readonly update: ReleaseUpdateCheck | null;
+  readonly checkUpdate: (channel: ReleaseUpdateChannel) => Promise<void>;
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
+  readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
 };
 
@@ -35,6 +41,7 @@ export function useDesktopRuntime(
   const [snapshot, setSnapshot] = useState<DesktopRuntimeSnapshot | null>(null);
   const [failure, setFailure] = useState<DesktopRuntimeFailure | null>(null);
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
+  const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
 
   const applyDeepLink = useCallback(
     (target: DesktopDeepLink): void => {
@@ -183,17 +190,46 @@ export function useDesktopRuntime(
     [gateway],
   );
 
+  const checkUpdate = useCallback(
+    async (channel: ReleaseUpdateChannel): Promise<void> => {
+      setBusy('update-check');
+      const result = await gateway.checkUpdate(channel);
+      if (result.ok) {
+        setUpdate(result.value);
+        setFailure(null);
+      } else {
+        setUpdate(null);
+        setFailure(result.error);
+      }
+      setBusy(null);
+    },
+    [gateway],
+  );
+
+  const installUpdate = useCallback(async (): Promise<void> => {
+    if (!update?.available) {
+      return;
+    }
+    setBusy('update-install');
+    const result = await gateway.installUpdate(update.channel, update.sequence);
+    setFailure(result.ok ? null : result.error);
+    setBusy(null);
+  }, [gateway, update]);
+
   return {
     available,
     busy,
     failure,
     snapshot,
+    update,
+    checkUpdate,
     dismissFailure: () => {
       setFailure(null);
     },
     openAuthorization,
     refresh,
     retryBridge,
+    installUpdate,
     setAutostart,
   };
 }

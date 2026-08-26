@@ -71,6 +71,7 @@ export const desktopRuntimeSnapshotSchema = z
     autostartEnabled: z.boolean(),
     platform: z.enum(['windows', 'macos', 'linux', 'unknown']),
     deepLink: desktopDeepLinkSchema.nullable(),
+    updatesConfigured: z.boolean(),
   })
   .strict();
 
@@ -78,6 +79,21 @@ export type BridgeRuntime = z.infer<typeof bridgeRuntimeSchema>;
 export type BridgePhase = z.infer<typeof bridgePhaseSchema>;
 export type DesktopDeepLink = z.infer<typeof desktopDeepLinkSchema>;
 export type DesktopRuntimeSnapshot = z.infer<typeof desktopRuntimeSnapshotSchema>;
+
+export const releaseUpdateChannelSchema = z.enum(['stable', 'testing']);
+export type ReleaseUpdateChannel = z.infer<typeof releaseUpdateChannelSchema>;
+
+export const releaseUpdateCheckSchema = z
+  .object({
+    available: z.boolean(),
+    channel: releaseUpdateChannelSchema,
+    currentVersion: z.string().min(1).max(64),
+    targetVersion: z.string().min(1).max(64),
+    sequence: z.number().int().nonnegative(),
+    rollback: z.boolean(),
+  })
+  .strict();
+export type ReleaseUpdateCheck = z.infer<typeof releaseUpdateCheckSchema>;
 
 export type DesktopRuntimeFailure = {
   readonly code: string;
@@ -96,6 +112,13 @@ export type DesktopRuntimeGateway = {
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;
   openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>>;
+  checkUpdate(
+    channel: ReleaseUpdateChannel,
+  ): Promise<Result<ReleaseUpdateCheck, DesktopRuntimeFailure>>;
+  installUpdate(
+    channel: ReleaseUpdateChannel,
+    expectedSequence: number,
+  ): Promise<Result<void, DesktopRuntimeFailure>>;
   subscribe(
     handlers: DesktopRuntimeEventHandlers,
   ): Promise<Result<() => void, DesktopRuntimeFailure>>;

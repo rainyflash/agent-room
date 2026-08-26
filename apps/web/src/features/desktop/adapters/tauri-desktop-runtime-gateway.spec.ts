@@ -22,6 +22,7 @@ const readySnapshot = {
   },
   deepLink: null,
   platform: 'windows',
+  updatesConfigured: false,
 } as const;
 
 function transport(overrides: Partial<TauriDesktopTransport> = {}): TauriDesktopTransport {

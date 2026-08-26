@@ -5,8 +5,9 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use semver::Version;
 
 use crate::{
-    ArtifactKind, ReleaseChannel, ReleaseManifest, ReleaseManifestError, ReleaseManifestResult,
-    ReleaseTrustState, SignedReleaseManifest, TrustedReleaseKey, VerifiedRelease,
+    ArtifactKind, ReleaseChannel, ReleaseInspection, ReleaseManifest, ReleaseManifestError,
+    ReleaseManifestResult, ReleaseTrustState, SignedReleaseManifest, TrustedReleaseKey,
+    VerifiedRelease,
 };
 
 pub const MAX_CLOCK_SKEW_SECONDS: u64 = 300;
@@ -30,6 +31,44 @@ pub fn validate_release_document(
         Version::parse(rollback_from).map_err(|_| ReleaseManifestError::InvalidVersion)?;
     }
     validate_artifacts(manifest)
+}
+
+/// 检查已签名清单，并区分“已经是当前版本”和“需要更新”。
+///
+/// # Errors
+///
+/// 当签名、渠道、时效、序号或版本迁移策略无效时返回错误。
+pub fn inspect_release(
+    envelope: &SignedReleaseManifest,
+    trusted_key: &TrustedReleaseKey,
+    expected_channel: ReleaseChannel,
+    trust_state: &ReleaseTrustState,
+    now_unix_seconds: u64,
+) -> ReleaseManifestResult<ReleaseInspection> {
+    let payload = authenticate_envelope(envelope, trusted_key)?;
+    let manifest: ReleaseManifest =
+        serde_json::from_slice(&payload).map_err(|_| ReleaseManifestError::InvalidPayload)?;
+    if manifest.channel != expected_channel || trust_state.channel != expected_channel {
+        return Err(ReleaseManifestError::ChannelMismatch);
+    }
+    validate_release_document(&manifest, now_unix_seconds)?;
+
+    let candidate =
+        Version::parse(&manifest.version).map_err(|_| ReleaseManifestError::InvalidVersion)?;
+    let installed = Version::parse(&trust_state.installed_version)
+        .map_err(|_| ReleaseManifestError::InvalidVersion)?;
+    if candidate == installed {
+        if manifest.sequence < trust_state.highest_sequence {
+            return Err(ReleaseManifestError::StaleSequence);
+        }
+        if manifest.rollback_from.is_some() {
+            return Err(ReleaseManifestError::UnauthorizedRollback);
+        }
+        return Ok(ReleaseInspection::Current(manifest));
+    }
+
+    validate_manifest(&manifest, expected_channel, trust_state, now_unix_seconds)?;
+    Ok(ReleaseInspection::Update(VerifiedRelease::new(manifest)))
 }
 
 /// 验证离线签名的发布清单，但不改变本地可信状态。
@@ -378,5 +417,23 @@ mod tests {
             ),
             Err(ReleaseManifestError::InvalidArtifactDigest)
         );
+    }
+
+    #[test]
+    fn reports_authenticated_current_release_without_advancing_state() {
+        let mut current = manifest();
+        current.version = "1.4.0".to_owned();
+        current.sequence = 40;
+
+        let inspection = inspect_release(
+            &sign(&current),
+            &trusted_key(),
+            ReleaseChannel::Stable,
+            &trust_state(),
+            NOW,
+        )
+        .expect("当前签名版本必须能被识别");
+
+        assert!(matches!(inspection, ReleaseInspection::Current(value) if value == current));
     }
 }

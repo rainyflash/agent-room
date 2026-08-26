@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "corepack pnpm@10.28.0 prepare:sidecar && tauri build --config src-tauri/tauri.sidecar.conf.json",
+    "build:signed": "corepack pnpm@10.28.0 prepare:sidecar && tauri build --config src-tauri/tauri.release.conf.json",
     "dev": "corepack pnpm@10.28.0 prepare:sidecar:debug && tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "prepare:sidecar": "node tools/prepare-sidecar.mjs --release",
     "prepare:sidecar:debug": "node tools/prepare-sidecar.mjs",

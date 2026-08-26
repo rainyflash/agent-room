@@ -5,14 +5,19 @@ mod capability_tests;
 mod commands;
 mod deep_link;
 mod desktop_config;
+mod release_update_config;
+mod release_update_state;
+mod release_updates;
 mod webview_migration;
 
 use commands::{
-    DesktopRuntime, desktop_open_authorization, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_set_autostart,
+    DesktopRuntime, desktop_check_update, desktop_install_update, desktop_open_authorization,
+    desktop_retry_bridge, desktop_runtime_snapshot, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
+use release_update_config::ReleaseUpdateConfig;
+use release_updates::ReleaseUpdateRuntime;
 use tauri::{
     Manager as _, RunEvent,
     menu::{Menu, MenuItem},
@@ -28,7 +33,17 @@ use tauri_plugin_deep_link::DeepLinkExt as _;
 /// 当 Tauri 上下文、窗口或插件无法构建时会终止启动。此时继续运行会留下一个
 /// 没有受监管 Bridge 的残缺桌面进程，因此必须显式失败。
 pub fn run() {
+    let update_config = ReleaseUpdateConfig::from_build().unwrap_or_else(|failure| {
+        panic!("桌面签名更新配置失败 [{}]", failure.code());
+    });
     let mut builder = tauri::Builder::default();
+    if let Some(config) = &update_config {
+        builder = builder.plugin(
+            tauri_plugin_updater::Builder::new()
+                .pubkey(config.tauri_public_key().to_owned())
+                .build(),
+        );
+    }
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(
@@ -56,13 +71,17 @@ pub fn run() {
             desktop_retry_bridge,
             desktop_set_autostart,
             desktop_open_authorization,
+            desktop_check_update,
+            desktop_install_update,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             webview_migration::retire_legacy_service_worker(app)?;
             let config = DesktopBridgeConfig::from_environment()
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
             let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config);
-            app.manage(DesktopRuntime { bridge });
+            let updates = ReleaseUpdateRuntime::new(app.handle().clone(), update_config.clone())
+                .map_err(|failure| format!("桌面更新状态初始化失败 [{}]", failure.code()))?;
+            app.manage(DesktopRuntime { bridge, updates });
             setup_tray(app)?;
             setup_deep_links(app)?;
             Ok(())

@@ -3,8 +3,8 @@
 import '@testing-library/jest-dom/vitest';
 
 import { I18nextProvider } from 'react-i18next';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type {
   BridgeRuntime,
@@ -15,9 +15,11 @@ import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-sur
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
+const router = vi.hoisted(() => ({ navigate: vi.fn() }));
+
 vi.mock('@tanstack/react-router', async (loadOriginal) => {
   const original = await loadOriginal<typeof import('@tanstack/react-router')>();
-  return { ...original, useNavigate: () => vi.fn() };
+  return { ...original, useNavigate: () => router.navigate };
 });
 
 const authorizationRuntime: BridgeRuntime = {
@@ -39,32 +41,48 @@ const authorizationRuntime: BridgeRuntime = {
   },
 };
 
-function snapshot(bridge: BridgeRuntime): DesktopRuntimeSnapshot {
+function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRuntimeSnapshot {
   return {
     autostartEnabled: false,
     bridge,
     deepLink: null,
     platform: 'windows',
+    updatesConfigured,
   };
 }
 
-function gateway(bridge: BridgeRuntime) {
+function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
   const openAuthorization = vi.fn(async () => ok(undefined));
   const retryBridge = vi.fn(async () => ok(bridge));
+  const checkUpdate = vi.fn(async (channel: 'stable' | 'testing') =>
+    ok({
+      available: true,
+      channel,
+      currentVersion: '0.1.0',
+      rollback: false,
+      sequence: 8,
+      targetVersion: '0.2.0',
+    }),
+  );
+  const installUpdate = vi.fn(async () => ok(undefined));
   const value: DesktopRuntimeGateway = {
+    checkUpdate,
+    installUpdate,
     isAvailable: () => true,
     openAuthorization,
     retryBridge,
     setAutostart: async (enabled) => ok(enabled),
-    snapshot: async () => ok(snapshot(bridge)),
+    snapshot: async () => ok(snapshot(bridge, updatesConfigured)),
     subscribe: async () => ok(() => undefined),
   };
-  return { openAuthorization, retryBridge, value };
+  return { checkUpdate, installUpdate, openAuthorization, retryBridge, value };
 }
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en-US']);
 });
+
+afterEach(cleanup);
 
 describe('桌面运行时界面', () => {
   it('只展示身份站点和一次性代码，并通过闭合命令打开完整地址', async () => {
@@ -108,6 +126,34 @@ describe('桌面运行时界面', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry Bridge' }));
     await waitFor(() => {
       expect(runtime.retryBridge).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('只有签名更新已配置时才允许显式检查并安装同一序号', async () => {
+    const ready: BridgeRuntime = {
+      authorization: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        diagnosticCode: 'desktop.bridge.ready',
+        phase: 'ready',
+      },
+    };
+    const runtime = gateway(ready, true);
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeSurface gateway={runtime.value} />
+      </I18nextProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    await waitFor(() => {
+      expect(runtime.checkUpdate).toHaveBeenCalledWith('stable');
+      expect(screen.getByText('0.1.0 → 0.2.0')).toBeVisible();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Install & restart' }));
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('stable', 8);
     });
   });
 });
