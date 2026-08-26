@@ -17,6 +17,7 @@ from tools.federation import (
     joined_room_events,
     read_environment,
     room_membership,
+    secure_container_output,
     synapse_configuration,
     write_private_text,
 )
@@ -67,6 +68,32 @@ class FederationConfigurationTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "SECRET=fresh\n")
             if os.name == "posix":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    @patch("tools.federation.run_command")
+    @patch(
+        "tools.federation.host_container_identity",
+        return_value=("991", "991"),
+    )
+    def test_container_output_is_secured_on_every_host(
+        self,
+        _host_identity,
+        run_command,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "server.key").write_text("secret", encoding="utf-8")
+
+            secure_container_output(output, "/certificates")
+
+            command = run_command.call_args.args[0]
+            shell_command = command[-1]
+            self.assertIn("chown -R 991:991 /certificates", shell_command)
+            self.assertIn("chmod -R u=rwX,go= /certificates", shell_command)
+
+    def test_container_output_rejects_unknown_mount_even_when_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(FederationFailure, "固定允许列表"):
+                secure_container_output(Path(directory), "/host")
 
     @patch("tools.federation.ssl.create_default_context")
     def test_federation_tls_rejects_tls_1_0_and_1_1(self, create_context) -> None:

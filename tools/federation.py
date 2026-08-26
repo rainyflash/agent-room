@@ -351,16 +351,13 @@ def write_private_text(path: Path, content: str) -> None:
 
 
 def secure_container_output(directory: Path, container_path: str) -> None:
-    """把容器生成物交给当前 Linux 用户，并移除组与其他用户权限。"""
+    """把容器生成物交给运行服务的用户，并移除组与其他用户权限。"""
 
-    if not any(directory.iterdir()):
-        return
-    if os.name != "posix":
-        return
     if container_path not in {"/certificates", "/data"}:
         raise FederationFailure("容器输出目录不在固定允许列表。")
-    user_id = os.getuid()
-    group_id = os.getgid()
+    if not any(directory.iterdir()):
+        return
+    user_id, group_id = host_container_identity()
     run_command(
         [
             "docker",
