@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -6,6 +8,7 @@ from unittest.mock import patch
 
 from tools.vertical import (
     BridgeRuntimeObservation,
+    IsolatedBridgeState,
     IsolatedServiceInterruption,
     LogRedactor,
     VerticalFailure,
@@ -180,6 +183,24 @@ class ComposeBoundaryTests(unittest.TestCase):
                 )
             )
         )
+
+    @unittest.skipUnless(os.name == "posix", "仅 POSIX 平台支持目录权限位")
+    def test_隔离_bridge_目录使用私有权限并在退出时清理(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_roots = (root / "bridge-sender", root / "bridge-target")
+            with (
+                patch("tools.vertical.VERTICAL_ROOT", root),
+                patch("tools.vertical.BRIDGE_DATA_ROOTS", data_roots),
+                patch("tools.vertical.clear_vertical_secure_storage"),
+            ):
+                with IsolatedBridgeState():
+                    for data_root in data_roots:
+                        permissions = stat.S_IMODE(data_root.stat().st_mode)
+                        self.assertEqual(permissions, 0o700)
+
+                for data_root in data_roots:
+                    self.assertFalse(data_root.exists())
 
     def test_拒绝中断未登记的基础设施服务(self) -> None:
         with self.assertRaises(VerticalFailure):

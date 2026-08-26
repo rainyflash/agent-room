@@ -504,8 +504,7 @@ class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
     def __enter__(self) -> "IsolatedBridgeState":
         reset_bridge_data_roots()
         clear_vertical_secure_storage()
-        for data_root in BRIDGE_DATA_ROOTS:
-            data_root.mkdir(parents=True, exist_ok=True)
+        prepare_private_bridge_data_roots()
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
@@ -525,6 +524,14 @@ class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
             print(message, file=sys.stderr)
             return
         raise VerticalFailure(message)
+
+
+def prepare_private_bridge_data_roots() -> None:
+    """以 Bridge 生产权限约束创建隔离测试目录。"""
+    for data_root in BRIDGE_DATA_ROOTS:
+        data_root.mkdir(mode=0o700, parents=True, exist_ok=False)
+        if os.name == "posix":
+            data_root.chmod(0o700)
 
 
 def executable(name: str) -> str:
