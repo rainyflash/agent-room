@@ -51,8 +51,9 @@ def retention_decisions(
     runs: Mapping[int, WorkflowRun],
     current_revision: str,
 ) -> tuple[RetentionDecision, ...]:
-    """保留发布物、当前修订、活跃运行及每个名称最近一次成功制品。"""
+    """保留发布物、当前修订、活跃运行及每个名称的最新与最近成功制品。"""
 
+    latest: dict[str, Artifact] = {}
     latest_successful: dict[str, Artifact] = {}
     for artifact in artifacts:
         run = runs.get(artifact.run_id)
@@ -60,9 +61,18 @@ def retention_decisions(
             raise ArtifactRetentionFailure(
                 f"Artifact {artifact.identifier} 缺少 Workflow Run {artifact.run_id}。"
             )
+        current_latest = latest.get(artifact.name)
+        if current_latest is None or (
+            artifact.created_at,
+            artifact.identifier,
+        ) > (current_latest.created_at, current_latest.identifier):
+            latest[artifact.name] = artifact
         if run.status == "completed" and run.conclusion == "success":
             current = latest_successful.get(artifact.name)
-            if current is None or artifact.created_at > current.created_at:
+            if current is None or (
+                artifact.created_at,
+                artifact.identifier,
+            ) > (current.created_at, current.identifier):
                 latest_successful[artifact.name] = artifact
 
     decisions: list[RetentionDecision] = []
@@ -74,6 +84,8 @@ def retention_decisions(
             reason = "current_revision"
         elif run.status != "completed":
             reason = "active_workflow"
+        elif latest.get(artifact.name) == artifact:
+            reason = "latest_by_name"
         elif latest_successful.get(artifact.name) == artifact:
             reason = "latest_successful_by_name"
         else:

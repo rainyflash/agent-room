@@ -39,6 +39,9 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
             artifact(4, "active-log", "2026-08-26T00:00:00Z", 14),
             artifact(5, "current-log", "2026-08-26T00:00:00Z", 15, "current"),
             artifact(6, "release-candidate-v1", "2026-08-20T00:00:00Z", 16),
+            artifact(7, "failed-log", "2026-08-27T00:00:00Z", 17),
+            artifact(8, "browser", "2026-08-25T00:00:00Z", 18),
+            artifact(9, "browser", "2026-08-26T00:00:00Z", 19),
         )
         runs = {
             11: WorkflowRun(11, "completed", "success"),
@@ -47,6 +50,9 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
             14: WorkflowRun(14, "in_progress", None),
             15: WorkflowRun(15, "completed", "failure"),
             16: WorkflowRun(16, "completed", "failure"),
+            17: WorkflowRun(17, "completed", "failure"),
+            18: WorkflowRun(18, "completed", "success"),
+            19: WorkflowRun(19, "completed", "failure"),
         }
 
         decisions = retention_decisions(values, runs, "current")
@@ -54,11 +60,14 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
 
         self.assertFalse(by_identifier[1].keep)
         self.assertEqual(by_identifier[1].reason, "stale")
-        self.assertEqual(by_identifier[2].reason, "latest_successful_by_name")
+        self.assertEqual(by_identifier[2].reason, "latest_by_name")
         self.assertFalse(by_identifier[3].keep)
         self.assertEqual(by_identifier[4].reason, "active_workflow")
         self.assertEqual(by_identifier[5].reason, "current_revision")
         self.assertEqual(by_identifier[6].reason, "release_artifact")
+        self.assertEqual(by_identifier[7].reason, "latest_by_name")
+        self.assertEqual(by_identifier[8].reason, "latest_successful_by_name")
+        self.assertEqual(by_identifier[9].reason, "latest_by_name")
 
     def test_policy_fails_closed_when_run_truth_is_missing(self) -> None:
         with self.assertRaisesRegex(ArtifactRetentionFailure, "缺少 Workflow Run"):
