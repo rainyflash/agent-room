@@ -27,8 +27,7 @@
   "backup": {
     "repository": "/var/backups/agent-room",
     "retentionDays": 30,
-    "rpoMinutes": 15,
-    "baseBackupIntervalHours": 24
+    "rpoMinutes": 15
   },
   "telemetry": {
     "enabled": true

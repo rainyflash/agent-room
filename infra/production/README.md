@@ -45,6 +45,39 @@ python3 tools/production.py install \
 
 Secret 只通过 Compose Secret 文件挂载。不要把 `/var/lib/agent-room/secrets` 加入 Git、工单或聊天记录。
 
+## 自动备份与恢复演练
+
+`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm、对象清单和对象字节的一致性备份。这里选择完整快照是有意的：公开测试阶段先保证可恢复性，不拿未经验证的“增量优化”冒充 RPO。
+
+先渲染并审查 unit，再以 root 安装和核验：
+
+```bash
+python3 tools/production.py backup-schedule-render \
+  --config /etc/agent-room/deployment.json \
+  --state-dir /var/lib/agent-room
+
+sudo python3 tools/production.py backup-schedule-install \
+  --config /etc/agent-room/deployment.json \
+  --state-dir /var/lib/agent-room
+
+sudo python3 tools/production.py backup-schedule-verify \
+  --config /etc/agent-room/deployment.json \
+  --state-dir /var/lib/agent-room
+```
+
+安装后的 unit 指向当前源码目录、配置文件和状态目录，因此源码部署目录必须保持稳定。备份服务以非重叠 oneshot 运行；失败会让 unit 进入 failed 状态，不能被脚本吞掉。使用 `systemctl status agent-room-backup.timer` 和 `journalctl -u agent-room-backup.service` 接入任务 42 的告警。
+
+手工备份、摘要核验、保留清理和隔离恢复演练：
+
+```bash
+sudo python3 tools/production.py backup --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+sudo python3 tools/production.py backup-verify --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+sudo python3 tools/production.py restore-drill --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+sudo python3 tools/production.py backup-prune --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
+外部 PostgreSQL 不允许伪装成本地 PITR：配置必须引用 30 分钟内采集、声明 RPO 不高于部署目标的供应商证据，真实隔离恢复仍由供应商流程执行。备份仓库必须位于独立故障域并由运营者另行加密；放在应用主机同一块磁盘只算副本，不算灾备。
+
 ## 健康、升级与停止
 
 ```bash

@@ -87,7 +87,6 @@ class BackupConfig:
     repository: str
     retention_days: int
     rpo_minutes: int
-    base_backup_interval_hours: int
     provider_pitr_evidence_file: str | None
 
     @property
@@ -280,7 +279,6 @@ def _parse_backup(value: object, database_value: object) -> BackupConfig:
             "repository",
             "retentionDays",
             "rpoMinutes",
-            "baseBackupIntervalHours",
             "providerPitrEvidenceFile",
         },
         "backup",
@@ -288,13 +286,10 @@ def _parse_backup(value: object, database_value: object) -> BackupConfig:
     repository = _absolute_host_path(_text(source, "repository"), "backup.repository")
     retention_days = _optional_integer(source, "retentionDays", 30)
     rpo_minutes = _optional_integer(source, "rpoMinutes", 15)
-    base_backup_interval_hours = _optional_integer(source, "baseBackupIntervalHours", 24)
     if not 7 <= retention_days <= 365:
         raise DeploymentConfigError("backup.retentionDays 必须在 7–365 之间。")
     if not 1 <= rpo_minutes <= 15:
         raise DeploymentConfigError("backup.rpoMinutes 必须在 1–15 之间。")
-    if not 1 <= base_backup_interval_hours <= 168:
-        raise DeploymentConfigError("backup.baseBackupIntervalHours 必须在 1–168 之间。")
 
     database = _mapping(database_value, "database")
     database_mode = _enum(database, "mode", DATABASE_MODES)
@@ -314,7 +309,6 @@ def _parse_backup(value: object, database_value: object) -> BackupConfig:
         repository=repository,
         retention_days=retention_days,
         rpo_minutes=rpo_minutes,
-        base_backup_interval_hours=base_backup_interval_hours,
         provider_pitr_evidence_file=evidence_path,
     )
 

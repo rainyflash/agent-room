@@ -12,6 +12,7 @@ from prodops.config import DeploymentConfigError, load_deployment_config
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
 from prodops.restore import RestoreDrillError
+from prodops.schedule import BackupScheduleError, BackupScheduleInstaller
 from prodops.secrets import SecretStoreError
 
 
@@ -30,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
             "backup",
             "backup-verify",
             "backup-prune",
+            "backup-schedule-install",
+            "backup-schedule-render",
+            "backup-schedule-verify",
             "restore-drill",
             "down",
         ),
@@ -75,6 +79,19 @@ def main() -> int:
             case "backup-prune":
                 removed = runtime.prune_backups()
                 print(f"已清理 {len(removed)} 个过期备份。")
+            case "backup-schedule-render":
+                installer = BackupScheduleInstaller(config, paths, arguments.config)
+                service, timer = installer.write_generated()
+                print(f"备份调度已生成：{service}；{timer}")
+            case "backup-schedule-install":
+                runtime.prepare(generate_signing_key=True)
+                runtime.validate_compose()
+                files = BackupScheduleInstaller(config, paths, arguments.config).install()
+                print(f"备份调度已启用：{files.timer_name}")
+            case "backup-schedule-verify":
+                installer = BackupScheduleInstaller(config, paths, arguments.config)
+                installer.verify(installer.render())
+                print("备份调度已启用且正在运行。")
             case "restore-drill":
                 if not arguments.backup_id:
                     raise ValueError("restore-drill 必须提供 --backup-id。")
@@ -89,6 +106,7 @@ def main() -> int:
                 raise AssertionError("argparse 已约束 action")
     except (
         BackupError,
+        BackupScheduleError,
         DeploymentConfigError,
         ProductionRuntimeError,
         RestoreDrillError,

@@ -156,7 +156,6 @@ class BackupCoordinatorTests(unittest.TestCase):
                 repository=self.repository_path.as_posix(),
                 retention_days=30,
                 rpo_minutes=15,
-                base_backup_interval_hours=24,
                 provider_pitr_evidence_file=evidence_path.as_posix(),
             ),
         )

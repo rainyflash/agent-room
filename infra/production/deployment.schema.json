@@ -105,14 +105,12 @@
       "required": [
         "repository",
         "retentionDays",
-        "rpoMinutes",
-        "baseBackupIntervalHours"
+        "rpoMinutes"
       ],
       "properties": {
         "repository": { "$ref": "#/$defs/absoluteHostPath" },
         "retentionDays": { "type": "integer", "minimum": 7, "maximum": 365 },
         "rpoMinutes": { "type": "integer", "minimum": 1, "maximum": 15 },
-        "baseBackupIntervalHours": { "type": "integer", "minimum": 1, "maximum": 168 },
         "providerPitrEvidenceFile": { "$ref": "#/$defs/absoluteHostPath" }
       }
     },
