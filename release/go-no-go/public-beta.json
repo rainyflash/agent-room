@@ -126,7 +126,7 @@
         "specs/agent-room-foundation/task-34-validation.md",
         "specs/agent-room-foundation/task-36-validation.md"
       ],
-      "blockerIds": ["GNG-001", "GNG-002"]
+      "blockerIds": ["GNG-002"]
     },
     {
       "id": 12,
@@ -172,7 +172,7 @@
         "specs/agent-room-foundation/task-42-validation.md",
         "specs/agent-room-foundation/task-43-validation.md"
       ],
-      "blockerIds": ["GNG-001", "GNG-005", "GNG-006"]
+      "blockerIds": ["GNG-005", "GNG-006"]
     }
   ],
   "gates": [
@@ -240,7 +240,7 @@
         "specs/agent-room-foundation/task-36-validation.md",
         "specs/agent-room-foundation/task-43-validation.md"
       ],
-      "blockerIds": ["GNG-001", "GNG-006"]
+      "blockerIds": ["GNG-006"]
     },
     {
       "id": "open_source",
@@ -262,15 +262,6 @@
     }
   ],
   "blockers": [
-    {
-      "id": "GNG-001",
-      "severity": "blocking",
-      "status": "open",
-      "title": "当前修订缺少 Windows 同源 M2 制品与签字",
-      "owner": "仓库维护者",
-      "exitCondition": "等待 GitHub Actions 官方重大中断恢复，并让当前候选的完整矩阵、Windows x86-64 与 M2 gate 在同一运行中成功；macOS 只在维护者自托管 runner 上另行验收。",
-      "evidence": ["specs/agent-room-foundation/task-36-validation.md"]
-    },
     {
       "id": "GNG-002",
       "severity": "blocking",

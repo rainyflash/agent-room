@@ -26,11 +26,11 @@
 | 8 Agent 工作状态 | 通过 | [`specs/agent-room-foundation/task-14-validation.md`](task-14-validation.md)<br>[`specs/agent-room-foundation/task-24-validation.md`](task-24-validation.md)<br>[`specs/agent-room-foundation/task-39-validation.md`](task-39-validation.md) | — |
 | 9 可视化大厅 | 通过 | [`specs/agent-room-foundation/task-19-validation.md`](task-19-validation.md)<br>[`specs/agent-room-foundation/task-20-validation.md`](task-20-validation.md)<br>[`specs/agent-room-foundation/task-39-validation.md`](task-39-validation.md) | — |
 | 10 Agent 自主发送权限 | 通过 | [`specs/agent-room-foundation/task-15-validation.md`](task-15-validation.md)<br>[`specs/agent-room-foundation/task-18-validation.md`](task-18-validation.md)<br>[`specs/agent-room-foundation/task-35-validation.md`](task-35-validation.md) | — |
-| 11 多设备、离线与恢复 | **阻断** | [`specs/agent-room-foundation/task-26-validation.md`](task-26-validation.md)<br>[`specs/agent-room-foundation/task-27-validation.md`](task-27-validation.md)<br>[`specs/agent-room-foundation/task-34-validation.md`](task-34-validation.md)<br>[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md) | GNG-001, GNG-002 |
+| 11 多设备、离线与恢复 | **阻断** | [`specs/agent-room-foundation/task-26-validation.md`](task-26-validation.md)<br>[`specs/agent-room-foundation/task-27-validation.md`](task-27-validation.md)<br>[`specs/agent-room-foundation/task-34-validation.md`](task-34-validation.md)<br>[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md) | GNG-002 |
 | 12 安全、隐私与滥用治理 | **阻断** | [`specs/agent-room-foundation/task-30-validation.md`](task-30-validation.md)<br>[`specs/agent-room-foundation/task-35-validation.md`](task-35-validation.md)<br>[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md) | GNG-002 |
 | 13 开放、自托管与联邦 | **阻断** | [`specs/agent-room-foundation/task-37-validation.md`](task-37-validation.md)<br>[`specs/agent-room-foundation/task-38-validation.md`](task-38-validation.md)<br>[`specs/agent-room-foundation/task-40-validation.md`](task-40-validation.md)<br>[`specs/agent-room-foundation/task-44-validation.md`](task-44-validation.md) | GNG-004, GNG-006, GNG-007 |
 | 14 国际化与可访问性 | 通过 | [`specs/agent-room-foundation/task-19-validation.md`](task-19-validation.md)<br>[`specs/agent-room-foundation/task-20-validation.md`](task-20-validation.md)<br>[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md) | — |
-| 15 可靠性与可诊断性 | **阻断** | [`specs/agent-room-foundation/task-33-validation.md`](task-33-validation.md)<br>[`specs/agent-room-foundation/task-34-validation.md`](task-34-validation.md)<br>[`specs/agent-room-foundation/task-42-validation.md`](task-42-validation.md)<br>[`specs/agent-room-foundation/task-43-validation.md`](task-43-validation.md) | GNG-001, GNG-005, GNG-006 |
+| 15 可靠性与可诊断性 | **阻断** | [`specs/agent-room-foundation/task-33-validation.md`](task-33-validation.md)<br>[`specs/agent-room-foundation/task-34-validation.md`](task-34-validation.md)<br>[`specs/agent-room-foundation/task-42-validation.md`](task-42-validation.md)<br>[`specs/agent-room-foundation/task-43-validation.md`](task-43-validation.md) | GNG-005, GNG-006 |
 
 ## 3. 发布门禁
 
@@ -43,17 +43,11 @@
 | 联邦兼容、治理与回填 | 通过 | [`specs/agent-room-foundation/task-37-validation.md`](task-37-validation.md)<br>[`specs/agent-room-foundation/task-38-validation.md`](task-38-validation.md)<br>[`specs/agent-room-foundation/evidence/task-39-federation-outage.json`](evidence/task-39-federation-outage.json) | — |
 | 公网生产部署 | **阻断** | [`specs/agent-room-foundation/task-40-validation.md`](task-40-validation.md) | GNG-004 |
 | SLO、告警与故障演练 | **阻断** | [`specs/agent-room-foundation/task-42-validation.md`](task-42-validation.md) | GNG-005 |
-| 跨平台签名发行与回滚 | **阻断** | [`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md)<br>[`specs/agent-room-foundation/task-43-validation.md`](task-43-validation.md) | GNG-001, GNG-006 |
+| 跨平台签名发行与回滚 | **阻断** | [`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md)<br>[`specs/agent-room-foundation/task-43-validation.md`](task-43-validation.md) | GNG-006 |
 | 开源与外部自托管复现 | **阻断** | [`specs/agent-room-foundation/task-44-validation.md`](task-44-validation.md) | GNG-007 |
 | 依赖、许可证与供应链 | 通过 | [`specs/agent-room-foundation/task-43-validation.md`](task-43-validation.md)<br>[`specs/agent-room-foundation/task-44-validation.md`](task-44-validation.md)<br>[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) | — |
 
 ## 4. 开放阻断
-
-### GNG-001 · 当前修订缺少 Windows 同源 M2 制品与签字
-
-- 责任角色：仓库维护者
-- 解除条件：等待 GitHub Actions 官方重大中断恢复，并让当前候选的完整矩阵、Windows x86-64 与 M2 gate 在同一运行中成功；macOS 只在维护者自托管 runner 上另行验收。
-- 当前证据：[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md)
 
 ### GNG-002 · 独立外部安全评审尚未完成
 

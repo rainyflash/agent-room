@@ -12,33 +12,6 @@
 - 原始证据进入受访问控制的不可变存储；仓库只提交脱敏摘要及其 SHA-256。
 - 完成一项后先更新唯一状态源、重新生成 Go/No-Go，再运行 Issue 同步器。不得直接手工关闭 Issue。
 
-## GNG-001：Windows 首发门禁
-
-责任人：仓库维护者。
-
-GitHub Actions 恢复后，先验证[官方状态](https://www.githubstatus.com/)已不再报告 Actions 故障，再执行：
-
-```bash
-# 最新 main：验证成本护栏、文档和最终工作流定义。
-gh workflow run ci.yml --ref main
-
-# 精确产品候选 d794418：恢复被平台中断的运行。
-gh run rerun 32984361605
-gh run watch 32984361605 --exit-status
-gh run watch 32984514797 --exit-status
-gh run watch 32984517038 --exit-status
-```
-
-若平台明确丢失两个手动运行，而不是仍在排队，才重新派发；不要制造重复队列：
-
-```bash
-gh workflow run closed-test.yml --ref d794418fef032f8dba37b7ee947bf2fc045dc40c
-gh workflow run federation.yml --ref d794418fef032f8dba37b7ee947bf2fc045dc40c
-```
-
-关闭条件：当前 `main` CI 与 CodeQL 成功；候选 SHA 的 M2 完整矩阵、Windows x86-64 制品、M2 签字门和 M3 联邦验收成功。macOS 不属于首发门禁，只能在维护者自己的
-`[self-hosted, macOS, ARM64]` runner 上手动验证。
-
 ## GNG-002：独立安全与隐私评审
 
 责任人：未参与实现的安全评审方和隐私评审方。开发者不能给自己签字。

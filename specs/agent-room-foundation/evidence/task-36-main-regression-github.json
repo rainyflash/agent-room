@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "main_ci_and_codeql",
+  "generatedAt": "2026-08-26T17:44:03Z",
+  "revision": "e9fff76aea8f75bd71f9c18c1617a7265c168722",
+  "passed": true,
+  "continuousIntegration": {
+    "runId": 32992189339,
+    "url": "https://github.com/rainyflash/agent-room/actions/runs/32992189339",
+    "conclusion": "success",
+    "jobs": {
+      "quality": "success",
+      "supplyChain": "success",
+      "windowsBridge": "success",
+      "windowsDesktop": "success",
+      "browserAcceptance": "success",
+      "postgresMatrixIntegration": "success"
+    },
+    "criticalLiveSessionStep": "success"
+  },
+  "codeql": {
+    "runId": 32992144789,
+    "url": "https://github.com/rainyflash/agent-room/actions/runs/32992144789",
+    "conclusion": "success",
+    "languages": {
+      "javascriptTypescript": "success",
+      "python": "success",
+      "actions": "success"
+    }
+  },
+  "runnerPolicy": {
+    "hostedMacosConfigured": false,
+    "selfHostedMacosManualOnly": true
+  }
+}

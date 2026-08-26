@@ -34,7 +34,11 @@ M2 签字门从同一运行下载验收报告和 Windows 制品，重新验证�
 
 Windows x86-64 是首发原生目标。自动 CI、M2 和发布候选工作流只使用 Linux/Windows；Actions 静态门禁会拒绝 GitHub 托管的 `macos-*` Runner。macOS ARM64 只保留手动 `.github/workflows/macos-self-hosted.yml`，并且必须命中 `[self-hosted, macOS, ARM64]`，不消耗托管 macOS 3-core。
 
-## 5. 已发布边界
+## 5. 主线回归
+
+修复本地网关绑定后，提交 `e9fff76aea8f75bd71f9c18c1617a7265c168722` 的[主 CI 运行 32992189339](https://github.com/rainyflash/agent-room/actions/runs/32992189339)六个 Job 全部成功，其中真实 OIDC、Matrix SSO 与浏览器会话恢复步骤通过；同一提交的 [CodeQL 运行 32992144789](https://github.com/rainyflash/agent-room/actions/runs/32992144789)对 JavaScript/TypeScript、Python 和 Actions 的分析全部成功。结构化摘要见 [`evidence/task-36-main-regression-github.json`](./evidence/task-36-main-regression-github.json)。
+
+## 6. 已发布边界
 
 - [`release/closed-test/DATA-POLICY.md`](../../release/closed-test/DATA-POLICY.md) 说明保留、导出、删除和联邦残留；
 - [`release/closed-test/KNOWN-LIMITATIONS.md`](../../release/closed-test/KNOWN-LIMITATIONS.md) 说明客户端、容量、联邦与签名边界；
