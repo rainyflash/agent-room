@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from tools.local_runtime import ControlPlaneNetworkScope
 from tools.vertical import (
     BridgeRuntimeObservation,
     IsolatedBridgeState,
@@ -150,10 +151,15 @@ class HttpReadinessTests(unittest.TestCase):
     def test_纵向控制平面监听容器可达地址(self) -> None:
         with patch(
             "tools.vertical.control_plane_runtime_environment",
-            return_value={"AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:8090"},
-        ):
+            return_value={"AGENT_ROOM_BIND_ADDRESS": "0.0.0.0:8090"},
+        ) as build_environment:
             environment = vertical_control_plane_environment({})
 
+        build_environment.assert_called_once_with(
+            {},
+            enable_telemetry=True,
+            network_scope=ControlPlaneNetworkScope.DOCKER_GATEWAY,
+        )
         self.assertEqual(environment["AGENT_ROOM_BIND_ADDRESS"], "0.0.0.0:8090")
 
 

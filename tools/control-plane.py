@@ -9,6 +9,7 @@ import sys
 
 from local_runtime import (
     ROOT,
+    ControlPlaneNetworkScope,
     LocalRuntimeError,
     control_plane_runtime_environment,
     read_environment,
@@ -33,12 +34,27 @@ def command_for(action: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "test"))
+    parser.add_argument(
+        "--network-scope",
+        choices=tuple(ControlPlaneNetworkScope),
+        default=ControlPlaneNetworkScope.LOOPBACK,
+        type=ControlPlaneNetworkScope,
+        help="控制平面监听边界；仅本地 TLS 网关验收需要 docker-gateway。",
+    )
     arguments = parser.parse_args()
+
+    if (
+        arguments.action != "run"
+        and arguments.network_scope != ControlPlaneNetworkScope.LOOPBACK
+    ):
+        parser.error("只有 run 操作可以扩大本地监听边界。")
 
     try:
         values = read_environment()
         environment = control_plane_runtime_environment(
-            values, enable_telemetry=arguments.action == "run"
+            values,
+            enable_telemetry=arguments.action == "run",
+            network_scope=arguments.network_scope,
         )
     except LocalRuntimeError as error:
         print(str(error), file=sys.stderr)

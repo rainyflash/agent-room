@@ -26,6 +26,7 @@ import uuid
 
 if __package__:
     from .local_runtime import (
+        ControlPlaneNetworkScope,
         LocalRuntimeError,
         bridge_runtime_environment,
         control_plane_runtime_environment,
@@ -35,6 +36,7 @@ if __package__:
     from .mcp_client import McpClientFailure, McpStdioClient
 else:
     from local_runtime import (
+        ControlPlaneNetworkScope,
         LocalRuntimeError,
         bridge_runtime_environment,
         control_plane_runtime_environment,
@@ -936,11 +938,11 @@ def vertical_control_plane_environment(
     environment: Mapping[str, str],
 ) -> dict[str, str]:
     """仅为隔离纵向环境开放宿主监听，使 Docker Caddy 可访问控制平面。"""
-    runtime_environment = control_plane_runtime_environment(
-        environment, enable_telemetry=True
+    return control_plane_runtime_environment(
+        environment,
+        enable_telemetry=True,
+        network_scope=ControlPlaneNetworkScope.DOCKER_GATEWAY,
     )
-    runtime_environment["AGENT_ROOM_BIND_ADDRESS"] = "0.0.0.0:8090"
-    return runtime_environment
 
 
 def web_preview_command() -> list[str]:

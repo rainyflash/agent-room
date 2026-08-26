@@ -20,7 +20,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'python tools/control-plane.py run',
+      command: 'python tools/control-plane.py run --network-scope docker-gateway',
       cwd: '../..',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

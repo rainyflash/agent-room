@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from tools.database import compose_project_name
 from tools.local_runtime import (
+    ControlPlaneNetworkScope,
     LocalRuntimeError,
     bridge_runtime_environment,
     control_plane_runtime_environment,
@@ -62,6 +63,22 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
             enabled["AGENT_ROOM_OTLP_METRICS_ENDPOINT"],
             "http://127.0.0.1:14318/v1/metrics",
         )
+
+    def test_默认只监听回环地址且网关模式必须显式选择(self) -> None:
+        loopback = control_plane_runtime_environment(
+            REQUIRED_VALUES,
+            enable_telemetry=False,
+            matrix_lifecycle_token_file=self.lifecycle_token,
+        )
+        docker_gateway = control_plane_runtime_environment(
+            REQUIRED_VALUES,
+            enable_telemetry=False,
+            network_scope=ControlPlaneNetworkScope.DOCKER_GATEWAY,
+            matrix_lifecycle_token_file=self.lifecycle_token,
+        )
+
+        self.assertEqual(loopback["AGENT_ROOM_BIND_ADDRESS"], "127.0.0.1:8090")
+        self.assertEqual(docker_gateway["AGENT_ROOM_BIND_ADDRESS"], "0.0.0.0:8090")
 
     def test_缺失凭据时立即失败(self) -> None:
         with self.assertRaises(LocalRuntimeError):

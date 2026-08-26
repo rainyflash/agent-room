@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from enum import StrEnum
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,19 @@ MATRIX_LIFECYCLE_TOKEN_FILE: Final = (
 SECURE_STORAGE_SERVICE: Final = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{1,126}[A-Za-z0-9])?$"
 )
+
+
+class ControlPlaneNetworkScope(StrEnum):
+    """限定本地控制平面可以接受连接的网络边界。"""
+
+    LOOPBACK = "loopback"
+    DOCKER_GATEWAY = "docker-gateway"
+
+
+CONTROL_PLANE_BIND_ADDRESSES: Final = {
+    ControlPlaneNetworkScope.LOOPBACK: "127.0.0.1:8090",
+    ControlPlaneNetworkScope.DOCKER_GATEWAY: "0.0.0.0:8090",
+}
 
 
 class LocalRuntimeError(RuntimeError):
@@ -50,6 +64,7 @@ def control_plane_runtime_environment(
     values: Mapping[str, str],
     *,
     enable_telemetry: bool,
+    network_scope: ControlPlaneNetworkScope = ControlPlaneNetworkScope.LOOPBACK,
     matrix_lifecycle_token_file: Path = MATRIX_LIFECYCLE_TOKEN_FILE,
 ) -> dict[str, str]:
     if not matrix_lifecycle_token_file.is_file():
@@ -57,7 +72,7 @@ def control_plane_runtime_environment(
     environment = os.environ.copy()
     environment.update(
         {
-            "AGENT_ROOM_BIND_ADDRESS": "127.0.0.1:8090",
+            "AGENT_ROOM_BIND_ADDRESS": CONTROL_PLANE_BIND_ADDRESSES[network_scope],
             "AGENT_ROOM_DB_HOST": "127.0.0.1",
             "AGENT_ROOM_DB_PORT": "55432",
             "AGENT_ROOM_DB_NAME": "agent_room",
