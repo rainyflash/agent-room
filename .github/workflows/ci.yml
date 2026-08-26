@@ -189,6 +189,8 @@ jobs:
           rustup component add llvm-tools-preview --toolchain 1.97.1
           cargo install cargo-llvm-cov --locked --version 0.9.0
           python tools/database.py coverage
+      - name: 确认覆盖率未改写源码并清理平台生成 Schema
+        run: python tools/build_hygiene.py
       - name: 验证发布形态 PostgreSQL 容量预算
         run: python tools/capacity_database.py
       - name: 上传 PostgreSQL 容量证据
