@@ -1,14 +1,15 @@
 {
   "schemaVersion": 1,
   "evidenceKind": "m3_github_federation_acceptance",
-  "generatedAt": "2026-08-26T12:13:04.611337+00:00",
-  "revision": "ff435e424f4a18af5b22e3776b543c10350a967f",
+  "generatedAt": "2026-08-26T16:13:16Z",
+  "revision": "d794418fef032f8dba37b7ee947bf2fc045dc40c",
   "workflow": {
-    "runId": 32966990323,
-    "url": "https://github.com/rainyflash/agent-room/actions/runs/32966990323",
+    "runId": 32986938295,
+    "url": "https://github.com/rainyflash/agent-room/actions/runs/32986938295",
     "conclusion": "success"
   },
   "passed": true,
+  "sourceReportSha256": "dbf1fa844c2a044a6365632ec44822bf11f771d38748a1042fcf1ab25caad371",
   "topology": {
     "alpha": "Synapse 1.159.0 / independent PostgreSQL / independent signing key",
     "beta": "Synapse 1.159.0 / independent PostgreSQL / independent signing key"

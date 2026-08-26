@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "m2_github_acceptance",
+  "generatedAt": "2026-08-26T16:40:49Z",
+  "revision": "d794418fef032f8dba37b7ee947bf2fc045dc40c",
+  "workflow": {
+    "runId": 32986934905,
+    "url": "https://github.com/rainyflash/agent-room/actions/runs/32986934905",
+    "conclusion": "success"
+  },
+  "passed": true,
+  "jobs": {
+    "acceptance": "success",
+    "windowsX64Package": "success",
+    "m2Gate": "success"
+  },
+  "scenarioPassRate": {
+    "passed": 6,
+    "total": 6
+  },
+  "openBlockers": 0,
+  "sensitiveOutputViolations": 0,
+  "sourceReports": {
+    "acceptanceReportSha256": "7be1523f8165330ccbc4a43818039e6f68d8a0669f82da640a20295963e5faff",
+    "windowsManifestSha256": "09fe030c060ef9137167384d18b35f9d6c67323255756f86db8598db5c598540"
+  },
+  "independentVerification": {
+    "passed": true,
+    "command": "python tools/closed_test.py verify --required-platform windows-x64",
+    "usedExactRevision": true
+  },
+  "artifacts": [
+    {
+      "kind": "web",
+      "platform": "all",
+      "sha256": "47d10131f29f4ea1a217a12c71fbc4fc7fabf1a04f4fa1fff4954857c62f62ec",
+      "size": 10389367
+    },
+    {
+      "kind": "single-node",
+      "platform": "linux",
+      "sha256": "02794af93f8ac6ea06d6e5cb835c85accb16c2ee94f0f79be92a943cf02bf521",
+      "size": 1885319
+    },
+    {
+      "kind": "codex-plugin",
+      "platform": "windows-x64",
+      "sha256": "42ed1d495a441c5e48170b484312ab3d3ade6714979d39bbfab135f777a5c16c",
+      "size": 2020959
+    },
+    {
+      "kind": "desktop",
+      "platform": "windows-x64",
+      "sha256": "f87a8ebf9d27542d5e24452c656daf8cb8a397cd2c9fe96a00bc449f00615059",
+      "size": 67319750
+    }
+  ]
+}
