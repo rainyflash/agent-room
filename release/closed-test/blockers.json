@@ -40,6 +40,30 @@
       "title": "Unix IPC 私有权限扩展从错误模块导入",
       "rootCause": "Windows 条件编译没有覆盖 Unix 分支；interprocess 2.4 将 ListenerOptionsExt 暴露在 os::unix::local_socket，而实现误从通用 local_socket 模块导入。",
       "resolution": "Unix 分支改为从平台模块导入权限扩展，并继续以 0600 创建本地 IPC 端点。"
+    },
+    {
+      "id": "M2-006",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "Linux 纵向验收的 Bridge 父目录没有满足 0700 权限",
+      "rootCause": "递归创建测试数据目录时只给末级目录指定权限，父目录仍受默认 umask 控制；真实 Bridge 按生产约束拒绝 0755 运行根目录。",
+      "resolution": "隔离夹具显式逐个创建 Bridge 数据根并在 Unix 上强制 chmod 0700，回归测试验证两个进程目录都满足私有权限。"
+    },
+    {
+      "id": "M2-007",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "GitHub runner 深路径使 Unix Socket 超过 sockaddr_un 上限",
+      "rootCause": "Unix IPC 文件名包含完整安装 UUID；叠加 GitHub runner 的深工作目录后路径达到 126 字节，bind 在 Bridge 启动前失败。",
+      "resolution": "Unix 私有运行根内使用固定 bridge.sock 文件名，并在启动前按 103 字节可移植上限与 NUL 字节规则响亮拒绝无效路径；Windows 命名管道仍保留安装 ID 隔离。"
+    },
+    {
+      "id": "M2-008",
+      "severity": "blocking",
+      "status": "closed",
+      "title": "Tauri 平台 Schema 生成物污染干净修订门",
+      "rootCause": "数据库覆盖率与桌面构建会生成平台 Schema；后续容量或制品步骤要求干净 Git 修订，因此 CI 在产品测试全部通过后仍被构建副作用阻断。",
+      "resolution": "统一 build_hygiene 工具只允许并清理精确的 Tauri Schema 目录，恢复受跟踪文件，并对任何目录外改动继续失败；CI 与 M2 共用同一实现。"
     }
   ]
 }

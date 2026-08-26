@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "target": "public-beta-v0.1.0",
   "recordedAt": "2026-08-26",
-  "baselineRevision": "f5867fe2ac04511f1d77f7d8bee11f3938e7a274",
+  "baselineRevision": "d794418fef032f8dba37b7ee947bf2fc045dc40c",
   "decision": "no-go",
   "publicBetaEnabled": false,
   "requirements": [
@@ -266,9 +266,9 @@
       "id": "GNG-001",
       "severity": "blocking",
       "status": "open",
-      "title": "当前修订缺少 Windows/macOS 同源 M2 制品与签字",
+      "title": "当前修订缺少 Windows 同源 M2 制品与签字",
       "owner": "仓库维护者",
-      "exitCondition": "修复 GitHub Actions 计费或额度，推送候选修订，并让完整矩阵、Windows x86-64、macOS arm64 与 M2 gate 在同一运行中成功。",
+      "exitCondition": "等待 GitHub Actions 官方重大中断恢复，并让当前候选的完整矩阵、Windows x86-64 与 M2 gate 在同一运行中成功；macOS 只在维护者自托管 runner 上另行验收。",
       "evidence": ["specs/agent-room-foundation/task-36-validation.md"]
     },
     {

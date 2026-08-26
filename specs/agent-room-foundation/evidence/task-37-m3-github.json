@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "m3_github_federation_acceptance",
+  "generatedAt": "2026-08-26T12:13:04.611337+00:00",
+  "revision": "ff435e424f4a18af5b22e3776b543c10350a967f",
+  "workflow": {
+    "runId": 32966990323,
+    "url": "https://github.com/rainyflash/agent-room/actions/runs/32966990323",
+    "conclusion": "success"
+  },
+  "passed": true,
+  "topology": {
+    "alpha": "Synapse 1.159.0 / independent PostgreSQL / independent signing key",
+    "beta": "Synapse 1.159.0 / independent PostgreSQL / independent signing key"
+  },
+  "delivery": {
+    "localAcceptanceObserved": true,
+    "remoteArrivalObserved": true,
+    "remoteReceiptObserved": true
+  },
+  "e2ee": "Megolm across two homeservers",
+  "governance": {
+    "banRejectedRemoteSend": true,
+    "unbanRejoined": true
+  },
+  "compatibility": {
+    "replayIdempotent": true,
+    "unknownEventReadOnly": true,
+    "legacyEventReadOnly": true
+  },
+  "outageRecovery": {
+    "queuedEvents": 3,
+    "deliveredEvents": 3,
+    "orderPreserved": true
+  }
+}

@@ -52,7 +52,7 @@ pnpm build
 - 页面包含一个 Canvas 视觉层、一个详情层，`scrollWidth <= clientWidth`，无横向溢出。
 - 控制台没有运行时 warning 或 error；仅有 Vite 连接日志与 React 开发提示。
 
-该走查验证的是 Chromium 实际辅助功能树和键盘焦点路径，不伪称已经听取特定版本 NVDA/VoiceOver 的语音输出；封闭测试包仍会在任务 36 的 Windows/macOS 设备矩阵中记录具体辅助技术版本。
+该走查验证的是 Chromium 实际辅助功能树和键盘焦点路径，不伪称已经听取特定版本 NVDA/VoiceOver 的语音输出；首发封闭测试记录 Windows 辅助技术版本，VoiceOver 只在维护者自托管 Mac 的手动验收中记录。
 
 ## 6. 提交
 

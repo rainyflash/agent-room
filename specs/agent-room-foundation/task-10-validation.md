@@ -75,8 +75,8 @@
 ## 7. 平台与质量门禁
 
 - Windows 上显式执行真实 OS 安全存储测试，完成签名种子和设备会话的写入、读取与清理。
-- Linux 由现有 Ubuntu 全仓 CI 编译；无 Secret Service 时适配器安全失败。Windows 与 macOS 新增独立原生 CI 编译矩阵，确保各自 Credential Manager / Keychain 后端不会被单平台开发掩盖。
-- Windows 主机交叉检查 macOS 时已编译 `apple-native-keyring-store`，随后因本机没有 Apple C 编译器而停止；完整 macOS 原生编译交由 `macos-latest` 门禁，不伪称 Windows 能完成 Apple 原生链接验证。
+- Linux 由现有 Ubuntu 全仓 CI 编译；无 Secret Service 时适配器安全失败。Windows 原生 CI 验证 Credential Manager 后端。macOS Keychain 代码路径保留，但只允许在维护者提供的自托管 Apple Silicon runner 上手动验收，不再租用 GitHub 托管 macOS runner。
+- Windows 主机交叉检查 macOS 时已编译 `apple-native-keyring-store`，随后因本机没有 Apple C 编译器而停止；完整 macOS 原生链接必须由 `.github/workflows/macos-self-hosted.yml` 验证，缺少自托管 Mac 时明确保持未验证，不用 Windows 结果冒充。
 - `just check` 全部通过：Rust/TypeScript 格式、Clippy `-D warnings`、类型检查、构建、测试、协议一致性、Secret 扫描和 GitHub Actions 固定版本检查均无失败。
 - `python tools/database.py test` 的 12 个真实 PostgreSQL 测试全部通过，其中设备撤销与并发刷新 2 个场景覆盖任务 10 的原子性要求。
 - `just coverage` 合并普通测试与真实 PostgreSQL 测试后，Rust 总行覆盖率为 77.75%，高于 60% 门禁。设备领域、设备应用层、Device Grant、PostgreSQL 设备适配器和设备 HTTP 层行覆盖率分别为 81.10%、78.70%、90.23%、88.74% 和 83.52%。TypeScript 四项覆盖率均为 100%。

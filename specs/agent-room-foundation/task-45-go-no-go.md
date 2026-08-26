@@ -7,7 +7,7 @@
 - **结论：NO-GO**
 - 目标：`public-beta-v0.1.0`
 - 记录日期：2026-08-26
-- 验收基线：`f5867fe2ac04511f1d77f7d8bee11f3938e7a274`
+- 验收基线：`d794418fef032f8dba37b7ee947bf2fc045dc40c`
 - 公开测试已启用：否
 
 本决定不是‘差不多可以上线’。开放阻断全部关闭且所有门禁变为通过之前，不得启用公共联邦、发布公开测试安装包或把当前代码描述为生产支持版本。
@@ -49,10 +49,10 @@
 
 ## 4. 开放阻断
 
-### GNG-001 · 当前修订缺少 Windows/macOS 同源 M2 制品与签字
+### GNG-001 · 当前修订缺少 Windows 同源 M2 制品与签字
 
 - 责任角色：仓库维护者
-- 解除条件：修复 GitHub Actions 计费或额度，推送候选修订，并让完整矩阵、Windows x86-64、macOS arm64 与 M2 gate 在同一运行中成功。
+- 解除条件：等待 GitHub Actions 官方重大中断恢复，并让当前候选的完整矩阵、Windows x86-64 与 M2 gate 在同一运行中成功；macOS 只在维护者自托管 runner 上另行验收。
 - 当前证据：[`specs/agent-room-foundation/task-36-validation.md`](task-36-validation.md)
 
 ### GNG-002 · 独立外部安全评审尚未完成

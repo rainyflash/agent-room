@@ -40,7 +40,7 @@ pnpm --filter @agent-room/desktop exec tauri build --debug --no-bundle \
   Windows 原生桌面可执行文件构建通过
 ```
 
-CI 新增 `desktop-platforms` 矩阵，在 `windows-latest` 与 `macos-latest` 上分别构建桌面专用 Web 产物、Bridge sidecar，并检查与测试桌面 crate。当前人工运行证据来自 Windows；macOS 的原生运行与安装包证据仍会在任务 36 的封闭发布矩阵中作为发布硬门禁，不会用 Windows 结果冒充。
+自动 CI 的 `desktop-platforms` 只在 `windows-latest` 构建桌面专用 Web 产物、Bridge sidecar，并检查与测试桌面 crate。macOS 的原生运行与安装包证据改由手动的自托管 Apple Silicon workflow 产生；没有维护者 Mac runner 时保持未验证，但不会租用昂贵的 GitHub 托管 macOS runner，也不会用 Windows 结果冒充。
 
 ## 5. Windows 真实运行时证据
 

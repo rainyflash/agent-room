@@ -21,8 +21,8 @@
 每个候选必须至少包含：
 
 - `control-plane`、`identity`、`web` 三个 amd64/arm64 OCI Index；
-- Windows、macOS 的 Bridge；
-- Windows、macOS 的 Tauri 更新归档；
+- Windows x86-64 的 Bridge；
+- Windows x86-64 的 Tauri 更新归档；
 - 对应平台 Codex 插件；
 - 跨平台 Tauri 更新 JSON。
 
@@ -87,7 +87,7 @@ pnpm secrets:check
 完成状态要求以下证据全部存在：
 
 1. 维护者完成可审计的离线根密钥仪式并配置公开信任根；
-2. Windows 与 macOS 候选在 GitHub 受保护环境真实构建；
+2. Windows 候选在 GitHub 受保护环境真实构建；macOS ARM64 若要对外发布，必须另行提供维护者自托管构建与宿主验收；
 3. 三个多架构 OCI Index 完成 GHCR 推送、签名和最终复验；
 4. 任务 36 封闭测试和任务 40 公网部署通过；
 5. 数据库扩展与兼容服务端晋级记录具有真实不可变证据；

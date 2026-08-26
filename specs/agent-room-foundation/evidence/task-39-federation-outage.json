@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "evidenceKind": "federation_outage_backfill",
-  "generatedAt": "2026-08-26T05:04:24.765381+00:00",
-  "revision": "f5867fe2ac04511f1d77f7d8bee11f3938e7a274",
+  "generatedAt": "2026-08-26T15:45:55.548723+00:00",
+  "revision": "d794418fef032f8dba37b7ee947bf2fc045dc40c",
   "passed": true,
   "releaseGateEligible": true,
   "topology": {
@@ -23,9 +23,9 @@
     "deliveryRatio": 1.0,
     "duplicateEvents": 0,
     "eventOrderPreserved": true,
-    "localWriteMilliseconds": 79.853,
-    "peerRestartMilliseconds": 4993.077,
-    "backfillMilliseconds": 1054.357
+    "localWriteMilliseconds": 123.74,
+    "peerRestartMilliseconds": 6857.82,
+    "backfillMilliseconds": 1617.311
   },
   "nextCapacityThreshold": {
     "outageSeconds": 3600,

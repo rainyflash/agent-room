@@ -46,7 +46,7 @@ target/release/agent-room-release-tool keygen \
 
 工作流执行以下动作：
 
-1. 构建 Windows x64、macOS x64 的 Tauri 更新归档、Bridge 和平台插件；
+1. 构建 Windows x64 的 Tauri 更新归档、Bridge 和平台插件；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
 2. 构建 `control-plane`、`identity`、`web` 的 amd64/arm64 OCI Index；
 3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；

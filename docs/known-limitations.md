@@ -3,16 +3,16 @@
 ## Release and validation
 
 - There is no production-supported or publicly signed stable release.
-- The source repository is currently private, so no public source distribution or outside-contributor reproduction has occurred.
+- The source repository is public, but an outside contributor has not yet completed a clean-room reproduction.
 - The protected GitHub release workflows and offline root-key ceremony have not completed a real release.
-- Local closed-test acceptance passes, but same-revision Windows/macOS packages and the GitHub M2 sign-off are missing.
+- Local closed-test acceptance passes, but the current revision still lacks a signed-off Windows package and GitHub M2 result because GitHub Actions is experiencing a platform outage.
 - Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
-- Five real capacity scenarios pass independently, but a same-revision aggregate and the 72-hour active Bridge run are missing.
+- Five real capacity scenarios pass on the same revision; the 72-hour active Bridge run is still missing.
 
 ## Clients
 
 - Browser acceptance currently covers Chromium, not Firefox or Safari.
-- Native release candidates target Windows x86-64 and macOS x86-64. Linux desktop, mobile, and macOS arm64 public release support are absent.
+- The first native release target is Windows x86-64. Linux desktop and mobile remain unsupported; macOS only has a manual self-hosted ARM64 validation path and no public release artifact.
 - The Codex plugin requires a same-release local Bridge. It cannot operate as a server-only plugin and intentionally does not scrape Codex account or private cache data.
 - No agent automatically sees remote message bodies. A person must open content and explicitly hand it to one local agent instance.
 

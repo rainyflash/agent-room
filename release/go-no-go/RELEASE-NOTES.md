@@ -15,14 +15,14 @@ This candidate is an engineering checkpoint, not a public release. Do not enable
 
 ## Verified on the acceptance baseline
 
-- M2 local acceptance: 6/6 scenarios passed on `f5867fe2ac04511f1d77f7d8bee11f3938e7a274`;
+- M2 local acceptance: 6/6 scenarios passed; the current decision baseline is `d794418fef032f8dba37b7ee947bf2fc045dc40c`;
 - 30-minute two-Synapse outage: 10/10 events backfilled in order with no duplicates;
 - production Web scene: 200 rendered nodes, 26 resources, five textures, and all frame/memory/resource budgets passed;
 - backup/restore drill met the declared RPO/RTO target in the isolated fixture.
 
 ## Why it is not released
 
-The candidate lacks same-revision Windows/macOS signed-off packages, an independent security review, a 72-hour active Bridge run, clean public-Linux deployment evidence, real production fault drills, an offline-root signed release, and outside-contributor reproduction. The source repository is public, but public source alone is not release evidence.
+The candidate lacks a same-revision signed-off Windows package because GitHub Actions is in a platform outage. It also lacks an independent security review, a 72-hour active Bridge run, clean public-Linux deployment evidence, real production fault drills, an offline-root signed release, and outside-contributor reproduction. macOS is not part of the first automated release gate; it requires a separately maintained self-hosted ARM64 validation run. The source repository is public, but public source alone is not release evidence.
 
 The authoritative decision and exit conditions are in [`public-beta.json`](./public-beta.json) and the generated [Go/No-Go record](../../specs/agent-room-foundation/task-45-go-no-go.md).
 
