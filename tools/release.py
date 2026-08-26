@@ -65,6 +65,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     prepare_parser = subcommands.add_parser("prepare", help="生成待离线签名的发布清单")
     add_candidate_arguments(prepare_parser)
 
+    descriptor_parser = subcommands.add_parser("descriptor", help="生成一个受约束的产物描述")
+    descriptor_parser.add_argument("--root", type=Path, required=True)
+    descriptor_parser.add_argument("--output", type=Path, required=True)
+    descriptor_parser.add_argument("--name", required=True)
+    descriptor_parser.add_argument("--kind", choices=sorted(VALID_KINDS), required=True)
+    descriptor_parser.add_argument("--platform", required=True)
+    descriptor_parser.add_argument("--path", required=True)
+    descriptor_parser.add_argument("--url", required=True)
+    descriptor_parser.add_argument("--sbom-path", required=True)
+    descriptor_parser.add_argument("--sbom-url", required=True)
+    descriptor_parser.add_argument("--signature-path", required=True)
+    descriptor_parser.add_argument("--signature-url", required=True)
+    descriptor_parser.add_argument("--signature-mode", choices=("blob", "oci"), required=True)
+
+    inventory_parser = subcommands.add_parser("inventory", help="聚合多平台产物描述")
+    inventory_parser.add_argument("--root", type=Path, required=True)
+    inventory_parser.add_argument("--descriptors", type=Path, required=True)
+    inventory_parser.add_argument("--output", type=Path, required=True)
+    inventory_parser.add_argument("--channel", choices=sorted(VALID_CHANNELS), required=True)
+    inventory_parser.add_argument("--sequence", type=int, required=True)
+    inventory_parser.add_argument("--version", required=True)
+    inventory_parser.add_argument("--published-at-unix-seconds", type=int, required=True)
+    inventory_parser.add_argument("--expires-at-unix-seconds", type=int, required=True)
+    inventory_parser.add_argument("--rollback-from")
+    inventory_parser.add_argument("--tauri-manifest-url", required=True)
+
     verify_parser = subcommands.add_parser("verify", help="验证候选、离线签名和 Sigstore 证据")
     add_candidate_arguments(verify_parser)
     verify_parser.add_argument("--signed-manifest", type=Path, required=True)
@@ -185,54 +211,13 @@ def parse_artifacts(root: Path, inventory: Mapping[str, object]) -> tuple[Artifa
         label = f"inventory.artifacts[{index}]"
         if not isinstance(value, dict):
             raise ReleaseFailure(f"{label} 必须是对象。")
-        name = require_string(value, "name", label)
-        kind = require_string(value, "kind", label)
-        platform = require_string(value, "platform", label)
-        if not NAME_PATTERN.fullmatch(name):
-            raise ReleaseFailure(f"{label}.name 不符合发布命名规则。")
-        if kind not in VALID_KINDS:
-            raise ReleaseFailure(f"{label}.kind 不受支持：{kind}")
-        if not PLATFORM_PATTERN.fullmatch(platform):
-            raise ReleaseFailure(f"{label}.platform 不符合发布命名规则。")
-        identity = (kind, platform, name)
+        artifact = parse_artifact(root, value, label)
+        identity = (artifact.kind, artifact.platform, artifact.name)
         if identity in identities:
-            raise ReleaseFailure(f"发布产物身份重复：{kind}/{platform}/{name}")
+            raise ReleaseFailure(
+                f"发布产物身份重复：{artifact.kind}/{artifact.platform}/{artifact.name}"
+            )
         identities.add(identity)
-
-        url = require_string(value, "url", label)
-        sbom_url = require_string(value, "sbomUrl", label)
-        signature_url = require_string(value, "signatureUrl", label)
-        signature_mode = require_string(value, "signatureMode", label)
-        validate_artifact_url(url, kind)
-        validate_https_url(sbom_url, f"{label}.sbomUrl")
-        validate_https_url(signature_url, f"{label}.signatureUrl")
-        if signature_mode not in {"blob", "oci"}:
-            raise ReleaseFailure(f"{label}.signatureMode 必须是 blob 或 oci。")
-        if (kind == "oci-image") != (signature_mode == "oci"):
-            raise ReleaseFailure(f"{label}.signatureMode 与产物类型不一致。")
-
-        artifact = ArtifactSource(
-            name=name,
-            kind=kind,
-            platform=platform,
-            path=resolve_local_file(root, require_string(value, "path", label), f"{label}.path"),
-            url=url,
-            sbom_path=resolve_local_file(
-                root,
-                require_string(value, "sbomPath", label),
-                f"{label}.sbomPath",
-            ),
-            sbom_url=sbom_url,
-            signature_path=resolve_local_file(
-                root,
-                require_string(value, "signaturePath", label),
-                f"{label}.signaturePath",
-            ),
-            signature_url=signature_url,
-            signature_mode=signature_mode,
-        )
-        validate_sbom(artifact.sbom_path)
-        validate_sigstore_bundle(artifact.signature_path)
         artifacts.append(artifact)
 
     missing = REQUIRED_KINDS - {artifact.kind for artifact in artifacts}
@@ -244,6 +229,119 @@ def parse_artifacts(root: Path, inventory: Mapping[str, object]) -> tuple[Artifa
     if missing_images:
         raise ReleaseFailure(f"发布候选缺少必需 OCI 镜像：{', '.join(sorted(missing_images))}")
     return tuple(artifacts)
+
+
+def parse_artifact(
+    root: Path,
+    value: Mapping[str, object],
+    label: str,
+) -> ArtifactSource:
+    name = require_string(value, "name", label)
+    kind = require_string(value, "kind", label)
+    platform = require_string(value, "platform", label)
+    if not NAME_PATTERN.fullmatch(name):
+        raise ReleaseFailure(f"{label}.name 不符合发布命名规则。")
+    if kind not in VALID_KINDS:
+        raise ReleaseFailure(f"{label}.kind 不受支持：{kind}")
+    if not PLATFORM_PATTERN.fullmatch(platform):
+        raise ReleaseFailure(f"{label}.platform 不符合发布命名规则。")
+
+    url = require_string(value, "url", label)
+    sbom_url = require_string(value, "sbomUrl", label)
+    signature_url = require_string(value, "signatureUrl", label)
+    signature_mode = require_string(value, "signatureMode", label)
+    validate_artifact_url(url, kind)
+    validate_https_url(sbom_url, f"{label}.sbomUrl")
+    validate_https_url(signature_url, f"{label}.signatureUrl")
+    if signature_mode not in {"blob", "oci"}:
+        raise ReleaseFailure(f"{label}.signatureMode 必须是 blob 或 oci。")
+    if (kind == "oci-image") != (signature_mode == "oci"):
+        raise ReleaseFailure(f"{label}.signatureMode 与产物类型不一致。")
+
+    artifact = ArtifactSource(
+        name=name,
+        kind=kind,
+        platform=platform,
+        path=resolve_local_file(root, require_string(value, "path", label), f"{label}.path"),
+        url=url,
+        sbom_path=resolve_local_file(
+            root,
+            require_string(value, "sbomPath", label),
+            f"{label}.sbomPath",
+        ),
+        sbom_url=sbom_url,
+        signature_path=resolve_local_file(
+            root,
+            require_string(value, "signaturePath", label),
+            f"{label}.signaturePath",
+        ),
+        signature_url=signature_url,
+        signature_mode=signature_mode,
+    )
+    validate_sbom(artifact.sbom_path)
+    validate_sigstore_bundle(artifact.signature_path)
+    return artifact
+
+
+def artifact_document(artifact: ArtifactSource, root: Path) -> dict[str, object]:
+    return {
+        "name": artifact.name,
+        "kind": artifact.kind,
+        "platform": artifact.platform,
+        "path": relative_path(root, artifact.path),
+        "url": artifact.url,
+        "sbomPath": relative_path(root, artifact.sbom_path),
+        "sbomUrl": artifact.sbom_url,
+        "signaturePath": relative_path(root, artifact.signature_path),
+        "signatureUrl": artifact.signature_url,
+        "signatureMode": artifact.signature_mode,
+    }
+
+
+def create_descriptor(args: argparse.Namespace) -> None:
+    root = args.root.resolve(strict=True)
+    raw = {
+        "name": args.name,
+        "kind": args.kind,
+        "platform": args.platform,
+        "path": args.path,
+        "url": args.url,
+        "sbomPath": args.sbom_path,
+        "sbomUrl": args.sbom_url,
+        "signaturePath": args.signature_path,
+        "signatureUrl": args.signature_url,
+        "signatureMode": args.signature_mode,
+    }
+    artifact = parse_artifact(root, raw, "descriptor")
+    write_new_json(args.output, artifact_document(artifact, root))
+
+
+def create_inventory(args: argparse.Namespace) -> None:
+    root = args.root.resolve(strict=True)
+    descriptors = args.descriptors.resolve(strict=True)
+    try:
+        descriptors.relative_to(root)
+    except ValueError as error:
+        raise ReleaseFailure("描述文件目录必须位于候选根目录内。") from error
+    descriptor_paths = sorted(descriptors.rglob("*.artifact.json"))
+    if not descriptor_paths:
+        raise ReleaseFailure("没有找到任何 *.artifact.json 描述文件。")
+    artifacts: list[Mapping[str, object]] = []
+    for descriptor_path in descriptor_paths:
+        artifacts.append(load_object(descriptor_path, "产物描述"))
+    inventory: dict[str, object] = {
+        "schemaVersion": SCHEMA_VERSION,
+        "channel": args.channel,
+        "sequence": args.sequence,
+        "version": args.version,
+        "publishedAtUnixSeconds": args.published_at_unix_seconds,
+        "expiresAtUnixSeconds": args.expires_at_unix_seconds,
+        "rollbackFrom": args.rollback_from,
+        "tauriManifestUrl": args.tauri_manifest_url,
+        "artifacts": artifacts,
+    }
+    parse_artifacts(root, inventory)
+    write_new_json(args.output, inventory)
 
 
 def sha256_file(path: Path) -> str:
@@ -500,12 +598,19 @@ def verify(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(argv)
-        paths = CandidatePaths(args.manifest, args.evidence)
-        if args.command == "prepare":
+        if args.command == "descriptor":
+            create_descriptor(args)
+            print(f"已生成产物描述：{args.output}")
+        elif args.command == "inventory":
+            create_inventory(args)
+            print(f"已聚合发布 inventory：{args.output}")
+        elif args.command == "prepare":
+            paths = CandidatePaths(args.manifest, args.evidence)
             prepare(args.root, args.inventory, paths)
             print(f"已生成待签名清单：{paths.manifest}")
             print(f"已生成候选证据：{paths.evidence}")
         else:
+            paths = CandidatePaths(args.manifest, args.evidence)
             verify(args)
             print("发布候选、离线签名和 Sigstore 证据均验证通过。")
         return 0

@@ -10,6 +10,9 @@ from tools.release import (
     CandidatePaths,
     ReleaseFailure,
     build_candidate,
+    create_descriptor,
+    create_inventory,
+    parse_args,
     prepare,
     validate_candidate_files,
 )
@@ -148,6 +151,71 @@ class ReleaseCandidateTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ReleaseFailure, "不一致"):
             validate_candidate_files(self.root, inventory_path, paths)
+
+    def test_descriptor_and_inventory_commands_preserve_safe_relative_paths(self) -> None:
+        source_inventory = json.loads(self.inventory().read_text(encoding="utf-8"))
+        descriptor_root = self.root / "descriptors"
+        for index, artifact in enumerate(source_inventory["artifacts"]):
+            args = parse_args(
+                [
+                    "descriptor",
+                    "--root",
+                    str(self.root),
+                    "--output",
+                    str(descriptor_root / f"{index}.artifact.json"),
+                    "--name",
+                    artifact["name"],
+                    "--kind",
+                    artifact["kind"],
+                    "--platform",
+                    artifact["platform"],
+                    "--path",
+                    artifact["path"],
+                    "--url",
+                    artifact["url"],
+                    "--sbom-path",
+                    artifact["sbomPath"],
+                    "--sbom-url",
+                    artifact["sbomUrl"],
+                    "--signature-path",
+                    artifact["signaturePath"],
+                    "--signature-url",
+                    artifact["signatureUrl"],
+                    "--signature-mode",
+                    artifact["signatureMode"],
+                ]
+            )
+            create_descriptor(args)
+
+        output = self.root / "assembled.json"
+        inventory_args = parse_args(
+            [
+                "inventory",
+                "--root",
+                str(self.root),
+                "--descriptors",
+                str(descriptor_root),
+                "--output",
+                str(output),
+                "--channel",
+                "testing",
+                "--sequence",
+                "41",
+                "--version",
+                "0.2.0",
+                "--published-at-unix-seconds",
+                "1800000000",
+                "--expires-at-unix-seconds",
+                "1800086400",
+                "--tauri-manifest-url",
+                "https://releases.example/tauri.json",
+            ]
+        )
+        create_inventory(inventory_args)
+
+        assembled = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(len(assembled["artifacts"]), 7)
+        self.assertTrue(all(not Path(item["path"]).is_absolute() for item in assembled["artifacts"]))
 
 
 if __name__ == "__main__":
