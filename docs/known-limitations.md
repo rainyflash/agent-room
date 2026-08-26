@@ -38,4 +38,4 @@
 - A message preview is deliberately incomplete. Opening content can still expose untrusted text, so handoff remains separate.
 - Native accessibility and reduced-performance paths are implemented, but broad assistive-technology field testing is still pending.
 
-Track acceptance status in [`specs/agent-room-foundation/tasks.md`](../specs/agent-room-foundation/tasks.md). A missing blocker in this document does not override that source of truth.
+Track acceptance status in the [written Go/No-Go decision](../specs/agent-room-foundation/task-45-go-no-go.md) and [`tasks.md`](../specs/agent-room-foundation/tasks.md). A missing blocker in this document does not override those sources of truth.

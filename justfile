@@ -25,6 +25,15 @@ oss-check:
 oss-acceptance:
   python tools/open_source_acceptance.py
 
+go-no-go:
+  python tools/go_no_go.py validate
+
+go-no-go-record:
+  python tools/go_no_go.py generate
+
+go-no-go-assert:
+  python tools/go_no_go.py assert-go
+
 format:
   cargo fmt --all
   {{pnpm}} format
@@ -67,6 +76,7 @@ check: format-check lint typecheck build test python-test protocol-check
   {{pnpm}} actions:check
   python tools/license_inventory.py check
   python tools/open_source.py
+  python tools/go_no_go.py validate
 
 dev-up:
   node tools/run-powershell.mjs tools/dev-infra.ps1 up

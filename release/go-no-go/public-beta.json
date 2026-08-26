@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "target": "public-beta-v0.1.0",
+  "recordedAt": "2026-08-26",
+  "baselineRevision": "f5867fe2ac04511f1d77f7d8bee11f3938e7a274",
+  "decision": "no-go",
+  "publicBetaEnabled": false,
+  "requirements": [
+    {
+      "id": 1,
+      "name": "身份与归属",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-12-validation.md",
+        "specs/agent-room-foundation/task-13-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 2,
+      "name": "Agent 接入",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-13-validation.md",
+        "specs/agent-room-foundation/task-23-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 3,
+      "name": "公共大厅发现与容量分片",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-16-validation.md",
+        "specs/agent-room-foundation/task-32-validation.md",
+        "specs/agent-room-foundation/task-39-validation.md"
+      ],
+      "blockerIds": ["GNG-003"]
+    },
+    {
+      "id": 4,
+      "name": "私人房间",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-25-validation.md",
+        "specs/agent-room-foundation/task-27-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": ["GNG-002"]
+    },
+    {
+      "id": 5,
+      "name": "直接会话",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-18-validation.md",
+        "specs/agent-room-foundation/task-27-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": ["GNG-002"]
+    },
+    {
+      "id": 6,
+      "name": "公频消息",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-18-validation.md",
+        "specs/agent-room-foundation/task-34-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 7,
+      "name": "渐进式消息查看",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-21-validation.md",
+        "specs/agent-room-foundation/task-22-validation.md",
+        "specs/agent-room-foundation/task-35-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 8,
+      "name": "Agent 工作状态",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-14-validation.md",
+        "specs/agent-room-foundation/task-24-validation.md",
+        "specs/agent-room-foundation/task-39-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 9,
+      "name": "可视化大厅",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-19-validation.md",
+        "specs/agent-room-foundation/task-20-validation.md",
+        "specs/agent-room-foundation/task-39-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 10,
+      "name": "Agent 自主发送权限",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-15-validation.md",
+        "specs/agent-room-foundation/task-18-validation.md",
+        "specs/agent-room-foundation/task-35-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 11,
+      "name": "多设备、离线与恢复",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-26-validation.md",
+        "specs/agent-room-foundation/task-27-validation.md",
+        "specs/agent-room-foundation/task-34-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": ["GNG-001", "GNG-002"]
+    },
+    {
+      "id": 12,
+      "name": "安全、隐私与滥用治理",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-30-validation.md",
+        "specs/agent-room-foundation/task-35-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": ["GNG-002"]
+    },
+    {
+      "id": 13,
+      "name": "开放、自托管与联邦",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-37-validation.md",
+        "specs/agent-room-foundation/task-38-validation.md",
+        "specs/agent-room-foundation/task-40-validation.md",
+        "specs/agent-room-foundation/task-44-validation.md"
+      ],
+      "blockerIds": ["GNG-004", "GNG-006", "GNG-007"]
+    },
+    {
+      "id": 14,
+      "name": "国际化与可访问性",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-19-validation.md",
+        "specs/agent-room-foundation/task-20-validation.md",
+        "specs/agent-room-foundation/task-36-validation.md"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": 15,
+      "name": "可靠性与可诊断性",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-33-validation.md",
+        "specs/agent-room-foundation/task-34-validation.md",
+        "specs/agent-room-foundation/task-42-validation.md",
+        "specs/agent-room-foundation/task-43-validation.md"
+      ],
+      "blockerIds": ["GNG-001", "GNG-005", "GNG-006"]
+    }
+  ],
+  "gates": [
+    {
+      "id": "functional",
+      "name": "功能与关键用户旅程",
+      "status": "pass",
+      "evidence": ["specs/agent-room-foundation/task-36-validation.md"],
+      "blockerIds": []
+    },
+    {
+      "id": "security",
+      "name": "安全、E2EE 与隐私评审",
+      "status": "blocked",
+      "evidence": ["specs/agent-room-foundation/task-35-validation.md", "SECURITY.md"],
+      "blockerIds": ["GNG-002"]
+    },
+    {
+      "id": "capacity",
+      "name": "容量与性能",
+      "status": "blocked",
+      "evidence": ["specs/agent-room-foundation/task-39-validation.md"],
+      "blockerIds": ["GNG-003"]
+    },
+    {
+      "id": "recovery",
+      "name": "备份、恢复与删除",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-41-validation.md",
+        "specs/agent-room-foundation/evidence/task-41-backup-restore.json"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": "federation",
+      "name": "联邦兼容、治理与回填",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-37-validation.md",
+        "specs/agent-room-foundation/task-38-validation.md",
+        "specs/agent-room-foundation/evidence/task-39-federation-outage.json"
+      ],
+      "blockerIds": []
+    },
+    {
+      "id": "deployment",
+      "name": "公网生产部署",
+      "status": "blocked",
+      "evidence": ["specs/agent-room-foundation/task-40-validation.md"],
+      "blockerIds": ["GNG-004"]
+    },
+    {
+      "id": "observability",
+      "name": "SLO、告警与故障演练",
+      "status": "blocked",
+      "evidence": ["specs/agent-room-foundation/task-42-validation.md"],
+      "blockerIds": ["GNG-005"]
+    },
+    {
+      "id": "release",
+      "name": "跨平台签名发行与回滚",
+      "status": "blocked",
+      "evidence": [
+        "specs/agent-room-foundation/task-36-validation.md",
+        "specs/agent-room-foundation/task-43-validation.md"
+      ],
+      "blockerIds": ["GNG-001", "GNG-006"]
+    },
+    {
+      "id": "open_source",
+      "name": "开源与外部自托管复现",
+      "status": "blocked",
+      "evidence": ["specs/agent-room-foundation/task-44-validation.md"],
+      "blockerIds": ["GNG-007"]
+    },
+    {
+      "id": "supply_chain",
+      "name": "依赖、许可证与供应链",
+      "status": "pass",
+      "evidence": [
+        "specs/agent-room-foundation/task-43-validation.md",
+        "specs/agent-room-foundation/task-44-validation.md",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "blockerIds": []
+    }
+  ],
+  "blockers": [
+    {
+      "id": "GNG-001",
+      "severity": "blocking",
+      "status": "open",
+      "title": "当前修订缺少 Windows/macOS 同源 M2 制品与签字",
+      "owner": "仓库维护者",
+      "exitCondition": "修复 GitHub Actions 计费或额度，推送候选修订，并让完整矩阵、Windows x86-64、macOS arm64 与 M2 gate 在同一运行中成功。",
+      "evidence": ["specs/agent-room-foundation/task-36-validation.md"]
+    },
+    {
+      "id": "GNG-002",
+      "severity": "blocking",
+      "status": "open",
+      "title": "独立外部安全评审尚未完成",
+      "owner": "独立安全评审方与隐私评审方",
+      "exitCondition": "完成威胁模型、E2EE、设备恢复、提示注入、权限、隐私文案和删除残留评审，关闭全部高危与阻断发现。",
+      "evidence": ["specs/agent-room-foundation/task-35-validation.md", "SECURITY.md"]
+    },
+    {
+      "id": "GNG-003",
+      "severity": "blocking",
+      "status": "open",
+      "title": "72 小时活跃 Bridge 常驻与同修订容量汇总缺失",
+      "owner": "容量测试运营者",
+      "exitCondition": "真实活跃会话连续运行 259,200 秒并满足 RSS 预算；六个容量场景在同一候选修订通过严格汇总门。",
+      "evidence": ["specs/agent-room-foundation/task-39-validation.md"]
+    },
+    {
+      "id": "GNG-004",
+      "severity": "blocking",
+      "status": "open",
+      "title": "干净公网 Linux、DNS、ACME 与外部依赖部署未验收",
+      "owner": "部署运营者",
+      "exitCondition": "在干净 x86-64 Linux 主机从公开发行物完成安装、健康、OIDC、对象存储、公开 Matrix 委派与双向联邦验证。",
+      "evidence": ["specs/agent-room-foundation/task-40-validation.md"]
+    },
+    {
+      "id": "GNG-005",
+      "severity": "blocking",
+      "status": "open",
+      "title": "真实生产副本故障演练与 SLO 对账缺失",
+      "owner": "运行与可观测性负责人",
+      "exitCondition": "在等价生产副本逐一演练控制平面、Matrix、对象存储、OIDC、Bridge 与联邦对端故障，验证分页告警、Runbook、恢复和原始指标一致。",
+      "evidence": ["specs/agent-room-foundation/task-42-validation.md"]
+    },
+    {
+      "id": "GNG-006",
+      "severity": "blocking",
+      "status": "open",
+      "title": "离线根密钥仪式与受保护签名发行未执行",
+      "owner": "发行维护者",
+      "exitCondition": "举行可审计的离线根密钥仪式，完成受保护候选与最终工作流、OCI/SBOM/签名复验，以及测试渠道升级、中断恢复和显式回滚。",
+      "evidence": ["specs/agent-room-foundation/task-43-validation.md"]
+    },
+    {
+      "id": "GNG-007",
+      "severity": "blocking",
+      "status": "open",
+      "title": "仓库尚未公开且没有外部贡献者复现",
+      "owner": "仓库维护者与外部贡献者",
+      "exitCondition": "在维护者批准后公开仓库，并由无开发缓存的外部贡献者按 README 完成开发启动；运营者在公网 Linux 按自托管指南部署且不手改数据库。",
+      "evidence": ["specs/agent-room-foundation/task-44-validation.md"]
+    }
+  ],
+  "publication": {
+    "releaseNotes": "release/go-no-go/RELEASE-NOTES.md",
+    "knownLimitations": "docs/known-limitations.md",
+    "dataPolicy": "release/closed-test/DATA-POLICY.md",
+    "securityPolicy": "SECURITY.md"
+  }
+}

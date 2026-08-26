@@ -26,6 +26,9 @@ REQUIRED_FILES: Final = (
     "docs/compatibility.md",
     "docs/known-limitations.md",
     "docs/adr/README.md",
+    "release/go-no-go/public-beta.json",
+    "release/go-no-go/RELEASE-NOTES.md",
+    "specs/agent-room-foundation/task-45-go-no-go.md",
 )
 PUBLIC_DOCUMENTS: Final = (
     "README.md",
@@ -34,6 +37,8 @@ PUBLIC_DOCUMENTS: Final = (
     "CODE_OF_CONDUCT.md",
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
+    "release/go-no-go/RELEASE-NOTES.md",
+    "specs/agent-room-foundation/task-45-go-no-go.md",
 )
 MARKDOWN_LINK: Final = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 PLACEHOLDER: Final = re.compile(r"\b(?:TODO|TBD|FIXME|example\.org)\b", re.IGNORECASE)
