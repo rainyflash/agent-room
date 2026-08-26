@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from tools.capacity_database import DatabaseCapacityFailure, parse_observation
+from tools.capacity_database import (
+    DatabaseCapacityFailure,
+    capacity_test_command,
+    parse_observation,
+)
 
 
 class DatabaseCapacityObservationTests(unittest.TestCase):
@@ -20,6 +24,11 @@ class DatabaseCapacityObservationTests(unittest.TestCase):
             parse_observation(
                 "CAPACITY_OBSERVATION={}\nCAPACITY_OBSERVATION={}\n"
             )
+
+    def test_capacity_budget_uses_release_binary(self) -> None:
+        command = capacity_test_command()
+        self.assertEqual(command[:3], ["cargo", "test", "--release"])
+        self.assertIn("capacity", command)
 
 
 if __name__ == "__main__":

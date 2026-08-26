@@ -63,6 +63,24 @@ def parse_observation(output: str) -> dict[str, object]:
     return value
 
 
+def capacity_test_command() -> list[str]:
+    """使用发布构建执行性能预算，拒绝覆盖率或调试插桩污染结果。"""
+
+    return [
+        "cargo",
+        "test",
+        "--release",
+        "-p",
+        "agent-room-postgres-adapter",
+        "--test",
+        "capacity",
+        "--",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+    ]
+
+
 def run() -> dict[str, object]:
     values = read_environment(ENV_FILE)
     migration_password = required_value(values, "AGENT_ROOM_DB_PASSWORD")
@@ -80,18 +98,7 @@ def run() -> dict[str, object]:
     environment["RUST_BACKTRACE"] = "0"
     try:
         result = subprocess.run(
-            [
-                "cargo",
-                "test",
-                "-p",
-                "agent-room-postgres-adapter",
-                "--test",
-                "capacity",
-                "--",
-                "--ignored",
-                "--nocapture",
-                "--test-threads=1",
-            ],
+            capacity_test_command(),
             cwd=ROOT,
             env=environment,
             check=False,

@@ -17,6 +17,8 @@ from urllib.parse import quote
 ROOT: Final = Path(__file__).resolve().parent.parent
 ENV_FILE: Final = ROOT / ".env.local"
 COMPOSE_FILE: Final = ROOT / "infra" / "compose" / "compose.yaml"
+POSTGRES_TESTS_DIRECTORY: Final = ROOT / "crates" / "postgres-adapter" / "tests"
+PERFORMANCE_TEST_TARGETS: Final = frozenset({"capacity"})
 PROJECT_NAME: Final = "agent-room-dev"
 TEST_DATABASE: Final = "agent_room_repository_test"
 SAFE_SECRET: Final = re.compile(r"^[A-Za-z0-9._~-]{16,256}$")
@@ -116,6 +118,54 @@ def run(command: list[str], environment: dict[str, str]) -> None:
         raise RuntimeError(f"命令执行失败，退出码为 {result.returncode}。")
 
 
+def postgres_correctness_test_targets(
+    tests_directory: Path = POSTGRES_TESTS_DIRECTORY,
+) -> tuple[str, ...]:
+    """返回正确性集成测试，排除必须独立执行的发布性能门。"""
+
+    available = {path.stem for path in tests_directory.glob("*.rs") if path.is_file()}
+    missing_performance_targets = PERFORMANCE_TEST_TARGETS - available
+    if missing_performance_targets:
+        missing = ", ".join(sorted(missing_performance_targets))
+        raise RuntimeError(f"PostgreSQL 性能测试目标缺失：{missing}。")
+
+    targets = tuple(sorted(available - PERFORMANCE_TEST_TARGETS))
+    if not targets:
+        raise RuntimeError("没有可执行覆盖率插桩的 PostgreSQL 集成测试。")
+    return targets
+
+
+def postgres_correctness_test_command(
+    tests_directory: Path = POSTGRES_TESTS_DIRECTORY,
+) -> list[str]:
+    """构造真实数据库正确性测试命令，不混入性能预算。"""
+
+    command = ["cargo", "test", "-p", "agent-room-postgres-adapter"]
+    for target in postgres_correctness_test_targets(tests_directory):
+        command.extend(("--test", target))
+    command.extend(("--", "--ignored", "--test-threads=1"))
+    return command
+
+
+def postgres_coverage_test_command(
+    tests_directory: Path = POSTGRES_TESTS_DIRECTORY,
+) -> list[str]:
+    """构造可审计的覆盖率命令，避免性能预算在插桩二进制上执行。"""
+
+    command = [
+        "cargo",
+        "llvm-cov",
+        "--all-features",
+        "-p",
+        "agent-room-postgres-adapter",
+        "--no-report",
+    ]
+    for target in postgres_correctness_test_targets(tests_directory):
+        command.extend(("--test", target))
+    command.extend(("--", "--ignored", "--test-threads=1"))
+    return command
+
+
 def reset_test_database() -> None:
     if TEST_DATABASE != "agent_room_repository_test":
         raise RuntimeError("拒绝操作未经审计的测试数据库名。")
@@ -198,18 +248,7 @@ def run_in_test_database(
 def test(values: dict[str, str]) -> None:
     run_in_test_database(
         values,
-        [
-            [
-                "cargo",
-                "test",
-                "-p",
-                "agent-room-postgres-adapter",
-                "--tests",
-                "--",
-                "--ignored",
-                "--test-threads=1",
-            ]
-        ],
+        [postgres_correctness_test_command()],
     )
 
 
@@ -225,18 +264,7 @@ def coverage(values: dict[str, str]) -> None:
                 "--all-features",
                 "--no-report",
             ],
-            [
-                "cargo",
-                "llvm-cov",
-                "--all-features",
-                "-p",
-                "agent-room-postgres-adapter",
-                "--tests",
-                "--no-report",
-                "--",
-                "--ignored",
-                "--test-threads=1",
-            ],
+            postgres_coverage_test_command(),
             [sys.executable, "tools/matrix.py", "coverage"],
             [
                 "cargo",

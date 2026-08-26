@@ -189,6 +189,16 @@ jobs:
           rustup component add llvm-tools-preview --toolchain 1.97.1
           cargo install cargo-llvm-cov --locked --version 0.9.0
           python tools/database.py coverage
+      - name: 验证发布形态 PostgreSQL 容量预算
+        run: python tools/capacity_database.py
+      - name: 上传 PostgreSQL 容量证据
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: task-39-database-capacity-evidence
+          path: artifacts/capacity/database-report.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: 应用控制平面数据库迁移
         run: python tools/database.py migrate
       - name: 生成默认自托管配置并验证生产 Compose
