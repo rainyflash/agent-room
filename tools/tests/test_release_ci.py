@@ -50,6 +50,7 @@ class ReleaseCiTests(unittest.TestCase):
 
         self.assertEqual(metadata["version"], "0.2.0")
         self.assertEqual(metadata["expiresAtUnixSeconds"], 1_800_604_800)
+        self.assertEqual(metadata["imageBase"], "ghcr.io/example/agent-room")
         self.assertEqual(
             metadata["tauriManifestUrl"],
             "https://github.com/example/agent-room/releases/download/v0.2.0/agent-room-update-v0.2.0.json",

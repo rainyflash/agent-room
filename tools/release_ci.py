@@ -91,6 +91,7 @@ def build_metadata(args: argparse.Namespace) -> dict[str, object]:
         "publishedAtUnixSeconds": now,
         "expiresAtUnixSeconds": now + 7 * 24 * 60 * 60,
         "releaseBaseUrl": base_url,
+        "imageBase": f"ghcr.io/{args.repository.lower()}",
         "tauriManifestName": tauri_name,
         "tauriManifestUrl": f"{base_url}/{tauri_name}",
     }
@@ -116,6 +117,7 @@ def github_output_values(metadata: Mapping[str, object]) -> tuple[tuple[str, str
         ("published_at", "publishedAtUnixSeconds"),
         ("expires_at", "expiresAtUnixSeconds"),
         ("release_base_url", "releaseBaseUrl"),
+        ("image_base", "imageBase"),
         ("tauri_manifest_name", "tauriManifestName"),
         ("tauri_manifest_url", "tauriManifestUrl"),
     )

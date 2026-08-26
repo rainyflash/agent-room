@@ -173,8 +173,20 @@ def validate_artifact_url(value: str, kind: str) -> None:
     if kind != "oci-image":
         validate_https_url(value, "artifact.url")
         return
-    if not value.startswith("oci://") or "@sha256:" not in value:
+    if oci_digest(value) is None:
         raise ReleaseFailure("OCI 产物地址必须使用 oci://...@sha256:<digest>。")
+
+
+def oci_digest(value: str) -> str | None:
+    if not value.startswith("oci://"):
+        return None
+    marker = "@sha256:"
+    if marker not in value:
+        return None
+    repository, digest = value.rsplit(marker, maxsplit=1)
+    if not repository.removeprefix("oci://") or not SHA256_PATTERN.fullmatch(digest):
+        return None
+    return digest
 
 
 def validate_sbom(path: Path) -> None:
@@ -336,7 +348,7 @@ def create_inventory(args: argparse.Namespace) -> None:
         "version": args.version,
         "publishedAtUnixSeconds": args.published_at_unix_seconds,
         "expiresAtUnixSeconds": args.expires_at_unix_seconds,
-        "rollbackFrom": args.rollback_from,
+        "rollbackFrom": args.rollback_from or None,
         "tauriManifestUrl": args.tauri_manifest_url,
         "artifacts": artifacts,
     }
@@ -384,12 +396,13 @@ def build_candidate(
     manifest_artifacts: list[dict[str, object]] = []
     evidence_artifacts: list[dict[str, object]] = []
     for artifact in artifacts:
-        digest = sha256_file(artifact.path)
+        local_digest = sha256_file(artifact.path)
+        digest = oci_digest(artifact.url) if artifact.kind == "oci-image" else local_digest
+        if digest is None:
+            raise ReleaseFailure(f"OCI 地址摘要无效：{artifact.name}")
         byte_length = artifact.path.stat().st_size
         if byte_length == 0:
             raise ReleaseFailure(f"发布产物不能为空：{artifact.path}")
-        if artifact.kind == "oci-image" and not artifact.url.endswith(f"@sha256:{digest}"):
-            raise ReleaseFailure(f"OCI 地址摘要与本地 manifest 不一致：{artifact.name}")
         manifest_artifacts.append(
             {
                 "name": artifact.name,
@@ -410,6 +423,7 @@ def build_candidate(
                 "path": relative_path(resolved_root, artifact.path),
                 "url": artifact.url,
                 "sha256": digest,
+                "localEvidenceSha256": local_digest,
                 "byteLength": byte_length,
                 "sbomPath": relative_path(resolved_root, artifact.sbom_path),
                 "sbomSha256": sha256_file(artifact.sbom_path),

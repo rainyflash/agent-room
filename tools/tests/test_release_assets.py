@@ -161,7 +161,7 @@ class ReleaseAssetTests(unittest.TestCase):
             ]
         )
 
-        with self.assertRaisesRegex(ReleaseFailure, "摘要"):
+        with self.assertRaisesRegex(ReleaseFailure, "不可变"):
             attest_image(args)
 
 

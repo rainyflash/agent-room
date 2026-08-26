@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
-import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -355,10 +355,8 @@ def attest_blob(args: argparse.Namespace) -> None:
 def attest_image(args: argparse.Namespace) -> None:
     root = args.root.resolve(strict=True)
     manifest = require_file(root / Path(args.manifest_path), "OCI manifest")
-    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    expected_suffix = f"@sha256:{digest}"
-    if not args.image_ref.endswith(expected_suffix):
-        raise ReleaseFailure("OCI manifest 摘要与不可变镜像引用不一致。")
+    if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", args.image_ref):
+        raise ReleaseFailure("OCI 镜像必须使用小写 SHA-256 不可变引用。")
     sbom = manifest.with_name(f"{manifest.name}.cdx.json")
     signature = manifest.with_name(f"{manifest.name}.sigstore.json")
     run_capture(

@@ -1,0 +1,293 @@
+name: 签名发布候选
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 与 Cargo workspace 版本一致的 SemVer 标签（例如 v0.2.0）
+        required: true
+        type: string
+      channel:
+        description: 更新渠道
+        required: true
+        type: choice
+        options: [testing, stable]
+      sequence:
+        description: 高于该渠道历史值的单调发布序号
+        required: true
+        type: string
+      rollback_from:
+        description: 仅显式回滚时填写来源版本
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  metadata:
+    name: 校验候选元数据
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      channel: ${{ steps.metadata.outputs.channel }}
+      sequence: ${{ steps.metadata.outputs.sequence }}
+      revision: ${{ steps.metadata.outputs.revision }}
+      published_at: ${{ steps.metadata.outputs.published_at }}
+      expires_at: ${{ steps.metadata.outputs.expires_at }}
+      rollback_from: ${{ steps.metadata.outputs.rollback_from }}
+      release_base_url: ${{ steps.metadata.outputs.release_base_url }}
+      image_base: ${{ steps.metadata.outputs.image_base }}
+      tauri_manifest_name: ${{ steps.metadata.outputs.tauri_manifest_name }}
+      tauri_manifest_url: ${{ steps.metadata.outputs.tauri_manifest_url }}
+    steps:
+      - name: 检出受保护主分支
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 生成候选与晋级记录
+        id: metadata
+        run: >-
+          python tools/release_ci.py
+          --tag "${{ inputs.tag }}"
+          --channel "${{ inputs.channel }}"
+          --sequence "${{ inputs.sequence }}"
+          --rollback-from "${{ inputs.rollback_from }}"
+          --revision "${{ github.sha }}"
+          --repository "${{ github.repository }}"
+          --metadata candidate/release-metadata.json
+          --promotion candidate/release-promotion.json
+          --github-output "$GITHUB_OUTPUT"
+      - name: 保存候选元数据
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: release-metadata
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
+
+  native:
+    name: ${{ matrix.target }} 原生发行
+    needs: metadata
+    environment: release-candidate
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-x86_64
+            rust_target: x86_64-pc-windows-msvc
+            bridge: target/release/agent-room-bridge.exe
+            mcp: target/release/agent-room-codex-mcp.exe
+          - runner: macos-15-intel
+            target: darwin-x86_64
+            rust_target: x86_64-apple-darwin
+            bridge: target/release/agent-room-bridge
+            mcp: target/release/agent-room-codex-mcp
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: 检出候选提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装固定依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 安装 Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+      - name: 安装 Syft
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 构建带强制签名更新的桌面端
+        env:
+          AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
+          AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_RELEASE_KEY_ID }}
+          AGENT_ROOM_RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_RELEASE_PUBLIC_KEY }}
+          AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY: ${{ vars.AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY }}
+          AGENT_ROOM_RELEASE_STABLE_URL: ${{ vars.AGENT_ROOM_RELEASE_STABLE_URL }}
+          AGENT_ROOM_RELEASE_TESTING_URL: ${{ vars.AGENT_ROOM_RELEASE_TESTING_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
+      - name: 构建 Codex MCP 并装配插件
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        shell: pwsh
+        run: |
+          cargo build --locked --release --package agent-room-codex-mcp
+          if ($LASTEXITCODE -ne 0) { throw 'Codex MCP 构建失败。' }
+          python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
+          if ($LASTEXITCODE -ne 0) { throw 'Codex 插件装配失败。' }
+      - name: 收集原生发布产物
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_BASE_URL: ${{ needs.metadata.outputs.release_base_url }}
+        shell: pwsh
+        run: >-
+          python tools/release_assets.py collect-native
+          --bundle-root target/release/bundle
+          --bridge "${{ matrix.bridge }}"
+          --plugin "artifacts/codex-plugin/agent-room-plugin-v${env:VERSION}-${{ matrix.target }}.zip"
+          --output-root candidate
+          --metadata "candidate/native-metadata-${{ matrix.target }}.json"
+          --release-base-url "$env:RELEASE_BASE_URL"
+          --version "$env:VERSION"
+          --rust-target "${{ matrix.rust_target }}"
+      - name: 为原生文件生成逐件 SBOM 与 Sigstore bundle
+        run: >-
+          python tools/release_assets.py attest-blobs
+          --root candidate
+          --metadata "candidate/native-metadata-${{ matrix.target }}.json"
+          --descriptor-root candidate
+      - name: 上传原生候选
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: release-native-${{ matrix.target }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
+
+  images:
+    name: ${{ matrix.name }} 多架构镜像
+    needs: metadata
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: control-plane
+            file: infra/production/Containerfile.control-plane
+          - name: identity
+            file: infra/production/Containerfile.identity
+          - name: web
+            file: infra/production/Containerfile.web
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出候选提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 登录 GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # 版本 4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # 版本 4.2.0
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # 版本 4.3.0
+      - name: 构建并推送不可变候选镜像
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # 版本 7.3.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}:candidate-${{ github.sha }}
+          build-args: |
+            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.agent-room.example
+            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agent-room.example
+      - name: 安装 Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+      - name: 安装 Syft
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 保存 OCI manifest
+        env:
+          IMAGE_REF: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p candidate
+          docker buildx imagetools inspect --raw "$IMAGE_REF" > "candidate/${{ matrix.name }}.oci-manifest.json"
+      - name: 为镜像生成 SBOM、签名与描述
+        env:
+          IMAGE_REF: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          RELEASE_BASE_URL: ${{ needs.metadata.outputs.release_base_url }}
+        run: >-
+          python tools/release_assets.py attest-image
+          --root candidate
+          --manifest-path "${{ matrix.name }}.oci-manifest.json"
+          --image-ref "$IMAGE_REF"
+          --name "${{ matrix.name }}"
+          --platform linux-multiarch
+          --descriptor "candidate/oci-image-linux-multiarch-${{ matrix.name }}.artifact.json"
+          --release-base-url "$RELEASE_BASE_URL"
+      - name: 上传镜像候选
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: release-image-${{ matrix.name }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
+
+  draft:
+    name: 聚合并创建私有草稿发行
+    needs: [metadata, native, images]
+    environment: release-candidate
+    permissions:
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出候选提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 下载全部候选产物
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # 版本 8.0.0
+        with:
+          pattern: release-*
+          path: candidate
+          merge-multiple: true
+      - name: 安装 Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+      - name: 安装 Syft
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 生成并证明跨平台 Tauri 更新清单
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          PUBLISHED_AT: ${{ needs.metadata.outputs.published_at }}
+          TAURI_NAME: ${{ needs.metadata.outputs.tauri_manifest_name }}
+          TAURI_URL: ${{ needs.metadata.outputs.tauri_manifest_url }}
+        run: |
+          python tools/release_assets.py merge-tauri --metadata-root candidate --version "$VERSION" --published-at-unix-seconds "$PUBLISHED_AT" --output "candidate/$TAURI_NAME"
+          python tools/release_assets.py attest-blob --root candidate --path "$TAURI_NAME" --name tauri-update --kind update-manifest --platform all --url "$TAURI_URL" --descriptor candidate/update-manifest-all-tauri-update.artifact.json
+      - name: 聚合清单并初始化离线签名输入
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          CHANNEL: ${{ needs.metadata.outputs.channel }}
+          SEQUENCE: ${{ needs.metadata.outputs.sequence }}
+          PUBLISHED_AT: ${{ needs.metadata.outputs.published_at }}
+          EXPIRES_AT: ${{ needs.metadata.outputs.expires_at }}
+          ROLLBACK_FROM: ${{ needs.metadata.outputs.rollback_from }}
+          TAURI_URL: ${{ needs.metadata.outputs.tauri_manifest_url }}
+        run: |
+          python tools/release.py inventory --root candidate --descriptors candidate --output candidate/release-inventory.json --channel "$CHANNEL" --sequence "$SEQUENCE" --version "$VERSION" --published-at-unix-seconds "$PUBLISHED_AT" --expires-at-unix-seconds "$EXPIRES_AT" --rollback-from "$ROLLBACK_FROM" --tauri-manifest-url "$TAURI_URL"
+          python tools/release.py prepare --root candidate --inventory candidate/release-inventory.json --manifest candidate/release.json --evidence candidate/release-evidence.json
+      - name: 创建仅维护者可见的草稿 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REVISION: ${{ needs.metadata.outputs.revision }}
+        run: |
+          gh release create "$TAG" --draft --target "$REVISION" --generate-notes --title "Agent Room $TAG"
+          gh release upload "$TAG" candidate/*
+      - name: 保存完整候选用于离线审查
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: release-candidate-${{ needs.metadata.outputs.tag }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
