@@ -154,3 +154,9 @@ production-upgrade config state:
 
 production-health config state:
   python tools/production.py health --config {{config}} --state-dir {{state}}
+
+observability-validate:
+  python tools/observability.py validate
+
+observability-drill config state:
+  python tools/observability.py drill --config {{config}} --state-dir {{state}} --target all --confirm-stop-services
