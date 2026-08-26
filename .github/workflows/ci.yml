@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  # 平台故障后可能延迟投递旧 push；按触发类型隔离，避免陈旧事件取消手动恢复验证。
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # 旧修订不能取消新修订；同一 SHA 的迟到 push 与手动恢复则必须去重，避免重复计费。
+  group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 env:
