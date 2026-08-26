@@ -8,7 +8,8 @@ on:
       - M3 联邦验收
     types: [completed]
   schedule:
-    - cron: '17 */6 * * *'
+    # Workflow 完成时已经即时清理；每日兜底足够，避免无意义地每六小时占用 Runner。
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
