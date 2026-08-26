@@ -33,6 +33,7 @@ services:
 
   synapse-alpha:
     image: matrixdotorg/synapse:v1.159.0
+    user: '${FEDERATION_HOST_UID:?缺少 FEDERATION_HOST_UID}:${FEDERATION_HOST_GID:?缺少 FEDERATION_HOST_GID}'
     depends_on:
       postgres-alpha:
         condition: service_healthy
@@ -55,6 +56,7 @@ services:
 
   synapse-beta:
     image: matrixdotorg/synapse:v1.159.0
+    user: '${FEDERATION_HOST_UID:?缺少 FEDERATION_HOST_UID}:${FEDERATION_HOST_GID:?缺少 FEDERATION_HOST_GID}'
     depends_on:
       postgres-beta:
         condition: service_healthy
@@ -77,6 +79,7 @@ services:
 
   federation-gateway:
     image: caddy:2.11.4-alpine
+    user: '${FEDERATION_HOST_UID:?缺少 FEDERATION_HOST_UID}:${FEDERATION_HOST_GID:?缺少 FEDERATION_HOST_GID}'
     depends_on:
       synapse-alpha:
         condition: service_healthy

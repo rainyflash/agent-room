@@ -129,10 +129,24 @@ def read_environment(path: Path = ENV_FILE) -> dict[str, str]:
 
 def write_environment() -> dict[str, str]:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    host_user_id, host_group_id = host_container_identity()
     if ENV_FILE.is_file():
-        return read_environment()
+        values = read_environment()
+        expected_identity = {
+            "FEDERATION_HOST_UID": host_user_id,
+            "FEDERATION_HOST_GID": host_group_id,
+        }
+        if any(values.get(name) != value for name, value in expected_identity.items()):
+            values.update(expected_identity)
+            write_private_text(
+                ENV_FILE,
+                "".join(f"{name}={value}\n" for name, value in values.items()),
+            )
+        return values
     values = {
         "FEDERATION_RUNTIME_DIR": RUNTIME_DIR.resolve().as_posix(),
+        "FEDERATION_HOST_UID": host_user_id,
+        "FEDERATION_HOST_GID": host_group_id,
         "ALPHA_DATABASE_PASSWORD": secrets.token_hex(24),
         "BETA_DATABASE_PASSWORD": secrets.token_hex(24),
         "ALPHA_REGISTRATION_SECRET": secrets.token_hex(32),
@@ -144,17 +158,23 @@ def write_environment() -> dict[str, str]:
         "ALPHA_USER_PASSWORD": secrets.token_urlsafe(24),
         "BETA_USER_PASSWORD": secrets.token_urlsafe(24),
     }
-    ENV_FILE.write_text(
+    write_private_text(
+        ENV_FILE,
         "".join(f"{name}={value}\n" for name, value in values.items()),
-        encoding="utf-8",
     )
     return values
+
+
+def host_container_identity() -> tuple[str, str]:
+    if os.name == "posix":
+        return str(os.getuid()), str(os.getgid())
+    return "991", "991"
 
 
 def prepare_certificates() -> None:
     directory = RUNTIME_DIR / "certificates"
     directory.mkdir(parents=True, exist_ok=True)
-    make_container_output_writable(directory, "/certificates")
+    secure_container_output(directory, "/certificates")
     profile_marker = directory / "profile-v2"
     ca_certificate = directory / "ca.crt"
     server_certificate = directory / "server.crt"
@@ -177,7 +197,8 @@ def prepare_certificates() -> None:
         server_request,
     ):
         generated.unlink(missing_ok=True)
-    extensions.write_text(
+    write_private_text(
+        extensions,
         "\n".join(
             (
                 "basicConstraints=CA:FALSE",
@@ -187,7 +208,6 @@ def prepare_certificates() -> None:
                 "",
             )
         ),
-        encoding="utf-8",
     )
     certificate_mount = f"{directory.resolve().as_posix()}:/certificates"
     openssl = [
@@ -266,8 +286,8 @@ def prepare_certificates() -> None:
         ],
         capture_output=True,
     )
-    make_container_output_writable(directory, "/certificates")
-    profile_marker.write_text("v2\n", encoding="utf-8")
+    secure_container_output(directory, "/certificates")
+    write_private_text(profile_marker, "v2\n")
 
 
 def prepare_synapse(peer: Peer, other: Peer, values: dict[str, str]) -> None:
@@ -290,29 +310,59 @@ def prepare_synapse(peer: Peer, other: Peer, values: dict[str, str]) -> None:
                 "generate",
             ]
         )
-    make_container_output_writable(directory, "/data")
+    secure_container_output(directory, "/data")
     config = synapse_configuration(peer, other, values)
-    (directory / "homeserver.yaml").write_text(config, encoding="utf-8")
+    write_private_text(directory / "homeserver.yaml", config)
 
 
-def make_container_output_writable(directory: Path, container_path: str) -> None:
-    """把测试容器生成物交还给当前宿主用户，避免 Linux UID 991 锁死目录。"""
+def write_private_text(path: Path, content: str) -> None:
+    """以当前用户独占权限原子替换含测试凭据的文件。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def secure_container_output(directory: Path, container_path: str) -> None:
+    """把容器生成物交给当前 Linux 用户，并移除组与其他用户权限。"""
 
     if not any(directory.iterdir()):
         return
+    if os.name != "posix":
+        return
+    if container_path not in {"/certificates", "/data"}:
+        raise FederationFailure("容器输出目录不在固定允许列表。")
+    user_id = os.getuid()
+    group_id = os.getgid()
     run_command(
         [
             "docker",
             "run",
             "--rm",
+            "--user",
+            "0:0",
             "--volume",
             f"{directory.resolve().as_posix()}:{container_path}",
             "--entrypoint",
-            "chmod",
+            "/bin/sh",
             SYNAPSE_IMAGE,
-            "-R",
-            "a+rwX",
-            container_path,
+            "-c",
+            (
+                f"chown -R {user_id}:{group_id} {container_path} && "
+                f"chmod -R u=rwX,go= {container_path}"
+            ),
         ],
         capture_output=True,
     )
@@ -415,6 +465,7 @@ def up() -> None:
 def down(*, volumes: bool) -> None:
     if not ENV_FILE.is_file():
         return
+    write_environment()
     arguments = ["down", "--remove-orphans"]
     if volumes:
         arguments.extend(("--volumes", "--timeout", "10"))
@@ -422,7 +473,7 @@ def down(*, volumes: bool) -> None:
 
 
 def tls_json_request(server_name: str, path: str) -> dict[str, object]:
-    context = ssl.create_default_context(cafile=str(RUNTIME_DIR / "certificates" / "ca.crt"))
+    context = federation_tls_context()
     try:
         with socket.create_connection(("127.0.0.1", FEDERATION_PORT), timeout=10) as raw:
             with context.wrap_socket(raw, server_hostname=server_name) as secured:
@@ -448,6 +499,14 @@ def tls_json_request(server_name: str, path: str) -> dict[str, object]:
     if not isinstance(parsed, dict):
         raise FederationFailure(f"{server_name}{path} 未返回 JSON 对象。")
     return parsed
+
+
+def federation_tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context(
+        cafile=str(RUNTIME_DIR / "certificates" / "ca.crt")
+    )
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 def diagnose() -> dict[str, object]:

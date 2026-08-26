@@ -24,6 +24,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "i18n:check": "node tools/check-ui-messages.mjs",
+    "prelint": "corepack pnpm@10.28.0 --filter @agent-room/protocol build",
     "lint": "eslint .",
     "namespace:check": "python tools/event_namespace.py --check",
     "protocol:check": "tsx tools/protocol-codegen.ts --check && python tools/event_namespace.py --check",

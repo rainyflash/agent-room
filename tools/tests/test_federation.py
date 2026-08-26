@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import ssl
+import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.federation import (
     ALPHA,
     BETA,
     FederationFailure,
     encoded,
+    federation_tls_context,
     joined_room_events,
     read_environment,
     room_membership,
     synapse_configuration,
+    write_private_text,
 )
 
 
@@ -49,6 +55,26 @@ class FederationConfigurationTests(unittest.TestCase):
         self.assertNotIn("alpha-database-secret", beta)
         self.assertIn("federation_custom_ca_list:", alpha)
         self.assertIn("federation_custom_ca_list:", beta)
+
+    def test_sensitive_runtime_files_are_replaced_with_private_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime.env"
+            path.write_text("stale", encoding="utf-8")
+
+            write_private_text(path, "SECRET=fresh\n")
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "SECRET=fresh\n")
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    @patch("tools.federation.ssl.create_default_context")
+    def test_federation_tls_rejects_tls_1_0_and_1_1(self, create_context) -> None:
+        context = create_context.return_value
+
+        actual = federation_tls_context()
+
+        self.assertIs(actual, context)
+        self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
 
 
 class FederationSyncParsingTests(unittest.TestCase):
