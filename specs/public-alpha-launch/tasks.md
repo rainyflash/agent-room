@@ -50,12 +50,15 @@
   - 本机已生成经过 Tauri 签名的 NSIS 安装器，并完成真实候选收集；安装器包含桌面端、Bridge、通用 MCP，Codex 适配器归档可独立装配。签名已用配置公钥反向验证；这不能替代干净机验收。
 - [ ] 27. 创建 GitHub prerelease，上传安装包、更新产物、SBOM、签名和摘要。
 - [ ] 28. 把官网版本化下载链接指向已发布 Alpha。
-- [ ] 29. 在获得 SMTP 凭据后完成生产部署门禁，开放注册并验证真实邮件投递。
+- [x] 29. 在获得 SMTP 凭据后完成生产部署门禁，开放注册并验证真实邮件投递。
+  - `mail.room.the-zeroth.com` 已通过 DKIM 与 SPF 验证；Resend 密钥限制为仅发送且仅允许该域名，生产 Secret 保持 `0600`。
+  - Linode 阻断标准 SMTP 出站端口后，部署改用 Resend 官方 STARTTLS 备用端口 `2587`；首次校验按设计保持注册关闭，备用端口认证通过后才开放 Keycloak 邮箱验证注册。
+  - 单封验收邮件已投递到运营者邮箱，Resend 日志确认状态为 `Delivered`；GitHub 发行变量已同步为 `open-email`。
 - [ ] 30. 验证生产首页、注册、首次登录、Matrix 自动供给、Web 预览和既有用户登录回归。
-  - 生产升级、备份恢复点、健康/联邦探针、首页、关闭注册禁用态、PWA 更新和 Web 预览已验证；真实邮件注册链仍被 SMTP 门禁阻断。
+  - 生产升级、健康/联邦探针、首页、开放注册入口、PWA 更新和 Web 预览已验证；尚需由真实用户完成验证码注册、首次登录、Matrix 自动供给与既有用户回归。
+  - 修复了每份快照重复复制全部历史 WAL 的生产缺陷：保留最新已验证快照后清理 42 份重复快照，释放约 53.1 GB；新快照稳定为 112 MB，摘要核验、6.466 秒隔离恢复和 systemd 自动触发均通过。
 
 ## 当前外部先决条件
 
-1. 可用于 `room.the-zeroth.com` 的 SMTP 服务端、发件地址、用户名和密码 Secret。
-2. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用于安装、登录、宿主配置与更新验收；当前 Windows 10 Pro 主机使用 Windows Sandbox 完成该隔离验收。
-3. Windows Authenticode 证书不是 Alpha 的硬阻断，但没有它时必须如实标注 SmartScreen 风险。
+1. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用于安装、登录、宿主配置与更新验收；当前 Windows 10 Pro 主机使用 Windows Sandbox 完成该隔离验收。
+2. Windows Authenticode 证书不是 Alpha 的硬阻断，但没有它时必须如实标注 SmartScreen 风险。
