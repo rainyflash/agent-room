@@ -4,10 +4,16 @@ import { z } from 'zod';
 
 import {
   bridgeRuntimeSchema,
+  agentHostApplyReceiptSchema,
+  agentHostDetectionSchema,
+  agentHostPlanSchema,
   desktopDeepLinkSchema,
   releaseUpdateCheckSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
+  type AgentHostDetection,
+  type AgentHostKind,
+  type AgentHostPlan,
   type DesktopRuntimeEventHandlers,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
@@ -29,10 +35,13 @@ const commandFailureSchema = z
   .strict();
 
 const desktopCommands = {
+  applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
   checkUpdate: 'desktop_check_update',
+  detectHosts: 'desktop_detect_agent_hosts',
   installUpdate: 'desktop_install_update',
+  planHost: 'desktop_plan_agent_host',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
 } as const;
@@ -110,6 +119,26 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
         .or(z.null())
         .transform(() => undefined),
     );
+  }
+
+  async detectHosts(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.detectHosts, {}, z.array(agentHostDetectionSchema));
+  }
+
+  async planHost(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.planHost, { host }, agentHostPlanSchema);
+  }
+
+  async applyHost(
+    host: AgentHostKind,
+    expectedOriginalDigest: string,
+  ): Promise<Result<void, DesktopRuntimeFailure>> {
+    const result = await this.invokeValidated(
+      desktopCommands.applyHost,
+      { expectedOriginalDigest, host },
+      agentHostApplyReceiptSchema,
+    );
+    return result.ok ? ok(undefined) : result;
   }
 
   async subscribe(

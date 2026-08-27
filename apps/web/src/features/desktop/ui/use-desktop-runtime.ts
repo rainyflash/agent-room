@@ -5,6 +5,8 @@ import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-de
 import {
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
+  type AgentHostDetection,
+  type AgentHostKind,
   type DesktopDeepLink,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
@@ -16,7 +18,13 @@ import {
 const defaultGateway = new TauriDesktopRuntimeGateway();
 
 type DesktopOperation =
-  'authorization' | 'autostart' | 'refresh' | 'retry' | 'update-check' | 'update-install';
+  | 'authorization'
+  | 'autostart'
+  | 'host-configure'
+  | 'refresh'
+  | 'retry'
+  | 'update-check'
+  | 'update-install';
 
 export type DesktopRuntimeController = {
   readonly available: boolean;
@@ -24,6 +32,7 @@ export type DesktopRuntimeController = {
   readonly failure: DesktopRuntimeFailure | null;
   readonly snapshot: DesktopRuntimeSnapshot | null;
   readonly update: ReleaseUpdateCheck | null;
+  readonly hosts: readonly AgentHostDetection[];
   readonly checkUpdate: (channel: ReleaseUpdateChannel) => Promise<void>;
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
@@ -31,6 +40,7 @@ export type DesktopRuntimeController = {
   readonly retryBridge: () => Promise<void>;
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
+  readonly configureHost: (host: AgentHostKind) => Promise<void>;
 };
 
 export function useDesktopRuntime(
@@ -42,6 +52,7 @@ export function useDesktopRuntime(
   const [failure, setFailure] = useState<DesktopRuntimeFailure | null>(null);
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
+  const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
 
   const applyDeepLink = useCallback(
     (target: DesktopDeepLink): void => {
@@ -139,6 +150,13 @@ export function useDesktopRuntime(
         ...result.value,
         bridge: latestRuntime ?? result.value.bridge,
       });
+      if (gateway.detectHosts !== undefined) {
+        void gateway.detectHosts().then((hostsResult) => {
+          if (!disposed && hostsResult.ok) {
+            setHosts(hostsResult.value);
+          }
+        });
+      }
       if (result.value.deepLink !== null) {
         applyDeepLink(result.value.deepLink);
       }
@@ -216,12 +234,39 @@ export function useDesktopRuntime(
     setBusy(null);
   }, [gateway, update]);
 
+  const configureHost = useCallback(
+    async (host: AgentHostKind): Promise<void> => {
+      if (gateway.planHost === undefined || gateway.applyHost === undefined) {
+        return;
+      }
+      setBusy('host-configure');
+      const plan = await gateway.planHost(host);
+      if (!plan.ok) {
+        setFailure(plan.error);
+        setBusy(null);
+        return;
+      }
+      const result =
+        plan.value.action === 'unchanged'
+          ? { ok: true as const, value: undefined }
+          : await gateway.applyHost(host, plan.value.originalDigest);
+      setFailure(result.ok ? null : result.error);
+      if (result.ok && gateway.detectHosts !== undefined) {
+        const detected = await gateway.detectHosts();
+        if (detected.ok) setHosts(detected.value);
+      }
+      setBusy(null);
+    },
+    [gateway],
+  );
+
   return {
     available,
     busy,
     failure,
     snapshot,
     update,
+    hosts,
     checkUpdate,
     dismissFailure: () => {
       setFailure(null);
@@ -231,5 +276,6 @@ export function useDesktopRuntime(
     retryBridge,
     installUpdate,
     setAutostart,
+    configureHost,
   };
 }

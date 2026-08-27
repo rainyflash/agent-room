@@ -86,6 +86,11 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': 'this system',
+      'desktop.hosts.title': 'Agent host connections',
+      'desktop.hosts.description': 'Configure the bundled generic MCP server for detected hosts.',
+      'desktop.hosts.codex': 'Configure Codex',
+      'desktop.hosts.claude-code': 'Configure Claude Code',
+      'desktop.hosts.cursor': 'Configure Cursor',
       'app.notImplemented.eyebrow': 'DELIVERY BOUNDARY',
       'app.notImplemented.title': 'This surface is not wired yet',
       'app.notImplemented.description':
@@ -663,6 +668,11 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': '当前系统',
+      'desktop.hosts.title': 'Agent 宿主连接',
+      'desktop.hosts.description': '为检测到的宿主配置安装包内置的通用 MCP Server。',
+      'desktop.hosts.codex': '配置 Codex',
+      'desktop.hosts.claude-code': '配置 Claude Code',
+      'desktop.hosts.cursor': '配置 Cursor',
       'app.notImplemented.eyebrow': '交付边界',
       'app.notImplemented.title': '这个界面尚未接线',
       'app.notImplemented.description':

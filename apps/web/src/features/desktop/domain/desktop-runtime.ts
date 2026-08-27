@@ -95,6 +95,36 @@ export const releaseUpdateCheckSchema = z
   .strict();
 export type ReleaseUpdateCheck = z.infer<typeof releaseUpdateCheckSchema>;
 
+export const agentHostKindSchema = z.enum(['codex', 'claude-code', 'cursor']);
+export type AgentHostKind = z.infer<typeof agentHostKindSchema>;
+
+export const agentHostDetectionSchema = z
+  .object({
+    host: agentHostKindSchema,
+    installed: z.boolean(),
+    configurable: z.boolean(),
+    mechanism: z.string().min(1).max(64),
+    diagnosticCode: diagnosticCodeSchema,
+  })
+  .strict();
+export type AgentHostDetection = z.infer<typeof agentHostDetectionSchema>;
+
+export const agentHostPlanSchema = z
+  .object({
+    host: agentHostKindSchema,
+    action: z.enum(['create', 'replace', 'unchanged', 'unavailable']),
+    target: z.string().min(1).max(256),
+    originalDigest: z.string().length(64),
+    desiredDigest: z.string().length(64),
+    summaryCode: diagnosticCodeSchema,
+  })
+  .strict();
+export type AgentHostPlan = z.infer<typeof agentHostPlanSchema>;
+
+export const agentHostApplyReceiptSchema = z
+  .object({ host: agentHostKindSchema, changed: z.boolean(), resultingDigest: z.string().length(64) })
+  .strict();
+
 export type DesktopRuntimeFailure = {
   readonly code: string;
   readonly retryable: boolean;
@@ -118,6 +148,12 @@ export type DesktopRuntimeGateway = {
   installUpdate(
     channel: ReleaseUpdateChannel,
     expectedSequence: number,
+  ): Promise<Result<void, DesktopRuntimeFailure>>;
+  detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
+  planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
+  applyHost?(
+    host: AgentHostKind,
+    expectedOriginalDigest: string,
   ): Promise<Result<void, DesktopRuntimeFailure>>;
   subscribe(
     handlers: DesktopRuntimeEventHandlers,

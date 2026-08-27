@@ -7,6 +7,7 @@ import {
   ExternalLink,
   KeyRound,
   MonitorCog,
+  PlugZap,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -247,6 +248,31 @@ export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurf
                     ? t('desktop.autostart.on')
                     : t('desktop.autostart.off')}
                 </button>
+              </section>
+            ) : null}
+
+            {controller.hosts.some((host) => host.installed) && authorization === null ? (
+              <section className="desktop-runtime__hosts">
+                <div>
+                  <h2>{t('desktop.hosts.title')}</h2>
+                  <p>{t('desktop.hosts.description')}</p>
+                </div>
+                <div className="desktop-runtime__host-list">
+                  {controller.hosts
+                    .filter((host) => host.installed)
+                    .map((host) => (
+                      <Button
+                        disabled={controller.busy !== null || !host.configurable}
+                        icon={<PlugZap aria-hidden="true" />}
+                        key={host.host}
+                        onClick={() => void controller.configureHost(host.host)}
+                        size="compact"
+                        tone="quiet"
+                      >
+                        {t(`desktop.hosts.${host.host}`)}
+                      </Button>
+                    ))}
+                </div>
               </section>
             ) : null}
 

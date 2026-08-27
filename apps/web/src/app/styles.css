@@ -6110,6 +6110,18 @@ p.message-dock__headline {
   background-size: 56px 56px;
 }
 
+.desktop-runtime__hosts {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border-top: 1px solid var(--ar-ink-09);
+}
+
+.desktop-runtime__hosts h2,
+.desktop-runtime__hosts p { margin: 0; }
+.desktop-runtime__hosts p { margin-top: 0.25rem; color: var(--ar-ink-48); font-size: 0.75rem; }
+.desktop-runtime__host-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
 .landing__topbar,
 .landing__footer {
   display: flex;
