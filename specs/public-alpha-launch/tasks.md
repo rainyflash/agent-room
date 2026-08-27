@@ -47,9 +47,11 @@
   - Tauri updater 密钥已生成：公钥已绑定发行配置与仓库变量，密码保护的私钥及密码已写入 `release-candidate` 环境 Secret；本机签名构建、反向验签和篡改拒绝测试均通过。
   - Alpha testing 清单使用受保护 Environment 中的独立在线 Ed25519 密钥自动签署；私钥 Secret、公开 Key ID 与公钥变量均已配置，临时明文文件已删除。stable 的离线根与独立审批推迟到稳定版，不再阻塞单维护者 Alpha。
 - [ ] 26. 构建并在干净 Windows 环境验证安装、登录、宿主配置和更新检查。
-  - 本机已生成经过 Tauri 签名的 NSIS 安装器，并完成真实候选收集；安装器包含桌面端、Bridge、通用 MCP，Codex 适配器归档可独立装配。签名已用配置公钥反向验证；这不能替代干净机验收。
-- [ ] 27. 创建 GitHub prerelease，上传安装包、更新产物、SBOM、签名和摘要。
-- [ ] 28. 把官网版本化下载链接指向已发布 Alpha。
+  - GitHub Windows Runner 已完成干净安装、启动、稳定运行和卸载验收；仍缺真实 Agent Room 账户登录、Codex/Claude/Cursor 宿主配置与更新检查的完整用户路径，因此不得提前勾选。
+- [x] 27. 创建 GitHub prerelease，上传安装包、更新产物、SBOM、签名和摘要。
+  - `v0.1.0-alpha.1` 已作为 GitHub prerelease 公开，50 个资产包含 Windows 安装器、Tauri 更新清单、Bridge、通用 MCP、Codex 适配器、三份多架构 OCI manifest、逐件 SBOM/Sigstore bundle、根清单和晋级证据；`channel-testing` 已原子推进。
+- [x] 28. 把官网版本化下载链接指向已发布 Alpha。
+  - 生产 `distribution.windowsDownloadUrl` 已切换到公开版本化安装器；升级后生产健康与 Matrix federation 检查通过，公网 Web 构建资源包含该 URL，安装器下载返回 HTTP 200。
 - [x] 29. 在获得 SMTP 凭据后完成生产部署门禁，开放注册并验证真实邮件投递。
   - `mail.room.the-zeroth.com` 已通过 DKIM 与 SPF 验证；Resend 密钥限制为仅发送且仅允许该域名，生产 Secret 保持 `0600`。
   - Linode 阻断标准 SMTP 出站端口后，部署改用 Resend 官方 STARTTLS 备用端口 `2587`；首次校验按设计保持注册关闭，备用端口认证通过后才开放 Keycloak 邮箱验证注册。
@@ -60,5 +62,5 @@
 
 ## 当前外部先决条件
 
-1. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用于安装、登录、宿主配置与更新验收；当前 Windows 10 Pro 主机使用 Windows Sandbox 完成该隔离验收。
+1. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用真实 Agent Room 账户完成登录、Codex/Claude/Cursor 宿主配置与更新检查；候选流水线已经覆盖无人值守安装、启动、稳定性和卸载，不再重复这些机械步骤。
 2. Windows Authenticode 证书不是 Alpha 的硬阻断，但没有它时必须如实标注 SmartScreen 风险。
