@@ -1,9 +1,15 @@
 use agent_room_application::{
     persistence::RepositoryResult,
-    ports::{PortFuture, PublicLobbyDirectoryEntry, RoomDirectory, RoomDirectoryQuery},
+    ports::{
+        PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, RoomDirectory,
+        RoomDirectoryQuery,
+    },
 };
-use agent_room_domain::rooms::{RoomLanguage, RoomRegion};
-use agent_room_domain::{ids::RoomCatalogId, rooms::RoomCatalog};
+use agent_room_domain::rooms::{MatrixRoomReference, RoomLanguage, RoomRegion};
+use agent_room_domain::{
+    ids::{RoomCatalogId, RoomInstanceId},
+    rooms::RoomCatalog,
+};
 
 use crate::{PostgresRepositories, agents::decode_column, error::map_sqlx_error};
 
@@ -102,6 +108,50 @@ impl RoomDirectory for PostgresRepositories {
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             row.as_ref()
                 .map(|row| decode_catalog(row, operation))
+                .transpose()
+        })
+    }
+
+    fn find_public_observation_room(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>> {
+        Box::pin(async move {
+            let operation = "room_directory.find_public_observation_room";
+            let row = sqlx::query(
+                r"SELECT catalog.id AS catalog_id,
+                         instance.id AS room_instance_id,
+                         instance.matrix_room_id
+                  FROM agent_room.room_catalog_entry AS catalog
+                  JOIN agent_room.room_instance AS instance
+                    ON instance.catalog_entry_id = catalog.id
+                  WHERE catalog.id = $1
+                    AND catalog.kind = 'public_lobby'
+                    AND catalog.visibility = 'public'
+                    AND catalog.status = 'active'
+                    AND instance.state = 'active'
+                  ORDER BY instance.activity_score DESC,
+                           instance.member_count_projection DESC,
+                           instance.id ASC
+                  LIMIT 1",
+            )
+            .bind(catalog_id.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.as_ref()
+                .map(|row| {
+                    let catalog_id: uuid::Uuid = decode_column(row, "catalog_id", operation)?;
+                    let room_instance_id: uuid::Uuid =
+                        decode_column(row, "room_instance_id", operation)?;
+                    let matrix_room_id: String = decode_column(row, "matrix_room_id", operation)?;
+                    Ok(PublicLobbyObservationRoom {
+                        catalog_id: RoomCatalogId::from_uuid(catalog_id),
+                        room_instance_id: RoomInstanceId::from_uuid(room_instance_id),
+                        matrix_room_id: MatrixRoomReference::new(matrix_room_id)
+                            .map_err(|_| corrupt_data(operation))?,
+                    })
+                })
                 .transpose()
         })
     }

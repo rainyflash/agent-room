@@ -39,6 +39,7 @@ use agent_room_application::{
     direct_sessions::{DirectSessionDependencies, DirectSessionService},
     handoffs::{HandoffAccessDependencies, HandoffAccessService},
     health::ReadinessService,
+    lobby_observation::PublicLobbyObservationService,
     moderation::{ModerationDependencies, ModerationService},
     ports::{MatrixAgentLocalpart, MatrixRoomAuthorityGateway, MatrixUserId, SecretValue},
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
@@ -531,6 +532,9 @@ fn build_agent_feature_states(
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
     )?;
+    let lobby_observation = Arc::new(PublicLobbyObservationService::new(
+        dependencies.repositories.clone(),
+    ));
     let private_rooms = Arc::new(PrivateRoomService::new(PrivateRoomDependencies {
         store: dependencies.repositories.clone(),
         matrix_provisioner: dependencies.matrix_identities.clone(),
@@ -574,6 +578,8 @@ fn build_agent_feature_states(
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
             directory: dependencies.repositories.clone(),
+            observation: lobby_observation,
+            authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         }),

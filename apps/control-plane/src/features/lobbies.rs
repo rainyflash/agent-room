@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
+    authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
+    lobby_observation::{
+        PublicLobbyObservationFailureKind, PublicLobbyObservationUseCases,
+        ResolvePublicLobbyObservation,
+    },
     persistence::RepositoryErrorKind,
     ports::{RoomDirectory, RoomDirectoryQuery, SecretFactory},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
@@ -20,13 +25,15 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::no_store, devices::authenticate_signed_device_request,
+        authentication::{authenticate_session, no_store},
+        devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
     },
 };
@@ -37,6 +44,8 @@ const MAX_LOBBY_ENTRY_BODY_BYTES: usize = 4 * 1_024;
 pub(crate) struct LobbyHttpState {
     entries: Arc<dyn AgentLobbyEntryUseCases>,
     directory: Arc<dyn RoomDirectory>,
+    observation: Arc<dyn PublicLobbyObservationUseCases>,
+    authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
 }
@@ -44,6 +53,8 @@ pub(crate) struct LobbyHttpState {
 pub(crate) struct LobbyHttpDependencies {
     pub(crate) entries: Arc<dyn AgentLobbyEntryUseCases>,
     pub(crate) directory: Arc<dyn RoomDirectory>,
+    pub(crate) observation: Arc<dyn PublicLobbyObservationUseCases>,
+    pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
 }
@@ -53,6 +64,8 @@ impl LobbyHttpState {
         Self {
             entries: dependencies.entries,
             directory: dependencies.directory,
+            observation: dependencies.observation,
+            authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
         }
@@ -62,6 +75,10 @@ impl LobbyHttpState {
 pub(crate) fn router(state: LobbyHttpState) -> Router {
     Router::new()
         .route("/lobbies/public", get(list_public_lobbies))
+        .route(
+            "/lobbies/{catalog_id}/observation",
+            get(resolve_public_lobby_observation),
+        )
         .route(
             "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
             post(enter_lobby),
@@ -117,6 +134,14 @@ struct PublicLobbyResponse {
     language: Option<String>,
     active_instance_count: u16,
     online_agent_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicLobbyObservationResponse {
+    catalog_id: String,
+    room_instance_id: String,
+    matrix_room_id: String,
 }
 
 async fn list_public_lobbies(
@@ -181,6 +206,70 @@ async fn list_public_lobbies(
                 )
                 .into_response(),
             )
+        }
+    }
+}
+
+async fn resolve_public_lobby_observation(
+    State(state): State<LobbyHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog_id): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Ok(catalog_id) = parse_uuid_v7(&catalog_id).map(RoomCatalogId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    if let Err(response) = authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        return response;
+    }
+    match state
+        .observation
+        .resolve(ResolvePublicLobbyObservation { catalog_id })
+        .await
+    {
+        Ok(target) => no_store(
+            Json(PublicLobbyObservationResponse {
+                catalog_id: target.catalog_id.to_string(),
+                room_instance_id: target.room_instance_id.to_string(),
+                matrix_room_id: target.matrix_room_id.as_str().to_owned(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => {
+            let (status, code, category, message) = match failure.kind() {
+                PublicLobbyObservationFailureKind::NotFound => (
+                    StatusCode::NOT_FOUND,
+                    "lobby.observation_not_found",
+                    ErrorCategory::Validation,
+                    "该公开大厅当前没有可观察的活跃房间。",
+                ),
+                PublicLobbyObservationFailureKind::DependencyUnavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "lobby.observation_unavailable",
+                    ErrorCategory::DependencyUnavailable,
+                    "公开大厅房间解析暂时不可用。",
+                ),
+                PublicLobbyObservationFailureKind::Internal => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "lobby.observation_internal",
+                    ErrorCategory::Transient,
+                    "公开大厅房间解析发生内部错误。",
+                ),
+            };
+            tracing::warn!(
+                correlation.id = %correlation_id.as_uuid(),
+                operation = failure.operation(),
+                failure = ?failure.kind(),
+                "公开大厅观察房间解析失败"
+            );
+            no_store(ApiError::new(status, code, category, message, correlation_id).into_response())
         }
     }
 }
@@ -298,15 +387,20 @@ mod tests {
 
     use agent_room_application::{
         agent_lobbies::{AgentLobbyEntryResult, AgentLobbyEntryUseCases, EnterAgentLobby},
+        authentication::{
+            AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
+            AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
+        },
         devices::{
             AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
             RevokedDevice,
         },
+        lobby_observation::PublicLobbyObservationService,
         persistence::RepositoryResult,
         ports::{
-            PortFuture, PrincipalAccount, PublicLobbyDirectoryEntry, RoomDirectory,
-            RoomDirectoryQuery, SecretFactory,
+            PortFuture, PrincipalAccount, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
+            RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
         },
         rooms::{EnterLobbyOutcome, LobbyJoinKind},
     };
@@ -351,6 +445,8 @@ mod tests {
 
     struct FakeDirectory;
 
+    struct FakeAuthentication;
+
     impl RoomDirectory for FakeDirectory {
         fn list_public<'a>(
             &'a self,
@@ -364,6 +460,72 @@ mod tests {
             _catalog_id: RoomCatalogId,
         ) -> PortFuture<'_, RepositoryResult<Option<RoomCatalog>>> {
             Box::pin(async { Ok(None) })
+        }
+
+        fn find_public_observation_room(
+            &self,
+            catalog_id: RoomCatalogId,
+        ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>> {
+            Box::pin(async move {
+                Ok(Some(PublicLobbyObservationRoom {
+                    catalog_id,
+                    room_instance_id: RoomInstanceId::from_uuid(uuid(ROOM_INSTANCE_UUID)),
+                    matrix_room_id: MatrixRoomReference::new(
+                        "!public-lobby:matrix.agent-room.test".to_owned(),
+                    )
+                    .expect("测试 Matrix 房间有效"),
+                }))
+            })
+        }
+    }
+
+    impl AuthenticationUseCases for FakeAuthentication {
+        fn begin_login(
+            &self,
+            _request: BeginLogin,
+        ) -> PortFuture<'_, AuthenticationResult<LoginRedirect>> {
+            Box::pin(async { unreachable!("大厅观察路由不会开始登录") })
+        }
+
+        fn complete_login<'a>(
+            &'a self,
+            _request: CompleteLogin<'a>,
+        ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>> {
+            Box::pin(async { unreachable!("大厅观察路由不会完成登录") })
+        }
+
+        fn authenticate<'a>(
+            &'a self,
+            session_secret: &'a SecretValue,
+            requirement: AuthenticationRequirement,
+        ) -> PortFuture<'a, AuthenticationResult<AuthenticatedPrincipal>> {
+            assert_eq!(session_secret.expose(), "web-session");
+            assert_eq!(requirement, AuthenticationRequirement::ActiveSession);
+            Box::pin(async {
+                Ok(AuthenticatedPrincipal {
+                    principal_id: principal_id(),
+                    matrix_user_id: "@user:matrix.agent-room.test".to_owned(),
+                    display_name: "Agent Room User".to_owned(),
+                    locale: "zh-CN".to_owned(),
+                    authenticated_at: time(1_700_000_000_000),
+                    expires_at: time(1_700_000_900_000),
+                    recently_authenticated: true,
+                })
+            })
+        }
+
+        fn logout<'a>(
+            &'a self,
+            _session_secret: &'a SecretValue,
+        ) -> PortFuture<'a, AuthenticationResult<()>> {
+            Box::pin(async { unreachable!("大厅观察路由不会登出") })
+        }
+
+        fn suspend_principal(
+            &self,
+            _principal_id: PrincipalId,
+        ) -> PortFuture<'_, AuthenticationResult<()>> {
+            Box::pin(async { unreachable!("大厅观察路由不会停用账户") })
         }
     }
 
@@ -537,6 +699,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 已登录观察者只获得目录确认的真实_matrix_房间() {
+        let response = test_router(
+            Arc::new(FakeEntries::returning(joined_outcome())),
+            Arc::new(FakeDevices::default()),
+        )
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lobbies/{CATALOG_UUID}/observation"))
+                .header(header::COOKIE, "__Host-agent-room-session=web-session")
+                .body(Body::empty())
+                .expect("公开大厅观察请求有效"),
+        )
+        .await
+        .expect("公开大厅观察路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            json!({
+                "catalogId": CATALOG_UUID,
+                "roomInstanceId": ROOM_INSTANCE_UUID,
+                "matrixRoomId": "!public-lobby:matrix.agent-room.test"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn 未登录观察者不能枚举真实_matrix_房间() {
+        let response = test_router(
+            Arc::new(FakeEntries::returning(joined_outcome())),
+            Arc::new(FakeDevices::default()),
+        )
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lobbies/{CATALOG_UUID}/observation"))
+                .body(Body::empty())
+                .expect("未登录观察请求有效"),
+        )
+        .await
+        .expect("公开大厅观察路由可调用");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn 供给繁忙返回可重试的二零二而不是伪造房间() {
         let entries = Arc::new(FakeEntries::returning(
             EnterLobbyOutcome::ProvisioningBusy {
@@ -587,9 +794,12 @@ mod tests {
     }
 
     fn test_router(entries: Arc<FakeEntries>, devices: Arc<FakeDevices>) -> axum::Router {
+        let directory = Arc::new(FakeDirectory);
         let state = LobbyHttpState::new(LobbyHttpDependencies {
             entries,
-            directory: Arc::new(FakeDirectory),
+            directory: directory.clone(),
+            observation: Arc::new(PublicLobbyObservationService::new(directory)),
+            authentication: Arc::new(FakeAuthentication),
             devices,
             secrets: Arc::new(SecureSecretFactory),
         });

@@ -77,6 +77,13 @@ pub struct PublicLobbyDirectoryEntry {
     pub activity_score_millis: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicLobbyObservationRoom {
+    pub catalog_id: RoomCatalogId,
+    pub room_instance_id: RoomInstanceId,
+    pub matrix_room_id: MatrixRoomReference,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomAllocationMode {
     Automatic,
@@ -132,6 +139,11 @@ pub trait RoomDirectory: Send + Sync {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<RoomCatalog>>>;
+
+    fn find_public_observation_room(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>>;
 }
 
 /// 把候选查询、行锁、领域评分与槽位递增封装在同一短事务内。
