@@ -11,6 +11,8 @@ This guide covers the Compose-first production reference. It does not convert th
 - Python 3.11+ and a checkout of the exact Agent Room release being deployed;
 - a backup destination in a different failure domain.
 
+The memory preflight treats up to 256 MiB as firmware or kernel reservation, so a genuine 4 GiB cloud instance is accepted even when Linux reports slightly less usable RAM. Hosts below 3.75 GiB visible RAM are still rejected.
+
 The installer rejects non-Linux production installation, insufficient minimum memory/disk, unresolved DNS, occupied public ports, invalid configuration, or unhealthy dependencies.
 
 ## DNS

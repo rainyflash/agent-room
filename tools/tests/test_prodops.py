@@ -9,7 +9,7 @@ import uuid
 
 from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
 from tools.prodops.render import DeploymentPaths, render_deployment
-from tools.prodops.runtime import ProductionRuntime
+from tools.prodops.runtime import ProductionRuntime, _meets_nominal_memory
 from tools.prodops.secrets import SecretStore
 
 
@@ -196,6 +196,14 @@ class ProductionRenderingTests(unittest.TestCase):
 
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
+
+    def test_nominal_memory_check_allows_only_bounded_system_reservation(self) -> None:
+        gibibyte = 1024**3
+        allowance = 256 * 1024**2
+
+        self.assertTrue(_meets_nominal_memory(4 * gibibyte - allowance, 4 * gibibyte))
+        self.assertFalse(_meets_nominal_memory(4 * gibibyte - allowance - 1, 4 * gibibyte))
+        self.assertTrue(_meets_nominal_memory(8 * gibibyte - allowance, 8 * gibibyte))
 
     def test_embedded_database_allows_only_backup_role_to_replicate(self) -> None:
         rules = ROOT.joinpath("infra", "production", "postgres-pg-hba.conf").read_text(

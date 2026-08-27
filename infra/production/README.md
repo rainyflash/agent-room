@@ -27,6 +27,8 @@
 - `serverName`、`appDomain`、`apiDomain`、`matrixDomain`、`identityDomain` 全部解析到该主机；
 - 公网能够访问 80/443，以便 ACME 和 Matrix 联邦完成验证。
 
+内存预检允许固件与内核最多保留 256 MiB，因此真实的 4 GiB 云主机即使在 Linux 中显示略少也会通过；可见内存低于 3.75 GiB 仍会被拒绝。
+
 示例只使用 RFC 保留域名，不能直接部署。
 
 ## 首次安装

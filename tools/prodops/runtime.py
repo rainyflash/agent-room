@@ -32,6 +32,8 @@ COMPOSE_FILE: Final = ROOT / "infra" / "production" / "compose.yaml"
 SYNAPSE_IMAGE: Final = "matrixdotorg/synapse:v1.159.0"
 MINIMUM_MEMORY_BYTES: Final = 4 * 1024**3
 RECOMMENDED_MEMORY_BYTES: Final = 8 * 1024**3
+# 云主机固件与内核会保留少量内存；不能拿 /proc/meminfo 的可见值硬等同于套餐标称容量。
+MEMORY_RESERVATION_ALLOWANCE_BYTES: Final = 256 * 1024**2
 MINIMUM_DISK_BYTES: Final = 20 * 1024**3
 RECOMMENDED_DISK_BYTES: Final = 100 * 1024**3
 
@@ -107,9 +109,9 @@ class ProductionRuntime:
             warnings.append("可用磁盘低于建议的 100 GiB。")
 
         memory = _linux_memory_bytes()
-        if memory is not None and memory < MINIMUM_MEMORY_BYTES:
+        if memory is not None and not _meets_nominal_memory(memory, MINIMUM_MEMORY_BYTES):
             raise ProductionRuntimeError("物理内存不足 4 GiB，拒绝生产安装。")
-        if memory is not None and memory < RECOMMENDED_MEMORY_BYTES:
+        if memory is not None and not _meets_nominal_memory(memory, RECOMMENDED_MEMORY_BYTES):
             warnings.append("物理内存低于建议的 8 GiB。")
 
         domains: list[str] = []
@@ -594,6 +596,12 @@ def _linux_memory_bytes() -> int | None:
             if len(fields) >= 2 and fields[1].isdigit():
                 return int(fields[1]) * 1024
     return None
+
+
+def _meets_nominal_memory(visible_bytes: int, nominal_bytes: int) -> bool:
+    """按云主机标称容量判断，并容忍固件与内核预留的固定开销。"""
+
+    return visible_bytes + MEMORY_RESERVATION_ALLOWANCE_BYTES >= nominal_bytes
 
 
 def _assert_port_available(port: int) -> None:
