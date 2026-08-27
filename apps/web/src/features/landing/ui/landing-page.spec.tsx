@@ -48,7 +48,7 @@ describe('公开 Alpha 首页', () => {
     const user = userEvent.setup();
     const beginAuthentication = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
-      config: { windowsDownloadUrl: null },
+      config: { registrationMode: 'open-email', windowsDownloadUrl: null },
       controlPlane: { beginAuthentication },
     } as unknown as ReturnType<typeof useAppServices>);
 
@@ -57,11 +57,20 @@ describe('公开 Alpha 首页', () => {
 
     expect(beginAuthentication).toHaveBeenCalledWith('/connect', 'register');
   });
+
+  it('服务端关闭注册时不给用户死入口', () => {
+    configure(null);
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Registration coming soon' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Create account' })).not.toBeInTheDocument();
+  });
 });
 
 function configure(windowsDownloadUrl: string | null) {
   vi.mocked(useAppServices).mockReturnValue({
-    config: { windowsDownloadUrl },
+    config: { registrationMode: 'closed', windowsDownloadUrl },
     controlPlane: { beginAuthentication: vi.fn() },
   } as unknown as ReturnType<typeof useAppServices>);
 }

@@ -479,6 +479,7 @@ const services: AppServices = {
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',
     matrixHomeserverUrl: 'https://matrix.agent-room.test',
+    registrationMode: 'open-email',
     windowsDownloadUrl: 'https://github.com/rainyflash/agent-room/releases/latest',
   },
   content,

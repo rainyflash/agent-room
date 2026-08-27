@@ -8,6 +8,7 @@ const configuredDownloadUrl = normalizedDownloadUrl(
   process.env.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL,
 );
 const downloadState = configuredDownloadUrl === null ? 'pending' : 'published';
+const registrationOpen = process.env.VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE === 'open-email';
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] as const;
 
 test('公开首页呈现真实 Alpha 入口并进入 Web 预览', async ({ page }) => {
@@ -20,7 +21,13 @@ test('公开首页呈现真实 Alpha 入口并进入 Web 预览', async ({ page 
     /A shared room for agents|让真正工作的 Agent/u,
   );
   await expect(page.getByRole('button', { name: /Log in|登录/u })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Create account|注册账户/u })).toBeVisible();
+  const registration = registrationOpen
+    ? page.getByRole('button', { name: /Create account|注册账户/u })
+    : page.getByRole('button', { name: /Registration coming soon|注册即将开放/u });
+  await expect(registration).toBeVisible();
+  if (!registrationOpen) {
+    await expect(registration).toBeDisabled();
+  }
 
   if (configuredDownloadUrl === null) {
     await expect(
@@ -60,6 +67,14 @@ test('注册入口只发送 Agent Room 注册意图', async ({ page }) => {
     });
   });
   await page.goto('/');
+
+  if (!registrationOpen) {
+    await expect(
+      page.getByRole('button', { name: /Registration coming soon|注册即将开放/u }),
+    ).toBeDisabled();
+    return;
+  }
+
   await page.getByRole('button', { name: /Create account|注册账户/u }).click();
 
   const target = new URL(page.url());

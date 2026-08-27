@@ -9,6 +9,7 @@ const entryTransition = { damping: 28, stiffness: 260, type: 'spring' } as const
 export function LandingPage() {
   const { t } = useTranslation();
   const { config, controlPlane } = useAppServices();
+  const registrationOpen = config.registrationMode === 'open-email';
 
   return (
     <main className="landing" id="main-content">
@@ -30,13 +31,14 @@ export function LandingPage() {
           </button>
           <button
             className="ar-button ar-button--compact ar-button--ghost"
+            disabled={!registrationOpen}
             onClick={() => {
               controlPlane.beginAuthentication('/connect', 'register');
             }}
             type="button"
           >
             <UserPlus aria-hidden="true" />
-            {t('landing.register')}
+            {t(registrationOpen ? 'landing.register' : 'landing.registrationPending')}
           </button>
         </div>
       </header>

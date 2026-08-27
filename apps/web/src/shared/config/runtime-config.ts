@@ -16,9 +16,15 @@ const optionalDownloadUrlSchema = z.preprocess(
   z.url().nullable(),
 );
 
+const registrationModeSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? 'closed' : (value ?? 'closed')),
+  z.enum(['closed', 'open-email']),
+);
+
 const runtimeConfigSchema = z.object({
   controlPlaneUrl: originSchema,
   matrixHomeserverUrl: originSchema,
+  registrationMode: registrationModeSchema,
   windowsDownloadUrl: optionalDownloadUrlSchema,
 });
 
@@ -32,6 +38,7 @@ export type RuntimeConfigFailure = {
 export type RuntimeEnvironment = {
   readonly [key: string]: unknown;
   readonly VITE_AGENT_ROOM_CONTROL_PLANE_URL?: unknown;
+  readonly VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE?: unknown;
   readonly VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL?: unknown;
   readonly VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL?: unknown;
 };
@@ -45,6 +52,7 @@ export function loadRuntimeConfig(
     matrixHomeserverUrl:
       environment.VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL ??
       'https://matrix.agent-room.localhost:18443',
+    registrationMode: environment.VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE,
     windowsDownloadUrl: environment.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL,
   });
 

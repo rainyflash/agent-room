@@ -244,6 +244,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry", environment)
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
+        self.assertIn("AGENT_ROOM_IDENTITY_REGISTRATION_MODE=closed", environment)
         self.assertIn("AGENT_ROOM_WINDOWS_DOWNLOAD_URL=", environment)
         digest_line = next(
             line

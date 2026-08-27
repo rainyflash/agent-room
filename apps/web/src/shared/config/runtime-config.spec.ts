@@ -16,6 +16,7 @@ describe('运行时配置', () => {
       value: {
         controlPlaneUrl: 'https://api.agent-room.test',
         matrixHomeserverUrl: 'https://matrix.agent-room.test',
+        registrationMode: 'closed',
         windowsDownloadUrl: null,
       },
     });
@@ -37,5 +38,19 @@ describe('运行时配置', () => {
     });
 
     expect(result.ok).toBe(false);
+  });
+
+  it('注册模式默认关闭且只接受受控枚举', () => {
+    const open = loadRuntimeConfig({
+      ...requiredEnvironment,
+      VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: 'open-email',
+    });
+    const invalid = loadRuntimeConfig({
+      ...requiredEnvironment,
+      VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: 'open-without-verification',
+    });
+
+    expect(open.ok && open.value.registrationMode).toBe('open-email');
+    expect(invalid.ok).toBe(false);
   });
 });
