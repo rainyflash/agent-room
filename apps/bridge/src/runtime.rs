@@ -114,7 +114,7 @@ use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
 };
 
-const CODEX_ADAPTER_CAPABILITY_VERSION: &str = "1.0";
+const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
     "self.read",
     "previews.read",
@@ -509,8 +509,8 @@ async fn compose_agent_session_runtime(
     ));
     let agent_config = AgentRuntimeSessionConfig::new(
         target.agent_id,
-        "codex-desktop",
-        CODEX_ADAPTER_CAPABILITY_VERSION,
+        "agent-room-mcp",
+        DESKTOP_RUNTIME_CAPABILITY_VERSION,
     )
     .map_err(BridgeRuntimeError::agent_runtime)?;
     let lobby = Arc::new(AgentLobbySessionService::new(Arc::new(
