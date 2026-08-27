@@ -5,6 +5,7 @@ import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-ru
 import type { DirectSessionGateway } from '@/features/direct-sessions/domain/direct-session';
 import type { AutomationGrantGateway } from '@/features/automation/domain/automation-grant';
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
+import type { ReadinessGateway } from '@/features/health/domain/readiness';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
 import type { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -19,7 +20,7 @@ import type {
 } from '@/features/private-rooms/domain/private-room';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
-import type { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import type { ControlPlaneGateway, SessionDependencies } from '@/features/session/domain/session';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 
@@ -29,7 +30,7 @@ export type AppServices = {
   readonly config: RuntimeConfig;
   readonly content: ContentGateway;
   readonly contentVerifier: ContentVerifier;
-  readonly controlPlane: ControlPlaneClient;
+  readonly controlPlane: ControlPlaneGateway & ReadinessGateway;
   readonly directSessionCoordinator: DirectSessionCoordinator;
   readonly directSessions: DirectSessionGateway;
   readonly desktop: DesktopRuntimeGateway;
@@ -44,6 +45,7 @@ export type AppServices = {
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
   readonly security: MatrixSecurityGateway;
+  readonly session: SessionDependencies;
   readonly telemetry: FrontendTelemetryGateway;
 };
 

@@ -473,6 +473,8 @@ class FixtureHandoffGateway implements HandoffGateway {
   }
 }
 
+const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' });
+
 const services: AppServices = {
   accessManagement,
   automation,
@@ -484,7 +486,7 @@ const services: AppServices = {
   },
   content,
   contentVerifier,
-  controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
+  controlPlane: fixtureControlPlane,
   directSessionCoordinator,
   directSessions,
   desktop,
@@ -501,6 +503,19 @@ const services: AppServices = {
   privateRoomMatrix,
   privateRooms,
   security,
+  session: {
+    browser: {
+      currentPath: () => '/lobby/fixture',
+      isOnline: () => true,
+      replacePath: () => undefined,
+    },
+    controlPlane: fixtureControlPlane,
+    matrix: {
+      beginAuthentication: async () => ok(undefined),
+      logout: async () => ok(undefined),
+      restore: async () => ok({ kind: 'authentication-required' }),
+    },
+  },
   telemetry: {
     record: async () => undefined,
   },
