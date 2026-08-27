@@ -34,9 +34,8 @@ run('cargo', cargoArguments, { inherit: true });
 const destinationDirectory = resolve(toolDirectory, '..', 'src-tauri', 'binaries');
 await mkdir(destinationDirectory, { recursive: true });
 for (const sidecar of sidecars) {
-  const executableName = process.platform === 'win32'
-    ? `${sidecar.executableName}.exe`
-    : sidecar.executableName;
+  const executableName =
+    process.platform === 'win32' ? `${sidecar.executableName}.exe` : sidecar.executableName;
   const source = join(repositoryRoot, 'target', profile, executableName);
   const destination = join(
     destinationDirectory,
