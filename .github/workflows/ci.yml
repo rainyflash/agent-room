@@ -120,6 +120,10 @@ jobs:
         run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
       - name: 验收桌面、移动、离线与深链边界
         run: corepack pnpm@10.28.0 --filter @agent-room/web test:browser
+      - name: 验收已发布 Alpha 的版本化下载入口
+        env:
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.1/agent-room-installer-v0.1.0-alpha.1-windows-x86_64.exe
+        run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright test e2e/public-alpha-landing.e2e.ts
       - name: 上传浏览器验收产物
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
@@ -127,6 +131,7 @@ jobs:
           name: task-19-browser-evidence
           path: |
             artifacts/browser/task-19/
+            artifacts/browser/public-alpha/
             artifacts/playwright/task-19-results/
           if-no-files-found: warn
           retention-days: 7
