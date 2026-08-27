@@ -33,6 +33,7 @@
       "mode": "closed"
     }
   },
+  "distribution": {},
   "telemetry": {
     "enabled": true,
     "alertWebhookUrl": "https://alerts.agent-room.example/v1/events"

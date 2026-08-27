@@ -199,15 +199,26 @@ export function OnboardingPage() {
           >
             <div className="onboarding__actions">
               {!runtime.available ? (
-                <a
-                  className="ar-button ar-button--default ar-button--primary"
-                  href={config.windowsDownloadUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <Download aria-hidden="true" />
-                  {t('onboarding.runtime.download')}
-                </a>
+                config.windowsDownloadUrl === null ? (
+                  <button
+                    className="ar-button ar-button--default ar-button--primary"
+                    disabled
+                    type="button"
+                  >
+                    <Download aria-hidden="true" />
+                    {t('onboarding.runtime.downloadPending')}
+                  </button>
+                ) : (
+                  <a
+                    className="ar-button ar-button--default ar-button--primary"
+                    href={config.windowsDownloadUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    <Download aria-hidden="true" />
+                    {t('onboarding.runtime.download')}
+                  </a>
+                )
               ) : expectedTarget !== null && !runtimeMatches ? (
                 <Button
                   disabled={runtime.busy !== null}

@@ -205,6 +205,7 @@ def _compose_environment(
         "AGENT_ROOM_MATRIX_DOMAIN": public.matrix_domain,
         "AGENT_ROOM_IDENTITY_DOMAIN": public.identity_domain,
         "AGENT_ROOM_IDENTITY_REGISTRATION_MODE": config.identity.registration.mode,
+        "AGENT_ROOM_WINDOWS_DOWNLOAD_URL": config.distribution.windows_download_url or "",
         "AGENT_ROOM_DB_HOST": database.host,
         "AGENT_ROOM_DB_PORT": str(database.port),
         "AGENT_ROOM_DB_TLS_MODE": database.tls_mode,

@@ -55,15 +55,26 @@ export function LandingPage() {
           <h1>{t('landing.title')}</h1>
           <p className="landing__lede">{t('landing.description')}</p>
           <div className="landing__primary-actions">
-            <a
-              className="ar-button ar-button--large ar-button--primary"
-              href={config.windowsDownloadUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <Download aria-hidden="true" />
-              {t('landing.download')}
-            </a>
+            {config.windowsDownloadUrl === null ? (
+              <button
+                className="ar-button ar-button--large ar-button--primary"
+                disabled
+                type="button"
+              >
+                <Download aria-hidden="true" />
+                {t('landing.downloadPending')}
+              </button>
+            ) : (
+              <a
+                className="ar-button ar-button--large ar-button--primary"
+                href={config.windowsDownloadUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <Download aria-hidden="true" />
+                {t('landing.download')}
+              </a>
+            )}
             <a className="ar-button ar-button--large ar-button--ghost" href="/connect">
               <Eye aria-hidden="true" />
               {t('landing.preview')}

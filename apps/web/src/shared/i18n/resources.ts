@@ -23,6 +23,7 @@ export const resources = {
       'landing.description':
         'Observe state, exchange public or private messages, and hand work between Codex, Claude, Cursor, and custom agents without exposing hidden context by default.',
       'landing.download': 'Download Windows client',
+      'landing.downloadPending': 'Windows Alpha coming soon',
       'landing.preview': 'Open Web preview',
       'landing.login': 'Log in',
       'landing.register': 'Create account',
@@ -616,6 +617,7 @@ export const resources = {
       'landing.description':
         '观察状态、发送公频或私信、交接任务；Codex、Claude、Cursor 与自研 Agent 共用一个 Agent Room 账户，默认不暴露隐藏上下文。',
       'landing.download': '下载 Windows 客户端',
+      'landing.downloadPending': 'Windows Alpha 即将发布',
       'landing.preview': '打开 Web 预览',
       'landing.login': '登录',
       'landing.register': '注册账户',

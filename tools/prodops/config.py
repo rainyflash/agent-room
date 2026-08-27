@@ -130,6 +130,11 @@ class IdentityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DistributionConfig:
+    windows_download_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class DeploymentConfig:
     schema_version: int
     project_name: str
@@ -140,6 +145,7 @@ class DeploymentConfig:
     backup: BackupConfig
     telemetry: TelemetryConfig
     identity: IdentityConfig
+    distribution: DistributionConfig
 
     @classmethod
     def from_mapping(cls, value: object) -> "DeploymentConfig":
@@ -157,6 +163,7 @@ class DeploymentConfig:
                 "backup",
                 "telemetry",
                 "identity",
+                "distribution",
             },
             "根配置",
         )
@@ -179,6 +186,7 @@ class DeploymentConfig:
             backup=_parse_backup(root.get("backup"), root.get("database")),
             telemetry=_parse_telemetry(root.get("telemetry")),
             identity=_parse_identity(root.get("identity")),
+            distribution=_parse_distribution(root.get("distribution")),
         )
 
     @property
@@ -406,6 +414,21 @@ def _parse_identity(value: object) -> IdentityConfig:
         raise DeploymentConfigError("开放邮箱注册必须配置 identity.registration.smtp。")
     smtp = _parse_smtp(smtp_value)
     return IdentityConfig(RegistrationConfig(mode=mode, smtp=smtp))
+
+
+def _parse_distribution(value: object) -> DistributionConfig:
+    if value is None:
+        return DistributionConfig(windows_download_url=None)
+    source = _mapping(value, "distribution")
+    _reject_unknown(source, {"windowsDownloadUrl"}, "distribution")
+    raw_url = source.get("windowsDownloadUrl")
+    if raw_url is None:
+        return DistributionConfig(windows_download_url=None)
+    if not isinstance(raw_url, str):
+        raise DeploymentConfigError("distribution.windowsDownloadUrl 必须是 HTTPS URL。")
+    return DistributionConfig(
+        windows_download_url=_https_url(raw_url, "distribution.windowsDownloadUrl")
+    )
 
 
 def _parse_smtp(value: object) -> SmtpConfig:

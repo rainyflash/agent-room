@@ -11,10 +11,15 @@ const originSchema = z
   )
   .transform((value) => value.origin);
 
+const optionalDownloadUrlSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : (value ?? null)),
+  z.url().nullable(),
+);
+
 const runtimeConfigSchema = z.object({
   controlPlaneUrl: originSchema,
   matrixHomeserverUrl: originSchema,
-  windowsDownloadUrl: z.url(),
+  windowsDownloadUrl: optionalDownloadUrlSchema,
 });
 
 export type RuntimeConfig = z.output<typeof runtimeConfigSchema>;
@@ -40,9 +45,7 @@ export function loadRuntimeConfig(
     matrixHomeserverUrl:
       environment.VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL ??
       'https://matrix.agent-room.localhost:18443',
-    windowsDownloadUrl:
-      environment.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL ??
-      'https://github.com/rainyflash/agent-room/releases/latest',
+    windowsDownloadUrl: environment.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL,
   });
 
   if (parsed.success) {

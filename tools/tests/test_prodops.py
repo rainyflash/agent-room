@@ -142,6 +142,23 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(config.identity.registration.mode, "closed")
         self.assertIsNone(config.identity.registration.smtp)
 
+    def test_distribution_url_is_optional_and_requires_https(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        self.assertIsNone(DeploymentConfig.from_mapping(value).distribution.windows_download_url)
+
+        value["distribution"] = {
+            "windowsDownloadUrl": "https://github.com/example/agent-room/releases/download/v1/app.exe"
+        }
+        config = DeploymentConfig.from_mapping(value)
+        self.assertEqual(
+            config.distribution.windows_download_url,
+            "https://github.com/example/agent-room/releases/download/v1/app.exe",
+        )
+
+        value["distribution"]["windowsDownloadUrl"] = "http://downloads.example/app.exe"
+        with self.assertRaisesRegex(DeploymentConfigError, "distribution.windowsDownloadUrl"):
+            DeploymentConfig.from_mapping(value)
+
     def test_open_email_registration_requires_complete_tls_smtp_configuration(self) -> None:
         config = open_email_config((ROOT / ".test-secrets" / "smtp-password").resolve())
 
@@ -227,6 +244,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry", environment)
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
+        self.assertIn("AGENT_ROOM_WINDOWS_DOWNLOAD_URL=", environment)
         digest_line = next(
             line
             for line in environment.splitlines()

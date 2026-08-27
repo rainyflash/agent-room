@@ -15,6 +15,21 @@ const validSession = {
 };
 
 describe('ControlPlaneClient', () => {
+  it('把注册意图作为受约束参数发送给身份入口', () => {
+    const navigate = vi.fn();
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://api.agent-room.test',
+      fetch: vi.fn(),
+      navigate,
+    });
+
+    client.beginAuthentication('/connect', 'register');
+
+    expect(navigate).toHaveBeenCalledWith(
+      'https://api.agent-room.test/auth/oidc/start?returnTo=%2Fconnect&importDisplayName=true&importLocale=true&intent=register',
+    );
+  });
+
   it('把 401 精确映射为缺少会话而不是通用网络错误', async () => {
     const client = new ControlPlaneClient({
       baseUrl: 'https://api.agent-room.test',

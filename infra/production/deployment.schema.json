@@ -172,6 +172,18 @@
           ]
         }
       }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "windowsDownloadUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "maxLength": 2048
+        }
+      }
     }
   },
   "allOf": [
