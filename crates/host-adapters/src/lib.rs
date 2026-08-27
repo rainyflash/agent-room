@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
+#[cfg(windows)]
+use std::ffi::OsStr;
 use std::{
-    env,
-    ffi::OsStr,
-    fmt, fs,
+    env, fmt, fs,
     io::Write as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
