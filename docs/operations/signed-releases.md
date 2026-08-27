@@ -45,7 +45,7 @@ target/release/agent-room-release-tool keygen \
 工作流执行以下动作：
 
 1. 构建 Windows x64 的 NSIS 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
-2. 构建 `control-plane`、`identity`、`web` 的 amd64/arm64 OCI Index；
+2. 在 GitHub 官方 amd64 与 arm64 Linux runner 上分别原生构建 `control-plane`、`identity`、`web`，记录每个平台不可变 digest，再合并为 amd64/arm64 OCI Index；禁止在 x64 runner 上用 QEMU 编译 Rust 控制面；
 3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；
 5. 生成 `release.json`、`release-evidence.json` 和连续晋级记录；

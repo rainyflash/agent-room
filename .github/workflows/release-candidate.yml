@@ -184,12 +184,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  images:
-    name: ${{ matrix.name }} 多架构镜像
+  image-platforms:
+    name: ${{ matrix.name }} ${{ matrix.arch }} 原生镜像
     needs: metadata
     permissions:
       contents: read
-      id-token: write
       packages: write
     strategy:
       fail-fast: false
@@ -197,12 +196,36 @@ jobs:
         include:
           - name: control-plane
             file: infra/production/Containerfile.control-plane
+            arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - name: control-plane
+            file: infra/production/Containerfile.control-plane
+            arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
           - name: identity
             file: infra/production/Containerfile.identity
+            arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - name: identity
+            file: infra/production/Containerfile.identity
+            arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
           - name: web
             file: infra/production/Containerfile.web
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+            arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - name: web
+            file: infra/production/Containerfile.web
+            arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -212,37 +235,99 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: 安装 QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # 版本 4.2.0
       - name: 安装 Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # 版本 4.3.0
-      - name: 构建并推送不可变候选镜像
+      - name: 原生构建并推送单架构候选镜像
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # 版本 7.3.0
         with:
           context: .
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}:candidate-${{ github.sha }}
+          tags: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}:candidate-${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.name }}-${{ matrix.arch }}
           build-args: |
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.room.the-zeroth.com
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
             VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.1/agent-room-installer-v0.1.0-alpha.1-windows-x86_64.exe
+      - name: 保存单架构不可变摘要
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          test "$(printf '%s' "$DIGEST" | grep -Ec '^sha256:[0-9a-f]{64}$')" = 1
+          mkdir -p platform-digest
+          printf '%s\n' "$DIGEST" > "platform-digest/${{ matrix.name }}-${{ matrix.arch }}.digest"
+      - name: 上传单架构摘要
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: image-platform-${{ matrix.name }}-${{ matrix.arch }}
+          path: platform-digest/
+          if-no-files-found: error
+          retention-days: 7
+
+  images:
+    name: ${{ matrix.name }} 多架构镜像
+    needs: [metadata, image-platforms]
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [control-plane, identity, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出候选提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 登录 GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # 版本 4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # 版本 4.3.0
+      - name: 下载单架构不可变摘要
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # 版本 8.0.0
+        with:
+          pattern: image-platform-${{ matrix.name }}-*
+          path: platform-digest
+          merge-multiple: true
+      - name: 合并不可变摘要为多架构 OCI Index
+        id: merge
+        env:
+          IMAGE_BASE: ${{ needs.metadata.outputs.image_base }}
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          AMD64_DIGEST="$(cat "platform-digest/$IMAGE_NAME-amd64.digest")"
+          ARM64_DIGEST="$(cat "platform-digest/$IMAGE_NAME-arm64.digest")"
+          test "$(printf '%s\n%s\n' "$AMD64_DIGEST" "$ARM64_DIGEST" | grep -Ec '^sha256:[0-9a-f]{64}$')" = 2
+
+          IMAGE_REPOSITORY="$IMAGE_BASE/$IMAGE_NAME"
+          TARGET_REF="$IMAGE_REPOSITORY:candidate-${{ github.sha }}"
+          docker buildx imagetools create \
+            --tag "$TARGET_REF" \
+            "$IMAGE_REPOSITORY@$AMD64_DIGEST" \
+            "$IMAGE_REPOSITORY@$ARM64_DIGEST"
+
+          mkdir -p candidate
+          docker buildx imagetools inspect --raw "$TARGET_REF" > "candidate/$IMAGE_NAME.oci-manifest.json"
+          INDEX_DIGEST="$(docker buildx imagetools inspect "$TARGET_REF" --format '{{json .Manifest}}' | jq -r '.digest')"
+          test "$(printf '%s' "$INDEX_DIGEST" | grep -Ec '^sha256:[0-9a-f]{64}$')" = 1
+          docker buildx imagetools inspect "$IMAGE_REPOSITORY@$INDEX_DIGEST" >/dev/null
+          printf 'digest=%s\n' "$INDEX_DIGEST" >> "$GITHUB_OUTPUT"
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
       - name: 安装 Syft
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
-      - name: 保存 OCI manifest
-        env:
-          IMAGE_REF: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p candidate
-          docker buildx imagetools inspect --raw "$IMAGE_REF" > "candidate/${{ matrix.name }}.oci-manifest.json"
       - name: 为镜像生成 SBOM、签名与描述
         env:
-          IMAGE_REF: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          IMAGE_REF: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}@${{ steps.merge.outputs.digest }}
           RELEASE_BASE_URL: ${{ needs.metadata.outputs.release_base_url }}
         run: >-
           python tools/release_assets.py attest-image
