@@ -17,6 +17,7 @@ tauri-build.workspace = true
 [dependencies]
 agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
+agent-room-host-adapters.workspace = true
 agent-room-release-manifest.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true

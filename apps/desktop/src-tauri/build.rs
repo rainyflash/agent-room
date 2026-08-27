@@ -5,6 +5,10 @@ const COMMANDS: &[&str] = &[
     "desktop_open_authorization",
     "desktop_check_update",
     "desktop_install_update",
+    "desktop_detect_agent_hosts",
+    "desktop_plan_agent_host",
+    "desktop_apply_agent_host",
+    "desktop_remove_agent_host",
 ];
 
 fn main() {

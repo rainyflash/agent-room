@@ -18,24 +18,35 @@ if (!/^[a-z0-9_.-]+$/u.test(targetTriple)) {
   throw new Error(`rustc 返回了不安全的目标三元组：${targetTriple}`);
 }
 
-const cargoArguments = ['build', '-p', 'agent-room-bridge'];
+const sidecars = [
+  { packageName: 'agent-room-bridge', executableName: 'agent-room-bridge' },
+  { packageName: 'agent-room-mcp', executableName: 'agent-room-mcp' },
+];
+const cargoArguments = ['build'];
+for (const sidecar of sidecars) {
+  cargoArguments.push('-p', sidecar.packageName);
+}
 if (release) {
   cargoArguments.push('--release');
 }
 run('cargo', cargoArguments, { inherit: true });
 
-const executableName = process.platform === 'win32' ? 'agent-room-bridge.exe' : 'agent-room-bridge';
-const source = join(repositoryRoot, 'target', profile, executableName);
 const destinationDirectory = resolve(toolDirectory, '..', 'src-tauri', 'binaries');
-const destination = join(
-  destinationDirectory,
-  process.platform === 'win32'
-    ? `agent-room-bridge-${targetTriple}.exe`
-    : `agent-room-bridge-${targetTriple}`,
-);
 await mkdir(destinationDirectory, { recursive: true });
-await copyFile(source, destination);
-process.stdout.write(`已准备桌面 sidecar：${basename(destination)}\n`);
+for (const sidecar of sidecars) {
+  const executableName = process.platform === 'win32'
+    ? `${sidecar.executableName}.exe`
+    : sidecar.executableName;
+  const source = join(repositoryRoot, 'target', profile, executableName);
+  const destination = join(
+    destinationDirectory,
+    process.platform === 'win32'
+      ? `${sidecar.executableName}-${targetTriple}.exe`
+      : `${sidecar.executableName}-${targetTriple}`,
+  );
+  await copyFile(source, destination);
+  process.stdout.write(`已准备桌面 sidecar：${basename(destination)}\n`);
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {

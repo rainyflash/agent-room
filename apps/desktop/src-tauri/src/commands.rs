@@ -1,4 +1,8 @@
+use agent_room_host_adapters::{
+    ApplyReceipt, ConfigurationPlan, HostConfigurator, HostDetection, HostFailure, HostKind,
+};
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt as _;
@@ -15,6 +19,7 @@ use crate::{
 pub(crate) struct DesktopRuntime {
     pub(crate) bridge: BridgeSupervisor,
     pub(crate) updates: ReleaseUpdateRuntime,
+    pub(crate) hosts: Arc<HostConfigurator>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +58,47 @@ impl From<ReleaseUpdateFailure> for DesktopCommandFailure {
     fn from(failure: ReleaseUpdateFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
     }
+}
+
+impl From<HostFailure> for DesktopCommandFailure {
+    fn from(failure: HostFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_detect_agent_hosts(runtime: State<'_, DesktopRuntime>) -> Vec<HostDetection> {
+    runtime.hosts.detect_all()
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_plan_agent_host(
+    runtime: State<'_, DesktopRuntime>,
+    host: HostKind,
+) -> Result<ConfigurationPlan, DesktopCommandFailure> {
+    Ok(runtime.hosts.plan(host)?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_apply_agent_host(
+    runtime: State<'_, DesktopRuntime>,
+    host: HostKind,
+    expected_original_digest: String,
+) -> Result<ApplyReceipt, DesktopCommandFailure> {
+    Ok(runtime.hosts.apply(host, &expected_original_digest)?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_remove_agent_host(
+    runtime: State<'_, DesktopRuntime>,
+    host: HostKind,
+    expected_original_digest: String,
+) -> Result<ApplyReceipt, DesktopCommandFailure> {
+    Ok(runtime.hosts.remove(host, &expected_original_digest)?)
 }
 
 #[tauri::command]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-plan-agent-host"
+description = "Enables the desktop_plan_agent_host command without any pre-configured scope."
+commands.allow = ["desktop_plan_agent_host"]
+
+[[permission]]
+identifier = "deny-desktop-plan-agent-host"
+description = "Denies the desktop_plan_agent_host command without any pre-configured scope."
+commands.deny = ["desktop_plan_agent_host"]

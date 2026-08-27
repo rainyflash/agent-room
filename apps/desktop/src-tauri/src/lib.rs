@@ -10,14 +10,18 @@ mod release_update_state;
 mod release_updates;
 mod webview_migration;
 
+use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
-    DesktopRuntime, desktop_check_update, desktop_install_update, desktop_open_authorization,
-    desktop_retry_bridge, desktop_runtime_snapshot, desktop_set_autostart,
+    DesktopRuntime, desktop_apply_agent_host, desktop_check_update, desktop_detect_agent_hosts,
+    desktop_install_update, desktop_open_authorization, desktop_plan_agent_host,
+    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
+use std::{path::PathBuf, sync::Arc};
 use tauri::{
     Manager as _, RunEvent,
     menu::{Menu, MenuItem},
@@ -73,6 +77,10 @@ pub fn run() {
             desktop_open_authorization,
             desktop_check_update,
             desktop_install_update,
+            desktop_detect_agent_hosts,
+            desktop_plan_agent_host,
+            desktop_apply_agent_host,
+            desktop_remove_agent_host,
         ])
         .setup(move |app| {
             webview_migration::retire_legacy_service_worker(app)?;
@@ -81,7 +89,15 @@ pub fn run() {
             let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config);
             let updates = ReleaseUpdateRuntime::new(app.handle().clone(), update_config.clone())
                 .map_err(|failure| format!("桌面更新状态初始化失败 [{}]", failure.code()))?;
-            app.manage(DesktopRuntime { bridge, updates });
+            let mcp_executable = installed_mcp_executable()?;
+            let host_context = HostContext::from_environment(mcp_executable)
+                .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
+            let hosts = Arc::new(HostConfigurator::system(host_context));
+            app.manage(DesktopRuntime {
+                bridge,
+                updates,
+                hosts,
+            });
             setup_tray(app)?;
             setup_deep_links(app)?;
             Ok(())
@@ -104,6 +120,24 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+fn installed_mcp_executable() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|_| "无法定位桌面程序目录".to_owned())?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| "桌面程序目录无效".to_owned())?;
+    let filename = if cfg!(windows) {
+        "agent-room-mcp.exe"
+    } else {
+        "agent-room-mcp"
+    };
+    let path = directory.join(filename);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err("安装包缺少 agent-room-mcp".to_owned())
+    }
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {

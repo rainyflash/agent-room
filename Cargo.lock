@@ -252,6 +252,7 @@ version = "0.1.0"
 dependencies = [
  "agent-room-bridge-ipc",
  "agent-room-bridge-local-adapter",
+ "agent-room-host-adapters",
  "agent-room-release-manifest",
  "base64 0.22.1",
  "ed25519-dalek",

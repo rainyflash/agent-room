@@ -555,10 +555,22 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the desktop_apply_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-apply-agent-host",
+          "markdownDescription": "Enables the desktop_apply_agent_host command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_check_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-check-update",
           "markdownDescription": "Enables the desktop_check_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_detect_agent_hosts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-detect-agent-hosts",
+          "markdownDescription": "Enables the desktop_detect_agent_hosts command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_install_update command without any pre-configured scope.",
@@ -571,6 +583,18 @@
           "type": "string",
           "const": "allow-desktop-open-authorization",
           "markdownDescription": "Enables the desktop_open_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_plan_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-plan-agent-host",
+          "markdownDescription": "Enables the desktop_plan_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_remove_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-remove-agent-host",
+          "markdownDescription": "Enables the desktop_remove_agent_host command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_retry_bridge command without any pre-configured scope.",
@@ -591,10 +615,22 @@
           "markdownDescription": "Enables the desktop_set_autostart command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_apply_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-apply-agent-host",
+          "markdownDescription": "Denies the desktop_apply_agent_host command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_check_update command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-check-update",
           "markdownDescription": "Denies the desktop_check_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_detect_agent_hosts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-detect-agent-hosts",
+          "markdownDescription": "Denies the desktop_detect_agent_hosts command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_install_update command without any pre-configured scope.",
@@ -607,6 +643,18 @@
           "type": "string",
           "const": "deny-desktop-open-authorization",
           "markdownDescription": "Denies the desktop_open_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_plan_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-plan-agent-host",
+          "markdownDescription": "Denies the desktop_plan_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_remove_agent_host command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-remove-agent-host",
+          "markdownDescription": "Denies the desktop_remove_agent_host command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_retry_bridge command without any pre-configured scope.",
