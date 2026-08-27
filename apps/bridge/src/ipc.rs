@@ -1770,7 +1770,7 @@ mod tests {
             &mut client,
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
-                caller: IpcCaller::CodexPlugin,
+                caller: IpcCaller::McpServer,
                 supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },

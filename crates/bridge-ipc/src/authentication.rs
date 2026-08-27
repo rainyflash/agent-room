@@ -123,7 +123,7 @@ fn append_text(buffer: &mut Vec<u8>, value: &str) {
 
 const fn caller_tag(caller: IpcCallerKind) -> u8 {
     match caller {
-        IpcCallerKind::CodexPlugin => 1,
+        IpcCallerKind::McpServer => 1,
         IpcCallerKind::DesktopShell => 2,
         IpcCallerKind::DiagnosticCli => 3,
     }
@@ -160,7 +160,7 @@ mod tests {
         let challenge_id = Uuid::from_u128(1);
         let challenge = IpcChallenge::new([9; 32]);
         let installation_id = IpcInstallationId::new("install_1").expect("安装标识有效");
-        let original_offer = offer(IpcCallerKind::CodexPlugin);
+        let original_offer = offer(IpcCallerKind::McpServer);
         let original_agreement = agreement(&original_offer);
         let proof = create_challenge_proof(
             &secret,

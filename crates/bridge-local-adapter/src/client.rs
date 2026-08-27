@@ -25,17 +25,17 @@ pub struct LocalBridgeClient {
 }
 
 impl LocalBridgeClient {
-    /// 创建只能以 Codex 插件身份协商作用域的本地客户端。
+    /// 创建只能以通用 MCP Server 身份协商工具作用域的本地客户端。
     pub fn system(runtime_root: PathBuf) -> Self {
         Self::system_with_secure_storage_service(runtime_root, SecureStorageService::default())
     }
 
-    /// 使用显式安全存储命名空间创建 Codex 插件客户端。
+    /// 使用显式安全存储命名空间创建通用 MCP Server 客户端。
     pub fn system_with_secure_storage_service(
         runtime_root: PathBuf,
         service: SecureStorageService,
     ) -> Self {
-        Self::for_caller(runtime_root, IpcCallerKind::CodexPlugin, service)
+        Self::for_caller(runtime_root, IpcCallerKind::McpServer, service)
     }
 
     /// 创建供受信桌面壳执行用户确认操作的本地客户端。

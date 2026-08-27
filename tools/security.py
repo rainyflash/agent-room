@@ -60,7 +60,7 @@ SCENARIOS: Final = (
     Scenario(
         "MCP Schema 与 IPC 二次校验",
         "mcp_schema_fuzz",
-        ("cargo", "test", "-p", "agent-room-codex-mcp"),
+        ("cargo", "test", "-p", "agent-room-mcp"),
     ),
     Scenario(
         "CSRF、同源与请求体限制",

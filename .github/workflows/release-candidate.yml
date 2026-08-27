@@ -91,7 +91,7 @@ jobs:
             target: windows-x86_64
             rust_target: x86_64-pc-windows-msvc
             bridge: target/release/agent-room-bridge.exe
-            mcp: target/release/agent-room-codex-mcp.exe
+            mcp: target/release/agent-room-mcp.exe
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -120,13 +120,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
-      - name: 构建 Codex MCP 并装配插件
+      - name: 构建通用 MCP 并装配 Codex 适配器
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
         run: |
-          cargo build --locked --release --package agent-room-codex-mcp
-          if ($LASTEXITCODE -ne 0) { throw 'Codex MCP 构建失败。' }
+          cargo build --locked --release --package agent-room-mcp
+          if ($LASTEXITCODE -ne 0) { throw '通用 MCP 构建失败。' }
           python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
           if ($LASTEXITCODE -ne 0) { throw 'Codex 插件装配失败。' }
       - name: 收集原生发布产物

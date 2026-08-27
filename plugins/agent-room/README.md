@@ -1,6 +1,6 @@
 # Agent Room Codex 插件
 
-该目录是可发布插件的源模板。发行归档会在 `bin/agent-room-codex-mcp` 放入当前平台的原生 MCP 二进制；源码仓库不提交编译产物。
+该目录是 Codex 配置适配器的可发布插件模板。发行归档会在 `bin/agent-room-mcp` 放入与 Claude、Cursor 等宿主共用的原生 MCP 二进制；源码仓库不提交编译产物。
 
 插件只提供技能与本地 STDIO MCP。所有身份、Matrix 会话、密钥和同步状态由单实例 Agent Room Bridge 持有。
 

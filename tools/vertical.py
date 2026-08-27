@@ -796,7 +796,7 @@ def build_runtime_binaries(
     packages: Sequence[str] = (
         "agent-room-control-plane",
         "agent-room-bridge",
-        "agent-room-codex-mcp",
+        "agent-room-mcp",
     ),
 ) -> None:
     package_arguments = [argument for package in packages for argument in ("-p", package)]
@@ -1148,7 +1148,7 @@ def wait_for_mcp_runtime_unavailable(
     """通过真实插件边界观察断网态，禁止把日志字符串当作状态协议。"""
     deadline = time.monotonic() + timeout_seconds
     with McpStdioClient(
-        command=[str(runtime_binary("agent-room-codex-mcp"))],
+        command=[str(runtime_binary("agent-room-mcp"))],
         working_directory=ROOT,
         environment=bridge_environment,
         stderr_path=LOG_ROOT / "codex-mcp-reconnect.log",
@@ -1201,14 +1201,14 @@ def verify_mcp_workflow(
     room = active_room_for_agent(expected_agent_id)
     with (
         McpStdioClient(
-            command=[str(runtime_binary("agent-room-codex-mcp"))],
+            command=[str(runtime_binary("agent-room-mcp"))],
             working_directory=ROOT,
             environment=target_bridge_environment,
             stderr_path=LOG_ROOT / "codex-mcp.log",
             sanitize_line=redactor.redact,
         ) as client,
         McpStdioClient(
-            command=[str(runtime_binary("agent-room-codex-mcp"))],
+            command=[str(runtime_binary("agent-room-mcp"))],
             working_directory=ROOT,
             environment=sender_bridge_environment,
             stderr_path=LOG_ROOT / "codex-mcp-sender.log",

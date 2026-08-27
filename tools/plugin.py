@@ -20,7 +20,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_SOURCE = REPOSITORY_ROOT / "plugins" / "agent-room"
 ARTIFACTS_ROOT = REPOSITORY_ROOT / "artifacts" / "codex-plugin"
-BINARY_BASENAME = "agent-room-codex-mcp"
+BINARY_BASENAME = "agent-room-mcp"
 MARKETPLACE_NAME = "agent-room-community"
 PLUGIN_SELECTOR = f"agent-room@{MARKETPLACE_NAME}"
 EXPECTED_TOOLS = (
@@ -161,7 +161,7 @@ def resolve_binary(explicit: Path | None) -> Path:
                 "--release",
                 "--locked",
                 "-p",
-                "agent-room-codex-mcp",
+                "agent-room-mcp",
             ]
         )
         suffix = ".exe" if os.name == "nt" else ""

@@ -113,7 +113,7 @@ mod tests {
         let (mut client, mut server) = duplex(4 * 1_024);
         let frame = IpcFrame::ClientHello {
             installation_id: "install_1".to_owned(),
-            caller: IpcCaller::CodexPlugin,
+            caller: IpcCaller::McpServer,
             supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
             requested_scopes: vec![IpcScopeName::BridgeStatusRead],
         };

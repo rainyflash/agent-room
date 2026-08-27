@@ -1,5 +1,5 @@
 [package]
-name = "agent-room-codex-mcp"
+name = "agent-room-mcp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

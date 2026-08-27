@@ -305,7 +305,7 @@ fn decode_challenge(encoded: &str) -> Result<IpcChallenge, IpcClientFailure> {
 
 const fn wire_caller(caller: IpcCallerKind) -> IpcCaller {
     match caller {
-        IpcCallerKind::CodexPlugin => IpcCaller::CodexPlugin,
+        IpcCallerKind::McpServer => IpcCaller::McpServer,
         IpcCallerKind::DesktopShell => IpcCaller::DesktopShell,
         IpcCallerKind::DiagnosticCli => IpcCaller::DiagnosticCli,
     }
@@ -468,7 +468,7 @@ mod tests {
         let mut client = IpcClientSession::authenticate(
             client_stream,
             &credentials,
-            IpcCallerKind::CodexPlugin,
+            IpcCallerKind::McpServer,
             [IpcScope::BridgeStatusRead],
         )
         .await
@@ -513,7 +513,7 @@ mod tests {
         let failure = IpcClientSession::authenticate(
             client_stream,
             &credentials,
-            IpcCallerKind::CodexPlugin,
+            IpcCallerKind::McpServer,
             [IpcScope::BridgeStatusRead],
         )
         .await

@@ -66,7 +66,7 @@ pub enum IpcFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcCaller {
-    CodexPlugin,
+    McpServer,
     DesktopShell,
     DiagnosticCli,
 }
@@ -154,7 +154,7 @@ pub fn server_agreement_frame(
 impl From<IpcCaller> for IpcCallerKind {
     fn from(value: IpcCaller) -> Self {
         match value {
-            IpcCaller::CodexPlugin => Self::CodexPlugin,
+            IpcCaller::McpServer => Self::McpServer,
             IpcCaller::DesktopShell => Self::DesktopShell,
             IpcCaller::DiagnosticCli => Self::DiagnosticCli,
         }
@@ -214,7 +214,7 @@ mod tests {
     fn 客户端握手只接受闭合且经过领域校验的值() {
         let frame = IpcFrame::ClientHello {
             installation_id: "install_1".to_owned(),
-            caller: IpcCaller::CodexPlugin,
+            caller: IpcCaller::McpServer,
             supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
             requested_scopes: vec![IpcScopeName::BridgeStatusRead],
         };
@@ -222,7 +222,7 @@ mod tests {
         let (installation_id, offer) = client_offer_from_frame(&frame).expect("握手帧有效");
 
         assert_eq!(installation_id.as_str(), "install_1");
-        assert_eq!(offer.caller(), IpcCallerKind::CodexPlugin);
+        assert_eq!(offer.caller(), IpcCallerKind::McpServer);
         assert!(
             offer
                 .supported_versions()

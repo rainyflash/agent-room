@@ -45,7 +45,8 @@ Domain and application crates do not depend on UI, Matrix, databases, object sto
 | `apps/bridge`                          | Local agent bridge daemon                                                |
 | `apps/web`                             | React lobby and collaboration UI                                         |
 | `apps/desktop`                         | Tauri desktop shell and Bridge supervisor                                |
-| `apps/codex-mcp`, `plugins/agent-room` | Codex MCP adapter and plugin bundle                                      |
+| `apps/agent-room-mcp`                  | Host-neutral MCP server backed by the local Bridge                       |
+| `plugins/agent-room`                   | Codex configuration adapter and plugin bundle                            |
 | `packages/protocol`                    | Canonical JSON Schema and generated cross-language types                 |
 | `infra/production`                     | Compose-first production reference                                       |
 | `tools`                                | Reproducible development, operations, release, and validation automation |

@@ -69,7 +69,7 @@ impl IpcProtocolVersion {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IpcCallerKind {
-    CodexPlugin,
+    McpServer,
     DesktopShell,
     DiagnosticCli,
 }
@@ -196,7 +196,7 @@ pub struct FoundationIpcScopePolicy;
 impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
         match caller {
-            IpcCallerKind::CodexPlugin => scope != IpcScope::HandoffApprove,
+            IpcCallerKind::McpServer => scope != IpcScope::HandoffApprove,
             IpcCallerKind::DesktopShell => {
                 matches!(scope, IpcScope::BridgeStatusRead | IpcScope::HandoffApprove)
             }
@@ -324,7 +324,7 @@ mod tests {
         )
         .expect("协商器配置有效");
         let offer = IpcHandshakeOffer::new(
-            IpcCallerKind::CodexPlugin,
+            IpcCallerKind::McpServer,
             [
                 IpcProtocolVersion::V1_0,
                 IpcProtocolVersion::new(1, 1).expect("测试版本有效"),
@@ -394,7 +394,7 @@ mod tests {
         let negotiator = IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], 拒绝全部作用域)
             .expect("协商器配置有效");
         let offer = IpcHandshakeOffer::new(
-            IpcCallerKind::CodexPlugin,
+            IpcCallerKind::McpServer,
             [IpcProtocolVersion::V1_0],
             [IpcScope::BridgeStatusRead],
         )
@@ -408,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_插件可逐项申请工具作用域而诊断客户端只能读取状态() {
+    fn mcp_server_可逐项申请工具作用域而诊断客户端只能读取状态() {
         let policy = FoundationIpcScopePolicy;
         let tool_scopes = [
             IpcScope::SelfRead,
@@ -424,7 +424,7 @@ mod tests {
         assert!(
             tool_scopes
                 .iter()
-                .all(|scope| policy.allows(IpcCallerKind::CodexPlugin, *scope))
+                .all(|scope| policy.allows(IpcCallerKind::McpServer, *scope))
         );
         assert!(
             tool_scopes
@@ -433,14 +433,14 @@ mod tests {
         );
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::HandoffApprove));
-        assert!(!policy.allows(IpcCallerKind::CodexPlugin, IpcScope::HandoffApprove));
+        assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
 
     #[test]
     fn 客户端拒绝未提议版本与越权作用域() {
         let offer = IpcHandshakeOffer::new(
-            IpcCallerKind::CodexPlugin,
+            IpcCallerKind::McpServer,
             [IpcProtocolVersion::V1_0],
             [IpcScope::SelfRead],
         )

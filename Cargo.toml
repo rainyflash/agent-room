@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "apps/bridge",
-  "apps/codex-mcp",
+  "apps/agent-room-mcp",
   "apps/control-plane",
   "apps/desktop/src-tauri",
   "apps/release-tool",

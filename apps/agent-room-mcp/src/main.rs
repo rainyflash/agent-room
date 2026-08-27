@@ -4,7 +4,7 @@ use agent_room_bridge_local_adapter::{
     BridgeLocationFailure, bridge_data_root_from_environment, bridge_runtime_root,
     secure_storage_service_from_environment,
 };
-use agent_room_codex_mcp::agent_room::{AgentRoomMcpServer, LocalBridgeToolClient};
+use agent_room_mcp::agent_room::{AgentRoomMcpServer, LocalBridgeToolClient};
 use rmcp::{ServiceExt, transport::stdio};
 
 #[tokio::main]
