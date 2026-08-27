@@ -1,6 +1,7 @@
 import { createContext, useContext, type PropsWithChildren } from 'react';
 
 import type { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import type { DirectSessionGateway } from '@/features/direct-sessions/domain/direct-session';
 import type { AutomationGrantGateway } from '@/features/automation/domain/automation-grant';
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
@@ -10,6 +11,7 @@ import type { MessageGateway } from '@/features/messages/domain/message';
 import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
+import type { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -29,12 +31,14 @@ export type AppServices = {
   readonly controlPlane: ControlPlaneClient;
   readonly directSessionCoordinator: DirectSessionCoordinator;
   readonly directSessions: DirectSessionGateway;
+  readonly desktop: DesktopRuntimeGateway;
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly messages: MessageGateway;
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;
   readonly moderation: ModerationGateway;
+  readonly onboarding: OnboardingCoordinator;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
   readonly security: MatrixSecurityGateway;

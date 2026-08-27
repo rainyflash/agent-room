@@ -7,6 +7,7 @@ import {
   type BridgeRuntime,
   type AgentHostDetection,
   type AgentHostKind,
+  type DesktopAgentTarget,
   type DesktopDeepLink,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
@@ -20,6 +21,7 @@ const defaultGateway = new TauriDesktopRuntimeGateway();
 type DesktopOperation =
   | 'authorization'
   | 'autostart'
+  | 'agent-runtime'
   | 'host-configure'
   | 'refresh'
   | 'retry'
@@ -41,6 +43,7 @@ export type DesktopRuntimeController = {
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
   readonly configureHost: (host: AgentHostKind) => Promise<void>;
+  readonly configureAgentRuntime: (target: DesktopAgentTarget) => Promise<void>;
 };
 
 export function useDesktopRuntime(
@@ -260,6 +263,23 @@ export function useDesktopRuntime(
     [gateway],
   );
 
+  const configureAgentRuntime = useCallback(
+    async (target: DesktopAgentTarget): Promise<void> => {
+      setBusy('agent-runtime');
+      const result = await gateway.configureAgentRuntime(target);
+      if (result.ok) {
+        setSnapshot((previous) =>
+          previous === null ? previous : { ...previous, agentTarget: result.value },
+        );
+        setFailure(null);
+      } else {
+        setFailure(result.error);
+      }
+      setBusy(null);
+    },
+    [gateway],
+  );
+
   return {
     available,
     busy,
@@ -268,6 +288,7 @@ export function useDesktopRuntime(
     update,
     hosts,
     checkUpdate,
+    configureAgentRuntime,
     dismissFailure: () => {
       setFailure(null);
     },

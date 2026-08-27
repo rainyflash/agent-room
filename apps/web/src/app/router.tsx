@@ -7,6 +7,7 @@ import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
+import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import {
   contextIdentifierSchema,
@@ -45,6 +46,12 @@ const lobbyRoute = createRoute({
   component: LobbyBoundary,
 });
 
+const onboardingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/onboarding',
+  component: OnboardingPage,
+});
+
 const lobbyInstanceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/lobby/$catalogId/instance/$roomId',
@@ -67,6 +74,7 @@ const adminRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   connectRoute,
+  onboardingRoute,
   lobbyRoute,
   lobbyInstanceRoute,
   settingsRoute,

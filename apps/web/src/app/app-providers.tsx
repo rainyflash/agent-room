@@ -6,6 +6,7 @@ import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
 import { ControlPlaneAutomationGrantClient } from '@/features/automation/adapters/control-plane-automation-grant-client';
 import { ControlPlaneDirectSessionClient } from '@/features/direct-sessions/adapters/control-plane-direct-session-client';
+import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import { BrowserDirectBlockRegistry } from '@/features/direct-sessions/adapters/browser-direct-block-registry';
 import { MatrixSdkDirectSessionGateway } from '@/features/direct-sessions/adapters/matrix-direct-session-gateway';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
@@ -19,6 +20,8 @@ import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-messag
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
 import { WebObserverMessagePublisher } from '@/features/messages/adapters/web-observer-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
+import { ControlPlaneOnboardingClient } from '@/features/onboarding/adapters/control-plane-onboarding-client';
+import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import { MatrixAccountPreferencesGateway } from '@/features/preferences/adapters/matrix-account-preferences-gateway';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -61,6 +64,10 @@ export function AppProviders({ config }: AppProvidersProps) {
 
 function createRuntime(config: RuntimeConfig) {
   const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
+  const desktop = new TauriDesktopRuntimeGateway();
+  const onboarding = new OnboardingCoordinator(
+    new ControlPlaneOnboardingClient({ baseUrl: config.controlPlaneUrl }),
+  );
   const frontendTelemetry = new ControlPlaneFrontendTelemetryClient({
     baseUrl: config.controlPlaneUrl,
   });
@@ -124,12 +131,14 @@ function createRuntime(config: RuntimeConfig) {
     controlPlane,
     directSessionCoordinator,
     directSessions,
+    desktop,
     handoffs,
     lobby,
     messagePublisher,
     messages,
     messageTranslation,
     moderation,
+    onboarding,
     privateRoomMatrix,
     privateRooms,
     security,

@@ -1,5 +1,6 @@
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
+import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
@@ -27,13 +28,17 @@ export const resources = {
       'landing.alphaNote': 'Testing build · Windows x86-64 · updates verified before install',
       'landing.flowTitle': 'One account. Many agent instances.',
       'landing.flow.account.title': 'Create an Agent Room account',
-      'landing.flow.account.detail': 'Email verification and a password establish the operator identity.',
+      'landing.flow.account.detail':
+        'Email verification and a password establish the operator identity.',
       'landing.flow.matrix.title': 'Matrix identity is provisioned',
-      'landing.flow.matrix.detail': 'The control plane creates the federated identity after first sign-in.',
+      'landing.flow.matrix.detail':
+        'The control plane creates the federated identity after first sign-in.',
       'landing.flow.runtime.title': 'Install the local Runtime',
-      'landing.flow.runtime.detail': 'Desktop, Bridge, generic MCP server, adapters, and updater ship together.',
+      'landing.flow.runtime.detail':
+        'Desktop, Bridge, generic MCP server, adapters, and updater ship together.',
       'landing.flow.agent.title': 'Register the first Agent',
-      'landing.flow.agent.detail': 'Bind Codex, Claude, Cursor, or your own implementation to the same account.',
+      'landing.flow.agent.detail':
+        'Bind Codex, Claude, Cursor, or your own implementation to the same account.',
       'landing.footer.identity': 'IDENTITY / AGENT ROOM',
       'landing.footer.protocol': 'TRANSPORT / MATRIX + MCP',
       'landing.footer.platform': 'TARGET / WINDOWS FIRST',
@@ -586,6 +591,7 @@ export const resources = {
         'A newer runtime is waiting. Apply it before sending with the current protocol.',
       ...automationResources.en,
       ...moderationResources.en,
+      ...onboardingResources.en,
       ...privateRoomResources.en,
       ...securityResources.en,
     },
@@ -1114,6 +1120,7 @@ export const resources = {
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',
       ...automationResources['zh-CN'],
       ...moderationResources['zh-CN'],
+      ...onboardingResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...securityResources['zh-CN'],
     },

@@ -58,7 +58,7 @@ export function ConnectionPage() {
 
   const handleAction = (action: ConnectionAction): void => {
     if (action === 'enter') {
-      void navigate({ to: '/lobby/$catalogId', params: { catalogId: 'public' } });
+      void navigate({ to: '/onboarding' });
       return;
     }
     send(eventByAction[action]);

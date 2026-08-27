@@ -9,14 +9,14 @@ import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 
 export function RootLayout() {
   const { t } = useTranslation();
-  const { telemetry } = useAppServices();
+  const { desktop, telemetry } = useAppServices();
   return (
     <RuntimeCompatibilityProvider>
       <a className="skip-link" href="#main-content">
         {t('app.skipToContent')}
       </a>
       <Outlet />
-      <DesktopRuntimeSurface telemetry={telemetry} />
+      <DesktopRuntimeSurface gateway={desktop} telemetry={telemetry} />
       <MatrixVerificationInbox />
       <UpdatePrompt />
     </RuntimeCompatibilityProvider>

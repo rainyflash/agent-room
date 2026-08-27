@@ -13,6 +13,7 @@ import type {
 } from '@/features/automation/domain/automation-grant';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import type {
   DirectAgent,
   DirectSession,
@@ -43,6 +44,7 @@ import type {
   ModerationCase,
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
+import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -58,6 +60,18 @@ import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-inje
 
 const room = testRoom(200);
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const desktop = new TauriDesktopRuntimeGateway({
+  available: () => false,
+  invoke: async () => {
+    throw new Error('桌面命令不应在浏览器测试夹具中运行');
+  },
+  listen: async () => () => undefined,
+});
+const onboarding = new OnboardingCoordinator({
+  ensureDefaultAgent: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  listAgents: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  listPublicLobbies: async () => err({ code: 'fixture.unavailable', retryable: false }),
+});
 const localPreferencesGateway: AccountPreferencesGateway = {
   read: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
   scope: () => null,
@@ -463,6 +477,7 @@ const services: AppServices = {
   controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' }),
   directSessionCoordinator,
   directSessions,
+  desktop,
   handoffs: new FixtureHandoffGateway(),
   lobby,
   messagePublisher: new FixtureMessagePublisher(),
@@ -471,6 +486,7 @@ const services: AppServices = {
     translate: async () => err({ code: 'unavailable' as const, retryable: false }),
   },
   moderation,
+  onboarding,
   privateRoomMatrix,
   privateRooms,
   security,
