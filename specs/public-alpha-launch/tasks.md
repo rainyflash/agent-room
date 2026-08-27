@@ -44,9 +44,10 @@
 - [x] 24. 让 Release Candidate 工作流只构建 Windows x86-64 与 testing 渠道。
 - [ ] 25. 配置 Tauri updater 密钥、发布变量和受保护环境，不提交私钥。
   - `release-candidate` 与 `public-release` 已建立分支保护和人工门禁；testing/stable 固定 URL 与默认关闭的注册模式已配置。
-  - 离线根公钥、Key ID、Tauri updater 公钥与私钥 Secret 仍待真实密钥仪式。
+  - Tauri updater 密钥已生成：公钥已绑定发行配置与仓库变量，密码保护的私钥及密码已写入 `release-candidate` 环境 Secret；本机签名构建、反向验签和篡改拒绝测试均通过。
+  - 离线根公钥与 Key ID 仍待离线密钥仪式；它与在线 Tauri updater 密钥不是同一信任边界。
 - [ ] 26. 构建并在干净 Windows 环境验证安装、登录、宿主配置和更新检查。
-  - 本机 NSIS 构建及归档检查已通过，Bridge 与通用 MCP 的归档哈希和独立构建产物一致；这不能替代干净机验收。
+  - 本机已生成经过 Tauri 签名的 NSIS 安装器，并完成真实候选收集；安装器包含桌面端、Bridge、通用 MCP，Codex 适配器归档可独立装配。签名已用配置公钥反向验证；这不能替代干净机验收。
 - [ ] 27. 创建 GitHub prerelease，上传安装包、更新产物、SBOM、签名和摘要。
 - [ ] 28. 把官网版本化下载链接指向已发布 Alpha。
 - [ ] 29. 在获得 SMTP 凭据后完成生产部署门禁，开放注册并验证真实邮件投递。
@@ -57,6 +58,7 @@
 
 1. 可用于 `room.the-zeroth.com` 的 SMTP 服务端、发件地址、用户名和密码 Secret。
 2. 在离线、全盘加密设备完成根发布密钥仪式；在线开发机不得代替该信任边界。
-3. 离线根公开材料、Tauri updater 公私钥和 `release-candidate` 私钥 Secret；环境与非敏感固定 URL 已配置。
+3. 密钥仪式完成后，把离线根公钥与 Key ID 写入受保护仓库变量；Tauri updater 密钥和相关 Secret 已配置。
 4. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用于安装、登录、宿主配置与更新验收。
 5. Windows Authenticode 证书不是 Alpha 的硬阻断，但没有它时必须如实标注 SmartScreen 风险。
+6. 增加第二位可信维护者，用于 `public-release` 的独立人工批准；当前仓库只有一位协作者，无法形成真正的双人复核。

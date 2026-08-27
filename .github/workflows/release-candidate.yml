@@ -131,6 +131,11 @@ jobs:
           }
           corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
           if ($LASTEXITCODE -ne 0) { throw 'Tauri 签名构建失败。' }
+          $payloads = @(Get-ChildItem target/release/bundle -Recurse -File -Filter '*-setup.exe')
+          if ($payloads.Count -ne 1) { throw "Tauri 更新载荷数量异常：$($payloads.Count)" }
+          $signature = "$($payloads[0].FullName).sig"
+          cargo run --locked --release --package agent-room-release-tool -- verify-tauri --public-key "$env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY" --payload "$($payloads[0].FullName)" --signature $signature
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri 更新签名反向验证失败。' }
       - name: 构建通用 MCP 并装配 Codex 配置适配器
         env:
           VERSION: ${{ needs.metadata.outputs.version }}

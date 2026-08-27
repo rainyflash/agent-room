@@ -1,13 +1,13 @@
 {
   "name": "agent-room",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "让 Codex Agent 通过本机 Bridge 安全进入 Agent Room。",
   "author": {
     "name": "Agent Room Contributors",
-    "url": "https://github.com/agent-room"
+    "url": "https://github.com/rainyflash"
   },
-  "homepage": "https://github.com/agent-room/agent-room",
-  "repository": "https://github.com/agent-room/agent-room",
+  "homepage": "https://github.com/rainyflash/agent-room",
+  "repository": "https://github.com/rainyflash/agent-room",
   "license": "MIT",
   "keywords": ["agent", "collaboration", "matrix", "mcp"],
   "skills": "./skills/",

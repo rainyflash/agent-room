@@ -4,14 +4,18 @@ use agent_room_release_manifest::{
     ReleaseChannel, ReleaseManifest, ReleaseTrustState, SignedReleaseManifest,
     validate_release_document, verify_release,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use ed25519_dalek::{Signer as _, SigningKey};
+use minisign_verify::{PublicKey, Signature};
 use zeroize::Zeroizing;
 
 use crate::{
-    cli::{ChannelArg, KeygenArgs, SignArgs, VerifyArgs},
+    cli::{ChannelArg, KeygenArgs, SignArgs, VerifyArgs, VerifyTauriArgs},
     error::{ToolError, ToolResult},
-    files::{read_text, write_new_json, write_new_private_json},
+    files::{read_bytes, read_text, write_new_json, write_new_private_json},
     keys::{PrivateKeyDocument, PublicKeyDocument, read_private_key, read_public_key},
 };
 
@@ -78,6 +82,20 @@ pub fn verify(args: &VerifyArgs) -> ToolResult<()> {
     Ok(())
 }
 
+pub fn verify_tauri(args: &VerifyTauriArgs) -> ToolResult<()> {
+    let public_key_document = decode_tauri_text(&args.public_key)?;
+    let signature_document = decode_tauri_text(read_text(&args.signature)?.trim())?;
+    let public_key = PublicKey::decode(&public_key_document)?;
+    let signature = Signature::decode(&signature_document)?;
+    public_key.verify(&read_bytes(&args.payload)?, &signature, true)?;
+    println!("Tauri 更新签名验证通过：{}", args.payload.display());
+    Ok(())
+}
+
+fn decode_tauri_text(encoded: &str) -> ToolResult<String> {
+    Ok(String::from_utf8(STANDARD.decode(encoded.trim())?)?)
+}
+
 fn now_unix_seconds() -> ToolResult<u64> {
     Ok(SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)?
@@ -87,6 +105,7 @@ fn now_unix_seconds() -> ToolResult<u64> {
 #[cfg(test)]
 mod tests {
     use agent_room_release_manifest::{ArtifactKind, ReleaseArtifact};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use tempfile::tempdir;
 
     use super::*;
@@ -147,5 +166,29 @@ mod tests {
             now_unix_seconds: Some(now),
         })
         .expect("必须能验证签名清单");
+    }
+
+    #[test]
+    fn tauri_signature_verification_rejects_tampered_payload() {
+        let directory = tempdir().expect("必须能创建测试目录");
+        let payload = directory.path().join("update.exe");
+        let signature = directory.path().join("update.exe.sig");
+        let public_key_document = "untrusted comment: minisign public key E7620F1842B4E81F\n\
+RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        let signature_document = "untrusted comment: signature from minisign secret key\n\
+RWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\n\
+trusted comment: timestamp:1555779966\tfile:test\n\
+QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==";
+        fs::write(&payload, b"test").expect("必须能写入测试载荷");
+        fs::write(&signature, STANDARD.encode(signature_document)).expect("必须能写入测试签名");
+        let args = VerifyTauriArgs {
+            public_key: STANDARD.encode(public_key_document),
+            payload: payload.clone(),
+            signature,
+        };
+
+        verify_tauri(&args).expect("有效的 Tauri 签名必须通过");
+        fs::write(payload, b"tampered").expect("必须能篡改测试载荷");
+        assert!(verify_tauri(&args).is_err());
     }
 }

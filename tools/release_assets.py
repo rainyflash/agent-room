@@ -23,7 +23,7 @@ else:
 
 @dataclass(frozen=True)
 class NativeTarget:
-    """描述一个原生平台必须产出的安装器与更新归档。"""
+    """描述一个原生平台必须产出的安装器与更新载荷。"""
 
     updater_target: str
     updater_patterns: tuple[str, ...]
@@ -32,10 +32,10 @@ class NativeTarget:
 
 TARGETS: Final[Mapping[str, NativeTarget]] = {
     "x86_64-pc-windows-msvc": NativeTarget(
-        "windows-x86_64", ("*.nsis.zip",), ("*-setup.exe",)
+        "windows-x86_64", ("*-setup.exe",), ("*-setup.exe",)
     ),
     "aarch64-pc-windows-msvc": NativeTarget(
-        "windows-aarch64", ("*.nsis.zip",), ("*-setup.exe",)
+        "windows-aarch64", ("*-setup.exe",), ("*-setup.exe",)
     ),
     "x86_64-apple-darwin": NativeTarget(
         "darwin-x86_64", ("*.app.tar.gz",), ("*.dmg",)
@@ -163,10 +163,10 @@ def find_unique_bundle_file(
 
 def compound_suffix(path: Path) -> str:
     name = path.name
-    for suffix in (".app.tar.gz", ".AppImage.tar.gz", ".nsis.zip", ".msi.zip"):
+    for suffix in (".app.tar.gz", ".AppImage.tar.gz", ".nsis.zip", ".msi.zip", ".exe"):
         if name.endswith(suffix):
             return suffix
-    raise ReleaseFailure(f"不支持的 Tauri 更新归档：{path}")
+    raise ReleaseFailure(f"不支持的 Tauri 更新载荷：{path}")
 
 
 def release_url(base: str, filename: str) -> str:
@@ -198,20 +198,23 @@ def collect_native(args: argparse.Namespace) -> None:
     if target is None:
         raise ReleaseFailure(f"不支持的 Rust 发布目标：{rust_target}")
     updater_target = target.updater_target
-    archive = find_unique_bundle_file(
-        args.bundle_root, target.updater_patterns, "Tauri 更新归档"
+    updater_payload = find_unique_bundle_file(
+        args.bundle_root, target.updater_patterns, "Tauri 更新载荷"
     )
     installer = find_unique_bundle_file(
         args.bundle_root, target.installer_patterns, "桌面安装器"
     )
-    tauri_signature = require_file(Path(f"{archive}.sig"), "Tauri 更新签名")
+    tauri_signature = require_file(Path(f"{updater_payload}.sig"), "Tauri 更新签名")
     bridge = require_file(args.bridge, "Bridge")
     mcp = require_file(args.mcp, "通用 MCP Server")
     plugin = require_file(args.plugin, "Codex 插件")
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    desktop_name = f"agent-room-desktop-v{args.version}-{updater_target}{compound_suffix(archive)}"
+    desktop_name = (
+        f"agent-room-desktop-v{args.version}-{updater_target}"
+        f"{compound_suffix(updater_payload)}"
+    )
     executable_suffix = ".exe" if updater_target.startswith("windows-") else ""
     installer_name = (
         f"agent-room-installer-v{args.version}-{updater_target}{installer.suffix}"
@@ -225,7 +228,7 @@ def collect_native(args: argparse.Namespace) -> None:
     bridge_path = output_root / bridge_name
     mcp_path = output_root / mcp_name
     plugin_path = output_root / plugin_name
-    copy_new(archive, desktop_path)
+    copy_new(updater_payload, desktop_path)
     copy_new(tauri_signature, desktop_signature_path)
     copy_new(installer, installer_path)
     copy_new(bridge, bridge_path)

@@ -23,5 +23,6 @@ fn run() -> ToolResult<()> {
         Command::Keygen(args) => commands::keygen(&args),
         Command::Sign(args) => commands::sign(&args),
         Command::Verify(args) => commands::verify(&args),
+        Command::VerifyTauri(args) => commands::verify_tauri(&args),
     }
 }

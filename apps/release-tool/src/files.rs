@@ -16,6 +16,13 @@ pub fn read_text(path: &Path) -> ToolResult<String> {
     })
 }
 
+pub fn read_bytes(path: &Path) -> ToolResult<Vec<u8>> {
+    fs::read(path).map_err(|source| ToolError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 pub fn write_new_json<T: Serialize>(path: &Path, value: &T) -> ToolResult<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     write_new_bytes(path, &bytes, false)

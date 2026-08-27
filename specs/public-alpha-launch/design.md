@@ -141,7 +141,7 @@ OIDC 登录继续由控制平面启动。注册入口调用同一 `/auth/oidc/st
 
 首个版本使用 `v0.1.0-alpha.1` 并标记 GitHub prerelease。Release 资产至少包括 NSIS 安装包、Tauri updater 产物、`agent-room-mcp.exe` 独立校验件、SBOM、Sigstore bundle、SHA-256 和发布说明。
 
-安装器与 updater 是不同产物：前者供用户双击安装，后者只供 Tauri 签名更新。官网通过生产 `distribution.windowsDownloadUrl` 指向版本化安装器；未配置时显示“即将发布”，不能回退到对 prerelease 无效的 `/releases/latest`。
+安装器与 updater 是不同发布角色：前者供用户双击安装，后者由 Tauri 校验签名后更新。当前 Windows NSIS 两个角色复用同一份已签名 EXE；macOS 与 Linux 仍使用独立更新归档。官网通过生产 `distribution.windowsDownloadUrl` 指向版本化安装器；未配置时显示“即将发布”，不能回退到对 prerelease 无效的 `/releases/latest`。
 
 Alpha 可以在稳定版 Go/No-Go 尚未关闭时发布，但只能进入 `testing` 渠道；README 必须把“可测试”与“生产支持”分开陈述。
 

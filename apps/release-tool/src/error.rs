@@ -17,6 +17,12 @@ pub enum ToolError {
     },
     #[error("JSON 无效：{0}")]
     Json(#[from] serde_json::Error),
+    #[error("Base64 编码无效：{0}")]
+    Base64(#[from] base64::DecodeError),
+    #[error("UTF-8 编码无效：{0}")]
+    Utf8(#[from] std::string::FromUtf8Error),
+    #[error("Minisign 签名验证失败：{0}")]
+    Minisign(#[from] minisign_verify::Error),
     #[error("发布策略无效：{0}")]
     Manifest(#[from] ReleaseManifestError),
     #[error("密钥文档架构或算法不受支持")]

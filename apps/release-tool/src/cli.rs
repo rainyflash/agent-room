@@ -14,6 +14,7 @@ pub enum Command {
     Keygen(KeygenArgs),
     Sign(SignArgs),
     Verify(VerifyArgs),
+    VerifyTauri(VerifyTauriArgs),
 }
 
 #[derive(Debug, Args)]
@@ -54,4 +55,14 @@ pub struct VerifyArgs {
     pub highest_sequence: u64,
     #[arg(long)]
     pub now_unix_seconds: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct VerifyTauriArgs {
+    #[arg(long)]
+    pub public_key: String,
+    #[arg(long)]
+    pub payload: PathBuf,
+    #[arg(long)]
+    pub signature: PathBuf,
 }

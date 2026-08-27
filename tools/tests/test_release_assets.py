@@ -20,11 +20,11 @@ class ReleaseAssetTests(unittest.TestCase):
     def create_native_source(self, platform: str) -> tuple[Path, Path, Path, Path]:
         bundle = self.root / platform / "bundle"
         bundle.mkdir(parents=True)
-        archive = bundle / "Agent Room_0.1.0_x64.nsis.zip"
-        archive.write_bytes(b"desktop")
-        Path(f"{archive}.sig").write_text("trusted-tauri-signature", encoding="utf-8")
         installer = bundle / "Agent Room_0.1.0_x64-setup.exe"
         installer.write_bytes(b"installer")
+        Path(f"{installer}.sig").write_text(
+            "trusted-tauri-signature", encoding="utf-8"
+        )
         bridge = self.root / platform / "agent-room-bridge.exe"
         bridge.write_bytes(b"bridge")
         mcp = self.root / platform / "agent-room-mcp.exe"
@@ -69,10 +69,16 @@ class ReleaseAssetTests(unittest.TestCase):
             "installer", "desktop", "bridge", "mcp-server", "codex-plugin"
         })
         self.assertTrue(all((output / item["path"]).is_file() for item in document["artifacts"]))
+        by_kind = {item["kind"]: item for item in document["artifacts"]}
+        self.assertEqual(
+            (output / by_kind["desktop"]["path"]).read_bytes(),
+            (output / by_kind["installer"]["path"]).read_bytes(),
+        )
+        self.assertTrue((output / document["tauriSignaturePath"]).is_file())
 
     def test_collect_native_rejects_ambiguous_archives(self) -> None:
         bundle, bridge, mcp, plugin = self.create_native_source("ambiguous")
-        duplicate = bundle / "second.nsis.zip"
+        duplicate = bundle / "second-setup.exe"
         duplicate.write_bytes(b"duplicate")
         Path(f"{duplicate}.sig").write_text("signature", encoding="utf-8")
         args = parse_args(
