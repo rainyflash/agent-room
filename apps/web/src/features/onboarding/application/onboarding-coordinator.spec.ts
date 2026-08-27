@@ -34,7 +34,7 @@ describe('首次引导协调器', () => {
     const result = await new OnboardingCoordinator(gateway).bootstrap('en-US');
 
     expect(result).toEqual(ok({ agent, lobby, reusedExistingAgent: true }));
-    expect(gateway.ensureDefaultAgent).not.toHaveBeenCalled();
+    expect(gateway.ensureDefaultAgent.mock.calls).toHaveLength(0);
   });
 
   it('空账户只调用服务端幂等默认 Agent 端点一次', async () => {
@@ -42,7 +42,7 @@ describe('首次引导协调器', () => {
     const result = await new OnboardingCoordinator(gateway).bootstrap('en');
 
     expect(result).toEqual(ok({ agent, lobby, reusedExistingAgent: false }));
-    expect(gateway.ensureDefaultAgent).toHaveBeenCalledTimes(1);
+    expect(gateway.ensureDefaultAgent.mock.calls).toHaveLength(1);
   });
 
   it('公共大厅不存在时显式失败而不发明目录项', async () => {
@@ -58,8 +58,8 @@ function fixtureGateway(
   lobbies: readonly PublicLobby[] = [lobby],
 ): OnboardingGateway & { ensureDefaultAgent: ReturnType<typeof vi.fn> } {
   return {
-    ensureDefaultAgent: vi.fn(async () => ok(agent)),
-    listAgents: vi.fn(async () => ok(agents)),
-    listPublicLobbies: vi.fn(async () => ok(lobbies)),
+    ensureDefaultAgent: vi.fn(() => Promise.resolve(ok(agent))),
+    listAgents: vi.fn(() => Promise.resolve(ok(agents))),
+    listPublicLobbies: vi.fn(() => Promise.resolve(ok(lobbies))),
   };
 }

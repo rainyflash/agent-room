@@ -1,9 +1,10 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useCallback } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
+import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
@@ -90,10 +91,29 @@ export const router = createRouter({
 
 function LobbyBoundary() {
   const { catalogId } = lobbyRoute.useParams();
+  const navigate = lobbyRoute.useNavigate();
+  const onConnectionRequired = useCallback(() => {
+    void navigate({ replace: true, to: '/connect' });
+  }, [navigate]);
+  const onEntered = useCallback(
+    (target: { readonly catalogId: string; readonly matrixRoomId: string }) => {
+      void navigate({
+        params: { catalogId: target.catalogId, roomId: target.matrixRoomId },
+        replace: true,
+        search: {},
+        to: '/lobby/$catalogId/instance/$roomId',
+      });
+    },
+    [navigate],
+  );
+  if (!routeIdentifierSchema.safeParse(catalogId).success) {
+    return <RouteUnavailable invalid routeLabel={`/lobby/${catalogId}`} />;
+  }
   return (
-    <RouteUnavailable
-      invalid={!routeIdentifierSchema.safeParse(catalogId).success}
-      routeLabel={`/lobby/${catalogId}`}
+    <PublicLobbyEntryBoundary
+      catalogId={catalogId}
+      onConnectionRequired={onConnectionRequired}
+      onEntered={onEntered}
     />
   );
 }

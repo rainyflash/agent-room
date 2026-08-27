@@ -2,11 +2,7 @@ import { z } from 'zod';
 
 import type { BridgePhase, DesktopAgentTarget } from '@/features/desktop/domain/desktop-runtime';
 import type { Result } from '@/shared/result';
-
-const uuidV7Schema = z
-  .string()
-  .uuid()
-  .refine((value) => value[14]?.toLowerCase() === '7', 'identifier must be UUIDv7');
+import { uuidV7Schema } from '@/shared/validation/identifiers';
 
 export const onboardingAgentSchema = z
   .object({
@@ -76,6 +72,7 @@ export type OnboardingFacts = {
   readonly bootstrapReady: boolean;
   readonly bridgePhase: BridgePhase | null;
   readonly desktopAvailable: boolean;
+  readonly runtimeSessionReady: boolean;
   readonly targetMatches: boolean;
 };
 
@@ -86,7 +83,8 @@ export function projectOnboardingPhase(facts: OnboardingFacts): OnboardingPhase 
   if (!facts.desktopAvailable) return 'runtime-required';
   if (!facts.targetMatches) return 'configuring-runtime';
   if (facts.bridgePhase === 'authorization_required') return 'authorizing-runtime';
-  return 'ready';
+  if (facts.bridgePhase !== 'ready') return 'configuring-runtime';
+  return facts.runtimeSessionReady ? 'ready' : 'failed';
 }
 
 export function selectPublicLobby(

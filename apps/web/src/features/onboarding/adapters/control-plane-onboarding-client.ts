@@ -66,7 +66,9 @@ export class ControlPlaneOnboardingClient implements OnboardingGateway {
 
   async #request(path: string, method: 'GET' | 'PUT'): Promise<Result<unknown, OnboardingFailure>> {
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), this.#timeoutMs);
+    const timeout = globalThis.setTimeout(() => {
+      controller.abort();
+    }, this.#timeoutMs);
     try {
       const response = await this.#fetch(new URL(path, this.#baseUrl), {
         cache: 'no-store',

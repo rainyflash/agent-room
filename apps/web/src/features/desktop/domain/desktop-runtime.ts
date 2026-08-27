@@ -42,8 +42,8 @@ const authorizationPromptSchema = z
 
 export const bridgeAgentSessionSchema = z
   .object({
-    agentId: z.string().uuid(),
-    instanceId: z.string().uuid(),
+    agentId: z.uuid(),
+    instanceId: z.uuid(),
     matrixRoomId: z
       .string()
       .min(4)
@@ -62,8 +62,8 @@ export const bridgeRuntimeSchema = z
 
 export const desktopAgentTargetSchema = z
   .object({
-    agentId: z.string().uuid(),
-    publicLobbyCatalogId: z.string().uuid(),
+    agentId: z.uuid(),
+    publicLobbyCatalogId: z.uuid(),
     lobbyLanguage: z.string().trim().min(1).max(35),
   })
   .strict();

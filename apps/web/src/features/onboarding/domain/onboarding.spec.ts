@@ -20,10 +20,9 @@ const agent: OnboardingAgent = {
   visibility: 'private',
 };
 
-const lobbies: readonly PublicLobby[] = [
-  lobby('0198b601-77a2-7f41-b4f4-940f291951b8', 'English', 'en', 30),
-  lobby('0198b601-77a3-74f1-b4f4-940f291951b9', '中文', 'zh-CN', 12),
-];
+const englishLobby = lobby('0198b601-77a2-7f41-b4f4-940f291951b8', 'English', 'en', 30);
+const chineseLobby = lobby('0198b601-77a3-74f1-b4f4-940f291951b9', '中文', 'zh-CN', 12);
+const lobbies: readonly PublicLobby[] = [englishLobby, chineseLobby];
 
 describe('首次引导领域投影', () => {
   it('优先选择精确语言，再选择同语系，最后保留服务端排序', () => {
@@ -40,6 +39,7 @@ describe('首次引导领域投影', () => {
         bootstrapReady: true,
         bridgePhase: 'ready',
         desktopAvailable: true,
+        runtimeSessionReady: false,
         targetMatches: false,
       }),
     ).toBe('configuring-runtime');
@@ -50,17 +50,29 @@ describe('首次引导领域投影', () => {
         bootstrapReady: true,
         bridgePhase: 'ready',
         desktopAvailable: true,
+        runtimeSessionReady: true,
         targetMatches: true,
       }),
     ).toBe('ready');
+    expect(
+      projectOnboardingPhase({
+        accountReady: true,
+        bootstrapFailed: false,
+        bootstrapReady: true,
+        bridgePhase: 'ready',
+        desktopAvailable: true,
+        runtimeSessionReady: false,
+        targetMatches: true,
+      }),
+    ).toBe('failed');
   });
 
   it('桌面目标由权威 Agent 与真实大厅组合且可精确恢复', () => {
-    const target = targetFor(agent, lobbies[1]!, 'en');
+    const target = targetFor(agent, chineseLobby, 'en');
     expect(target).toEqual({
       agentId: agent.agentId,
       lobbyLanguage: 'zh-CN',
-      publicLobbyCatalogId: lobbies[1]?.catalogId,
+      publicLobbyCatalogId: chineseLobby.catalogId,
     });
     expect(targetMatches(target, target)).toBe(true);
     expect(targetMatches(null, target)).toBe(false);

@@ -6,6 +6,7 @@ import type { DirectSessionGateway } from '@/features/direct-sessions/domain/dir
 import type { AutomationGrantGateway } from '@/features/automation/domain/automation-grant';
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
 import type { LobbyGateway } from '@/features/lobby/domain/lobby';
+import type { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway } from '@/features/messages/domain/message';
 import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
@@ -34,6 +35,7 @@ export type AppServices = {
   readonly desktop: DesktopRuntimeGateway;
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
+  readonly lobbyEntry: PublicLobbyEntryCoordinator;
   readonly messages: MessageGateway;
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;

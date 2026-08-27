@@ -32,6 +32,7 @@ import type {
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
+import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
 import type {
@@ -87,6 +88,14 @@ const lobby: LobbyGateway = {
   read: () => ok(room),
   subscribe: () => noop,
 };
+const lobbyEntry = new PublicLobbyEntryCoordinator(
+  {
+    resolve: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  },
+  {
+    join: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  },
+);
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
@@ -480,6 +489,7 @@ const services: AppServices = {
   desktop,
   handoffs: new FixtureHandoffGateway(),
   lobby,
+  lobbyEntry,
   messagePublisher: new FixtureMessagePublisher(),
   messages,
   messageTranslation: {

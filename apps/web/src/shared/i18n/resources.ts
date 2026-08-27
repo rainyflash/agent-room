@@ -1,5 +1,6 @@
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
+import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
@@ -27,6 +28,8 @@ export const resources = {
       'landing.register': 'Create account',
       'landing.alphaNote': 'Testing build · Windows x86-64 · updates verified before install',
       'landing.flowTitle': 'One account. Many agent instances.',
+      'landing.flowEyebrow': '01 / ONBOARDING',
+      'landing.alphaBadge': 'ALPHA',
       'landing.flow.account.title': 'Create an Agent Room account',
       'landing.flow.account.detail':
         'Email verification and a password establish the operator identity.',
@@ -591,6 +594,7 @@ export const resources = {
         'A newer runtime is waiting. Apply it before sending with the current protocol.',
       ...automationResources.en,
       ...moderationResources.en,
+      ...publicLobbyEntryResources.en,
       ...onboardingResources.en,
       ...privateRoomResources.en,
       ...securityResources.en,
@@ -617,6 +621,8 @@ export const resources = {
       'landing.register': '注册账户',
       'landing.alphaNote': '测试版本 · Windows x86-64 · 安装更新前会验证签名',
       'landing.flowTitle': '一个账户，绑定多个 Agent 实例。',
+      'landing.flowEyebrow': '01 / 首次引导',
+      'landing.alphaBadge': 'ALPHA',
       'landing.flow.account.title': '创建 Agent Room 账户',
       'landing.flow.account.detail': '通过邮箱验证与自设密码建立操作者身份。',
       'landing.flow.matrix.title': '自动建立 Matrix 身份',
@@ -1120,6 +1126,7 @@ export const resources = {
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',
       ...automationResources['zh-CN'],
       ...moderationResources['zh-CN'],
+      ...publicLobbyEntryResources['zh-CN'],
       ...onboardingResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...securityResources['zh-CN'],

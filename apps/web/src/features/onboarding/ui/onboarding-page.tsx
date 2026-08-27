@@ -1,5 +1,6 @@
 import { Button, StatusMark } from '@agent-room/ui-system';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import {
   ArrowRight,
   Bot,
@@ -17,6 +18,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
 import {
   projectOnboardingPhase,
   targetFor,
@@ -46,8 +48,9 @@ const phaseOrder: readonly OnboardingPhase[] = [
 
 export function OnboardingPage() {
   const { i18n, t } = useTranslation();
+  const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
-  const { config, desktop, onboarding } = useAppServices();
+  const { config, desktop, lobbyEntry, onboarding } = useAppServices();
   const { snapshot } = useSession();
   const sessionState = sessionStateName(snapshot.value);
   const principal = snapshot.context.principal;
@@ -67,12 +70,35 @@ export function OnboardingPage() {
     resolved === null ? null : targetFor(resolved.agent, resolved.lobby, locale);
   const runtimeMatches =
     expectedTarget !== null && targetMatches(runtime.snapshot?.agentTarget ?? null, expectedTarget);
+  const bridgeSession = runtime.snapshot?.bridge.session ?? null;
+  const runtimeReady =
+    runtimeMatches &&
+    runtime.snapshot?.bridge.lifecycle.phase === 'ready' &&
+    bridgeSession?.agentId === resolved?.agent.agentId;
+  const entry = useMutation({
+    mutationFn: async (intent: LobbyEntryIntent) =>
+      intent.kind === 'known'
+        ? await lobbyEntry.enterKnown(intent.target)
+        : await lobbyEntry.enter(intent.catalogId),
+    onSuccess: (result) => {
+      if (!result.ok) return;
+      void navigate({
+        params: {
+          catalogId: result.value.catalogId,
+          roomId: result.value.matrixRoomId,
+        },
+        search: {},
+        to: '/lobby/$catalogId/instance/$roomId',
+      });
+    },
+  });
   const phase = projectOnboardingPhase({
     accountReady,
     bootstrapFailed: bootstrap.data?.ok === false || bootstrap.isError,
     bootstrapReady: resolved !== null,
     bridgePhase: runtime.snapshot?.bridge.lifecycle.phase ?? null,
     desktopAvailable: runtime.available,
+    runtimeSessionReady: runtimeReady,
     targetMatches: runtimeMatches,
   });
   const installedHosts = runtime.hosts.filter((host) => host.installed);
@@ -168,7 +194,7 @@ export function OnboardingPage() {
               web: t('onboarding.runtime.web'),
             })}
             icon={<PlugZap aria-hidden="true" />}
-            status={runtimeMatches ? 'complete' : runtime.available ? 'active' : 'optional'}
+            status={runtimeReady ? 'complete' : runtime.available ? 'active' : 'optional'}
             title={t('onboarding.runtime')}
           >
             <div className="onboarding__actions">
@@ -213,7 +239,7 @@ export function OnboardingPage() {
         <section className="onboarding__hosts">
           <header>
             <div>
-              <p className="eyebrow">MCP / HOST ADAPTERS</p>
+              <p className="eyebrow">{t('onboarding.hosts.eyebrow')}</p>
               <h2>{t('onboarding.hosts')}</h2>
             </div>
             <p>{t('onboarding.hosts.detail')}</p>
@@ -237,18 +263,31 @@ export function OnboardingPage() {
           )}
         </section>
 
-        {bootstrap.data?.ok === false || runtime.failure !== null ? (
+        {bootstrap.data?.ok === false ||
+        runtime.failure !== null ||
+        entry.data?.ok === false ||
+        entry.isError ? (
           <section aria-live="assertive" className="onboarding__failure">
             <KeyRound aria-hidden="true" />
             <div>
               <strong>{t('onboarding.failure')}</strong>
               <code>
-                {bootstrap.data?.ok === false ? bootstrap.data.error.code : runtime.failure?.code}
+                {bootstrap.data?.ok === false
+                  ? bootstrap.data.error.code
+                  : (runtime.failure?.code ??
+                    (entry.data?.ok === false
+                      ? entry.data.error.code
+                      : entry.isError
+                        ? 'lobby_entry.unexpected_failure'
+                        : undefined))}
               </code>
             </div>
             <Button
               icon={<RefreshCw aria-hidden="true" />}
-              onClick={() => void bootstrap.refetch()}
+              onClick={() => {
+                entry.reset();
+                void bootstrap.refetch();
+              }}
               tone="alert"
             >
               {t('onboarding.retry')}
@@ -260,18 +299,36 @@ export function OnboardingPage() {
       <footer className="onboarding__footer">
         <a href="/connect">{t('onboarding.signOut')}</a>
         {resolved === null ? null : (
-          <a
-            className="ar-button ar-button--large ar-button--primary"
-            href={`/lobby/${resolved.lobby.catalogId}`}
+          <Button
+            disabled={entry.isPending || (runtime.available && !runtimeReady)}
+            icon={<ArrowRight aria-hidden="true" />}
+            onClick={() => {
+              if (runtime.available && bridgeSession !== null) {
+                entry.mutate({
+                  kind: 'known',
+                  target: {
+                    catalogId: resolved.lobby.catalogId,
+                    matrixRoomId: bridgeSession.matrixRoomId,
+                  },
+                });
+                return;
+              }
+              entry.mutate({ kind: 'resolve', catalogId: resolved.lobby.catalogId });
+            }}
+            size="large"
+            tone="primary"
           >
             {t(runtime.available ? 'onboarding.continue' : 'onboarding.webContinue')}
-            <ArrowRight aria-hidden="true" />
-          </a>
+          </Button>
         )}
       </footer>
     </main>
   );
 }
+
+type LobbyEntryIntent =
+  | { readonly catalogId: string; readonly kind: 'resolve' }
+  | { readonly kind: 'known'; readonly target: PublicLobbyRouteTarget };
 
 type FactCardProps = {
   readonly children: ReactNode;

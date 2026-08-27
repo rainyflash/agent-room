@@ -13,6 +13,9 @@ import { DirectSessionCoordinator } from '@/features/direct-sessions/application
 import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-observer-handoff-gateway';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
+import { ControlPlanePublicLobbyEntryClient } from '@/features/lobby-entry/adapters/control-plane-public-lobby-entry-client';
+import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapters/matrix-public-lobby-entry-gateway';
+import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
 import { BrowserMachineTranslationGateway } from '@/features/messages/adapters/browser-machine-translation-gateway';
 import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
@@ -91,6 +94,10 @@ function createRuntime(config: RuntimeConfig) {
     },
   );
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
+  const lobbyEntry = new PublicLobbyEntryCoordinator(
+    new ControlPlanePublicLobbyEntryClient({ baseUrl: config.controlPlaneUrl }),
+    new MatrixSdkPublicLobbyEntryGateway(matrixClients),
+  );
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   const content = new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl });
   const contentVerifier = new BrowserContentVerifier();
@@ -134,6 +141,7 @@ function createRuntime(config: RuntimeConfig) {
     desktop,
     handoffs,
     lobby,
+    lobbyEntry,
     messagePublisher,
     messages,
     messageTranslation,

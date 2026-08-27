@@ -80,8 +80,8 @@ export function LandingPage() {
           transition={{ ...entryTransition, delay: 0.08 }}
         >
           <div className="landing__flow-head">
-            <span>01 / ONBOARDING</span>
-            <span className="landing__live">ALPHA</span>
+            <span>{t('landing.flowEyebrow')}</span>
+            <span className="landing__live">{t('landing.alphaBadge')}</span>
           </div>
           <h2>{t('landing.flowTitle')}</h2>
           <ol>

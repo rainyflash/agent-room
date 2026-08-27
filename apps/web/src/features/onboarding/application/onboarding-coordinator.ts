@@ -20,19 +20,14 @@ export class OnboardingCoordinator {
     if (!lobbies.ok) return lobbies;
 
     const reusedExistingAgent = agents.value.length > 0;
-    let selectedAgent = agents.value[0];
-    if (selectedAgent === undefined) {
-      const ensured = await this.gateway.ensureDefaultAgent();
-      if (!ensured.ok) return ensured;
-      selectedAgent = ensured.value;
-    }
-    if (selectedAgent === undefined) {
-      return err({ code: 'onboarding.agent_resolution_failed', retryable: true });
-    }
+    const firstAgent = agents.value[0];
+    const selectedAgent =
+      firstAgent === undefined ? await this.gateway.ensureDefaultAgent() : ok(firstAgent);
+    if (!selectedAgent.ok) return selectedAgent;
     const lobby = selectPublicLobby(lobbies.value, preferredLocale);
     if (lobby === null) {
       return err({ code: 'onboarding.public_lobby_unavailable', retryable: true });
     }
-    return ok({ agent: selectedAgent, lobby, reusedExistingAgent });
+    return ok({ agent: selectedAgent.value, lobby, reusedExistingAgent });
   }
 }

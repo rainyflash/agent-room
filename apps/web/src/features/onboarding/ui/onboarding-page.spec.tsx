@@ -3,7 +3,8 @@
 import '@testing-library/jest-dom/vitest';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,11 +15,14 @@ import { useSession } from '@/features/session/ui/session-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
 vi.mock('@/features/desktop/ui/use-desktop-runtime', () => ({
   useDesktopRuntime: vi.fn(),
 }));
 vi.mock('@/features/session/ui/session-provider', () => ({ useSession: vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
 vi.mock('motion/react', () => ({
   motion: { article: 'article', header: 'header' },
   useReducedMotion: () => true,
@@ -97,6 +101,10 @@ describe('首次引导页面', () => {
         windowsDownloadUrl: 'https://download.agent-room.test/windows',
       },
       desktop: {},
+      lobbyEntry: {
+        enter: vi.fn(),
+        enterKnown: vi.fn(),
+      },
       onboarding: { bootstrap },
     } as unknown as ReturnType<typeof useAppServices>);
 
@@ -114,6 +122,36 @@ describe('首次引导页面', () => {
       'https://download.agent-room.test/windows',
     );
     expect(bootstrap).toHaveBeenCalledWith('en');
+  });
+
+  it('Web 预览只有解析并加入真实房间后才导航', async () => {
+    const user = userEvent.setup();
+    const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: true as const }));
+    const enter = vi.fn(async () =>
+      ok({
+        catalogId: lobby.catalogId,
+        matrixRoomId: '!english:matrix.test',
+        roomInstanceId: '0198b601-77a4-7f41-b4f4-940f291951ba',
+      }),
+    );
+    vi.mocked(useAppServices).mockReturnValue({
+      config: { windowsDownloadUrl: 'https://download.agent-room.test/windows' },
+      desktop: {},
+      lobbyEntry: { enter, enterKnown: vi.fn() },
+      onboarding: { bootstrap },
+    } as unknown as ReturnType<typeof useAppServices>);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Open Web preview' }));
+
+    expect(enter).toHaveBeenCalledWith(lobby.catalogId);
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalledWith({
+        params: { catalogId: lobby.catalogId, roomId: '!english:matrix.test' },
+        search: {},
+        to: '/lobby/$catalogId/instance/$roomId',
+      });
+    });
   });
 });
 
