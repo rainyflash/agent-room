@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -23,6 +24,8 @@ STAGES: Final = (
 )
 SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
 REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{40}$")
+EVIDENCE_FILENAME_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}\.json$")
+DEPLOYMENT_EVIDENCE_KIND: Final = "agent-room.release-deployment-evidence"
 
 
 class PromotionFailure(RuntimeError):
@@ -51,6 +54,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_parser.add_argument("--expected-stage", choices=STAGES, required=True)
     verify_parser.add_argument("--version", required=True)
     verify_parser.add_argument("--revision", required=True)
+
+    evidence_parser = subcommands.add_parser(
+        "verify-evidence", help="把晋级记录绑定到同一 Release 的真实部署报告"
+    )
+    evidence_parser.add_argument("--record", type=Path, required=True)
+    evidence_parser.add_argument("--root", type=Path, required=True)
+    evidence_parser.add_argument("--release-base-url", required=True)
     return parser.parse_args(argv)
 
 
@@ -72,6 +82,14 @@ def validate_https(value: str, label: str) -> None:
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise PromotionFailure(f"{label} 必须是无内嵌凭据的 HTTPS 地址。")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def validate_version(value: str) -> None:
@@ -197,6 +215,92 @@ def verify(record_path: Path, expected_stage: str, version: str, revision: str) 
         raise PromotionFailure("发布晋级记录与候选版本或 Git 提交不一致。")
 
 
+def validate_deployment_evidence(
+    path: Path,
+    *,
+    stage: str,
+    version: str,
+    revision: str,
+    recorded_at_unix_seconds: int,
+) -> None:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PromotionFailure(f"部署证据不是有效 JSON：{path.name}") from error
+    if not isinstance(document, dict):
+        raise PromotionFailure(f"部署证据必须是 JSON 对象：{path.name}")
+    if require_integer(document, "schemaVersion", "evidence") != SCHEMA_VERSION:
+        raise PromotionFailure(f"部署证据版本不受支持：{path.name}")
+    if require_string(document, "kind", "evidence") != DEPLOYMENT_EVIDENCE_KIND:
+        raise PromotionFailure(f"部署证据 kind 不受支持：{path.name}")
+    if require_string(document, "stage", "evidence") != stage:
+        raise PromotionFailure(f"部署证据阶段与晋级记录不一致：{path.name}")
+    if require_string(document, "version", "evidence") != version:
+        raise PromotionFailure(f"部署证据版本与晋级记录不一致：{path.name}")
+    if require_string(document, "revision", "evidence") != revision:
+        raise PromotionFailure(f"部署证据提交与晋级记录不一致：{path.name}")
+    captured_at = require_integer(document, "capturedAtUnixSeconds", "evidence")
+    if captured_at > recorded_at_unix_seconds:
+        raise PromotionFailure(f"部署证据时间晚于晋级记录：{path.name}")
+    if require_string(document, "result", "evidence") != "passed":
+        raise PromotionFailure(f"部署证据没有通过：{path.name}")
+    checks = document.get("checks")
+    if not isinstance(checks, list) or not checks:
+        raise PromotionFailure(f"部署证据 checks 必须是非空数组：{path.name}")
+    for index, check in enumerate(checks):
+        label = f"evidence.checks[{index}]"
+        if not isinstance(check, dict):
+            raise PromotionFailure(f"{label} 必须是对象。")
+        require_string(check, "name", label)
+        require_string(check, "detail", label)
+        if check.get("passed") is not True:
+            raise PromotionFailure(f"{label}.passed 必须为 true。")
+
+
+def verify_evidence(record_path: Path, root: Path, release_base_url: str) -> None:
+    record = load_record(record_path)
+    validate_https(release_base_url, "releaseBaseUrl")
+    parsed_base = urlparse(release_base_url)
+    if not release_base_url.endswith("/") or parsed_base.query or parsed_base.fragment:
+        raise PromotionFailure("releaseBaseUrl 必须以 / 结尾且不能包含查询或片段。")
+    try:
+        resolved_root = root.resolve(strict=True)
+    except OSError as error:
+        raise PromotionFailure(f"候选证据目录不存在：{root}") from error
+    history = record.get("history")
+    if not isinstance(history, list):
+        raise PromotionFailure("record.history 必须是数组。")
+    version = require_string(record, "version", "record")
+    revision = require_string(record, "revision", "record")
+    for index, item in enumerate(history):
+        if not isinstance(item, dict):
+            raise PromotionFailure(f"record.history[{index}] 必须是对象。")
+        label = f"record.history[{index}]"
+        stage = require_string(item, "stage", label)
+        evidence_url = require_string(item, "evidenceUrl", label)
+        expected_digest = require_string(item, "evidenceSha256", label)
+        recorded_at = require_integer(item, "recordedAtUnixSeconds", label)
+        if not evidence_url.startswith(release_base_url):
+            raise PromotionFailure(f"{label}.evidenceUrl 不属于当前 Release。")
+        filename = evidence_url.removeprefix(release_base_url)
+        if not EVIDENCE_FILENAME_PATTERN.fullmatch(filename):
+            raise PromotionFailure(f"{label}.evidenceUrl 不是受约束的 JSON 资产。")
+        try:
+            evidence_path = (resolved_root / filename).resolve(strict=True)
+            evidence_path.relative_to(resolved_root)
+        except (OSError, ValueError) as error:
+            raise PromotionFailure(f"部署证据资产不存在或逃逸候选目录：{filename}") from error
+        if not evidence_path.is_file() or sha256_file(evidence_path) != expected_digest:
+            raise PromotionFailure(f"部署证据摘要不匹配：{filename}")
+        validate_deployment_evidence(
+            evidence_path,
+            stage=stage,
+            version=version,
+            revision=revision,
+            recorded_at_unix_seconds=recorded_at,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(argv)
@@ -211,8 +315,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.evidence_sha256,
                 args.recorded_at_unix_seconds,
             )
-        else:
+        elif args.command == "verify":
             verify(args.record, args.expected_stage, args.version, args.revision)
+        else:
+            verify_evidence(args.record, args.root, args.release_base_url)
         return 0
     except PromotionFailure as error:
         print(f"发布晋级失败：{error}", file=sys.stderr)

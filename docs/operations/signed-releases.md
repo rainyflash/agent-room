@@ -76,7 +76,7 @@ python tools/release_promotion.py advance \
   --recorded-at-unix-seconds <unix>
 ```
 
-两个证据必须来自不可变、受访问控制的真实部署报告。把最终文件上传到同一 Draft Release。客户端发布后进入 `clients-published`；观察错误率和协议兼容比例后推进 `compatibility-observed`；只有下一发布窗口才允许推进 `legacy-contracted` 并删除旧路径。
+两个证据必须来自不可变、受访问控制的真实部署报告。报告必须使用 `agent-room.release-deployment-evidence` Schema，绑定候选版本、完整 Git SHA、阶段、采集时间和全部通过的检查。把报告与最终晋级文件上传到同一 Draft Release；最终工作流会从晋级 URL 定位同一 Release 的本地资产、复算 SHA-256，并拒绝缺失、篡改、失败或跨版本证据。客户端发布后进入 `clients-published`；观察错误率和协议兼容比例后推进 `compatibility-observed`；只有下一发布窗口才允许推进 `legacy-contracted` 并删除旧路径。
 
 ## 5. stable 的未来离线签名边界
 
