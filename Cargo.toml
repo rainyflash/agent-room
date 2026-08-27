@@ -13,6 +13,7 @@ members = [
   "crates/bridge-storage-adapter",
   "crates/content-adapter",
   "crates/domain",
+  "crates/host-adapters",
   "crates/identity-adapter",
   "crates/matrix-adapter",
   "crates/matrix-provisioning-adapter",
@@ -39,6 +40,7 @@ agent-room-bridge-local-adapter = { version = "0.1.0", path = "crates/bridge-loc
 agent-room-bridge-storage-adapter = { version = "0.1.0", path = "crates/bridge-storage-adapter" }
 agent-room-content-adapter = { version = "0.1.0", path = "crates/content-adapter" }
 agent-room-domain = { version = "0.1.0", path = "crates/domain" }
+agent-room-host-adapters = { version = "0.1.0", path = "crates/host-adapters" }
 agent-room-identity-adapter = { version = "0.1.0", path = "crates/identity-adapter" }
 agent-room-matrix-adapter = { version = "0.1.0", path = "crates/matrix-adapter" }
 agent-room-matrix-provisioning-adapter = { version = "0.1.0", path = "crates/matrix-provisioning-adapter" }
