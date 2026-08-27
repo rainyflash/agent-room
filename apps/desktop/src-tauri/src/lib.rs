@@ -5,6 +5,7 @@ mod capability_tests;
 mod commands;
 mod deep_link;
 mod desktop_config;
+mod installer_acceptance;
 mod release_update_config;
 mod release_update_state;
 mod release_updates;
@@ -23,7 +24,7 @@ use desktop_config::DesktopBridgeConfig;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, process::ExitCode, sync::Arc};
 use tauri::{
     Manager as _, RunEvent,
     menu::{Menu, MenuItem},
@@ -31,6 +32,20 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_deep_link::DeepLinkExt as _;
+
+/// 按进程参数选择交互桌面或无 `WebView` 的安装器验收入口。
+///
+/// 安装器验收仍使用正式桌面的 Bridge 配置并持有子进程生命周期，但不会在
+/// GitHub Windows runner 的非交互会话中创建 `WebView` 窗口。
+pub fn run_entrypoint() -> ExitCode {
+    match installer_acceptance::launch_mode(std::env::args_os().skip(1)) {
+        installer_acceptance::DesktopLaunchMode::Interactive => {
+            run();
+            ExitCode::SUCCESS
+        }
+        installer_acceptance::DesktopLaunchMode::InstallerAcceptance => installer_acceptance::run(),
+    }
+}
 
 /// 启动 Agent Room 桌面壳并接管 Bridge 生命周期。
 ///

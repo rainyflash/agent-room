@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from typing import Final, Sequence
+import uuid
 
 
 SCHEMA_VERSION: Final = 1
@@ -26,6 +27,7 @@ SEMVER_PATTERN: Final = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
+BRIDGE_STABILITY_SECONDS: Final = 2.0
 
 
 class WindowsInstallerAcceptanceFailure(RuntimeError):
@@ -127,16 +129,42 @@ def process_ids(image_name: str) -> frozenset[int]:
 
 def wait_for_bridge(previous: frozenset[int], desktop: subprocess.Popen[bytes], timeout_seconds: int) -> int:
     deadline = time.monotonic() + timeout_seconds
+    bridge_pid: int | None = None
+    observed_at: float | None = None
     while time.monotonic() < deadline:
         if desktop.poll() is not None:
             raise WindowsInstallerAcceptanceFailure(
                 f"桌面端在 Bridge 启动前退出（退出码 {desktop.returncode}）。"
             )
-        started = process_ids(BRIDGE_EXECUTABLE) - previous
-        if started:
-            return min(started)
+        running = process_ids(BRIDGE_EXECUTABLE) - previous
+        if bridge_pid is None and running:
+            bridge_pid = min(running)
+            observed_at = time.monotonic()
+        if (
+            bridge_pid is not None
+            and bridge_pid in running
+            and observed_at is not None
+            and time.monotonic() - observed_at >= BRIDGE_STABILITY_SECONDS
+        ):
+            return bridge_pid
+        if bridge_pid is not None and bridge_pid not in running:
+            bridge_pid = None
+            observed_at = None
         time.sleep(1)
     raise WindowsInstallerAcceptanceFailure("桌面端未在时限内启动受管 Bridge。")
+
+
+def acceptance_environment(temporary: Path) -> dict[str, str]:
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("AGENT_ROOM_")
+    }
+    environment["AGENT_ROOM_BRIDGE_DATA_DIR"] = str(temporary / "bridge-data")
+    environment["AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE"] = (
+        f"dev.agent-room.acceptance.{uuid.uuid4().hex}"
+    )
+    return environment
 
 
 def terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
@@ -207,6 +235,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 cwd=layout.root,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=acceptance_environment(Path(temporary)),
             )
             bridge_pid = wait_for_bridge(previous_bridge_ids, desktop, launch_timeout_seconds)
         finally:

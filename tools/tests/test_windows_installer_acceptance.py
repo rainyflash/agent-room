@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.windows_installer_acceptance import (
     WindowsInstallerAcceptanceFailure,
+    acceptance_environment,
     locate_installed_layout,
     wait_for_install_files_removed,
     write_new_report,
@@ -13,6 +15,32 @@ from tools.windows_installer_acceptance import (
 
 
 class WindowsInstallerAcceptanceTests(unittest.TestCase):
+    def test_acceptance_environment_isolates_runtime_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "ACCEPTANCE_KEEP_ME": "kept",
+                    "AGENT_ROOM_AGENT_ID": "must-not-leak",
+                    "AGENT_ROOM_BRIDGE_DATA_DIR": "must-be-replaced",
+                },
+                clear=True,
+            ):
+                environment = acceptance_environment(root)
+
+            self.assertEqual(environment["ACCEPTANCE_KEEP_ME"], "kept")
+            self.assertNotIn("AGENT_ROOM_AGENT_ID", environment)
+            self.assertEqual(
+                environment["AGENT_ROOM_BRIDGE_DATA_DIR"],
+                str(root / "bridge-data"),
+            )
+            self.assertRegex(
+                environment["AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE"],
+                r"^dev\.agent-room\.acceptance\.[0-9a-f]{32}$",
+            )
+
     def test_layout_requires_all_same_directory_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
