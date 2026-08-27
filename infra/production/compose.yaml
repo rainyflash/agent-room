@@ -74,6 +74,8 @@ services:
       KC_METRICS_ENABLED: 'true'
       KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
       KC_BOOTSTRAP_ADMIN_USERNAME: agent-room-admin
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     secrets:
       - keycloak_db_password
       - keycloak_admin_password
@@ -106,6 +108,8 @@ services:
       - -dir=/data
       - -ip.bind=0.0.0.0
       - -s3.config=/config/s3.json
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/data/object-store:/data
       - ${AGENT_ROOM_STATE_DIR}/generated/seaweedfs:/config:ro
@@ -148,6 +152,8 @@ services:
     environment:
       PYTHONPATH: /config
       SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/generated/synapse:/config:ro
       - ${AGENT_ROOM_STATE_DIR}/data/synapse:/data
@@ -191,6 +197,8 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=45d
       - --storage.tsdb.wal-compression
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     ports:
       - 127.0.0.1:${AGENT_ROOM_PROMETHEUS_PORT:-9090}:9090
     volumes:
@@ -207,6 +215,8 @@ services:
     command:
       - --config.file=/etc/alertmanager/alertmanager.yaml
       - --storage.path=/alertmanager
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     secrets: [alertmanager_webhook_token]
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/generated/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
@@ -493,6 +503,8 @@ services:
     ports:
       - 80:80
       - 443:443
+    labels:
+      org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/generated/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${AGENT_ROOM_STATE_DIR}/data/caddy-data:/data

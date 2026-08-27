@@ -95,14 +95,14 @@ class SecretStore:
     def write_derived(self, name: str, value: str) -> None:
         if name not in DERIVED_SECRET_NAMES:
             raise SecretStoreError(f"{name} 不是可派生 Secret。")
-        if not value or len(value.encode("utf-8")) > MAX_SECRET_BYTES:
+        if (
+            not value
+            or "\n" in value
+            or "\r" in value
+            or len(value.encode("utf-8")) > MAX_SECRET_BYTES
+        ):
             raise SecretStoreError(f"派生 Secret 无效：{name}。")
-        path = self.path(name)
-        temporary = path.with_suffix(".tmp")
-        temporary.unlink(missing_ok=True)
-        _exclusive_write(temporary, value)
-        os.replace(temporary, path)
-        _restrict_permissions(path, directory=False)
+        _replace_secret(self.path(name), value)
 
 
 def _generate_secret(name: str) -> str:
@@ -121,6 +121,36 @@ def _exclusive_write(path: Path, value: str) -> None:
         path.unlink(missing_ok=True)
         raise
     _restrict_permissions(path, directory=False)
+
+
+def _replace_secret(path: Path, value: str) -> None:
+    expected = f"{value}\n".encode("utf-8")
+    if path.exists():
+        try:
+            if path.read_bytes() == expected:
+                _restrict_permissions(path, directory=False)
+                return
+        except OSError as error:
+            raise SecretStoreError(f"无法读取派生 Secret：{path.name}。") from error
+
+    temporary = path.with_suffix(".tmp")
+    if temporary.exists():
+        temporary.chmod(0o600)
+        temporary.unlink()
+    try:
+        _exclusive_write(temporary, value)
+        # Windows 不允许替换只读目标；父目录仍为 0700，替换完成后立即恢复只读。
+        if path.exists():
+            path.chmod(0o600)
+        os.replace(temporary, path)
+    except OSError as error:
+        raise SecretStoreError(f"无法替换派生 Secret：{path.name}。") from error
+    finally:
+        if temporary.exists():
+            temporary.chmod(0o600)
+            temporary.unlink()
+        if path.exists():
+            _restrict_permissions(path, directory=False)
 
 
 def _restrict_permissions(path: Path, *, directory: bool) -> None:

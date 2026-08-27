@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -119,11 +120,6 @@ def render_deployment(
         config.database.tls_mode,
     )
     secrets.write_derived("migration_database_url", migration_url)
-    _write_text(
-        paths.compose_environment,
-        _compose_environment(config, paths, secrets),
-        PUBLIC_FILE_MODE,
-    )
     _write_json(
         paths.generated / "keycloak" / "realm-agent-room.json",
         _keycloak_realm(config, secrets),
@@ -171,6 +167,12 @@ def render_deployment(
             _alertmanager_config(config),
             CONTAINER_CONFIG_FILE_MODE,
         )
+    generated_config_digest = _generated_config_digest(paths)
+    _write_text(
+        paths.compose_environment,
+        _compose_environment(config, paths, secrets, generated_config_digest),
+        PUBLIC_FILE_MODE,
+    )
     paths.expose_container_configuration()
 
 
@@ -178,6 +180,7 @@ def _compose_environment(
     config: DeploymentConfig,
     paths: DeploymentPaths,
     secrets: SecretStore,
+    generated_config_digest: str,
 ) -> str:
     database = config.database
     public = config.public
@@ -195,6 +198,7 @@ def _compose_environment(
         "AGENT_ROOM_HOST_UID": str(os.getuid() if hasattr(os, "getuid") else 0),
         "AGENT_ROOM_HOST_GID": str(os.getgid() if hasattr(os, "getgid") else 0),
         "AGENT_ROOM_PROJECT_NAME": config.project_name,
+        "AGENT_ROOM_GENERATED_CONFIG_DIGEST": generated_config_digest,
         "AGENT_ROOM_SERVER_NAME": public.server_name,
         "AGENT_ROOM_APP_DOMAIN": public.app_domain,
         "AGENT_ROOM_API_DOMAIN": public.api_domain,
@@ -488,6 +492,9 @@ worker_log_config: /config/log.config
             "restart": "unless-stopped",
             "security_opt": ["no-new-privileges:true"],
             "tmpfs": ["/tmp:rw,noexec,nosuid,size=64m", "/run:rw,noexec,nosuid,size=16m"],
+            "labels": {
+                "org.agent-room.generated-config-digest": "${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}"
+            },
             "volumes": [
                 "${AGENT_ROOM_STATE_DIR}/generated/synapse:/config:ro",
                 "${AGENT_ROOM_STATE_DIR}/data/synapse:/data",
@@ -688,14 +695,53 @@ def _yaml(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _generated_config_digest(paths: DeploymentPaths) -> str:
+    """为全部挂载配置生成稳定摘要，驱动 Compose 在内容变化时重建服务。"""
+    digest = hashlib.sha256()
+    files = sorted(
+        {
+            child
+            for root in paths.container_config_directories()
+            for child in root.rglob("*")
+            if child.is_file()
+        },
+        key=lambda child: child.relative_to(paths.generated).as_posix(),
+    )
+    for path in files:
+        relative = path.relative_to(paths.generated).as_posix().encode("utf-8")
+        content = path.read_bytes()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def _write_json(path: Path, value: object, mode: int) -> None:
     _write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n", mode)
 
 
 def _write_text(path: Path, content: str, mode: int) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    encoded = content.encode("utf-8")
+    if path.exists() and path.read_bytes() == encoded:
+        path.chmod(mode)
+        return
+
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(content, encoding="utf-8", newline="\n")
-    temporary.chmod(mode)
-    os.replace(temporary, path)
-    path.chmod(mode)
+    if temporary.exists():
+        temporary.chmod(0o600)
+        temporary.unlink()
+    try:
+        temporary.write_text(content, encoding="utf-8", newline="\n")
+        temporary.chmod(mode)
+        # Windows 不允许替换只读目标；目录仍私有，替换完成后立即恢复目标权限。
+        if path.exists():
+            path.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.chmod(0o600)
+            temporary.unlink()
+        if path.exists():
+            path.chmod(mode)

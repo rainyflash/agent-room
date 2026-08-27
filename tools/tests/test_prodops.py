@@ -16,6 +16,7 @@ from tools.prodops.render import (
     CONTAINER_CONFIG_FILE_MODE,
     PRIVATE_DIRECTORY_MODE,
     DeploymentPaths,
+    _generated_config_digest,
     render_deployment,
 )
 from tools.prodops.runtime import ProductionRuntime, _meets_nominal_memory
@@ -132,6 +133,13 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(self.secrets.read("agent_room_db_runtime_password"), first)
         self.assertEqual(uuid.UUID(self.secrets.read("content_matrix_agent_id")).version, 7)
 
+    def test_derived_secret_write_is_idempotent_and_replaceable(self) -> None:
+        self.secrets.write_derived("migration_database_url", "first")
+        self.secrets.write_derived("migration_database_url", "first")
+        self.secrets.write_derived("migration_database_url", "second")
+
+        self.assertEqual(self.secrets.read("migration_database_url"), "second")
+
     @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
     def test_container_secrets_are_read_only_inside_private_directory(self) -> None:
         self.assertEqual(stat.S_IMODE(self.paths.secrets.stat().st_mode), SECRET_DIRECTORY_MODE)
@@ -150,7 +158,33 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry", environment)
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
+        digest_line = next(
+            line
+            for line in environment.splitlines()
+            if line.startswith("AGENT_ROOM_GENERATED_CONFIG_DIGEST=")
+        )
+        self.assertRegex(digest_line.removeprefix("AGENT_ROOM_GENERATED_CONFIG_DIGEST="), r"^[0-9a-f]{64}$")
         self.assertIn("sslmode=disable", self.secrets.read("migration_database_url"))
+
+    def test_generated_config_digest_is_stable_and_changes_with_content(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        first = self.paths.compose_environment.read_text(encoding="utf-8")
+        render_deployment(self.config, self.paths, self.secrets)
+        second = self.paths.compose_environment.read_text(encoding="utf-8")
+
+        self.assertEqual(first, second)
+        caddyfile = self.paths.generated / "caddy" / "Caddyfile"
+        caddyfile.chmod(0o600)
+        caddyfile.write_text(
+            caddyfile.read_text(encoding="utf-8") + "\n# 配置变更\n",
+            encoding="utf-8",
+        )
+        first_digest = next(
+            line.split("=", 1)[1]
+            for line in first.splitlines()
+            if line.startswith("AGENT_ROOM_GENERATED_CONFIG_DIGEST=")
+        )
+        self.assertNotEqual(_generated_config_digest(self.paths), first_digest)
 
     def test_render_omits_unconfigured_acme_contact(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)
@@ -248,6 +282,12 @@ class ProductionRenderingTests(unittest.TestCase):
 
         self.assertEqual(set(override["services"]), {"synapse-worker-1", "synapse-worker-2"})
         self.assertIn("synapse-worker-1:8083 synapse-worker-2:8083", caddyfile)
+        self.assertEqual(
+            override["services"]["synapse-worker-1"]["labels"][
+                "org.agent-room.generated-config-digest"
+            ],
+            "${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}",
+        )
 
     def test_compose_command_uses_generated_override_and_environment(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)
