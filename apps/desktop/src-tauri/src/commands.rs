@@ -10,9 +10,11 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::{
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
     deep_link::{DeepLinkInbox, DeepLinkTarget},
+    desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
     release_updates::{
         ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
     },
+    runtime_target::{DesktopAgentTarget, RuntimeTargetFailure, RuntimeTargetStore},
 };
 
 #[derive(Clone)]
@@ -20,6 +22,7 @@ pub(crate) struct DesktopRuntime {
     pub(crate) bridge: BridgeSupervisor,
     pub(crate) updates: ReleaseUpdateRuntime,
     pub(crate) hosts: Arc<HostConfigurator>,
+    pub(crate) targets: Arc<RuntimeTargetStore>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,6 +33,7 @@ pub(crate) struct DesktopRuntimeSnapshot {
     platform: &'static str,
     deep_link: Option<DeepLinkTarget>,
     updates_configured: bool,
+    agent_target: Option<DesktopAgentTarget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +68,36 @@ impl From<HostFailure> for DesktopCommandFailure {
     fn from(failure: HostFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
     }
+}
+
+impl From<RuntimeTargetFailure> for DesktopCommandFailure {
+    fn from(failure: RuntimeTargetFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
+impl From<DesktopConfigFailure> for DesktopCommandFailure {
+    fn from(failure: DesktopConfigFailure) -> Self {
+        Self::new(failure.code(), false)
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_configure_agent_runtime(
+    runtime: State<'_, DesktopRuntime>,
+    agent_id: String,
+    public_lobby_catalog_id: String,
+    lobby_language: String,
+) -> Result<DesktopAgentTarget, DesktopCommandFailure> {
+    let target = DesktopAgentTarget::new(&agent_id, &public_lobby_catalog_id, &lobby_language)?;
+    let config = DesktopBridgeConfig::from_environment()?.with_agent_target(&target);
+
+    // 外部 Bridge 无法由桌面安全重启；先拒绝，避免磁盘目标与正在运行的进程分叉。
+    runtime.bridge.ensure_reconfigurable()?;
+    runtime.targets.persist(target.clone())?;
+    runtime.bridge.reconfigure(config)?;
+    Ok(target)
 }
 
 #[tauri::command]
@@ -119,6 +153,7 @@ pub(crate) fn desktop_runtime_snapshot(
         platform: current_platform(),
         deep_link: deep_links.latest(),
         updates_configured: runtime.updates.configured(),
+        agent_target: runtime.targets.current()?,
     })
 }
 

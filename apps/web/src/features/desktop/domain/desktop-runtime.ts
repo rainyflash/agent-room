@@ -47,6 +47,15 @@ export const bridgeRuntimeSchema = z
   })
   .strict();
 
+export const desktopAgentTargetSchema = z
+  .object({
+    agentId: z.string().uuid(),
+    publicLobbyCatalogId: z.string().uuid(),
+    lobbyLanguage: z.string().trim().min(1).max(35),
+  })
+  .strict();
+export type DesktopAgentTarget = z.infer<typeof desktopAgentTargetSchema>;
+
 const routeSegmentSchema = z
   .string()
   .min(1)
@@ -72,6 +81,7 @@ export const desktopRuntimeSnapshotSchema = z
     platform: z.enum(['windows', 'macos', 'linux', 'unknown']),
     deepLink: desktopDeepLinkSchema.nullable(),
     updatesConfigured: z.boolean(),
+    agentTarget: desktopAgentTargetSchema.nullable(),
   })
   .strict();
 
@@ -122,7 +132,11 @@ export const agentHostPlanSchema = z
 export type AgentHostPlan = z.infer<typeof agentHostPlanSchema>;
 
 export const agentHostApplyReceiptSchema = z
-  .object({ host: agentHostKindSchema, changed: z.boolean(), resultingDigest: z.string().length(64) })
+  .object({
+    host: agentHostKindSchema,
+    changed: z.boolean(),
+    resultingDigest: z.string().length(64),
+  })
   .strict();
 
 export type DesktopRuntimeFailure = {
@@ -149,6 +163,9 @@ export type DesktopRuntimeGateway = {
     channel: ReleaseUpdateChannel,
     expectedSequence: number,
   ): Promise<Result<void, DesktopRuntimeFailure>>;
+  configureAgentRuntime(
+    target: DesktopAgentTarget,
+  ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;
   detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
   planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
   applyHost?(

@@ -16,6 +16,7 @@
     "allow-desktop-detect-agent-hosts",
     "allow-desktop-plan-agent-host",
     "allow-desktop-apply-agent-host",
-    "allow-desktop-remove-agent-host"
+    "allow-desktop-remove-agent-host",
+    "allow-desktop-configure-agent-runtime"
   ]
 }

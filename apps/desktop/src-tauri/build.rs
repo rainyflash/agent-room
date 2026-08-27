@@ -9,6 +9,7 @@ const COMMANDS: &[&str] = &[
     "desktop_plan_agent_host",
     "desktop_apply_agent_host",
     "desktop_remove_agent_host",
+    "desktop_configure_agent_runtime",
 ];
 
 fn main() {

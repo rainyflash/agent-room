@@ -127,6 +127,23 @@ impl BridgeSupervisor {
             .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))
     }
 
+    pub(crate) fn ensure_reconfigurable(&self) -> Result<(), SupervisorFailure> {
+        if self.state.borrow().view.lifecycle.ownership == Some(BridgeOwnership::External) {
+            return Err(SupervisorFailure::new(
+                "desktop.bridge.external_reconfigure_unsupported",
+                false,
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reconfigure(&self, config: DesktopBridgeConfig) -> Result<(), SupervisorFailure> {
+        self.ensure_reconfigurable()?;
+        self.input
+            .try_send(ActorInput::Reconfigure { config })
+            .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))
+    }
+
     pub(crate) fn resume(&self) {
         let _ = self.input.try_send(ActorInput::Resume);
     }
@@ -192,6 +209,7 @@ impl BridgeSupervisorActor {
                         self.handle_process_event(event);
                     }
                 }
+                ActorInput::Reconfigure { config } => self.handle_reconfigure(config),
                 ActorInput::Resume => self.handle_resume().await,
                 ActorInput::Shutdown => {
                     self.shutting_down.store(true, Ordering::SeqCst);
@@ -266,6 +284,27 @@ impl BridgeSupervisorActor {
             return;
         }
         self.kill_managed_child();
+        self.policy.explicit_retry(now_unix_ms());
+        self.start_managed();
+    }
+
+    fn handle_reconfigure(&mut self, config: DesktopBridgeConfig) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.policy.snapshot().ownership == Some(BridgeOwnership::External) {
+            self.policy.set_diagnostic(
+                now_unix_ms(),
+                "desktop.bridge.external_reconfigure_unsupported".to_owned(),
+            );
+            self.publish();
+            return;
+        }
+
+        // 先推进代次，让旧子进程迟到的 Terminated 事件失效，避免它污染新进程状态。
+        self.generation = self.generation.saturating_add(1);
+        self.kill_managed_child();
+        self.config = config;
         self.policy.explicit_retry(now_unix_ms());
         self.start_managed();
     }
@@ -475,6 +514,9 @@ impl BridgeSupervisorActor {
 #[derive(Debug)]
 enum ActorInput {
     ExplicitRetry,
+    Reconfigure {
+        config: DesktopBridgeConfig,
+    },
     AutomaticRetry {
         generation: u64,
     },

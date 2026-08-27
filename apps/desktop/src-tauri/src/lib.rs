@@ -8,19 +8,21 @@ mod desktop_config;
 mod release_update_config;
 mod release_update_state;
 mod release_updates;
+mod runtime_target;
 mod webview_migration;
 
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
-    DesktopRuntime, desktop_apply_agent_host, desktop_check_update, desktop_detect_agent_hosts,
-    desktop_install_update, desktop_open_authorization, desktop_plan_agent_host,
-    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_set_autostart,
+    DesktopRuntime, desktop_apply_agent_host, desktop_check_update,
+    desktop_configure_agent_runtime, desktop_detect_agent_hosts, desktop_install_update,
+    desktop_open_authorization, desktop_plan_agent_host, desktop_remove_agent_host,
+    desktop_retry_bridge, desktop_runtime_snapshot, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
+use runtime_target::RuntimeTargetStore;
 use std::{path::PathBuf, sync::Arc};
 use tauri::{
     Manager as _, RunEvent,
@@ -81,11 +83,22 @@ pub fn run() {
             desktop_plan_agent_host,
             desktop_apply_agent_host,
             desktop_remove_agent_host,
+            desktop_configure_agent_runtime,
         ])
         .setup(move |app| {
             webview_migration::retire_legacy_service_worker(app)?;
-            let config = DesktopBridgeConfig::from_environment()
+            let mut config = DesktopBridgeConfig::from_environment()
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
+            let targets = Arc::new(
+                RuntimeTargetStore::open(&config.data_root())
+                    .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,
+            );
+            if let Some(target) = targets
+                .current()
+                .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?
+            {
+                config = config.with_agent_target(&target);
+            }
             let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config);
             let updates = ReleaseUpdateRuntime::new(app.handle().clone(), update_config.clone())
                 .map_err(|failure| format!("桌面更新状态初始化失败 [{}]", failure.code()))?;
@@ -97,6 +110,7 @@ pub fn run() {
                 bridge,
                 updates,
                 hosts,
+                targets,
             });
             setup_tray(app)?;
             setup_deep_links(app)?;

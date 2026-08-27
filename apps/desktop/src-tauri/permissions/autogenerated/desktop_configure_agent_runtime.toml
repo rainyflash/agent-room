@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-configure-agent-runtime"
+description = "Enables the desktop_configure_agent_runtime command without any pre-configured scope."
+commands.allow = ["desktop_configure_agent_runtime"]
+
+[[permission]]
+identifier = "deny-desktop-configure-agent-runtime"
+description = "Denies the desktop_configure_agent_runtime command without any pre-configured scope."
+commands.deny = ["desktop_configure_agent_runtime"]

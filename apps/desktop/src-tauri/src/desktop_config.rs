@@ -6,6 +6,8 @@ use agent_room_bridge_local_adapter::{
 };
 use url::Url;
 
+use crate::runtime_target::DesktopAgentTarget;
+
 const DEFAULT_CONTROL_PLANE_URL: &str = "https://api.room.the-zeroth.com/";
 const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.room.the-zeroth.com";
 const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.room.the-zeroth.com/realms/agent-room";
@@ -66,6 +68,28 @@ impl DesktopBridgeConfig {
             environment,
             secure_storage_service,
         })
+    }
+
+    pub(crate) fn with_agent_target(mut self, target: &DesktopAgentTarget) -> Self {
+        self.environment.insert(
+            "AGENT_ROOM_AGENT_ID".to_owned(),
+            target.agent_id().to_owned(),
+        );
+        self.environment.insert(
+            "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID".to_owned(),
+            target.public_lobby_catalog_id().to_owned(),
+        );
+        self.environment.insert(
+            "AGENT_ROOM_LOBBY_LANGUAGE".to_owned(),
+            target.lobby_language().to_owned(),
+        );
+        self
+    }
+
+    pub(crate) fn data_root(&self) -> PathBuf {
+        self.runtime_root
+            .parent()
+            .map_or_else(|| self.runtime_root.clone(), PathBuf::from)
     }
 
     pub(crate) fn runtime_root(&self) -> PathBuf {

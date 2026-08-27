@@ -48,6 +48,7 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
     deepLink: null,
     platform: 'windows',
     updatesConfigured,
+    agentTarget: null,
   };
 }
 
@@ -67,6 +68,7 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
   const installUpdate = vi.fn(async () => ok(undefined));
   const value: DesktopRuntimeGateway = {
     checkUpdate,
+    configureAgentRuntime: async (target) => ok(target),
     installUpdate,
     isAvailable: () => true,
     openAuthorization,

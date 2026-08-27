@@ -23,7 +23,7 @@ fn 主窗口能力不包含文件_shell_或进程通配权限() {
             .iter()
             .filter(|permission| permission.starts_with("allow-desktop-"))
             .count(),
-        10
+        11
     );
 }
 
