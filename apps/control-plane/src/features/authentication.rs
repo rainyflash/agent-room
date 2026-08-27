@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use agent_room_application::{
     authentication::{
-        AuthenticatedPrincipal, AuthenticationFailureKind, AuthenticationRequirement,
-        AuthenticationUseCases, BeginLogin, CompleteLogin,
+        AuthenticatedPrincipal, AuthenticationFailureKind, AuthenticationIntent,
+        AuthenticationRequirement, AuthenticationUseCases, BeginLogin, CompleteLogin,
     },
     ports::{ProfileImportConsent, SafeReturnPath, SecretValue},
 };
@@ -89,6 +89,16 @@ struct BeginLoginQuery {
     import_display_name: bool,
     #[serde(default)]
     import_locale: bool,
+    #[serde(default)]
+    intent: BeginLoginIntent,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum BeginLoginIntent {
+    #[default]
+    SignIn,
+    Register,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +150,10 @@ async fn begin_login(
             profile_import: ProfileImportConsent {
                 display_name: query.import_display_name,
                 locale: query.import_locale,
+            },
+            intent: match query.intent {
+                BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
+                BeginLoginIntent::Register => AuthenticationIntent::Register,
             },
         })
         .await
@@ -409,8 +423,9 @@ mod tests {
 
     use agent_room_application::{
         authentication::{
-            AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
-            AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
+            AuthenticatedPrincipal, AuthenticationIntent, AuthenticationRequirement,
+            AuthenticationResult, AuthenticationUseCases, BeginLogin, CompleteLogin,
+            LoginCompletion, LoginRedirect,
         },
         ports::{PortFuture, SafeReturnPath, SecretValue},
     };
@@ -429,6 +444,7 @@ mod tests {
     #[derive(Default)]
     struct FakeAuthentication {
         begin: AtomicUsize,
+        register_begin: AtomicUsize,
         complete: AtomicUsize,
         logout: AtomicUsize,
     }
@@ -439,10 +455,20 @@ mod tests {
             request: BeginLogin,
         ) -> PortFuture<'_, AuthenticationResult<LoginRedirect>> {
             self.begin.fetch_add(1, Ordering::SeqCst);
+            if request.intent == AuthenticationIntent::Register {
+                self.register_begin.fetch_add(1, Ordering::SeqCst);
+            }
             Box::pin(async move {
-                assert_eq!(request.return_path.as_str(), "/rooms/42?tab=chat");
-                assert!(request.profile_import.display_name);
-                assert!(!request.profile_import.locale);
+                match request.intent {
+                    AuthenticationIntent::SignIn => {
+                        assert_eq!(request.return_path.as_str(), "/rooms/42?tab=chat");
+                        assert!(request.profile_import.display_name);
+                        assert!(!request.profile_import.locale);
+                    }
+                    AuthenticationIntent::Register => {
+                        assert_eq!(request.return_path.as_str(), "/onboarding");
+                    }
+                }
                 Ok(LoginRedirect {
                     authorization_url: "https://identity.example/authorize?state=opaque".to_owned(),
                     browser_secret: SecretValue::new("browser-secret").expect("测试密钥有效"),
@@ -573,6 +599,25 @@ mod tests {
             assert!(cookie.contains(attribute), "缺少 Cookie 属性：{attribute}");
         }
         assert_eq!(fake.begin.load(Ordering::SeqCst), 1);
+        assert_eq!(fake.register_begin.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn 注册起点显式传递创建账户意图() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/start?returnTo=%2Fonboarding&intent=register")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.begin.load(Ordering::SeqCst), 1);
+        assert_eq!(fake.register_begin.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

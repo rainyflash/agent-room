@@ -75,7 +75,7 @@ pub use identity::{
     OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,
     OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
     OidcDeviceGrantGateway, OidcDevicePromptFailure, OidcFailure, OidcFailureKind, OidcGateway,
-    OidcResult, PrincipalAccount, PrincipalRegistration, PrincipalRepository,
+    OidcInteraction, OidcResult, PrincipalAccount, PrincipalRegistration, PrincipalRepository,
     PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
     SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession, VerifiedOidcIdentity,
     WebSessionRegistration, WebSessionStore,

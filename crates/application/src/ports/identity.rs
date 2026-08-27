@@ -108,9 +108,16 @@ pub struct OidcAuthorizationRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OidcInteraction {
+    SignIn,
+    CreateAccount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OidcAuthorizationOptions {
     pub request_profile: bool,
     pub maximum_authentication_age: DurationMillis,
+    pub interaction: OidcInteraction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,8 +3,8 @@ use std::{error::Error, time::Duration};
 use agent_room_application::ports::{
     AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier, DeviceProofVerifier,
     DeviceSignature, OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,
-    OidcFailure, OidcFailureKind, OidcGateway, OidcResult, PortFuture, SecretDigest, SecretFactory,
-    SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
+    OidcFailure, OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, PortFuture,
+    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
 };
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey, devices::DevicePublicSigningKey,
@@ -299,6 +299,10 @@ impl OidcGateway for DiscoveredOidcGateway {
                 authorization.add_scope(Scope::new("profile".to_owned()))
             } else {
                 authorization
+            };
+            let authorization = match options.interaction {
+                OidcInteraction::SignIn => authorization,
+                OidcInteraction::CreateAccount => authorization.add_extra_param("prompt", "create"),
             };
             let (authorization_url, state, nonce) = authorization.url();
 

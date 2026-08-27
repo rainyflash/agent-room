@@ -8,15 +8,15 @@ use std::{
 
 use agent_room_application::{
     authentication::{
-        AuthenticationDependencies, AuthenticationFailureKind, AuthenticationPolicy,
-        AuthenticationRequirement, AuthenticationService, AuthenticationUseCases, BeginLogin,
-        CompleteLogin,
+        AuthenticationDependencies, AuthenticationFailureKind, AuthenticationIntent,
+        AuthenticationPolicy, AuthenticationRequirement, AuthenticationService,
+        AuthenticationUseCases, BeginLogin, CompleteLogin,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, IdentifierFactory, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
         OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcGateway,
-        OidcResult, PortFuture, PrincipalAccount, PrincipalRegistration,
+        OidcInteraction, OidcResult, PortFuture, PrincipalAccount, PrincipalRegistration,
         PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
         SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
         VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
@@ -154,6 +154,7 @@ struct TestOidc {
     identity: Mutex<VerifiedOidcIdentity>,
     exchanges: AtomicUsize,
     requested_profile: Mutex<Option<bool>>,
+    requested_interaction: Mutex<Option<OidcInteraction>>,
 }
 
 impl TestOidc {
@@ -162,6 +163,7 @@ impl TestOidc {
             identity: Mutex::new(identity),
             exchanges: AtomicUsize::new(0),
             requested_profile: Mutex::new(None),
+            requested_interaction: Mutex::new(None),
         }
     }
 }
@@ -172,6 +174,7 @@ impl OidcGateway for TestOidc {
         options: OidcAuthorizationOptions,
     ) -> PortFuture<'_, OidcResult<OidcAuthorizationRequest>> {
         *self.requested_profile.lock().expect("测试锁可用") = Some(options.request_profile);
+        *self.requested_interaction.lock().expect("测试锁可用") = Some(options.interaction);
         Box::pin(async {
             Ok(OidcAuthorizationRequest {
                 authorization_url: "https://identity.example/authorize".to_owned(),
@@ -366,6 +369,7 @@ impl Harness {
             .begin_login(BeginLogin {
                 return_path: SafeReturnPath::new("/rooms/lobby").expect("返回路径有效"),
                 profile_import,
+                intent: AuthenticationIntent::SignIn,
             })
             .await
             .expect("登录应开始")
@@ -386,6 +390,30 @@ impl Harness {
             })
             .await
     }
+}
+
+#[tokio::test]
+async fn 注册意图被明确映射为_oidc_创建账户交互() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+
+    harness
+        .service
+        .begin_login(BeginLogin {
+            return_path: SafeReturnPath::new("/onboarding").expect("返回路径有效"),
+            profile_import: ProfileImportConsent::default(),
+            intent: AuthenticationIntent::Register,
+        })
+        .await
+        .expect("注册授权应开始");
+
+    assert_eq!(
+        *harness
+            .oidc
+            .requested_interaction
+            .lock()
+            .expect("测试锁可用"),
+        Some(OidcInteraction::CreateAccount)
+    );
 }
 
 #[tokio::test]

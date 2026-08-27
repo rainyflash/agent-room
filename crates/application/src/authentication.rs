@@ -9,9 +9,9 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         Clock, IdentifierFactory, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
-        OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, PortFuture,
-        PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretFactory,
-        SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
+        OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
+        PortFuture, PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath,
+        SecretFactory, SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
     },
 };
 
@@ -71,6 +71,13 @@ pub enum AuthenticationConfigurationError {
 pub struct BeginLogin {
     pub return_path: SafeReturnPath,
     pub profile_import: ProfileImportConsent,
+    pub intent: AuthenticationIntent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthenticationIntent {
+    SignIn,
+    Register,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,6 +233,10 @@ impl AuthenticationService {
             .begin_authorization(OidcAuthorizationOptions {
                 request_profile: request.profile_import.requests_profile_scope(),
                 maximum_authentication_age: self.policy.recent_authentication_window,
+                interaction: match request.intent {
+                    AuthenticationIntent::SignIn => OidcInteraction::SignIn,
+                    AuthenticationIntent::Register => OidcInteraction::CreateAccount,
+                },
             })
             .await
             .map_err(|failure| map_oidc_failure("authentication.begin_login", failure.kind()))?;

@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use agent_room_application::ports::{
-    OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, SecretValue,
+    OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
+    SecretValue,
 };
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{DiscoveredOidcGateway, OidcAdapterConfig};
@@ -242,6 +243,7 @@ async fn 执行兑换(
         .begin_authorization(OidcAuthorizationOptions {
             request_profile: true,
             maximum_authentication_age: DurationMillis::new(300_000).expect("时长有效"),
+            interaction: OidcInteraction::SignIn,
         })
         .await
         .expect("Discovery 与授权请求应成功");
@@ -269,6 +271,27 @@ async fn 完整授权码流程校验_pkce_签名_声明和访问令牌哈希() {
 }
 
 #[tokio::test]
+async fn 创建账户交互使用标准_prompt_create_参数() {
+    let provider = 假提供者::启动(令牌变体::有效).await;
+    let gateway = provider.网关();
+
+    let authorization = gateway
+        .begin_authorization(OidcAuthorizationOptions {
+            request_profile: true,
+            maximum_authentication_age: DurationMillis::new(300_000).expect("时长有效"),
+            interaction: OidcInteraction::CreateAccount,
+        })
+        .await
+        .expect("注册授权请求应成功");
+    let url = Url::parse(&authorization.authorization_url).expect("授权 URL 有效");
+
+    assert!(
+        url.query_pairs()
+            .any(|(name, value)| name == "prompt" && value == "create")
+    );
+}
+
+#[tokio::test]
 async fn 错误_pkce_verifier_由提供者拒绝() {
     let provider = 假提供者::启动(令牌变体::有效).await;
     let gateway = provider.网关();
@@ -276,6 +299,7 @@ async fn 错误_pkce_verifier_由提供者拒绝() {
         .begin_authorization(OidcAuthorizationOptions {
             request_profile: false,
             maximum_authentication_age: DurationMillis::new(300_000).expect("时长有效"),
+            interaction: OidcInteraction::SignIn,
         })
         .await
         .expect("授权请求应成功");
