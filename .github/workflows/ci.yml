@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  # 旧修订不能取消新修订；同一 SHA 的迟到 push 与手动恢复则必须去重，避免重复计费。
-  group: ci-${{ github.ref }}-${{ github.sha }}
+  # 同一分支只验证最新修订，避免快速连续提交并行消耗 Actions 分钟数。
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
