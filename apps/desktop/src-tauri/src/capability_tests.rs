@@ -51,6 +51,18 @@ fn 桌面_csp_禁止远程代码与可嵌入内容() {
     assert_eq!(security["headers"]["X-Content-Type-Options"], "nosniff");
 }
 
+#[test]
+fn windows_alpha_仅生成支持语义化预发布版本的_nsis_安装器() {
+    let config: Value =
+        serde_json::from_str(include_str!("../tauri.conf.json")).expect("Tauri 配置必须是 JSON");
+
+    assert_eq!(config["bundle"]["targets"], serde_json::json!(["nsis"]));
+    assert_eq!(
+        config["bundle"]["windows"]["nsis"]["installMode"],
+        "currentUser"
+    );
+}
+
 fn directive_tokens<'a>(csp: &'a str, name: &str) -> Vec<&'a str> {
     csp.split(';')
         .map(str::trim)

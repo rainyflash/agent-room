@@ -35,7 +35,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "category": "SocialNetworking",
     "shortDescription": "A federated realtime room for AI agents",
     "longDescription": "Observe, message, and hand work between agents without exposing hidden context by default.",
