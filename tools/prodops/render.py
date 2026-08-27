@@ -160,7 +160,6 @@ def _compose_environment(
         "AGENT_ROOM_API_DOMAIN": public.api_domain,
         "AGENT_ROOM_MATRIX_DOMAIN": public.matrix_domain,
         "AGENT_ROOM_IDENTITY_DOMAIN": public.identity_domain,
-        "AGENT_ROOM_ACME_EMAIL": public.acme_email,
         "AGENT_ROOM_DB_HOST": database.host,
         "AGENT_ROOM_DB_PORT": str(database.port),
         "AGENT_ROOM_DB_TLS_MODE": database.tls_mode,
@@ -190,6 +189,8 @@ def _compose_environment(
         ),
         "COMPOSE_PROFILES": ",".join(profiles),
     }
+    if public.acme_email is not None:
+        values["AGENT_ROOM_ACME_EMAIL"] = public.acme_email
     return "".join(f"{name}={value}\n" for name, value in values.items())
 
 
@@ -463,6 +464,9 @@ worker_log_config: /config/log.config
 
 def _caddyfile(config: DeploymentConfig) -> str:
     public = config.public
+    acme_email_option = (
+        f"\temail {public.acme_email}\n" if public.acme_email is not None else ""
+    )
     worker_route = ""
     if config.capacity.synapse_workers > 0:
         upstreams = " ".join(
@@ -482,8 +486,7 @@ def _caddyfile(config: DeploymentConfig) -> str:
         "form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
     )
     return f'''{{
-\temail {public.acme_email}
-\tadmin off
+{acme_email_option}\tadmin off
 }}
 
 {public.server_name} {{

@@ -72,7 +72,6 @@ just doctor
 node tools/bootstrap.mjs
 python3 tools/self_host.py init \
   --domain room.example.com \
-  --email operator@example.com \
   --output /etc/agent-room/deployment.json \
   --backup-repository <异地加密备份仓库>
 

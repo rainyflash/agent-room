@@ -79,6 +79,14 @@ class ProductionConfigTests(unittest.TestCase):
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(value)
 
+    def test_acme_email_is_optional_but_validated_when_present(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        self.assertIsNone(DeploymentConfig.from_mapping(value).public.acme_email)
+
+        value["public"]["acmeEmail"] = "not-an-email"
+        with self.assertRaisesRegex(DeploymentConfigError, "acmeEmail"):
+            DeploymentConfig.from_mapping(value)
+
     def test_enabled_telemetry_requires_secret_free_https_receiver(self) -> None:
         missing = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         missing["telemetry"].pop("alertWebhookUrl")
@@ -120,6 +128,17 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("sslmode=disable", self.secrets.read("migration_database_url"))
+
+    def test_render_omits_unconfigured_acme_contact(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("AGENT_ROOM_ACME_EMAIL", environment)
+        self.assertNotIn("\temail ", caddyfile)
+        self.assertIn("\tadmin off", caddyfile)
 
     def test_observability_render_has_paging_and_fixed_probe_names(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)

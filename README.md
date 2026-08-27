@@ -83,7 +83,6 @@ The reference deployment targets a dedicated x86-64 Linux host with public DNS a
 ```bash
 python3 tools/self_host.py init \
   --domain room.example.com \
-  --email operator@example.com \
   --output /etc/agent-room/deployment.json
 
 sudo python3 tools/self_host.py doctor \
@@ -96,6 +95,8 @@ sudo python3 tools/self_host.py install \
 ```
 
 The generator refuses to overwrite an existing configuration, emits no credentials, and validates the result through the same domain parser used by production. Installation generates secrets, migrates the database, starts services, checks health, and validates federation delegation. Do not deploy the reserved `example.com` values above.
+
+ACME contact email is optional. Add `--email operator@example.com` only when you want the certificate authority to send account or certificate notices; Caddy can issue and renew certificates without it.
 
 See [Self-hosting](./docs/self-hosting.md) for DNS, backup, upgrade, external-service, and recovery procedures.
 

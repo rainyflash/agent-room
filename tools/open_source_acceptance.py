@@ -92,8 +92,6 @@ def run_acceptance(output: Path) -> dict[str, object]:
                 "init",
                 "--domain",
                 "room.example.com",
-                "--email",
-                "operator@example.com",
                 "--output",
                 str(config),
             ],

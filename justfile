@@ -189,8 +189,8 @@ production-upgrade config state:
 production-health config state:
   python tools/production.py health --config {{config}} --state-dir {{state}}
 
-self-host-init domain email output:
-  python tools/self_host.py init --domain {{domain}} --email {{email}} --output {{output}}
+self-host-init domain output:
+  python tools/self_host.py init --domain {{domain}} --output {{output}}
 
 self-host-doctor config state:
   python tools/self_host.py doctor --config {{config}} --state-dir {{state}}

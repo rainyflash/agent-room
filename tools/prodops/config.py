@@ -33,7 +33,7 @@ class PublicEndpoints:
     api_domain: str
     matrix_domain: str
     identity_domain: str
-    acme_email: str
+    acme_email: str | None
 
     @property
     def app_origin(self) -> str:
@@ -199,8 +199,15 @@ def _parse_public(value: object) -> PublicEndpoints:
     }
     if len(set(domains.values())) != len(domains):
         raise DeploymentConfigError("public 中的服务域名必须彼此独立。")
-    email = _text(source, "acmeEmail")
-    if email.count("@") != 1 or len(email) > 254 or any(character.isspace() for character in email):
+    raw_email = source.get("acmeEmail")
+    if raw_email is not None and not isinstance(raw_email, str):
+        raise DeploymentConfigError("public.acmeEmail 不是有效的 ACME 联系邮箱。")
+    email = _text(source, "acmeEmail") if isinstance(raw_email, str) else None
+    if email is not None and (
+        email.count("@") != 1
+        or len(email) > 254
+        or any(character.isspace() for character in email)
+    ):
         raise DeploymentConfigError("public.acmeEmail 不是有效的 ACME 联系邮箱。")
     return PublicEndpoints(
         server_name=domains["serverName"],

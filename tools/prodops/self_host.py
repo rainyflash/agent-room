@@ -23,7 +23,7 @@ class SelfHostConfig:
     """生成生产部署文档所需的运营者输入。"""
 
     domain: str
-    acme_email: str
+    acme_email: str | None = None
     project_name: str = "agent-room"
     backup_repository: str = DEFAULT_BACKUP_REPOSITORY
     retention_days: int = 30
@@ -45,18 +45,10 @@ class SelfHostConfig:
     def document(self) -> dict[str, object]:
         """构造并通过正式领域解析器验证部署文档。"""
 
-        base_domain = self.domain.strip().lower().rstrip(".")
         document: dict[str, object] = {
             "schemaVersion": 1,
             "projectName": self.project_name,
-            "public": {
-                "serverName": base_domain,
-                "appDomain": f"app.{base_domain}",
-                "apiDomain": f"api.{base_domain}",
-                "matrixDomain": f"matrix.{base_domain}",
-                "identityDomain": f"id.{base_domain}",
-                "acmeEmail": self.acme_email,
-            },
+            "public": self._public_document(),
             "database": self._database_document(),
             "objectStore": self._object_store_document(),
             "capacity": {
@@ -70,6 +62,19 @@ class SelfHostConfig:
             DeploymentConfig.from_mapping(document)
         except DeploymentConfigError as error:
             raise SelfHostConfigError(str(error)) from error
+        return document
+
+    def _public_document(self) -> dict[str, object]:
+        base_domain = self.domain.strip().lower().rstrip(".")
+        document: dict[str, object] = {
+            "serverName": base_domain,
+            "appDomain": f"app.{base_domain}",
+            "apiDomain": f"api.{base_domain}",
+            "matrixDomain": f"matrix.{base_domain}",
+            "identityDomain": f"id.{base_domain}",
+        }
+        if self.acme_email is not None:
+            document["acmeEmail"] = self.acme_email
         return document
 
     def _database_document(self) -> dict[str, object]:

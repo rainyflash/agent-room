@@ -35,11 +35,12 @@ The guided generator emits no credential and refuses to overwrite an existing fi
 sudo install -d -m 0750 /etc/agent-room /var/lib/agent-room
 sudo python3 tools/self_host.py init \
   --domain room.example.com \
-  --email operator@example.com \
   --output /etc/agent-room/deployment.json
 ```
 
 The default profile uses embedded PostgreSQL and embedded S3-compatible object storage. It derives distinct service domains, stores backups at `/var/backups/agent-room`, retains them for 30 days, targets a 15-minute RPO, and leaves outbound paging disabled until an HTTPS alert receiver is explicitly supplied.
+
+The ACME contact email is optional. Supply `--email operator@example.com` only if certificate-authority notifications are desired; omitting it does not disable Caddy automatic HTTPS or renewal.
 
 Run the strict host, DNS, and port check:
 

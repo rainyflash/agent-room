@@ -24,14 +24,7 @@
     "public": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "serverName",
-        "appDomain",
-        "apiDomain",
-        "matrixDomain",
-        "identityDomain",
-        "acmeEmail"
-      ],
+      "required": ["serverName", "appDomain", "apiDomain", "matrixDomain", "identityDomain"],
       "properties": {
         "serverName": { "$ref": "#/$defs/dnsName" },
         "appDomain": { "$ref": "#/$defs/dnsName" },

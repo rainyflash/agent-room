@@ -36,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     initialize = subcommands.add_parser("init", help="生成经过严格验证的生产配置")
     initialize.add_argument("--domain", required=True, help="公开基础域名，例如 room.example.com")
-    initialize.add_argument("--email", required=True, help="ACME 联系邮箱")
+    initialize.add_argument(
+        "--email",
+        help="可选的 ACME 联系邮箱，仅用于证书机构通知",
+    )
     initialize.add_argument("--output", type=Path, required=True, help="要新建的部署 JSON")
     initialize.add_argument("--project-name", default="agent-room")
     initialize.add_argument("--backup-repository", default="/var/backups/agent-room")

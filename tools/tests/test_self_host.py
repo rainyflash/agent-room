@@ -13,7 +13,6 @@ class SelfHostConfigTests(unittest.TestCase):
     def test_embedded_config_derives_distinct_public_domains(self) -> None:
         document = SelfHostConfig(
             domain="ROOM.EXAMPLE.COM.",
-            acme_email="operator@example.com",
         ).document()
 
         public = document["public"]
@@ -21,9 +20,26 @@ class SelfHostConfigTests(unittest.TestCase):
         assert isinstance(public, dict)
         self.assertEqual(public["serverName"], "room.example.com")
         self.assertEqual(public["appDomain"], "app.room.example.com")
+        self.assertNotIn("acmeEmail", public)
         self.assertEqual(document["telemetry"], {"enabled": False})
         parsed = DeploymentConfig.from_mapping(document)
+        self.assertIsNone(parsed.public.acme_email)
         self.assertEqual(parsed.compose_profiles, ("embedded-database", "embedded-object-store"))
+
+    def test_optional_acme_email_is_preserved_when_supplied(self) -> None:
+        document = SelfHostConfig(
+            domain="room.example.com",
+            acme_email="operator@example.com",
+        ).document()
+
+        public = document["public"]
+        self.assertIsInstance(public, dict)
+        assert isinstance(public, dict)
+        self.assertEqual(public["acmeEmail"], "operator@example.com")
+        self.assertEqual(
+            DeploymentConfig.from_mapping(document).public.acme_email,
+            "operator@example.com",
+        )
 
     def test_external_dependencies_require_complete_secure_inputs(self) -> None:
         config = SelfHostConfig(

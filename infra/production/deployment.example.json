@@ -7,8 +7,7 @@
     "appDomain": "app.agent-room.example",
     "apiDomain": "api.agent-room.example",
     "matrixDomain": "matrix.agent-room.example",
-    "identityDomain": "id.agent-room.example",
-    "acmeEmail": "operator@example.com"
+    "identityDomain": "id.agent-room.example"
   },
   "database": {
     "mode": "embedded",
