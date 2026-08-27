@@ -145,6 +145,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw '通用 MCP 构建失败。' }
           python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
           if ($LASTEXITCODE -ne 0) { throw 'Codex 配置适配器装配失败。' }
+      - name: 在干净 Windows 候选机验收安装、运行时与卸载
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) { throw "NSIS 安装器数量异常：$($installers.Count)" }
+          python tools/windows_installer_acceptance.py --installer "$($installers[0].FullName)" --expected-version "$env:VERSION" --report candidate/windows-installer-acceptance.json
+          if ($LASTEXITCODE -ne 0) { throw '干净 Windows 安装器验收失败。' }
       - name: 收集原生发布产物
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
