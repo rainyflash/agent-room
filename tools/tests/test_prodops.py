@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
@@ -139,6 +140,12 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertNotIn("AGENT_ROOM_ACME_EMAIL", environment)
         self.assertNotIn("\temail ", caddyfile)
         self.assertIn("\tadmin off", caddyfile)
+
+    def test_prepare_keeps_postgres_18_mount_parent_traversable(self) -> None:
+        with patch.object(Path, "chmod", autospec=True) as chmod:
+            self.paths.prepare()
+
+        chmod.assert_called_once_with(self.paths.data / "postgres", 0o711)
 
     def test_observability_render_has_paging_and_fixed_probe_names(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)

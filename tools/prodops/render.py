@@ -16,6 +16,7 @@ from .secrets import SecretStore
 
 GENERATED_FILE_MODE: Final = 0o600
 PUBLIC_FILE_MODE: Final = 0o644
+POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
 OIDC_MAPPING_SOURCE: Final = (
     Path(__file__).resolve().parents[2] / "infra" / "synapse" / "agent_room_oidc_mapping.py"
 )
@@ -59,10 +60,18 @@ class DeploymentPaths:
             self.data / "caddy-config",
             self.data / "clamav",
             self.data / "object-store",
-            self.data / "postgres",
             self.data / "synapse",
         ):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        # PostgreSQL 18 会先降权，再进入主版本子目录；挂载根只允许遍历，实际数据目录仍为 0700。
+        postgres_mount_parent = self.data / "postgres"
+        postgres_mount_parent.mkdir(
+            mode=POSTGRES_MOUNT_PARENT_MODE,
+            parents=True,
+            exist_ok=True,
+        )
+        postgres_mount_parent.chmod(POSTGRES_MOUNT_PARENT_MODE)
 
 
 def render_deployment(
