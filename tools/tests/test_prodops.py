@@ -11,7 +11,13 @@ from unittest.mock import patch
 import uuid
 
 from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
-from tools.prodops.render import DeploymentPaths, render_deployment
+from tools.prodops.render import (
+    CONTAINER_CONFIG_DIRECTORY_MODE,
+    CONTAINER_CONFIG_FILE_MODE,
+    PRIVATE_DIRECTORY_MODE,
+    DeploymentPaths,
+    render_deployment,
+)
 from tools.prodops.runtime import ProductionRuntime, _meets_nominal_memory
 from tools.prodops.secrets import (
     CONTAINER_SECRET_FILE_MODE,
@@ -161,7 +167,31 @@ class ProductionRenderingTests(unittest.TestCase):
         with patch.object(Path, "chmod", autospec=True) as chmod:
             self.paths.prepare()
 
-        chmod.assert_called_once_with(self.paths.data / "postgres", 0o711)
+        chmod.assert_any_call(self.paths.data / "postgres", 0o711)
+
+    @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
+    def test_rendered_configuration_is_read_only_to_non_root_containers(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+
+        self.assertEqual(
+            stat.S_IMODE(self.paths.generated.stat().st_mode),
+            PRIVATE_DIRECTORY_MODE,
+        )
+        for root in self.paths.container_config_directories():
+            self.assertEqual(
+                stat.S_IMODE(root.stat().st_mode),
+                CONTAINER_CONFIG_DIRECTORY_MODE,
+            )
+            for child in root.rglob("*"):
+                expected = (
+                    CONTAINER_CONFIG_DIRECTORY_MODE
+                    if child.is_dir()
+                    else CONTAINER_CONFIG_FILE_MODE
+                )
+                self.assertEqual(stat.S_IMODE(child.stat().st_mode), expected)
+
+        # 第二次渲染必须先恢复目录写权限，升级不能被自己的只读策略卡死。
+        render_deployment(self.config, self.paths, self.secrets)
 
     def test_observability_render_has_paging_and_fixed_probe_names(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)

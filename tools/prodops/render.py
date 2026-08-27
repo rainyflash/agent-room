@@ -14,7 +14,9 @@ from .config import DeploymentConfig
 from .secrets import SecretStore
 
 
-GENERATED_FILE_MODE: Final = 0o600
+CONTAINER_CONFIG_DIRECTORY_MODE: Final = 0o555
+CONTAINER_CONFIG_FILE_MODE: Final = 0o444
+PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
 OIDC_MAPPING_SOURCE: Final = (
@@ -51,18 +53,23 @@ class DeploymentPaths:
             self.generated,
             self.data,
             self.secrets,
-            self.generated / "caddy",
-            self.generated / "keycloak",
-            self.generated / "seaweedfs",
-            self.generated / "synapse" / "workers",
-            self.generated / "observability",
+        ):
+            directory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
+            directory.chmod(PRIVATE_DIRECTORY_MODE)
+
+        # 渲染期间需要可写；完成后再把容器配置树收紧为只读。
+        for directory in self.container_config_directories():
+            directory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
+            directory.chmod(PRIVATE_DIRECTORY_MODE)
+
+        for directory in (
             self.data / "caddy-data",
             self.data / "caddy-config",
             self.data / "clamav",
             self.data / "object-store",
             self.data / "synapse",
         ):
-            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            directory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
 
         # PostgreSQL 18 会先降权，再进入主版本子目录；挂载根只允许遍历，实际数据目录仍为 0700。
         postgres_mount_parent = self.data / "postgres"
@@ -72,6 +79,29 @@ class DeploymentPaths:
             exist_ok=True,
         )
         postgres_mount_parent.chmod(POSTGRES_MOUNT_PARENT_MODE)
+
+    def container_config_directories(self) -> tuple[Path, ...]:
+        return (
+            self.generated / "caddy",
+            self.generated / "keycloak",
+            self.generated / "seaweedfs",
+            self.generated / "synapse",
+            self.generated / "synapse" / "workers",
+            self.generated / "observability",
+        )
+
+    def expose_container_configuration(self) -> None:
+        """让非 root 容器只读生成配置，同时保持宿主机父目录私有。"""
+        for root in self.container_config_directories():
+            if not root.exists():
+                continue
+            for child in root.rglob("*"):
+                child.chmod(
+                    CONTAINER_CONFIG_DIRECTORY_MODE
+                    if child.is_dir()
+                    else CONTAINER_CONFIG_FILE_MODE
+                )
+            root.chmod(CONTAINER_CONFIG_DIRECTORY_MODE)
 
 
 def render_deployment(
@@ -97,22 +127,22 @@ def render_deployment(
     _write_json(
         paths.generated / "keycloak" / "realm-agent-room.json",
         _keycloak_realm(config, secrets),
-        GENERATED_FILE_MODE,
+        CONTAINER_CONFIG_FILE_MODE,
     )
     _write_json(
         paths.generated / "seaweedfs" / "s3.json",
         _seaweed_config(secrets),
-        GENERATED_FILE_MODE,
+        CONTAINER_CONFIG_FILE_MODE,
     )
     _write_text(
         paths.generated / "synapse" / "agent-room-appservice.yaml",
         _synapse_appservice(config, secrets),
-        GENERATED_FILE_MODE,
+        CONTAINER_CONFIG_FILE_MODE,
     )
     _write_text(
         paths.generated / "synapse" / "homeserver.yaml",
         _synapse_homeserver(config, secrets),
-        GENERATED_FILE_MODE,
+        CONTAINER_CONFIG_FILE_MODE,
     )
     _write_text(
         paths.generated / "synapse" / "log.config",
@@ -139,8 +169,9 @@ def render_deployment(
         _write_text(
             paths.generated / "observability" / "alertmanager.yaml",
             _alertmanager_config(config),
-            GENERATED_FILE_MODE,
+            CONTAINER_CONFIG_FILE_MODE,
         )
+    paths.expose_container_configuration()
 
 
 def _compose_environment(
@@ -427,7 +458,7 @@ worker_listeners:
       - names: [client, federation]
 worker_log_config: /config/log.config
 ''',
-            GENERATED_FILE_MODE,
+            CONTAINER_CONFIG_FILE_MODE,
         )
         services[name] = {
             "image": "matrixdotorg/synapse:v1.159.0",

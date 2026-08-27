@@ -15,7 +15,7 @@
 - `prometheus`、`alertmanager`、`blackbox` 与 exporter：SLO、依赖和恢复事实；
 - `grafana`：仅通过主机回环地址访问的运营仪表盘。
 
-所有持久数据、生成配置和 Secret 都位于显式 `state-dir`。容器可以重建，`state-dir` 不能随意删除。
+所有持久数据、生成配置和 Secret 都位于显式 `state-dir`。容器可以重建，`state-dir` 不能随意删除。生成配置的顶层目录保持 `0700`；挂载给非 root 容器的子目录和文件在渲染完成后分别规范化为只读 `0555` 与 `0444`。这既兼容 Compose bind mount，也不会让宿主普通用户穿过顶层目录。
 
 ## 主机与 DNS 前置条件
 
