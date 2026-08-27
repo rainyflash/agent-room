@@ -137,11 +137,13 @@ struct PublicLobbyResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct PublicLobbyObservationResponse {
-    catalog_id: String,
-    room_instance_id: String,
-    matrix_room_id: String,
+    #[serde(rename = "catalogId")]
+    catalog: String,
+    #[serde(rename = "roomInstanceId")]
+    room_instance: String,
+    #[serde(rename = "matrixRoomId")]
+    matrix_room: String,
 }
 
 async fn list_public_lobbies(
@@ -236,9 +238,9 @@ async fn resolve_public_lobby_observation(
     {
         Ok(target) => no_store(
             Json(PublicLobbyObservationResponse {
-                catalog_id: target.catalog_id.to_string(),
-                room_instance_id: target.room_instance_id.to_string(),
-                matrix_room_id: target.matrix_room_id.as_str().to_owned(),
+                catalog: target.catalog_id.to_string(),
+                room_instance: target.room_instance_id.to_string(),
+                matrix_room: target.matrix_room_id.as_str().to_owned(),
             })
             .into_response(),
         ),

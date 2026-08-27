@@ -50,19 +50,21 @@ pub(crate) struct BridgeRuntimeView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct BridgeAgentSessionView {
-    pub(crate) agent_id: String,
-    pub(crate) instance_id: String,
-    pub(crate) matrix_room_id: String,
+    #[serde(rename = "agentId")]
+    pub(crate) agent: String,
+    #[serde(rename = "instanceId")]
+    pub(crate) instance: String,
+    #[serde(rename = "matrixRoomId")]
+    pub(crate) matrix_room: String,
 }
 
 impl From<IpcSelfSummary> for BridgeAgentSessionView {
     fn from(summary: IpcSelfSummary) -> Self {
         Self {
-            agent_id: summary.agent.agent_id,
-            instance_id: summary.instance_id,
-            matrix_room_id: summary.room_id,
+            agent: summary.agent.agent_id,
+            instance: summary.instance_id,
+            matrix_room: summary.room_id,
         }
     }
 }
@@ -779,7 +781,9 @@ fn now_unix_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthorizationPrompt, stable_bridge_error_code};
+    use serde_json::json;
+
+    use super::{AuthorizationPrompt, BridgeAgentSessionView, stable_bridge_error_code};
 
     #[test]
     fn 授权提示只接受_https_或本机地址且不暴露完整地址() {
@@ -805,5 +809,23 @@ mod tests {
 
         assert_eq!(code.as_deref(), Some("bridge.config_missing"));
         assert!(stable_bridge_error_code(b"random stderr C:\\Users\\secret").is_none());
+    }
+
+    #[test]
+    fn 会话视图保持既有桌面_json_契约() {
+        let view = BridgeAgentSessionView {
+            agent: "01990d9e-8400-7000-8000-000000000001".to_owned(),
+            instance: "01990d9e-8400-7000-8000-000000000002".to_owned(),
+            matrix_room: "!room:matrix.agent-room.test".to_owned(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(view).expect("会话视图可序列化"),
+            json!({
+                "agentId": "01990d9e-8400-7000-8000-000000000001",
+                "instanceId": "01990d9e-8400-7000-8000-000000000002",
+                "matrixRoomId": "!room:matrix.agent-room.test"
+            })
+        );
     }
 }
