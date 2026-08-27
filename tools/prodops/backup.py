@@ -17,12 +17,15 @@ from uuid import UUID
 
 from .config import DeploymentConfig
 from .render import DeploymentPaths
+from .restore_point import RestorePoint, RestorePointError, WAL_SEGMENT
 
 
 BACKUP_SCHEMA_VERSION: Final = 1
 BACKUP_ID: Final = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}$")
 SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
+WAL_BACKUP_MARKER: Final = re.compile(r"^([0-9A-F]{24})\.[0-9A-F]{8}\.backup$")
 LOCK_STALE_AFTER: Final = timedelta(hours=24)
+MINIMUM_BACKUP_HEADROOM_BYTES: Final = 2 * 1024 * 1024 * 1024
 MANIFEST_NAME: Final = "manifest.json"
 ACCOUNT_DELETION_ARTIFACT: Final = "privacy/account-deletions.json"
 ACCOUNT_DELETION_LEDGER_NAME: Final = "ACCOUNT_DELETION_LEDGER.json"
@@ -316,9 +319,17 @@ class BackupRepository:
         _require_restore_contract(manifest)
         return manifest
 
-    def prune(self, retention_days: int, *, now: datetime | None = None) -> tuple[str, ...]:
+    def prune(
+        self,
+        retention_days: int,
+        recent_retention_hours: int = 24,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[str, ...]:
         if not 7 <= retention_days <= 365:
             raise BackupError("备份保留天数必须在 7–365 之间。")
+        if not 1 <= recent_retention_hours <= 168:
+            raise BackupError("近期高频备份保留小时数必须在 1–168 之间。")
         reference = now or datetime.now(UTC)
         manifests: list[BackupManifest] = []
         for path in self.root.iterdir():
@@ -327,12 +338,72 @@ class BackupRepository:
         manifests.sort(key=lambda item: _parse_utc(item.created_at), reverse=True)
         removed: list[str] = []
         cutoff = reference - timedelta(days=retention_days)
+        recent_cutoff = reference - timedelta(hours=recent_retention_hours)
+        retained_days = {
+            _parse_utc(manifest.created_at).date()
+            for manifest in manifests
+            if _parse_utc(manifest.created_at) >= recent_cutoff
+        }
         for manifest in manifests[1:]:
-            if _parse_utc(manifest.created_at) >= cutoff:
+            created_at = _parse_utc(manifest.created_at)
+            if created_at >= recent_cutoff:
+                continue
+            if created_at >= cutoff and created_at.date() not in retained_days:
+                retained_days.add(created_at.date())
                 continue
             shutil.rmtree(self.root / manifest.backup_id)
             removed.append(manifest.backup_id)
         self._remove_stale_partials(reference)
+        return tuple(removed)
+
+    def require_headroom(self) -> int:
+        self.prepare()
+        latest_size = 0
+        latest_path = self.root / "LATEST"
+        if latest_path.is_symlink():
+            raise BackupError("LATEST 不得是符号链接。")
+        if latest_path.is_file():
+            latest_id = latest_path.read_text(encoding="utf-8").strip()
+            latest_size = sum(artifact.byte_length for artifact in self.load(latest_id).artifacts)
+        required = max(MINIMUM_BACKUP_HEADROOM_BYTES, latest_size * 2)
+        available = shutil.disk_usage(self.root).free
+        if available < required:
+            raise BackupError(
+                f"备份前磁盘余量不足：可用 {available} 字节，至少需要 {required} 字节。"
+            )
+        return required
+
+    def prune_archived_wal(self, manifest: BackupManifest) -> tuple[str, ...]:
+        if manifest.database_mode != "embedded":
+            return ()
+        try:
+            restore_point = RestorePoint.load(
+                self.root / manifest.backup_id / "postgres" / "restore-point.json"
+            )
+        except RestorePointError as error:
+            raise BackupError(str(error)) from error
+        last_required_wal = restore_point.last_required_wal
+        wal_directory = (self.root / "wal").resolve()
+        try:
+            wal_directory.relative_to(self.root.resolve())
+        except ValueError as error:
+            raise BackupError("归档 WAL 目录越过备份仓库。") from error
+        if not wal_directory.is_dir():
+            return ()
+
+        removed: list[str] = []
+        for path in sorted(wal_directory.iterdir(), key=lambda item: item.name):
+            if path.is_symlink() or not path.is_file():
+                raise BackupError(f"归档 WAL 中包含不安全条目：{path.name}。")
+            marker = WAL_BACKUP_MARKER.fullmatch(path.name)
+            if WAL_SEGMENT.fullmatch(path.name):
+                segment = path.name
+            else:
+                segment = marker.group(1) if marker else None
+            if segment is None or segment > last_required_wal:
+                continue
+            path.unlink()
+            removed.append(path.name)
         return tuple(removed)
 
     def _remove_stale_partials(self, now: datetime) -> None:

@@ -99,6 +99,12 @@
       "properties": {
         "repository": { "$ref": "#/$defs/absoluteHostPath" },
         "retentionDays": { "type": "integer", "minimum": 7, "maximum": 365 },
+        "recentRetentionHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168,
+          "default": 24
+        },
         "rpoMinutes": { "type": "integer", "minimum": 1, "maximum": 15 },
         "providerPitrEvidenceFile": { "$ref": "#/$defs/absoluteHostPath" }
       }

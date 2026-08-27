@@ -55,7 +55,7 @@ Secret 只通过 Compose Secret 文件挂载。父目录保持 `0700`，单个�
 
 ## 自动备份与恢复演练
 
-`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm、对象清单和对象字节的一致性备份。这里选择完整快照是有意的：公开测试阶段先保证可恢复性，不拿未经验证的“增量优化”冒充 RPO。
+`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm、对象清单和对象字节的一致性备份。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间，发布并校验成功后才清理已封装的宿主归档。`backup.recentRetentionHours`（默认 24）内保留全部高频快照，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份；这样保留近期恢复粒度，同时避免把同一批 WAL 在每份快照中无限复制。创建快照前还会按上一份快照体积执行磁盘余量门禁。
 
 先渲染并审查 unit，再以 root 安装和核验：
 

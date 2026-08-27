@@ -26,6 +26,7 @@
   "backup": {
     "repository": "/var/backups/agent-room",
     "retentionDays": 30,
+    "recentRetentionHours": 24,
     "rpoMinutes": 15
   },
   "identity": {

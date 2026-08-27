@@ -61,6 +61,7 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(config.schema_version, 1)
         self.assertEqual(config.database.mode, "embedded")
         self.assertEqual(config.backup.rpo_minutes, 15)
+        self.assertEqual(config.backup.recent_retention_hours, 24)
         self.assertEqual(config.backup.archive_timeout_seconds, 900)
         self.assertEqual(
             config.telemetry.alert_webhook_url,
@@ -68,6 +69,16 @@ class ProductionConfigTests(unittest.TestCase):
         )
         self.assertEqual(config.compose_profiles, ("embedded-database", "embedded-object-store"))
         self.assertEqual(json.loads(SCHEMA.read_text(encoding="utf-8"))["$schema"], "https://json-schema.org/draft/2020-12/schema")
+
+    def test_physical_backup_copies_only_required_wal_interval(self) -> None:
+        script = (ROOT / "infra" / "production" / "postgres-base-backup.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("cp -a /archive/.", script)
+        self.assertIn('name=${source##*/}', script)
+        self.assertIn('[ "$name" \\< "$start_wal" ]', script)
+        self.assertIn('[ "$name" \\> "$wal_file" ]', script)
 
     def test_unknown_configuration_is_rejected(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

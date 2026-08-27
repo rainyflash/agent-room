@@ -8,16 +8,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 from typing import Callable, Protocol
 
 from .backup import BackupError, BackupManifest, BackupRepository
 from .config import DeploymentConfig
 from .render import DeploymentPaths
-
-
-RESTORE_POINT_NAME = re.compile(r"^[A-Za-z0-9_]{1,200}$")
+from .restore_point import RestorePoint, RestorePointError
 
 
 class RestoreDrillError(RuntimeError):
@@ -218,21 +215,10 @@ class RestoreDrillCoordinator:
 
 def _read_restore_point(path: Path) -> tuple[str, str]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RestoreDrillError("恢复点元数据缺失或损坏。") from error
-    if not isinstance(value, dict) or set(value) != {"name", "lsn", "lastRequiredWal"}:
-        raise RestoreDrillError("恢复点元数据字段无效。")
-    name = value.get("name")
-    lsn = value.get("lsn")
-    wal = value.get("lastRequiredWal")
-    if not isinstance(name, str) or not RESTORE_POINT_NAME.fullmatch(name):
-        raise RestoreDrillError("恢复点名称无效。")
-    if not isinstance(lsn, str) or not re.fullmatch(r"[0-9A-F]+/[0-9A-F]+", lsn):
-        raise RestoreDrillError("恢复点 LSN 无效。")
-    if not isinstance(wal, str) or not re.fullmatch(r"[0-9A-F]{24}", wal):
-        raise RestoreDrillError("恢复点 WAL 文件名无效。")
-    return name, lsn
+        restore_point = RestorePoint.load(path)
+    except RestorePointError as error:
+        raise RestoreDrillError(str(error)) from error
+    return restore_point.name, restore_point.lsn
 
 
 def _artifact_digest(manifest: BackupManifest, path: str) -> str:

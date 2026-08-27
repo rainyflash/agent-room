@@ -197,9 +197,14 @@ class ProductionRuntime:
         self.prepare(generate_signing_key=True)
         self.validate_compose()
         repository = self.prepare_backup_repository()
+        repository.prune(
+            self.config.backup.retention_days,
+            self.config.backup.recent_retention_hours,
+        )
+        repository.require_headroom()
         coordinator = BackupCoordinator(self.config, self.paths, self, repository)
         manifest = coordinator.create()
-        repository.prune(self.config.backup.retention_days)
+        repository.prune_archived_wal(manifest)
         return manifest
 
     def verify_backup(self, backup_id: str) -> BackupManifest:
@@ -209,7 +214,10 @@ class ProductionRuntime:
     def prune_backups(self) -> tuple[str, ...]:
         repository = BackupRepository(Path(self.config.backup.repository))
         repository.prepare()
-        return repository.prune(self.config.backup.retention_days)
+        return repository.prune(
+            self.config.backup.retention_days,
+            self.config.backup.recent_retention_hours,
+        )
 
     def restore_drill(self, backup_id: str) -> RestoreDrillReport:
         repository = BackupRepository(Path(self.config.backup.repository))

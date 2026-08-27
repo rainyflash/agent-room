@@ -37,7 +37,13 @@ class FakeBackupCapture:
         write(staging / "privacy" / "account-deletions.json", b'{"schemaVersion":1,"entries":[]}\n')
         if self.embedded:
             write(staging / "postgres" / "base" / "backup_manifest", b"{}")
-            write(staging / "postgres" / "restore-point.json", b"{}")
+            write(
+                staging / "postgres" / "restore-point.json",
+                (
+                    b'{"name":"agent_room_test","lsn":"0/1000000",'
+                    b'"lastRequiredWal":"000000010000000000000001"}\n'
+                ),
+            )
             write(staging / "postgres" / "wal" / "000000010000000000000001", b"wal")
 
 
@@ -172,6 +178,74 @@ class BackupCoordinatorTests(unittest.TestCase):
         self.assertTrue((self.repository_path / second.backup_id).exists())
         self.assertEqual(repository.load_account_deletion_ledger().entries[0].job_id, entry["jobId"])
 
+    def test_prune_keeps_recent_snapshots_and_one_daily_snapshot(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        capture = FakeBackupCapture(self.repository_path)
+        expired = BackupCoordinator(
+            self.config,
+            self.paths,
+            capture,
+            repository,
+            clock=lambda: FIXED_NOW - timedelta(days=8),
+        ).create()
+        older_daily = BackupCoordinator(
+            self.config,
+            self.paths,
+            capture,
+            repository,
+            clock=lambda: FIXED_NOW - timedelta(hours=26),
+        ).create()
+        retained_daily = BackupCoordinator(
+            self.config,
+            self.paths,
+            capture,
+            repository,
+            clock=lambda: FIXED_NOW - timedelta(hours=25),
+        ).create()
+        recent = BackupCoordinator(
+            self.config,
+            self.paths,
+            capture,
+            repository,
+            clock=lambda: FIXED_NOW - timedelta(hours=2),
+        ).create()
+
+        removed = repository.prune(7, 24, now=FIXED_NOW)
+
+        self.assertEqual(set(removed), {expired.backup_id, older_daily.backup_id})
+        self.assertTrue((self.repository_path / retained_daily.backup_id).is_dir())
+        self.assertTrue((self.repository_path / recent.backup_id).is_dir())
+
+    def test_archived_wal_is_pruned_only_through_published_restore_point(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        manifest = BackupCoordinator(
+            self.config,
+            self.paths,
+            FakeBackupCapture(self.repository_path),
+            repository,
+            clock=lambda: FIXED_NOW,
+        ).create()
+        wal_directory = self.repository_path / "wal"
+        for name in (
+            "000000010000000000000000",
+            "000000010000000000000001",
+            "000000010000000000000001.00000028.backup",
+            "000000010000000000000002",
+        ):
+            write(wal_directory / name, name.encode())
+
+        removed = repository.prune_archived_wal(manifest)
+
+        self.assertEqual(
+            set(removed),
+            {
+                "000000010000000000000000",
+                "000000010000000000000001",
+                "000000010000000000000001.00000028.backup",
+            },
+        )
+        self.assertTrue((wal_directory / "000000010000000000000002").is_file())
+
     def test_external_backup_requires_fresh_provider_evidence(self) -> None:
         evidence_path = Path(self.temporary.name) / "provider.json"
         evidence_path.write_text(
@@ -193,6 +267,7 @@ class BackupCoordinatorTests(unittest.TestCase):
             backup=BackupConfig(
                 repository=self.repository_path.as_posix(),
                 retention_days=30,
+                recent_retention_hours=24,
                 rpo_minutes=15,
                 provider_pitr_evidence_file=evidence_path.as_posix(),
             ),
