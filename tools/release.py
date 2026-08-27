@@ -20,7 +20,15 @@ ROOT: Final = Path(__file__).resolve().parent.parent
 SCHEMA_VERSION: Final = 1
 VALID_CHANNELS: Final = frozenset({"stable", "testing"})
 VALID_KINDS: Final = frozenset(
-    {"oci-image", "bridge", "desktop", "codex-plugin", "update-manifest"}
+    {
+        "oci-image",
+        "bridge",
+        "desktop",
+        "installer",
+        "mcp-server",
+        "codex-plugin",
+        "update-manifest",
+    }
 )
 REQUIRED_KINDS: Final = VALID_KINDS
 REQUIRED_OCI_IMAGES: Final = frozenset({"control-plane", "identity", "web"})

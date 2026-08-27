@@ -48,6 +48,8 @@ class ReleaseCandidateTests(unittest.TestCase):
             ("web", "oci-image", "linux-amd64", "oci"),
             ("bridge", "bridge", "windows-x86_64", "blob"),
             ("desktop", "desktop", "windows-x86_64", "blob"),
+            ("installer", "installer", "windows-x86_64", "blob"),
+            ("mcp-server", "mcp-server", "windows-x86_64", "blob"),
             ("codex-plugin", "codex-plugin", "all", "blob"),
             ("tauri-update", "update-manifest", "windows-x86_64", "blob"),
         )
@@ -108,7 +110,8 @@ class ReleaseCandidateTests(unittest.TestCase):
         manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
         evidence = json.loads(paths.evidence.read_text(encoding="utf-8"))
         self.assertEqual({item["kind"] for item in manifest["artifacts"]}, {
-            "oci-image", "bridge", "desktop", "codex-plugin", "update-manifest"
+            "oci-image", "bridge", "desktop", "installer", "mcp-server",
+            "codex-plugin", "update-manifest"
         })
         self.assertEqual(
             evidence["manifestSha256"],
@@ -214,7 +217,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         create_inventory(inventory_args)
 
         assembled = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual(len(assembled["artifacts"]), 7)
+        self.assertEqual(len(assembled["artifacts"]), 9)
         self.assertTrue(all(not Path(item["path"]).is_absolute() for item in assembled["artifacts"]))
 
 

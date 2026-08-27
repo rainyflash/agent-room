@@ -13,6 +13,8 @@ pub enum ArtifactKind {
     OciImage,
     Bridge,
     Desktop,
+    Installer,
+    McpServer,
     CodexPlugin,
     UpdateManifest,
 }

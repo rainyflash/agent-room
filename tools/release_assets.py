@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -20,13 +21,34 @@ else:
     from release import ReleaseFailure, create_descriptor, parse_args as parse_release_args
 
 
-TARGETS: Final = {
-    "x86_64-pc-windows-msvc": ("windows-x86_64", ("*.nsis.zip", "*.msi.zip")),
-    "aarch64-pc-windows-msvc": ("windows-aarch64", ("*.nsis.zip", "*.msi.zip")),
-    "x86_64-apple-darwin": ("darwin-x86_64", ("*.app.tar.gz",)),
-    "aarch64-apple-darwin": ("darwin-aarch64", ("*.app.tar.gz",)),
-    "x86_64-unknown-linux-gnu": ("linux-x86_64", ("*.AppImage.tar.gz",)),
-    "aarch64-unknown-linux-gnu": ("linux-aarch64", ("*.AppImage.tar.gz",)),
+@dataclass(frozen=True)
+class NativeTarget:
+    """描述一个原生平台必须产出的安装器与更新归档。"""
+
+    updater_target: str
+    updater_patterns: tuple[str, ...]
+    installer_patterns: tuple[str, ...]
+
+
+TARGETS: Final[Mapping[str, NativeTarget]] = {
+    "x86_64-pc-windows-msvc": NativeTarget(
+        "windows-x86_64", ("*.nsis.zip",), ("*-setup.exe",)
+    ),
+    "aarch64-pc-windows-msvc": NativeTarget(
+        "windows-aarch64", ("*.nsis.zip",), ("*-setup.exe",)
+    ),
+    "x86_64-apple-darwin": NativeTarget(
+        "darwin-x86_64", ("*.app.tar.gz",), ("*.dmg",)
+    ),
+    "aarch64-apple-darwin": NativeTarget(
+        "darwin-aarch64", ("*.app.tar.gz",), ("*.dmg",)
+    ),
+    "x86_64-unknown-linux-gnu": NativeTarget(
+        "linux-x86_64", ("*.AppImage.tar.gz",), ("*.AppImage",)
+    ),
+    "aarch64-unknown-linux-gnu": NativeTarget(
+        "linux-aarch64", ("*.AppImage.tar.gz",), ("*.AppImage",)
+    ),
 }
 
 
@@ -37,6 +59,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     collect_parser = subcommands.add_parser("collect-native", help="收集当前平台发布文件")
     collect_parser.add_argument("--bundle-root", type=Path, required=True)
     collect_parser.add_argument("--bridge", type=Path, required=True)
+    collect_parser.add_argument("--mcp", type=Path, required=True)
     collect_parser.add_argument("--plugin", type=Path, required=True)
     collect_parser.add_argument("--output-root", type=Path, required=True)
     collect_parser.add_argument("--metadata", type=Path, required=True)
@@ -57,7 +80,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     blob_parser.add_argument("--name", required=True)
     blob_parser.add_argument(
         "--kind",
-        choices=("bridge", "desktop", "codex-plugin", "update-manifest"),
+        choices=(
+            "bridge",
+            "desktop",
+            "installer",
+            "mcp-server",
+            "codex-plugin",
+            "update-manifest",
+        ),
         required=True,
     )
     blob_parser.add_argument("--platform", required=True)
@@ -118,15 +148,17 @@ def require_file(path: Path, label: str) -> Path:
     return resolved
 
 
-def find_updater_archive(bundle_root: Path, patterns: Sequence[str]) -> Path:
+def find_unique_bundle_file(
+    bundle_root: Path, patterns: Sequence[str], label: str
+) -> Path:
     root = bundle_root.resolve(strict=True)
     for pattern in patterns:
         matches = sorted(root.rglob(pattern))
         if len(matches) == 1:
-            return require_file(matches[0], "Tauri 更新归档")
+            return require_file(matches[0], label)
         if len(matches) > 1:
-            raise ReleaseFailure(f"Tauri 更新归档不唯一（{pattern}）：{len(matches)} 个")
-    raise ReleaseFailure(f"没有找到 Tauri 更新归档：{', '.join(patterns)}")
+            raise ReleaseFailure(f"{label}不唯一（{pattern}）：{len(matches)} 个")
+    raise ReleaseFailure(f"没有找到{label}：{', '.join(patterns)}")
 
 
 def compound_suffix(path: Path) -> str:
@@ -165,25 +197,39 @@ def collect_native(args: argparse.Namespace) -> None:
     target = TARGETS.get(rust_target)
     if target is None:
         raise ReleaseFailure(f"不支持的 Rust 发布目标：{rust_target}")
-    updater_target, patterns = target
-    archive = find_updater_archive(args.bundle_root, patterns)
+    updater_target = target.updater_target
+    archive = find_unique_bundle_file(
+        args.bundle_root, target.updater_patterns, "Tauri 更新归档"
+    )
+    installer = find_unique_bundle_file(
+        args.bundle_root, target.installer_patterns, "桌面安装器"
+    )
     tauri_signature = require_file(Path(f"{archive}.sig"), "Tauri 更新签名")
     bridge = require_file(args.bridge, "Bridge")
+    mcp = require_file(args.mcp, "通用 MCP Server")
     plugin = require_file(args.plugin, "Codex 插件")
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
     desktop_name = f"agent-room-desktop-v{args.version}-{updater_target}{compound_suffix(archive)}"
-    bridge_suffix = ".exe" if updater_target.startswith("windows-") else ""
-    bridge_name = f"agent-room-bridge-v{args.version}-{updater_target}{bridge_suffix}"
+    executable_suffix = ".exe" if updater_target.startswith("windows-") else ""
+    installer_name = (
+        f"agent-room-installer-v{args.version}-{updater_target}{installer.suffix}"
+    )
+    bridge_name = f"agent-room-bridge-v{args.version}-{updater_target}{executable_suffix}"
+    mcp_name = f"agent-room-mcp-v{args.version}-{updater_target}{executable_suffix}"
     plugin_name = f"agent-room-codex-plugin-v{args.version}-{updater_target}.zip"
     desktop_path = output_root / desktop_name
     desktop_signature_path = output_root / f"{desktop_name}.sig"
+    installer_path = output_root / installer_name
     bridge_path = output_root / bridge_name
+    mcp_path = output_root / mcp_name
     plugin_path = output_root / plugin_name
     copy_new(archive, desktop_path)
     copy_new(tauri_signature, desktop_signature_path)
+    copy_new(installer, installer_path)
     copy_new(bridge, bridge_path)
+    copy_new(mcp, mcp_path)
     copy_new(plugin, plugin_path)
 
     metadata = {
@@ -192,6 +238,13 @@ def collect_native(args: argparse.Namespace) -> None:
         "updaterTarget": updater_target,
         "tauriSignaturePath": desktop_signature_path.relative_to(output_root).as_posix(),
         "artifacts": [
+            {
+                "name": "installer",
+                "kind": "installer",
+                "platform": updater_target,
+                "path": installer_path.relative_to(output_root).as_posix(),
+                "url": release_url(args.release_base_url, installer_name),
+            },
             {
                 "name": "desktop",
                 "kind": "desktop",
@@ -205,6 +258,13 @@ def collect_native(args: argparse.Namespace) -> None:
                 "platform": updater_target,
                 "path": bridge_path.relative_to(output_root).as_posix(),
                 "url": release_url(args.release_base_url, bridge_name),
+            },
+            {
+                "name": "mcp-server",
+                "kind": "mcp-server",
+                "platform": updater_target,
+                "path": mcp_path.relative_to(output_root).as_posix(),
+                "url": release_url(args.release_base_url, mcp_name),
             },
             {
                 "name": "codex-plugin",

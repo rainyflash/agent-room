@@ -11,7 +11,7 @@ on:
         description: 更新渠道
         required: true
         type: choice
-        options: [testing, stable]
+        options: [testing]
       sequence:
         description: 高于该渠道历史值的单调发布序号
         required: true
@@ -123,7 +123,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
-      - name: 构建通用 MCP 并装配 Codex 适配器
+      - name: 构建通用 MCP 并装配 Codex 配置适配器
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
@@ -131,7 +131,7 @@ jobs:
           cargo build --locked --release --package agent-room-mcp
           if ($LASTEXITCODE -ne 0) { throw '通用 MCP 构建失败。' }
           python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
-          if ($LASTEXITCODE -ne 0) { throw 'Codex 插件装配失败。' }
+          if ($LASTEXITCODE -ne 0) { throw 'Codex 配置适配器装配失败。' }
       - name: 收集原生发布产物
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -141,6 +141,7 @@ jobs:
           python tools/release_assets.py collect-native
           --bundle-root target/release/bundle
           --bridge "${{ matrix.bridge }}"
+          --mcp "${{ matrix.mcp }}"
           --plugin "artifacts/codex-plugin/agent-room-plugin-v${env:VERSION}-${{ matrix.target }}.zip"
           --output-root candidate
           --metadata "candidate/native-metadata-${{ matrix.target }}.json"
