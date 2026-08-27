@@ -391,9 +391,9 @@ oidc_providers:
     client_id: "agent-room-matrix"
     client_secret: {_yaml(secrets.read("keycloak_matrix_client_secret"))}
     authorization_endpoint: {_yaml(public.identity_origin + "/realms/agent-room/protocol/openid-connect/auth")}
-    token_endpoint: "http://identity:8080/realms/agent-room/protocol/openid-connect/token"
-    userinfo_endpoint: "http://identity:8080/realms/agent-room/protocol/openid-connect/userinfo"
-    jwks_uri: "http://identity:8080/realms/agent-room/protocol/openid-connect/certs"
+    token_endpoint: {_yaml(public.identity_origin + "/realms/agent-room/protocol/openid-connect/token")}
+    userinfo_endpoint: {_yaml(public.identity_origin + "/realms/agent-room/protocol/openid-connect/userinfo")}
+    jwks_uri: {_yaml(public.identity_origin + "/realms/agent-room/protocol/openid-connect/certs")}
     scopes: ["openid", "profile", "email"]
     enable_registration: true
     user_mapping_provider:

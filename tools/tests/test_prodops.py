@@ -228,6 +228,12 @@ class ProductionRenderingTests(unittest.TestCase):
         matrix_client = next(client for client in realm["clients"] if client["clientId"] == "agent-room-matrix")
         self.assertIn(matrix_client["secret"], homeserver)
         self.assertIn(self.config.public.identity_origin, homeserver)
+        self.assertNotIn("http://identity", homeserver)
+        for endpoint in ("auth", "token", "userinfo", "certs"):
+            self.assertIn(
+                f"{self.config.public.identity_origin}/realms/agent-room/protocol/openid-connect/{endpoint}",
+                homeserver,
+            )
         self.assertIn("retention:\n  enabled: true", homeserver)
         self.assertIn("max_lifetime: 30d", homeserver)
 
@@ -320,6 +326,16 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(
             module.registration_mac("secret", "nonce", "alice", "password", True),
             "013c5738fc920e1110110046fc346bb5e30c53f2",
+        )
+        self.assertFalse(module.USERNAME.startswith("_"))
+        self.assertEqual(
+            module.matrix_error_summary(
+                {
+                    "errcode": "M_INVALID_USERNAME",
+                    "error": "User ID may not begin with _\n",
+                }
+            ),
+            "（M_INVALID_USERNAME：User ID may not begin with _）",
         )
 
     @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")

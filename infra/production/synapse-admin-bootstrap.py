@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 
 BASE_URL: Final = "http://synapse:8008"
-USERNAME: Final = "_agent_room_lifecycle_admin"
+USERNAME: Final = "agent_room_lifecycle_admin"
 DEVICE_NAME: Final = "Agent Room Account Lifecycle"
 REGISTRATION_SECRET_FILE: Final = Path("/run/secrets/synapse_registration_secret")
 PASSWORD_FILE: Final = Path("/run/secrets/synapse_lifecycle_admin_password")
@@ -97,7 +97,9 @@ def register(registration_secret: str, password: str) -> tuple[str, str]:
     if status == 400 and body.get("errcode") == "M_USER_IN_USE":
         raise BootstrapError("管理员已存在但生成的密码无法登录；拒绝覆盖未知账号")
     if status != 200:
-        raise BootstrapError("共享密钥注册被 Synapse 拒绝")
+        raise BootstrapError(
+            f"共享密钥注册被 Synapse 拒绝{matrix_error_summary(body)}"
+        )
     return require_string(body, "access_token"), require_string(body, "user_id")
 
 
@@ -187,6 +189,19 @@ def require_string(value: dict[str, object], field: str) -> str:
     if not isinstance(candidate, str) or not candidate:
         raise BootstrapError(f"Synapse 响应缺少 {field}")
     return candidate
+
+
+def matrix_error_summary(value: dict[str, object]) -> str:
+    """只保留 Matrix 错误码和单行短消息，避免把任意响应写进日志。"""
+    details: list[str] = []
+    for field in ("errcode", "error"):
+        candidate = value.get(field)
+        if not isinstance(candidate, str):
+            continue
+        normalized = " ".join(candidate.split())
+        if normalized:
+            details.append(normalized[:200])
+    return f"（{'：'.join(details)}）" if details else ""
 
 
 if __name__ == "__main__":
