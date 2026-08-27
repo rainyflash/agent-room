@@ -69,7 +69,11 @@ fn 签名发行配置同时启用更新归档与_updater_插件() {
         .expect("Tauri 签名发行配置必须是 JSON");
 
     assert_eq!(config["bundle"]["createUpdaterArtifacts"], true);
-    assert!(config["plugins"]["updater"].is_object());
+    assert!(
+        config["plugins"]["updater"]["pubkey"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 fn directive_tokens<'a>(csp: &'a str, name: &str) -> Vec<&'a str> {

@@ -4,6 +4,8 @@
     "externalBin": ["binaries/agent-room-bridge", "binaries/agent-room-mcp"]
   },
   "plugins": {
-    "updater": {}
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2RTRFMzU0MjgyOUIzQkQKUldTOXN5a29WT1BrVnE5NFNJM1FvdkRsam1CNXE4RTMwbXdoak03VFg1RHRWMm1qM1pVelFXWncK"
+    }
   }
 }

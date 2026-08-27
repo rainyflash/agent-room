@@ -123,7 +123,14 @@ jobs:
           AGENT_ROOM_RELEASE_TESTING_URL: ${{ vars.AGENT_ROOM_RELEASE_TESTING_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
+        shell: pwsh
+        run: |
+          $configuredKey = (Get-Content apps/desktop/src-tauri/tauri.release.conf.json | ConvertFrom-Json).plugins.updater.pubkey
+          if ($configuredKey -ne $env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY) {
+            throw 'Tauri 发行配置公钥与受保护发布变量不一致。'
+          }
+          corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri 签名构建失败。' }
       - name: 构建通用 MCP 并装配 Codex 配置适配器
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
