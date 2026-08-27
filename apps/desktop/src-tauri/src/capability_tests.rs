@@ -63,6 +63,15 @@ fn windows_alpha_仅生成支持语义化预发布版本的_nsis_安装器() {
     );
 }
 
+#[test]
+fn 签名发行配置同时启用更新归档与_updater_插件() {
+    let config: Value = serde_json::from_str(include_str!("../tauri.release.conf.json"))
+        .expect("Tauri 签名发行配置必须是 JSON");
+
+    assert_eq!(config["bundle"]["createUpdaterArtifacts"], true);
+    assert!(config["plugins"]["updater"].is_object());
+}
+
 fn directive_tokens<'a>(csp: &'a str, name: &str) -> Vec<&'a str> {
     csp.split(';')
         .map(str::trim)
