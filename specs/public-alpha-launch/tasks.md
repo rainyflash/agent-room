@@ -36,23 +36,27 @@
 - [x] 20. 接入桌面 Runtime 宿主检测、配置状态和活跃 Agent 选择。
 - [x] 21. 完成默认 Agent 确保、失败恢复、已有 Agent 跳过和真实 Matrix 入房逻辑。
 - [x] 22. 添加单元、组件、路由、可访问性和 Playwright 测试。
-  - 公开首页已覆盖待发布与版本化下载两种状态、注册意图、Web 预览跳转、WCAG 扫描和 390px 视口。
+  - 公开首页已覆盖待发布与版本化下载、注册关闭与开放、注册意图、Web 预览跳转、WCAG 扫描和 390px 视口。
 
 ## 阶段 5：发行与上线
 
 - [x] 23. 统一版本为 `0.1.0-alpha.1`，更新兼容矩阵和 Alpha 限制。
 - [x] 24. 让 Release Candidate 工作流只构建 Windows x86-64 与 testing 渠道。
 - [ ] 25. 配置 Tauri updater 密钥、发布变量和受保护环境，不提交私钥。
+  - `release-candidate` 与 `public-release` 已建立分支保护和人工门禁；testing/stable 固定 URL 与默认关闭的注册模式已配置。
+  - 离线根公钥、Key ID、Tauri updater 公钥与私钥 Secret 仍待真实密钥仪式。
 - [ ] 26. 构建并在干净 Windows 环境验证安装、登录、宿主配置和更新检查。
+  - 本机 NSIS 构建及归档检查已通过，Bridge 与通用 MCP 的归档哈希和独立构建产物一致；这不能替代干净机验收。
 - [ ] 27. 创建 GitHub prerelease，上传安装包、更新产物、SBOM、签名和摘要。
 - [ ] 28. 把官网版本化下载链接指向已发布 Alpha。
 - [ ] 29. 在获得 SMTP 凭据后完成生产部署门禁，开放注册并验证真实邮件投递。
 - [ ] 30. 验证生产首页、注册、首次登录、Matrix 自动供给、Web 预览和既有用户登录回归。
+  - 生产升级、备份恢复点、健康/联邦探针、首页、关闭注册禁用态、PWA 更新和 Web 预览已验证；真实邮件注册链仍被 SMTP 门禁阻断。
 
 ## 当前外部先决条件
 
 1. 可用于 `room.the-zeroth.com` 的 SMTP 服务端、发件地址、用户名和密码 Secret。
 2. 在离线、全盘加密设备完成根发布密钥仪式；在线开发机不得代替该信任边界。
-3. GitHub `release-candidate` / `public-release` Environment、Tauri updater 私钥 Secret 与公开发布变量。
+3. 离线根公开材料、Tauri updater 公私钥和 `release-candidate` 私钥 Secret；环境与非敏感固定 URL 已配置。
 4. 一台没有开发环境残留的 Windows x86-64 设备或虚拟机，用于安装、登录、宿主配置与更新验收。
 5. Windows Authenticode 证书不是 Alpha 的硬阻断，但没有它时必须如实标注 SmartScreen 风险。
