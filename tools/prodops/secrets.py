@@ -40,6 +40,7 @@ DERIVED_SECRET_NAMES: Final = (
     "migration_database_url",
     "synapse_lifecycle_admin_token",
 )
+IMPORTED_SECRET_NAMES: Final = ("identity_smtp_password",)
 MAX_SECRET_BYTES: Final = 4_096
 SECRET_DIRECTORY_MODE: Final = 0o700
 # Compose 非 Swarm 模式会直接 bind-mount 源文件；父目录负责宿主隔离，文件按 Docker Secret 语义只读。
@@ -72,7 +73,12 @@ class SecretStore:
             uuid.UUID(self.read("content_matrix_agent_id"))
 
     def path(self, name: str) -> Path:
-        if name not in {*SECRET_NAMES, *DERIVED_SECRET_NAMES, "content_matrix_agent_id"}:
+        if name not in {
+            *SECRET_NAMES,
+            *DERIVED_SECRET_NAMES,
+            *IMPORTED_SECRET_NAMES,
+            "content_matrix_agent_id",
+        }:
             raise SecretStoreError(f"未知 Secret 名称：{name}。")
         return self.directory / name
 
@@ -82,15 +88,20 @@ class SecretStore:
             raw = path.read_bytes()
         except FileNotFoundError as error:
             raise SecretStoreError(f"缺少 Secret 文件：{name}。") from error
-        if not raw or len(raw) > MAX_SECRET_BYTES or b"\0" in raw:
-            raise SecretStoreError(f"Secret 文件无效：{name}。")
+        return _decode_secret(raw, name)
+
+    def import_file(self, name: str, source: Path) -> None:
+        if name not in IMPORTED_SECRET_NAMES:
+            raise SecretStoreError(f"{name} 不是可导入 Secret。")
+        if source.is_symlink() or not source.is_file():
+            raise SecretStoreError(f"导入 Secret 必须是普通文件：{source}。")
+        if os.name != "nt" and stat.S_IMODE(source.stat().st_mode) & 0o077:
+            raise SecretStoreError(f"导入 Secret 权限过宽，必须仅所有者可读：{source}。")
         try:
-            value = raw.decode("utf-8").rstrip("\r\n")
-        except UnicodeDecodeError as error:
-            raise SecretStoreError(f"Secret 文件不是 UTF-8：{name}。") from error
-        if not value or "\n" in value or "\r" in value:
-            raise SecretStoreError(f"Secret 文件必须只有一行：{name}。")
-        return value
+            value = _decode_secret(source.read_bytes(), name)
+        except OSError as error:
+            raise SecretStoreError(f"无法读取导入 Secret：{source}。") from error
+        _replace_secret(self.path(name), value)
 
     def write_derived(self, name: str, value: str) -> None:
         if name not in DERIVED_SECRET_NAMES:
@@ -109,6 +120,18 @@ def _generate_secret(name: str) -> str:
     if name == "s3_access_key":
         return f"ar{secrets.token_hex(12)}"
     return secrets.token_urlsafe(48)
+
+
+def _decode_secret(raw: bytes, name: str) -> str:
+    if not raw or len(raw) > MAX_SECRET_BYTES or b"\0" in raw:
+        raise SecretStoreError(f"Secret 文件无效：{name}。")
+    try:
+        value = raw.decode("utf-8").rstrip("\r\n")
+    except UnicodeDecodeError as error:
+        raise SecretStoreError(f"Secret 文件不是 UTF-8：{name}。") from error
+    if not value or "\n" in value or "\r" in value:
+        raise SecretStoreError(f"Secret 文件必须只有一行：{name}。")
+    return value
 
 
 def _exclusive_write(path: Path, value: str) -> None:

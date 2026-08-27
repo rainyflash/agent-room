@@ -10,6 +10,19 @@ x-control-plane-runtime: &control-plane-runtime
     context: ../..
     dockerfile: infra/production/Containerfile.control-plane
 
+x-identity-registration-reconcile: &identity-registration-reconcile
+  image: matrixdotorg/synapse:v1.159.0
+  profiles: [provisioning]
+  entrypoint: [python3, /scripts/keycloak-registration-reconcile.py]
+  depends_on:
+    identity:
+      condition: service_healthy
+  volumes:
+    - ./keycloak-registration-reconcile.py:/scripts/keycloak-registration-reconcile.py:ro
+  read_only: true
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+  networks: [backend]
+
 services:
   postgres:
     profiles: [embedded-database]
@@ -98,6 +111,29 @@ services:
       - /opt/keycloak/data/tmp:rw,noexec,nosuid,size=128m
       - /opt/keycloak/data/transaction-logs:rw,noexec,nosuid,size=64m
     networks: [backend]
+
+  identity-registration-close:
+    <<: [*identity-registration-reconcile, *common-security]
+    environment:
+      AGENT_ROOM_IDENTITY_REGISTRATION_MODE: closed
+      AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080
+      AGENT_ROOM_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
+    secrets: [keycloak_admin_password]
+
+  identity-registration-open:
+    <<: [*identity-registration-reconcile, *common-security]
+    environment:
+      AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
+      AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080
+      AGENT_ROOM_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
+      AGENT_ROOM_SMTP_HOST: ${AGENT_ROOM_SMTP_HOST:-}
+      AGENT_ROOM_SMTP_PORT: ${AGENT_ROOM_SMTP_PORT:-}
+      AGENT_ROOM_SMTP_FROM_ADDRESS: ${AGENT_ROOM_SMTP_FROM_ADDRESS:-}
+      AGENT_ROOM_SMTP_FROM_DISPLAY_NAME: ${AGENT_ROOM_SMTP_FROM_DISPLAY_NAME:-}
+      AGENT_ROOM_SMTP_USERNAME: ${AGENT_ROOM_SMTP_USERNAME:-}
+      AGENT_ROOM_SMTP_ENCRYPTION: ${AGENT_ROOM_SMTP_ENCRYPTION:-}
+      AGENT_ROOM_SMTP_PASSWORD_FILE: /run/secrets/identity_smtp_password
+    secrets: [keycloak_admin_password, identity_smtp_password]
 
   object-store:
     profiles: [embedded-object-store]
@@ -569,6 +605,8 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/alertmanager_webhook_token
   grafana_admin_password:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/grafana_admin_password
+  identity_smtp_password:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/identity_smtp_password
 
 volumes:
   alertmanager-data:

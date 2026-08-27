@@ -126,6 +126,52 @@
           "else": { "not": { "required": ["alertWebhookUrl"] } }
         }
       ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "registration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "enum": ["closed", "open-email"] },
+            "smtp": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "host",
+                "port",
+                "fromAddress",
+                "fromDisplayName",
+                "username",
+                "encryption",
+                "passwordFile"
+              ],
+              "properties": {
+                "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "fromAddress": { "type": "string", "format": "email", "maxLength": 254 },
+                "fromDisplayName": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                "username": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                "encryption": { "enum": ["starttls", "ssl"] },
+                "passwordFile": { "$ref": "#/$defs/absoluteHostPath" }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "mode": { "const": "open-email" } },
+                "required": ["mode"]
+              },
+              "then": { "required": ["smtp"] },
+              "else": { "not": { "required": ["smtp"] } }
+            }
+          ]
+        }
+      }
     }
   },
   "allOf": [

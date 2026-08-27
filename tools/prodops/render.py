@@ -204,6 +204,7 @@ def _compose_environment(
         "AGENT_ROOM_API_DOMAIN": public.api_domain,
         "AGENT_ROOM_MATRIX_DOMAIN": public.matrix_domain,
         "AGENT_ROOM_IDENTITY_DOMAIN": public.identity_domain,
+        "AGENT_ROOM_IDENTITY_REGISTRATION_MODE": config.identity.registration.mode,
         "AGENT_ROOM_DB_HOST": database.host,
         "AGENT_ROOM_DB_PORT": str(database.port),
         "AGENT_ROOM_DB_TLS_MODE": database.tls_mode,
@@ -235,7 +236,19 @@ def _compose_environment(
     }
     if public.acme_email is not None:
         values["AGENT_ROOM_ACME_EMAIL"] = public.acme_email
-    return "".join(f"{name}={value}\n" for name, value in values.items())
+    smtp = config.identity.registration.smtp
+    if smtp is not None:
+        values.update(
+            {
+                "AGENT_ROOM_SMTP_HOST": smtp.host,
+                "AGENT_ROOM_SMTP_PORT": str(smtp.port),
+                "AGENT_ROOM_SMTP_FROM_ADDRESS": smtp.from_address,
+                "AGENT_ROOM_SMTP_FROM_DISPLAY_NAME": smtp.from_display_name,
+                "AGENT_ROOM_SMTP_USERNAME": smtp.username,
+                "AGENT_ROOM_SMTP_ENCRYPTION": smtp.encryption,
+            }
+        )
+    return "".join(f"{name}={_dotenv_value(value)}\n" for name, value in values.items())
 
 
 def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str, object]:
@@ -245,7 +258,13 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         "enabled": True,
         "displayName": "Agent Room",
         "registrationAllowed": False,
+        "registrationEmailAsUsername": True,
+        "editUsernameAllowed": False,
+        "duplicateEmailsAllowed": False,
         "loginWithEmailAllowed": True,
+        "verifyEmail": True,
+        "resetPasswordAllowed": True,
+        "rememberMe": True,
         "sslRequired": "external",
         "bruteForceProtected": True,
         "clients": [
@@ -692,6 +711,12 @@ def _postgres_url(
 
 
 def _yaml(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _dotenv_value(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_./:@,+-]*", value):
+        return value
     return json.dumps(value, ensure_ascii=False)
 
 

@@ -20,6 +20,8 @@ PROJECT_NAME: Final = re.compile(r"^[a-z0-9][a-z0-9_-]{2,62}$")
 DATABASE_MODES: Final = frozenset({"embedded", "external"})
 OBJECT_STORE_MODES: Final = frozenset({"embedded", "external"})
 TLS_MODES: Final = frozenset({"disable", "prefer", "require", "verify-ca", "verify-full"})
+REGISTRATION_MODES: Final = frozenset({"closed", "open-email"})
+SMTP_ENCRYPTION_MODES: Final = frozenset({"starttls", "ssl"})
 
 
 class DeploymentConfigError(ValueError):
@@ -102,6 +104,32 @@ class TelemetryConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SmtpConfig:
+    host: str
+    port: int
+    from_address: str
+    from_display_name: str
+    username: str
+    encryption: str
+    password_file: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationConfig:
+    mode: str
+    smtp: SmtpConfig | None
+
+    @property
+    def is_open(self) -> bool:
+        return self.mode == "open-email"
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityConfig:
+    registration: RegistrationConfig
+
+
+@dataclass(frozen=True, slots=True)
 class DeploymentConfig:
     schema_version: int
     project_name: str
@@ -111,6 +139,7 @@ class DeploymentConfig:
     capacity: CapacityConfig
     backup: BackupConfig
     telemetry: TelemetryConfig
+    identity: IdentityConfig
 
     @classmethod
     def from_mapping(cls, value: object) -> "DeploymentConfig":
@@ -127,6 +156,7 @@ class DeploymentConfig:
                 "capacity",
                 "backup",
                 "telemetry",
+                "identity",
             },
             "根配置",
         )
@@ -148,6 +178,7 @@ class DeploymentConfig:
             capacity=_parse_capacity(root.get("capacity")),
             backup=_parse_backup(root.get("backup"), root.get("database")),
             telemetry=_parse_telemetry(root.get("telemetry")),
+            identity=_parse_identity(root.get("identity")),
         )
 
     @property
@@ -353,6 +384,63 @@ def _parse_telemetry(value: object) -> TelemetryConfig:
     return TelemetryConfig(enabled=enabled, alert_webhook_url=webhook)
 
 
+def _parse_identity(value: object) -> IdentityConfig:
+    if value is None:
+        return IdentityConfig(RegistrationConfig(mode="closed", smtp=None))
+    source = _mapping(value, "identity")
+    _reject_unknown(source, {"registration"}, "identity")
+    registration_value = source.get("registration")
+    if registration_value is None:
+        return IdentityConfig(RegistrationConfig(mode="closed", smtp=None))
+    registration = _mapping(registration_value, "identity.registration")
+    _reject_unknown(registration, {"mode", "smtp"}, "identity.registration")
+    mode = _enum(registration, "mode", REGISTRATION_MODES)
+    smtp_value = registration.get("smtp")
+    if mode == "closed":
+        if smtp_value is not None:
+            raise DeploymentConfigError(
+                "identity.registration.mode=closed 时不得配置 SMTP。"
+            )
+        return IdentityConfig(RegistrationConfig(mode=mode, smtp=None))
+    if smtp_value is None:
+        raise DeploymentConfigError("开放邮箱注册必须配置 identity.registration.smtp。")
+    smtp = _parse_smtp(smtp_value)
+    return IdentityConfig(RegistrationConfig(mode=mode, smtp=smtp))
+
+
+def _parse_smtp(value: object) -> SmtpConfig:
+    source = _mapping(value, "identity.registration.smtp")
+    _reject_unknown(
+        source,
+        {
+            "host",
+            "port",
+            "fromAddress",
+            "fromDisplayName",
+            "username",
+            "encryption",
+            "passwordFile",
+        },
+        "identity.registration.smtp",
+    )
+    port = _integer(source, "port")
+    if not 1 <= port <= 65_535:
+        raise DeploymentConfigError("identity.registration.smtp.port 必须在 1–65535 之间。")
+    from_address = _email(_text(source, "fromAddress"), "identity.registration.smtp.fromAddress")
+    return SmtpConfig(
+        host=_host(_text(source, "host"), "identity.registration.smtp.host"),
+        port=port,
+        from_address=from_address,
+        from_display_name=_text(source, "fromDisplayName"),
+        username=_text(source, "username"),
+        encryption=_enum(source, "encryption", SMTP_ENCRYPTION_MODES),
+        password_file=_absolute_host_path(
+            _text(source, "passwordFile"),
+            "identity.registration.smtp.passwordFile",
+        ),
+    )
+
+
 def _mapping(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise DeploymentConfigError(f"{label} 必须是 JSON 对象。")
@@ -456,6 +544,19 @@ def _https_url(value: str, label: str) -> str:
     if urlparse(normalized).scheme != "https":
         raise DeploymentConfigError(f"{label} 必须使用 HTTPS。")
     return normalized
+
+
+def _email(value: str, label: str) -> str:
+    if (
+        value.count("@") != 1
+        or len(value) > 254
+        or any(character.isspace() for character in value)
+    ):
+        raise DeploymentConfigError(f"{label} 不是有效邮箱地址。")
+    local, domain = value.rsplit("@", 1)
+    if not local or not DNS_NAME.fullmatch(domain.lower()):
+        raise DeploymentConfigError(f"{label} 不是有效邮箱地址。")
+    return value
 
 
 def _safe_token(value: str, label: str) -> str:

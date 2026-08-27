@@ -28,6 +28,11 @@
     "retentionDays": 30,
     "rpoMinutes": 15
   },
+  "identity": {
+    "registration": {
+      "mode": "closed"
+    }
+  },
   "telemetry": {
     "enabled": true,
     "alertWebhookUrl": "https://alerts.agent-room.example/v1/events"

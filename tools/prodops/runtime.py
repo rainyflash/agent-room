@@ -61,10 +61,14 @@ class ProductionRuntime:
 
     def prepare(self, *, generate_signing_key: bool) -> None:
         self.paths.prepare()
-        self.secrets.initialize()
+        secrets = self.secrets
+        secrets.initialize()
+        smtp = self.config.identity.registration.smtp
+        if smtp is not None:
+            secrets.import_file("identity_smtp_password", Path(smtp.password_file))
         if generate_signing_key:
             self.ensure_synapse_signing_key()
-        render_deployment(self.config, self.paths, self.secrets)
+        render_deployment(self.config, self.paths, secrets)
 
     def ensure_synapse_signing_key(self) -> Path:
         signing_key = self.paths.data / "synapse" / f"{self.config.public.server_name}.signing.key"
@@ -152,6 +156,7 @@ class ProductionRuntime:
             _wait_tcp(self.config.database.host, self.config.database.port, timeout_seconds=60)
         self.initialize_object_store()
         self._run([*self.compose_command(), "run", "--rm", "migrate"])
+        self.reconcile_identity()
         self.provision_synapse_administrator()
         self._run([*self.compose_command(), "up", "--detach", "--wait"])
         self.health(timeout_seconds=180)
@@ -165,12 +170,22 @@ class ProductionRuntime:
         self._run([*self.compose_command(), "pull", "--ignore-buildable"])
         self.initialize_object_store()
         self._run([*self.compose_command(), "run", "--rm", "migrate"])
+        self.reconcile_identity()
         self.provision_synapse_administrator()
         self._run([*self.compose_command(), "up", "--detach", "--wait", "--remove-orphans"])
         self.health(timeout_seconds=180)
 
     def down(self) -> None:
         self._run([*self.compose_command(), "down", "--remove-orphans"])
+
+    def reconcile_identity(self) -> None:
+        self._run([*self.compose_command(), "up", "--detach", "--wait", "identity"])
+        service = (
+            "identity-registration-open"
+            if self.config.identity.registration.is_open
+            else "identity-registration-close"
+        )
+        self._run([*self.compose_command(), "run", "--rm", service])
 
     def prepare_backup_repository(self) -> BackupRepository:
         repository = BackupRepository(Path(self.config.backup.repository))

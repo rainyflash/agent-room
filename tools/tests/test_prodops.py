@@ -25,6 +25,7 @@ from tools.prodops.secrets import (
     SECRET_DIRECTORY_MODE,
     SECRET_NAMES,
     SecretStore,
+    SecretStoreError,
 )
 
 
@@ -32,6 +33,25 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "infra" / "production" / "deployment.example.json"
 EXTERNAL_EXAMPLE = ROOT / "infra" / "production" / "deployment.external.example.json"
 SCHEMA = ROOT / "infra" / "production" / "deployment.schema.json"
+
+
+def open_email_config(password_file: Path) -> DeploymentConfig:
+    value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    value["identity"] = {
+        "registration": {
+            "mode": "open-email",
+            "smtp": {
+                "host": "smtp.agent-room.example",
+                "port": 587,
+                "fromAddress": "hello@agent-room.example",
+                "fromDisplayName": "Agent Room",
+                "username": "hello@agent-room.example",
+                "encryption": "starttls",
+                "passwordFile": str(password_file),
+            },
+        }
+    }
+    return DeploymentConfig.from_mapping(value)
 
 
 class ProductionConfigTests(unittest.TestCase):
@@ -113,6 +133,33 @@ class ProductionConfigTests(unittest.TestCase):
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(insecure)
 
+    def test_missing_identity_configuration_defaults_to_closed_registration(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value.pop("identity")
+
+        config = DeploymentConfig.from_mapping(value)
+
+        self.assertEqual(config.identity.registration.mode, "closed")
+        self.assertIsNone(config.identity.registration.smtp)
+
+    def test_open_email_registration_requires_complete_tls_smtp_configuration(self) -> None:
+        config = open_email_config((ROOT / ".test-secrets" / "smtp-password").resolve())
+
+        self.assertTrue(config.identity.registration.is_open)
+        self.assertEqual(config.identity.registration.smtp.encryption, "starttls")
+
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["identity"] = {"registration": {"mode": "open-email"}}
+        with self.assertRaisesRegex(DeploymentConfigError, "smtp"):
+            DeploymentConfig.from_mapping(value)
+
+    def test_closed_registration_rejects_unused_smtp_configuration(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["identity"]["registration"]["smtp"] = {}
+
+        with self.assertRaisesRegex(DeploymentConfigError, "不得配置 SMTP"):
+            DeploymentConfig.from_mapping(value)
+
 
 class ProductionRenderingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -139,6 +186,28 @@ class ProductionRenderingTests(unittest.TestCase):
         self.secrets.write_derived("migration_database_url", "second")
 
         self.assertEqual(self.secrets.read("migration_database_url"), "second")
+
+    def test_smtp_password_is_imported_without_entering_rendered_environment(self) -> None:
+        source = Path(self.temporary.name) / "smtp-password"
+        source.write_text("smtp-secret-value\n", encoding="utf-8")
+        source.chmod(0o600)
+        config = open_email_config(source.resolve())
+
+        ProductionRuntime(config, self.paths).prepare(generate_signing_key=False)
+
+        self.assertEqual(self.secrets.read("identity_smtp_password"), "smtp-secret-value")
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        self.assertNotIn("smtp-secret-value", environment)
+        self.assertIn('AGENT_ROOM_SMTP_FROM_DISPLAY_NAME="Agent Room"', environment)
+
+    @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
+    def test_smtp_password_import_rejects_group_readable_source(self) -> None:
+        source = Path(self.temporary.name) / "smtp-password"
+        source.write_text("smtp-secret-value\n", encoding="utf-8")
+        source.chmod(0o640)
+
+        with self.assertRaisesRegex(SecretStoreError, "权限过宽"):
+            self.secrets.import_file("identity_smtp_password", source)
 
     @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
     def test_container_secrets_are_read_only_inside_private_directory(self) -> None:
@@ -270,6 +339,9 @@ class ProductionRenderingTests(unittest.TestCase):
             )
         self.assertIn("retention:\n  enabled: true", homeserver)
         self.assertIn("max_lifetime: 30d", homeserver)
+        self.assertFalse(realm["registrationAllowed"])
+        self.assertTrue(realm["verifyEmail"])
+        self.assertTrue(realm["registrationEmailAsUsername"])
 
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -295,6 +367,43 @@ class ProductionRenderingTests(unittest.TestCase):
 
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
+
+    def test_identity_reconcile_selects_fail_closed_or_open_service(self) -> None:
+        closed_runtime = ProductionRuntime(self.config, self.paths)
+        with patch.object(ProductionRuntime, "_run") as run:
+            closed_runtime.reconcile_identity()
+        self.assertEqual(run.call_args_list[-1].args[0][-1], "identity-registration-close")
+
+        source = Path(self.temporary.name) / "smtp-password"
+        source.write_text("smtp-secret-value\n", encoding="utf-8")
+        open_runtime = ProductionRuntime(open_email_config(source.resolve()), self.paths)
+        with patch.object(ProductionRuntime, "_run") as run:
+            open_runtime.reconcile_identity()
+        self.assertEqual(run.call_args_list[-1].args[0][-1], "identity-registration-open")
+
+    def test_keycloak_registration_reconcile_is_fail_closed_and_preserves_input(self) -> None:
+        script = ROOT / "infra" / "production" / "keycloak-registration-reconcile.py"
+        specification = importlib.util.spec_from_file_location(
+            "agent_room_keycloak_registration_reconcile", script
+        )
+        self.assertIsNotNone(specification)
+        self.assertIsNotNone(specification.loader if specification else None)
+        module = importlib.util.module_from_spec(specification)
+        assert specification is not None and specification.loader is not None
+        specification.loader.exec_module(module)
+        original = {"realm": "agent-room", "smtpServer": {"password": "old"}}
+
+        closed = module.apply_registration_policy(original, enabled=False, smtp=None)
+        opened = module.apply_registration_policy(
+            closed,
+            enabled=True,
+            smtp={"host": "smtp.example", "password": "new"},
+        )
+
+        self.assertNotIn("smtpServer", closed)
+        self.assertFalse(closed["registrationAllowed"])
+        self.assertTrue(opened["registrationAllowed"])
+        self.assertEqual(original["smtpServer"], {"password": "old"})
 
     def test_nominal_memory_check_allows_only_bounded_system_reservation(self) -> None:
         gibibyte = 1024**3
