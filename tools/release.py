@@ -216,8 +216,15 @@ def validate_sigstore_bundle(path: Path) -> None:
         raise ReleaseFailure(f"签名证据不是受支持的 Sigstore bundle：{path}")
     if not isinstance(bundle.get("verificationMaterial"), dict):
         raise ReleaseFailure(f"Sigstore bundle 缺少 verificationMaterial：{path}")
-    if not isinstance(bundle.get("messageSignature"), dict):
-        raise ReleaseFailure(f"Sigstore bundle 缺少 messageSignature：{path}")
+    signed_payloads = tuple(
+        name
+        for name in ("messageSignature", "dsseEnvelope")
+        if isinstance(bundle.get(name), dict)
+    )
+    if len(signed_payloads) != 1:
+        raise ReleaseFailure(
+            f"Sigstore bundle 必须且只能包含 messageSignature 或 dsseEnvelope：{path}"
+        )
 
 
 def parse_artifacts(root: Path, inventory: Mapping[str, object]) -> tuple[ArtifactSource, ...]:

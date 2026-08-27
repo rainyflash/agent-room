@@ -14,6 +14,7 @@ from tools.release import (
     create_inventory,
     parse_args,
     prepare,
+    validate_sigstore_bundle,
     validate_candidate_files,
 )
 
@@ -39,6 +40,42 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "messageSignature": {},
             },
         )
+
+    def test_sigstore_bundle_accepts_exactly_one_supported_payload(self) -> None:
+        dsse = self.root / "dsse.sigstore.json"
+        self.write_json(
+            dsse,
+            {
+                "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+                "verificationMaterial": {},
+                "dsseEnvelope": {},
+            },
+        )
+        validate_sigstore_bundle(dsse)
+
+        missing = self.root / "missing.sigstore.json"
+        self.write_json(
+            missing,
+            {
+                "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+                "verificationMaterial": {},
+            },
+        )
+        with self.assertRaisesRegex(ReleaseFailure, "必须且只能"):
+            validate_sigstore_bundle(missing)
+
+        ambiguous = self.root / "ambiguous.sigstore.json"
+        self.write_json(
+            ambiguous,
+            {
+                "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+                "verificationMaterial": {},
+                "messageSignature": {},
+                "dsseEnvelope": {},
+            },
+        )
+        with self.assertRaisesRegex(ReleaseFailure, "必须且只能"):
+            validate_sigstore_bundle(ambiguous)
 
     def inventory(self) -> Path:
         artifacts = []
