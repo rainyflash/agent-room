@@ -20,6 +20,8 @@ export type SessionFailure = {
   readonly retryable: boolean;
 };
 
+export type AuthenticationIntent = 'register' | 'sign-in';
+
 export type MatrixConnectionStatus = 'ready' | 'reconnecting' | 'failed' | 'stopped';
 
 export type MatrixConnection = {
@@ -39,7 +41,7 @@ export type MatrixRestoreOutcome =
     };
 
 export type ControlPlaneGateway = {
-  beginAuthentication(returnPath: string): void;
+  beginAuthentication(returnPath: string, intent?: AuthenticationIntent): void;
   logout(): Promise<Result<void, SessionFailure>>;
   readSession(): Promise<Result<WebSession, SessionFailure>>;
 };

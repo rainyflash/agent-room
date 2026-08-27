@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { lazy, Suspense } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
@@ -6,6 +6,7 @@ import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
+import { LandingPage } from '@/features/landing/ui/landing-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import {
   contextIdentifierSchema,
@@ -27,9 +28,7 @@ const rootRoute = createRootRoute({ component: RootLayout });
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  beforeLoad: () => {
-    throw redirect({ to: '/connect' });
-  },
+  component: LandingPage,
 });
 
 const connectRoute = createRoute({

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ReadinessReport } from '@/features/health/domain/readiness';
 import type {
   ControlPlaneGateway,
+  AuthenticationIntent,
   SessionFailure,
   WebSession,
 } from '@/features/session/domain/session';
@@ -73,11 +74,12 @@ export class ControlPlaneClient implements ControlPlaneGateway {
     this.#timeoutMs = timeoutMs;
   }
 
-  beginAuthentication(returnPath: string): void {
+  beginAuthentication(returnPath: string, intent: AuthenticationIntent = 'sign-in'): void {
     const target = new URL('/auth/oidc/start', this.#baseUrl);
     target.searchParams.set('returnTo', safeReturnPath(returnPath));
     target.searchParams.set('importDisplayName', 'true');
     target.searchParams.set('importLocale', 'true');
+    target.searchParams.set('intent', intent);
     this.#navigate(target.toString());
   }
 
