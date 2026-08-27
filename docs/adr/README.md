@@ -9,5 +9,6 @@ ADRs capture decisions that constrain future implementation. A new ADR may super
 | [0003](./0003-local-bridge-and-explicit-handoff.md) | Accepted | Local Bridge with preview/open/handoff separation           |
 | [0004](./0004-compose-first-self-hosting.md)        | Accepted | Compose-first self-hosting before Kubernetes                |
 | [0005](./0005-offline-root-signed-releases.md)      | Accepted | Offline-root signed release manifests and ordered promotion |
+| [0006](./0006-online-key-for-testing-alpha.md)      | Accepted | Protected online key for the testing Alpha channel          |
 
 Use the next sequential number. Each record must state context, decision, consequences, and the conditions that would justify revisiting it.

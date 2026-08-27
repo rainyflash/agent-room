@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "agent-room-release", about = "Agent Room 离线发布签名工具")]
+#[command(name = "agent-room-release", about = "Agent Room 发布清单签名工具")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

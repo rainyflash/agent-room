@@ -4,7 +4,7 @@
 
 - There is no production-supported or publicly signed stable release.
 - The source repository is public, but an outside contributor has not yet completed a clean-room reproduction.
-- The protected GitHub release workflows and offline root-key ceremony have not completed the first public Alpha release.
+- The protected GitHub testing-key workflow has not completed the first public Alpha release. The offline root-key ceremony remains a stable-release blocker, not an Alpha prerequisite.
 - Same-revision GitHub M2 acceptance and Windows x86-64 packaging pass, but no publicly signed stable package exists yet.
 - Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
 - Five real capacity scenarios pass on the same revision; the 72-hour active Bridge run is still missing.

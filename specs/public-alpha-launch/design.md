@@ -114,7 +114,7 @@ Tauri `externalBin` 同时包含：
 
 桌面进程监管 Bridge；MCP 由宿主按需以 STDIO 启动，不作为第二个常驻服务。宿主配置器编译进桌面端，不另起高权限安装服务。
 
-安装器采用当前用户范围 NSIS。安装完成后首次启动进入账户授权和宿主检测。自启动是显式用户选项。更新仅使用 testing 渠道，保持 Tauri updater 签名与 Agent Room 离线根发布清单双重校验。
+安装器采用当前用户范围 NSIS。安装完成后首次启动进入账户授权和宿主检测。自启动是显式用户选项。Alpha 更新仅使用 testing 渠道，保持 Tauri updater 签名与 Agent Room testing 发布清单双重校验。testing 清单由 GitHub 受保护环境中的独立在线 Ed25519 密钥自动签署；未来 stable 渠道必须迁移到不同的离线根密钥，不能复用 testing 私钥。
 
 ## 8. Web 信息架构
 

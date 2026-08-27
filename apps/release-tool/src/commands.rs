@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn offline_signing_workflow_round_trips() {
+    fn release_signing_workflow_round_trips() {
         let directory = tempdir().expect("必须能创建测试目录");
         let private_key = directory.path().join("release-private.json");
         let public_key = directory.path().join("release-public.json");
@@ -123,7 +123,7 @@ mod tests {
             private_key: private_key.clone(),
             public_key: public_key.clone(),
         })
-        .expect("必须能生成离线密钥");
+        .expect("必须能生成发布密钥");
 
         let manifest = ReleaseManifest {
             schema_version: 1,

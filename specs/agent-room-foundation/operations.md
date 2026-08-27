@@ -321,7 +321,7 @@ Bridge：
 
 ## 14. 发布流水线
 
-可执行的密钥仪式、候选构建、离线签名、晋级、回滚和事故步骤见[签名发布与安全更新 Runbook](../../docs/operations/signed-releases.md)。
+可执行的 testing Alpha 在线签名、stable 离线密钥边界、候选构建、晋级、回滚和事故步骤见[签名发布与安全更新 Runbook](../../docs/operations/signed-releases.md)。
 
 ### 14.1 Pull Request 门禁
 

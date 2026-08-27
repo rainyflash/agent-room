@@ -1,10 +1,10 @@
-name: 验证并发布离线签名发行
+name: 验证并发布 testing 签名发行
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 已完成离线签名和服务端晋级的草稿 Release 标签
+        description: 已完成 testing 签名和服务端晋级的草稿 Release 标签
         required: true
         type: string
       installed_version:
@@ -58,16 +58,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: 构建离线公钥验证器
+      - name: 构建发布签名验证器
         run: cargo build --locked --release --package agent-room-release-tool
-      - name: 构造公开信任根文档
+      - name: 构造 testing 渠道公开信任文档
         env:
-          RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_RELEASE_KEY_ID }}
-          RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_RELEASE_PUBLIC_KEY }}
+          RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_TESTING_RELEASE_KEY_ID }}
+          RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_TESTING_RELEASE_PUBLIC_KEY }}
         run: >-
           jq -n --arg keyId "$RELEASE_KEY_ID" --arg publicKey "$RELEASE_PUBLIC_KEY"
           '{schemaVersion: 1, algorithm: "Ed25519", keyId: $keyId, publicKey: $publicKey}'
           > candidate/release-public-key.json
+      - name: 拒绝非 testing 渠道草稿
+        run: test "$(jq -r .channel candidate/release-metadata.json)" = testing
       - name: 核对服务端已完成兼容晋级
         env:
           TAG: ${{ inputs.tag }}
@@ -75,7 +77,7 @@ jobs:
           VERSION="${TAG#v}"
           REVISION="$(git rev-list -n 1 "$TAG")"
           python tools/release_promotion.py verify --record candidate/release-promotion-compatible-server.json --expected-stage compatible-server --version "$VERSION" --revision "$REVISION"
-      - name: 验证离线签名、所有摘要、SBOM 与 Sigstore 身份
+      - name: 验证 testing 签名、所有摘要、SBOM 与 Sigstore 身份
         env:
           INSTALLED_VERSION: ${{ inputs.installed_version }}
           HIGHEST_SEQUENCE: ${{ inputs.highest_sequence }}
