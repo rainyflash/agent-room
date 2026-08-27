@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,7 +13,12 @@ import uuid
 from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
 from tools.prodops.render import DeploymentPaths, render_deployment
 from tools.prodops.runtime import ProductionRuntime, _meets_nominal_memory
-from tools.prodops.secrets import SecretStore
+from tools.prodops.secrets import (
+    CONTAINER_SECRET_FILE_MODE,
+    SECRET_DIRECTORY_MODE,
+    SECRET_NAMES,
+    SecretStore,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +125,15 @@ class ProductionRenderingTests(unittest.TestCase):
 
         self.assertEqual(self.secrets.read("agent_room_db_runtime_password"), first)
         self.assertEqual(uuid.UUID(self.secrets.read("content_matrix_agent_id")).version, 7)
+
+    @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
+    def test_container_secrets_are_read_only_inside_private_directory(self) -> None:
+        self.assertEqual(stat.S_IMODE(self.paths.secrets.stat().st_mode), SECRET_DIRECTORY_MODE)
+        for name in (*SECRET_NAMES, "content_matrix_agent_id"):
+            self.assertEqual(
+                stat.S_IMODE(self.secrets.path(name).stat().st_mode),
+                CONTAINER_SECRET_FILE_MODE,
+            )
 
     def test_render_keeps_secret_values_out_of_compose_environment(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)
@@ -274,6 +290,29 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(
             module.registration_mac("secret", "nonce", "alice", "password", True),
             "013c5738fc920e1110110046fc346bb5e30c53f2",
+        )
+
+    @unittest.skipIf(os.name == "nt", "Windows 不提供生产 POSIX 权限语义")
+    def test_synapse_admin_token_is_materialized_as_container_secret(self) -> None:
+        script = ROOT / "infra" / "production" / "synapse-admin-bootstrap.py"
+        specification = importlib.util.spec_from_file_location(
+            "agent_room_synapse_admin_bootstrap_mode",
+            script,
+        )
+        self.assertIsNotNone(specification)
+        self.assertIsNotNone(specification.loader if specification else None)
+        module = importlib.util.module_from_spec(specification)
+        assert specification is not None and specification.loader is not None
+        specification.loader.exec_module(module)
+        token_file = self.state / "derived" / "synapse_lifecycle_admin_token"
+        module.TOKEN_FILE = token_file
+
+        module.write_token("opaque-token")
+
+        self.assertEqual(token_file.read_text(encoding="utf-8"), "opaque-token\n")
+        self.assertEqual(
+            stat.S_IMODE(token_file.stat().st_mode),
+            CONTAINER_SECRET_FILE_MODE,
         )
 
 

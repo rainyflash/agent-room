@@ -47,7 +47,7 @@ python3 tools/production.py install \
 
 `install` 会按顺序完成主机预检、稳定 Secret 生成、Synapse signing key 生成、配置渲染、镜像构建/拉取、数据库启动与迁移、对象桶核验/创建、全栈启动、公开健康检查和联邦委派检查。任何一步失败都会返回非零退出码。
 
-Secret 只通过 Compose Secret 文件挂载。不要把 `/var/lib/agent-room/secrets` 加入 Git、工单或聊天记录。
+Secret 只通过 Compose Secret 文件挂载。父目录保持 `0700`，单个文件规范化为只读 `0444`，以兼容非 Swarm Compose 对非 root 容器的 bind-mount 语义；宿主普通用户仍无法穿过父目录。不要把 `/var/lib/agent-room/secrets` 加入 Git、工单或聊天记录。
 
 `telemetry.enabled=true` 时必须配置不含凭据的 HTTPS `alertWebhookUrl`。安装器会生成独立 Bearer Secret；告警接收端必须支持 `Authorization: Bearer`。Grafana 和 Prometheus 默认只监听 `127.0.0.1:3000` 与 `127.0.0.1:9090`，通过 SSH 隧道访问。完整验证与故障演练见[可观测性 Runbook](../../docs/operations/observability.md)。
 
@@ -109,7 +109,7 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 外部 PostgreSQL 强制 `require`、`verify-ca` 或 `verify-full`。控制平面运行容器只持有 `agent_room_runtime`，迁移 URL 仅挂载给一次性 `migrate` 容器。
 外部数据库管理员还必须创建 `agent_room_metrics` 登录角色、授予 `pg_monitor`，并把密码写入生成后的 `postgres_metrics_password` 文件；不得给该角色数据库所有权或迁移权限。
 
-外部对象桶必须由运营者预先创建；初始化容器只执行 `HeadBucket`，不会请求 `CreateBucket` 权限。将外部 S3 凭据写入生成后的 `s3_access_key` 与 `s3_secret_key` 文件，并保持 `0600` 权限。
+外部对象桶必须由运营者预先创建；初始化容器只执行 `HeadBucket`，不会请求 `CreateBucket` 权限。将外部 S3 凭据写入生成后的 `s3_access_key` 与 `s3_secret_key` 文件；再次运行安装器会把它们规范化为父目录 `0700`、文件 `0444` 的容器 Secret 权限模型。
 
 ## 伸缩边界
 

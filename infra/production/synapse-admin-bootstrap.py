@@ -137,7 +137,7 @@ def write_token(token: str) -> None:
             stream.write(token)
             stream.write("\n")
         os.replace(temporary, TOKEN_FILE)
-        TOKEN_FILE.chmod(0o600)
+        TOKEN_FILE.chmod(0o444)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

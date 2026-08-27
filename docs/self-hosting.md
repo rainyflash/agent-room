@@ -70,7 +70,7 @@ sudo python3 tools/self_host.py federation \
 
 Installation creates stable random secrets, generates the Synapse signing key, renders configuration, validates Compose, builds/pulls images, applies migrations through a dedicated migration role, initializes the object bucket, starts the stack, checks public health, and validates Matrix delegation. Operators never edit application tables or Synapse's database directly.
 
-Treat `/var/lib/agent-room` as irreplaceable state. Secret files are mounted into containers and must not enter Git, tickets, logs, or chat.
+Treat `/var/lib/agent-room` as irreplaceable state. The secret directory remains `0700`; individual files are normalized to read-only `0444` because non-Swarm Compose bind-mounts them directly into non-root containers. Host users still cannot traverse the parent directory. Secrets must not enter Git, tickets, logs, or chat.
 
 ## Backups and restore drills
 

@@ -41,6 +41,9 @@ DERIVED_SECRET_NAMES: Final = (
     "synapse_lifecycle_admin_token",
 )
 MAX_SECRET_BYTES: Final = 4_096
+SECRET_DIRECTORY_MODE: Final = 0o700
+# Compose 非 Swarm 模式会直接 bind-mount 源文件；父目录负责宿主隔离，文件按 Docker Secret 语义只读。
+CONTAINER_SECRET_FILE_MODE: Final = 0o444
 
 
 class SecretStoreError(RuntimeError):
@@ -52,7 +55,7 @@ class SecretStore:
     directory: Path
 
     def initialize(self) -> None:
-        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.directory.mkdir(mode=SECRET_DIRECTORY_MODE, parents=True, exist_ok=True)
         _restrict_permissions(self.directory, directory=True)
         for name in SECRET_NAMES:
             path = self.path(name)
@@ -121,7 +124,7 @@ def _exclusive_write(path: Path, value: str) -> None:
 
 
 def _restrict_permissions(path: Path, *, directory: bool) -> None:
-    mode = 0o700 if directory else 0o600
+    mode = SECRET_DIRECTORY_MODE if directory else CONTAINER_SECRET_FILE_MODE
     try:
         path.chmod(mode)
     except OSError as error:
