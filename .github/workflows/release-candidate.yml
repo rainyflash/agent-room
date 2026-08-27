@@ -107,6 +107,8 @@ jobs:
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
       - name: 安装 Syft
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 构建带强制签名更新的桌面端
@@ -323,6 +325,8 @@ jobs:
           printf 'digest=%s\n' "$INDEX_DIGEST" >> "$GITHUB_OUTPUT"
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
       - name: 安装 Syft
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 为镜像生成 SBOM、签名与描述
@@ -366,6 +370,8 @@ jobs:
           merge-multiple: true
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
       - name: 安装 Syft
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 生成并证明跨平台 Tauri 更新清单

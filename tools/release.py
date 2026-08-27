@@ -108,6 +108,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_parser.add_argument("--highest-sequence", type=int, required=True)
     verify_parser.add_argument("--now-unix-seconds", type=int, required=True)
     verify_parser.add_argument("--cosign", default="cosign")
+    verify_parser.add_argument("--docker", default="docker")
     verify_parser.add_argument("--certificate-identity-regexp", required=True)
     verify_parser.add_argument(
         "--certificate-oidc-issuer",
@@ -415,6 +416,8 @@ def build_candidate(
         digest = oci_digest(artifact.url) if artifact.kind == "oci-image" else local_digest
         if digest is None:
             raise ReleaseFailure(f"OCI 地址摘要无效：{artifact.name}")
+        if artifact.kind == "oci-image" and local_digest != digest:
+            raise ReleaseFailure(f"OCI 清单摘要与不可变引用不一致：{artifact.name}")
         byte_length = artifact.path.stat().st_size
         if byte_length == 0:
             raise ReleaseFailure(f"发布产物不能为空：{artifact.path}")
@@ -587,19 +590,57 @@ def verify_sigstore_evidence(
 ) -> None:
     artifacts = parse_artifacts(root, inventory)
     for artifact in artifacts:
-        base = (
-            "--bundle",
-            str(artifact.signature_path),
-            "--certificate-identity-regexp",
+        command = build_sigstore_verify_command(
+            artifact,
+            cosign,
             certificate_identity_regexp,
-            "--certificate-oidc-issuer",
             certificate_oidc_issuer,
         )
-        if artifact.signature_mode == "blob":
-            command = (cosign, "verify-blob", *base, str(artifact.path))
-        else:
-            command = (cosign, "verify", *base, artifact.url.removeprefix("oci://"))
         run_checked(command, f"Sigstore 证据验证 {artifact.kind}/{artifact.name}")
+
+
+def build_sigstore_verify_command(
+    artifact: ArtifactSource,
+    cosign: str,
+    certificate_identity_regexp: str,
+    certificate_oidc_issuer: str,
+) -> tuple[str, ...]:
+    return (
+        cosign,
+        "verify-blob",
+        "--bundle",
+        str(artifact.signature_path),
+        "--certificate-identity-regexp",
+        certificate_identity_regexp,
+        "--certificate-oidc-issuer",
+        certificate_oidc_issuer,
+        str(artifact.path),
+    )
+
+
+def build_oci_inspect_command(artifact: ArtifactSource, docker: str) -> tuple[str, ...]:
+    return (
+        docker,
+        "buildx",
+        "imagetools",
+        "inspect",
+        artifact.url.removeprefix("oci://"),
+    )
+
+
+def verify_oci_availability(
+    root: Path,
+    inventory: Mapping[str, object],
+    docker: str,
+) -> None:
+    artifacts = parse_artifacts(root, inventory)
+    for artifact in artifacts:
+        if artifact.kind != "oci-image":
+            continue
+        run_checked(
+            build_oci_inspect_command(artifact, docker),
+            f"OCI 不可变引用可达性验证 {artifact.name}",
+        )
 
 
 def verify(args: argparse.Namespace) -> None:
@@ -622,6 +663,7 @@ def verify(args: argparse.Namespace) -> None:
         args.certificate_identity_regexp,
         args.certificate_oidc_issuer,
     )
+    verify_oci_availability(args.root, inventory, args.docker)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

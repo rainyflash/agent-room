@@ -6,6 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-publish.yml"
+CANDIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "release-candidate.yml"
 
 
 class ReleasePublishWorkflowTests(unittest.TestCase):
@@ -21,6 +22,20 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertIn(".version | select(type == \"string\")", self.workflow)
         self.assertIn('test("^[0-9a-f]{40}$")', self.workflow)
         self.assertIn('git rev-parse --verify "$REVISION^{commit}"', self.workflow)
+
+    def test_签名和验证统一锁定已修补的_cosign(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertEqual(self.workflow.count("cosign-release: v3.1.3"), 1)
+        self.assertEqual(candidate.count("cosign-release: v3.1.3"), 3)
+        self.assertEqual(
+            self.workflow.count("sigstore/cosign-installer"),
+            self.workflow.count("cosign-release: v3.1.3"),
+        )
+        self.assertEqual(
+            candidate.count("sigstore/cosign-installer"),
+            candidate.count("cosign-release: v3.1.3"),
+        )
 
 
 if __name__ == "__main__":

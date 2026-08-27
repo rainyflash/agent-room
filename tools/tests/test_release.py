@@ -7,8 +7,11 @@ import tempfile
 import unittest
 
 from tools.release import (
+    ArtifactSource,
     CandidatePaths,
     ReleaseFailure,
+    build_oci_inspect_command,
+    build_sigstore_verify_command,
     build_candidate,
     create_descriptor,
     create_inventory,
@@ -76,6 +79,77 @@ class ReleaseCandidateTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ReleaseFailure, "必须且只能"):
             validate_sigstore_bundle(ambiguous)
+
+    def test_blob_验证使用本地_bundle_并绑定签名身份(self) -> None:
+        artifact = self.artifact("blob", "https://releases.example/bridge.exe")
+
+        command = build_sigstore_verify_command(
+            artifact,
+            "cosign",
+            "^https://github.com/example/workflow$",
+            "https://token.actions.githubusercontent.com",
+        )
+
+        self.assertEqual(
+            command,
+            (
+                "cosign",
+                "verify-blob",
+                "--bundle",
+                str(artifact.signature_path),
+                "--certificate-identity-regexp",
+                "^https://github.com/example/workflow$",
+                "--certificate-oidc-issuer",
+                "https://token.actions.githubusercontent.com",
+                str(artifact.path),
+            ),
+        )
+
+    def test_oci_验证使用本地_bundle_绑定不可变清单(self) -> None:
+        image = "oci://ghcr.io/example/control-plane@sha256:" + "a" * 64
+        artifact = self.artifact("oci", image)
+
+        command = build_sigstore_verify_command(
+            artifact,
+            "cosign",
+            "^https://github.com/example/workflow$",
+            "https://token.actions.githubusercontent.com",
+        )
+
+        self.assertEqual(command[0:2], ("cosign", "verify-blob"))
+        self.assertIn("--bundle", command)
+        self.assertEqual(command[-1], str(artifact.path))
+
+    def test_oci_可达性检查只使用不可变镜像引用(self) -> None:
+        image = "oci://ghcr.io/example/control-plane@sha256:" + "a" * 64
+        artifact = self.artifact("oci", image)
+
+        command = build_oci_inspect_command(artifact, "docker")
+
+        self.assertEqual(
+            command,
+            (
+                "docker",
+                "buildx",
+                "imagetools",
+                "inspect",
+                image.removeprefix("oci://"),
+            ),
+        )
+
+    def artifact(self, signature_mode: str, url: str) -> ArtifactSource:
+        return ArtifactSource(
+            name="artifact",
+            kind="oci-image" if signature_mode == "oci" else "bridge",
+            platform="linux-multiarch" if signature_mode == "oci" else "windows-x86_64",
+            path=self.root / "artifact.bin",
+            url=url,
+            sbom_path=self.root / "artifact.cdx.json",
+            sbom_url="https://releases.example/artifact.cdx.json",
+            signature_path=self.root / "artifact.sigstore.json",
+            signature_url="https://releases.example/artifact.sigstore.json",
+            signature_mode=signature_mode,
+        )
 
     def inventory(self) -> Path:
         artifacts = []
@@ -162,6 +236,17 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.write_json(inventory_path, inventory)
 
         with self.assertRaisesRegex(ReleaseFailure, "相对路径"):
+            build_candidate(self.root, inventory_path)
+
+    def test_oci_清单摘要必须等于不可变镜像摘要(self) -> None:
+        inventory_path = self.inventory()
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["artifacts"][0]["url"] = (
+            "oci://ghcr.io/example/control-plane@sha256:" + "b" * 64
+        )
+        self.write_json(inventory_path, inventory)
+
+        with self.assertRaisesRegex(ReleaseFailure, "OCI 清单摘要与不可变引用不一致"):
             build_candidate(self.root, inventory_path)
 
     def test_missing_sbom_or_signature_is_rejected(self) -> None:

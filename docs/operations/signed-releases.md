@@ -46,7 +46,7 @@ target/release/agent-room-release-tool keygen \
 
 1. 构建 Windows x64 的 NSIS 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
 2. 在 GitHub 官方 amd64 与 arm64 Linux runner 上分别原生构建 `control-plane`、`identity`、`web`，记录每个平台不可变 digest，再合并为 amd64/arm64 OCI Index；禁止在 x64 runner 上用 QEMU 编译 Rust 控制面；
-3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；
+3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；OCI bundle 签署原始 Index manifest，并要求该文件 SHA-256 与远端不可变 digest 完全一致；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；
 5. 生成 `release.json`、`release-evidence.json` 和连续晋级记录；
 6. 从受保护 Environment 注入 testing 私钥，签署 `release.signed.json`，再用仓库公钥反向验证；
@@ -97,8 +97,8 @@ target/release/agent-room-release-tool sign \
 
 - 验证 testing Ed25519 签名、渠道、有效期、序号和显式回滚；
 - 重新计算所有本地文件摘要并验证逐件 SBOM；
-- 用精确 GitHub Workflow OIDC 身份验证所有 Sigstore bundle；
-- 远程验证三个不可变 OCI digest 的签名；
+- 使用已修补并显式锁定的 Cosign 3.1.3，以精确 GitHub Workflow OIDC 身份验证所有本地 Sigstore bundle；
+- 对三个 OCI 产物复核“已签 manifest 摘要 = 发布 URL digest”，再从 GHCR 探测该精确 digest 可达，拒绝可变标签、摘要错配或已删除镜像；
 - 要求晋级记录恰好处于 `compatible-server`；
 - 以 prerelease 公开版本，再更新 `channel-testing` 的签名根清单；
 - 追加并上传 `clients-published` 晋级证据。
