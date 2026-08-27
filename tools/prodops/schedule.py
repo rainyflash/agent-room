@@ -67,7 +67,7 @@ After=docker.service network-online.target
 [Service]
 Type=oneshot
 ExecStart={command}
-WorkingDirectory={_systemd_argument(ROOT.as_posix())}
+WorkingDirectory={_systemd_path(ROOT.as_posix())}
 Environment=PYTHONUTF8=1
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
@@ -114,6 +114,7 @@ WantedBy=timers.target
             raise BackupScheduleError("生产主机缺少 systemctl。")
         files = self.render()
         generated = self.write_generated()
+        _verify_unit_files(generated)
         SYSTEM_UNIT_DIRECTORY.mkdir(mode=0o755, parents=True, exist_ok=True)
         for source in generated:
             destination = SYSTEM_UNIT_DIRECTORY / source.name
@@ -142,11 +143,46 @@ def _systemd_argument(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _systemd_path(value: str) -> str:
+    if not value or any(character in value for character in "\r\n\0"):
+        raise BackupScheduleError("systemd 路径为空或包含控制字符。")
+    if sys.platform.startswith("linux") and not value.startswith("/"):
+        raise BackupScheduleError("systemd 工作目录必须是绝对路径。")
+    safe = frozenset(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_.:-")
+    encoded: list[str] = []
+    for byte in value.encode("utf-8"):
+        if byte == ord("%"):
+            encoded.append("%%")
+        elif byte in safe:
+            encoded.append(chr(byte))
+        else:
+            encoded.append(f"\\x{byte:02x}")
+    return "".join(encoded)
+
+
 def _write_unit(path: Path, content: str) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(content, encoding="utf-8", newline="\n")
     temporary.chmod(0o644)
     os.replace(temporary, path)
+
+
+def _verify_unit_files(paths: tuple[Path, Path]) -> None:
+    executable = shutil.which("systemd-analyze")
+    if executable is None:
+        raise BackupScheduleError("生产主机缺少 systemd-analyze，无法验证调度单元。")
+    result = subprocess.run(
+        [executable, "verify", *(str(path) for path in paths)],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"退出码 {result.returncode}"
+        raise BackupScheduleError(f"systemd 调度单元验证失败：{detail}。")
 
 
 def _systemctl(executable: str, *arguments: str) -> None:
