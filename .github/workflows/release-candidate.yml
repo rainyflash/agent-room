@@ -111,6 +111,9 @@ jobs:
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 构建带强制签名更新的桌面端
         env:
+          VITE_AGENT_ROOM_CONTROL_PLANE_URL: https://api.room.the-zeroth.com
+          VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.room.the-zeroth.com
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/latest
           AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
           AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_RELEASE_KEY_ID }}
           AGENT_ROOM_RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_RELEASE_PUBLIC_KEY }}
@@ -200,8 +203,9 @@ jobs:
           push: true
           tags: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}:candidate-${{ github.sha }}
           build-args: |
-            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.agent-room.example
-            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agent-room.example
+            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.room.the-zeroth.com
+            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/latest
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
       - name: 安装 Syft

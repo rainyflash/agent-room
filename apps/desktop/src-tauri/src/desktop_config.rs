@@ -6,9 +6,9 @@ use agent_room_bridge_local_adapter::{
 };
 use url::Url;
 
-const DEFAULT_CONTROL_PLANE_URL: &str = "http://127.0.0.1:8090/";
-const DEFAULT_MATRIX_BASE_URL: &str = "http://127.0.0.1:18008";
-const DEFAULT_OIDC_ISSUER_URL: &str = "http://127.0.0.1:18080/realms/agent-room";
+const DEFAULT_CONTROL_PLANE_URL: &str = "https://api.room.the-zeroth.com/";
+const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.room.the-zeroth.com";
+const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.room.the-zeroth.com/realms/agent-room";
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
 
 #[derive(Debug, Clone)]
