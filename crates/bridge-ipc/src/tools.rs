@@ -335,6 +335,7 @@ pub struct IpcSelfSummary {
     pub agent: IpcAgentSummary,
     pub instance_id: String,
     pub matrix_device_id: String,
+    pub room_id: String,
     pub connection_state: IpcBridgeState,
     pub granted_capabilities: Vec<String>,
 }

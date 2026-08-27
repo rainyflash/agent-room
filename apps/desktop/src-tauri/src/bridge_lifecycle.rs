@@ -121,6 +121,14 @@ impl BridgeRestartPolicy {
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
+    pub(crate) fn discovered_pending(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
+        self.snapshot.phase = BridgePhase::Starting;
+        self.snapshot.ownership = Some(ownership);
+        self.snapshot.diagnostic_code = Some("desktop.bridge.session_pending".to_owned());
+        self.snapshot.next_retry_at_unix_ms = None;
+        self.snapshot.changed_at_unix_ms = now_unix_ms;
+    }
+
     pub(crate) fn starting(&mut self, now_unix_ms: i64) {
         self.snapshot.phase = BridgePhase::Starting;
         self.snapshot.ownership = Some(BridgeOwnership::Managed);
@@ -224,6 +232,20 @@ mod tests {
 
         assert_eq!(policy.snapshot().phase, BridgePhase::Ready);
         assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::External));
+    }
+
+    #[test]
+    fn 可达但未就绪的外部_bridge_不会被误报为_ready() {
+        let mut policy = BridgeRestartPolicy::new(1_000);
+
+        policy.discovered_pending(1_100, BridgeOwnership::External);
+
+        assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
+        assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::External));
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.bridge.session_pending")
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ const readySnapshot = {
   autostartEnabled: false,
   bridge: {
     authorization: null,
+    session: null,
     lifecycle: {
       automaticRestartCount: 0,
       changedAtUnixMs: 1,

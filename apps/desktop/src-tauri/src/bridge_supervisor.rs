@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use agent_room_bridge_ipc::{IpcMethod, IpcResponse};
+use agent_room_bridge_ipc::{IpcBridgeState, IpcMethod, IpcResponse, IpcSelfSummary};
 use agent_room_bridge_local_adapter::{LocalBridgeClient, LocalBridgeClientFailureKind};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter as _};
@@ -46,6 +46,25 @@ pub(crate) struct AuthorizationPromptView {
 pub(crate) struct BridgeRuntimeView {
     pub(crate) lifecycle: BridgeLifecycleSnapshot,
     pub(crate) authorization: Option<AuthorizationPromptView>,
+    pub(crate) session: Option<BridgeAgentSessionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BridgeAgentSessionView {
+    pub(crate) agent_id: String,
+    pub(crate) instance_id: String,
+    pub(crate) matrix_room_id: String,
+}
+
+impl From<IpcSelfSummary> for BridgeAgentSessionView {
+    fn from(summary: IpcSelfSummary) -> Self {
+        Self {
+            agent_id: summary.agent.agent_id,
+            instance_id: summary.instance_id,
+            matrix_room_id: summary.room_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +88,7 @@ impl BridgeSupervisor {
             view: BridgeRuntimeView {
                 lifecycle: policy.snapshot().clone(),
                 authorization: None,
+                session: None,
             },
             authorization_url: None,
         };
@@ -81,6 +101,7 @@ impl BridgeSupervisor {
             config,
             policy,
             authorization: None,
+            session: None,
             child: child.clone(),
             shutting_down: shutting_down.clone(),
             input: input_tx.clone(),
@@ -164,6 +185,7 @@ struct BridgeSupervisorActor {
     config: DesktopBridgeConfig,
     policy: BridgeRestartPolicy,
     authorization: Option<AuthorizationPrompt>,
+    session: Option<BridgeAgentSessionView>,
     child: Arc<Mutex<Option<CommandChild>>>,
     shutting_down: Arc<AtomicBool>,
     input: mpsc::Sender<ActorInput>,
@@ -176,10 +198,18 @@ struct BridgeSupervisorActor {
 impl BridgeSupervisorActor {
     async fn run(mut self) {
         match self.probe().await {
-            ProbeOutcome::Ready => {
+            ProbeOutcome::Ready(session) => {
+                self.session = Some(session);
                 self.policy
                     .discovered_ready(now_unix_ms(), BridgeOwnership::External);
                 self.publish();
+            }
+            ProbeOutcome::Pending => {
+                self.session = None;
+                self.policy
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::External);
+                self.publish();
+                schedule_external_probe(self.input.clone(), self.generation);
             }
             ProbeOutcome::Absent => self.start_managed(),
             ProbeOutcome::Blocked(code) => {
@@ -204,6 +234,11 @@ impl BridgeSupervisorActor {
                         self.handle_managed_probe().await;
                     }
                 }
+                ActorInput::ProbeExternal { generation } => {
+                    if generation == self.generation && !self.managed_child_active {
+                        self.handle_external_probe().await;
+                    }
+                }
                 ActorInput::ProcessEvent { generation, event } => {
                     if generation == self.generation {
                         self.handle_process_event(event);
@@ -216,6 +251,7 @@ impl BridgeSupervisorActor {
                     self.kill_managed_child();
                     self.policy.stop(now_unix_ms());
                     self.authorization = None;
+                    self.session = None;
                     self.publish();
                     break;
                 }
@@ -230,6 +266,7 @@ impl BridgeSupervisorActor {
         self.generation = self.generation.saturating_add(1);
         self.policy.starting(now_unix_ms());
         self.authorization = None;
+        self.session = None;
         self.publish();
         let generation = self.generation;
         let spawned = self
@@ -305,16 +342,34 @@ impl BridgeSupervisorActor {
         self.generation = self.generation.saturating_add(1);
         self.kill_managed_child();
         self.config = config;
+        self.session = None;
         self.policy.explicit_retry(now_unix_ms());
         self.start_managed();
     }
 
     async fn handle_resume(&mut self) {
         let probe = self.probe().await;
+        if matches!(&probe, ProbeOutcome::Pending) {
+            self.session = None;
+            let ownership = if self.managed_child_active {
+                BridgeOwnership::Managed
+            } else {
+                BridgeOwnership::External
+            };
+            self.policy.discovered_pending(now_unix_ms(), ownership);
+            self.publish();
+            if self.managed_child_active {
+                schedule_probe(self.input.clone(), self.generation);
+            } else {
+                schedule_external_probe(self.input.clone(), self.generation);
+            }
+            return;
+        }
         let probe_state = match probe {
-            ProbeOutcome::Ready => ResumeProbeState::Ready,
+            ProbeOutcome::Ready(_) => ResumeProbeState::Ready,
             ProbeOutcome::Absent => ResumeProbeState::Absent,
             ProbeOutcome::Blocked(_) => ResumeProbeState::Blocked,
+            ProbeOutcome::Pending => unreachable!("等待态已提前处理"),
         };
         match decide_resume(
             probe_state,
@@ -322,6 +377,10 @@ impl BridgeSupervisorActor {
             self.policy.snapshot().phase,
         ) {
             ResumeDecision::Ready(ownership) => {
+                let ProbeOutcome::Ready(session) = probe else {
+                    unreachable!("就绪决策必须携带 Agent 会话")
+                };
+                self.session = Some(session);
                 self.policy.discovered_ready(now_unix_ms(), ownership);
                 self.publish();
             }
@@ -345,22 +404,47 @@ impl BridgeSupervisorActor {
 
     async fn handle_managed_probe(&mut self) {
         match self.probe().await {
-            ProbeOutcome::Ready => {
+            ProbeOutcome::Ready(session) => {
+                self.session = Some(session);
                 self.policy
                     .discovered_ready(now_unix_ms(), BridgeOwnership::Managed);
                 self.authorization = None;
                 self.publish();
             }
+            ProbeOutcome::Pending => {
+                schedule_probe(self.input.clone(), self.generation);
+            }
             ProbeOutcome::Absent => {
-                if !matches!(
-                    self.policy.snapshot().phase,
-                    BridgePhase::AuthorizationRequired | BridgePhase::Ready
-                ) {
+                if self.managed_child_active {
                     schedule_probe(self.input.clone(), self.generation);
                 }
             }
             ProbeOutcome::Blocked(code) => {
                 self.policy.set_diagnostic(now_unix_ms(), code);
+                self.publish();
+            }
+        }
+    }
+
+    async fn handle_external_probe(&mut self) {
+        match self.probe().await {
+            ProbeOutcome::Ready(session) => {
+                self.session = Some(session);
+                self.policy
+                    .discovered_ready(now_unix_ms(), BridgeOwnership::External);
+                self.publish();
+            }
+            ProbeOutcome::Pending => {
+                self.session = None;
+                self.policy
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::External);
+                self.publish();
+                schedule_external_probe(self.input.clone(), self.generation);
+            }
+            ProbeOutcome::Absent => self.start_managed(),
+            ProbeOutcome::Blocked(code) => {
+                self.session = None;
+                self.policy.halt(now_unix_ms(), code);
                 self.publish();
             }
         }
@@ -415,14 +499,17 @@ impl BridgeSupervisorActor {
                     return;
                 };
                 self.authorization = Some(prompt);
+                self.session = None;
                 self.policy.authorization_required(now_unix_ms());
                 self.publish();
             }
             BridgeSupervisorEvent::Ready { channel } if channel == SUPERVISOR_CHANNEL => {
                 self.authorization = None;
+                self.session = None;
                 self.policy
-                    .discovered_ready(now_unix_ms(), BridgeOwnership::Managed);
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::Managed);
                 self.publish();
+                schedule_probe(self.input.clone(), self.generation);
             }
             _ => {}
         }
@@ -434,6 +521,7 @@ impl BridgeSupervisorActor {
         }
         self.managed_child_active = false;
         self.authorization = None;
+        self.session = None;
         match self.policy.child_exited(
             now_unix_ms(),
             exit_code,
@@ -471,14 +559,32 @@ impl BridgeSupervisorActor {
     }
 
     async fn probe(&self) -> ProbeOutcome {
-        let result = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
             self.config.runtime_root(),
             self.config.secure_storage_service(),
-        )
-        .invoke(IpcMethod::BridgeStatus)
-        .await;
+        );
+        let result = client.invoke(IpcMethod::BridgeStatus).await;
         match result {
-            Ok(IpcResponse::BridgeStatus { .. }) => ProbeOutcome::Ready,
+            Ok(IpcResponse::BridgeStatus {
+                state: IpcBridgeState::Ready,
+                ..
+            }) => match client.invoke(IpcMethod::GetSelf).await {
+                Ok(IpcResponse::SelfSummary { summary })
+                    if summary.connection_state == IpcBridgeState::Ready =>
+                {
+                    ProbeOutcome::Ready(summary.into())
+                }
+                Ok(IpcResponse::SelfSummary { .. }) => ProbeOutcome::Pending,
+                Ok(_) => ProbeOutcome::Blocked("desktop.bridge.self_response_invalid".to_owned()),
+                Err(failure)
+                    if failure.code() == "bridge.ipc.agent_runtime_unavailable"
+                        || failure.kind() == LocalBridgeClientFailureKind::Timeout =>
+                {
+                    ProbeOutcome::Pending
+                }
+                Err(failure) => ProbeOutcome::Blocked(failure.code().to_owned()),
+            },
+            Ok(IpcResponse::BridgeStatus { .. }) => ProbeOutcome::Pending,
             Ok(_) => ProbeOutcome::Blocked("desktop.bridge.probe_response_invalid".to_owned()),
             Err(failure)
                 if matches!(
@@ -500,6 +606,7 @@ impl BridgeSupervisorActor {
             view: BridgeRuntimeView {
                 lifecycle: self.policy.snapshot().clone(),
                 authorization,
+                session: self.session.clone(),
             },
             authorization_url: self
                 .authorization
@@ -523,6 +630,9 @@ enum ActorInput {
     ProbeManaged {
         generation: u64,
     },
+    ProbeExternal {
+        generation: u64,
+    },
     ProcessEvent {
         generation: u64,
         event: CommandEvent,
@@ -532,7 +642,8 @@ enum ActorInput {
 }
 
 enum ProbeOutcome {
-    Ready,
+    Ready(BridgeAgentSessionView),
+    Pending,
     Absent,
     Blocked(String),
 }
@@ -631,6 +742,13 @@ fn schedule_probe(sender: mpsc::Sender<ActorInput>, generation: u64) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(PROBE_INTERVAL).await;
         let _ = sender.send(ActorInput::ProbeManaged { generation }).await;
+    });
+}
+
+fn schedule_external_probe(sender: mpsc::Sender<ActorInput>, generation: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(PROBE_INTERVAL).await;
+        let _ = sender.send(ActorInput::ProbeExternal { generation }).await;
     });
 }
 

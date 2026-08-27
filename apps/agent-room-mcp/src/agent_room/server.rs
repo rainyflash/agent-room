@@ -675,6 +675,7 @@ mod tests {
                     agent: agent(),
                     instance_id: "instance-1".to_owned(),
                     matrix_device_id: "DEVICE".to_owned(),
+                    room_id: "!room:example.test".to_owned(),
                     connection_state: IpcBridgeState::Ready,
                     granted_capabilities: vec!["message.send".to_owned()],
                 },

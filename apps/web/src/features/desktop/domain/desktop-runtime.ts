@@ -40,10 +40,23 @@ const authorizationPromptSchema = z
   })
   .strict();
 
+export const bridgeAgentSessionSchema = z
+  .object({
+    agentId: z.string().uuid(),
+    instanceId: z.string().uuid(),
+    matrixRoomId: z
+      .string()
+      .min(4)
+      .max(512)
+      .regex(/^![^\s]+:[^\s]+$/u),
+  })
+  .strict();
+
 export const bridgeRuntimeSchema = z
   .object({
     lifecycle: bridgeLifecycleSchema,
     authorization: authorizationPromptSchema.nullable(),
+    session: bridgeAgentSessionSchema.nullable(),
   })
   .strict();
 
@@ -86,6 +99,7 @@ export const desktopRuntimeSnapshotSchema = z
   .strict();
 
 export type BridgeRuntime = z.infer<typeof bridgeRuntimeSchema>;
+export type BridgeAgentSession = z.infer<typeof bridgeAgentSessionSchema>;
 export type BridgePhase = z.infer<typeof bridgePhaseSchema>;
 export type DesktopDeepLink = z.infer<typeof desktopDeepLinkSchema>;
 export type DesktopRuntimeSnapshot = z.infer<typeof desktopRuntimeSnapshotSchema>;

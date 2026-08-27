@@ -247,6 +247,7 @@ impl AgentRuntimeIpcFacade {
                 agent: ipc_agent(&runtime.identity),
                 instance_id: runtime.identity.agent_instance_id().to_string(),
                 matrix_device_id: runtime.matrix_device_id,
+                room_id: runtime.room_id.as_str().to_owned(),
                 connection_state: self.status_reader.read_status().state,
                 granted_capabilities: runtime.granted_capabilities,
             },

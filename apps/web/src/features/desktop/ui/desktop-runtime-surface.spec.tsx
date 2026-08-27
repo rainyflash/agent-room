@@ -29,6 +29,7 @@ const authorizationRuntime: BridgeRuntime = {
     userCode: 'ABCD-EFGH',
     verificationHost: 'identity.example',
   },
+  session: null,
   lifecycle: {
     automaticRestartCount: 0,
     changedAtUnixMs: 1,
@@ -108,6 +109,7 @@ describe('桌面运行时界面', () => {
   it('崩溃预算耗尽后保持停机，只有明确按钮才触发重试', async () => {
     const halted: BridgeRuntime = {
       authorization: null,
+      session: null,
       lifecycle: {
         ...authorizationRuntime.lifecycle,
         automaticRestartCount: 4,
@@ -134,6 +136,7 @@ describe('桌面运行时界面', () => {
   it('只有签名更新已配置时才允许显式检查并安装同一序号', async () => {
     const ready: BridgeRuntime = {
       authorization: null,
+      session: null,
       lifecycle: {
         ...authorizationRuntime.lifecycle,
         diagnosticCode: 'desktop.bridge.ready',
