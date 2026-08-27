@@ -32,6 +32,39 @@ impl AgentRepository for PostgresRepositories {
         })
     }
 
+    fn list_for_principal(
+        &self,
+        principal_id: agent_room_domain::ids::PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RegisteredAgent>>> {
+        Box::pin(async move {
+            let operation = "agent.list_for_principal";
+            let rows = sqlx::query(
+                r"SELECT agent.id, agent.matrix_user_id, agent.slug, agent.display_name,
+                          agent.description, agent.avatar_content_id, agent.visibility,
+                          agent.lifecycle_state, agent.version,
+                          floor(extract(epoch FROM agent.created_at) * 1000)::bigint
+                              AS created_at_ms
+                   FROM agent_room.agent AS agent
+                   JOIN agent_room.agent_ownership AS ownership
+                     ON ownership.agent_id = agent.id
+                   WHERE ownership.principal_id = $1
+                     AND ownership.revoked_at IS NULL
+                   ORDER BY agent.created_at ASC, agent.id ASC",
+            )
+            .bind(principal_id.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+
+            rows.iter()
+                .map(|row| {
+                    let id: uuid::Uuid = decode_column(row, "id", operation)?;
+                    decode_registered_agent(row, AgentId::from_uuid(id), operation)
+                })
+                .collect()
+        })
+    }
+
     fn find_registration(
         &self,
         id: AgentId,

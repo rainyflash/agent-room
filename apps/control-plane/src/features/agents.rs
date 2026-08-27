@@ -5,8 +5,8 @@ use agent_room_application::{
         AgentInstanceVerificationUseCases, ResolveAgentInstanceVerification,
     },
     agents::{
-        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, RegisterAgentInstance,
-        RegisteredAgentInstance,
+        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, EnsureDefaultAgent,
+        ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
@@ -83,7 +83,8 @@ impl AgentHttpState {
 
 pub(crate) fn router(state: AgentHttpState) -> Router {
     Router::new()
-        .route("/agents", post(create_agent))
+        .route("/agents", get(list_agents).post(create_agent))
+        .route("/onboarding/default-agent", put(ensure_default_agent))
         .route(
             "/agents/{agent_id}/members/{principal_id}",
             put(grant_membership).delete(revoke_membership),
@@ -143,6 +144,12 @@ struct AgentResponse {
     avatar_content_id: Option<String>,
     visibility: &'static str,
     registered_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentListResponse {
+    agents: Vec<AgentResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,6 +216,63 @@ async fn create_agent(
         Ok(agent) => {
             no_store((StatusCode::CREATED, Json(AgentResponse::from(agent))).into_response())
         }
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn list_agents(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    jar: CookieJar,
+) -> Response {
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state.agents.list_agents(ListAgents { actor }).await {
+        Ok(agents) => no_store(
+            Json(AgentListResponse {
+                agents: agents.into_iter().map(AgentResponse::from).collect(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn ensure_default_agent(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    if !origin_matches(&headers, &state.frontend_origin) {
+        return no_store(invalid_origin(correlation_id).into_response());
+    }
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .agents
+        .ensure_default_agent(EnsureDefaultAgent { actor })
+        .await
+    {
+        Ok(agent) => no_store(Json(AgentResponse::from(agent)).into_response()),
         Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
     }
 }
@@ -571,7 +635,7 @@ mod tests {
         },
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
-            RegisterAgentInstance, RegisteredAgentInstance,
+            EnsureDefaultAgent, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
         },
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -625,11 +689,27 @@ mod tests {
     #[derive(Default)]
     struct FakeAgents {
         creation: Mutex<Option<CreateAgent>>,
+        default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
     }
 
     impl AgentManagementUseCases for FakeAgents {
+        fn list_agents(
+            &self,
+            _request: ListAgents,
+        ) -> PortFuture<'_, AgentManagementResult<Vec<RegisteredAgent>>> {
+            Box::pin(async { Ok(vec![registered_agent()]) })
+        }
+
+        fn ensure_default_agent(
+            &self,
+            _request: EnsureDefaultAgent,
+        ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+            self.default_agent_ensures.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(registered_agent()) })
+        }
+
         fn create_agent(
             &self,
             request: CreateAgent,
@@ -897,6 +977,47 @@ mod tests {
                 .expect("认证要求记录锁可用"),
             vec![AuthenticationRequirement::ActiveSession]
         );
+    }
+
+    #[tokio::test]
+    async fn 首次引导可列出并幂等确保默认_agent() {
+        let agents = Arc::new(FakeAgents::default());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            Arc::new(FakeDevices::default()),
+        );
+
+        let list_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/agents")
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .body(Body::empty())
+                    .expect("Agent 列表请求有效"),
+            )
+            .await
+            .expect("Agent 列表路由可调用");
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let payload = response_json(list_response).await;
+        assert_eq!(payload["agents"][0]["agentId"], AGENT_UUID);
+
+        let ensure_response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/onboarding/default-agent")
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .body(Body::empty())
+                    .expect("默认 Agent 请求有效"),
+            )
+            .await
+            .expect("默认 Agent 路由可调用");
+        assert_eq!(ensure_response.status(), StatusCode::OK);
+        assert_eq!(response_json(ensure_response).await["agentId"], AGENT_UUID);
+        assert_eq!(agents.default_agent_ensures.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

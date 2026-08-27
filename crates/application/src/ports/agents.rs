@@ -134,6 +134,11 @@ pub struct AgentMembershipChange {
 pub trait AgentRepository: Send + Sync {
     fn find(&self, id: AgentId) -> PortFuture<'_, RepositoryResult<Option<Agent>>>;
 
+    fn list_for_principal(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RegisteredAgent>>>;
+
     fn find_registration(
         &self,
         id: AgentId,

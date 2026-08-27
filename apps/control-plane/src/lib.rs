@@ -573,6 +573,7 @@ fn build_agent_feature_states(
         }),
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
+            directory: dependencies.repositories.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         }),

@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agents::{
         AgentManagementDependencies, AgentManagementFailureKind, AgentManagementService,
-        AgentManagementUseCases, CreateAgent, RegisterAgentInstance,
+        AgentManagementUseCases, CreateAgent, EnsureDefaultAgent, ListAgents,
+        RegisterAgentInstance,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -193,6 +194,14 @@ impl AgentRepository for FakeAgentRepository {
         Box::pin(async move { Ok(value) })
     }
 
+    fn list_for_principal(
+        &self,
+        _principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RegisteredAgent>>> {
+        let value = self.registration.clone().into_iter().collect();
+        Box::pin(async move { Ok(value) })
+    }
+
     fn find_registration(
         &self,
         id: AgentId,
@@ -360,6 +369,76 @@ async fn 创建_agent_先预留稳定标识再对账_matrix_身份() {
         creation.completions.lock().expect("测试锁不得中毒").len(),
         1
     );
+}
+
+#[tokio::test]
+async fn 首次引导按_principal_幂等创建默认_agent() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
+    let creation = Arc::new(FakeCreationWorkflow {
+        agent_id: default_agent_id,
+        claims: Mutex::new(Vec::new()),
+        completions: Mutex::new(Vec::new()),
+    });
+    let service = service(
+        creation.clone(),
+        None,
+        None,
+        Arc::new(FakeInstances::default()),
+        Arc::new(FakeMatrixIdentities {
+            server_name: "matrix.test".to_owned(),
+            issued_sessions: Mutex::new(0),
+            corrupt_session_identity: false,
+        }),
+    );
+
+    let ensured = service
+        .ensure_default_agent(EnsureDefaultAgent {
+            actor: authenticated_principal(principal_id),
+        })
+        .await
+        .expect("默认 Agent 应创建成功");
+
+    assert_eq!(ensured.agent.id(), default_agent_id);
+    let claims = creation.claims.lock().expect("测试锁不得中毒");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].request_id.as_uuid(), principal_id.as_uuid());
+    assert_eq!(claims[0].proposed_agent_id, default_agent_id);
+}
+
+#[tokio::test]
+async fn 已有_agent_时首次引导直接复用且不创建重复记录() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let existing = registered_agent(AgentId::from_uuid(Uuid::now_v7()));
+    let creation = unused_creation(AgentId::from_uuid(Uuid::now_v7()));
+    let service = service(
+        creation.clone(),
+        Some(existing.clone()),
+        None,
+        Arc::new(FakeInstances::default()),
+        Arc::new(FakeMatrixIdentities {
+            server_name: "matrix.test".to_owned(),
+            issued_sessions: Mutex::new(0),
+            corrupt_session_identity: false,
+        }),
+    );
+
+    let listed = service
+        .list_agents(ListAgents {
+            actor: authenticated_principal(principal_id),
+        })
+        .await
+        .expect("Agent 列表应可读取");
+    let ensured = service
+        .ensure_default_agent(EnsureDefaultAgent {
+            actor: authenticated_principal(principal_id),
+        })
+        .await
+        .expect("已有 Agent 应被复用");
+
+    assert_eq!(listed, vec![existing.clone()]);
+    assert_eq!(ensured, existing);
+    assert!(creation.claims.lock().expect("测试锁不得中毒").is_empty());
 }
 
 #[tokio::test]

@@ -3,20 +3,22 @@ use std::sync::Arc;
 use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
     devices::DeviceAuthorizationUseCases,
-    ports::SecretFactory,
+    persistence::RepositoryErrorKind,
+    ports::{RoomDirectory, RoomDirectoryQuery, SecretFactory},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
     rooms::{RoomLanguage, RoomRegion},
 };
+use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Extension, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,12 +36,14 @@ const MAX_LOBBY_ENTRY_BODY_BYTES: usize = 4 * 1_024;
 #[derive(Clone)]
 pub(crate) struct LobbyHttpState {
     entries: Arc<dyn AgentLobbyEntryUseCases>,
+    directory: Arc<dyn RoomDirectory>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
 }
 
 pub(crate) struct LobbyHttpDependencies {
     pub(crate) entries: Arc<dyn AgentLobbyEntryUseCases>,
+    pub(crate) directory: Arc<dyn RoomDirectory>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
 }
@@ -48,6 +52,7 @@ impl LobbyHttpState {
     pub(crate) fn new(dependencies: LobbyHttpDependencies) -> Self {
         Self {
             entries: dependencies.entries,
+            directory: dependencies.directory,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
         }
@@ -56,6 +61,7 @@ impl LobbyHttpState {
 
 pub(crate) fn router(state: LobbyHttpState) -> Router {
     Router::new()
+        .route("/lobbies/public", get(list_public_lobbies))
         .route(
             "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
             post(enter_lobby),
@@ -93,6 +99,90 @@ enum LobbyEntryResponse {
     CapacityChanged {
         catalog_id: String,
     },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicLobbyDirectoryResponse {
+    lobbies: Vec<PublicLobbyResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicLobbyResponse {
+    catalog_id: String,
+    slug: Option<String>,
+    name: String,
+    description: String,
+    language: Option<String>,
+    active_instance_count: u16,
+    online_agent_count: u32,
+}
+
+async fn list_public_lobbies(
+    State(state): State<LobbyHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+) -> Response {
+    match state
+        .directory
+        .list_public(&RoomDirectoryQuery::default())
+        .await
+    {
+        Ok(entries) => no_store(
+            Json(PublicLobbyDirectoryResponse {
+                lobbies: entries
+                    .into_iter()
+                    .map(|entry| PublicLobbyResponse {
+                        catalog_id: entry.catalog.id().to_string(),
+                        slug: entry.catalog.slug().map(|slug| slug.as_str().to_owned()),
+                        name: entry.catalog.name().to_owned(),
+                        description: entry.catalog.description().to_owned(),
+                        language: entry
+                            .catalog
+                            .language()
+                            .map(|language| language.as_str().to_owned()),
+                        active_instance_count: entry.active_instance_count,
+                        online_agent_count: entry.online_agent_count,
+                    })
+                    .collect(),
+            })
+            .into_response(),
+        ),
+        Err(error) => {
+            let (status, code, category) = match error.kind() {
+                RepositoryErrorKind::Unavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "lobby.directory_unavailable",
+                    ErrorCategory::DependencyUnavailable,
+                ),
+                RepositoryErrorKind::Forbidden
+                | RepositoryErrorKind::NotFound
+                | RepositoryErrorKind::Conflict
+                | RepositoryErrorKind::Constraint
+                | RepositoryErrorKind::CorruptData => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "lobby.directory_internal",
+                    ErrorCategory::Transient,
+                ),
+            };
+            tracing::warn!(
+                correlation.id = %correlation_id.as_uuid(),
+                operation = error.operation(),
+                failure = ?error.kind(),
+                "公开大厅目录读取失败"
+            );
+            no_store(
+                ApiError::new(
+                    status,
+                    code,
+                    category,
+                    "公开大厅目录暂时不可用。",
+                    correlation_id,
+                )
+                .into_response(),
+            )
+        }
+    }
 }
 
 async fn enter_lobby(
@@ -213,7 +303,11 @@ mod tests {
             DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
             RevokedDevice,
         },
-        ports::{PortFuture, PrincipalAccount, SecretFactory},
+        persistence::RepositoryResult,
+        ports::{
+            PortFuture, PrincipalAccount, PublicLobbyDirectoryEntry, RoomDirectory,
+            RoomDirectoryQuery, SecretFactory,
+        },
         rooms::{EnterLobbyOutcome, LobbyJoinKind},
     };
     use agent_room_domain::{
@@ -224,8 +318,8 @@ mod tests {
             RoomReservationId,
         },
         rooms::{
-            MatrixRoomReference, RoomCapacity, RoomInstance, RoomInstanceFields, RoomInstanceState,
-            RoomReservation,
+            MatrixRoomReference, RoomCapacity, RoomCatalog, RoomInstance, RoomInstanceFields,
+            RoomInstanceState, RoomReservation,
         },
         time::UtcMillis,
     };
@@ -253,6 +347,24 @@ mod tests {
     struct FakeEntries {
         request: Mutex<Option<EnterAgentLobby>>,
         outcome: Mutex<Option<AgentLobbyEntryResult<EnterLobbyOutcome>>>,
+    }
+
+    struct FakeDirectory;
+
+    impl RoomDirectory for FakeDirectory {
+        fn list_public<'a>(
+            &'a self,
+            _query: &'a RoomDirectoryQuery,
+        ) -> PortFuture<'a, RepositoryResult<Vec<PublicLobbyDirectoryEntry>>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn find_catalog(
+            &self,
+            _catalog_id: RoomCatalogId,
+        ) -> PortFuture<'_, RepositoryResult<Option<RoomCatalog>>> {
+            Box::pin(async { Ok(None) })
+        }
     }
 
     impl FakeEntries {
@@ -406,6 +518,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 公开大厅目录不伪造缺失数据() {
+        let response = test_router(
+            Arc::new(FakeEntries::returning(joined_outcome())),
+            Arc::new(FakeDevices::default()),
+        )
+        .oneshot(
+            Request::builder()
+                .uri("/lobbies/public")
+                .body(Body::empty())
+                .expect("公开大厅目录请求有效"),
+        )
+        .await
+        .expect("公开大厅目录路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await, json!({ "lobbies": [] }));
+    }
+
+    #[tokio::test]
     async fn 供给繁忙返回可重试的二零二而不是伪造房间() {
         let entries = Arc::new(FakeEntries::returning(
             EnterLobbyOutcome::ProvisioningBusy {
@@ -458,6 +589,7 @@ mod tests {
     fn test_router(entries: Arc<FakeEntries>, devices: Arc<FakeDevices>) -> axum::Router {
         let state = LobbyHttpState::new(LobbyHttpDependencies {
             entries,
+            directory: Arc::new(FakeDirectory),
             devices,
             secrets: Arc::new(SecureSecretFactory),
         });

@@ -43,6 +43,16 @@ pub struct CreateAgent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListAgents {
+    pub actor: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsureDefaultAgent {
+    pub actor: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterAgentInstance {
     pub request_id: AgentInstanceRegistrationRequestId,
     pub actor: AuthenticatedDevice,
@@ -102,6 +112,16 @@ impl AgentManagementFailure {
 pub type AgentManagementResult<T> = Result<T, AgentManagementFailure>;
 
 pub trait AgentManagementUseCases: Send + Sync {
+    fn list_agents(
+        &self,
+        request: ListAgents,
+    ) -> PortFuture<'_, AgentManagementResult<Vec<RegisteredAgent>>>;
+
+    fn ensure_default_agent(
+        &self,
+        request: EnsureDefaultAgent,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>>;
+
     fn create_agent(
         &self,
         request: CreateAgent,
@@ -161,6 +181,15 @@ impl AgentManagementService {
         &self,
         request: CreateAgent,
     ) -> AgentManagementResult<RegisteredAgent> {
+        let proposed_agent_id = self.identifiers.agent_id();
+        self.create_agent_with_id(request, proposed_agent_id).await
+    }
+
+    async fn create_agent_with_id(
+        &self,
+        request: CreateAgent,
+        proposed_agent_id: AgentId,
+    ) -> AgentManagementResult<RegisteredAgent> {
         let operation = "agent.create";
         validate_agent_profile(&request)?;
         let started_at = self.clock.now();
@@ -169,7 +198,7 @@ impl AgentManagementService {
         let claim = AgentCreationClaim {
             request_id: request.request_id,
             owner_id: request.actor.principal_id,
-            proposed_agent_id: self.identifiers.agent_id(),
+            proposed_agent_id,
             request_fingerprint: fingerprint,
             reserved_at: started_at,
         };
@@ -208,6 +237,50 @@ impl AgentManagementService {
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         Ok(RegisteredAgent::from(&registration))
+    }
+
+    async fn list_agents_internal(
+        &self,
+        request: ListAgents,
+    ) -> AgentManagementResult<Vec<RegisteredAgent>> {
+        let operation = "agent.list";
+        ensure_active_principal(&request.actor, self.clock.now(), operation)?;
+        self.agents
+            .list_for_principal(request.actor.principal_id)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))
+    }
+
+    async fn ensure_default_agent_internal(
+        &self,
+        request: EnsureDefaultAgent,
+    ) -> AgentManagementResult<RegisteredAgent> {
+        let operation = "agent.ensure_default";
+        ensure_active_principal(&request.actor, self.clock.now(), operation)?;
+        let existing = self
+            .agents
+            .list_for_principal(request.actor.principal_id)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        if let Some(agent) = existing.into_iter().next() {
+            return Ok(agent);
+        }
+
+        let principal_uuid = request.actor.principal_id.as_uuid();
+        let compact = principal_uuid.simple().to_string();
+        self.create_agent_with_id(
+            CreateAgent {
+                request_id: AgentCreationRequestId::from_uuid(principal_uuid),
+                actor: request.actor,
+                slug: format!("agent-{}", &compact[compact.len() - 12..]),
+                display_name: format!("Agent {}", &compact[..8]),
+                description: String::new(),
+                avatar_content_id: None,
+                visibility: AgentVisibility::Private,
+            },
+            AgentId::from_uuid(principal_uuid),
+        )
+        .await
     }
 
     async fn register_instance_internal(
@@ -326,6 +399,20 @@ impl AgentManagementService {
 }
 
 impl AgentManagementUseCases for AgentManagementService {
+    fn list_agents(
+        &self,
+        request: ListAgents,
+    ) -> PortFuture<'_, AgentManagementResult<Vec<RegisteredAgent>>> {
+        Box::pin(self.list_agents_internal(request))
+    }
+
+    fn ensure_default_agent(
+        &self,
+        request: EnsureDefaultAgent,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+        Box::pin(self.ensure_default_agent_internal(request))
+    }
+
     fn create_agent(
         &self,
         request: CreateAgent,

@@ -134,6 +134,13 @@ impl AgentRepository for FakeAgentRepository {
         Box::pin(async move { Ok(value) })
     }
 
+    fn list_for_principal(
+        &self,
+        _principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RegisteredAgent>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn find_registration(
         &self,
         _id: AgentId,
