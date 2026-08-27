@@ -75,7 +75,10 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           VERSION="${TAG#v}"
-          REVISION="$(git rev-list -n 1 "$TAG")"
+          test "$(jq -er '.tag | select(type == "string")' candidate/release-metadata.json)" = "$TAG"
+          test "$(jq -er '.version | select(type == "string")' candidate/release-metadata.json)" = "$VERSION"
+          REVISION="$(jq -er '.revision | select(type == "string" and test("^[0-9a-f]{40}$"))' candidate/release-metadata.json)"
+          test "$(git rev-parse --verify "$REVISION^{commit}")" = "$REVISION"
           python tools/release_promotion.py verify --record candidate/release-promotion-compatible-server.json --expected-stage compatible-server --version "$VERSION" --revision "$REVISION"
           python tools/release_promotion.py verify-evidence --record candidate/release-promotion-compatible-server.json --root candidate --release-base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
       - name: 验证 testing 签名、所有摘要、SBOM 与 Sigstore 身份
