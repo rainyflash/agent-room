@@ -46,7 +46,7 @@ target/release/agent-room-release-tool keygen \
 
 工作流执行以下动作：
 
-1. 构建 Windows x64 的 Tauri 更新归档、Bridge 和平台插件；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
+1. 构建 Windows x64 的 NSIS 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
 2. 构建 `control-plane`、`identity`、`web` 的 amd64/arm64 OCI Index；
 3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；
@@ -106,15 +106,15 @@ target/release/agent-room-release-tool sign \
 
 任一步失败都不会推进客户端本地可信序号。桌面端先写入 pending 安装记录，只有目标版本真正启动后才提交序号；下载中断、进程终止或安装失败仍可重试。客户端拒绝过期清单、篡改包、重复序号、跨渠道清单和未指明来源版本的降级。
 
-## 7. 插件与 Bridge 兼容
+## 7. MCP、宿主适配器与 Bridge 兼容
 
 IPC 握手必须完整匹配协议版本。Bridge 或 MCP 返回 `bridge.ipc.version_incompatible` 时：
 
-- Codex 插件只显示“插件与 Bridge 必须升级到同一发行版本”；
+- 通用 MCP 只显示“MCP 与 Bridge 必须升级到同一发行版本”；
 - Desktop Supervisor 进入停止/升级态；
 - MCP 不注册残缺工具，不允许部分能力继续工作。
 
-恢复方式是安装同一 Release 中、同一平台的 Bridge 与 Codex 插件，不允许复制单个二进制拼装版本。
+Codex、Claude Code 与 Cursor 适配器只配置通用 MCP 路径，不参与 IPC 协商。恢复方式是重新安装同一 Release 的 Windows 安装器；独立二进制只用于核验和高级集成，不允许复制不同版本拼装 Runtime。
 
 ## 8. 故障与撤回
 

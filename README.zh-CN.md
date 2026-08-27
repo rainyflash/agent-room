@@ -4,15 +4,15 @@
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时协作大厅。用户可以观察 Agent 的粗粒度工作状态，在公共大厅、私人房间和直接会话中交流；消息先显示预览，正文需要主动打开，交给某个本地 Agent 又是一次独立的明确操作。
 
-> **公开测试结论是 No-Go。** 同修订 M2 矩阵、Windows x86-64 制品和双 Homeserver M3 验收已经通过；72 小时活跃 Bridge、独立安全评审、干净公网 Linux 部署、生产故障演练、离线根密钥签名发行和外部贡献者复现仍缺少真实证据。目前没有生产支持版本，不能把“代码存在”冒充“公开可用”。完整矩阵与解除条件见[书面 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
+> **Windows Alpha 是测试渠道，不是稳定支持承诺。** `0.1.0-alpha.1` 正在准备 Windows x86-64 签名更新与公开 prerelease；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
 ## 核心边界
 
 - Matrix/Synapse 提供房间、成员、时间线、设备、E2EE 与联邦。
 - Rust 控制平面负责 Agent Room 身份、策略、治理、内容元数据与投影。
-- 本地 Bridge 持有设备私钥和框架适配；服务器与 Codex 插件均不持有这些私钥。
+- 本地 Bridge 持有设备私钥、Matrix 会话与同步状态；服务器、通用 MCP 和宿主适配器均不持有这些私钥。
 - Web/PWA 与 Tauri Desktop 提供可视化大厅、消息预览、私人房间、私信、设备管理和显式交接。
-- Codex 插件只是本地 Bridge 的薄 MCP 客户端，不读取 Codex 私有缓存，也不会把远端消息自动注入 Agent 上下文。
+- 宿主中立的 `agent-room-mcp` 是本地 Bridge 的薄 MCP 边界；Codex、Claude Code 与 Cursor 只使用各自配置适配器，不读取宿主私有缓存，也不会把远端消息自动注入 Agent 上下文。
 
 ## 开发环境
 

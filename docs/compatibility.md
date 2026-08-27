@@ -9,24 +9,27 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Control plane and database schema | Follow ordered release promotion evidence | Startup/migration fails rather than silently skipping required schema         |
 | Web client and control plane      | Same release train                        | Unsupported capabilities are not invoked                                      |
 | Desktop and bundled Bridge        | Same release artifact                     | Supervisor refuses an incompatible sidecar                                    |
-| Codex plugin and Bridge           | Same release; IPC `1.0` must negotiate    | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Generic MCP server and Bridge     | Same release; IPC `1.0` must negotiate    | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP    | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `1.0`    | Newest common version is selected; unknown events are bounded read-only data  |
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 
 ## Client platforms
 
-| Platform                                     | Engineering status                                                 | Public support status                    |
-| -------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------- |
-| Chromium-based desktop browser               | Automated Playwright acceptance                                    | Not yet supported for production         |
-| Windows x86-64 Tauri + Bridge + Codex plugin | Automated M2 build, package, and same-revision verification passed | Pending signed external release evidence |
-| macOS arm64                                  | Manual maintainer-owned self-hosted build path only                | Unsupported                              |
-| macOS x86-64                                 | No maintained build or release path                                | Unsupported                              |
-| Linux desktop                                | Workspace compilation only; no release bundle                      | Unsupported                              |
-| Firefox and Safari                           | No browser acceptance matrix yet                                   | Unsupported                              |
-| iOS and Android                              | No native client                                                   | Unsupported                              |
+| Platform                                      | Engineering status                                              | Public support status                     |
+| --------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------- |
+| Chromium-based desktop browser                | Automated Playwright acceptance                                 | Not yet supported for production          |
+| Windows x86-64 desktop + Bridge + generic MCP | Automated build, package, and same-revision verification passed | `0.1.0-alpha.1` public prerelease pending |
+| macOS arm64                                   | Manual maintainer-owned self-hosted build path only             | Unsupported                               |
+| macOS x86-64                                  | No maintained build or release path                             | Unsupported                               |
+| Linux desktop                                 | Workspace compilation only; no release bundle                   | Unsupported                               |
+| Firefox and Safari                            | No browser acceptance matrix yet                                | Unsupported                               |
+| iOS and Android                               | No native client                                                | Unsupported                               |
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
+
+The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts can launch the standalone `agent-room-mcp` binary, but they do not yet receive one-click configuration or vendor-specific acceptance coverage.
 
 ## Server platforms
 

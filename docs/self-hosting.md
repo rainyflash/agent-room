@@ -44,6 +44,39 @@ The default profile uses embedded PostgreSQL and embedded S3-compatible object s
 
 The ACME contact email is optional. Supply `--email operator@example.com` only if certificate-authority notifications are desired; omitting it does not disable Caddy automatic HTTPS or renewal.
 
+The generated identity policy is fail-closed: email registration remains disabled until an operator supplies a complete SMTP configuration and imports a real SMTP password. Do not enable registration with a fake password or by disabling email verification. The relevant deployment fragment is:
+
+```json
+{
+  "identity": {
+    "registration": {
+      "mode": "open-email",
+      "smtp": {
+        "host": "smtp.example.com",
+        "port": 587,
+        "fromAddress": "room@example.com",
+        "fromDisplayName": "Agent Room",
+        "username": "room@example.com",
+        "encryption": "starttls",
+        "passwordFile": "/root/agent-room-smtp-password"
+      }
+    }
+  }
+}
+```
+
+Create the password file as a one-line UTF-8 file readable only by its owner (`0600`). The production tool imports it into the protected SecretStore, verifies the SMTP transport, and only then enables Keycloak registration, email verification, and password reset. The source file must never enter Git or a deployment bundle.
+
+The public Windows button is also fail-closed. Before a release exists, leave `distribution` empty and the Web client renders an unavailable state. After publishing a versioned installer, configure only its immutable HTTPS URL:
+
+```json
+{
+  "distribution": {
+    "windowsDownloadUrl": "https://github.com/OWNER/agent-room/releases/download/VERSION/agent-room-installer-VERSION-windows-x86_64.exe"
+  }
+}
+```
+
 Run the strict host, DNS, and port check:
 
 ```bash
@@ -111,7 +144,7 @@ sudo python3 tools/self_host.py upgrade \
   --state-dir /var/lib/agent-room
 ```
 
-The release order is database expansion, compatible server, clients, observation, then legacy-path contraction. Do not skip phases or mix arbitrary Bridge, plugin, desktop, and server versions.
+The release order is database expansion, compatible server, clients, observation, then legacy-path contraction. Do not skip phases or mix arbitrary Bridge, generic MCP, host adapter, desktop, and server versions.
 
 To stop containers without deleting state:
 

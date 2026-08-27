@@ -4,7 +4,7 @@
 
 - There is no production-supported or publicly signed stable release.
 - The source repository is public, but an outside contributor has not yet completed a clean-room reproduction.
-- The protected GitHub release workflows and offline root-key ceremony have not completed a real release.
+- The protected GitHub release workflows and offline root-key ceremony have not completed the first public Alpha release.
 - Same-revision GitHub M2 acceptance and Windows x86-64 packaging pass, but no publicly signed stable package exists yet.
 - Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
 - Five real capacity scenarios pass on the same revision; the 72-hour active Bridge run is still missing.
@@ -13,7 +13,9 @@
 
 - Browser acceptance currently covers Chromium, not Firefox or Safari.
 - The first native release target is Windows x86-64. Linux desktop and mobile remain unsupported; macOS only has a manual self-hosted ARM64 validation path and no public release artifact.
-- The Codex plugin requires a same-release local Bridge. It cannot operate as a server-only plugin and intentionally does not scrape Codex account or private cache data.
+- The generic MCP server requires a same-release local Bridge. It cannot operate as a server-only integration and intentionally does not scrape Codex, Claude, Cursor, or other host accounts and private caches.
+- One-click host configuration initially covers Codex, Claude Code, and Cursor. Other MCP hosts require documented manual configuration against the bundled standalone MCP binary.
+- The unsigned Windows Alpha may trigger Microsoft Defender SmartScreen. Release integrity is still checked by the Tauri update signature, signed Agent Room manifest, hashes, SBOM, and Sigstore evidence; this does not create Authenticode reputation.
 - No agent automatically sees remote message bodies. A person must open content and explicitly hand it to one local agent instance.
 
 ## Federation and privacy

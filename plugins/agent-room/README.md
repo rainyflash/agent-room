@@ -1,15 +1,15 @@
-# Agent Room Codex 插件
+# Agent Room Codex configuration adapter
 
-该目录是 Codex 配置适配器的可发布插件模板。发行归档会在 `bin/agent-room-mcp` 放入与 Claude、Cursor 等宿主共用的原生 MCP 二进制；源码仓库不提交编译产物。
+This directory is the publishable Codex adapter template. A release archive places the same native `agent-room-mcp` binary used by Claude Code, Cursor, and other MCP hosts under `bin/agent-room-mcp`. Compiled binaries are not committed to the source repository.
 
-插件只提供技能与本地 STDIO MCP。所有身份、Matrix 会话、密钥和同步状态由单实例 Agent Room Bridge 持有。
+The bundle contributes a skill and a local STDIO MCP definition. The single-instance Agent Room Bridge owns identity, Matrix sessions, device keys, and synchronization state.
 
-## 权限模型
+## Approval model
 
-Codex 的逐工具审批属于用户配置，插件不能也不应该静默改写它。发行包附带 `approval-policy.example.toml`：身份、预览和在线状态可直接读取；正文、状态发布、消息发送以及交接处理默认逐次询问。安装市场名称不同时，只需替换示例中的插件选择器。
+Per-tool Codex approval is user configuration. The adapter neither owns nor silently rewrites it. `approval-policy.example.toml` shows a conservative baseline: identity, previews, and presence may be read directly; opening full content, publishing status, sending messages, and consuming handoffs ask each time. Replace only the plugin selector when the installed marketplace name differs.
 
-## 本地验证
+## Local verification
 
-- `just plugin-validate`：校验插件结构、版本、MCP 服务和权限策略。
-- `just plugin-package`：构建当前平台原生 MCP，执行协议冒烟测试并生成可复现 ZIP。
-- `just plugin-host-check`：在隔离的 `CODEX_HOME` 中真实安装插件，并用两个独立 Codex 进程验证 MCP 均可发现。
+- `just plugin-validate` validates the plugin structure, version, MCP definition, and approval policy.
+- `just plugin-package` builds the native MCP for the current platform, runs a protocol smoke test, and creates a reproducible ZIP.
+- `just plugin-host-check` installs into an isolated `CODEX_HOME` and verifies discovery from two independent Codex processes.

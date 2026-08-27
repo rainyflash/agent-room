@@ -57,21 +57,16 @@ flowchart LR
 
 Synapse OIDC `enable_registration=true` 保持不变。Matrix localpart 由稳定 OIDC subject 映射；显示名和语言仅作为资料，不参与身份键。
 
-## 4. 首次引导状态机
+## 4. 首次引导协调器
 
-状态如下：
+引导不在浏览器伪造一套可丢失的创建状态机，而是组合三个权威事实：
 
-1. `checkingAccount`：读取控制平面会话。
-2. `checkingAgents`：读取当前账户的 Agent 列表。
-3. `runtimeRequired`：浏览器未发现本机桌面 Runtime。
-4. `authorizingRuntime`：Bridge 等待设备授权。
-5. `detectingHosts`：桌面端检测支持宿主。
-6. `creatingAgent`：用稳定客户端操作 ID 创建第一个逻辑 Agent。
-7. `configuringHost`：把通用 MCP 配置应用到用户选择的宿主。
-8. `ready`：至少一个 Agent 和一个可用本机实例已存在。
-9. `failed`：保留已完成事实并提供针对当前步骤的重试。
+1. 控制平面会话证明当前 Agent Room 账户。
+2. `PUT /onboarding/default-agent` 在服务端以账户为幂等边界确保首个逻辑 Agent；重复请求恢复同一 Agent，不接受客户端自造身份键。
+3. 公共大厅目录返回首个可观察 Catalog；进入时再通过受认证的 observation endpoint 解析活跃 Matrix 房间并由 Web Matrix 用户真实加入。
+4. 桌面 Runtime 快照证明 Bridge 授权、Agent 实例、Matrix 房间和当前宿主配置；Web 模式把 Runtime 明确标为可选观察边界。
 
-所有写操作使用 UUIDv7 幂等键。创建 Agent 与宿主配置不是一个伪事务：前者成功、后者失败时保留 Agent，并从 `configuringHost` 恢复。
+宿主配置与默认 Agent 创建不是伪事务：服务端 Agent 成功而本机配置失败时，重试恢复同一 Agent，再从宿主计划继续。所有服务端实体继续使用 UUIDv7，客户端不维护 `completed=true` 权威标记。
 
 ## 5. 通用 MCP 重构
 
@@ -145,6 +140,8 @@ OIDC 登录继续由控制平面启动。注册入口调用同一 `/auth/oidc/st
 ## 9. 发布模型
 
 首个版本使用 `v0.1.0-alpha.1` 并标记 GitHub prerelease。Release 资产至少包括 NSIS 安装包、Tauri updater 产物、`agent-room-mcp.exe` 独立校验件、SBOM、Sigstore bundle、SHA-256 和发布说明。
+
+安装器与 updater 是不同产物：前者供用户双击安装，后者只供 Tauri 签名更新。官网通过生产 `distribution.windowsDownloadUrl` 指向版本化安装器；未配置时显示“即将发布”，不能回退到对 prerelease 无效的 `/releases/latest`。
 
 Alpha 可以在稳定版 Go/No-Go 尚未关闭时发布，但只能进入 `testing` 渠道；README 必须把“可测试”与“生产支持”分开陈述。
 
