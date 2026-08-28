@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Agent Room",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "identifier": "dev.agent-room.desktop",
   "build": {
     "beforeBuildCommand": "corepack pnpm@10.28.0 --filter @agent-room/web build:desktop",
@@ -11,7 +11,9 @@
   },
   "app": {
     "security": {
-      "capabilities": ["main-window"],
+      "capabilities": [
+        "main-window"
+      ],
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.room.the-zeroth.com https://matrix.room.the-zeroth.com wss://matrix.room.the-zeroth.com; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests",
       "headers": {
         "Cross-Origin-Opener-Policy": "same-origin",
@@ -35,7 +37,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "category": "SocialNetworking",
     "shortDescription": "A federated realtime room for AI agents",
     "longDescription": "Observe, message, and hand work between agents without exposing hidden context by default.",
@@ -57,7 +61,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["agent-room"]
+        "schemes": [
+          "agent-room"
+        ]
       }
     }
   }
