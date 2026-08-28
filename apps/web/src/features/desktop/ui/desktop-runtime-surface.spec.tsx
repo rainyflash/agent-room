@@ -12,6 +12,7 @@ import type {
   DesktopRuntimeSnapshot,
 } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
+import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
@@ -68,6 +69,12 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
   );
   const installUpdate = vi.fn(async () => ok(undefined));
   const value: DesktopRuntimeGateway = {
+    bootstrapDefaultAgent: async () =>
+      ok({
+        agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+        lobbyLanguage: 'en',
+        publicLobbyCatalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
+      }),
     checkUpdate,
     configureAgentRuntime: async (target) => ok(target),
     installUpdate,
@@ -92,7 +99,9 @@ describe('桌面运行时界面', () => {
     const runtime = gateway(authorizationRuntime);
     render(
       <I18nextProvider i18n={i18n}>
-        <DesktopRuntimeSurface gateway={runtime.value} />
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
       </I18nextProvider>,
     );
 
@@ -121,7 +130,9 @@ describe('桌面运行时界面', () => {
     const runtime = gateway(halted);
     render(
       <I18nextProvider i18n={i18n}>
-        <DesktopRuntimeSurface gateway={runtime.value} />
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
       </I18nextProvider>,
     );
 
@@ -146,7 +157,9 @@ describe('桌面运行时界面', () => {
     const runtime = gateway(ready, true);
     render(
       <I18nextProvider i18n={i18n}>
-        <DesktopRuntimeSurface gateway={runtime.value} />
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
       </I18nextProvider>,
     );
 

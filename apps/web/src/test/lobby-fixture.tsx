@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 
-import { AppServicesProvider, type AppServices } from '@/app/app-services';
+import { AppServicesProvider, type WebAppServices } from '@/app/app-services';
 import type {
   AutomationGrant,
   AutomationGrantGateway,
@@ -475,7 +475,7 @@ class FixtureHandoffGateway implements HandoffGateway {
 
 const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' });
 
-const services: AppServices = {
+const services: WebAppServices = {
   accessManagement,
   automation,
   config: {
@@ -502,6 +502,7 @@ const services: AppServices = {
   onboarding,
   privateRoomMatrix,
   privateRooms,
+  runtimeMode: 'web',
   security,
   session: {
     browser: {

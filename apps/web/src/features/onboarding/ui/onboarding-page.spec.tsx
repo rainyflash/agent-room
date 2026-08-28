@@ -71,6 +71,7 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useSession>);
   vi.mocked(useDesktopRuntime).mockReturnValue({
     available: false,
+    bootstrapDefaultAgent: vi.fn(),
     busy: null,
     checkUpdate: vi.fn(),
     configureAgentRuntime: vi.fn(),

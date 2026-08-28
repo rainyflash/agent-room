@@ -7,7 +7,9 @@ import { LanguageControl } from '@/features/preferences/ui/language-control';
 import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type ConnectionRailProps = {
+  readonly sessionKey?: TranslationKey;
   readonly stages: readonly ConnectionStage[];
+  readonly transportKey?: TranslationKey;
 };
 
 const toneByStage: Readonly<Record<ConnectionStage['status'], StatusTone>> = {
@@ -24,7 +26,11 @@ const statusMessageKey: Readonly<Record<ConnectionStage['status'], TranslationKe
   pending: 'connection.stage.status.pending',
 };
 
-export function ConnectionRail({ stages }: ConnectionRailProps) {
+export function ConnectionRail({
+  sessionKey = 'connection.session',
+  stages,
+  transportKey = 'connection.transport',
+}: ConnectionRailProps) {
   const { t } = useTranslation();
   return (
     <aside className="connection-rail">
@@ -61,8 +67,8 @@ export function ConnectionRail({ stages }: ConnectionRailProps) {
       </ol>
 
       <footer className="connection-rail__footer">
-        <span>{t('connection.transport')}</span>
-        <span>{t('connection.session')}</span>
+        <span>{t(transportKey)}</span>
+        <span>{t(sessionKey)}</span>
       </footer>
     </aside>
   );

@@ -43,6 +43,7 @@ export type DesktopRuntimeController = {
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
   readonly configureHost: (host: AgentHostKind) => Promise<void>;
+  readonly bootstrapDefaultAgent: (preferredLanguage: string | null) => Promise<void>;
   readonly configureAgentRuntime: (target: DesktopAgentTarget) => Promise<void>;
 };
 
@@ -280,6 +281,23 @@ export function useDesktopRuntime(
     [gateway],
   );
 
+  const bootstrapDefaultAgent = useCallback(
+    async (preferredLanguage: string | null): Promise<void> => {
+      setBusy('agent-runtime');
+      const result = await gateway.bootstrapDefaultAgent(preferredLanguage);
+      if (result.ok) {
+        setSnapshot((previous) =>
+          previous === null ? previous : { ...previous, agentTarget: result.value },
+        );
+        setFailure(null);
+      } else {
+        setFailure(result.error);
+      }
+      setBusy(null);
+    },
+    [gateway],
+  );
+
   return {
     available,
     busy,
@@ -288,6 +306,7 @@ export function useDesktopRuntime(
     update,
     hosts,
     checkUpdate,
+    bootstrapDefaultAgent,
     configureAgentRuntime,
     dismissFailure: () => {
       setFailure(null);

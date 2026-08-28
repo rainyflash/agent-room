@@ -17,34 +17,18 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  BridgePhase,
-  DesktopRuntimeGateway,
-  ReleaseUpdateChannel,
-} from '@/features/desktop/domain/desktop-runtime';
-import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import type { BridgePhase, ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
+import { desktopPhaseMessage } from '@/features/desktop/domain/desktop-connection';
+import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
-import type { TranslationKey } from '@/shared/i18n/resources';
-
-const phaseMessage: Readonly<Record<BridgePhase, TranslationKey>> = {
-  authorization_required: 'desktop.phase.authorizationRequired',
-  authorized: 'desktop.phase.authorized',
-  discovering: 'desktop.phase.discovering',
-  halted: 'desktop.phase.halted',
-  ready: 'desktop.phase.ready',
-  retry_scheduled: 'desktop.phase.retryScheduled',
-  starting: 'desktop.phase.starting',
-  stopped: 'desktop.phase.stopped',
-};
 
 export type DesktopRuntimeSurfaceProps = {
-  readonly gateway?: DesktopRuntimeGateway;
   readonly telemetry?: FrontendTelemetryGateway;
 };
 
-export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurfaceProps) {
+export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps) {
   const { i18n, t } = useTranslation();
-  const controller = useDesktopRuntime(gateway);
+  const controller = useDesktopRuntimeController();
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
@@ -111,7 +95,7 @@ export function DesktopRuntimeSurface({ gateway, telemetry }: DesktopRuntimeSurf
         </span>
         <span>
           <strong>{t('desktop.runtime.title')}</strong>
-          <small>{t(phaseMessage[phase])}</small>
+          <small>{t(desktopPhaseMessage[phase])}</small>
         </span>
         <ChevronDown aria-hidden="true" className="desktop-runtime__chevron" />
       </button>

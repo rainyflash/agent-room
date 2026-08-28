@@ -59,6 +59,22 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it('默认 Agent 引导只传递语言并校验目标摘要', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+      lobbyLanguage: 'zh-CN',
+      publicLobbyCatalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
+    });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    const result = await gateway.bootstrapDefaultAgent('zh-CN');
+
+    expect(result.ok).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('desktop_bootstrap_default_agent', {
+      preferredLanguage: 'zh-CN',
+    });
+  });
+
   it('订阅两个白名单事件并在任一载荷失真时显式失败', async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     const onFailure = vi.fn();

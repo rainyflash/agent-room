@@ -20,7 +20,7 @@
   - 重试复用同一 Agent 与目录目标。
   - _需求：5、6、8_
 
-- [ ] 5. 分离 Web 与 Desktop 会话组合根
+- [x] 5. 分离 Web 与 Desktop 会话组合根
   - 桌面连接页只消费 Bridge 快照。
   - Web/PWA 保持 Cookie 与浏览器 Matrix 会话。
   - _需求：3、7、8_

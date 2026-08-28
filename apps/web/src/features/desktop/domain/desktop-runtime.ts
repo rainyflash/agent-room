@@ -178,6 +178,9 @@ export type DesktopRuntimeGateway = {
     channel: ReleaseUpdateChannel,
     expectedSequence: number,
   ): Promise<Result<void, DesktopRuntimeFailure>>;
+  bootstrapDefaultAgent(
+    preferredLanguage: string | null,
+  ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;
   configureAgentRuntime(
     target: DesktopAgentTarget,
   ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;

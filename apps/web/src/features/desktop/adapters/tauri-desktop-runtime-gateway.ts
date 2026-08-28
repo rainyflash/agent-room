@@ -40,6 +40,7 @@ const desktopCommands = {
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
+  bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
   checkUpdate: 'desktop_check_update',
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   detectHosts: 'desktop_detect_agent_hosts',
@@ -121,6 +122,16 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
         .undefined()
         .or(z.null())
         .transform(() => undefined),
+    );
+  }
+
+  async bootstrapDefaultAgent(
+    preferredLanguage: string | null,
+  ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.bootstrapDefaultAgent,
+      { preferredLanguage },
+      desktopAgentTargetSchema,
     );
   }
 
