@@ -45,6 +45,14 @@ pub(crate) struct ApiError {
 }
 
 impl ApiError {
+    pub(crate) fn code(&self) -> &str {
+        &self.envelope.code
+    }
+
+    pub(crate) fn correlation_id(&self) -> &str {
+        &self.envelope.correlation_id
+    }
+
     pub(crate) fn new(
         status: StatusCode,
         code: &str,

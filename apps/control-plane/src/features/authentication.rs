@@ -34,6 +34,7 @@ pub(crate) struct AuthenticationHttpState {
     frontend_origin: Url,
     issuer: Url,
     serialized_frontend_origin: String,
+    login_failure_redirect: String,
     login_cookie_ttl: CookieDuration,
     session_cookie_ttl: CookieDuration,
 }
@@ -58,6 +59,10 @@ impl AuthenticationHttpState {
             return Err(AuthenticationHttpConfigurationError::InvalidFrontendOrigin);
         }
         let serialized_frontend_origin = frontend_origin.origin().ascii_serialization();
+        let login_failure_redirect = frontend_origin
+            .join("/connect")
+            .map_err(|_| AuthenticationHttpConfigurationError::InvalidFrontendOrigin)?
+            .to_string();
         let login_cookie_ttl = cookie_duration(login_cookie_ttl)?;
         let session_cookie_ttl = cookie_duration(session_cookie_ttl)?;
         Ok(Self {
@@ -65,6 +70,7 @@ impl AuthenticationHttpState {
             frontend_origin,
             issuer,
             serialized_frontend_origin,
+            login_failure_redirect,
             login_cookie_ttl,
             session_cookie_ttl,
         })
@@ -175,10 +181,13 @@ async fn complete_login(
     State(state): State<AuthenticationHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     query: Result<Query<CompleteLoginQuery>, QueryRejection>,
+    headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
     let Ok(Query(query)) = query else {
         return login_failure(
+            &state,
+            &headers,
             jar,
             ApiError::invalid_request("authentication.invalid_callback_query", correlation_id),
         );
@@ -189,6 +198,8 @@ async fn complete_login(
         .is_some_and(|issuer| issuer != state.issuer.as_str())
     {
         return login_failure(
+            &state,
+            &headers,
             jar,
             ApiError::invalid_request("authentication.issuer_mismatch", correlation_id),
         );
@@ -198,6 +209,8 @@ async fn complete_login(
         .and_then(|cookie| SecretValue::new(cookie.value()).ok())
     else {
         return login_failure(
+            &state,
+            &headers,
             jar,
             ApiError::invalid_request("authentication.missing_login_cookie", correlation_id),
         );
@@ -213,11 +226,18 @@ async fn complete_login(
     {
         Ok(completion) => completion,
         Err(failure) => {
-            return login_failure(jar, ApiError::authentication(failure, correlation_id));
+            return login_failure(
+                &state,
+                &headers,
+                jar,
+                ApiError::authentication(failure, correlation_id),
+            );
         }
     };
     let Ok(destination) = state.frontend_origin.join(completion.return_path.as_str()) else {
         return login_failure(
+            &state,
+            &headers,
             jar,
             ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
         );
@@ -320,8 +340,36 @@ pub(crate) fn expired_session_jar(jar: CookieJar) -> CookieJar {
     jar.add(expired_cookie(SESSION_COOKIE))
 }
 
-fn login_failure(jar: CookieJar, error: ApiError) -> Response {
-    no_store((jar.add(expired_cookie(LOGIN_COOKIE)), error).into_response())
+fn login_failure(
+    state: &AuthenticationHttpState,
+    headers: &HeaderMap,
+    jar: CookieJar,
+    error: ApiError,
+) -> Response {
+    let jar = jar.add(expired_cookie(LOGIN_COOKIE));
+    if accepts_html(headers) {
+        tracing::warn!(
+            correlation.id = error.correlation_id(),
+            error.code = error.code(),
+            "浏览器登录回调失败，返回连接页重新开始"
+        );
+        return no_store((jar, Redirect::to(&state.login_failure_redirect)).into_response());
+    }
+    no_store((jar, error).into_response())
+}
+
+fn accepts_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| {
+            accept.split(',').any(|media_range| {
+                media_range
+                    .split(';')
+                    .next()
+                    .is_some_and(|media_type| media_type.trim() == "text/html")
+            })
+        })
 }
 
 pub(crate) fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSession> {
@@ -715,6 +763,35 @@ mod tests {
             .expect("路由执行成功");
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        assert!(
+            set_cookies(&response)
+                .iter()
+                .any(|cookie| cookie.contains("Max-Age=0"))
+        );
+    }
+
+    #[tokio::test]
+    async fn 浏览器回调缺少登录_cookie_时返回连接页重新开始() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
+                    .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get(header::LOCATION),
+            Some(&header::HeaderValue::from_static(
+                "https://app.agent-room.test/connect"
+            ))
+        );
         assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
         assert!(
             set_cookies(&response)
