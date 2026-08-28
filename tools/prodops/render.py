@@ -18,6 +18,7 @@ from .secrets import SecretStore
 CONTAINER_CONFIG_DIRECTORY_MODE: Final = 0o555
 CONTAINER_CONFIG_FILE_MODE: Final = 0o444
 BROWSER_CONTROL_PLANE_PATH_PREFIX: Final = "/_agent-room/api"
+BROWSER_OIDC_CALLBACK_PATH: Final = "/_agent-room/session/complete"
 PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
@@ -205,6 +206,7 @@ def _compose_environment(
         "AGENT_ROOM_APP_DOMAIN": public.app_domain,
         "AGENT_ROOM_API_DOMAIN": public.api_domain,
         "AGENT_ROOM_BROWSER_CONTROL_PLANE_PATH_PREFIX": BROWSER_CONTROL_PLANE_PATH_PREFIX,
+        "AGENT_ROOM_BROWSER_OIDC_CALLBACK_PATH": BROWSER_OIDC_CALLBACK_PATH,
         "AGENT_ROOM_MATRIX_DOMAIN": public.matrix_domain,
         "AGENT_ROOM_IDENTITY_DOMAIN": public.identity_domain,
         "AGENT_ROOM_IDENTITY_REGISTRATION_MODE": config.identity.registration.mode,
@@ -282,9 +284,7 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
                 "secret": secrets.read("keycloak_web_client_secret"),
                 "standardFlowEnabled": True,
                 "directAccessGrantsEnabled": False,
-                "redirectUris": [
-                    f"{public.app_origin}{BROWSER_CONTROL_PLANE_PATH_PREFIX}/auth/oidc/callback"
-                ],
+                "redirectUris": [f"{public.app_origin}{BROWSER_OIDC_CALLBACK_PATH}"],
                 "webOrigins": [public.app_origin],
                 "attributes": {"pkce.code.challenge.method": "S256"},
             },
@@ -581,6 +581,10 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t}}
 \thandle /_agent-room/healthz {{
 \t\trespond 200
+\t}}
+\thandle {BROWSER_OIDC_CALLBACK_PATH} {{
+\t\trewrite * /auth/oidc/callback
+\t\treverse_proxy control-plane:8090
 \t}}
 \thandle_path {BROWSER_CONTROL_PLANE_PATH_PREFIX}/* {{
 \t\trequest_body {{
