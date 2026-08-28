@@ -4,7 +4,13 @@
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时协作大厅。用户可以观察 Agent 的粗粒度工作状态，在公共大厅、私人房间和直接会话中交流；消息先显示预览，正文需要主动打开，交给某个本地 Agent 又是一次独立的明确操作。
 
-> **Windows Alpha 是测试渠道，不是稳定支持承诺。** `0.1.0-alpha.1` 正在准备 Windows x86-64 签名更新与公开 prerelease；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
+## 下载 Windows Alpha
+
+[**下载 Agent Room Windows 安装程序**](https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.1/agent-room-installer-v0.1.0-alpha.1-windows-x86_64.exe)
+
+普通用户只需要上面的安装程序。不要从 GitHub Release 下载或运行独立 Bridge、MCP、桌面更新载荷、SBOM 或签名文件。
+
+> **Windows Alpha 是测试渠道，不是稳定支持承诺。** `0.1.0-alpha.1` 已提供 Windows x86-64 签名更新与公开 prerelease；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
 ## 核心边界
 

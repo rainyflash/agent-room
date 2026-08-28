@@ -101,6 +101,13 @@ jobs:
           --highest-sequence "$HIGHEST_SEQUENCE"
           --now-unix-seconds "$(date +%s)"
           --certificate-identity-regexp "$CERTIFICATE_IDENTITY"
+      - name: 整理面向普通用户的 Release 下载入口
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          python tools/release_surface.py apply --repository "${{ github.repository }}" --tag "$TAG" --version "$VERSION"
       - name: 公开版本并原子推进渠道入口
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -129,4 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
-        run: gh release upload "$TAG" candidate/release-promotion-clients-published.json
+        run: |
+          gh release upload "$TAG" candidate/release-promotion-clients-published.json
+          VERSION="${TAG#v}"
+          python tools/release_surface.py apply --repository "${{ github.repository }}" --tag "$TAG" --version "$VERSION"

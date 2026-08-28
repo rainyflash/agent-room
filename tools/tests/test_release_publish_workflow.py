@@ -37,6 +37,15 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
             candidate.count("cosign-release: v3.1.3"),
         )
 
+    def test_发布前后都整理普通用户下载入口(self) -> None:
+        command = "python tools/release_surface.py apply"
+        publish = self.workflow.index('gh release edit "$TAG" --draft=false')
+        first_surface = self.workflow.index(command)
+        final_surface = self.workflow.rindex(command)
+
+        self.assertLess(first_surface, publish)
+        self.assertGreater(final_surface, publish)
+
 
 if __name__ == "__main__":
     unittest.main()
