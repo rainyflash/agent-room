@@ -62,8 +62,28 @@ class GhCliReleaseGateway:
     """通过已认证的 GitHub CLI 适配 Release REST API。"""
 
     def get_release(self, repository: str, tag: str) -> Mapping[str, object]:
-        value = self._json((f"repos/{repository}/releases/tags/{tag}",))
-        return require_mapping(value, "release")
+        value = self._json(
+            (
+                "--paginate",
+                "--slurp",
+                f"repos/{repository}/releases?per_page=100",
+            )
+        )
+        if not isinstance(value, list):
+            raise ReleaseSurfaceFailure("GitHub Release 分页响应必须是数组。")
+        matches: list[Mapping[str, object]] = []
+        for page in value:
+            if not isinstance(page, list):
+                raise ReleaseSurfaceFailure("GitHub Release 分页响应无效。")
+            for item in page:
+                release = require_mapping(item, "release")
+                if release.get("tag_name") == tag:
+                    matches.append(release)
+        if len(matches) != 1:
+            raise ReleaseSurfaceFailure(
+                f"必须且只能找到一个标签为 {tag} 的 Release，实际为 {len(matches)} 个。"
+            )
+        return matches[0]
 
     def list_assets(self, repository: str, release_id: int) -> Sequence[Mapping[str, object]]:
         value = self._json(

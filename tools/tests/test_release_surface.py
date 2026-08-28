@@ -78,15 +78,40 @@ class ReleaseSurfaceTests(unittest.TestCase):
                 [{"id": 1, "name": self.installer, "label": None}],
             )
 
-    @patch.object(GhCliReleaseGateway, "_json", return_value={"id": 42})
-    def test_github_release_endpoint是单个受约束路径(self, request) -> None:
+    @patch.object(
+        GhCliReleaseGateway,
+        "_json",
+        return_value=[
+            [
+                {"id": 41, "tag_name": "v0.0.9"},
+                {"id": 42, "tag_name": "v0.1.0-alpha.1", "draft": True},
+            ]
+        ],
+    )
+    def test_github_release分页包含草稿并精确匹配标签(self, request) -> None:
         gateway = GhCliReleaseGateway()
 
-        gateway.get_release(self.repository, self.tag)
+        release = gateway.get_release(self.repository, self.tag)
 
+        self.assertEqual(release["id"], 42)
         request.assert_called_once_with(
-            (f"repos/{self.repository}/releases/tags/{self.tag}",)
+            (
+                "--paginate",
+                "--slurp",
+                f"repos/{self.repository}/releases?per_page=100",
+            )
         )
+
+    @patch.object(
+        GhCliReleaseGateway,
+        "_json",
+        return_value=[[{"id": 41, "tag_name": "v0.0.9"}]],
+    )
+    def test_github_release缺少目标标签会响亮失败(self, _request) -> None:
+        gateway = GhCliReleaseGateway()
+
+        with self.assertRaisesRegex(ReleaseSurfaceFailure, "实际为 0 个"):
+            gateway.get_release(self.repository, self.tag)
 
 
 if __name__ == "__main__":
