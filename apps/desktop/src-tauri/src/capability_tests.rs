@@ -18,12 +18,27 @@ fn 主窗口能力不包含文件_shell_或进程通配权限() {
             && !permission.starts_with("process:")
             && !permission.contains('*')
     }));
+    let desktop_permissions = permissions
+        .iter()
+        .copied()
+        .filter(|permission| permission.starts_with("allow-desktop-"))
+        .collect::<Vec<_>>();
     assert_eq!(
-        permissions
-            .iter()
-            .filter(|permission| permission.starts_with("allow-desktop-"))
-            .count(),
-        11
+        desktop_permissions,
+        [
+            "allow-desktop-runtime-snapshot",
+            "allow-desktop-retry-bridge",
+            "allow-desktop-set-autostart",
+            "allow-desktop-open-authorization",
+            "allow-desktop-check-update",
+            "allow-desktop-install-update",
+            "allow-desktop-detect-agent-hosts",
+            "allow-desktop-plan-agent-host",
+            "allow-desktop-apply-agent-host",
+            "allow-desktop-remove-agent-host",
+            "allow-desktop-bootstrap-default-agent",
+            "allow-desktop-configure-agent-runtime",
+        ]
     );
 }
 

@@ -1,18 +1,11 @@
 import { RouterProvider } from '@tanstack/react-router';
-import { lazy, Suspense, useMemo } from 'react';
+import { useMemo } from 'react';
 
 import { AppServicesProvider, type DesktopAppServices, type RuntimeMode } from '@/app/app-services';
 import { desktopRouter } from '@/app/desktop-router';
+import { WebAppProviders } from '@/app/web-app-providers';
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
-
-const WebAppProviders =
-  import.meta.env.MODE === 'desktop'
-    ? null
-    : lazy(async () => {
-        const module = await import('@/app/web-app-providers');
-        return { default: module.WebAppProviders };
-      });
 
 export type AppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -30,14 +23,7 @@ export function AppProviders({ config, runtimeMode }: AppProvidersProps) {
       </AppServicesProvider>
     );
   }
-  if (WebAppProviders === null) {
-    throw new Error('Web providers are excluded from the packaged desktop build.');
-  }
-  return (
-    <Suspense fallback={null}>
-      <WebAppProviders config={config} desktop={desktop} />
-    </Suspense>
-  );
+  return <WebAppProviders config={config} desktop={desktop} />;
 }
 
 export function resolveRuntimeMode(buildMode: string, desktopAvailable: boolean): RuntimeMode {

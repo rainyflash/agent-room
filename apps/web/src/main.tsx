@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 
-import { AppProviders } from '@/app/app-providers';
+import { AppProviders } from '@/app/runtime-app-providers';
 import { ConfigurationFailure } from '@/app/configuration-failure';
 import { loadRuntimeConfig } from '@/shared/config/runtime-config';
 import { i18n, initializeI18n, resolveSystemLanguage } from '@/shared/i18n/i18n';
