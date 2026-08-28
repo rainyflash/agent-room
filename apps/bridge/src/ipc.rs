@@ -6,12 +6,18 @@ use agent_room_bridge_core::ipc::{
     IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion,
 };
 use agent_room_bridge_core::messages::{MessageTimelineQueryRepository, OpenMessageContentService};
+use agent_room_bridge_core::onboarding::{
+    BootstrapDefaultAgent, BridgeOnboardingFailure, BridgeOnboardingFailureKind,
+    BridgeOnboardingService,
+};
 use agent_room_bridge_ipc::{
-    IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcErrorCategory, IpcFrame, IpcFrameCodec,
-    IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName, IpcSharedSecret, IpcVersion,
-    client_offer_from_frame, server_agreement_frame, verify_challenge_proof,
+    IpcBridgeState, IpcChallenge, IpcChallengeProof, IpcDefaultAgentBootstrap, IpcErrorCategory,
+    IpcFrame, IpcFrameCodec, IpcMethod, IpcProtocolFailureKind, IpcResponse, IpcScopeName,
+    IpcSharedSecret, IpcVersion, client_offer_from_frame, server_agreement_frame,
+    verify_challenge_proof,
 };
 use agent_room_bridge_local_adapter::LocalIpcEndpoint;
+use agent_room_domain::rooms::RoomLanguage;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use interprocess::local_socket::{
     ListenerOptions,
@@ -54,13 +60,27 @@ pub(crate) trait BridgeIpcRequestHandler: Send + Sync {
 
 pub(crate) struct FoundationBridgeIpcRequestHandler {
     status_reader: Arc<dyn BridgeStatusReader>,
+    onboarding: Option<Arc<BridgeOnboardingService>>,
     agent_runtime: Option<AgentRuntimeIpcFacade>,
 }
 
 impl FoundationBridgeIpcRequestHandler {
+    #[cfg(test)]
     pub(crate) fn new(status_reader: Arc<dyn BridgeStatusReader>) -> Self {
         Self {
             status_reader,
+            onboarding: None,
+            agent_runtime: None,
+        }
+    }
+
+    pub(crate) fn with_onboarding(
+        status_reader: Arc<dyn BridgeStatusReader>,
+        onboarding: Arc<BridgeOnboardingService>,
+    ) -> Self {
+        Self {
+            status_reader,
+            onboarding: Some(onboarding),
             agent_runtime: None,
         }
     }
@@ -74,6 +94,7 @@ impl FoundationBridgeIpcRequestHandler {
     ) -> Self {
         Self {
             status_reader: status_reader.clone(),
+            onboarding: None,
             agent_runtime: Some(AgentRuntimeIpcFacade::new(
                 status_reader,
                 agent_runtime_reader,
@@ -89,6 +110,47 @@ impl FoundationBridgeIpcRequestHandler {
             .as_ref()
             .ok_or_else(agent_runtime_unavailable)
     }
+
+    fn onboarding(&self) -> Result<&BridgeOnboardingService, BridgeIpcDispatchFailure> {
+        self.onboarding.as_deref().ok_or_else(|| {
+            BridgeIpcDispatchFailure::new(
+                "bridge.onboarding.unavailable",
+                IpcErrorCategory::DependencyUnavailable,
+                false,
+            )
+        })
+    }
+
+    async fn bootstrap_default_agent(
+        &self,
+        preferred_language: Option<String>,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let preferred_language = preferred_language
+            .map(RoomLanguage::new)
+            .transpose()
+            .map_err(|_| {
+                BridgeIpcDispatchFailure::new(
+                    "bridge.ipc.language_invalid",
+                    IpcErrorCategory::Validation,
+                    false,
+                )
+            })?;
+        let bootstrap = self
+            .onboarding()?
+            .bootstrap(BootstrapDefaultAgent { preferred_language })
+            .await
+            .map_err(map_onboarding_failure)?;
+        Ok(IpcResponse::DefaultAgentBootstrap {
+            bootstrap: IpcDefaultAgentBootstrap {
+                agent_id: bootstrap.agent_id.to_string(),
+                display_name: bootstrap.display_name,
+                public_lobby_catalog_id: bootstrap.public_lobby_catalog_id.to_string(),
+                lobby_language: bootstrap
+                    .lobby_language
+                    .map(|language| language.as_str().to_owned()),
+            },
+        })
+    }
 }
 
 impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
@@ -103,6 +165,10 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     })
                 }
                 IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
+                IpcMethod::BootstrapDefaultAgent(request) => {
+                    self.bootstrap_default_agent(request.preferred_language)
+                        .await
+                }
                 IpcMethod::ListPreviews(request) => {
                     self.agent_runtime()?.list_previews(request).await
                 }
@@ -129,6 +195,36 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 }
             }
         })
+    }
+}
+
+const fn map_onboarding_failure(failure: BridgeOnboardingFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        BridgeOnboardingFailureKind::NotAuthorized => BridgeIpcDispatchFailure::new(
+            "bridge.onboarding.device_authorization_required",
+            IpcErrorCategory::Authentication,
+            false,
+        ),
+        BridgeOnboardingFailureKind::Unavailable => BridgeIpcDispatchFailure::new(
+            "bridge.onboarding.control_plane_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        BridgeOnboardingFailureKind::PublicLobbyUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.onboarding.public_lobby_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        BridgeOnboardingFailureKind::InvalidResponse => BridgeIpcDispatchFailure::new(
+            "bridge.onboarding.response_invalid",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        BridgeOnboardingFailureKind::Internal => BridgeIpcDispatchFailure::new(
+            "bridge.onboarding.internal",
+            IpcErrorCategory::Internal,
+            false,
+        ),
     }
 }
 
@@ -691,6 +787,10 @@ mod tests {
             OpenMessageContentDependencies, OpenMessageContentService, ProjectedMessageActor,
             ProjectedMessagePreview,
         },
+        onboarding::{
+            BridgeDefaultAgent, BridgeOnboardingService, BridgePublicLobby,
+            ControlPlaneOnboardingGateway, ControlPlaneOnboardingResult,
+        },
         ports::{
             AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
             StatusEventIdentifierFactory,
@@ -706,12 +806,12 @@ mod tests {
         },
     };
     use agent_room_bridge_ipc::{
-        IpcApproveHandoffRequest, IpcCaller, IpcChallenge, IpcErrorCategory, IpcFrame,
-        IpcFrameCodec, IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose,
-        IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission, IpcMessageProvenance,
-        IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest, IpcPublishStatusRequest,
-        IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState,
-        IpcVersion, IpcWorkStatus, create_challenge_proof,
+        IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcCaller, IpcChallenge,
+        IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcGetPresenceRequest, IpcHandoffPermission,
+        IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
+        IpcMessageProvenance, IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest,
+        IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret,
+        IpcSubmissionState, IpcVersion, IpcWorkStatus, create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
     use agent_room_domain::{
@@ -731,7 +831,7 @@ mod tests {
             MessageContentReference, MessagePreview, MessageProvenance, MessageRiskFlag,
             MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
         },
-        rooms::MatrixRoomReference,
+        rooms::{MatrixRoomReference, RoomLanguage},
         time::{DurationMillis, UtcMillis},
     };
     use agent_room_message_crypto_adapter::{AesGcmMessageContentCipher, MessageContentRootKey};
@@ -759,6 +859,65 @@ mod tests {
                 started_at_unix_ms: 1_000,
             }
         }
+    }
+
+    struct 固定首次引导 {
+        agent_id: AgentId,
+        lobby_id: RoomCatalogId,
+    }
+
+    impl ControlPlaneOnboardingGateway for 固定首次引导 {
+        fn ensure_default_agent(
+            &self,
+        ) -> PortFuture<'_, ControlPlaneOnboardingResult<BridgeDefaultAgent>> {
+            let agent = BridgeDefaultAgent {
+                agent_id: self.agent_id,
+                display_name: "桌面 Agent".to_owned(),
+            };
+            Box::pin(async move { Ok(agent) })
+        }
+
+        fn list_public_lobbies(
+            &self,
+        ) -> PortFuture<'_, ControlPlaneOnboardingResult<Vec<BridgePublicLobby>>> {
+            let lobby = BridgePublicLobby {
+                catalog_id: self.lobby_id,
+                language: Some(RoomLanguage::new("zh-CN").expect("测试语言有效")),
+            };
+            Box::pin(async move { Ok(vec![lobby]) })
+        }
+    }
+
+    #[tokio::test]
+    async fn 首次引导_ipc_只返回非秘密_agent_与大厅目标() {
+        let agent_id = AgentId::from_uuid(Uuid::now_v7());
+        let lobby_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+        let onboarding = Arc::new(BridgeOnboardingService::new(Arc::new(固定首次引导 {
+            agent_id,
+            lobby_id,
+        })));
+        let handler =
+            FoundationBridgeIpcRequestHandler::with_onboarding(Arc::new(固定状态), onboarding);
+
+        let response = handler
+            .dispatch(IpcMethod::BootstrapDefaultAgent(
+                IpcBootstrapDefaultAgentRequest {
+                    preferred_language: Some("zh-CN".to_owned()),
+                },
+            ))
+            .await
+            .expect("首次引导 IPC 应成功");
+
+        let IpcResponse::DefaultAgentBootstrap { bootstrap } = response else {
+            panic!("首次引导必须返回闭合摘要");
+        };
+        assert_eq!(bootstrap.agent_id, agent_id.to_string());
+        assert_eq!(bootstrap.display_name, "桌面 Agent");
+        assert_eq!(bootstrap.public_lobby_catalog_id, lobby_id.to_string());
+        assert_eq!(bootstrap.lobby_language.as_deref(), Some("zh-CN"));
+        let serialized = serde_json::to_string(&bootstrap).expect("摘要可序列化");
+        assert!(!serialized.contains("token"));
+        assert!(!serialized.contains("secret"));
     }
 
     #[derive(Clone)]

@@ -606,7 +606,7 @@ impl BridgeSupervisorActor {
                 }
                 Ok(IpcResponse::SelfSummary { .. }) => ProbeOutcome::Pending,
                 Ok(_) => ProbeOutcome::Blocked("desktop.bridge.self_response_invalid".to_owned()),
-                Err(failure) if failure.code() == "bridge.ipc.agent_runtime_unavailable" => {
+                Err(failure) if failure.code() == "bridge.agent_runtime_unavailable" => {
                     ProbeOutcome::Authorized
                 }
                 Err(failure) if failure.kind() == LocalBridgeClientFailureKind::Timeout => {

@@ -47,6 +47,7 @@ use agent_room_bridge_core::{
         MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind, MessageSyncService,
         OpenMessageContentDependencies, OpenMessageContentService,
     },
+    onboarding::BridgeOnboardingService,
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
         StatusEventIdentifierFactory,
@@ -108,7 +109,7 @@ use agent_room_bridge::control_plane::{
     ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneAutomationAuthorizationGateway,
     ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
     ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneLobbyEntryGateway,
-    ReqwestControlPlaneMessageContentGateway,
+    ReqwestControlPlaneMessageContentGateway, ReqwestControlPlaneOnboardingGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -168,7 +169,10 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
             runtime.content.clone(),
             Arc::new(SystemClock),
         )),
-        None => Arc::new(FoundationBridgeIpcRequestHandler::new(status.clone())),
+        None => Arc::new(FoundationBridgeIpcRequestHandler::with_onboarding(
+            status.clone(),
+            initialize_onboarding(&config, device_session.service.clone())?,
+        )),
     };
     let server = BridgeIpcServer::bind(
         &paths,
@@ -190,6 +194,21 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     status.finish_starting();
     announce_supervisor_ready()?;
     run_until_shutdown(server, status, device_session, agent_session).await
+}
+
+fn initialize_onboarding(
+    config: &BridgeConfig,
+    device_session: Arc<BridgeSessionService>,
+) -> Result<Arc<BridgeOnboardingService>, BridgeRuntimeError> {
+    let gateway = ReqwestControlPlaneOnboardingGateway::new(
+        &ControlPlaneHttpConfig {
+            base_url: config.control_plane_url.clone(),
+            request_timeout: config.request_timeout,
+        },
+        device_session,
+    )
+    .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+    Ok(Arc::new(BridgeOnboardingService::new(Arc::new(gateway))))
 }
 
 struct DeviceSessionRuntime {

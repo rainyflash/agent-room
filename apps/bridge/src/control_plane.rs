@@ -18,6 +18,11 @@ use agent_room_bridge_core::{
         AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailure,
         AgentInstanceVerificationGatewayFailureKind, AgentInstanceVerificationGatewayResult,
     },
+    onboarding::{
+        BridgeDefaultAgent, BridgePublicLobby, ControlPlaneOnboardingFailure,
+        ControlPlaneOnboardingFailureKind, ControlPlaneOnboardingGateway,
+        ControlPlaneOnboardingResult,
+    },
     ports::{
         ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway,
         ControlPlaneDeviceResult, RefreshBridgeDevice, RegisterBridgeDevice,
@@ -30,7 +35,10 @@ use agent_room_bridge_core::{
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
     identity::Principal,
-    ids::{AdapterBindingId, AgentId, AgentInstanceId, ContentId, DeviceId, PrincipalId},
+    ids::{
+        AdapterBindingId, AgentId, AgentInstanceId, ContentId, DeviceId, PrincipalId, RoomCatalogId,
+    },
+    rooms::RoomLanguage,
     time::UtcMillis,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -53,6 +61,8 @@ pub use message_content::ReqwestControlPlaneMessageContentGateway;
 
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";
 const REFRESH_DEVICE_PATH: &str = "auth/devices/refresh";
+const DEVICE_DEFAULT_AGENT_PATH: &str = "/onboarding/device/default-agent";
+const PUBLIC_LOBBIES_PATH: &str = "/lobbies/public";
 const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
 const PROOF_ISSUED_AT_HEADER: &str = "x-agent-room-proof-issued-at";
 const PROOF_NONCE_HEADER: &str = "x-agent-room-proof-nonce";
@@ -78,6 +88,12 @@ pub struct ReqwestAgentInstanceVerificationGateway {
 }
 
 pub struct ReqwestControlPlaneAgentRuntimeGateway {
+    client: Client,
+    base_url: Url,
+    authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+}
+
+pub struct ReqwestControlPlaneOnboardingGateway {
     client: Client,
     base_url: Url,
     authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
@@ -280,6 +296,67 @@ impl ReqwestControlPlaneAgentRuntimeGateway {
     }
 }
 
+impl ReqwestControlPlaneOnboardingGateway {
+    /// 创建以设备持有证明恢复默认 Agent、并只读取公开大厅目录的网关。
+    ///
+    /// # Errors
+    ///
+    /// 控制面地址、明文传输边界、超时或 HTTP 客户端配置无效时返回错误。
+    pub fn new(
+        config: &ControlPlaneHttpConfig,
+        authorizer: Arc<dyn ControlPlaneRequestAuthorizer>,
+    ) -> Result<Self, ControlPlaneHttpConfigurationError> {
+        let (client, base_url) = configured_client(config)?;
+        Ok(Self {
+            client,
+            base_url,
+            authorizer,
+        })
+    }
+
+    async fn ensure_default_agent_internal(
+        &self,
+    ) -> ControlPlaneOnboardingResult<BridgeDefaultAgent> {
+        let authorized = self
+            .authorizer
+            .authorize("PUT", DEVICE_DEFAULT_AGENT_PATH, "")
+            .await
+            .map_err(map_onboarding_session_failure)?;
+        let request_url = self
+            .base_url
+            .join(DEVICE_DEFAULT_AGENT_PATH.trim_start_matches('/'))
+            .map_err(|_| onboarding_failure(ControlPlaneOnboardingFailureKind::Internal))?;
+        let request = signed_onboarding_request(
+            self.client.put(request_url),
+            &authorized,
+            "PUT",
+            DEVICE_DEFAULT_AGENT_PATH,
+        )?;
+        let response = request
+            .body(Vec::new())
+            .send()
+            .await
+            .map_err(onboarding_transport_failure)?;
+        decode_default_agent_response(response).await
+    }
+
+    async fn list_public_lobbies_internal(
+        &self,
+    ) -> ControlPlaneOnboardingResult<Vec<BridgePublicLobby>> {
+        let request_url = self
+            .base_url
+            .join(PUBLIC_LOBBIES_PATH.trim_start_matches('/'))
+            .map_err(|_| onboarding_failure(ControlPlaneOnboardingFailureKind::Internal))?;
+        let response = self
+            .client
+            .get(request_url)
+            .send()
+            .await
+            .map_err(onboarding_transport_failure)?;
+        decode_public_lobbies_response(response).await
+    }
+}
+
 impl AgentInstanceVerificationGateway for ReqwestAgentInstanceVerificationGateway {
     fn resolve(
         &self,
@@ -296,6 +373,20 @@ impl ControlPlaneAgentRuntimeGateway for ReqwestControlPlaneAgentRuntimeGateway 
         intent: &'a AgentRuntimeRegistrationIntent,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
         Box::pin(self.register_internal(intent))
+    }
+}
+
+impl ControlPlaneOnboardingGateway for ReqwestControlPlaneOnboardingGateway {
+    fn ensure_default_agent(
+        &self,
+    ) -> PortFuture<'_, ControlPlaneOnboardingResult<BridgeDefaultAgent>> {
+        Box::pin(self.ensure_default_agent_internal())
+    }
+
+    fn list_public_lobbies(
+        &self,
+    ) -> PortFuture<'_, ControlPlaneOnboardingResult<Vec<BridgePublicLobby>>> {
+        Box::pin(self.list_public_lobbies_internal())
     }
 }
 
@@ -374,6 +465,26 @@ struct AgentRuntimeResponse {
     refresh_token: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefaultAgentResponse {
+    agent_id: String,
+    display_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicLobbyDirectoryResponse {
+    lobbies: Vec<PublicLobbyResponse>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicLobbyResponse {
+    catalog_id: String,
+    language: Option<String>,
+}
+
 fn signed_request(
     request: reqwest::RequestBuilder,
     authorized: &AuthorizedControlPlaneRequest,
@@ -392,6 +503,16 @@ fn signed_agent_runtime_request(
 ) -> Result<reqwest::RequestBuilder, ControlPlaneAgentRuntimeFailure> {
     signed_request_headers(request, authorized, expected_method, expected_target)
         .map_err(|()| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))
+}
+
+fn signed_onboarding_request(
+    request: reqwest::RequestBuilder,
+    authorized: &AuthorizedControlPlaneRequest,
+    expected_method: &str,
+    expected_target: &str,
+) -> Result<reqwest::RequestBuilder, ControlPlaneOnboardingFailure> {
+    signed_request_headers(request, authorized, expected_method, expected_target)
+        .map_err(|()| onboarding_failure(ControlPlaneOnboardingFailureKind::Internal))
 }
 
 fn signed_request_headers(
@@ -473,6 +594,65 @@ async fn decode_agent_runtime_response(
     let response = serde_json::from_slice::<AgentRuntimeResponse>(&body)
         .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::InvalidResponse))?;
     response.try_into_runtime(requested_agent_id)
+}
+
+async fn decode_default_agent_response(
+    response: reqwest::Response,
+) -> ControlPlaneOnboardingResult<BridgeDefaultAgent> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(onboarding_status_failure(status));
+    }
+    let body = read_limited_response_body(response)
+        .await
+        .map_err(|()| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    let response = serde_json::from_slice::<DefaultAgentResponse>(&body)
+        .map_err(|_| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    let agent_id = parse_v7_id(&response.agent_id)
+        .map(AgentId::from_uuid)
+        .map_err(|()| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    validate_account_text(&response.display_name, 128)
+        .map_err(|()| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    Ok(BridgeDefaultAgent {
+        agent_id,
+        display_name: response.display_name,
+    })
+}
+
+async fn decode_public_lobbies_response(
+    response: reqwest::Response,
+) -> ControlPlaneOnboardingResult<Vec<BridgePublicLobby>> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(onboarding_status_failure(status));
+    }
+    let body = read_limited_response_body(response)
+        .await
+        .map_err(|()| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    let response = serde_json::from_slice::<PublicLobbyDirectoryResponse>(&body)
+        .map_err(|_| onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse))?;
+    response
+        .lobbies
+        .into_iter()
+        .map(|lobby| {
+            let catalog_id = parse_v7_id(&lobby.catalog_id)
+                .map(RoomCatalogId::from_uuid)
+                .map_err(|()| {
+                    onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse)
+                })?;
+            let language = lobby
+                .language
+                .map(RoomLanguage::new)
+                .transpose()
+                .map_err(|_| {
+                    onboarding_failure(ControlPlaneOnboardingFailureKind::InvalidResponse)
+                })?;
+            Ok(BridgePublicLobby {
+                catalog_id,
+                language,
+            })
+        })
+        .collect()
 }
 
 async fn read_limited_body(response: reqwest::Response) -> ControlPlaneDeviceResult<Vec<u8>> {
@@ -772,6 +952,26 @@ fn agent_runtime_status_failure(status: StatusCode) -> ControlPlaneAgentRuntimeF
     agent_runtime_failure(kind)
 }
 
+fn onboarding_transport_failure(_error: reqwest::Error) -> ControlPlaneOnboardingFailure {
+    onboarding_failure(ControlPlaneOnboardingFailureKind::Unavailable)
+}
+
+fn onboarding_status_failure(status: StatusCode) -> ControlPlaneOnboardingFailure {
+    let kind = match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            ControlPlaneOnboardingFailureKind::AuthenticationRejected
+        }
+        StatusCode::REQUEST_TIMEOUT
+        | StatusCode::TOO_MANY_REQUESTS
+        | StatusCode::BAD_GATEWAY
+        | StatusCode::SERVICE_UNAVAILABLE
+        | StatusCode::GATEWAY_TIMEOUT => ControlPlaneOnboardingFailureKind::Unavailable,
+        _ if status.is_server_error() => ControlPlaneOnboardingFailureKind::Unavailable,
+        _ => ControlPlaneOnboardingFailureKind::InvalidResponse,
+    };
+    onboarding_failure(kind)
+}
+
 fn map_session_failure(failure: BridgeSessionFailure) -> AgentInstanceVerificationGatewayFailure {
     let kind = match failure.kind() {
         BridgeSessionFailureKind::NotAuthorized
@@ -810,6 +1010,23 @@ fn map_agent_runtime_session_failure(
     agent_runtime_failure(kind)
 }
 
+fn map_onboarding_session_failure(failure: BridgeSessionFailure) -> ControlPlaneOnboardingFailure {
+    let kind = match failure.kind() {
+        BridgeSessionFailureKind::NotAuthorized
+        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+            ControlPlaneOnboardingFailureKind::AuthenticationRejected
+        }
+        BridgeSessionFailureKind::SecureStorageUnavailable
+        | BridgeSessionFailureKind::ControlPlaneUnavailable => {
+            ControlPlaneOnboardingFailureKind::Unavailable
+        }
+        BridgeSessionFailureKind::CorruptSecureStorage
+        | BridgeSessionFailureKind::InvalidControlPlaneResponse
+        | BridgeSessionFailureKind::Internal => ControlPlaneOnboardingFailureKind::Internal,
+    };
+    onboarding_failure(kind)
+}
+
 const fn failure(kind: ControlPlaneDeviceFailureKind) -> ControlPlaneDeviceFailure {
     ControlPlaneDeviceFailure::new(kind)
 }
@@ -824,6 +1041,12 @@ const fn agent_runtime_failure(
     kind: ControlPlaneAgentRuntimeFailureKind,
 ) -> ControlPlaneAgentRuntimeFailure {
     ControlPlaneAgentRuntimeFailure::new(kind)
+}
+
+const fn onboarding_failure(
+    kind: ControlPlaneOnboardingFailureKind,
+) -> ControlPlaneOnboardingFailure {
+    ControlPlaneOnboardingFailure::new(kind)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -865,6 +1088,7 @@ mod tests {
         agent_verification::{
             AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailureKind,
         },
+        onboarding::ControlPlaneOnboardingGateway,
         ports::{
             ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway, RefreshBridgeDevice,
             RegisterBridgeDevice,
@@ -886,7 +1110,7 @@ mod tests {
         extract::{Path, Request},
         http::{HeaderMap, StatusCode},
         response::IntoResponse,
-        routing::{get, post},
+        routing::{get, post, put},
     };
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
@@ -895,11 +1119,12 @@ mod tests {
     use super::{
         ControlPlaneHttpConfig, ControlPlaneHttpConfigurationError,
         ReqwestAgentInstanceVerificationGateway, ReqwestControlPlaneAgentRuntimeGateway,
-        ReqwestControlPlaneDeviceGateway,
+        ReqwestControlPlaneDeviceGateway, ReqwestControlPlaneOnboardingGateway,
     };
 
     const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
     const INSTANCE_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
+    const LOBBY_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 
     #[derive(Default)]
     struct 测试请求授权器 {
@@ -1147,6 +1372,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 桌面首次引导只给默认_agent_请求签名并解析公开大厅() {
+        let app = Router::new()
+            .route(
+                "/onboarding/device/default-agent",
+                put(|headers: HeaderMap, request: Request| async move {
+                    let valid = header(&headers, "authorization") == Some("Bearer access-token")
+                        && header(&headers, "x-agent-room-device-id")
+                            == Some("00000000-0000-0000-0000-000000000001")
+                        && header(&headers, "x-agent-room-proof-issued-at") == Some("1000")
+                        && header(&headers, "x-agent-room-proof-nonce") == Some("0123456789abcdef")
+                        && request.body().size_hint().exact() == Some(0);
+                    if valid {
+                        Json(json!({
+                            "agentId": AGENT_ID,
+                            "displayName": "Codex Builder",
+                            "matrixUserId": "@agent:example.org",
+                            "slug": "codex-builder"
+                        }))
+                        .into_response()
+                    } else {
+                        StatusCode::BAD_REQUEST.into_response()
+                    }
+                }),
+            )
+            .route(
+                "/lobbies/public",
+                get(|| async {
+                    Json(json!({
+                        "lobbies": [{
+                            "catalogId": LOBBY_ID,
+                            "language": "zh-CN",
+                            "name": "公共大厅"
+                        }]
+                    }))
+                }),
+            );
+        let authorizer = Arc::new(测试请求授权器::default());
+        let gateway = onboarding_gateway(spawn_server(app).await, authorizer.clone());
+
+        let agent = gateway
+            .ensure_default_agent()
+            .await
+            .expect("默认 Agent 响应可解析");
+        let lobbies = gateway
+            .list_public_lobbies()
+            .await
+            .expect("公开大厅目录可解析");
+
+        assert_eq!(agent.agent_id.to_string(), AGENT_ID);
+        assert_eq!(agent.display_name, "Codex Builder");
+        assert_eq!(lobbies.len(), 1);
+        assert_eq!(lobbies[0].catalog_id.to_string(), LOBBY_ID);
+        assert_eq!(
+            lobbies[0].language.as_ref().map(|value| value.as_str()),
+            Some("zh-CN")
+        );
+        assert_eq!(
+            authorizer
+                .requests
+                .lock()
+                .expect("授权请求记录锁可用")
+                .as_slice(),
+            [(
+                "PUT".to_owned(),
+                "/onboarding/device/default-agent".to_owned(),
+                String::new(),
+            )]
+        );
+    }
+
+    #[tokio::test]
     async fn agent_运行时网关拒绝错配身份和未知响应字段() {
         let wrong_identity = Router::new().route(
             "/agents/{agent_id}/instances",
@@ -1305,6 +1601,20 @@ mod tests {
             authorizer,
         )
         .expect("本地 Agent 运行时网关地址有效")
+    }
+
+    fn onboarding_gateway(
+        base_url: String,
+        authorizer: Arc<测试请求授权器>,
+    ) -> ReqwestControlPlaneOnboardingGateway {
+        ReqwestControlPlaneOnboardingGateway::new(
+            &ControlPlaneHttpConfig {
+                base_url,
+                request_timeout: Duration::from_secs(2),
+            },
+            authorizer,
+        )
+        .expect("本地首次引导网关地址有效")
     }
 
     async fn spawn_server(app: Router) -> String {

@@ -83,6 +83,7 @@ pub struct IpcVersion {
 pub enum IpcScopeName {
     BridgeStatusRead,
     SelfRead,
+    AgentBootstrap,
     PreviewsRead,
     PresenceRead,
     ContentRead,
@@ -166,6 +167,7 @@ impl From<IpcScopeName> for IpcScope {
         match value {
             IpcScopeName::BridgeStatusRead => Self::BridgeStatusRead,
             IpcScopeName::SelfRead => Self::SelfRead,
+            IpcScopeName::AgentBootstrap => Self::AgentBootstrap,
             IpcScopeName::PreviewsRead => Self::PreviewsRead,
             IpcScopeName::PresenceRead => Self::PresenceRead,
             IpcScopeName::ContentRead => Self::ContentRead,
@@ -183,6 +185,7 @@ impl From<IpcScope> for IpcScopeName {
         match value {
             IpcScope::BridgeStatusRead => Self::BridgeStatusRead,
             IpcScope::SelfRead => Self::SelfRead,
+            IpcScope::AgentBootstrap => Self::AgentBootstrap,
             IpcScope::PreviewsRead => Self::PreviewsRead,
             IpcScope::PresenceRead => Self::PresenceRead,
             IpcScope::ContentRead => Self::ContentRead,

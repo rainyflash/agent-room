@@ -9,6 +9,7 @@ use crate::limits;
 pub enum IpcMethod {
     BridgeStatus,
     GetSelf,
+    BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
@@ -24,6 +25,7 @@ impl IpcMethod {
         match self {
             Self::BridgeStatus => "bridge_status",
             Self::GetSelf => "get_self",
+            Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
@@ -39,6 +41,7 @@ impl IpcMethod {
         match self {
             Self::BridgeStatus => IpcScope::BridgeStatusRead,
             Self::GetSelf => IpcScope::SelfRead,
+            Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
@@ -58,6 +61,7 @@ impl IpcMethod {
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
             Self::BridgeStatus | Self::GetSelf => Ok(()),
+            Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
@@ -66,6 +70,22 @@ impl IpcMethod {
             Self::ApproveHandoff(request) => request.validate(),
             Self::ConsumeHandoff(request) | Self::DeclineHandoff(request) => request.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcBootstrapDefaultAgentRequest {
+    pub preferred_language: Option<String>,
+}
+
+impl IpcBootstrapDefaultAgentRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_optional_bounded(
+            self.preferred_language.as_deref(),
+            limits::LANGUAGE_BYTES,
+            "bridge.ipc.language_invalid",
+        )
     }
 }
 
@@ -301,6 +321,9 @@ pub enum IpcResponse {
     SelfSummary {
         summary: IpcSelfSummary,
     },
+    DefaultAgentBootstrap {
+        bootstrap: IpcDefaultAgentBootstrap,
+    },
     MessagePreviews {
         previews: Vec<IpcMessagePreviewSummary>,
         #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
@@ -327,6 +350,15 @@ pub enum IpcResponse {
     DeclinedHandoff {
         handoff: IpcDeclinedHandoff,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcDefaultAgentBootstrap {
+    pub agent_id: String,
+    pub display_name: String,
+    pub public_lobby_catalog_id: String,
+    pub lobby_language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -621,9 +653,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        IpcApproveHandoffRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
-        IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
-        IpcPublishStatusRequest, IpcSendMessageRequest, IpcWorkStatus,
+        IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcHandoffPermission,
+        IpcHandoffPurpose, IpcHandoffRequest, IpcListPreviewsRequest, IpcMessageProvenance,
+        IpcMessageSensitivity, IpcMethod, IpcPublishStatusRequest, IpcSendMessageRequest,
+        IpcWorkStatus,
     };
 
     #[test]
@@ -631,6 +664,12 @@ mod tests {
         let id = Uuid::now_v7().to_string();
         let methods = [
             (IpcMethod::GetSelf, IpcScope::SelfRead),
+            (
+                IpcMethod::BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest {
+                    preferred_language: Some("zh-CN".to_owned()),
+                }),
+                IpcScope::AgentBootstrap,
+            ),
             (
                 IpcMethod::ListPreviews(IpcListPreviewsRequest {
                     room_id: None,

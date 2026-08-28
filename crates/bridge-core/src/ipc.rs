@@ -78,6 +78,7 @@ pub enum IpcCallerKind {
 pub enum IpcScope {
     BridgeStatusRead,
     SelfRead,
+    AgentBootstrap,
     PreviewsRead,
     PresenceRead,
     ContentRead,
@@ -196,11 +197,16 @@ pub struct FoundationIpcScopePolicy;
 impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
         match caller {
-            IpcCallerKind::McpServer => scope != IpcScope::HandoffApprove,
+            IpcCallerKind::McpServer => {
+                !matches!(scope, IpcScope::AgentBootstrap | IpcScope::HandoffApprove)
+            }
             IpcCallerKind::DesktopShell => {
                 matches!(
                     scope,
-                    IpcScope::BridgeStatusRead | IpcScope::SelfRead | IpcScope::HandoffApprove
+                    IpcScope::BridgeStatusRead
+                        | IpcScope::SelfRead
+                        | IpcScope::AgentBootstrap
+                        | IpcScope::HandoffApprove
                 )
             }
             IpcCallerKind::DiagnosticCli => scope == IpcScope::BridgeStatusRead,
@@ -436,10 +442,12 @@ mod tests {
         );
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::SelfRead));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::AgentBootstrap));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::ContentRead));
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::MessageSend));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::HandoffApprove));
+        assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::AgentBootstrap));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
 
