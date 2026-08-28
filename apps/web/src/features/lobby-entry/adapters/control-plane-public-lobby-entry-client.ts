@@ -6,6 +6,7 @@ import {
   type PublicLobbyEntryGateway,
   type PublicLobbyEntryTarget,
 } from '@/features/lobby-entry/domain/public-lobby-entry';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 import { uuidV7Schema } from '@/shared/validation/identifiers';
 
@@ -47,7 +48,10 @@ export class ControlPlanePublicLobbyEntryClient implements PublicLobbyEntryGatew
     }, this.#timeoutMs);
     try {
       const response = await this.#fetch(
-        new URL(`/lobbies/${encodeURIComponent(catalogId)}/observation`, this.#baseUrl),
+        controlPlaneEndpoint(
+          this.#baseUrl,
+          `/lobbies/${encodeURIComponent(catalogId)}/observation`,
+        ),
         {
           cache: 'no-store',
           credentials: 'include',

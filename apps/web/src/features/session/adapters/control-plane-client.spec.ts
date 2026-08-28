@@ -30,6 +30,21 @@ describe('ControlPlaneClient', () => {
     );
   });
 
+  it('通过同源 BFF 登录时保留部署路径前缀', () => {
+    const navigate = vi.fn();
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://app.agent-room.test/_agent-room/api',
+      fetch: vi.fn(),
+      navigate,
+    });
+
+    client.beginAuthentication('/connect', 'register');
+
+    expect(navigate).toHaveBeenCalledWith(
+      'https://app.agent-room.test/_agent-room/api/auth/oidc/start?returnTo=%2Fconnect&importDisplayName=true&importLocale=true&intent=register',
+    );
+  });
+
   it('把 401 精确映射为缺少会话而不是通用网络错误', async () => {
     const client = new ControlPlaneClient({
       baseUrl: 'https://api.agent-room.test',

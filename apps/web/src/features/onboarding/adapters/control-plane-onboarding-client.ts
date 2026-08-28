@@ -9,6 +9,7 @@ import {
   type OnboardingGateway,
   type PublicLobby,
 } from '@/features/onboarding/domain/onboarding';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const errorEnvelopeSchema = z.looseObject({
@@ -70,7 +71,7 @@ export class ControlPlaneOnboardingClient implements OnboardingGateway {
       controller.abort();
     }, this.#timeoutMs);
     try {
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         cache: 'no-store',
         credentials: 'include',
         headers: { Accept: 'application/json' },

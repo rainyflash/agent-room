@@ -359,6 +359,11 @@ class ProductionRenderingTests(unittest.TestCase):
         homeserver = self.paths.generated.joinpath("synapse", "homeserver.yaml").read_text(encoding="utf-8")
 
         matrix_client = next(client for client in realm["clients"] if client["clientId"] == "agent-room-matrix")
+        web_client = next(
+            client
+            for client in realm["clients"]
+            if client["clientId"] == "agent-room-web"
+        )
         self.assertIn(matrix_client["secret"], homeserver)
         self.assertIn(self.config.public.identity_origin, homeserver)
         self.assertNotIn("http://identity", homeserver)
@@ -374,6 +379,25 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertTrue(realm["registrationEmailAsUsername"])
         self.assertEqual(realm["actionTokenGeneratedByUserLifespan"], 60 * 60)
         self.assertEqual(realm["accessCodeLifespanUserAction"], 60 * 60)
+        self.assertEqual(
+            web_client["redirectUris"],
+            [f"{self.config.public.app_origin}/_agent-room/api/auth/oidc/callback"],
+        )
+
+    def test_browser_control_plane_uses_same_origin_gateway_without_removing_machine_api(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "AGENT_ROOM_BROWSER_CONTROL_PLANE_PATH_PREFIX=/_agent-room/api",
+            environment,
+        )
+        self.assertIn("handle_path /_agent-room/api/*", caddyfile)
+        self.assertIn(f"{self.config.public.api_domain} {{", caddyfile)
+        self.assertIn("reverse_proxy control-plane:8090", caddyfile)
 
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -440,6 +464,27 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(opened["actionTokenGeneratedByUserLifespan"], 60 * 60)
         self.assertEqual(opened["accessCodeLifespanUserAction"], 60 * 60)
         self.assertEqual(original["smtpServer"], {"password": "old"})
+
+        original_client = {
+            "id": "internal-client-id",
+            "redirectUris": ["https://api.example/old-callback"],
+            "secret": "preserved",
+            "webOrigins": ["https://old-app.example"],
+        }
+        updated_client = module.apply_web_client_policy(
+            original_client,
+            redirect_url="https://app.example/_agent-room/api/auth/oidc/callback",
+            frontend_origin="https://app.example",
+        )
+        self.assertEqual(
+            updated_client["redirectUris"],
+            ["https://app.example/_agent-room/api/auth/oidc/callback"],
+        )
+        self.assertEqual(updated_client["webOrigins"], ["https://app.example"])
+        self.assertEqual(updated_client["secret"], "preserved")
+        self.assertEqual(
+            original_client["redirectUris"], ["https://api.example/old-callback"]
+        )
 
     def test_nominal_memory_check_allows_only_bounded_system_reservation(self) -> None:
         gibibyte = 1024**3

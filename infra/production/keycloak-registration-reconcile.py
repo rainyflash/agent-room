@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""以失败关闭策略同步 Agent Room 的 Keycloak 注册配置。"""
+"""以失败关闭策略同步 Agent Room 的 Keycloak 登录与注册配置。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,12 @@ import ssl
 import sys
 from typing import Final
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
 REALM: Final = "agent-room"
+WEB_CLIENT_ID: Final = "agent-room-web"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
@@ -30,6 +31,24 @@ def require_environment(name: str) -> str:
     if not value or any(character in value for character in "\r\n\0"):
         raise ReconcileError(f"缺少或无效环境变量：{name}。")
     return value
+
+
+def require_https_url(name: str, *, origin_only: bool) -> str:
+    value = require_environment(name)
+    parsed = urlsplit(value)
+    invalid_path = origin_only and parsed.path not in {"", "/"}
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or invalid_path
+    ):
+        expected_kind = "Origin" if origin_only else "URL"
+        raise ReconcileError(f"{name} 必须是有效的 HTTPS {expected_kind}。")
+    return value.rstrip("/") if origin_only else value
 
 
 def read_secret(path: str, label: str) -> str:
@@ -111,6 +130,53 @@ def load_realm(base_url: str, token: str) -> dict[str, object]:
     return realm
 
 
+def load_web_client(base_url: str, token: str) -> dict[str, object]:
+    raw = request(
+        f"{base_url}/admin/realms/{quote(REALM, safe='')}/clients"
+        f"?clientId={quote(WEB_CLIENT_ID, safe='')}",
+        token=token,
+    )
+    try:
+        clients = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ReconcileError("Keycloak Web Client 响应不是有效 JSON。") from error
+    if not isinstance(clients, list) or len(clients) != 1 or not isinstance(clients[0], dict):
+        raise ReconcileError("Keycloak Web Client 不存在或不唯一。")
+    client_id = clients[0].get("id")
+    if not isinstance(client_id, str) or not client_id:
+        raise ReconcileError("Keycloak Web Client 缺少内部 ID。")
+    detail_raw = request(
+        f"{base_url}/admin/realms/{quote(REALM, safe='')}/clients/"
+        f"{quote(client_id, safe='')}",
+        token=token,
+    )
+    try:
+        client = json.loads(detail_raw)
+    except json.JSONDecodeError as error:
+        raise ReconcileError("Keycloak Web Client 详情不是有效 JSON。") from error
+    if not isinstance(client, dict) or client.get("id") != client_id:
+        raise ReconcileError("Keycloak Web Client 详情结构无效。")
+    return client
+
+
+def apply_web_client_policy(
+    client: dict[str, object],
+    *,
+    redirect_url: str,
+    frontend_origin: str,
+) -> dict[str, object]:
+    updated = dict(client)
+    updated.update(
+        {
+            "redirectUris": [redirect_url],
+            "webOrigins": [frontend_origin],
+            "standardFlowEnabled": True,
+            "directAccessGrantsEnabled": False,
+        }
+    )
+    return updated
+
+
 def apply_registration_policy(
     realm: dict[str, object],
     *,
@@ -146,6 +212,20 @@ def update_realm(base_url: str, token: str, realm: dict[str, object]) -> None:
         method="PUT",
         token=token,
         body=json.dumps(realm, ensure_ascii=False).encode("utf-8"),
+        content_type="application/json",
+    )
+
+
+def update_web_client(base_url: str, token: str, client: dict[str, object]) -> None:
+    client_id = client.get("id")
+    if not isinstance(client_id, str) or not client_id:
+        raise ReconcileError("Keycloak Web Client 缺少内部 ID。")
+    request(
+        f"{base_url}/admin/realms/{quote(REALM, safe='')}/clients/"
+        f"{quote(client_id, safe='')}",
+        method="PUT",
+        token=token,
+        body=json.dumps(client, ensure_ascii=False).encode("utf-8"),
         content_type="application/json",
     )
 
@@ -211,6 +291,18 @@ def reconcile() -> None:
     # 每次同步先关闭注册，后续任一步失败都不会留下半可用的注册入口。
     closed_realm = apply_registration_policy(realm, enabled=False, smtp=None)
     update_realm(base_url, token, closed_realm)
+    redirect_url = require_https_url("AGENT_ROOM_OIDC_REDIRECT_URL", origin_only=False)
+    frontend_origin = require_https_url("AGENT_ROOM_FRONTEND_ORIGIN", origin_only=True)
+    web_client = load_web_client(base_url, token)
+    update_web_client(
+        base_url,
+        token,
+        apply_web_client_policy(
+            web_client,
+            redirect_url=redirect_url,
+            frontend_origin=frontend_origin,
+        ),
+    )
     if mode == "closed":
         print("Keycloak 公开注册已关闭。")
         return

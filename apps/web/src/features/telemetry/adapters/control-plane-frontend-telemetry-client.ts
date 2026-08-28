@@ -2,6 +2,7 @@ import type {
   FrontendMetric,
   FrontendTelemetryGateway,
 } from '@/features/telemetry/domain/frontend-metric';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 
 export type ControlPlaneFrontendTelemetryClientOptions = {
   readonly baseUrl: string;
@@ -17,7 +18,7 @@ export class ControlPlaneFrontendTelemetryClient implements FrontendTelemetryGat
     baseUrl,
     fetch: fetchImplementation = globalThis.fetch.bind(globalThis),
   }: ControlPlaneFrontendTelemetryClientOptions) {
-    this.#endpoint = new URL('/telemetry/frontend', baseUrl);
+    this.#endpoint = controlPlaneEndpoint(baseUrl, '/telemetry/frontend');
     this.#fetch = fetchImplementation;
   }
 

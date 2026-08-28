@@ -11,6 +11,7 @@ import {
   type PrivateRoomPermissions,
   type TransferPrivateRoomOwnershipInput,
 } from '@/features/private-rooms/domain/private-room';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const errorEnvelopeSchema = z.looseObject({
@@ -157,7 +158,7 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
       if (init.body !== undefined) {
         headers.set('Content-Type', 'application/json');
       }
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         ...init,
         cache: 'no-store',
         credentials: 'include',

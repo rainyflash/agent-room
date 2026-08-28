@@ -6,6 +6,7 @@ import type {
   ContentReadTicket,
   DownloadedContent,
 } from '@/features/messages/domain/content';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const readTicketSchema = z
@@ -110,7 +111,7 @@ export class ControlPlaneContentClient implements ContentGateway {
       controller.abort();
     }, this.#timeoutMs);
     try {
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         ...init,
         cache: 'no-store',
         credentials: 'include',

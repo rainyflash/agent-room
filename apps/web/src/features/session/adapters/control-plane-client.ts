@@ -7,6 +7,7 @@ import type {
   SessionFailure,
   WebSession,
 } from '@/features/session/domain/session';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const sessionSchema = z
@@ -75,7 +76,7 @@ export class ControlPlaneClient implements ControlPlaneGateway {
   }
 
   beginAuthentication(returnPath: string, intent: AuthenticationIntent = 'sign-in'): void {
-    const target = new URL('/auth/oidc/start', this.#baseUrl);
+    const target = controlPlaneEndpoint(this.#baseUrl, '/auth/oidc/start');
     target.searchParams.set('returnTo', safeReturnPath(returnPath));
     target.searchParams.set('importDisplayName', 'true');
     target.searchParams.set('importLocale', 'true');
@@ -162,7 +163,7 @@ export class ControlPlaneClient implements ControlPlaneGateway {
     try {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         ...init,
         cache: 'no-store',
         credentials: 'include',

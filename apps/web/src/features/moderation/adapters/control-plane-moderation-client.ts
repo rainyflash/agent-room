@@ -16,6 +16,7 @@ import {
   type ModerationGateway,
   type SubmitModerationReportInput,
 } from '@/features/moderation/domain/moderation';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const errorEnvelopeSchema = z.looseObject({
@@ -167,7 +168,7 @@ export class ControlPlaneModerationClient implements ModerationGateway {
       if (init.body !== undefined) {
         headers.set('Content-Type', 'application/json');
       }
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         ...init,
         cache: 'no-store',
         credentials: 'include',

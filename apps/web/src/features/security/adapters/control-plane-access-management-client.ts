@@ -12,6 +12,7 @@ import {
   type ProductDevice,
   type ProductDeviceRevocation,
 } from '@/features/security/domain/access-management';
+import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
 const errorEnvelopeSchema = z.looseObject({
@@ -114,7 +115,7 @@ export class ControlPlaneAccessManagementClient implements AccessManagementGatew
     try {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');
-      const response = await this.#fetch(new URL(path, this.#baseUrl), {
+      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
         ...init,
         cache: 'no-store',
         credentials: 'include',

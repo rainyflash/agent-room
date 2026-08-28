@@ -8,6 +8,20 @@ const requiredEnvironment = {
 };
 
 describe('运行时配置', () => {
+  it('保留浏览器同源 Control Plane 的部署路径前缀', () => {
+    const result = loadRuntimeConfig({
+      ...requiredEnvironment,
+      VITE_AGENT_ROOM_CONTROL_PLANE_URL: 'https://app.agent-room.test/_agent-room/api/',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        controlPlaneUrl: 'https://app.agent-room.test/_agent-room/api',
+      },
+    });
+  });
+
   it('下载地址缺失时显式返回不可用而不是生成死链', () => {
     const result = loadRuntimeConfig(requiredEnvironment);
 

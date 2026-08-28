@@ -11,6 +11,23 @@ const originSchema = z
   )
   .transform((value) => value.origin);
 
+const serviceBaseUrlSchema = z
+  .url()
+  .transform((value) => new URL(value))
+  .refine(
+    (value) =>
+      ['http:', 'https:'].includes(value.protocol) &&
+      value.username.length === 0 &&
+      value.password.length === 0 &&
+      value.search.length === 0 &&
+      value.hash.length === 0,
+    'must be an HTTP(S) URL without credentials, query, or fragment',
+  )
+  .transform((value) => {
+    const pathname = value.pathname.replace(/\/+$/u, '');
+    return pathname.length === 0 ? value.origin : `${value.origin}${pathname}`;
+  });
+
 const optionalDownloadUrlSchema = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : (value ?? null)),
   z.url().nullable(),
@@ -22,7 +39,7 @@ const registrationModeSchema = z.preprocess(
 );
 
 const runtimeConfigSchema = z.object({
-  controlPlaneUrl: originSchema,
+  controlPlaneUrl: serviceBaseUrlSchema,
   matrixHomeserverUrl: originSchema,
   registrationMode: registrationModeSchema,
   windowsDownloadUrl: optionalDownloadUrlSchema,
