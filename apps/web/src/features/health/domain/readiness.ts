@@ -5,7 +5,7 @@ export type DependencyHealth = {
   readonly failure?: string | undefined;
   readonly latencyMs: number;
   readonly name: string;
-  readonly status: 'available' | 'unavailable';
+  readonly status: 'ready' | 'unavailable';
 };
 
 export type ReadinessReport = {

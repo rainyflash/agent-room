@@ -105,4 +105,29 @@ describe('ControlPlaneClient', () => {
 
     expect(result).toEqual({ ok: true, value: report });
   });
+
+  it('接受控制平面返回的 ready 依赖状态', async () => {
+    const report = {
+      checkedAtUnixMs: 1_700_000_000_000,
+      correlationId: '018c251e-7b5a-7c7f-8a28-2de53f56a9a3',
+      dependencies: [
+        {
+          latencyMs: 4,
+          name: 'postgresql',
+          status: 'ready',
+        },
+      ],
+      service: 'agent-room-control-plane',
+      status: 'ready',
+      version: '0.1.0',
+    };
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://api.agent-room.test',
+      fetch: vi.fn(() => Promise.resolve(Response.json(report))),
+    });
+
+    const result = await client.readReadiness();
+
+    expect(result).toEqual({ ok: true, value: report });
+  });
 });

@@ -33,7 +33,7 @@ const dependencyHealthSchema = z
     failure: z.string().optional(),
     latencyMs: z.number().int().nonnegative(),
     name: z.string().min(1),
-    status: z.enum(['available', 'unavailable']),
+    status: z.enum(['ready', 'unavailable']),
   })
   .strict();
 
