@@ -57,6 +57,10 @@ class ReleaseGateway(Protocol):
         self, repository: str, update: AssetLabelUpdate
     ) -> None: ...
 
+    def publish_release(
+        self, repository: str, release_id: int, prerelease: bool
+    ) -> None: ...
+
 
 class GhCliReleaseGateway:
     """通过已认证的 GitHub CLI 适配 Release REST API。"""
@@ -126,6 +130,22 @@ class GhCliReleaseGateway:
             )
         )
 
+    def publish_release(
+        self, repository: str, release_id: int, prerelease: bool
+    ) -> None:
+        arguments = [
+            "--method",
+            "PATCH",
+            f"repos/{repository}/releases/{release_id}",
+            "-F",
+            "draft=false",
+            "-F",
+            f"prerelease={'true' if prerelease else 'false'}",
+        ]
+        if not prerelease:
+            arguments.extend(("-f", "make_latest=true"))
+        self._run(tuple(arguments))
+
     @staticmethod
     def _run(arguments: Sequence[str]) -> str:
         command = (
@@ -159,10 +179,11 @@ class GhCliReleaseGateway:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("apply", "plan"))
+    parser.add_argument("command", choices=("apply", "plan", "publish"))
     parser.add_argument("--repository", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--channel", choices=("stable", "testing"))
     return parser.parse_args(argv)
 
 
@@ -330,6 +351,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         plan = build_plan(args.repository, args.tag, args.version, release, assets)
         if args.command == "apply":
             apply_plan(gateway, args.repository, plan)
+        elif args.command == "publish":
+            if args.channel is None:
+                raise ReleaseSurfaceFailure("publish 命令必须显式提供 channel。")
+            gateway.publish_release(
+                args.repository,
+                plan.release_id,
+                prerelease=args.channel != "stable",
+            )
         else:
             json.dump(plan_document(plan), sys.stdout, ensure_ascii=False, indent=2)
             sys.stdout.write("\n")

@@ -113,6 +113,44 @@ class ReleaseSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseSurfaceFailure, "实际为 0 个"):
             gateway.get_release(self.repository, self.tag)
 
+    @patch.object(GhCliReleaseGateway, "_run", return_value="")
+    def test_testing版本通过release_id发布为预发行版(self, request) -> None:
+        gateway = GhCliReleaseGateway()
+
+        gateway.publish_release(self.repository, 42, prerelease=True)
+
+        request.assert_called_once_with(
+            (
+                "--method",
+                "PATCH",
+                f"repos/{self.repository}/releases/42",
+                "-F",
+                "draft=false",
+                "-F",
+                "prerelease=true",
+            )
+        )
+
+    @patch.object(GhCliReleaseGateway, "_run", return_value="")
+    def test_stable版本发布并设置latest(self, request) -> None:
+        gateway = GhCliReleaseGateway()
+
+        gateway.publish_release(self.repository, 42, prerelease=False)
+
+        request.assert_called_once_with(
+            (
+                "--method",
+                "PATCH",
+                f"repos/{self.repository}/releases/42",
+                "-F",
+                "draft=false",
+                "-F",
+                "prerelease=false",
+                "-f",
+                "make_latest=true",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

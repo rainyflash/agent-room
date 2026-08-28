@@ -39,7 +39,7 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
 
     def test_发布前后都整理普通用户下载入口(self) -> None:
         command = "python tools/release_surface.py apply"
-        publish = self.workflow.index('gh release edit "$TAG" --draft=false')
+        publish = self.workflow.index("python tools/release_surface.py publish")
         first_surface = self.workflow.index(command)
         final_surface = self.workflow.rindex(command)
 

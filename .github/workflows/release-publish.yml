@@ -114,11 +114,8 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           CHANNEL="$(jq -r .channel candidate/release-metadata.json)"
-          if [ "$CHANNEL" = stable ]; then
-            gh release edit "$TAG" --draft=false --latest
-          else
-            gh release edit "$TAG" --draft=false --prerelease
-          fi
+          VERSION="${TAG#v}"
+          python tools/release_surface.py publish --repository "${{ github.repository }}" --tag "$TAG" --version "$VERSION" --channel "$CHANNEL"
           CHANNEL_TAG="channel-$CHANNEL"
           if gh release view "$CHANNEL_TAG" >/dev/null 2>&1; then
             gh release upload "$CHANNEL_TAG" candidate/release.signed.json --clobber
