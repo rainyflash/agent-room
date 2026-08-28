@@ -25,7 +25,7 @@
   - Web/PWA 保持 Cookie 与浏览器 Matrix 会话。
   - _需求：3、7、8_
 
-- [ ] 6. 完成多层回归与真实 WebView 验收
+- [x] 6. 完成多层回归与真实 WebView 验收
   - 运行 Rust、TypeScript、组件、Playwright 与安装后诊断。
   - 验证桌面模式不再请求 `/auth/session`。
   - _需求：1—9_
