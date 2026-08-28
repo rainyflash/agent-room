@@ -381,7 +381,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(realm["accessCodeLifespanUserAction"], 60 * 60)
         self.assertEqual(
             web_client["redirectUris"],
-            [f"{self.config.public.app_origin}/_agent-room/session/complete"],
+            [f"{self.config.public.app_origin}/connect/finalize"],
         )
 
     def test_browser_control_plane_uses_same_origin_gateway_without_removing_machine_api(self) -> None:
@@ -396,11 +396,11 @@ class ProductionRenderingTests(unittest.TestCase):
             environment,
         )
         self.assertIn(
-            "AGENT_ROOM_BROWSER_OIDC_CALLBACK_PATH=/_agent-room/session/complete",
+            "AGENT_ROOM_BROWSER_OIDC_CALLBACK_PATH=/connect/finalize",
             environment,
         )
         self.assertIn("handle_path /_agent-room/api/*", caddyfile)
-        self.assertIn("handle /_agent-room/session/complete", caddyfile)
+        self.assertIn("handle /connect/finalize", caddyfile)
         self.assertIn("rewrite * /auth/oidc/callback", caddyfile)
         self.assertIn(f"{self.config.public.api_domain} {{", caddyfile)
         self.assertIn("reverse_proxy control-plane:8090", caddyfile)
@@ -479,12 +479,12 @@ class ProductionRenderingTests(unittest.TestCase):
         }
         updated_client = module.apply_web_client_policy(
             original_client,
-            redirect_url="https://app.example/_agent-room/session/complete",
+            redirect_url="https://app.example/connect/finalize",
             frontend_origin="https://app.example",
         )
         self.assertEqual(
             updated_client["redirectUris"],
-            ["https://app.example/_agent-room/session/complete"],
+            ["https://app.example/connect/finalize"],
         )
         self.assertEqual(updated_client["webOrigins"], ["https://app.example"])
         self.assertEqual(updated_client["secret"], "preserved")

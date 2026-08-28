@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => ({
         navigateFallbackDenylist: [
           /^\/_agent-room\/api(?:\/|$)/u,
           /^\/_agent-room\/healthz$/u,
-          /^\/_agent-room\/session\/complete$/u,
+          /^\/connect\/finalize$/u,
         ],
       },
     }),

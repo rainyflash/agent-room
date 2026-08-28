@@ -18,7 +18,7 @@ from .secrets import SecretStore
 CONTAINER_CONFIG_DIRECTORY_MODE: Final = 0o555
 CONTAINER_CONFIG_FILE_MODE: Final = 0o444
 BROWSER_CONTROL_PLANE_PATH_PREFIX: Final = "/_agent-room/api"
-BROWSER_OIDC_CALLBACK_PATH: Final = "/_agent-room/session/complete"
+BROWSER_OIDC_CALLBACK_PATH: Final = "/connect/finalize"
 PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
