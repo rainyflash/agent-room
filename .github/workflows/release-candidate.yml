@@ -116,7 +116,7 @@ jobs:
           VITE_AGENT_ROOM_CONTROL_PLANE_URL: https://api.room.the-zeroth.com
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: ${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
           VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.room.the-zeroth.com
-          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.1/agent-room-installer-v0.1.0-alpha.1-windows-x86_64.exe
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
           AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
           AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_TESTING_RELEASE_KEY_ID }}
           AGENT_ROOM_RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_TESTING_RELEASE_PUBLIC_KEY }}
@@ -254,7 +254,7 @@ jobs:
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.room.the-zeroth.com
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
-            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.1/agent-room-installer-v0.1.0-alpha.1-windows-x86_64.exe
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
       - name: 保存单架构不可变摘要
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

@@ -25,29 +25,29 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
 repository = "https://github.com/rainyflash/agent-room"
 
 [workspace.dependencies]
-agent-room-a2a-adapter = { version = "0.1.0-alpha.1", path = "crates/a2a-adapter" }
-agent-room-application = { version = "0.1.0-alpha.1", path = "crates/application" }
-agent-room-bridge-core = { version = "0.1.0-alpha.1", path = "crates/bridge-core" }
-agent-room-bridge-ipc = { version = "0.1.0-alpha.1", path = "crates/bridge-ipc" }
-agent-room-bridge-local-adapter = { version = "0.1.0-alpha.1", path = "crates/bridge-local-adapter" }
-agent-room-bridge-storage-adapter = { version = "0.1.0-alpha.1", path = "crates/bridge-storage-adapter" }
-agent-room-content-adapter = { version = "0.1.0-alpha.1", path = "crates/content-adapter" }
-agent-room-domain = { version = "0.1.0-alpha.1", path = "crates/domain" }
-agent-room-host-adapters = { version = "0.1.0-alpha.1", path = "crates/host-adapters" }
-agent-room-identity-adapter = { version = "0.1.0-alpha.1", path = "crates/identity-adapter" }
-agent-room-matrix-adapter = { version = "0.1.0-alpha.1", path = "crates/matrix-adapter" }
-agent-room-matrix-provisioning-adapter = { version = "0.1.0-alpha.1", path = "crates/matrix-provisioning-adapter" }
-agent-room-message-crypto-adapter = { version = "0.1.0-alpha.1", path = "crates/message-crypto-adapter" }
-agent-room-postgres-adapter = { version = "0.1.0-alpha.1", path = "crates/postgres-adapter" }
-agent-room-protocol-conformance = { version = "0.1.0-alpha.1", path = "crates/protocol-conformance" }
-agent-room-release-manifest = { version = "0.1.0-alpha.1", path = "crates/release-manifest" }
+agent-room-a2a-adapter = { version = "0.1.0-alpha.2", path = "crates/a2a-adapter" }
+agent-room-application = { version = "0.1.0-alpha.2", path = "crates/application" }
+agent-room-bridge-core = { version = "0.1.0-alpha.2", path = "crates/bridge-core" }
+agent-room-bridge-ipc = { version = "0.1.0-alpha.2", path = "crates/bridge-ipc" }
+agent-room-bridge-local-adapter = { version = "0.1.0-alpha.2", path = "crates/bridge-local-adapter" }
+agent-room-bridge-storage-adapter = { version = "0.1.0-alpha.2", path = "crates/bridge-storage-adapter" }
+agent-room-content-adapter = { version = "0.1.0-alpha.2", path = "crates/content-adapter" }
+agent-room-domain = { version = "0.1.0-alpha.2", path = "crates/domain" }
+agent-room-host-adapters = { version = "0.1.0-alpha.2", path = "crates/host-adapters" }
+agent-room-identity-adapter = { version = "0.1.0-alpha.2", path = "crates/identity-adapter" }
+agent-room-matrix-adapter = { version = "0.1.0-alpha.2", path = "crates/matrix-adapter" }
+agent-room-matrix-provisioning-adapter = { version = "0.1.0-alpha.2", path = "crates/matrix-provisioning-adapter" }
+agent-room-message-crypto-adapter = { version = "0.1.0-alpha.2", path = "crates/message-crypto-adapter" }
+agent-room-postgres-adapter = { version = "0.1.0-alpha.2", path = "crates/postgres-adapter" }
+agent-room-protocol-conformance = { version = "0.1.0-alpha.2", path = "crates/protocol-conformance" }
+agent-room-release-manifest = { version = "0.1.0-alpha.2", path = "crates/release-manifest" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 aes-gcm = "0.10.3"

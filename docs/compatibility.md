@@ -20,7 +20,7 @@ Do not combine files from separate release archives. Stable and testing channels
 | Platform                                      | Engineering status                                              | Public support status                     |
 | --------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------- |
 | Chromium-based desktop browser                | Automated Playwright acceptance                                 | Not yet supported for production          |
-| Windows x86-64 desktop + Bridge + generic MCP | Automated build, package, and same-revision verification passed | `0.1.0-alpha.1` public prerelease pending |
+| Windows x86-64 desktop + Bridge + generic MCP | Automated build, package, and same-revision verification passed | `0.1.0-alpha.2` public prerelease pending |
 | macOS arm64                                   | Manual maintainer-owned self-hosted build path only             | Unsupported                               |
 | macOS x86-64                                  | No maintained build or release path                             | Unsupported                               |
 | Linux desktop                                 | Workspace compilation only; no release bundle                   | Unsupported                               |
