@@ -372,6 +372,8 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertFalse(realm["registrationAllowed"])
         self.assertTrue(realm["verifyEmail"])
         self.assertTrue(realm["registrationEmailAsUsername"])
+        self.assertEqual(realm["actionTokenGeneratedByUserLifespan"], 60 * 60)
+        self.assertEqual(realm["accessCodeLifespanUserAction"], 60 * 60)
 
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -433,6 +435,10 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertNotIn("smtpServer", closed)
         self.assertFalse(closed["registrationAllowed"])
         self.assertTrue(opened["registrationAllowed"])
+        self.assertEqual(closed["actionTokenGeneratedByUserLifespan"], 60 * 60)
+        self.assertEqual(closed["accessCodeLifespanUserAction"], 60 * 60)
+        self.assertEqual(opened["actionTokenGeneratedByUserLifespan"], 60 * 60)
+        self.assertEqual(opened["accessCodeLifespanUserAction"], 60 * 60)
         self.assertEqual(original["smtpServer"], {"password": "old"})
 
     def test_nominal_memory_check_allows_only_bounded_system_reservation(self) -> None:

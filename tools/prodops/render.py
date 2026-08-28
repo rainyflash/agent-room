@@ -20,6 +20,7 @@ CONTAINER_CONFIG_FILE_MODE: Final = 0o444
 PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
+USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
 OIDC_MAPPING_SOURCE: Final = (
     Path(__file__).resolve().parents[2] / "infra" / "synapse" / "agent_room_oidc_mapping.py"
 )
@@ -265,6 +266,8 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         "loginWithEmailAllowed": True,
         "verifyEmail": True,
         "resetPasswordAllowed": True,
+        "actionTokenGeneratedByUserLifespan": USER_IDENTITY_ACTION_LIFESPAN_SECONDS,
+        "accessCodeLifespanUserAction": USER_IDENTITY_ACTION_LIFESPAN_SECONDS,
         "rememberMe": True,
         "sslRequired": "external",
         "bruteForceProtected": True,

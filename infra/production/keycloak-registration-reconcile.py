@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 REALM: Final = "agent-room"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
+USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
 
 
 class ReconcileError(RuntimeError):
@@ -126,6 +127,8 @@ def apply_registration_policy(
             "loginWithEmailAllowed": True,
             "verifyEmail": True,
             "resetPasswordAllowed": True,
+            "actionTokenGeneratedByUserLifespan": USER_IDENTITY_ACTION_LIFESPAN_SECONDS,
+            "accessCodeLifespanUserAction": USER_IDENTITY_ACTION_LIFESPAN_SECONDS,
             "rememberMe": True,
             "bruteForceProtected": True,
         }
