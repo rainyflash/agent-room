@@ -10,6 +10,7 @@ import { ConfigurationFailure } from '@/app/configuration-failure';
 import { loadRuntimeConfig } from '@/shared/config/runtime-config';
 import { i18n, initializeI18n, resolveSystemLanguage } from '@/shared/i18n/i18n';
 import { resources } from '@/shared/i18n/resources';
+import { applyApplicationEntry } from '@/shared/routing/application-entry';
 
 async function bootstrap(): Promise<void> {
   await initializeI18n();
@@ -18,6 +19,7 @@ async function bootstrap(): Promise<void> {
     throw new Error('Root element is missing.');
   }
   const config = loadRuntimeConfig();
+  applyApplicationEntry();
   createRoot(rootElement).render(
     <StrictMode>
       <I18nextProvider i18n={i18n}>
