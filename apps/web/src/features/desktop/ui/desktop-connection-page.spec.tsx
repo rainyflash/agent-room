@@ -95,7 +95,7 @@ describe('桌面设备连接页', () => {
 
     expect(
       await screen.findByRole('heading', { name: 'Preparing your first Agent' }),
-    ).toBeInTheDocument();
+    ).not.toBeNull();
     await waitFor(() => {
       expect(bootstrap).toHaveBeenCalledTimes(1);
       expect(bootstrap).toHaveBeenCalledWith('en');

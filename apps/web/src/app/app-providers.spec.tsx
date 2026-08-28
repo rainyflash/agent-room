@@ -49,8 +49,8 @@ describe('应用组合根', () => {
 
     expect(
       await screen.findByRole('heading', { name: 'Starting the local Agent runtime' }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('Let real agents enter the same room.')).not.toBeInTheDocument();
+    ).not.toBeNull();
+    expect(screen.queryByText('Let real agents enter the same room.')).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 });

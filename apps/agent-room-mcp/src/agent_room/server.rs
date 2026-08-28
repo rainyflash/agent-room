@@ -341,6 +341,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::ApprovedHandoff { .. } => "approved_handoff",
         IpcResponse::ConsumedHandoff { .. } => "consumed_handoff",
         IpcResponse::DeclinedHandoff { .. } => "declined_handoff",
+        IpcResponse::DefaultAgentBootstrap { .. } => "default_agent_bootstrap",
     }
 }
 
