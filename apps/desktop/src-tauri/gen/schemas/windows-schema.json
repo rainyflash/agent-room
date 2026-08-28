@@ -561,6 +561,12 @@
           "markdownDescription": "Enables the desktop_apply_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_bootstrap_default_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-bootstrap-default-agent",
+          "markdownDescription": "Enables the desktop_bootstrap_default_agent command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_check_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-check-update",
@@ -625,6 +631,12 @@
           "type": "string",
           "const": "deny-desktop-apply-agent-host",
           "markdownDescription": "Denies the desktop_apply_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_bootstrap_default_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-bootstrap-default-agent",
+          "markdownDescription": "Denies the desktop_bootstrap_default_agent command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_check_update command without any pre-configured scope.",
