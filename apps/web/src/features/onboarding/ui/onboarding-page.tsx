@@ -76,10 +76,7 @@ export function OnboardingPage() {
     runtime.snapshot?.bridge.lifecycle.phase === 'ready' &&
     bridgeSession?.agentId === resolved?.agent.agentId;
   const entry = useMutation({
-    mutationFn: async (intent: LobbyEntryIntent) =>
-      intent.kind === 'known'
-        ? await lobbyEntry.enterKnown(intent.target)
-        : await lobbyEntry.enter(intent.catalogId),
+    mutationFn: async (target: PublicLobbyRouteTarget) => await lobbyEntry.enterKnown(target),
     onSuccess: (result) => {
       if (!result.ok) return;
       void navigate({
@@ -316,15 +313,16 @@ export function OnboardingPage() {
             onClick={() => {
               if (runtime.available && bridgeSession !== null) {
                 entry.mutate({
-                  kind: 'known',
-                  target: {
-                    catalogId: resolved.lobby.catalogId,
-                    matrixRoomId: bridgeSession.matrixRoomId,
-                  },
+                  catalogId: resolved.lobby.catalogId,
+                  matrixRoomId: bridgeSession.matrixRoomId,
                 });
                 return;
               }
-              entry.mutate({ kind: 'resolve', catalogId: resolved.lobby.catalogId });
+              void navigate({
+                params: { catalogId: resolved.lobby.catalogId },
+                search: {},
+                to: '/lobby/$catalogId',
+              });
             }}
             size="large"
             tone="primary"
@@ -336,10 +334,6 @@ export function OnboardingPage() {
     </main>
   );
 }
-
-type LobbyEntryIntent =
-  | { readonly catalogId: string; readonly kind: 'resolve' }
-  | { readonly kind: 'known'; readonly target: PublicLobbyRouteTarget };
 
 type FactCardProps = {
   readonly children: ReactNode;

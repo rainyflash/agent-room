@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -124,16 +124,10 @@ describe('首次引导页面', () => {
     expect(bootstrap).toHaveBeenCalledWith('en');
   });
 
-  it('Web 预览只有解析并加入真实房间后才导航', async () => {
+  it('Web 预览进入目录边界并由边界等待真实房间', async () => {
     const user = userEvent.setup();
     const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: true as const }));
-    const enter = vi.fn(async () =>
-      ok({
-        catalogId: lobby.catalogId,
-        matrixRoomId: '!english:matrix.test',
-        roomInstanceId: '0198b601-77a4-7f41-b4f4-940f291951ba',
-      }),
-    );
+    const enter = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
       config: { windowsDownloadUrl: 'https://download.agent-room.test/windows' },
       desktop: {},
@@ -144,13 +138,11 @@ describe('首次引导页面', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Open Web preview' }));
 
-    expect(enter).toHaveBeenCalledWith(lobby.catalogId);
-    await waitFor(() => {
-      expect(navigate).toHaveBeenCalledWith({
-        params: { catalogId: lobby.catalogId, roomId: '!english:matrix.test' },
-        search: {},
-        to: '/lobby/$catalogId/instance/$roomId',
-      });
+    expect(enter).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith({
+      params: { catalogId: lobby.catalogId },
+      search: {},
+      to: '/lobby/$catalogId',
     });
   });
 });

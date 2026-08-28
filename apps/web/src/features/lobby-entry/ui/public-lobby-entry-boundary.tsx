@@ -10,6 +10,26 @@ import { LanguageControl } from '@/features/preferences/ui/language-control';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useSession } from '@/features/session/ui/session-provider';
 
+const EMPTY_LOBBY_CODE = 'lobby.observation_not_found';
+const EMPTY_LOBBY_REFRESH_MILLISECONDS = 5_000;
+
+const entryCopy = {
+  failure: {
+    detail: 'lobbyEntry.failure.detail',
+    title: 'lobbyEntry.failure.title',
+  },
+  loading: {
+    detail: 'lobbyEntry.loading.detail',
+    title: 'lobbyEntry.loading.title',
+  },
+  waiting: {
+    detail: 'lobbyEntry.waiting.detail',
+    title: 'lobbyEntry.waiting.title',
+  },
+} as const;
+
+type EntryPhase = keyof typeof entryCopy;
+
 export type PublicLobbyEntryBoundaryProps = {
   readonly catalogId: string;
   readonly onConnectionRequired: () => void;
@@ -31,6 +51,10 @@ export function PublicLobbyEntryBoundary({
     networkMode: 'always',
     queryFn: async () => await lobbyEntry.enter(catalogId),
     queryKey: ['public-lobby-entry', catalogId] as const,
+    refetchInterval: (query) =>
+      query.state.data?.ok === false && query.state.data.error.code === EMPTY_LOBBY_CODE
+        ? EMPTY_LOBBY_REFRESH_MILLISECONDS
+        : false,
     retry: false,
     staleTime: 0,
   });
@@ -41,6 +65,9 @@ export function PublicLobbyEntryBoundary({
       : entry.isError
         ? 'lobby_entry.unexpected_failure'
         : null;
+  const phase: EntryPhase =
+    failureCode === null ? 'loading' : failureCode === EMPTY_LOBBY_CODE ? 'waiting' : 'failure';
+  const copy = entryCopy[phase];
 
   useEffect(() => {
     if (sessionState === 'unauthenticated' && snapshot.context.principal === null) {
@@ -62,27 +89,27 @@ export function PublicLobbyEntryBoundary({
         <LanguageControl />
       </header>
       <section aria-live="polite" className="lobby-boundary__body">
-        {failureCode === null ? (
+        {phase === 'loading' ? (
           <LoaderCircle aria-hidden="true" className="lobby-boundary__icon lobby-boundary__spin" />
         ) : (
           <RadioTower aria-hidden="true" className="lobby-boundary__icon" />
         )}
         <p className="eyebrow">{t('lobbyEntry.eyebrow')}</p>
-        <h1>{t(failureCode === null ? 'lobbyEntry.loading.title' : 'lobbyEntry.failure.title')}</h1>
-        <p>{t(failureCode === null ? 'lobbyEntry.loading.detail' : 'lobbyEntry.failure.detail')}</p>
-        {failureCode === null ? null : (
+        <h1>{t(copy.title)}</h1>
+        <p>{t(copy.detail)}</p>
+        {phase === 'loading' ? null : (
           <div className="lobby-boundary__actions">
             <Button
               icon={<RotateCw aria-hidden="true" />}
               onClick={() => void entry.refetch()}
               tone="primary"
             >
-              {t('lobbyEntry.retry')}
+              {t(phase === 'waiting' ? 'lobbyEntry.waiting.retry' : 'lobbyEntry.retry')}
             </Button>
             <a className="lobby-boundary__link" href="/connect">
               {t('lobbyEntry.connect')}
             </a>
-            <code>{failureCode}</code>
+            {phase === 'failure' ? <code>{failureCode}</code> : null}
           </div>
         )}
       </section>
