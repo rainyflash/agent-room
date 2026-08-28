@@ -124,6 +124,20 @@ async fn 迁移可重复执行且运行时角色没有建表权限() {
     .expect("应能读取迁移结果");
     assert_eq!(tables, EXPECTED_TABLES);
 
+    let default_lobby_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS( \
+             SELECT 1 FROM agent_room.room_catalog_entry \
+             WHERE id = '01a04772-3804-72f9-b1cd-51ca3f730b3d'::uuid \
+               AND kind = 'public_lobby' \
+               AND visibility = 'public' \
+               AND status = 'active' \
+         )",
+    )
+    .fetch_one(&database.runtime)
+    .await
+    .expect("运行时角色应能读取默认公共大厅");
+    assert!(default_lobby_exists, "迁移后必须存在默认公共大厅");
+
     let current_user: String = sqlx::query_scalar("SELECT current_user")
         .fetch_one(&database.runtime)
         .await
