@@ -1,4 +1,7 @@
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use url::Url;
 
 use agent_room_release_manifest::TrustedReleaseKey;
@@ -72,8 +75,7 @@ impl ReleaseUpdateConfig {
             .map_err(|_| ReleaseUpdateConfigFailure::PublicKey)?;
         let tauri_public_key =
             bounded(values.tauri_public_key.expect("完整配置已经校验"))?.to_owned();
-        minisign_verify::PublicKey::from_base64(&tauri_public_key)
-            .map_err(|_| ReleaseUpdateConfigFailure::PublicKey)?;
+        validate_tauri_public_key(&tauri_public_key)?;
 
         Ok(Some(Self {
             trusted_key: TrustedReleaseKey {
@@ -85,6 +87,17 @@ impl ReleaseUpdateConfig {
             testing_url: secure_url(values.testing_url.expect("完整配置已经校验"))?,
         }))
     }
+}
+
+fn validate_tauri_public_key(value: &str) -> Result<(), ReleaseUpdateConfigFailure> {
+    let document = STANDARD
+        .decode(value)
+        .map_err(|_| ReleaseUpdateConfigFailure::PublicKey)?;
+    let document =
+        std::str::from_utf8(&document).map_err(|_| ReleaseUpdateConfigFailure::PublicKey)?;
+    minisign_verify::PublicKey::decode(document)
+        .map(|_| ())
+        .map_err(|_| ReleaseUpdateConfigFailure::PublicKey)
 }
 
 #[derive(Clone, Copy)]
@@ -141,16 +154,25 @@ impl ReleaseUpdateConfigFailure {
 
 #[cfg(test)]
 mod tests {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use base64::{
+        Engine as _,
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    };
 
     use super::*;
 
-    fn complete_values(public_key: &str) -> BuildValues<'_> {
+    const MINISIGN_PUBLIC_KEY: &str = "untrusted comment: minisign public key: 56E4E3542829B3BD\nRWS9sykoVOPkVq94SI3QovDljmB5q8E30mwhjM7TX5DtV2mj3ZUzQWZw\n";
+
+    fn tauri_public_key() -> String {
+        STANDARD.encode(MINISIGN_PUBLIC_KEY)
+    }
+
+    fn complete_values<'a>(public_key: &'a str, tauri_public_key: &'a str) -> BuildValues<'a> {
         BuildValues {
             required: Some("1"),
             release_key_id: Some("release-2026"),
             release_public_key: Some(public_key),
-            tauri_public_key: Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"),
+            tauri_public_key: Some(tauri_public_key),
             stable_url: Some("https://releases.example/stable.signed.json"),
             testing_url: Some("https://releases.example/testing.signed.json"),
         }
@@ -163,7 +185,8 @@ mod tests {
                 .verifying_key()
                 .to_bytes(),
         );
-        let values = complete_values(&public_key);
+        let tauri_public_key = tauri_public_key();
+        let values = complete_values(&public_key, &tauri_public_key);
 
         let config = ReleaseUpdateConfig::from_values(values)
             .expect("完整配置必须有效")
@@ -191,7 +214,8 @@ mod tests {
                 .verifying_key()
                 .to_bytes(),
         );
-        let mut partial = complete_values(&public_key);
+        let tauri_public_key = tauri_public_key();
+        let mut partial = complete_values(&public_key, &tauri_public_key);
         partial.testing_url = None;
         assert!(matches!(
             ReleaseUpdateConfig::from_values(partial),
@@ -206,11 +230,32 @@ mod tests {
                 .verifying_key()
                 .to_bytes(),
         );
-        let mut values = complete_values(&public_key);
+        let tauri_public_key = tauri_public_key();
+        let mut values = complete_values(&public_key, &tauri_public_key);
         values.stable_url = Some("http://releases.example/stable.json");
         assert!(matches!(
             ReleaseUpdateConfig::from_values(values),
             Err(ReleaseUpdateConfigFailure::Url)
         ));
+    }
+
+    #[test]
+    fn 仓库发行配置包含_tauri_可消费的公钥文档() {
+        let release_config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.release.conf.json"))
+                .expect("发行配置必须是 JSON");
+        let public_key = release_config["plugins"]["updater"]["pubkey"]
+            .as_str()
+            .expect("发行配置必须声明更新公钥");
+
+        assert_eq!(validate_tauri_public_key(public_key), Ok(()));
+    }
+
+    #[test]
+    fn 拒绝没有_tauri_文档封装的裸_minisign_公钥() {
+        assert_eq!(
+            validate_tauri_public_key("RWS9sykoVOPkVq94SI3QovDljmB5q8E30mwhjM7TX5DtV2mj3ZUzQWZw"),
+            Err(ReleaseUpdateConfigFailure::PublicKey)
+        );
     }
 }
