@@ -117,13 +117,15 @@ class ReleaseSurfaceTests(unittest.TestCase):
     def test_testing版本通过release_id发布为预发行版(self, request) -> None:
         gateway = GhCliReleaseGateway()
 
-        gateway.publish_release(self.repository, 42, prerelease=True)
+        gateway.publish_release(self.repository, 42, self.tag, prerelease=True)
 
         request.assert_called_once_with(
             (
                 "--method",
                 "PATCH",
                 f"repos/{self.repository}/releases/42",
+                "-f",
+                f"tag_name={self.tag}",
                 "-F",
                 "draft=false",
                 "-F",
@@ -135,13 +137,15 @@ class ReleaseSurfaceTests(unittest.TestCase):
     def test_stable版本发布并设置latest(self, request) -> None:
         gateway = GhCliReleaseGateway()
 
-        gateway.publish_release(self.repository, 42, prerelease=False)
+        gateway.publish_release(self.repository, 42, self.tag, prerelease=False)
 
         request.assert_called_once_with(
             (
                 "--method",
                 "PATCH",
                 f"repos/{self.repository}/releases/42",
+                "-f",
+                f"tag_name={self.tag}",
                 "-F",
                 "draft=false",
                 "-F",

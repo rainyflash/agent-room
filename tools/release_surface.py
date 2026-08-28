@@ -41,6 +41,7 @@ class AssetLabelUpdate:
 @dataclass(frozen=True)
 class ReleaseSurfacePlan:
     release_id: int
+    tag: str
     title: str
     body: str
     asset_updates: tuple[AssetLabelUpdate, ...]
@@ -58,7 +59,7 @@ class ReleaseGateway(Protocol):
     ) -> None: ...
 
     def publish_release(
-        self, repository: str, release_id: int, prerelease: bool
+        self, repository: str, release_id: int, tag: str, prerelease: bool
     ) -> None: ...
 
 
@@ -113,6 +114,8 @@ class GhCliReleaseGateway:
                 "PATCH",
                 f"repos/{repository}/releases/{plan.release_id}",
                 "-f",
+                f"tag_name={plan.tag}",
+                "-f",
                 f"name={plan.title}",
                 "-f",
                 f"body={plan.body}",
@@ -131,12 +134,14 @@ class GhCliReleaseGateway:
         )
 
     def publish_release(
-        self, repository: str, release_id: int, prerelease: bool
+        self, repository: str, release_id: int, tag: str, prerelease: bool
     ) -> None:
         arguments = [
             "--method",
             "PATCH",
             f"repos/{repository}/releases/{release_id}",
+            "-f",
+            f"tag_name={tag}",
             "-F",
             "draft=false",
             "-F",
@@ -315,6 +320,7 @@ def build_plan(
     )
     return ReleaseSurfacePlan(
         release_id=release_id,
+        tag=tag,
         title=f"Agent Room {tag} — Windows Alpha",
         body=release_notes(repository, tag, version),
         asset_updates=updates,
@@ -324,6 +330,7 @@ def build_plan(
 def plan_document(plan: ReleaseSurfacePlan) -> Mapping[str, object]:
     return {
         "releaseId": plan.release_id,
+        "tag": plan.tag,
         "title": plan.title,
         "body": plan.body,
         "assetUpdates": [
@@ -357,6 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             gateway.publish_release(
                 args.repository,
                 plan.release_id,
+                plan.tag,
                 prerelease=args.channel != "stable",
             )
         else:
