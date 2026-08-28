@@ -1101,6 +1101,7 @@ mod tests {
         agents::AgentInstancePublicSigningKey,
         devices::{DevicePlatform, DevicePublicSigningKey},
         ids::{AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId},
+        rooms::RoomLanguage,
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -1425,7 +1426,7 @@ mod tests {
         assert_eq!(lobbies.len(), 1);
         assert_eq!(lobbies[0].catalog_id.to_string(), LOBBY_ID);
         assert_eq!(
-            lobbies[0].language.as_ref().map(|value| value.as_str()),
+            lobbies[0].language.as_ref().map(RoomLanguage::as_str),
             Some("zh-CN")
         );
         assert_eq!(
