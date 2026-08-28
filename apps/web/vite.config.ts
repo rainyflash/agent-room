@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import { navigationFallbackDenylist } from './src/shared/pwa/navigation-fallback.js';
+
 export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
@@ -32,11 +34,7 @@ export default defineConfig(({ mode }) => ({
         cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{html,js,css,svg}'],
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [
-          /^\/_agent-room\/api(?:\/|$)/u,
-          /^\/_agent-room\/healthz$/u,
-          /^\/connect\/finalize$/u,
-        ],
+        navigateFallbackDenylist: [...navigationFallbackDenylist],
       },
     }),
   ],
