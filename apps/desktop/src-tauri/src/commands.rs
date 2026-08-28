@@ -8,6 +8,10 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::{
+    agent_runtime::{
+        AgentBootstrapFailure, AgentRuntimeBindingFailure, DesktopAgentRuntimeBinding,
+        LocalBridgeBootstrapGateway, bind_agent_runtime, bootstrap_agent_target,
+    },
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
     deep_link::{DeepLinkInbox, DeepLinkTarget},
     desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
@@ -16,6 +20,7 @@ use crate::{
     },
     runtime_target::{DesktopAgentTarget, RuntimeTargetFailure, RuntimeTargetStore},
 };
+use agent_room_bridge_local_adapter::LocalBridgeClient;
 
 #[derive(Clone)]
 pub(crate) struct DesktopRuntime {
@@ -82,6 +87,38 @@ impl From<DesktopConfigFailure> for DesktopCommandFailure {
     }
 }
 
+impl From<AgentBootstrapFailure> for DesktopCommandFailure {
+    fn from(failure: AgentBootstrapFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
+impl From<AgentRuntimeBindingFailure> for DesktopCommandFailure {
+    fn from(failure: AgentRuntimeBindingFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_bootstrap_default_agent(
+    runtime: State<'_, DesktopRuntime>,
+    preferred_language: Option<String>,
+) -> Result<DesktopAgentTarget, DesktopCommandFailure> {
+    // 外部 Bridge 不能由桌面安全切换目标，先拒绝再调用幂等创建端点。
+    runtime.bridge.ensure_reconfigurable()?;
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    let gateway = LocalBridgeBootstrapGateway::new(client);
+    let target = bootstrap_agent_target(&gateway, preferred_language).await?;
+    let configured = config.with_agent_target(&target);
+    let binding = DesktopAgentRuntimeBinding::new(&runtime.bridge, &runtime.targets);
+    Ok(bind_agent_runtime(&binding, target, configured)?)
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_configure_agent_runtime(
@@ -92,12 +129,8 @@ pub(crate) fn desktop_configure_agent_runtime(
 ) -> Result<DesktopAgentTarget, DesktopCommandFailure> {
     let target = DesktopAgentTarget::new(&agent_id, &public_lobby_catalog_id, &lobby_language)?;
     let config = DesktopBridgeConfig::from_environment()?.with_agent_target(&target);
-
-    // 外部 Bridge 无法由桌面安全重启；先拒绝，避免磁盘目标与正在运行的进程分叉。
-    runtime.bridge.ensure_reconfigurable()?;
-    runtime.targets.persist(target.clone())?;
-    runtime.bridge.reconfigure(config)?;
-    Ok(target)
+    let binding = DesktopAgentRuntimeBinding::new(&runtime.bridge, &runtime.targets);
+    Ok(bind_agent_runtime(&binding, target, config)?)
 }
 
 #[tauri::command]

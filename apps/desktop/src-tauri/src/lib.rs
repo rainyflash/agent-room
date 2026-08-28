@@ -1,3 +1,4 @@
+mod agent_runtime;
 mod bridge_lifecycle;
 mod bridge_supervisor;
 #[cfg(test)]
@@ -14,10 +15,11 @@ mod webview_migration;
 
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
-    DesktopRuntime, desktop_apply_agent_host, desktop_check_update,
-    desktop_configure_agent_runtime, desktop_detect_agent_hosts, desktop_install_update,
-    desktop_open_authorization, desktop_plan_agent_host, desktop_remove_agent_host,
-    desktop_retry_bridge, desktop_runtime_snapshot, desktop_set_autostart,
+    DesktopRuntime, desktop_apply_agent_host, desktop_bootstrap_default_agent,
+    desktop_check_update, desktop_configure_agent_runtime, desktop_detect_agent_hosts,
+    desktop_install_update, desktop_open_authorization, desktop_plan_agent_host,
+    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -102,6 +104,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_plan_agent_host,
             desktop_apply_agent_host,
             desktop_remove_agent_host,
+            desktop_bootstrap_default_agent,
             desktop_configure_agent_runtime,
         ])
         .setup(move |app| {
