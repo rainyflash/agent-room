@@ -32,6 +32,7 @@ export default defineConfig(({ mode }) => ({
         cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{html,js,css,svg}'],
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/_agent-room\/api(?:\/|$)/u, /^\/_agent-room\/healthz$/u],
       },
     }),
   ],
