@@ -4,6 +4,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': new URL('./apps/web/src', import.meta.url).pathname,
+      'virtual:pwa-register/react': new URL(
+        './apps/web/src/test/pwa-register-react-stub.ts',
+        import.meta.url,
+      ).pathname,
     },
   },
   test: {
