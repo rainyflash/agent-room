@@ -8,6 +8,8 @@ from unittest.mock import patch
 from tools.windows_installer_acceptance import (
     WindowsInstallerAcceptanceFailure,
     acceptance_environment,
+    ensure_clean_install_registration,
+    installed_desktop_version,
     locate_installed_layout,
     wait_for_install_files_removed,
     write_new_report,
@@ -81,6 +83,27 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
 
             with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "拒绝覆盖"):
                 write_new_report(report, {"schemaVersion": 1, "result": "changed"})
+
+    def test_clean_install_rejects_existing_registration(self) -> None:
+        with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "拒绝覆盖"):
+            ensure_clean_install_registration(lambda _key: True)
+
+        ensure_clean_install_registration(lambda _key: False)
+
+    def test_installed_version_uses_headless_desktop_probe(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "0.1.0-alpha.4\n", "stderr": ""},
+        )()
+        with patch("tools.windows_installer_acceptance.subprocess.run", return_value=completed) as run:
+            version = installed_desktop_version(Path("agent-room-desktop.exe"))
+
+        self.assertEqual(version, "0.1.0-alpha.4")
+        self.assertEqual(
+            run.call_args.args[0],
+            ("agent-room-desktop.exe", "--installer-version"),
+        )
 
     def test_uninstall_accepts_empty_directories_but_rejects_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

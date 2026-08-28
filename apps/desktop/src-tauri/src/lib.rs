@@ -40,19 +40,22 @@ use tauri_plugin_deep_link::DeepLinkExt as _;
 /// 安装器验收仍使用正式桌面的 Bridge 配置并持有子进程生命周期，但不会在
 /// GitHub Windows runner 的非交互会话中创建 `WebView` 窗口。
 pub fn run_entrypoint() -> ExitCode {
-    let update_config = match ReleaseUpdateConfig::from_build() {
-        Ok(config) => config,
-        Err(failure) => {
-            eprintln!("Agent Room 启动失败 [{}]", failure.code());
-            return ExitCode::FAILURE;
-        }
-    };
     match installer_acceptance::launch_mode(std::env::args_os().skip(1)) {
         installer_acceptance::DesktopLaunchMode::Interactive => {
+            let update_config = match ReleaseUpdateConfig::from_build() {
+                Ok(config) => config,
+                Err(failure) => {
+                    eprintln!("Agent Room 启动失败 [{}]", failure.code());
+                    return ExitCode::FAILURE;
+                }
+            };
             run(update_config);
             ExitCode::SUCCESS
         }
         installer_acceptance::DesktopLaunchMode::InstallerAcceptance => installer_acceptance::run(),
+        installer_acceptance::DesktopLaunchMode::InstallerVersion => {
+            installer_acceptance::print_version()
+        }
     }
 }
 

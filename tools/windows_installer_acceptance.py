@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import csv
 from dataclasses import dataclass
 import hashlib
@@ -28,6 +29,11 @@ SEMVER_PATTERN: Final = re.compile(
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 BRIDGE_STABILITY_SECONDS: Final = 2.0
+INSTALLER_REGISTRATION_KEYS: Final = (
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Agent Room",
+    r"HKCU\Software\agent-room\Agent Room",
+    r"HKCU\Software\Classes\agent-room",
+)
 
 
 class WindowsInstallerAcceptanceFailure(RuntimeError):
@@ -106,6 +112,50 @@ def run_checked(command: Sequence[str], label: str, *, timeout_seconds: int) -> 
         raise WindowsInstallerAcceptanceFailure(
             f"{label}失败（退出码 {completed.returncode}）：{detail}"
         )
+
+
+def windows_registry_key_exists(key: str) -> bool:
+    completed = subprocess.run(
+        ("reg", "query", key),
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    if completed.returncode not in (0, 1):
+        raise WindowsInstallerAcceptanceFailure("无法确认 Windows 安装注册状态。")
+    return completed.returncode == 0
+
+
+def ensure_clean_install_registration(
+    key_exists: Callable[[str], bool] | None = None,
+) -> None:
+    query = key_exists or windows_registry_key_exists
+    occupied = tuple(key for key in INSTALLER_REGISTRATION_KEYS if query(key))
+    if occupied:
+        raise WindowsInstallerAcceptanceFailure(
+            "干净安装验收拒绝覆盖当前用户已有的 Agent Room 安装注册；"
+            "请在一次性 Windows runner 上运行。"
+        )
+
+
+def installed_desktop_version(desktop: Path, *, timeout_seconds: int = 30) -> str:
+    completed = subprocess.run(
+        (str(desktop), "--installer-version"),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+    )
+    version = completed.stdout.strip()
+    if completed.returncode != 0 or SEMVER_PATTERN.fullmatch(version) is None:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise WindowsInstallerAcceptanceFailure(
+            f"无法读取已安装桌面端版本：{detail or '无有效输出'}"
+        )
+    return version
 
 
 def process_ids(image_name: str) -> frozenset[int]:
@@ -216,6 +266,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
         raise WindowsInstallerAcceptanceFailure("installer 必须是存在的 EXE 文件。")
     if launch_timeout_seconds < 5 or launch_timeout_seconds > 120:
         raise WindowsInstallerAcceptanceFailure("launch-timeout-seconds 必须在 5 到 120 之间。")
+    ensure_clean_install_registration()
 
     with tempfile.TemporaryDirectory(prefix="agent-room-installer-acceptance-") as temporary:
         install_root = Path(temporary) / "installed"
@@ -229,6 +280,11 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 timeout_seconds=300,
             )
             layout = locate_installed_layout(install_root)
+            actual_version = installed_desktop_version(layout.desktop)
+            if actual_version != expected_version:
+                raise WindowsInstallerAcceptanceFailure(
+                    f"已安装桌面端版本 {actual_version}，预期 {expected_version}。"
+                )
             previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
             desktop = subprocess.Popen(
                 (str(layout.desktop), "--installer-acceptance"),
@@ -265,6 +321,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                     "desktopPresent": True,
                     "bridgePresent": True,
                     "mcpPresent": True,
+                    "desktopVersion": True,
                     "desktopLaunch": True,
                     "managedBridgeLaunch": True,
                     "silentUninstall": True,

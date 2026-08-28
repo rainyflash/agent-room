@@ -7,22 +7,30 @@ use std::{
 use crate::desktop_config::DesktopBridgeConfig;
 
 const INSTALLER_ACCEPTANCE_ARGUMENT: &str = "--installer-acceptance";
+const INSTALLER_VERSION_ARGUMENT: &str = "--installer-version";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DesktopLaunchMode {
     Interactive,
     InstallerAcceptance,
+    InstallerVersion,
 }
 
 pub(crate) fn launch_mode(arguments: impl IntoIterator<Item = OsString>) -> DesktopLaunchMode {
-    if arguments
-        .into_iter()
-        .any(|argument| argument == INSTALLER_ACCEPTANCE_ARGUMENT)
-    {
-        DesktopLaunchMode::InstallerAcceptance
-    } else {
-        DesktopLaunchMode::Interactive
+    for argument in arguments {
+        if argument == INSTALLER_ACCEPTANCE_ARGUMENT {
+            return DesktopLaunchMode::InstallerAcceptance;
+        }
+        if argument == INSTALLER_VERSION_ARGUMENT {
+            return DesktopLaunchMode::InstallerVersion;
+        }
     }
+    DesktopLaunchMode::Interactive
+}
+
+pub(crate) fn print_version() -> ExitCode {
+    println!(env!("CARGO_PKG_VERSION"));
+    ExitCode::SUCCESS
 }
 
 pub(crate) fn run() -> ExitCode {
@@ -121,6 +129,18 @@ mod tests {
         );
         assert_eq!(
             launch_mode([OsString::from("--autostart")]),
+            DesktopLaunchMode::Interactive
+        );
+    }
+
+    #[test]
+    fn 精确参数进入版本探测模式() {
+        assert_eq!(
+            launch_mode([OsString::from("--installer-version")]),
+            DesktopLaunchMode::InstallerVersion
+        );
+        assert_eq!(
+            launch_mode([OsString::from("--installer-version=true")]),
             DesktopLaunchMode::Interactive
         );
     }
