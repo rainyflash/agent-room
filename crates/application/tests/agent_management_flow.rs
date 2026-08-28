@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agents::{
         AgentManagementDependencies, AgentManagementFailureKind, AgentManagementService,
-        AgentManagementUseCases, CreateAgent, EnsureDefaultAgent, ListAgents,
-        RegisterAgentInstance,
+        AgentManagementUseCases, CreateAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
+        ListAgents, RegisterAgentInstance,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -407,6 +407,42 @@ async fn 首次引导按_principal_幂等创建默认_agent() {
 }
 
 #[tokio::test]
+async fn 设备身份首次引导复用同一_principal_确定性_agent() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
+    let creation = Arc::new(FakeCreationWorkflow {
+        agent_id: default_agent_id,
+        claims: Mutex::new(Vec::new()),
+        completions: Mutex::new(Vec::new()),
+    });
+    let service = service(
+        creation.clone(),
+        None,
+        None,
+        Arc::new(FakeInstances::default()),
+        Arc::new(FakeMatrixIdentities {
+            server_name: "matrix.test".to_owned(),
+            issued_sessions: Mutex::new(0),
+            corrupt_session_identity: false,
+        }),
+    );
+
+    let ensured = service
+        .ensure_default_agent_for_device(EnsureDefaultAgentForDevice {
+            actor: authenticated_device(principal_id),
+        })
+        .await
+        .expect("设备身份应可确保默认 Agent");
+
+    assert_eq!(ensured.agent.id(), default_agent_id);
+    let claims = creation.claims.lock().expect("测试锁不得中毒");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].owner_id, principal_id);
+    assert_eq!(claims[0].request_id.as_uuid(), principal_id.as_uuid());
+    assert_eq!(claims[0].proposed_agent_id, default_agent_id);
+}
+
+#[tokio::test]
 async fn 已有_agent_时首次引导直接复用且不创建重复记录() {
     let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
     let existing = registered_agent(AgentId::from_uuid(Uuid::now_v7()));
@@ -548,23 +584,27 @@ fn registered_agent(agent_id: AgentId) -> RegisteredAgent {
 fn register_request(principal_id: PrincipalId, agent_id: AgentId) -> RegisterAgentInstance {
     RegisterAgentInstance {
         request_id: AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
-        actor: AuthenticatedDevice {
-            account: PrincipalAccount {
-                principal: Principal::new(principal_id),
-                matrix_user_id: format!("@principal-{principal_id}:matrix.test"),
-                display_name: "测试用户".to_owned(),
-                avatar_content_id: None,
-                locale: "zh-CN".to_owned(),
-            },
-            device_id: DeviceId::from_uuid(Uuid::now_v7()),
-            access_token_expires_at: time(NOW + 60_000),
-        },
+        actor: authenticated_device(principal_id),
         agent_id,
         adapter_type: "codex".to_owned(),
         external_subject_hash: Some(AdapterSubjectHash::new(vec![7; 32]).expect("主体摘要有效")),
         capability_version: "1.0".to_owned(),
         configuration: Map::new(),
         public_signing_key: AgentInstancePublicSigningKey::new(vec![9; 32]).expect("实例公钥有效"),
+    }
+}
+
+fn authenticated_device(principal_id: PrincipalId) -> AuthenticatedDevice {
+    AuthenticatedDevice {
+        account: PrincipalAccount {
+            principal: Principal::new(principal_id),
+            matrix_user_id: format!("@principal-{principal_id}:matrix.test"),
+            display_name: "测试用户".to_owned(),
+            avatar_content_id: None,
+            locale: "zh-CN".to_owned(),
+        },
+        device_id: DeviceId::from_uuid(Uuid::now_v7()),
+        access_token_expires_at: time(NOW + 60_000),
     }
 }
 

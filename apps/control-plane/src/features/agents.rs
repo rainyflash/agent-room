@@ -6,7 +6,7 @@ use agent_room_application::{
     },
     agents::{
         AgentManagementUseCases, ChangeAgentMembership, CreateAgent, EnsureDefaultAgent,
-        ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+        EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
@@ -49,6 +49,7 @@ const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const MAX_AGENT_BODY_BYTES: usize = 64 * 1_024;
 const MAX_ENCODED_HASH_LENGTH: usize = 64;
 const MAX_ENCODED_PUBLIC_KEY_LENGTH: usize = 64;
+const DEVICE_DEFAULT_AGENT_TARGET: &str = "/onboarding/device/default-agent";
 
 #[derive(Clone)]
 pub(crate) struct AgentHttpState {
@@ -85,6 +86,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
     Router::new()
         .route("/agents", get(list_agents).post(create_agent))
         .route("/onboarding/default-agent", put(ensure_default_agent))
+        .route(
+            DEVICE_DEFAULT_AGENT_TARGET,
+            put(ensure_default_agent_for_device),
+        )
         .route(
             "/agents/{agent_id}/members/{principal_id}",
             put(grant_membership).delete(revoke_membership),
@@ -270,6 +275,48 @@ async fn ensure_default_agent(
     match state
         .agents
         .ensure_default_agent(EnsureDefaultAgent { actor })
+        .await
+    {
+        Ok(agent) => no_store(Json(AgentResponse::from(agent)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn ensure_default_agent_for_device(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Ok(body_text) = std::str::from_utf8(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_default_agent_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "PUT",
+        DEVICE_DEFAULT_AGENT_TARGET,
+        body_text,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    if !body.is_empty() {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_default_agent_body", correlation_id)
+                .into_response(),
+        );
+    }
+    match state
+        .agents
+        .ensure_default_agent_for_device(EnsureDefaultAgentForDevice { actor })
         .await
     {
         Ok(agent) => no_store(Json(AgentResponse::from(agent)).into_response()),
@@ -635,7 +682,8 @@ mod tests {
         },
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
-            EnsureDefaultAgent, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+            EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
+            RegisteredAgentInstance,
         },
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -674,7 +722,7 @@ mod tests {
     use url::Url;
     use uuid::Uuid;
 
-    use super::{AgentHttpDependencies, AgentHttpState, router};
+    use super::{AgentHttpDependencies, AgentHttpState, DEVICE_DEFAULT_AGENT_TARGET, router};
 
     const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
     const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
@@ -690,6 +738,7 @@ mod tests {
     struct FakeAgents {
         creation: Mutex<Option<CreateAgent>>,
         default_agent_ensures: AtomicUsize,
+        device_default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
     }
@@ -707,6 +756,16 @@ mod tests {
             _request: EnsureDefaultAgent,
         ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
             self.default_agent_ensures.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(registered_agent()) })
+        }
+
+        fn ensure_default_agent_for_device(
+            &self,
+            request: EnsureDefaultAgentForDevice,
+        ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+            assert_eq!(request.actor.device_id, device_id());
+            self.device_default_agent_ensures
+                .fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(registered_agent()) })
         }
 
@@ -1021,6 +1080,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 桌面首次引导使用设备持有证明而不依赖_web_cookie_或_origin() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let devices = Arc::new(FakeDevices::default());
+        devices.expect_request("PUT", DEVICE_DEFAULT_AGENT_TARGET.to_owned(), String::new());
+        let app = test_router(agents.clone(), authentication.clone(), devices.clone());
+
+        let response = app
+            .oneshot(device_default_agent_request(true))
+            .await
+            .expect("设备默认 Agent 路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["agentId"], AGENT_UUID);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            agents.device_default_agent_ensures.load(Ordering::SeqCst),
+            1
+        );
+        assert!(
+            authentication
+                .requirements
+                .lock()
+                .expect("认证要求记录锁可用")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn 非_uuidv7_幂等键在认证和业务用例前失败() {
         let agents = Arc::new(FakeAgents::default());
         let authentication = Arc::new(FakeAuthentication::default());
@@ -1331,6 +1419,26 @@ mod tests {
         request
             .body(Body::from(body.to_owned()))
             .expect("Agent 实例注册请求有效")
+    }
+
+    fn device_default_agent_request(include_proof: bool) -> Request<Body> {
+        let mut request = Request::builder()
+            .method("PUT")
+            .uri(DEVICE_DEFAULT_AGENT_TARGET)
+            .header(header::AUTHORIZATION, "Bearer device-access-token");
+        if include_proof {
+            request = request
+                .header("x-agent-room-device-id", DEVICE_UUID)
+                .header("x-agent-room-proof-issued-at", "1700000000000")
+                .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+                .header(
+                    "x-agent-room-proof-signature",
+                    URL_SAFE_NO_PAD.encode([9_u8; 64]),
+                );
+        }
+        request
+            .body(Body::empty())
+            .expect("设备默认 Agent 请求有效")
     }
 
     fn verification_request(include_proof: bool) -> Request<Body> {

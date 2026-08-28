@@ -43,6 +43,17 @@ pub struct CreateAgent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentCreationDraft {
+    request_id: AgentCreationRequestId,
+    owner_id: PrincipalId,
+    slug: String,
+    display_name: String,
+    description: String,
+    avatar_content_id: Option<ContentId>,
+    visibility: AgentVisibility,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListAgents {
     pub actor: AuthenticatedPrincipal,
 }
@@ -50,6 +61,11 @@ pub struct ListAgents {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnsureDefaultAgent {
     pub actor: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsureDefaultAgentForDevice {
+    pub actor: AuthenticatedDevice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +138,11 @@ pub trait AgentManagementUseCases: Send + Sync {
         request: EnsureDefaultAgent,
     ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>>;
 
+    fn ensure_default_agent_for_device(
+        &self,
+        request: EnsureDefaultAgentForDevice,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>>;
+
     fn create_agent(
         &self,
         request: CreateAgent,
@@ -181,23 +202,25 @@ impl AgentManagementService {
         &self,
         request: CreateAgent,
     ) -> AgentManagementResult<RegisteredAgent> {
+        let operation = "agent.create";
+        validate_agent_profile(&request)?;
+        ensure_active_principal(&request.actor, self.clock.now(), operation)?;
         let proposed_agent_id = self.identifiers.agent_id();
-        self.create_agent_with_id(request, proposed_agent_id).await
+        self.create_agent_with_id(AgentCreationDraft::from(request), proposed_agent_id)
+            .await
     }
 
     async fn create_agent_with_id(
         &self,
-        request: CreateAgent,
+        request: AgentCreationDraft,
         proposed_agent_id: AgentId,
     ) -> AgentManagementResult<RegisteredAgent> {
         let operation = "agent.create";
-        validate_agent_profile(&request)?;
         let started_at = self.clock.now();
-        ensure_active_principal(&request.actor, started_at, operation)?;
         let fingerprint = self.secrets.digest(&canonical_agent_creation(&request));
         let claim = AgentCreationClaim {
             request_id: request.request_id,
-            owner_id: request.actor.principal_id,
+            owner_id: request.owner_id,
             proposed_agent_id,
             request_fingerprint: fingerprint,
             reserved_at: started_at,
@@ -222,7 +245,7 @@ impl AgentManagementService {
         let now = self.clock.now();
         let registration = AgentRegistration {
             agent: Agent::register(agent_id),
-            owner_id: request.actor.principal_id,
+            owner_id: request.owner_id,
             matrix_user_id: matrix_user_id.as_str().to_owned(),
             slug: request.slug,
             display_name: request.display_name,
@@ -257,21 +280,40 @@ impl AgentManagementService {
     ) -> AgentManagementResult<RegisteredAgent> {
         let operation = "agent.ensure_default";
         ensure_active_principal(&request.actor, self.clock.now(), operation)?;
+        self.ensure_default_agent_for_owner(request.actor.principal_id, operation)
+            .await
+    }
+
+    async fn ensure_default_agent_for_device_internal(
+        &self,
+        request: EnsureDefaultAgentForDevice,
+    ) -> AgentManagementResult<RegisteredAgent> {
+        let operation = "agent.ensure_default_for_device";
+        ensure_active_device(&request.actor, self.clock.now(), operation)?;
+        self.ensure_default_agent_for_owner(request.actor.account.principal.id(), operation)
+            .await
+    }
+
+    async fn ensure_default_agent_for_owner(
+        &self,
+        principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> AgentManagementResult<RegisteredAgent> {
         let existing = self
             .agents
-            .list_for_principal(request.actor.principal_id)
+            .list_for_principal(principal_id)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         if let Some(agent) = existing.into_iter().next() {
             return Ok(agent);
         }
 
-        let principal_uuid = request.actor.principal_id.as_uuid();
+        let principal_uuid = principal_id.as_uuid();
         let compact = principal_uuid.simple().to_string();
         self.create_agent_with_id(
-            CreateAgent {
+            AgentCreationDraft {
                 request_id: AgentCreationRequestId::from_uuid(principal_uuid),
-                actor: request.actor,
+                owner_id: principal_id,
                 slug: format!("agent-{}", &compact[compact.len() - 12..]),
                 display_name: format!("Agent {}", &compact[..8]),
                 description: String::new(),
@@ -413,6 +455,13 @@ impl AgentManagementUseCases for AgentManagementService {
         Box::pin(self.ensure_default_agent_internal(request))
     }
 
+    fn ensure_default_agent_for_device(
+        &self,
+        request: EnsureDefaultAgentForDevice,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+        Box::pin(self.ensure_default_agent_for_device_internal(request))
+    }
+
     fn create_agent(
         &self,
         request: CreateAgent,
@@ -450,6 +499,20 @@ fn validate_agent_profile(request: &CreateAgent) -> AgentManagementResult<()> {
             "agent.create",
             AgentManagementFailureKind::InvalidRequest,
         ))
+    }
+}
+
+impl From<CreateAgent> for AgentCreationDraft {
+    fn from(value: CreateAgent) -> Self {
+        Self {
+            request_id: value.request_id,
+            owner_id: value.actor.principal_id,
+            slug: value.slug,
+            display_name: value.display_name,
+            description: value.description,
+            avatar_content_id: value.avatar_content_id,
+            visibility: value.visibility,
+        }
     }
 }
 
@@ -496,9 +559,9 @@ fn ensure_agent_matrix_identity(
     }
 }
 
-fn canonical_agent_creation(request: &CreateAgent) -> String {
+fn canonical_agent_creation(request: &AgentCreationDraft) -> String {
     let mut canonical = CanonicalRequest::new("agent.create.v1");
-    canonical.field("principal_id", request.actor.principal_id.to_string());
+    canonical.field("principal_id", request.owner_id.to_string());
     canonical.field("slug", &request.slug);
     canonical.field("display_name", &request.display_name);
     canonical.field("description", &request.description);
