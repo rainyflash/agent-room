@@ -200,6 +200,12 @@ struct BridgeSupervisorActor {
 impl BridgeSupervisorActor {
     async fn run(mut self) {
         match self.probe().await {
+            ProbeOutcome::Authorized => {
+                self.session = None;
+                self.policy
+                    .discovered_authorized(now_unix_ms(), BridgeOwnership::External);
+                self.publish();
+            }
             ProbeOutcome::Ready(session) => {
                 self.session = Some(session);
                 self.policy
@@ -318,7 +324,10 @@ impl BridgeSupervisorActor {
         }
         if matches!(
             self.policy.snapshot().phase,
-            BridgePhase::Ready | BridgePhase::Starting | BridgePhase::AuthorizationRequired
+            BridgePhase::Authorized
+                | BridgePhase::Ready
+                | BridgePhase::Starting
+                | BridgePhase::AuthorizationRequired
         ) {
             return;
         }
@@ -368,6 +377,7 @@ impl BridgeSupervisorActor {
             return;
         }
         let probe_state = match probe {
+            ProbeOutcome::Authorized => ResumeProbeState::Authorized,
             ProbeOutcome::Ready(_) => ResumeProbeState::Ready,
             ProbeOutcome::Absent => ResumeProbeState::Absent,
             ProbeOutcome::Blocked(_) => ResumeProbeState::Blocked,
@@ -378,6 +388,11 @@ impl BridgeSupervisorActor {
             self.managed_child_active,
             self.policy.snapshot().phase,
         ) {
+            ResumeDecision::Authorized(ownership) => {
+                self.session = None;
+                self.policy.discovered_authorized(now_unix_ms(), ownership);
+                self.publish();
+            }
             ResumeDecision::Ready(ownership) => {
                 let ProbeOutcome::Ready(session) = probe else {
                     unreachable!("就绪决策必须携带 Agent 会话")
@@ -406,6 +421,13 @@ impl BridgeSupervisorActor {
 
     async fn handle_managed_probe(&mut self) {
         match self.probe().await {
+            ProbeOutcome::Authorized => {
+                self.session = None;
+                self.policy
+                    .discovered_authorized(now_unix_ms(), BridgeOwnership::Managed);
+                self.authorization = None;
+                self.publish();
+            }
             ProbeOutcome::Ready(session) => {
                 self.session = Some(session);
                 self.policy
@@ -430,6 +452,12 @@ impl BridgeSupervisorActor {
 
     async fn handle_external_probe(&mut self) {
         match self.probe().await {
+            ProbeOutcome::Authorized => {
+                self.session = None;
+                self.policy
+                    .discovered_authorized(now_unix_ms(), BridgeOwnership::External);
+                self.publish();
+            }
             ProbeOutcome::Ready(session) => {
                 self.session = Some(session);
                 self.policy
@@ -578,10 +606,10 @@ impl BridgeSupervisorActor {
                 }
                 Ok(IpcResponse::SelfSummary { .. }) => ProbeOutcome::Pending,
                 Ok(_) => ProbeOutcome::Blocked("desktop.bridge.self_response_invalid".to_owned()),
-                Err(failure)
-                    if failure.code() == "bridge.ipc.agent_runtime_unavailable"
-                        || failure.kind() == LocalBridgeClientFailureKind::Timeout =>
-                {
+                Err(failure) if failure.code() == "bridge.ipc.agent_runtime_unavailable" => {
+                    ProbeOutcome::Authorized
+                }
+                Err(failure) if failure.kind() == LocalBridgeClientFailureKind::Timeout => {
                     ProbeOutcome::Pending
                 }
                 Err(failure) => ProbeOutcome::Blocked(failure.code().to_owned()),
@@ -644,6 +672,7 @@ enum ActorInput {
 }
 
 enum ProbeOutcome {
+    Authorized,
     Ready(BridgeAgentSessionView),
     Pending,
     Absent,

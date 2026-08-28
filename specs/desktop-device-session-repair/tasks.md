@@ -1,6 +1,6 @@
 # Agent Room 桌面设备会话修复实施计划
 
-- [ ] 1. 修复 DesktopShell IPC 最小权限与状态探测
+- [x] 1. 修复 DesktopShell IPC 最小权限与状态探测
   - 为 `SelfRead` 增加明确授权与拒绝矩阵测试。
   - 区分设备已授权与 Agent Runtime 已就绪。
   - _需求：1、2、8_

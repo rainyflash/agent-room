@@ -12,6 +12,7 @@ export const bridgePhaseSchema = z.enum([
   'discovering',
   'starting',
   'authorization_required',
+  'authorized',
   'ready',
   'retry_scheduled',
   'halted',

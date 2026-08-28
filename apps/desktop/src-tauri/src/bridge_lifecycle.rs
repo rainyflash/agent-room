@@ -16,6 +16,7 @@ pub(crate) enum BridgePhase {
     Discovering,
     Starting,
     AuthorizationRequired,
+    Authorized,
     Ready,
     RetryScheduled,
     Halted,
@@ -57,6 +58,7 @@ pub(crate) enum ExitDecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResumeProbeState {
+    Authorized,
     Ready,
     Absent,
     Blocked,
@@ -64,6 +66,7 @@ pub(crate) enum ResumeProbeState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResumeDecision {
+    Authorized(BridgeOwnership),
     Ready(BridgeOwnership),
     StartManaged,
     KeepProbing,
@@ -76,6 +79,11 @@ pub(crate) const fn decide_resume(
     phase: BridgePhase,
 ) -> ResumeDecision {
     match probe {
+        ResumeProbeState::Authorized => ResumeDecision::Authorized(if managed_child_active {
+            BridgeOwnership::Managed
+        } else {
+            BridgeOwnership::External
+        }),
         ResumeProbeState::Ready => ResumeDecision::Ready(if managed_child_active {
             BridgeOwnership::Managed
         } else {
@@ -114,6 +122,15 @@ impl BridgeRestartPolicy {
 
     pub(crate) fn discovered_ready(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
         self.snapshot.phase = BridgePhase::Ready;
+        self.snapshot.ownership = Some(ownership);
+        self.snapshot.diagnostic_code = None;
+        self.snapshot.last_failure_code = None;
+        self.snapshot.next_retry_at_unix_ms = None;
+        self.snapshot.changed_at_unix_ms = now_unix_ms;
+    }
+
+    pub(crate) fn discovered_authorized(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
+        self.snapshot.phase = BridgePhase::Authorized;
         self.snapshot.ownership = Some(ownership);
         self.snapshot.diagnostic_code = None;
         self.snapshot.last_failure_code = None;
@@ -249,6 +266,17 @@ mod tests {
     }
 
     #[test]
+    fn 设备已授权但尚无_agent_时暴露可操作阶段() {
+        let mut policy = BridgeRestartPolicy::new(1_000);
+
+        policy.discovered_authorized(1_100, BridgeOwnership::Managed);
+
+        assert_eq!(policy.snapshot().phase, BridgePhase::Authorized);
+        assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::Managed));
+        assert_eq!(policy.snapshot().diagnostic_code, None);
+    }
+
+    #[test]
     fn 自动重启有指数退避且第四次崩溃进入停机态() {
         let mut policy = BridgeRestartPolicy::new(0);
         policy.starting(0);
@@ -306,6 +334,10 @@ mod tests {
 
     #[test]
     fn 系统唤醒后重新探测而不沿用休眠前的假绿色状态() {
+        assert_eq!(
+            decide_resume(ResumeProbeState::Authorized, true, BridgePhase::Starting),
+            ResumeDecision::Authorized(BridgeOwnership::Managed)
+        );
         assert_eq!(
             decide_resume(ResumeProbeState::Absent, false, BridgePhase::Ready),
             ResumeDecision::StartManaged

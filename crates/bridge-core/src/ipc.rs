@@ -198,7 +198,10 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
         match caller {
             IpcCallerKind::McpServer => scope != IpcScope::HandoffApprove,
             IpcCallerKind::DesktopShell => {
-                matches!(scope, IpcScope::BridgeStatusRead | IpcScope::HandoffApprove)
+                matches!(
+                    scope,
+                    IpcScope::BridgeStatusRead | IpcScope::SelfRead | IpcScope::HandoffApprove
+                )
             }
             IpcCallerKind::DiagnosticCli => scope == IpcScope::BridgeStatusRead,
         }
@@ -432,7 +435,10 @@ mod tests {
                 .all(|scope| !policy.allows(IpcCallerKind::DiagnosticCli, *scope))
         );
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::SelfRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::HandoffApprove));
+        assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::ContentRead));
+        assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::MessageSend));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
