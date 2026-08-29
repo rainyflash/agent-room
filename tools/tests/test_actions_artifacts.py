@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from subprocess import CompletedProcess
 import unittest
+from unittest.mock import patch
 
 from tools.actions_artifacts import (
     Artifact,
     ArtifactRetentionFailure,
     WorkflowRun,
+    github_http_status,
+    is_transient_github_failure,
     parse_artifacts,
     retention_decisions,
+    run_gh,
 )
 
 
@@ -96,6 +101,65 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
 
         self.assertEqual(values[0].identifier, 42)
         self.assertEqual(values[0].run_id, 99)
+
+    def test_github_status_and_transient_failure_classification(self) -> None:
+        self.assertEqual(github_http_status("gh: Server Error (HTTP 502)"), 502)
+        self.assertTrue(is_transient_github_failure("gh: Server Error (HTTP 502)"))
+        self.assertTrue(is_transient_github_failure("connection reset by peer"))
+        self.assertFalse(is_transient_github_failure("gh: Not Found (HTTP 404)"))
+
+    @patch("tools.actions_artifacts.time.sleep")
+    @patch("tools.actions_artifacts.subprocess.run")
+    def test_github_cli_retries_transient_server_failure(
+        self,
+        run_mock,
+        sleep_mock,
+    ) -> None:
+        run_mock.side_effect = (
+            CompletedProcess([], 1, stdout="", stderr="gh: Server Error (HTTP 502)"),
+            CompletedProcess([], 0, stdout="ok", stderr=""),
+        )
+
+        self.assertEqual(run_gh(("api", "repos/example/project")), "ok")
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(1.0)
+
+    @patch("tools.actions_artifacts.time.sleep")
+    @patch("tools.actions_artifacts.subprocess.run")
+    def test_github_cli_accepts_idempotent_delete_not_found(
+        self,
+        run_mock,
+        sleep_mock,
+    ) -> None:
+        run_mock.return_value = CompletedProcess(
+            [], 1, stdout="", stderr="gh: Not Found (HTTP 404)"
+        )
+
+        self.assertEqual(
+            run_gh(
+                ("api", "--method", "DELETE", "repos/example/project/actions/artifacts/1"),
+                accepted_http_statuses=frozenset({404}),
+            ),
+            "",
+        )
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(sleep_mock.mock_calls, [])
+
+    @patch("tools.actions_artifacts.time.sleep")
+    @patch("tools.actions_artifacts.subprocess.run")
+    def test_github_cli_fails_immediately_for_non_transient_error(
+        self,
+        run_mock,
+        sleep_mock,
+    ) -> None:
+        run_mock.return_value = CompletedProcess(
+            [], 1, stdout="", stderr="gh: Forbidden (HTTP 403)"
+        )
+
+        with self.assertRaisesRegex(ArtifactRetentionFailure, "HTTP 403"):
+            run_gh(("api", "repos/example/project"))
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(sleep_mock.mock_calls, [])
 
 
 if __name__ == "__main__":

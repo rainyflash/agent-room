@@ -8,14 +8,23 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import time
 from typing import Final, Mapping, Sequence
 from urllib.parse import quote
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 RELEASE_ARTIFACT_PREFIX: Final = "release-"
+GITHUB_HTTP_STATUS_PATTERN: Final = re.compile(r"\bHTTP (?P<status>[1-5][0-9]{2})\b")
+TRANSIENT_GITHUB_FAILURE_PATTERN: Final = re.compile(
+    r"\b(?:timeout|timed out|connection reset|EOF)\b", re.IGNORECASE
+)
+TRANSIENT_GITHUB_HTTP_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
+GITHUB_CLI_MAX_ATTEMPTS: Final = 4
+GITHUB_CLI_RETRY_BASE_SECONDS: Final = 1.0
 
 
 class ArtifactRetentionFailure(RuntimeError):
@@ -160,22 +169,59 @@ def parse_workflow_run(value: object, expected_identifier: int) -> WorkflowRun:
     )
 
 
-def run_gh(arguments: Sequence[str]) -> str:
-    completed = subprocess.run(
-        ["gh", *arguments],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+def github_http_status(detail: str) -> int | None:
+    """从 gh 的稳定错误格式中提取 HTTP 状态码。"""
+
+    matches = tuple(GITHUB_HTTP_STATUS_PATTERN.finditer(detail))
+    return int(matches[-1].group("status")) if matches else None
+
+
+def is_transient_github_failure(detail: str) -> bool:
+    """只重试 GitHub 限流、服务端错误与明确的瞬时传输错误。"""
+
+    status = github_http_status(detail)
+    return status in TRANSIENT_GITHUB_HTTP_STATUSES or bool(
+        TRANSIENT_GITHUB_FAILURE_PATTERN.search(detail)
     )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "无错误输出"
-        raise ArtifactRetentionFailure(
-            f"GitHub CLI 命令失败（gh {' '.join(arguments)}）：{detail}"
+
+
+def run_gh(
+    arguments: Sequence[str],
+    *,
+    accepted_http_statuses: frozenset[int] = frozenset(),
+) -> str:
+    """执行 gh；瞬时失败采用有上限退避，避免定时清理被偶发 5xx 打红。"""
+
+    command = ["gh", *arguments]
+    for attempt in range(1, GITHUB_CLI_MAX_ATTEMPTS + 1):
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-    return completed.stdout
+        if completed.returncode == 0:
+            return completed.stdout
+        detail = completed.stderr.strip() or completed.stdout.strip() or "无错误输出"
+        if github_http_status(detail) in accepted_http_statuses:
+            return completed.stdout
+        if (
+            attempt == GITHUB_CLI_MAX_ATTEMPTS
+            or not is_transient_github_failure(detail)
+        ):
+            raise ArtifactRetentionFailure(
+                f"GitHub CLI 命令失败（gh {' '.join(arguments)}）：{detail}"
+            )
+        delay = GITHUB_CLI_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+        print(
+            f"GitHub CLI 瞬时失败，{delay:g} 秒后进行第 {attempt + 1} 次尝试。",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+    raise AssertionError("有上限重试循环不应执行到此处。")
 
 
 def gh_json(arguments: Sequence[str]) -> object:
@@ -238,7 +284,8 @@ def delete_artifact(repository: str, identifier: int) -> None:
             "--method",
             "DELETE",
             f"repos/{repository}/actions/artifacts/{identifier}",
-        )
+        ),
+        accepted_http_statuses=frozenset({404}),
     )
 
 
