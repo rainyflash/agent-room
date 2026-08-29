@@ -16,7 +16,23 @@ from tools.windows_installer_acceptance import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[2]
+INSTALLER_HOOKS = ROOT / "apps" / "desktop" / "src-tauri" / "windows" / "hooks.nsh"
+
+
 class WindowsInstallerAcceptanceTests(unittest.TestCase):
+    def test_installer_hooks_stop_every_owned_runtime_before_write_and_delete(self) -> None:
+        source = INSTALLER_HOOKS.read_text(encoding="utf-8")
+
+        self.assertIn("!macro NSIS_HOOK_PREINSTALL", source)
+        self.assertIn("!macro NSIS_HOOK_PREUNINSTALL", source)
+        self.assertEqual(source.count("!insertmacro AGENT_ROOM_STOP_RUNTIME"), 2)
+        self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-desktop.exe', source)
+        self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-bridge.exe', source)
+        self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-mcp.exe', source)
+        self.assertIn("Push $0", source)
+        self.assertGreaterEqual(source.count("Pop $0"), 5)
+
     def test_acceptance_environment_isolates_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

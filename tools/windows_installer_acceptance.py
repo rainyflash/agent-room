@@ -29,6 +29,8 @@ SEMVER_PATTERN: Final = re.compile(
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 BRIDGE_STABILITY_SECONDS: Final = 2.0
+PROCESS_STABILITY_SECONDS: Final = 1.0
+PROCESS_EXIT_TIMEOUT_SECONDS: Final = 30
 INSTALLER_REGISTRATION_KEYS: Final = (
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Agent Room",
     r"HKCU\Software\agent-room\Agent Room",
@@ -204,6 +206,48 @@ def wait_for_bridge(previous: frozenset[int], desktop: subprocess.Popen[bytes], 
     raise WindowsInstallerAcceptanceFailure("桌面端未在时限内启动受管 Bridge。")
 
 
+def wait_for_process_stability(
+    process: subprocess.Popen[bytes],
+    label: str,
+    *,
+    stability_seconds: float = PROCESS_STABILITY_SECONDS,
+) -> None:
+    deadline = time.monotonic() + stability_seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise WindowsInstallerAcceptanceFailure(
+                f"{label}未保持运行（退出码 {process.returncode}）。"
+            )
+        time.sleep(0.1)
+
+
+def wait_for_process_exit(
+    process: subprocess.Popen[bytes],
+    label: str,
+    *,
+    timeout_seconds: int = PROCESS_EXIT_TIMEOUT_SECONDS,
+) -> None:
+    try:
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        raise WindowsInstallerAcceptanceFailure(f"{label}没有按安装器要求退出。") from error
+
+
+def wait_for_image_exit(
+    image_name: str,
+    process_id: int,
+    label: str,
+    *,
+    timeout_seconds: int = PROCESS_EXIT_TIMEOUT_SECONDS,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if process_id not in process_ids(image_name):
+            return
+        time.sleep(0.5)
+    raise WindowsInstallerAcceptanceFailure(f"{label}没有按安装器要求退出。")
+
+
 def acceptance_environment(temporary: Path) -> dict[str, str]:
     environment = {
         name: value
@@ -218,20 +262,21 @@ def acceptance_environment(temporary: Path) -> dict[str, str]:
 
 
 def terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    subprocess.run(
-        ("taskkill", "/PID", str(process.pid), "/T", "/F"),
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=30,
-    )
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=10)
+    if process.poll() is None:
+        subprocess.run(
+            ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    if process.stdin is not None:
+        process.stdin.close()
 
 
 def wait_for_install_files_removed(root: Path, *, timeout_seconds: int = 30) -> None:
@@ -272,7 +317,10 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
         install_root = Path(temporary) / "installed"
         layout: InstalledLayout | None = None
         desktop: subprocess.Popen[bytes] | None = None
+        mcp: subprocess.Popen[bytes] | None = None
         bridge_pid: int | None = None
+        upgraded_bridge_pid: int | None = None
+        environment = acceptance_environment(Path(temporary))
         try:
             run_checked(
                 (str(installer), "/S", "/NS", f"/D={install_root}"),
@@ -291,10 +339,77 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 cwd=layout.root,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                env=acceptance_environment(Path(temporary)),
+                env=environment,
             )
             bridge_pid = wait_for_bridge(previous_bridge_ids, desktop, launch_timeout_seconds)
+            mcp = subprocess.Popen(
+                (str(layout.mcp),),
+                cwd=layout.root,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=environment,
+            )
+            wait_for_process_stability(mcp, "MCP")
+
+            run_checked(
+                (str(installer), "/S", "/NS", f"/D={install_root}"),
+                "运行中原地升级",
+                timeout_seconds=300,
+            )
+            wait_for_process_exit(desktop, "桌面端")
+            wait_for_process_exit(mcp, "MCP")
+            wait_for_image_exit(BRIDGE_EXECUTABLE, bridge_pid, "受管 Bridge")
+            terminate_process_tree(desktop)
+            terminate_process_tree(mcp)
+            desktop = None
+            mcp = None
+
+            layout = locate_installed_layout(install_root)
+            upgraded_version = installed_desktop_version(layout.desktop)
+            if upgraded_version != expected_version:
+                raise WindowsInstallerAcceptanceFailure(
+                    f"原地升级后桌面端版本 {upgraded_version}，预期 {expected_version}。"
+                )
+
+            previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
+            desktop = subprocess.Popen(
+                (str(layout.desktop), "--installer-acceptance"),
+                cwd=layout.root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=environment,
+            )
+            upgraded_bridge_pid = wait_for_bridge(
+                previous_bridge_ids,
+                desktop,
+                launch_timeout_seconds,
+            )
+            mcp = subprocess.Popen(
+                (str(layout.mcp),),
+                cwd=layout.root,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=environment,
+            )
+            wait_for_process_stability(mcp, "升级后的 MCP")
+
+            run_checked((str(layout.uninstaller), "/S"), "运行中静默卸载", timeout_seconds=300)
+            wait_for_process_exit(desktop, "卸载时的桌面端")
+            wait_for_process_exit(mcp, "卸载时的 MCP")
+            wait_for_image_exit(
+                BRIDGE_EXECUTABLE,
+                upgraded_bridge_pid,
+                "卸载时的受管 Bridge",
+            )
+            terminate_process_tree(desktop)
+            terminate_process_tree(mcp)
+            desktop = None
+            mcp = None
         finally:
+            if mcp is not None:
+                terminate_process_tree(mcp)
             if desktop is not None:
                 terminate_process_tree(desktop)
             if layout is not None and layout.uninstaller.is_file():
@@ -303,6 +418,8 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
         wait_for_install_files_removed(install_root)
         if bridge_pid is None:
             raise WindowsInstallerAcceptanceFailure("没有记录到受管 Bridge 进程。")
+        if upgraded_bridge_pid is None:
+            raise WindowsInstallerAcceptanceFailure("没有记录到升级后的受管 Bridge 进程。")
 
         write_new_report(
             report,
@@ -324,7 +441,16 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                     "desktopVersion": True,
                     "desktopLaunch": True,
                     "managedBridgeLaunch": True,
+                    "mcpLaunch": True,
+                    "runningUpgrade": True,
+                    "upgradeStoppedDesktop": True,
+                    "upgradeStoppedBridge": True,
+                    "upgradeStoppedMcp": True,
+                    "postUpgradeDesktopLaunch": True,
+                    "postUpgradeBridgeLaunch": True,
+                    "postUpgradeMcpLaunch": True,
                     "silentUninstall": True,
+                    "uninstallStoppedRuntime": True,
                     "installFilesRemoved": True,
                 },
             },
