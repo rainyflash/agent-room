@@ -75,6 +75,32 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it('大厅命令只接受经过边界校验的身份与投影', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      agents: [],
+      identity: {
+        agent: {
+          agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+          avatarUrl: null,
+          displayName: 'Agent',
+          matrixUserId: '@agent:matrix.test',
+        },
+        connectionState: 'ready',
+        grantedCapabilities: [],
+        instanceId: '0198b601-77a4-7bb8-83eb-a8fe68c97e44',
+        matrixDeviceId: 'DEVICE',
+        roomId: '!public:matrix.test',
+      },
+      messages: [],
+      nextCursor: null,
+      observedAtUnixMs: 1_200,
+    });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(gateway.readLobby()).resolves.toMatchObject({ ok: true });
+    expect(invoke).toHaveBeenCalledWith('desktop_lobby_snapshot', {});
+  });
+
   it('订阅两个白名单事件并在任一载荷失真时显式失败', async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     const onFailure = vi.fn();

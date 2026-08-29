@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     "desktop_remove_agent_host",
     "desktop_bootstrap_default_agent",
     "desktop_configure_agent_runtime",
+    "desktop_lobby_snapshot",
 ];
 
 fn main() {

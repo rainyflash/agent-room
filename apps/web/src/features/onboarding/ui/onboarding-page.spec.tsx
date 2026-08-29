@@ -21,6 +21,9 @@ vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
 vi.mock('@/features/desktop/ui/use-desktop-runtime', () => ({
   useDesktopRuntime: vi.fn(),
 }));
+vi.mock('@/features/session/ui/connection-page', () => ({
+  ConnectionPage: () => <main>SESSION_RECOVERY</main>,
+}));
 vi.mock('@/features/session/ui/session-provider', () => ({ useSession: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
 vi.mock('motion/react', () => ({
@@ -95,6 +98,22 @@ afterEach(() => {
 });
 
 describe('首次引导页面', () => {
+  it('控制面会话失效时回到登录边界而不是永久显示账户检查', () => {
+    vi.mocked(useSession).mockReturnValue({
+      send: vi.fn(),
+      snapshot: {
+        context: { principal: null },
+        value: 'unauthenticated',
+      },
+    } as unknown as ReturnType<typeof useSession>);
+    vi.mocked(useAppServices).mockReturnValue({} as ReturnType<typeof useAppServices>);
+
+    renderPage();
+
+    expect(screen.getByText('SESSION_RECOVERY')).toBeVisible();
+    expect(screen.queryByText('Checking account')).not.toBeInTheDocument();
+  });
+
   it('从服务端事实展示账户、首个 Agent、真实大厅与 Windows Runtime 入口', async () => {
     const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: false as const }));
     vi.mocked(useAppServices).mockReturnValue({

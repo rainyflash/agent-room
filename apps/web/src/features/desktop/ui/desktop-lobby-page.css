@@ -1,0 +1,213 @@
+.desktop-lobby .lobby-stage {
+  right: 380px;
+}
+
+.desktop-message-rail {
+  position: absolute;
+  z-index: 31;
+  top: 96px;
+  right: 20px;
+  bottom: 84px;
+  width: 340px;
+  overflow: hidden;
+  border: 1px solid var(--ar-paper-18);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-ink) 94%, transparent);
+  box-shadow: 0 18px 60px color-mix(in srgb, black 30%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.desktop-message-rail > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  padding: 1rem 1.1rem 0.9rem;
+  border-bottom: 1px solid var(--ar-paper-18);
+}
+
+.desktop-message-rail h2,
+.desktop-message-rail h3,
+.desktop-message-rail p {
+  margin: 0;
+}
+
+.desktop-message-rail h2 {
+  margin-top: 0.15rem;
+  font-size: 1rem;
+}
+
+.desktop-message-rail > header > span {
+  color: var(--color-network);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.desktop-message-rail ol {
+  height: calc(100% - 72px);
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.desktop-message-rail li {
+  padding: 0.95rem 1.1rem 1rem;
+  border-bottom: 1px solid var(--ar-paper-10);
+}
+
+.desktop-message-rail li > div,
+.desktop-message-rail time {
+  display: flex;
+  align-items: center;
+}
+
+.desktop-message-rail li > div {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.desktop-message-rail li strong,
+.desktop-message-rail time {
+  color: var(--ar-paper-72);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.desktop-message-rail time {
+  gap: 0.25rem;
+}
+
+.desktop-message-rail time svg {
+  width: 12px;
+  height: 12px;
+}
+
+.desktop-message-rail h3 {
+  margin-top: 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.desktop-message-rail li p {
+  display: -webkit-box;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  color: var(--ar-paper-72);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.desktop-message-rail__empty {
+  padding: 1rem 1.1rem;
+  color: var(--ar-paper-48);
+  font-size: 0.74rem;
+}
+
+.desktop-agent-panel {
+  position: absolute;
+  z-index: 40;
+  top: 112px;
+  left: 20px;
+  width: min(330px, calc(100% - 420px));
+  padding: 1.2rem;
+  border: 1px solid var(--ar-paper-18);
+  border-left: 3px solid var(--color-network);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-ink) 94%, transparent);
+  box-shadow: 0 18px 60px color-mix(in srgb, black 30%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.desktop-agent-panel > .ar-button {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+}
+
+.desktop-agent-panel > svg {
+  width: 22px;
+  color: var(--color-network);
+}
+
+.desktop-agent-panel h2 {
+  margin: 0.35rem 0 0.2rem;
+  font-size: 1.35rem;
+}
+
+.desktop-agent-panel code {
+  color: var(--ar-paper-72);
+  font-size: 0.64rem;
+}
+
+.desktop-agent-panel dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+  margin: 1rem 0 0;
+}
+
+.desktop-agent-panel dl > div {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--ar-paper-18);
+}
+
+.desktop-agent-panel dt {
+  color: var(--ar-paper-48);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.desktop-agent-panel dd {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+}
+
+.desktop-lobby--boundary {
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  padding: 3rem;
+}
+
+.desktop-lobby--boundary > img {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 1.3rem;
+}
+
+.desktop-lobby--boundary h1 {
+  max-width: 620px;
+  margin: 0.35rem 0 0.8rem;
+  font-size: clamp(2.2rem, 6vw, 5rem);
+  letter-spacing: -0.06em;
+}
+
+.desktop-lobby--boundary code {
+  margin-bottom: 1.25rem;
+  color: var(--color-network);
+}
+
+@media (max-width: 980px) {
+  .desktop-lobby .lobby-stage {
+    right: 0;
+  }
+
+  .desktop-message-rail {
+    top: auto;
+    right: 12px;
+    bottom: 76px;
+    width: min(340px, calc(100% - 24px));
+    height: 260px;
+  }
+
+  .desktop-agent-panel {
+    width: min(330px, calc(100% - 40px));
+  }
+
+  .desktop-lobby__refresh-label {
+    display: none;
+  }
+}

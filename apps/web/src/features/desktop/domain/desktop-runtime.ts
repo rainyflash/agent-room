@@ -70,6 +70,81 @@ export const desktopAgentTargetSchema = z
   .strict();
 export type DesktopAgentTarget = z.infer<typeof desktopAgentTargetSchema>;
 
+const desktopLobbyAgentIdentitySchema = z
+  .object({
+    agentId: z.uuid(),
+    displayName: z.string().trim().min(1).max(160),
+    matrixUserId: z.string().min(4).max(512),
+    avatarUrl: z.string().min(1).max(2_048).nullable(),
+  })
+  .strict();
+
+const desktopLobbyActorSchema = z
+  .object({
+    agent: desktopLobbyAgentIdentitySchema,
+    instanceId: z.uuid(),
+    provenance: z.enum(['human', 'human_confirmed_agent', 'autonomous_agent']),
+  })
+  .strict();
+
+const desktopLobbyContentSchema = z
+  .object({
+    contentId: z.uuid(),
+    digestSha256: z.string().length(64),
+    mediaType: z.string().min(1).max(255),
+    sizeBytes: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const desktopLobbyIdentitySchema = z
+  .object({
+    agent: desktopLobbyAgentIdentitySchema,
+    instanceId: z.uuid(),
+    matrixDeviceId: z.string().min(1).max(255),
+    roomId: z.string().min(4).max(512),
+    connectionState: z.enum(['starting', 'ready', 'reconnecting', 'offline', 'shutting_down']),
+    grantedCapabilities: z.array(z.string().min(1).max(128)).max(128),
+  })
+  .strict();
+
+const desktopLobbyPresenceSchema = z
+  .object({
+    roomId: z.string().min(4).max(512),
+    agent: desktopLobbyAgentIdentitySchema,
+    instanceId: z.uuid(),
+    status: z.enum(['offline', 'idle', 'working', 'waiting_input', 'blocked', 'completed']),
+    observedAtUnixMs: z.number().int().nonnegative(),
+    leaseExpiresAtUnixMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const desktopLobbyMessageSchema = z
+  .object({
+    messageId: z.uuid(),
+    eventId: z.string().min(1).max(512),
+    roomId: z.string().min(4).max(512),
+    actor: desktopLobbyActorSchema,
+    createdAtUnixMs: z.number().int().nonnegative(),
+    title: z.string().trim().min(1).max(240),
+    summary: z.string().trim().max(2_000),
+    content: desktopLobbyContentSchema,
+    language: z.string().trim().min(1).max(35).nullable(),
+    sensitivity: z.enum(['normal', 'sensitive', 'restricted']),
+    riskFlags: z.array(z.string().min(1).max(128)).max(64),
+  })
+  .strict();
+
+export const desktopLobbySnapshotSchema = z
+  .object({
+    identity: desktopLobbyIdentitySchema,
+    agents: z.array(desktopLobbyPresenceSchema).max(250),
+    messages: z.array(desktopLobbyMessageSchema).max(100),
+    nextCursor: z.string().min(1).max(512).nullable(),
+    observedAtUnixMs: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DesktopLobbySnapshot = z.infer<typeof desktopLobbySnapshotSchema>;
+
 const routeSegmentSchema = z
   .string()
   .min(1)
@@ -184,6 +259,7 @@ export type DesktopRuntimeGateway = {
   configureAgentRuntime(
     target: DesktopAgentTarget,
   ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;
+  readLobby(): Promise<Result<DesktopLobbySnapshot, DesktopRuntimeFailure>>;
   detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
   planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
   applyHost?(

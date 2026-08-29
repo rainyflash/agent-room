@@ -8,6 +8,7 @@ import {
   agentHostDetectionSchema,
   agentHostPlanSchema,
   desktopAgentTargetSchema,
+  desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
   releaseUpdateCheckSchema,
   desktopRuntimeSnapshotSchema,
@@ -20,6 +21,7 @@ import {
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
+  type DesktopLobbySnapshot,
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
 } from '@/features/desktop/domain/desktop-runtime';
@@ -45,6 +47,7 @@ const desktopCommands = {
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   detectHosts: 'desktop_detect_agent_hosts',
   installUpdate: 'desktop_install_update',
+  lobbySnapshot: 'desktop_lobby_snapshot',
   planHost: 'desktop_plan_agent_host',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
@@ -147,6 +150,10 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
       },
       desktopAgentTargetSchema,
     );
+  }
+
+  async readLobby(): Promise<Result<DesktopLobbySnapshot, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.lobbySnapshot, {}, desktopLobbySnapshotSchema);
   }
 
   async detectHosts(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>> {

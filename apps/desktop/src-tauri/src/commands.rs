@@ -10,7 +10,9 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::{
     agent_runtime::{
         AgentBootstrapFailure, AgentRuntimeBindingFailure, DesktopAgentRuntimeBinding,
-        LocalBridgeBootstrapGateway, bind_agent_runtime, bootstrap_agent_target,
+        DesktopLobbyProjectionFailure, DesktopLobbySnapshot, LocalBridgeBootstrapGateway,
+        LocalBridgeLobbyProjectionGateway, bind_agent_runtime, bootstrap_agent_target,
+        read_desktop_lobby,
     },
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
     deep_link::{DeepLinkInbox, DeepLinkTarget},
@@ -99,6 +101,12 @@ impl From<AgentRuntimeBindingFailure> for DesktopCommandFailure {
     }
 }
 
+impl From<DesktopLobbyProjectionFailure> for DesktopCommandFailure {
+    fn from(failure: DesktopLobbyProjectionFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) async fn desktop_bootstrap_default_agent(
@@ -117,6 +125,18 @@ pub(crate) async fn desktop_bootstrap_default_agent(
     let configured = config.with_agent_target(&target);
     let binding = DesktopAgentRuntimeBinding::new(&runtime.bridge, &runtime.targets);
     Ok(bind_agent_runtime(&binding, target, configured)?)
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_lobby_snapshot() -> Result<DesktopLobbySnapshot, DesktopCommandFailure>
+{
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    let gateway = LocalBridgeLobbyProjectionGateway::new(client);
+    Ok(read_desktop_lobby(&gateway).await?)
 }
 
 #[tauri::command]

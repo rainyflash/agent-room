@@ -80,6 +80,9 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
     installUpdate,
     isAvailable: () => true,
     openAuthorization,
+    readLobby: async () => {
+      throw new Error('此测试不读取大厅。');
+    },
     retryBridge,
     setAutostart: async (enabled) => ok(enabled),
     snapshot: async () => ok(snapshot(bridge, updatesConfigured)),

@@ -38,6 +38,7 @@ fn 主窗口能力不包含文件_shell_或进程通配权限() {
             "allow-desktop-remove-agent-host",
             "allow-desktop-bootstrap-default-agent",
             "allow-desktop-configure-agent-runtime",
+            "allow-desktop-lobby-snapshot",
         ]
     );
 }

@@ -206,6 +206,8 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                     IpcScope::BridgeStatusRead
                         | IpcScope::SelfRead
                         | IpcScope::AgentBootstrap
+                        | IpcScope::PreviewsRead
+                        | IpcScope::PresenceRead
                         | IpcScope::HandoffApprove
                 )
             }
@@ -443,6 +445,8 @@ mod tests {
         assert!(policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::BridgeStatusRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::SelfRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::AgentBootstrap));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::PreviewsRead));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::PresenceRead));
         assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::ContentRead));
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::MessageSend));

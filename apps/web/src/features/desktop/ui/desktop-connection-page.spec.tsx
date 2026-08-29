@@ -65,6 +65,9 @@ function gateway(bootstrapDefaultAgent: DesktopRuntimeGateway['bootstrapDefaultA
     installUpdate: async () => ok(undefined),
     isAvailable: () => true,
     openAuthorization: async () => ok(undefined),
+    readLobby: async () => {
+      throw new Error('此测试不读取大厅。');
+    },
     retryBridge: async () => ok(authorizedSnapshot.bridge),
     setAutostart: async (enabled) => ok(enabled),
     snapshot: async () => ok(authorizedSnapshot),
@@ -99,6 +102,44 @@ describe('桌面设备连接页', () => {
     await waitFor(() => {
       expect(bootstrap).toHaveBeenCalledTimes(1);
       expect(bootstrap).toHaveBeenCalledWith('en');
+    });
+  });
+
+  it('Bridge 与默认 Agent 就绪后自动进入真实大厅路由', async () => {
+    const readySnapshot: DesktopRuntimeSnapshot = {
+      ...authorizedSnapshot,
+      agentTarget: target,
+      bridge: {
+        authorization: null,
+        lifecycle: { ...authorizedSnapshot.bridge.lifecycle, phase: 'ready' },
+        session: {
+          agentId: target.agentId,
+          instanceId: '0198b601-77a4-7bb8-83eb-a8fe68c97e44',
+          matrixRoomId: '!public:matrix.test',
+        },
+      },
+    };
+    const runtime = gateway(vi.fn(async () => ok(target)));
+    runtime.snapshot = async () => ok(readySnapshot);
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime}>
+          <DesktopConnectionPage />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    await waitFor(() => {
+      expect(router.navigate).toHaveBeenCalledWith({
+        params: {
+          catalogId: target.publicLobbyCatalogId,
+          roomId: '!public:matrix.test',
+        },
+        replace: true,
+        search: {},
+        to: '/lobby/$catalogId/instance/$roomId',
+      });
     });
   });
 });

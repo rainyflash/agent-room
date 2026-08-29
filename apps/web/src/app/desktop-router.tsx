@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 
 import { DesktopRootLayout } from '@/app/desktop-root-layout';
 import { DesktopConnectionPage } from '@/features/desktop/ui/desktop-connection-page';
+import { DesktopLobbyPage } from '@/features/desktop/ui/desktop-lobby-page';
 import { normalizeConnectSearch, normalizeLobbySearch } from '@/shared/routing/route-state';
 
 const rootRoute = createRootRoute({ component: DesktopRootLayout });
@@ -29,14 +30,14 @@ const lobbyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/lobby/$catalogId',
   validateSearch: normalizeLobbySearch,
-  component: DesktopConnectionPage,
+  component: DesktopLobbyPage,
 });
 
 const lobbyInstanceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/lobby/$catalogId/instance/$roomId',
   validateSearch: normalizeLobbySearch,
-  component: DesktopConnectionPage,
+  component: DesktopLobbyPage,
 });
 
 const settingsRoute = createRoute({

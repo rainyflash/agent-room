@@ -26,6 +26,7 @@ import { ModerationHub } from '@/features/moderation/ui/moderation-hub';
 import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
 import { useAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
 import type { WebSession } from '@/features/session/domain/session';
+import { resolveFrontendSurface } from '@/features/telemetry/adapters/runtime-surface';
 
 export type LobbyPageProps = {
   readonly catalogId: string;
@@ -106,7 +107,7 @@ function ReadyLobby({
   selectedMessageId,
 }: ReadyLobbyProps) {
   const { i18n, t } = useTranslation();
-  const { accessManagement, automation, controlPlane, moderation } = useAppServices();
+  const { accessManagement, automation, controlPlane, moderation, telemetry } = useAppServices();
   const accountPreferences = useAccountPreferences();
   const listModeRequirement = useListModeRequirement();
   const compact = listModeRequirement === 'compact';
@@ -218,6 +219,13 @@ function ReadyLobby({
               languageKey={languageKey}
               onFailure={() => {
                 setSceneAvailable(false);
+              }}
+              onSceneInitialized={(durationMs) => {
+                void telemetry.record({
+                  metric: 'scene_initialization',
+                  surface: resolveFrontendSurface(),
+                  value: durationMs,
+                });
               }}
               onSelectAgent={onSelectedAgentChange}
               onZoomChange={setZoom}

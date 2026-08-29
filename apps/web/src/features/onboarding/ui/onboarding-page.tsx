@@ -26,7 +26,9 @@ import {
   type OnboardingPhase,
 } from '@/features/onboarding/domain/onboarding';
 import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import type { WebSession } from '@/features/session/domain/session';
 import { sessionStateName } from '@/features/session/ui/connection-model';
+import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { useSession } from '@/features/session/ui/session-provider';
 
 import './onboarding-page.css';
@@ -47,20 +49,24 @@ const phaseOrder: readonly OnboardingPhase[] = [
 ];
 
 export function OnboardingPage() {
+  const { snapshot } = useSession();
+  const principal = snapshot.context.principal;
+  if (sessionStateName(snapshot.value) !== 'ready' || principal === null) {
+    return <ConnectionPage />;
+  }
+  return <ReadyOnboardingPage principal={principal} />;
+}
+
+function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) {
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
   const { config, desktop, lobbyEntry, onboarding } = useAppServices();
-  const { snapshot } = useSession();
-  const sessionState = sessionStateName(snapshot.value);
-  const principal = snapshot.context.principal;
-  const accountReady = sessionState === 'ready' && principal !== null;
-  const locale = principal?.locale ?? i18n.resolvedLanguage ?? 'en';
+  const locale = principal.locale ?? i18n.resolvedLanguage ?? 'en';
   const bootstrap = useQuery({
-    enabled: accountReady,
     networkMode: 'always',
     queryFn: async () => await onboarding.bootstrap(locale),
-    queryKey: ['onboarding', 'bootstrap', principal?.principalId ?? 'anonymous', locale] as const,
+    queryKey: ['onboarding', 'bootstrap', principal.principalId, locale] as const,
     retry: false,
     staleTime: 5_000,
   });
@@ -90,7 +96,7 @@ export function OnboardingPage() {
     },
   });
   const phase = projectOnboardingPhase({
-    accountReady,
+    accountReady: true,
     bootstrapFailed: bootstrap.data?.ok === false || bootstrap.isError,
     bootstrapReady: resolved !== null,
     bridgePhase: runtime.snapshot?.bridge.lifecycle.phase ?? null,
@@ -138,11 +144,11 @@ export function OnboardingPage() {
           <FactCard
             detail={t('onboarding.account.detail')}
             icon={<UserRound aria-hidden="true" />}
-            status={accountReady ? 'complete' : 'pending'}
+            status="complete"
             title={t('onboarding.account')}
           >
-            <strong>{principal?.displayName ?? t('connection.identity.pending')}</strong>
-            <code>{principal?.matrixUserId ?? '—'}</code>
+            <strong>{principal.displayName}</strong>
+            <code>{principal.matrixUserId}</code>
           </FactCard>
 
           <FactCard

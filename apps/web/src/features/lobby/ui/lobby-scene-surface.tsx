@@ -8,7 +8,6 @@ import {
   useState,
 } from 'react';
 
-import { useAppServices } from '@/app/app-services';
 import type { LobbySceneLabels } from '@/features/lobby/scene/lobby-scene';
 import type { LobbySceneHandle } from '@/features/lobby/scene/lobby-scene';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
@@ -17,7 +16,6 @@ import {
   SceneSelectionAnnouncement,
   SceneSemanticRoster,
 } from '@/features/lobby/ui/scene-semantic-roster';
-import { resolveFrontendSurface } from '@/features/telemetry/adapters/runtime-surface';
 
 export type LobbySceneSurfaceHandle = {
   focus(): void;
@@ -30,16 +28,16 @@ export type LobbySceneSurfaceProps = {
   readonly languageKey: string;
   readonly onFailure: () => void;
   readonly onSelectAgent: (agentId: string | null) => void;
+  readonly onSceneInitialized?: (durationMs: number) => void;
   readonly onZoomChange: (zoom: number) => void;
   readonly projection: LobbySceneProjection;
 };
 
 export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneSurfaceProps>(
   function LobbySceneSurface(
-    { labels, languageKey, onFailure, onSelectAgent, onZoomChange, projection },
+    { labels, languageKey, onFailure, onSceneInitialized, onSelectAgent, onZoomChange, projection },
     forwardedRef,
   ) {
-    const { telemetry } = useAppServices();
     const hostRef = useRef<HTMLDivElement>(null);
     const canvasHostRef = useRef<HTMLDivElement>(null);
     const handleRef = useRef<LobbySceneHandle | null>(null);
@@ -61,10 +59,12 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
     const selectRef = useRef(onSelectAgent);
     const zoomRef = useRef(onZoomChange);
     const failureRef = useRef(onFailure);
+    const initializedRef = useRef(onSceneInitialized);
     projectionRef.current = sceneProjection;
     selectRef.current = onSelectAgent;
     zoomRef.current = onZoomChange;
     failureRef.current = onFailure;
+    initializedRef.current = onSceneInitialized;
 
     useImperativeHandle(forwardedRef, () => ({
       focus: () => {
@@ -102,11 +102,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             handle.destroy();
           } else {
             handleRef.current = handle;
-            void telemetry.record({
-              metric: 'scene_initialization',
-              surface: resolveFrontendSurface(),
-              value: performance.now() - startedAt,
-            });
+            initializedRef.current?.(performance.now() - startedAt);
           }
         })
         .catch(() => {
@@ -119,7 +115,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         handleRef.current?.destroy();
         handleRef.current = null;
       };
-    }, [labels, languageKey, telemetry]);
+    }, [labels, languageKey]);
 
     useEffect(() => {
       handleRef.current?.update(sceneProjection);

@@ -1,4 +1,5 @@
 import { Button, StatusMark } from '@agent-room/ui-system';
+import { useNavigate } from '@tanstack/react-router';
 import { ExternalLink, KeyRound, RefreshCw, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef } from 'react';
@@ -12,11 +13,13 @@ import './desktop-connection-page.css';
 
 export function DesktopConnectionPage() {
   const { i18n, t } = useTranslation();
+  const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
   const runtime = useDesktopRuntimeController();
   const bootstrapDefaultAgent = runtime.bootstrapDefaultAgent;
   const phase = runtime.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const autoBootstrapAttempt = useRef(false);
+  const lobbyNavigationAttempt = useRef(false);
   const failed = runtime.failure !== null || phase === 'halted' || phase === 'stopped';
   const view = useMemo(
     () => desktopConnectionView(phase, runtime.busy !== null, failed),
@@ -42,6 +45,29 @@ export function DesktopConnectionPage() {
     autoBootstrapAttempt.current = true;
     void bootstrapDefaultAgent(i18n.resolvedLanguage ?? null);
   }, [bootstrapDefaultAgent, i18n.resolvedLanguage, phase, runtime.busy, runtime.failure, target]);
+
+  useEffect(() => {
+    if (
+      phase !== 'ready' ||
+      target === null ||
+      session === null ||
+      target.agentId !== session.agentId
+    ) {
+      lobbyNavigationAttempt.current = false;
+      return;
+    }
+    if (lobbyNavigationAttempt.current) return;
+    lobbyNavigationAttempt.current = true;
+    void navigate({
+      params: {
+        catalogId: target.publicLobbyCatalogId,
+        roomId: session.matrixRoomId,
+      },
+      replace: true,
+      search: {},
+      to: '/lobby/$catalogId/instance/$roomId',
+    });
+  }, [navigate, phase, session, target]);
 
   return (
     <div className="connection-shell desktop-connection">
