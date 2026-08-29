@@ -67,7 +67,6 @@ function ReadyDesktopLobby({
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [preferredMode, setPreferredMode] = useState<LobbyViewMode>('scene');
-  const [sceneAvailable, setSceneAvailable] = useState(true);
   const [zoom, setZoom] = useState(1);
   const sceneRef = useRef<LobbySceneSurfaceHandle>(null);
   const listModeRequirement = useListModeRequirement();
@@ -106,8 +105,7 @@ function ReadyDesktopLobby({
   const scene = projectLobbyScene(projected.room, selectedAgentId);
   const selectedAgent =
     projected.room.agents.find((agent) => agent.agentId === scene.selectedAgentId) ?? null;
-  const mode: LobbyViewMode =
-    listModeRequirement !== null || !sceneAvailable ? 'list' : preferredMode;
+  const mode: LobbyViewMode = listModeRequirement !== null ? 'list' : preferredMode;
   const labels: LobbySceneLabels = {
     canvas: t('lobby.scene.canvasLabel'),
     zones: {
@@ -141,7 +139,6 @@ function ReadyDesktopLobby({
           <LobbySceneSurface
             labels={labels}
             languageKey={i18n.resolvedLanguage ?? i18n.language}
-            onFailure={() => setSceneAvailable(false)}
             onSelectAgent={setSelectedAgentId}
             onZoomChange={setZoom}
             projection={scene}
@@ -152,6 +149,7 @@ function ReadyDesktopLobby({
             agents={projected.room.agents}
             onSelectAgent={setSelectedAgentId}
             selectedAgentId={scene.selectedAgentId}
+            selfAgentId={state.snapshot.identity.agent.agentId}
           />
         )}
       </div>
@@ -164,7 +162,7 @@ function ReadyDesktopLobby({
         onModeChange={setPreferredMode}
         onResetViewport={() => sceneRef.current?.resetViewport()}
         onZoomBy={(factor) => sceneRef.current?.zoomBy(factor)}
-        sceneAvailable={sceneAvailable && listModeRequirement === null}
+        sceneAvailable={listModeRequirement === null}
         zoom={zoom}
       />
     </main>

@@ -88,6 +88,15 @@ pub struct ApplyReceipt {
     pub resulting_digest: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualHostConfiguration {
+    pub server_name: String,
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct HostContext {
     pub home_dir: PathBuf,
@@ -252,6 +261,15 @@ impl HostConfigurator {
             .iter()
             .map(|adapter| adapter.detect(&self.context))
             .collect()
+    }
+
+    pub fn manual_configuration(&self) -> ManualHostConfiguration {
+        ManualHostConfiguration {
+            server_name: SERVER_NAME.into(),
+            transport: "stdio".into(),
+            command: self.context.mcp_executable.to_string_lossy().into_owned(),
+            args: Vec::new(),
+        }
     }
 
     pub fn plan(&self, host: HostKind) -> Result<ConfigurationPlan, HostFailure> {
@@ -936,6 +954,24 @@ mod tests {
                 .expect_err("摘要不同必须失败")
                 .code(),
             "host.concurrent_modification"
+        );
+    }
+
+    #[test]
+    fn manual_configuration_exposes_only_the_bundled_stdio_boundary() {
+        let directory = tempfile::tempdir().expect("临时目录可创建");
+        let context = context(directory.path());
+        let expected_command = context.mcp_executable.to_string_lossy().into_owned();
+        let configurator = HostConfigurator::new(context, Arc::new(FakeRunner::default()));
+
+        assert_eq!(
+            configurator.manual_configuration(),
+            ManualHostConfiguration {
+                server_name: SERVER_NAME.into(),
+                transport: "stdio".into(),
+                command: expected_command,
+                args: Vec::new(),
+            }
         );
     }
 }

@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { BridgePhase, ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
 import { desktopPhaseMessage } from '@/features/desktop/domain/desktop-connection';
+import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 
@@ -236,7 +237,7 @@ export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps)
               </section>
             ) : null}
 
-            {controller.hosts.some((host) => host.installed) && authorization === null ? (
+            {controller.snapshot !== null && authorization === null ? (
               <section className="desktop-runtime__hosts">
                 <div>
                   <h2>{t('desktop.hosts.title')}</h2>
@@ -257,6 +258,9 @@ export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps)
                         {t(`desktop.hosts.${host.host}`)}
                       </Button>
                     ))}
+                  <ManualHostConfiguration
+                    configuration={controller.snapshot.manualHostConfiguration}
+                  />
                 </div>
               </section>
             ) : null}

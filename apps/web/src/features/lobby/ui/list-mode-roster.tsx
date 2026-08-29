@@ -9,6 +9,7 @@ export type ListModeRosterProps = {
   readonly agents: readonly LobbyAgent[];
   readonly onSelectAgent: (agentId: string) => void;
   readonly selectedAgentId: string | null;
+  readonly selfAgentId?: string;
 };
 
 export type ListModeRosterHandle = {
@@ -25,7 +26,7 @@ const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freez
 });
 
 export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterProps>(
-  function ListModeRoster({ agents, onSelectAgent, selectedAgentId }, forwardedRef) {
+  function ListModeRoster({ agents, onSelectAgent, selectedAgentId, selfAgentId }, forwardedRef) {
     const { t } = useTranslation();
     const selectedButtonRef = useRef<HTMLButtonElement>(null);
     const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -133,7 +134,10 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                     />
                   </span>
                   <span className="roster-agent__identity">
-                    <strong>{agent.displayName}</strong>
+                    <strong>
+                      {agent.displayName}
+                      {agent.agentId === selfAgentId ? <em>{t('lobby.agent.self')}</em> : null}
+                    </strong>
                     <span>{agent.matrixUserId}</span>
                   </span>
                   <span className="roster-agent__summary">

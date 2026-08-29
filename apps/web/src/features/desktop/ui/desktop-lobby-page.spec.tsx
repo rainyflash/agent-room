@@ -64,6 +64,7 @@ describe('桌面真实大厅', () => {
     );
 
     expect((await screen.findAllByText('Build Agent')).length).toBeGreaterThan(0);
+    expect(screen.getByText('This device')).toBeVisible();
     expect(screen.getByText('Working on release')).toBeVisible();
     expect(screen.getByText('Recent previews')).toBeVisible();
     expect(screen.queryByText('Bring your first Agent online.')).not.toBeInTheDocument();
@@ -119,6 +120,12 @@ function runtimeSnapshot(): DesktopRuntimeSnapshot {
       session: { agentId, instanceId, matrixRoomId: roomId },
     },
     deepLink: null,
+    manualHostConfiguration: {
+      args: [],
+      command: 'C:\\Agent Room\\agent-room-mcp.exe',
+      serverName: 'agent_room',
+      transport: 'stdio',
+    },
     platform: 'windows',
     updatesConfigured: true,
   };

@@ -1,5 +1,6 @@
 use agent_room_host_adapters::{
     ApplyReceipt, ConfigurationPlan, HostConfigurator, HostDetection, HostFailure, HostKind,
+    ManualHostConfiguration,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -41,6 +42,7 @@ pub(crate) struct DesktopRuntimeSnapshot {
     deep_link: Option<DeepLinkTarget>,
     updates_configured: bool,
     agent_target: Option<DesktopAgentTarget>,
+    manual_host_configuration: ManualHostConfiguration,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,6 +209,7 @@ pub(crate) fn desktop_runtime_snapshot(
         deep_link: deep_links.latest(),
         updates_configured: runtime.updates.configured(),
         agent_target: runtime.targets.current()?,
+        manual_host_configuration: runtime.hosts.manual_configuration(),
     })
 }
 

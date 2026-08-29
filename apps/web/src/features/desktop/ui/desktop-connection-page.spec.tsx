@@ -38,6 +38,12 @@ const authorizedSnapshot: DesktopRuntimeSnapshot = {
     session: null,
   },
   deepLink: null,
+  manualHostConfiguration: {
+    args: [],
+    command: 'C:\\Agent Room\\agent-room-mcp.exe',
+    serverName: 'agent_room',
+    transport: 'stdio',
+  },
   platform: 'windows',
   updatesConfigured: false,
 };

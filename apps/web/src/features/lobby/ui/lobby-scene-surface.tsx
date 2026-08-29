@@ -13,6 +13,10 @@ import type { LobbySceneHandle } from '@/features/lobby/scene/lobby-scene';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { nextAgentInDirection } from '@/features/lobby/domain/spatial-navigation';
 import {
+  SvgLobbyScene,
+  type SvgLobbySceneHandle,
+} from '@/features/lobby/scene/svg/svg-lobby-scene';
+import {
   SceneSelectionAnnouncement,
   SceneSemanticRoster,
 } from '@/features/lobby/ui/scene-semantic-roster';
@@ -26,7 +30,6 @@ export type LobbySceneSurfaceHandle = {
 export type LobbySceneSurfaceProps = {
   readonly labels: LobbySceneLabels;
   readonly languageKey: string;
-  readonly onFailure: () => void;
   readonly onSelectAgent: (agentId: string | null) => void;
   readonly onSceneInitialized?: (durationMs: number) => void;
   readonly onZoomChange: (zoom: number) => void;
@@ -35,12 +38,14 @@ export type LobbySceneSurfaceProps = {
 
 export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneSurfaceProps>(
   function LobbySceneSurface(
-    { labels, languageKey, onFailure, onSceneInitialized, onSelectAgent, onZoomChange, projection },
+    { labels, languageKey, onSceneInitialized, onSelectAgent, onZoomChange, projection },
     forwardedRef,
   ) {
     const hostRef = useRef<HTMLDivElement>(null);
     const canvasHostRef = useRef<HTMLDivElement>(null);
     const handleRef = useRef<LobbySceneHandle | null>(null);
+    const svgHandleRef = useRef<SvgLobbySceneHandle | null>(null);
+    const [renderer, setRenderer] = useState<'pixi' | 'svg'>('pixi');
     const [activeAgentId, setActiveAgentId] = useState<string | null>(
       projection.selectedAgentId ?? projection.nodes[0]?.agentId ?? null,
     );
@@ -58,12 +63,10 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
     const projectionRef = useRef(projection);
     const selectRef = useRef(onSelectAgent);
     const zoomRef = useRef(onZoomChange);
-    const failureRef = useRef(onFailure);
     const initializedRef = useRef(onSceneInitialized);
     projectionRef.current = sceneProjection;
     selectRef.current = onSelectAgent;
     zoomRef.current = onZoomChange;
-    failureRef.current = onFailure;
     initializedRef.current = onSceneInitialized;
 
     useImperativeHandle(forwardedRef, () => ({
@@ -71,14 +74,17 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         hostRef.current?.focus();
       },
       resetViewport: () => {
-        handleRef.current?.resetViewport();
+        if (renderer === 'pixi') handleRef.current?.resetViewport();
+        else svgHandleRef.current?.resetViewport();
       },
       zoomBy: (factor) => {
-        handleRef.current?.zoomBy(factor);
+        if (renderer === 'pixi') handleRef.current?.zoomBy(factor);
+        else svgHandleRef.current?.zoomBy(factor);
       },
     }));
 
     useEffect(() => {
+      if (renderer !== 'pixi') return undefined;
       const host = canvasHostRef.current;
       if (host === null) {
         return undefined;
@@ -107,7 +113,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         })
         .catch(() => {
           if (!disposed) {
-            failureRef.current();
+            setRenderer('svg');
           }
         });
       return () => {
@@ -115,7 +121,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         handleRef.current?.destroy();
         handleRef.current = null;
       };
-    }, [labels, languageKey]);
+    }, [labels, languageKey, renderer]);
 
     useEffect(() => {
       handleRef.current?.update(sceneProjection);
@@ -165,7 +171,19 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
           role="listbox"
           tabIndex={0}
         >
-          <div aria-hidden="true" className="lobby-scene__visual" ref={canvasHostRef} />
+          <div aria-hidden="true" className="lobby-scene__visual">
+            {renderer === 'pixi' ? (
+              <div className="lobby-scene__pixi" data-renderer="pixi" ref={canvasHostRef} />
+            ) : (
+              <SvgLobbyScene
+                labels={labels}
+                onSelectAgent={onSelectAgent}
+                onZoomChange={onZoomChange}
+                projection={sceneProjection}
+                ref={svgHandleRef}
+              />
+            )}
+          </div>
           <SceneSemanticRoster
             activeAgentId={normalizedActiveAgentId}
             nodes={projection.nodes}

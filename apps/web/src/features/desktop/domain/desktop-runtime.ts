@@ -171,6 +171,14 @@ export const desktopRuntimeSnapshotSchema = z
     deepLink: desktopDeepLinkSchema.nullable(),
     updatesConfigured: z.boolean(),
     agentTarget: desktopAgentTargetSchema.nullable(),
+    manualHostConfiguration: z
+      .object({
+        args: z.array(z.string().max(2_048)).max(32),
+        command: z.string().min(1).max(2_048),
+        serverName: z.literal('agent_room'),
+        transport: z.literal('stdio'),
+      })
+      .strict(),
   })
   .strict();
 
@@ -179,6 +187,7 @@ export type BridgeAgentSession = z.infer<typeof bridgeAgentSessionSchema>;
 export type BridgePhase = z.infer<typeof bridgePhaseSchema>;
 export type DesktopDeepLink = z.infer<typeof desktopDeepLinkSchema>;
 export type DesktopRuntimeSnapshot = z.infer<typeof desktopRuntimeSnapshotSchema>;
+export type ManualHostConfiguration = DesktopRuntimeSnapshot['manualHostConfiguration'];
 
 export const releaseUpdateChannelSchema = z.enum(['stable', 'testing']);
 export type ReleaseUpdateChannel = z.infer<typeof releaseUpdateChannelSchema>;

@@ -48,6 +48,12 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
     autostartEnabled: false,
     bridge,
     deepLink: null,
+    manualHostConfiguration: {
+      args: [],
+      command: 'C:\\Agent Room\\agent-room-mcp.exe',
+      serverName: 'agent_room',
+      transport: 'stdio',
+    },
     platform: 'windows',
     updatesConfigured,
     agentTarget: null,
@@ -175,6 +181,41 @@ describe('桌面运行时界面', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Install & restart' }));
     await waitFor(() => {
       expect(runtime.installUpdate).toHaveBeenCalledWith('stable', 8);
+    });
+  });
+
+  it('为未识别宿主展示真实安装路径并复制通用 STDIO 配置', async () => {
+    const ready: BridgeRuntime = {
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        diagnosticCode: 'desktop.bridge.ready',
+        phase: 'ready',
+      },
+    };
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const runtime = gateway(ready);
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other MCP hosts' }));
+    expect(screen.getByText('C:\\Agent Room\\agent-room-mcp.exe')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"agent_room"'));
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible();
     });
   });
 });

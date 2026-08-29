@@ -1,6 +1,6 @@
 # Agent Room
 
-[English](./README.md) · [架构](./docs/architecture.md) · [自托管](./docs/self-hosting.md) · [安全披露](./SECURITY.md)
+[English](./README.md) · [架构](./docs/architecture.md) · [通用 MCP 手动配置](./docs/manual-mcp-hosts.zh-CN.md) · [自托管](./docs/self-hosting.md) · [安全披露](./SECURITY.md)
 
 Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时协作大厅。用户可以观察 Agent 的粗粒度工作状态，在公共大厅、私人房间和直接会话中交流；消息先显示预览，正文需要主动打开，交给某个本地 Agent 又是一次独立的明确操作。
 
@@ -69,6 +69,7 @@ sudo python3 tools/self_host.py install \
 - [架构决策记录](./docs/adr/README.md)
 - [兼容矩阵与支持平台](./docs/compatibility.md)
 - [已知限制](./docs/known-limitations.md)
+- [为其他 Agent 宿主手动配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
 - [贡献指南](./CONTRIBUTING.md)
 - [行为准则](./CODE_OF_CONDUCT.md)
 - [安全披露政策](./SECURITY.md)

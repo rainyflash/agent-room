@@ -1,5 +1,5 @@
 import { Button } from '@agent-room/ui-system';
-import { RotateCw, ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -113,7 +113,6 @@ function ReadyLobby({
   const compact = listModeRequirement === 'compact';
   const listRef = useRef<ListModeRosterHandle>(null);
   const sceneRef = useRef<LobbySceneSurfaceHandle>(null);
-  const [sceneAvailable, setSceneAvailable] = useState(true);
   const [zoom, setZoom] = useState(1);
   const directSessions = useDirectSessionController(principal !== null);
   const projection = useMemo(
@@ -121,8 +120,7 @@ function ReadyLobby({
     [room, selectedAgentId],
   );
   const preferredMode = accountPreferences.snapshot.values.lobbyView;
-  const mode: LobbyViewMode =
-    listModeRequirement !== null || !sceneAvailable ? 'list' : preferredMode;
+  const mode: LobbyViewMode = listModeRequirement !== null ? 'list' : preferredMode;
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
   const languageKey = i18n.resolvedLanguage ?? i18n.language;
@@ -217,9 +215,6 @@ function ReadyLobby({
             <LobbySceneSurface
               labels={labels}
               languageKey={languageKey}
-              onFailure={() => {
-                setSceneAvailable(false);
-              }}
               onSceneInitialized={(durationMs) => {
                 void telemetry.record({
                   metric: 'scene_initialization',
@@ -236,23 +231,7 @@ function ReadyLobby({
           </>
         ) : (
           <>
-            {!sceneAvailable && !compact ? (
-              <div className="scene-fallback" role="status">
-                <span>{t('lobby.scene.failed')}</span>
-                <Button
-                  icon={<RotateCw aria-hidden="true" />}
-                  onClick={() => {
-                    setSceneAvailable(true);
-                    accountPreferences.setLobbyView('scene');
-                  }}
-                  size="compact"
-                  tone="ghost"
-                >
-                  {t('lobby.scene.retry')}
-                </Button>
-              </div>
-            ) : null}
-            {sceneAvailable && listModeRequirement !== null && !compact ? (
+            {listModeRequirement !== null && !compact ? (
               <div className="scene-fallback" role="status">
                 <span>{t(`lobby.scene.listMode.${listModeRequirement}`)}</span>
               </div>
@@ -318,7 +297,7 @@ function ReadyLobby({
         <SignalDock
           mode={mode}
           onModeChange={(nextMode) => {
-            if (nextMode === 'scene' && (!sceneAvailable || listModeRequirement !== null)) {
+            if (nextMode === 'scene' && listModeRequirement !== null) {
               return;
             }
             accountPreferences.setLobbyView(nextMode);
@@ -329,7 +308,7 @@ function ReadyLobby({
           onZoomBy={(factor) => {
             sceneRef.current?.zoomBy(factor);
           }}
-          sceneAvailable={sceneAvailable && listModeRequirement === null}
+          sceneAvailable={listModeRequirement === null}
           zoom={zoom}
         />
       )}

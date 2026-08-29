@@ -29,7 +29,7 @@ Do not combine files from separate release archives. Stable and testing channels
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
 
-The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts can launch the standalone `agent-room-mcp` binary, but they do not yet receive one-click configuration or vendor-specific acceptance coverage.
+The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
 
 ## Server platforms
 
