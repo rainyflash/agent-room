@@ -6,6 +6,8 @@ on:
       - 持续集成
       - M2 封闭测试发行
       - M3 联邦验收
+      - 签名发布候选
+      - 验证并发布 testing 签名发行
     types: [completed]
   schedule:
     # Workflow 完成时已经即时清理；每日兜底足够，避免无意义地每六小时占用 Runner。

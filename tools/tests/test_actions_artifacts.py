@@ -34,7 +34,7 @@ def artifact(
 
 
 class ArtifactRetentionPolicyTests(unittest.TestCase):
-    def test_policy_keeps_release_current_active_and_latest_successful_artifacts(
+    def test_policy_keeps_current_active_and_latest_successful_artifacts(
         self,
     ) -> None:
         values = (
@@ -69,7 +69,8 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
         self.assertFalse(by_identifier[3].keep)
         self.assertEqual(by_identifier[4].reason, "active_workflow")
         self.assertEqual(by_identifier[5].reason, "current_revision")
-        self.assertEqual(by_identifier[6].reason, "release_artifact")
+        self.assertFalse(by_identifier[6].keep)
+        self.assertEqual(by_identifier[6].reason, "published_release_duplicate")
         self.assertEqual(by_identifier[7].reason, "latest_by_name")
         self.assertEqual(by_identifier[8].reason, "latest_successful_by_name")
         self.assertEqual(by_identifier[9].reason, "latest_by_name")

@@ -46,6 +46,23 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertLess(first_surface, publish)
         self.assertGreater(final_surface, publish)
 
+    def test_alpha候选默认只构建客户端(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("default: client", candidate)
+        self.assertEqual(candidate.count("if: ${{ inputs.profile == 'full' }}"), 2)
+        self.assertIn('--profile "${{ inputs.profile }}"', candidate)
+
+    def test客户端候选不重复编译_mcp且不写最大化镜像缓存(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            "cargo build --locked --release --package agent-room-mcp",
+            candidate,
+        )
+        self.assertNotIn("cache-to: type=gha,mode=max", candidate)
+        self.assertIn("cache-to: type=gha,mode=min", candidate)
+
 
 if __name__ == "__main__":
     unittest.main()

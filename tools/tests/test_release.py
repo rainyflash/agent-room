@@ -212,6 +212,18 @@ class ReleaseCandidateTests(unittest.TestCase):
         )
         return inventory
 
+    def client_inventory(self) -> Path:
+        inventory_path = self.inventory()
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["profile"] = "client"
+        inventory["artifacts"] = [
+            artifact
+            for artifact in inventory["artifacts"]
+            if artifact["kind"] != "oci-image"
+        ]
+        self.write_json(inventory_path, inventory)
+        return inventory_path
+
     def test_prepare_builds_complete_draft_and_evidence(self) -> None:
         inventory = self.inventory()
         paths = CandidatePaths(self.root / "release.json", self.root / "evidence.json")
@@ -228,6 +240,28 @@ class ReleaseCandidateTests(unittest.TestCase):
             evidence["manifestSha256"],
             hashlib.sha256(paths.manifest.read_bytes()).hexdigest(),
         )
+
+    def test_client_profile_accepts_runtime_without_server_images(self) -> None:
+        inventory = self.client_inventory()
+        paths = CandidatePaths(self.root / "release.json", self.root / "evidence.json")
+
+        prepare(self.root, inventory, paths)
+
+        manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+        self.assertNotIn("profile", manifest)
+        self.assertNotIn(
+            "oci-image",
+            {artifact["kind"] for artifact in manifest["artifacts"]},
+        )
+
+    def test_client_profile_rejects_mixed_server_images(self) -> None:
+        inventory_path = self.inventory()
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["profile"] = "client"
+        self.write_json(inventory_path, inventory)
+
+        with self.assertRaisesRegex(ReleaseFailure, "不得混入"):
+            build_candidate(self.root, inventory_path)
 
     def test_artifact_path_cannot_escape_candidate_root(self) -> None:
         inventory_path = self.inventory()

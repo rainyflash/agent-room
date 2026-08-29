@@ -12,6 +12,12 @@ on:
         required: true
         type: choice
         options: [testing]
+      profile:
+        description: 日常 Alpha 只构建客户端；full 才构建服务端多架构镜像
+        required: true
+        default: client
+        type: choice
+        options: [client, full]
       sequence:
         description: 高于该渠道历史值的单调发布序号
         required: true
@@ -74,7 +80,7 @@ jobs:
           name: release-metadata
           path: candidate/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   native:
     name: ${{ matrix.target }} 原生发行
@@ -103,6 +109,12 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 恢复 Windows Release 编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: windows-runtime
+          add-job-id-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装固定依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       - name: 安装 Cosign
@@ -138,13 +150,11 @@ jobs:
           $signature = "$($payloads[0].FullName).sig"
           cargo run --locked --release --package agent-room-release-tool -- verify-tauri --public-key "$env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY" --payload "$($payloads[0].FullName)" --signature $signature
           if ($LASTEXITCODE -ne 0) { throw 'Tauri 更新签名反向验证失败。' }
-      - name: 构建通用 MCP 并装配 Codex 配置适配器
+      - name: 装配已随桌面端构建的通用 MCP 配置适配器
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
         run: |
-          cargo build --locked --release --package agent-room-mcp
-          if ($LASTEXITCODE -ne 0) { throw '通用 MCP 构建失败。' }
           python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
           if ($LASTEXITCODE -ne 0) { throw 'Codex 配置适配器装配失败。' }
       - name: 在干净 Windows 候选机验收安装、运行时与卸载
@@ -184,11 +194,12 @@ jobs:
           name: release-native-${{ matrix.target }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   image-platforms:
     name: ${{ matrix.name }} ${{ matrix.arch }} 原生镜像
     needs: metadata
+    if: ${{ inputs.profile == 'full' }}
     permissions:
       contents: read
       packages: write
@@ -249,7 +260,7 @@ jobs:
           push: true
           tags: ${{ needs.metadata.outputs.image_base }}/${{ matrix.name }}:candidate-${{ github.sha }}-${{ matrix.arch }}
           cache-from: type=gha,scope=release-${{ matrix.name }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=release-${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=release-${{ matrix.name }}-${{ matrix.arch }}
           build-args: |
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://api.room.the-zeroth.com
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
@@ -268,11 +279,12 @@ jobs:
           name: image-platform-${{ matrix.name }}-${{ matrix.arch }}
           path: platform-digest/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   images:
     name: ${{ matrix.name }} 多架构镜像
     needs: [metadata, image-platforms]
+    if: ${{ inputs.profile == 'full' }}
     permissions:
       contents: read
       id-token: write
@@ -348,11 +360,18 @@ jobs:
           name: release-image-${{ matrix.name }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   draft:
     name: 聚合并创建私有草稿发行
     needs: [metadata, native, images]
+    if: >-
+      ${{
+        always() &&
+        needs.metadata.result == 'success' &&
+        needs.native.result == 'success' &&
+        (needs.images.result == 'success' || needs.images.result == 'skipped')
+      }}
     environment: release-candidate
     permissions:
       contents: write
@@ -393,7 +412,7 @@ jobs:
           ROLLBACK_FROM: ${{ needs.metadata.outputs.rollback_from }}
           TAURI_URL: ${{ needs.metadata.outputs.tauri_manifest_url }}
         run: |
-          python tools/release.py inventory --root candidate --descriptors candidate --output candidate/release-inventory.json --channel "$CHANNEL" --sequence "$SEQUENCE" --version "$VERSION" --published-at-unix-seconds "$PUBLISHED_AT" --expires-at-unix-seconds "$EXPIRES_AT" --rollback-from "$ROLLBACK_FROM" --tauri-manifest-url "$TAURI_URL"
+          python tools/release.py inventory --root candidate --descriptors candidate --output candidate/release-inventory.json --channel "$CHANNEL" --sequence "$SEQUENCE" --version "$VERSION" --published-at-unix-seconds "$PUBLISHED_AT" --expires-at-unix-seconds "$EXPIRES_AT" --rollback-from "$ROLLBACK_FROM" --tauri-manifest-url "$TAURI_URL" --profile "${{ inputs.profile }}"
           python tools/release.py prepare --root candidate --inventory candidate/release-inventory.json --manifest candidate/release.json --evidence candidate/release-evidence.json
       - name: 安装 Rust 并构建发布签名器
         run: |
@@ -454,4 +473,4 @@ jobs:
           name: release-candidate-${{ needs.metadata.outputs.tag }}
           path: candidate/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

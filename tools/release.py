@@ -30,7 +30,9 @@ VALID_KINDS: Final = frozenset(
         "update-manifest",
     }
 )
-REQUIRED_KINDS: Final = VALID_KINDS
+VALID_PROFILES: Final = frozenset({"client", "full"})
+CLIENT_REQUIRED_KINDS: Final = VALID_KINDS - {"oci-image"}
+FULL_REQUIRED_KINDS: Final = VALID_KINDS
 REQUIRED_OCI_IMAGES: Final = frozenset({"control-plane", "identity", "web"})
 NAME_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 PLATFORM_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -98,6 +100,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     inventory_parser.add_argument("--expires-at-unix-seconds", type=int, required=True)
     inventory_parser.add_argument("--rollback-from")
     inventory_parser.add_argument("--tauri-manifest-url", required=True)
+    inventory_parser.add_argument(
+        "--profile",
+        choices=sorted(VALID_PROFILES),
+        default="full",
+        help="client 只发布桌面运行时；full 同时发布服务端 OCI 镜像",
+    )
 
     verify_parser = subcommands.add_parser("verify", help="验证候选、离线签名和 Sigstore 证据")
     add_candidate_arguments(verify_parser)
@@ -248,15 +256,35 @@ def parse_artifacts(root: Path, inventory: Mapping[str, object]) -> tuple[Artifa
         identities.add(identity)
         artifacts.append(artifact)
 
-    missing = REQUIRED_KINDS - {artifact.kind for artifact in artifacts}
+    profile = release_profile(inventory)
+    required_kinds = (
+        CLIENT_REQUIRED_KINDS if profile == "client" else FULL_REQUIRED_KINDS
+    )
+    artifact_kinds = {artifact.kind for artifact in artifacts}
+    missing = required_kinds - artifact_kinds
     if missing:
         raise ReleaseFailure(f"发布候选缺少必需产物类型：{', '.join(sorted(missing))}")
-    missing_images = REQUIRED_OCI_IMAGES - {
-        artifact.name for artifact in artifacts if artifact.kind == "oci-image"
-    }
-    if missing_images:
-        raise ReleaseFailure(f"发布候选缺少必需 OCI 镜像：{', '.join(sorted(missing_images))}")
+    if profile == "client":
+        if "oci-image" in artifact_kinds:
+            raise ReleaseFailure("client 发布候选不得混入服务端 OCI 镜像。")
+    else:
+        missing_images = REQUIRED_OCI_IMAGES - {
+            artifact.name for artifact in artifacts if artifact.kind == "oci-image"
+        }
+        if missing_images:
+            raise ReleaseFailure(
+                f"发布候选缺少必需 OCI 镜像：{', '.join(sorted(missing_images))}"
+            )
     return tuple(artifacts)
+
+
+def release_profile(inventory: Mapping[str, object]) -> str:
+    """解析发布边界；旧版 inventory 没有 profile 时保持 full 语义。"""
+
+    value = inventory.get("profile", "full")
+    if not isinstance(value, str) or value not in VALID_PROFILES:
+        raise ReleaseFailure("inventory.profile 必须是 client 或 full。")
+    return value
 
 
 def parse_artifact(
@@ -359,6 +387,7 @@ def create_inventory(args: argparse.Namespace) -> None:
         artifacts.append(load_object(descriptor_path, "产物描述"))
     inventory: dict[str, object] = {
         "schemaVersion": SCHEMA_VERSION,
+        "profile": args.profile,
         "channel": args.channel,
         "sequence": args.sequence,
         "version": args.version,

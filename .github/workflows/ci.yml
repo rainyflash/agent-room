@@ -16,6 +16,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
   PYTHONUTF8: '1'
   RUST_BACKTRACE: '1'
 
@@ -33,6 +34,12 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: 恢复 Linux 质量门编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: linux-quality
+          add-job-id-key: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: 安装 Linux 桌面编译依赖
         run: bash tools/install-linux-desktop-deps.sh
       - name: 安装 Node 依赖
@@ -51,6 +58,8 @@ jobs:
         run: corepack pnpm@10.28.0 test
       - name: 运行 Python 工具测试
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: 检查凭据泄漏
+        run: node tools/check-secrets.mjs --self-test && corepack pnpm@10.28.0 secrets:check
       - name: 验证 TypeScript 覆盖率
         run: corepack pnpm@10.28.0 test:coverage
       - name: 检查协议生成物
@@ -58,29 +67,9 @@ jobs:
       - name: 检查 Action 固定策略
         run: corepack pnpm@10.28.0 actions:check
 
-  bridge-platforms:
-    name: Bridge 原生编译（${{ matrix.os }}）
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
-      - name: 安装 Rust 工具链
-        run: rustup toolchain install 1.97.1 --profile minimal
-      - name: 编译 Bridge 与平台安全存储适配器
-        run: cargo check -p agent-room-bridge --all-targets
-
-  desktop-platforms:
-    name: 桌面壳原生构建（${{ matrix.os }}）
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-    runs-on: ${{ matrix.os }}
+  windows-runtime:
+    name: Windows 客户端运行时原生检查
+    runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - name: 检出代码
@@ -91,12 +80,18 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 恢复 Windows Runtime 编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: windows-runtime
+          add-job-id-key: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: 安装 Node 依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 检查 Bridge、MCP 与平台安全存储适配器
+        run: cargo check -p agent-room-bridge -p agent-room-mcp --all-targets
       - name: 构建桌面专用 Web 产物
         run: corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
-      - name: 构建 Bridge sidecar
-        run: corepack pnpm@10.28.0 --filter @agent-room/desktop prepare:sidecar
       - name: 检查桌面壳与窄化 Capabilities
         run: cargo check -p agent-room-desktop --all-targets --all-features
       - name: 运行桌面壳领域测试
@@ -139,6 +134,7 @@ jobs:
 
   supply-chain:
     name: 供应链与物料清单
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -154,8 +150,6 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: 安装依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
-      - name: 验证 Secret 扫描器
-        run: node tools/check-secrets.mjs --self-test && corepack pnpm@10.28.0 secrets:check
       - name: 审计 Node 依赖
         run: corepack pnpm@10.28.0 audit:node
       - name: 审计 Rust 依赖与许可证
@@ -175,6 +169,7 @@ jobs:
   integration:
     name: PostgreSQL、Matrix、对象存储与协议集成
     needs: quality
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
