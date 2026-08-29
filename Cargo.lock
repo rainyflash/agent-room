@@ -337,6 +337,7 @@ dependencies = [
  "matrix-sdk",
  "matrix-sdk-base",
  "reqwest 0.13.4",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

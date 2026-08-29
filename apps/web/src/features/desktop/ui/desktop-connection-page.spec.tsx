@@ -142,4 +142,36 @@ describe('桌面设备连接页', () => {
       });
     });
   });
+
+  it('自动重启期间优先显示 Bridge 原始失败代码', async () => {
+    const retrySnapshot: DesktopRuntimeSnapshot = {
+      ...authorizedSnapshot,
+      bridge: {
+        authorization: null,
+        lifecycle: {
+          ...authorizedSnapshot.bridge.lifecycle,
+          automaticRestartCount: 1,
+          diagnosticCode: 'desktop.bridge.process_exited',
+          lastExitCode: 1,
+          lastFailureCode: 'bridge.matrix_store_unavailable',
+          nextRetryAtUnixMs: 2_000,
+          phase: 'retry_scheduled',
+        },
+        session: null,
+      },
+    };
+    const runtime = gateway(vi.fn(async () => ok(target)));
+    runtime.snapshot = async () => ok(retrySnapshot);
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime}>
+          <DesktopConnectionPage />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    expect(await screen.findByText('bridge.matrix_store_unavailable')).not.toBeNull();
+    expect(screen.queryByText('desktop.bridge.process_exited')).toBeNull();
+  });
 });

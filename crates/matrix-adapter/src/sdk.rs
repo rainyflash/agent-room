@@ -55,6 +55,7 @@ use crate::{
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response},
+    store_recovery::recover_query_statistics,
 };
 
 #[derive(Debug, Clone)]
@@ -87,8 +88,27 @@ impl MatrixSdkClientFactory {
     ///
     /// `SQLite` Store 无法创建、解密或迁移时返回 Matrix 基础设施错误。
     pub async fn initialize_store(&self) -> MatrixResult<()> {
-        drop(self.build_client(MatrixOperation::InitializeStore).await?);
-        Ok(())
+        let first_attempt = self.build_client(MatrixOperation::InitializeStore).await;
+        match first_attempt {
+            Ok(client) => {
+                drop(client);
+                Ok(())
+            }
+            Err(failure) if failure.kind() == MatrixFailureKind::DependencyUnavailable => {
+                let recovered = match &self.store {
+                    MatrixSdkStore::Memory => false,
+                    MatrixSdkStore::EncryptedSqlite(store) => {
+                        recover_query_statistics(store.path()).unwrap_or(false)
+                    }
+                };
+                if !recovered {
+                    return Err(failure);
+                }
+                drop(self.build_client(MatrixOperation::InitializeStore).await?);
+                Ok(())
+            }
+            Err(failure) => Err(failure),
+        }
     }
 
     /// 恢复同一个 Matrix SDK 客户端，并额外暴露加密 To-Device 交付能力。

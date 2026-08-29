@@ -13,18 +13,19 @@ agent-room-domain.workspace = true
 matrix-sdk = { workspace = true, features = ["bundled-sqlite", "experimental-send-custom-to-device"] }
 matrix-sdk-base = { workspace = true, features = ["e2e-encryption", "experimental-send-custom-to-device"] }
 reqwest.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 agent-room-matrix-provisioning-adapter.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

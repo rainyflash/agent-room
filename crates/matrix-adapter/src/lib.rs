@@ -7,6 +7,7 @@ mod mapping;
 mod membership;
 mod provisioning;
 mod sdk;
+mod store_recovery;
 
 pub use configuration::{
     MatrixSdkConfiguration, MatrixSdkConfigurationError, MatrixSdkStoreConfiguration,

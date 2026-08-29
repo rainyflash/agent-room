@@ -28,6 +28,11 @@ export function DesktopConnectionPage() {
   const authorization = runtime.snapshot?.bridge.authorization ?? null;
   const target = runtime.snapshot?.agentTarget ?? null;
   const session = runtime.snapshot?.bridge.session ?? null;
+  const failureCode =
+    runtime.failure?.code ??
+    runtime.snapshot?.bridge.lifecycle.lastFailureCode ??
+    runtime.snapshot?.bridge.lifecycle.diagnosticCode ??
+    null;
 
   useEffect(() => {
     if (phase !== 'authorized') {
@@ -123,16 +128,12 @@ export function DesktopConnectionPage() {
             </section>
           )}
 
-          {runtime.failure === null && phase !== 'halted' ? null : (
+          {failureCode === null ? null : (
             <aside className="failure-panel" role="alert">
               <span className="failure-panel__line" />
               <div>
                 <p>{t('desktop.connection.failure')}</p>
-                <code>
-                  {runtime.failure?.code ??
-                    runtime.snapshot?.bridge.lifecycle.diagnosticCode ??
-                    'desktop.bridge.halted'}
-                </code>
+                <code>{failureCode}</code>
               </div>
             </aside>
           )}
