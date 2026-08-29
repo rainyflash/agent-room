@@ -55,7 +55,7 @@ use crate::{
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response},
-    store_recovery::recover_query_statistics,
+    store_recovery::{quarantine_invalid_state_cache, recover_query_statistics},
 };
 
 #[derive(Debug, Clone)]
@@ -150,6 +150,33 @@ impl MatrixSdkClientFactory {
     async fn restore_client(&self, session: &MatrixSession) -> MatrixResult<Client> {
         let client = self.build_client(MatrixOperation::RestoreSession).await?;
         let sdk_session = to_sdk_session(session)?;
+        let first_attempt = client
+            .matrix_auth()
+            .restore_session(sdk_session, RoomLoadSettings::default())
+            .await;
+        let Err(error) = first_attempt else {
+            return Ok(client);
+        };
+        if !is_rebuildable_state_cache_error(&error) {
+            return Err(map_sdk_error(MatrixOperation::RestoreSession, &error));
+        }
+        drop(client);
+        let recovered = match &self.store {
+            MatrixSdkStore::Memory => false,
+            MatrixSdkStore::EncryptedSqlite(store) => quarantine_invalid_state_cache(store.path())
+                .map_err(|_| {
+                    MatrixFailure::new(
+                        MatrixOperation::RestoreSession,
+                        MatrixFailureKind::DependencyUnavailable,
+                    )
+                })?,
+        };
+        if !recovered {
+            return Err(map_sdk_error(MatrixOperation::RestoreSession, &error));
+        }
+
+        let client = self.build_client(MatrixOperation::RestoreSession).await?;
+        let sdk_session = to_sdk_session(session)?;
         client
             .matrix_auth()
             .restore_session(sdk_session, RoomLoadSettings::default())
@@ -163,6 +190,19 @@ impl MatrixSdkClientFactory {
             .disable_retry()
             .timeout(self.configuration.request_timeout())
     }
+}
+
+fn is_rebuildable_state_cache_error(error: &matrix_sdk::Error) -> bool {
+    matches!(
+        error,
+        matrix_sdk::Error::StateStore(failure)
+            if matches!(
+                failure.as_ref(),
+                matrix_sdk_base::StoreError::Encryption(_)
+                    | matrix_sdk_base::StoreError::Codec(_)
+                    | matrix_sdk_base::StoreError::InvalidData { .. }
+            )
+    )
 }
 
 pub struct MatrixSdkHandoffConnection {

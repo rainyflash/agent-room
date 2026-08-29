@@ -541,6 +541,12 @@ impl BridgeSupervisorActor {
                 self.publish();
                 schedule_probe(self.input.clone(), self.generation);
             }
+            BridgeSupervisorEvent::TransientFailure { channel, code }
+                if channel == SUPERVISOR_CHANNEL && is_stable_bridge_code(&code) =>
+            {
+                self.policy.set_diagnostic(now_unix_ms(), code);
+                self.publish();
+            }
             _ => {}
         }
     }
@@ -694,6 +700,10 @@ enum BridgeSupervisorEvent {
     Ready {
         channel: String,
     },
+    TransientFailure {
+        channel: String,
+        code: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -789,15 +799,18 @@ fn stable_bridge_error_code(bytes: &[u8]) -> Option<String> {
     let suffix_start = line.strip_prefix(prefix)?;
     let end = suffix_start.find(']')?;
     let code = &suffix_start[..end];
-    if code.is_empty()
-        || code.len() > 128
-        || !code.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_')
-        })
-    {
+    if !is_stable_bridge_code(code) {
         return None;
     }
     Some(code.to_owned())
+}
+
+fn is_stable_bridge_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= 128
+        && code.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_')
+        })
 }
 
 fn now_unix_ms() -> i64 {
@@ -812,7 +825,10 @@ fn now_unix_ms() -> i64 {
 mod tests {
     use serde_json::json;
 
-    use super::{AuthorizationPrompt, BridgeAgentSessionView, stable_bridge_error_code};
+    use super::{
+        AuthorizationPrompt, BridgeAgentSessionView, is_stable_bridge_code,
+        stable_bridge_error_code,
+    };
 
     #[test]
     fn 授权提示只接受_https_或本机地址且不暴露完整地址() {
@@ -838,6 +854,17 @@ mod tests {
 
         assert_eq!(code.as_deref(), Some("bridge.config_missing"));
         assert!(stable_bridge_error_code(b"random stderr C:\\Users\\secret").is_none());
+    }
+
+    #[test]
+    fn 监督事件诊断只接受有限字符集的稳定代码() {
+        assert!(is_stable_bridge_code(
+            "bridge.matrix_restore_dependency_unavailable"
+        ));
+        assert!(!is_stable_bridge_code(""));
+        assert!(!is_stable_bridge_code("C:\\Users\\secret"));
+        assert!(!is_stable_bridge_code("bridge.MatrixFailure"));
+        assert!(!is_stable_bridge_code(&"a".repeat(129)));
     }
 
     #[test]

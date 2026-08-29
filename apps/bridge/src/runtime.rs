@@ -9,8 +9,8 @@ use std::{
 };
 
 use agent_room_application::ports::{
-    Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixRoomEncryption, MatrixRoomId,
-    MatrixSyncRequest, MatrixSyncToken, OidcDeviceAuthorizationPrompt,
+    Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixRoomEncryption,
+    MatrixRoomId, MatrixSyncRequest, MatrixSyncToken, OidcDeviceAuthorizationPrompt,
     OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, ProfileImportConsent,
 };
 use agent_room_bridge_core::{
@@ -485,6 +485,12 @@ async fn initialize_agent_session(
             Some(online)
         }
         Err(failure) if is_reconnectable_agent_online_failure(failure) => {
+            if let Err(error) = announce_supervisor_diagnostic(failure) {
+                tracing::warn!(
+                    error_code = error.code(),
+                    "Agent 暂时失败诊断无法写入监督通道"
+                );
+            }
             tracing::warn!(
                 failure_kind = ?failure.kind(),
                 "Agent 上线流程暂时不可用，Bridge 将在后台重试"
@@ -1194,6 +1200,12 @@ async fn maintain_agent_session(
                 status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
                 runtime.state.clear();
                 let delay = retry_delay_for_agent_failure(failure, &mut backoff);
+                if let Err(error) = announce_supervisor_diagnostic(failure) {
+                    tracing::warn!(
+                        error_code = error.code(),
+                        "Agent 暂时失败诊断无法写入监督通道"
+                    );
+                }
                 tracing::warn!(
                     failure_kind = ?failure.kind(),
                     consecutive_failures = backoff.consecutive_failures(),
@@ -1590,6 +1602,10 @@ enum BridgeSupervisorEvent<'a> {
     Ready {
         channel: &'static str,
     },
+    TransientFailure {
+        channel: &'static str,
+        code: &'static str,
+    },
 }
 
 fn announce_supervisor_ready() -> Result<(), BridgeRuntimeError> {
@@ -1598,6 +1614,17 @@ fn announce_supervisor_ready() -> Result<(), BridgeRuntimeError> {
     }
     write_supervisor_event(&BridgeSupervisorEvent::Ready {
         channel: "agent_room_desktop",
+    })
+}
+
+fn announce_supervisor_diagnostic(failure: AgentOnlineFailure) -> Result<(), BridgeRuntimeError> {
+    if !supervisor_events_enabled() {
+        return Ok(());
+    }
+    let mapped = BridgeRuntimeError::agent_online(failure);
+    write_supervisor_event(&BridgeSupervisorEvent::TransientFailure {
+        channel: "agent_room_desktop",
+        code: mapped.code(),
     })
 }
 
@@ -2063,13 +2090,30 @@ impl BridgeRuntimeError {
                 "bridge.matrix_room_not_found",
                 "控制面分配的 Matrix 房间不存在",
             ),
-            MatrixFailureKind::Conflict
-            | MatrixFailureKind::RateLimited
-            | MatrixFailureKind::Timeout
-            | MatrixFailureKind::DependencyUnavailable
-            | MatrixFailureKind::StaleSyncToken => (
-                "bridge.matrix_temporarily_unavailable",
-                "Agent Matrix 同步暂时不可用",
+            MatrixFailureKind::Conflict => {
+                ("bridge.matrix_conflict", "Agent Matrix 房间状态发生冲突")
+            }
+            MatrixFailureKind::RateLimited => {
+                ("bridge.matrix_rate_limited", "Agent Matrix 请求已被限流")
+            }
+            MatrixFailureKind::Timeout => ("bridge.matrix_timeout", "Agent Matrix 请求超时"),
+            MatrixFailureKind::DependencyUnavailable => match failure.operation() {
+                MatrixOperation::RestoreSession => (
+                    "bridge.matrix_restore_dependency_unavailable",
+                    "Agent Matrix 会话恢复依赖暂时不可用",
+                ),
+                MatrixOperation::Sync => (
+                    "bridge.matrix_sync_dependency_unavailable",
+                    "Agent Matrix 同步依赖暂时不可用",
+                ),
+                _ => (
+                    "bridge.matrix_dependency_unavailable",
+                    "Agent Matrix 服务或本地依赖暂时不可用",
+                ),
+            },
+            MatrixFailureKind::StaleSyncToken => (
+                "bridge.matrix_sync_token_stale",
+                "Agent Matrix 同步游标已失效",
             ),
             MatrixFailureKind::UnknownCommit => (
                 "bridge.matrix_outcome_unknown",
@@ -2094,9 +2138,28 @@ impl std::error::Error for BridgeRuntimeError {}
 
 #[cfg(test)]
 mod tests {
+    use agent_room_application::ports::{MatrixFailure, MatrixFailureKind, MatrixOperation};
     use agent_room_bridge_ipc::IpcBridgeState;
 
-    use super::{BridgeRuntimeStatus, BridgeStatusReader};
+    use super::{BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader};
+
+    #[test]
+    fn matrix_依赖故障保留恢复与同步的操作维度() {
+        let restore = BridgeRuntimeError::agent_matrix(MatrixFailure::new(
+            MatrixOperation::RestoreSession,
+            MatrixFailureKind::DependencyUnavailable,
+        ));
+        let sync = BridgeRuntimeError::agent_matrix(MatrixFailure::new(
+            MatrixOperation::Sync,
+            MatrixFailureKind::DependencyUnavailable,
+        ));
+
+        assert_eq!(
+            restore.code(),
+            "bridge.matrix_restore_dependency_unavailable"
+        );
+        assert_eq!(sync.code(), "bridge.matrix_sync_dependency_unavailable");
+    }
 
     #[test]
     fn bridge_只有所有必需组件就绪时才报告_ready() {

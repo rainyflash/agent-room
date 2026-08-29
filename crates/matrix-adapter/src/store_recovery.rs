@@ -34,22 +34,32 @@ pub(crate) fn recover_query_statistics(store_root: &Path) -> Result<bool, StoreR
     drop(source);
 
     let quarantine = store_root.join(RECOVERY_DIRECTORY).join(&recovery_id);
-    fs::create_dir_all(&quarantine).map_err(StoreRecoveryFailure::Filesystem)?;
-    let companions = database_companions(&state_database, &quarantine);
-    let mut moved = Vec::new();
-    for (original, backup) in companions.iter().filter(|(original, _)| original.exists()) {
-        if let Err(error) = fs::rename(original, backup) {
-            rollback_moves(&moved);
+    let moved = match move_database_to_quarantine(&state_database, &quarantine) {
+        Ok(moved) => moved,
+        Err(error) => {
             let _ = fs::remove_file(&rebuilt_database);
-            return Err(StoreRecoveryFailure::Filesystem(error));
+            return Err(error);
         }
-        moved.push((original.clone(), backup.clone()));
-    }
+    };
     if let Err(error) = fs::rename(&rebuilt_database, &state_database) {
         rollback_moves(&moved);
         let _ = fs::remove_file(&rebuilt_database);
         return Err(StoreRecoveryFailure::Filesystem(error));
     }
+    Ok(true)
+}
+
+pub(crate) fn quarantine_invalid_state_cache(
+    store_root: &Path,
+) -> Result<bool, StoreRecoveryFailure> {
+    let state_database = store_root.join(STATE_DATABASE);
+    if !state_database.is_file() {
+        return Ok(false);
+    }
+    let quarantine = store_root
+        .join(RECOVERY_DIRECTORY)
+        .join(Uuid::now_v7().to_string());
+    move_database_to_quarantine(&state_database, &quarantine)?;
     Ok(true)
 }
 
@@ -261,6 +271,23 @@ fn database_companions(database: &Path, quarantine: &Path) -> Vec<(PathBuf, Path
         .collect()
 }
 
+fn move_database_to_quarantine(
+    database: &Path,
+    quarantine: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, StoreRecoveryFailure> {
+    fs::create_dir_all(quarantine).map_err(StoreRecoveryFailure::Filesystem)?;
+    let companions = database_companions(database, quarantine);
+    let mut moved = Vec::new();
+    for (original, backup) in companions.iter().filter(|(original, _)| original.exists()) {
+        if let Err(error) = fs::rename(original, backup) {
+            rollback_moves(&moved);
+            return Err(StoreRecoveryFailure::Filesystem(error));
+        }
+        moved.push((original.clone(), backup.clone()));
+    }
+    Ok(moved)
+}
+
 fn rollback_moves(moved: &[(PathBuf, PathBuf)]) {
     for (original, backup) in moved.iter().rev() {
         let _ = fs::rename(backup, original);
@@ -294,7 +321,10 @@ mod tests {
     use rusqlite::Connection;
     use tempfile::tempdir;
 
-    use super::{RECOVERY_DIRECTORY, STATE_DATABASE, recover_query_statistics};
+    use super::{
+        RECOVERY_DIRECTORY, STATE_DATABASE, quarantine_invalid_state_cache,
+        recover_query_statistics,
+    };
 
     #[test]
     fn 仅查询统计页损坏时保留业务数据并隔离原文件() {
@@ -330,6 +360,46 @@ mod tests {
 
         assert!(!recover_query_statistics(directory.path()).expect("业务损坏必须保持失败关闭"));
         assert!(!directory.path().join(RECOVERY_DIRECTORY).exists());
+    }
+
+    #[test]
+    fn 无法解密的可再生状态缓存只隔离_state_数据库() {
+        let directory = tempdir().expect("临时目录可创建");
+        let state = directory.path().join(STATE_DATABASE);
+        let state_wal = directory.path().join(format!("{STATE_DATABASE}-wal"));
+        let state_shm = directory.path().join(format!("{STATE_DATABASE}-shm"));
+        let crypto = directory.path().join("matrix-sdk-crypto.sqlite3");
+        let crypto_wal = directory.path().join("matrix-sdk-crypto.sqlite3-wal");
+        std::fs::write(&state, b"state-cache").expect("状态缓存可创建");
+        std::fs::write(&state_wal, b"state-wal").expect("状态日志可创建");
+        std::fs::write(&state_shm, b"state-shm").expect("状态共享页可创建");
+        std::fs::write(&crypto, b"crypto-store").expect("加密存储可创建");
+        std::fs::write(&crypto_wal, b"crypto-wal").expect("加密日志可创建");
+
+        assert!(quarantine_invalid_state_cache(directory.path()).expect("状态缓存可隔离"));
+
+        assert!(!state.exists());
+        assert!(!state_wal.exists());
+        assert!(!state_shm.exists());
+        assert_eq!(
+            std::fs::read(&crypto).expect("加密存储仍存在"),
+            b"crypto-store"
+        );
+        assert_eq!(
+            std::fs::read(&crypto_wal).expect("加密日志仍存在"),
+            b"crypto-wal"
+        );
+        let backups = std::fs::read_dir(directory.path().join(RECOVERY_DIRECTORY))
+            .expect("隔离目录存在")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("隔离目录可读取");
+        assert_eq!(backups.len(), 1);
+        let quarantine = backups[0].path();
+        assert!(quarantine.join(STATE_DATABASE).is_file());
+        assert!(quarantine.join(format!("{STATE_DATABASE}-wal")).is_file());
+        assert!(quarantine.join(format!("{STATE_DATABASE}-shm")).is_file());
+        assert!(!quarantine.join("matrix-sdk-crypto.sqlite3").exists());
+        assert!(!quarantine.join("matrix-sdk-crypto.sqlite3-wal").exists());
     }
 
     fn create_analyzed_database(path: &Path) {
