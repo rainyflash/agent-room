@@ -48,53 +48,78 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   const canvas = page.locator('.lobby-scene__canvas');
   await expect(canvas).toBeVisible();
 
-  const interactionSamples = await canvas.evaluate(async (element) => {
-    const host = element.closest<HTMLElement>('.lobby-scene__visual');
-    if (host === null) {
-      throw new Error('大厅场景缺少性能遥测宿主。');
-    }
-    const samples: {
-      readonly renderMilliseconds: number;
-      readonly scheduleMilliseconds: number;
-      readonly updateMilliseconds: number;
-    }[] = [];
-    for (let index = 0; index < 72; index += 1) {
-      const startedAt = performance.now();
-      const previousSequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-      element.dispatchEvent(
-        new WheelEvent('wheel', {
-          bubbles: true,
-          cancelable: true,
-          clientX: element.clientWidth / 2,
-          clientY: element.clientHeight / 2,
-          deltaY: index % 12 < 6 ? -5 : 5,
-        }),
+  const sceneHost = page.locator('.lobby-scene__pixi');
+  const interactionSamples: {
+    readonly renderMilliseconds: number;
+    readonly scheduleMilliseconds: number;
+    readonly updateMilliseconds: number;
+  }[] = [];
+  await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
+  await canvas.hover();
+  for (let index = 0; index < 72; index += 1) {
+    const previousSequence = await canvas.evaluate((element) => {
+      const host = element.closest<HTMLElement>('.lobby-scene__pixi');
+      if (host === null) {
+        throw new Error('大厅场景缺少性能遥测宿主。');
+      }
+      const sequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
+      if (!Number.isFinite(sequence)) {
+        throw new Error('大厅渲染序列无效。');
+      }
+      delete host.dataset.agentRoomTestRenderCompletedAt;
+      delete host.dataset.agentRoomTestWheelStartedAt;
+      const observer = new MutationObserver(() => {
+        const nextSequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
+        if (Number.isFinite(nextSequence) && nextSequence > sequence) {
+          host.dataset.agentRoomTestRenderCompletedAt = String(performance.now());
+          observer.disconnect();
+        }
+      });
+      observer.observe(host, {
+        attributeFilter: ['data-agent-room-render-sequence'],
+        attributes: true,
+      });
+      element.addEventListener(
+        'wheel',
+        () => {
+          host.dataset.agentRoomTestWheelStartedAt = String(performance.now());
+        },
+        { capture: true, once: true },
       );
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-      const renderSequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-      const renderMilliseconds = Number(host.dataset.agentRoomRenderMilliseconds ?? Number.NaN);
-      const updateMilliseconds = Number(host.dataset.agentRoomUpdateMilliseconds ?? Number.NaN);
-      if (!Number.isFinite(previousSequence) || renderSequence <= previousSequence) {
-        throw new Error('大厅交互没有触发预期的合并渲染。');
-      }
-      if (!Number.isFinite(renderMilliseconds)) {
-        throw new Error('大厅渲染没有产生有效耗时遥测。');
-      }
-      if (!Number.isFinite(updateMilliseconds)) {
-        throw new Error('大厅场景更新没有产生有效耗时遥测。');
-      }
-      samples.push({
-        renderMilliseconds,
-        scheduleMilliseconds: performance.now() - startedAt,
-        updateMilliseconds,
-      });
-    }
-    return samples.slice(6);
-  });
+      return sequence;
+    });
+    await page.mouse.wheel(0, index % 12 < 6 ? -5 : 5);
+    await page.waitForFunction(
+      (sequence) => {
+        const host = document.querySelector<HTMLElement>('.lobby-scene__pixi');
+        return (
+          host?.dataset.agentRoomTestRenderCompletedAt !== undefined &&
+          Number(host.dataset.agentRoomRenderSequence ?? Number.NaN) > sequence
+        );
+      },
+      previousSequence,
+      { polling: 'raf', timeout: 1_000 },
+    );
+    interactionSamples.push(
+      await sceneHost.evaluate((host) => {
+        const completedAt = Number(host.dataset.agentRoomTestRenderCompletedAt ?? Number.NaN);
+        const startedAt = Number(host.dataset.agentRoomTestWheelStartedAt ?? Number.NaN);
+        const renderMilliseconds = Number(host.dataset.agentRoomRenderMilliseconds ?? Number.NaN);
+        const updateMilliseconds = Number(host.dataset.agentRoomUpdateMilliseconds ?? Number.NaN);
+        if (
+          ![completedAt, renderMilliseconds, startedAt, updateMilliseconds].every(Number.isFinite)
+        ) {
+          throw new Error('大厅交互没有产生完整的性能遥测。');
+        }
+        return {
+          renderMilliseconds,
+          scheduleMilliseconds: completedAt - startedAt,
+          updateMilliseconds,
+        };
+      }),
+    );
+  }
+  interactionSamples.splice(0, 6);
 
   const renderDurations = interactionSamples
     .map((sample) => sample.renderMilliseconds)
@@ -177,7 +202,7 @@ test('手机默认使用完整列表且 reduced-motion 不保留持续动画', a
   });
 });
 
-test('图形上下文不可用时自动降级且仍可查看 Agent', async ({ page }) => {
+test('WebGL 不可用时自动降级为可交互 SVG 空间视图', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.addInitScript(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
@@ -188,11 +213,20 @@ test('图形上下文不可用时自动降级且仍可查看 Agent', async ({ pa
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  await expect(page.getByText(/graphics surface failed/u)).toBeVisible();
-  await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
-  await page.getByRole('button', { name: /Build Agent 001/u }).click();
-  await expect(page.getByRole('complementary')).toContainText('Build Agent 001');
-  await expect(page.getByRole('button', { name: 'Retry scene' })).toBeEnabled();
+  const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
+  await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
+  await expect(scene.getByRole('option')).toHaveCount(200);
+  await expect(page.getByText(/graphics surface failed/u)).toHaveCount(0);
+  const activeOptionText = await scene.getByRole('option', { selected: true }).innerText();
+  const activeAgentName = /^Build Agent \d{3}/u.exec(activeOptionText)?.[0];
+  if (activeAgentName === undefined) {
+    throw new Error('SVG 降级场景缺少有效的当前 Agent。');
+  }
+  await scene.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary')).toContainText(activeAgentName);
+  await page.getByRole('button', { name: 'Close Agent details' }).click();
+  await expect(scene).toBeFocused();
   expect(failures).toEqual([]);
 });
 
@@ -283,7 +317,7 @@ async function collectRuntimeBudget(
     Number.POSITIVE_INFINITY;
   const browserMetrics = await page.evaluate(() => {
     const resourceEntries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
-    const scene = document.querySelector<HTMLElement>('.lobby-scene__visual');
+    const scene = document.querySelector<HTMLElement>('.lobby-scene__pixi');
     return {
       decodedResourceBytes: resourceEntries.reduce(
         (total, resource) => total + resource.decodedBodySize,
