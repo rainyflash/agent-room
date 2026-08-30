@@ -19,7 +19,10 @@ use agent_room_application::{
     },
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
     direct_sessions::{DirectSessionFailure, DirectSessionFailureKind},
-    handoffs::{HandoffAccessFailure, HandoffAccessFailureKind},
+    handoffs::{
+        HandoffAccessFailure, HandoffAccessFailureKind, TargetedHandoffFailure,
+        TargetedHandoffFailureKind,
+    },
     moderation::{ModerationFailure, ModerationFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
@@ -735,6 +738,75 @@ impl ApiError {
             operation = failure.operation(),
             failure = ?failure.kind(),
             "交接授权请求失败"
+        );
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    pub(crate) fn targeted_handoff(
+        failure: TargetedHandoffFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            TargetedHandoffFailureKind::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "targeted_handoff.unauthorized",
+                ErrorCategory::Authentication,
+                "当前人类会话或设备凭证无效。",
+            ),
+            TargetedHandoffFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "targeted_handoff.forbidden",
+                ErrorCategory::Authorization,
+                "当前主体无权访问该房间或交接任务。",
+            ),
+            TargetedHandoffFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "targeted_handoff.invalid_request",
+                ErrorCategory::Validation,
+                "交接请求的标识、权限或有效期无效。",
+            ),
+            TargetedHandoffFailureKind::InvalidSource => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "targeted_handoff.invalid_source",
+                ErrorCategory::Validation,
+                "交接来源消息、事件或内容绑定不成立。",
+            ),
+            TargetedHandoffFailureKind::TargetUnavailable => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "targeted_handoff.target_unavailable",
+                ErrorCategory::Validation,
+                "目标 Agent 实例不存在、已撤销或不支持云端交接。",
+            ),
+            TargetedHandoffFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "targeted_handoff.not_found",
+                ErrorCategory::Validation,
+                "交接任务不存在或当前主体不可见。",
+            ),
+            TargetedHandoffFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "targeted_handoff.conflict",
+                ErrorCategory::Conflict,
+                "交接任务状态或幂等请求已经发生冲突。",
+            ),
+            TargetedHandoffFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "targeted_handoff.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "交接队列依赖暂时不可用。",
+            ),
+            TargetedHandoffFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "targeted_handoff.internal",
+                ErrorCategory::Transient,
+                "交接队列发生内部错误。",
+            ),
+        };
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            operation = failure.operation(),
+            failure = ?failure.kind(),
+            "定向交接请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
     }

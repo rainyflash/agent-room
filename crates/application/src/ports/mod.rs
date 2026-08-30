@@ -68,7 +68,10 @@ pub use devices::{
     PendingAgentMatrixDeviceRevocation, StoredDeviceSession,
 };
 pub use handoffs::{
-    HandoffAccessRepository, HandoffAuthorizationSnapshot, HandoffInstanceAccessRecord,
+    ClaimTargetedHandoff, HandoffAccessRepository, HandoffAuthorizationSnapshot,
+    HandoffInstanceAccessRecord, QueueTargetedHandoff, QueueTargetedHandoffOutcome,
+    RecordTargetedHandoffReceipt, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+    TargetedHandoffRequestFingerprint, TargetedHandoffTargetRecord,
 };
 pub use identity::{
     DesktopAuthorizationCodeRegistration, DesktopClientState, DesktopLoginCompletionTransaction,

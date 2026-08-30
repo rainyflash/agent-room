@@ -10,9 +10,12 @@ use agent_room_application::{
         AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
         AgentInstanceRevocationTransaction, AgentInstanceVerificationRepository,
         AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
-        AgentRegistration, AgentRepository, DeviceRevocationOutcome, DeviceRevocationTransaction,
-        DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId, OutboxMessage,
-        PrincipalRegistration, PrincipalRepository, SecretDigest, StoredAgentInstanceRegistration,
+        AgentRegistration, AgentRepository, ClaimTargetedHandoff, DeviceRevocationOutcome,
+        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId,
+        OutboxMessage, PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
+        QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SecretDigest,
+        StoredAgentInstanceRegistration, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+        TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -26,12 +29,18 @@ use agent_room_domain::{
         AdapterBinding, AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
         AgentMatrixDeviceId, AgentRole, AgentVisibility,
     },
+    content::{ContentByteLength, ContentMediaType, Sha256Digest},
+    handoff::{
+        HandoffContentReference, HandoffPermission, HandoffPermissions, HandoffPurpose,
+        HandoffSourceEventId, TargetedHandoff, TargetedHandoffFields, TargetedHandoffStatus,
+    },
     identity::Principal,
     ids::{
         AccountDeletionJobId, AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId,
-        AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId, OutboxEventId,
-        PrincipalId,
+        AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, ContentId, DeviceId,
+        HandoffId, MessageId, OutboxEventId, PrincipalId,
     },
+    rooms::MatrixRoomReference,
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
@@ -861,6 +870,170 @@ async fn 上下文交接授权在同一快照返回两个精确实例及主体�
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 定向交接支持离线排队幂等领取回执并随目标撤销终止() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 77).await;
+    let target_registration = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        fixture.agent_id,
+        SecretDigest::from_array([78; 32]),
+        [79; 32],
+        [80; 32],
+    );
+    let target = register_instance(&repositories, &target_registration)
+        .await
+        .expect("离线目标实例注册成功");
+    let targets =
+        TargetedHandoffRepository::list_targets(&repositories, fixture.owner_id, test_time())
+            .await
+            .expect("可枚举支持交接的目标");
+    assert!(
+        targets
+            .iter()
+            .any(|record| record.instance_id == target.instance.id())
+    );
+
+    let content_id = ContentId::from_uuid(Uuid::now_v7());
+    let room_id = "!targeted-handoff:matrix.test";
+    let event_id = "$targeted-handoff:matrix.test";
+    seed_targeted_handoff_content(
+        &database.runtime,
+        fixture.owner_id,
+        content_id,
+        room_id,
+        event_id,
+    )
+    .await;
+    let handoff_id = HandoffId::from_uuid(Uuid::now_v7());
+    let handoff = targeted_handoff(
+        handoff_id,
+        fixture.owner_id,
+        fixture.agent_id,
+        target.instance.id(),
+        content_id,
+        room_id,
+        event_id,
+    );
+    let fingerprint = TargetedHandoffRequestFingerprint::from_bytes([81; 32]);
+    let created = TargetedHandoffRepository::queue(
+        &repositories,
+        QueueTargetedHandoff {
+            handoff: &handoff,
+            request_fingerprint: fingerprint,
+        },
+    )
+    .await
+    .expect("首次排队成功");
+    assert!(matches!(created, QueueTargetedHandoffOutcome::Created(_)));
+    let replay = TargetedHandoffRepository::queue(
+        &repositories,
+        QueueTargetedHandoff {
+            handoff: &handoff,
+            request_fingerprint: fingerprint,
+        },
+    )
+    .await
+    .expect("同一幂等请求可安全重放");
+    assert!(matches!(replay, QueueTargetedHandoffOutcome::Existing(_)));
+    let conflict = TargetedHandoffRepository::queue(
+        &repositories,
+        QueueTargetedHandoff {
+            handoff: &handoff,
+            request_fingerprint: TargetedHandoffRequestFingerprint::from_bytes([82; 32]),
+        },
+    )
+    .await
+    .expect_err("同一键不能改写请求");
+    assert_eq!(conflict.kind(), RepositoryErrorKind::Conflict);
+
+    let delivered = TargetedHandoffRepository::claim_next(
+        &repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id: target.instance.id(),
+            claimed_at: test_time(),
+        },
+    )
+    .await
+    .expect("领取事务成功")
+    .expect("存在待领取记录");
+    assert_eq!(delivered.status(), TargetedHandoffStatus::Delivered);
+    let consumed = TargetedHandoffRepository::record_receipt(
+        &repositories,
+        RecordTargetedHandoffReceipt {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id: target.instance.id(),
+            handoff_id,
+            outcome: TargetedHandoffReceiptOutcome::Consumed,
+            recorded_at: test_time(),
+        },
+    )
+    .await
+    .expect("消费回执事务成功")
+    .expect("交接存在");
+    assert_eq!(consumed.status(), TargetedHandoffStatus::Consumed);
+
+    let second_content_id = ContentId::from_uuid(Uuid::now_v7());
+    seed_targeted_handoff_content(
+        &database.runtime,
+        fixture.owner_id,
+        second_content_id,
+        room_id,
+        "$targeted-revoke:matrix.test",
+    )
+    .await;
+    let pending_id = HandoffId::from_uuid(Uuid::now_v7());
+    let pending = targeted_handoff(
+        pending_id,
+        fixture.owner_id,
+        fixture.agent_id,
+        target.instance.id(),
+        second_content_id,
+        room_id,
+        "$targeted-revoke:matrix.test",
+    );
+    TargetedHandoffRepository::queue(
+        &repositories,
+        QueueTargetedHandoff {
+            handoff: &pending,
+            request_fingerprint: TargetedHandoffRequestFingerprint::from_bytes([83; 32]),
+        },
+    )
+    .await
+    .expect("第二条交接排队成功");
+    AgentInstanceRevocationTransaction::revoke(
+        &repositories,
+        fixture.owner_id,
+        target.instance.id(),
+        &instance_revocation_event(target.instance.id()),
+    )
+    .await
+    .expect("目标撤销成功");
+    let failed = TargetedHandoffRepository::find_for_principal(
+        &repositories,
+        pending_id,
+        fixture.owner_id,
+        test_time(),
+    )
+    .await
+    .expect("撤销后的交接可查询")
+    .expect("审计记录保留");
+    assert_eq!(failed.status(), TargetedHandoffStatus::Failed);
+    assert_eq!(
+        failed.failure_code().map(|code| code.as_str()),
+        Some("handoff.target_revoked")
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn agent_card_快照可往返且历史被原子裁剪() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -1304,6 +1477,92 @@ async fn insert_verified_device(
     .expect("已验证设备写入应成功");
 }
 
+async fn seed_targeted_handoff_content(
+    pool: &PgPool,
+    principal_id: PrincipalId,
+    content_id: ContentId,
+    room_id: &str,
+    event_id: &str,
+) {
+    let expires_at = test_time()
+        .checked_add(DurationMillis::new(86_400_000).expect("内容期限有效"))
+        .expect("内容到期时间有效");
+    sqlx::query(
+        r"INSERT INTO agent_room.content_object (
+               id, owner_principal_id, storage_key, sha256_digest, byte_length,
+               media_type, encryption_mode, scan_state, lifecycle_state,
+               expires_at, created_at
+           ) VALUES (
+               $1, $2, $3, $4, 256, 'text/markdown', 'server_side', 'clean', 'active',
+               to_timestamp($5::double precision / 1000.0),
+               to_timestamp($6::double precision / 1000.0)
+           )",
+    )
+    .bind(content_id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .bind(format!("content/{content_id}/targeted-handoff"))
+    .bind(vec![0x42; 32])
+    .bind(expires_at.value())
+    .bind(test_time().value())
+    .execute(pool)
+    .await
+    .expect("交接内容写入成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.content_access_policy (
+               id, content_id, matrix_room_id, matrix_event_id,
+               access_mode, created_at
+           ) VALUES (
+               $1, $2, $3, $4, 'room_member',
+               to_timestamp($5::double precision / 1000.0)
+           )",
+    )
+    .bind(Uuid::now_v7())
+    .bind(content_id.as_uuid())
+    .bind(room_id)
+    .bind(event_id)
+    .bind(test_time().value())
+    .execute(pool)
+    .await
+    .expect("交接内容策略写入成功");
+}
+
+fn targeted_handoff(
+    id: HandoffId,
+    principal_id: PrincipalId,
+    target_agent_id: AgentId,
+    target_instance_id: AgentInstanceId,
+    content_id: ContentId,
+    room_id: &str,
+    event_id: &str,
+) -> TargetedHandoff {
+    TargetedHandoff::queue(TargetedHandoffFields {
+        id,
+        principal_id,
+        source_room_id: MatrixRoomReference::new(room_id).expect("房间有效"),
+        source_event_id: HandoffSourceEventId::new(event_id).expect("事件有效"),
+        source_message_id: MessageId::from_uuid(Uuid::now_v7()),
+        target_agent_id,
+        target_instance_id,
+        content: HandoffContentReference::new(
+            content_id,
+            Sha256Digest::from_bytes([0x42; 32]),
+            ContentByteLength::new(256).expect("内容长度有效"),
+            ContentMediaType::new("text/markdown").expect("媒体类型有效"),
+        ),
+        permissions: HandoffPermissions::new([
+            HandoffPermission::ReadText,
+            HandoffPermission::IncludeMetadata,
+        ])
+        .expect("交接权限有效"),
+        purpose: HandoffPurpose::Summarize,
+        created_at: test_time(),
+        expires_at: test_time()
+            .checked_add(DurationMillis::new(120_000).expect("交接期限有效"))
+            .expect("交接到期时间有效"),
+    })
+    .expect("交接领域对象有效")
+}
+
 fn instance_registration(
     request_id: AgentInstanceRegistrationRequestId,
     principal_id: PrincipalId,
@@ -1336,6 +1595,10 @@ fn instance_registration(
     configuration.insert(
         "mode".to_owned(),
         serde_json::Value::String("observe".to_owned()),
+    );
+    configuration.insert(
+        "capabilities".to_owned(),
+        serde_json::json!(["targeted_handoff_v1"]),
     );
     AgentInstanceRegistration {
         request_id,

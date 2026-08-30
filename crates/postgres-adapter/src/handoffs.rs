@@ -17,6 +17,10 @@ use crate::{
     error::map_sqlx_error,
 };
 
+mod targeted;
+
+pub(crate) use targeted::{fail_targeted_handoffs_for_device, fail_targeted_handoffs_for_instance};
+
 impl HandoffAccessRepository for PostgresRepositories {
     fn inspect_authorization(
         &self,

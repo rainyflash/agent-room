@@ -25,6 +25,7 @@ use crate::{
     PostgresRepositories,
     agents::{decode_column, decode_optional_time, decode_time},
     error::map_sqlx_error,
+    handoffs::fail_targeted_handoffs_for_instance,
     outbox::insert_outbox_event,
 };
 
@@ -285,6 +286,13 @@ impl PostgresRepositories {
             if update.rows_affected() != 1 {
                 return Err(corrupt_data(operation));
             }
+            fail_targeted_handoffs_for_instance(
+                &mut transaction,
+                instance_id,
+                event.occurred_at(),
+                operation,
+            )
+            .await?;
             insert_outbox_event(&mut transaction, event).await?;
             record.instance.revoke();
             record.revoked_at = Some(event.occurred_at());

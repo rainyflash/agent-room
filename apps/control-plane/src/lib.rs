@@ -37,11 +37,17 @@ use agent_room_application::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
     },
     direct_sessions::{DirectSessionDependencies, DirectSessionService},
-    handoffs::{HandoffAccessDependencies, HandoffAccessService},
+    handoffs::{
+        HandoffAccessDependencies, HandoffAccessService, TargetedHandoffDependencies,
+        TargetedHandoffPolicy, TargetedHandoffService,
+    },
     health::ReadinessService,
     lobby_observation::PublicLobbyObservationService,
     moderation::{ModerationDependencies, ModerationService},
-    ports::{MatrixAgentLocalpart, MatrixRoomAuthorityGateway, MatrixUserId, SecretValue},
+    ports::{
+        ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
+        MatrixUserId, SecretValue,
+    },
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
@@ -123,6 +129,7 @@ struct AgentFeatureDependencies {
     authentication: Arc<AuthenticationService>,
     devices: Arc<DeviceAuthorizationService>,
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    content_authorizer: Arc<dyn ContentMembershipAuthorizer>,
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -320,7 +327,8 @@ async fn build_identity_router(
             desktop_origin: &authentication_config.desktop_origin,
         })
         .await?;
-    let (content_routes, content_cleanup, matrix_authority) = content_runtime.into_parts();
+    let (content_routes, content_cleanup, matrix_authority, content_authorizer) =
+        content_runtime.into_parts();
     let account_lifecycle = build_account_lifecycle_service(
         &config.account_lifecycle,
         repositories.clone(),
@@ -347,6 +355,7 @@ async fn build_identity_router(
             authentication: service,
             devices,
             matrix_authority,
+            content_authorizer,
         },
     )?;
     let routes = compose_identity_routes(
@@ -537,6 +546,17 @@ fn build_agent_feature_states(
         access: dependencies.repositories.clone(),
         clock: dependencies.system_runtime.clone(),
     }));
+    let targeted_handoffs = Arc::new(TargetedHandoffService::new(TargetedHandoffDependencies {
+        store: dependencies.repositories.clone(),
+        content: dependencies.repositories.clone(),
+        authorizer: dependencies.content_authorizer.clone(),
+        clock: dependencies.system_runtime.clone(),
+        policy: TargetedHandoffPolicy::new(
+            DurationMillis::new(60_000).expect("固定最短交接期限必须有效"),
+            DurationMillis::new(24 * 60 * 60 * 1_000).expect("固定最长交接期限必须有效"),
+        )
+        .expect("固定交接期限范围必须有效"),
+    }));
     let entries = build_agent_lobby_entry(
         &config.lobby,
         dependencies.repositories.clone(),
@@ -583,11 +603,17 @@ fn build_agent_feature_states(
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         }),
-        handoffs: HandoffHttpState::new(HandoffHttpDependencies {
-            handoffs,
-            devices: dependencies.devices.clone(),
-            secrets: dependencies.secrets.clone(),
-        }),
+        handoffs: HandoffHttpState::new(
+            HandoffHttpDependencies {
+                handoffs,
+                targeted: targeted_handoffs,
+                authentication: dependencies.authentication.clone(),
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+            },
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
+        ),
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
             directory: dependencies.repositories.clone(),

@@ -290,6 +290,423 @@ pub enum HandoffStatus {
     Failed,
 }
 
+/// 云端事实源中的实例定向交接状态。
+///
+/// `ContextHandoff` 表达 Bridge 已持有的一次性本地上下文包；这里表达用户在云端批准后、
+/// 等待某个精确实例领取的工作项。两者不能共用一个状态机，否则离线排队会被误报为本地已交付。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetedHandoffStatus {
+    Queued,
+    Delivered,
+    Consumed,
+    Declined,
+    Revoked,
+    Expired,
+    Failed,
+}
+
+impl TargetedHandoffStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Delivered => "delivered",
+            Self::Consumed => "consumed",
+            Self::Declined => "declined",
+            Self::Revoked => "revoked",
+            Self::Expired => "expired",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Consumed | Self::Declined | Self::Revoked | Self::Expired | Self::Failed
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetedHandoffFields {
+    pub id: HandoffId,
+    pub principal_id: PrincipalId,
+    pub source_room_id: MatrixRoomReference,
+    pub source_event_id: HandoffSourceEventId,
+    pub source_message_id: MessageId,
+    pub target_agent_id: AgentId,
+    pub target_instance_id: AgentInstanceId,
+    pub content: HandoffContentReference,
+    pub permissions: HandoffPermissions,
+    pub purpose: HandoffPurpose,
+    pub created_at: UtcMillis,
+    pub expires_at: UtcMillis,
+}
+
+/// 用户已明确批准、由云端排队并交给精确 Agent 实例领取的交接记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetedHandoff {
+    fields: TargetedHandoffFields,
+    status: TargetedHandoffStatus,
+    queued_at: UtcMillis,
+    delivered_at: Option<UtcMillis>,
+    consumed_at: Option<UtcMillis>,
+    resolved_at: Option<UtcMillis>,
+    failure_code: Option<HandoffFailureCode>,
+    version: u64,
+}
+
+impl TargetedHandoff {
+    /// 原子建立一条已经得到用户批准的云端排队记录。
+    ///
+    /// # Errors
+    ///
+    /// 到期时间不晚于创建时间时返回校验错误。
+    pub fn queue(fields: TargetedHandoffFields) -> DomainResult<Self> {
+        validate_targeted_lifetime(&fields)?;
+        let queued_at = fields.created_at;
+        Ok(Self {
+            fields,
+            status: TargetedHandoffStatus::Queued,
+            queued_at,
+            delivered_at: None,
+            consumed_at: None,
+            resolved_at: None,
+            failure_code: None,
+            version: 0,
+        })
+    }
+
+    /// 从云端持久化事实恢复聚合，并拒绝互相矛盾的状态时间线。
+    ///
+    /// # Errors
+    ///
+    /// 状态、时间、失败原因或版本不满足领域约束时返回错误。
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore(
+        fields: TargetedHandoffFields,
+        status: TargetedHandoffStatus,
+        queued_at: UtcMillis,
+        delivered_at: Option<UtcMillis>,
+        consumed_at: Option<UtcMillis>,
+        resolved_at: Option<UtcMillis>,
+        failure_code: Option<HandoffFailureCode>,
+        version: u64,
+    ) -> DomainResult<Self> {
+        validate_targeted_lifetime(&fields)?;
+        if queued_at < fields.created_at || queued_at >= fields.expires_at {
+            return Err(DomainError::InvariantViolation {
+                entity: "targeted_handoff",
+                rule: "排队时间必须位于有效授权期内",
+            });
+        }
+        validate_targeted_timeline(
+            &fields,
+            status,
+            queued_at,
+            delivered_at,
+            consumed_at,
+            resolved_at,
+            failure_code.as_ref(),
+        )?;
+        Ok(Self {
+            fields,
+            status,
+            queued_at,
+            delivered_at,
+            consumed_at,
+            resolved_at,
+            failure_code,
+            version,
+        })
+    }
+
+    pub const fn fields(&self) -> &TargetedHandoffFields {
+        &self.fields
+    }
+
+    pub const fn status(&self) -> TargetedHandoffStatus {
+        self.status
+    }
+
+    pub const fn queued_at(&self) -> UtcMillis {
+        self.queued_at
+    }
+
+    pub const fn delivered_at(&self) -> Option<UtcMillis> {
+        self.delivered_at
+    }
+
+    pub const fn consumed_at(&self) -> Option<UtcMillis> {
+        self.consumed_at
+    }
+
+    pub const fn resolved_at(&self) -> Option<UtcMillis> {
+        self.resolved_at
+    }
+
+    pub const fn failure_code(&self) -> Option<&HandoffFailureCode> {
+        self.failure_code.as_ref()
+    }
+
+    pub const fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// 目标 Bridge 已领取记录并建立本地一次性上下文包。
+    pub fn mark_delivered(&mut self, delivered_at: UtcMillis) -> DomainResult<()> {
+        if self.status == TargetedHandoffStatus::Delivered {
+            return Ok(());
+        }
+        self.require_targeted_status(
+            TargetedHandoffStatus::Queued,
+            TargetedHandoffStatus::Delivered,
+        )?;
+        self.validate_targeted_active_time(delivered_at, self.queued_at, "handoff_delivered_at")?;
+        self.status = TargetedHandoffStatus::Delivered;
+        self.delivered_at = Some(delivered_at);
+        self.bump_version();
+        Ok(())
+    }
+
+    /// 目标 Agent 已消费本地上下文包；重复回执保持幂等。
+    pub fn consume(&mut self, consumed_at: UtcMillis) -> DomainResult<()> {
+        if self.status == TargetedHandoffStatus::Consumed {
+            return Ok(());
+        }
+        self.require_targeted_status(
+            TargetedHandoffStatus::Delivered,
+            TargetedHandoffStatus::Consumed,
+        )?;
+        let delivered_at = self.delivered_at.ok_or(DomainError::InvariantViolation {
+            entity: "targeted_handoff",
+            rule: "已交付状态必须记录交付时间",
+        })?;
+        self.validate_targeted_active_time(consumed_at, delivered_at, "handoff_consumed_at")?;
+        self.status = TargetedHandoffStatus::Consumed;
+        self.consumed_at = Some(consumed_at);
+        self.resolved_at = Some(consumed_at);
+        self.bump_version();
+        Ok(())
+    }
+
+    /// 目标实例明确拒绝交接；稳定失败码用于跨设备诊断。
+    pub fn decline(
+        &mut self,
+        failure_code: HandoffFailureCode,
+        declined_at: UtcMillis,
+    ) -> DomainResult<()> {
+        self.resolve_active(TargetedHandoffStatus::Declined, failure_code, declined_at)
+    }
+
+    /// 创建者撤销尚未消费的交接。
+    pub fn revoke(&mut self, revoked_at: UtcMillis) -> DomainResult<()> {
+        if self.status == TargetedHandoffStatus::Revoked {
+            return Ok(());
+        }
+        if !matches!(
+            self.status,
+            TargetedHandoffStatus::Queued | TargetedHandoffStatus::Delivered
+        ) {
+            return Err(self.invalid_targeted_transition(TargetedHandoffStatus::Revoked));
+        }
+        self.validate_targeted_active_time(
+            revoked_at,
+            self.latest_targeted_active_time(),
+            "handoff_revoked_at",
+        )?;
+        self.status = TargetedHandoffStatus::Revoked;
+        self.resolved_at = Some(revoked_at);
+        self.bump_version();
+        Ok(())
+    }
+
+    /// 授权期限到达后关闭尚未终结的交接。
+    pub fn expire(&mut self, observed_at: UtcMillis) -> DomainResult<()> {
+        if self.status == TargetedHandoffStatus::Expired {
+            return Ok(());
+        }
+        if !matches!(
+            self.status,
+            TargetedHandoffStatus::Queued | TargetedHandoffStatus::Delivered
+        ) {
+            return Err(self.invalid_targeted_transition(TargetedHandoffStatus::Expired));
+        }
+        if observed_at < self.fields.expires_at {
+            return Err(DomainError::InvariantViolation {
+                entity: "targeted_handoff",
+                rule: "尚未到达交接授权期限",
+            });
+        }
+        self.status = TargetedHandoffStatus::Expired;
+        self.resolved_at = Some(observed_at);
+        self.bump_version();
+        Ok(())
+    }
+
+    /// 记录排队或交付阶段的稳定失败。
+    pub fn fail(
+        &mut self,
+        failure_code: HandoffFailureCode,
+        failed_at: UtcMillis,
+    ) -> DomainResult<()> {
+        self.resolve_active(TargetedHandoffStatus::Failed, failure_code, failed_at)
+    }
+
+    fn resolve_active(
+        &mut self,
+        status: TargetedHandoffStatus,
+        failure_code: HandoffFailureCode,
+        resolved_at: UtcMillis,
+    ) -> DomainResult<()> {
+        if self.status == status {
+            if self.failure_code.as_ref() == Some(&failure_code) {
+                return Ok(());
+            }
+            return Err(DomainError::InvariantViolation {
+                entity: "targeted_handoff",
+                rule: "终态不能改写失败原因",
+            });
+        }
+        if !matches!(
+            self.status,
+            TargetedHandoffStatus::Queued | TargetedHandoffStatus::Delivered
+        ) {
+            return Err(self.invalid_targeted_transition(status));
+        }
+        self.validate_targeted_active_time(
+            resolved_at,
+            self.latest_targeted_active_time(),
+            "handoff_resolved_at",
+        )?;
+        self.status = status;
+        self.failure_code = Some(failure_code);
+        self.resolved_at = Some(resolved_at);
+        self.bump_version();
+        Ok(())
+    }
+
+    fn require_targeted_status(
+        &self,
+        expected: TargetedHandoffStatus,
+        target: TargetedHandoffStatus,
+    ) -> DomainResult<()> {
+        if self.status != expected {
+            return Err(self.invalid_targeted_transition(target));
+        }
+        Ok(())
+    }
+
+    fn validate_targeted_active_time(
+        &self,
+        value: UtcMillis,
+        earliest: UtcMillis,
+        field: &'static str,
+    ) -> DomainResult<()> {
+        if value < earliest {
+            return Err(DomainError::Validation {
+                field,
+                reason: "不能早于前一阶段",
+            });
+        }
+        if value >= self.fields.expires_at {
+            return Err(DomainError::InvariantViolation {
+                entity: "targeted_handoff",
+                rule: "交接授权已经到期",
+            });
+        }
+        Ok(())
+    }
+
+    fn latest_targeted_active_time(&self) -> UtcMillis {
+        self.delivered_at.unwrap_or(self.queued_at)
+    }
+
+    fn bump_version(&mut self) {
+        self.version = self.version.saturating_add(1);
+    }
+
+    const fn invalid_targeted_transition(&self, target: TargetedHandoffStatus) -> DomainError {
+        DomainError::InvalidTransition {
+            entity: "targeted_handoff",
+            from: self.status.as_str(),
+            to: target.as_str(),
+        }
+    }
+}
+
+fn validate_targeted_lifetime(fields: &TargetedHandoffFields) -> DomainResult<()> {
+    if fields.expires_at <= fields.created_at {
+        return Err(DomainError::Validation {
+            field: "handoff_expires_at",
+            reason: "必须晚于创建时间",
+        });
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_targeted_timeline(
+    fields: &TargetedHandoffFields,
+    status: TargetedHandoffStatus,
+    queued_at: UtcMillis,
+    delivered_at: Option<UtcMillis>,
+    consumed_at: Option<UtcMillis>,
+    resolved_at: Option<UtcMillis>,
+    failure_code: Option<&HandoffFailureCode>,
+) -> DomainResult<()> {
+    if delivered_at.is_some_and(|value| value < queued_at || value >= fields.expires_at)
+        || consumed_at.is_some_and(|value| {
+            delivered_at.is_none_or(|delivered| value < delivered) || value >= fields.expires_at
+        })
+    {
+        return Err(DomainError::InvariantViolation {
+            entity: "targeted_handoff",
+            rule: "交接阶段时间线无效",
+        });
+    }
+    let active_resolution_is_valid = resolved_at.is_some_and(|value| {
+        value >= delivered_at.unwrap_or(queued_at) && value < fields.expires_at
+    });
+    let shape_is_valid = match status {
+        TargetedHandoffStatus::Queued => {
+            delivered_at.is_none()
+                && consumed_at.is_none()
+                && resolved_at.is_none()
+                && failure_code.is_none()
+        }
+        TargetedHandoffStatus::Delivered => {
+            delivered_at.is_some()
+                && consumed_at.is_none()
+                && resolved_at.is_none()
+                && failure_code.is_none()
+        }
+        TargetedHandoffStatus::Consumed => {
+            delivered_at.is_some()
+                && consumed_at.is_some()
+                && resolved_at == consumed_at
+                && failure_code.is_none()
+        }
+        TargetedHandoffStatus::Declined | TargetedHandoffStatus::Failed => {
+            consumed_at.is_none() && active_resolution_is_valid && failure_code.is_some()
+        }
+        TargetedHandoffStatus::Revoked => {
+            consumed_at.is_none() && active_resolution_is_valid && failure_code.is_none()
+        }
+        TargetedHandoffStatus::Expired => {
+            consumed_at.is_none()
+                && resolved_at.is_some_and(|value| value >= fields.expires_at)
+                && failure_code.is_none()
+        }
+    };
+    if !shape_is_valid {
+        return Err(DomainError::InvariantViolation {
+            entity: "targeted_handoff",
+            rule: "状态与审计字段不一致",
+        });
+    }
+    Ok(())
+}
+
 impl HandoffStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -614,7 +1031,8 @@ mod tests {
     use super::{
         ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffFailureCode,
         HandoffPermission, HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
-        HandoffSourceEventId, HandoffStatus,
+        HandoffSourceEventId, HandoffStatus, TargetedHandoff, TargetedHandoffFields,
+        TargetedHandoffStatus,
     };
     use crate::{
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
@@ -718,6 +1136,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn 云端定向交接遵循排队领取消费的单向生命周期() {
+        let mut handoff = targeted_handoff();
+
+        assert_eq!(handoff.status(), TargetedHandoffStatus::Queued);
+        assert_eq!(handoff.version(), 0);
+        handoff.mark_delivered(time(1_200)).expect("领取有效");
+        handoff.mark_delivered(time(1_300)).expect("重复领取幂等");
+        assert_eq!(handoff.delivered_at(), Some(time(1_200)));
+        assert_eq!(handoff.version(), 1);
+        handoff.consume(time(1_400)).expect("消费有效");
+        handoff.consume(time(2_500)).expect("重复回执幂等");
+
+        assert_eq!(handoff.status(), TargetedHandoffStatus::Consumed);
+        assert_eq!(handoff.consumed_at(), Some(time(1_400)));
+        assert_eq!(handoff.resolved_at(), Some(time(1_400)));
+        assert_eq!(handoff.version(), 2);
+        assert!(handoff.revoke(time(1_500)).is_err());
+    }
+
+    #[test]
+    fn 云端交接允许离线排队但到期前不能伪造过期终态() {
+        let mut handoff = targeted_handoff();
+
+        assert!(handoff.expire(time(1_999)).is_err());
+        handoff.expire(time(2_000)).expect("到期关闭有效");
+        handoff.expire(time(2_500)).expect("重复关闭幂等");
+
+        assert_eq!(handoff.status(), TargetedHandoffStatus::Expired);
+        assert_eq!(handoff.resolved_at(), Some(time(2_000)));
+        assert!(handoff.mark_delivered(time(2_100)).is_err());
+    }
+
+    #[test]
+    fn 云端交接失败原因不可被重复回执改写() {
+        let mut handoff = targeted_handoff();
+        let unavailable =
+            HandoffFailureCode::new("handoff.target_unavailable").expect("失败码有效");
+
+        handoff
+            .decline(unavailable.clone(), time(1_200))
+            .expect("拒绝有效");
+        handoff
+            .decline(unavailable, time(1_300))
+            .expect("相同拒绝幂等");
+        assert_eq!(handoff.status(), TargetedHandoffStatus::Declined);
+        assert_eq!(handoff.version(), 1);
+        assert!(
+            handoff
+                .decline(
+                    HandoffFailureCode::new("handoff.policy_denied").expect("失败码有效"),
+                    time(1_300),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn 云端交接拒绝越过期限的非过期终态快照() {
+        let queued = targeted_handoff();
+        let restored = TargetedHandoff::restore(
+            queued.fields().clone(),
+            TargetedHandoffStatus::Failed,
+            time(1_000),
+            None,
+            None,
+            Some(time(2_100)),
+            Some(HandoffFailureCode::new("handoff.target_revoked").expect("失败码有效")),
+            1,
+        );
+
+        assert!(restored.is_err());
+    }
+
     fn approved_handoff() -> ContextHandoff {
         let mut handoff = proposed_handoff();
         handoff
@@ -763,6 +1255,35 @@ mod tests {
             expires_at: time(2_000),
         })
         .expect("提案有效")
+    }
+
+    fn targeted_handoff() -> TargetedHandoff {
+        TargetedHandoff::queue(TargetedHandoffFields {
+            id: HandoffId::from_uuid(Uuid::from_u128(21)),
+            principal_id: PrincipalId::from_uuid(Uuid::from_u128(10)),
+            source_room_id: MatrixRoomReference::new("!builders:agent-room.test")
+                .expect("房间有效"),
+            source_event_id: HandoffSourceEventId::new("$source:agent-room.test")
+                .expect("事件有效"),
+            source_message_id: MessageId::from_uuid(Uuid::from_u128(22)),
+            target_agent_id: AgentId::from_uuid(Uuid::from_u128(23)),
+            target_instance_id: AgentInstanceId::from_uuid(Uuid::from_u128(24)),
+            content: HandoffContentReference::new(
+                ContentId::from_uuid(Uuid::from_u128(25)),
+                Sha256Digest::from_bytes([26; 32]),
+                ContentByteLength::new(512).expect("长度有效"),
+                ContentMediaType::new("text/markdown").expect("媒体类型有效"),
+            ),
+            permissions: HandoffPermissions::new([
+                HandoffPermission::ReadText,
+                HandoffPermission::IncludeMetadata,
+            ])
+            .expect("权限有效"),
+            purpose: HandoffPurpose::Summarize,
+            created_at: time(1_000),
+            expires_at: time(2_000),
+        })
+        .expect("云端交接有效")
     }
 
     fn time(value: i64) -> UtcMillis {

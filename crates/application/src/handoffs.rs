@@ -11,6 +11,16 @@ use crate::{
     ports::{Clock, HandoffAccessRepository, HandoffInstanceAccessRecord, PortFuture},
 };
 
+mod targeted;
+
+pub use targeted::{
+    ClaimNextTargetedHandoff, CreateTargetedHandoff, CreateTargetedHandoffOutcome,
+    GetTargetedHandoff, HandoffTargetView, ListTargetedHandoffTargets,
+    RecordTargetedHandoffReceiptCommand, RevokeTargetedHandoff, TargetedHandoffConfigurationError,
+    TargetedHandoffDependencies, TargetedHandoffFailure, TargetedHandoffFailureKind,
+    TargetedHandoffPolicy, TargetedHandoffResult, TargetedHandoffService, TargetedHandoffUseCases,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizeHandoff {
     pub actor: AuthenticatedDevice,

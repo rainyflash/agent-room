@@ -50,6 +50,7 @@ pub(crate) struct ContentRuntime {
     routes: Router,
     cleanup: ContentCleanupWorker,
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    authorizer: Arc<dyn ContentMembershipAuthorizer>,
 }
 
 impl ContentRuntime {
@@ -59,8 +60,14 @@ impl ContentRuntime {
         Router,
         ContentCleanupWorker,
         Arc<dyn MatrixRoomAuthorityGateway>,
+        Arc<dyn ContentMembershipAuthorizer>,
     ) {
-        (self.routes, self.cleanup, self.matrix_authority)
+        (
+            self.routes,
+            self.cleanup,
+            self.matrix_authority,
+            self.authorizer,
+        )
     }
 }
 
@@ -130,7 +137,7 @@ pub(crate) async fn initialize(
         object_store,
         scanner,
         ticket_codec,
-        authorizer,
+        authorizer: authorizer.clone(),
         limiter,
     })?;
     let cleanup =
@@ -155,6 +162,7 @@ pub(crate) async fn initialize(
         routes: crate::features::content::router(state),
         cleanup,
         matrix_authority: authority,
+        authorizer,
     })
 }
 

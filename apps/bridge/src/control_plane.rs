@@ -265,7 +265,10 @@ impl ReqwestControlPlaneAgentRuntimeGateway {
         let body = serde_json::to_string(&RegisterAgentRuntimeBody {
             adapter_type: intent.adapter_type(),
             capability_version: intent.capability_version(),
-            configuration: serde_json::Map::new(),
+            configuration: serde_json::Map::from_iter([(
+                "capabilities".to_owned(),
+                serde_json::json!(["targeted_handoff_v1"]),
+            )]),
             public_signing_key: URL_SAFE_NO_PAD.encode(intent.public_signing_key().as_bytes()),
         })
         .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))?;
@@ -1331,7 +1334,9 @@ mod tests {
                             == Some(json!({
                                 "adapterType": "codex-desktop",
                                 "capabilityVersion": "2026-08-24",
-                                "configuration": {},
+                                "configuration": {
+                                    "capabilities": ["targeted_handoff_v1"]
+                                },
                                 "publicSigningKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
                             }));
                     if valid {
@@ -1366,7 +1371,9 @@ mod tests {
             json!({
                 "adapterType": "codex-desktop",
                 "capabilityVersion": "2026-08-24",
-                "configuration": {},
+                "configuration": {
+                    "capabilities": ["targeted_handoff_v1"]
+                },
                 "publicSigningKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
             })
         );

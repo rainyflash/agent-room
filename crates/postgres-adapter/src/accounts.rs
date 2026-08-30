@@ -537,7 +537,7 @@ async fn finalize_local(
           WHERE principal_id = $1 AND revoked_at IS NULL",
         r"UPDATE agent_room.context_handoff
           SET state = 'revoked', failure_code = NULL, version = version + 1
-          WHERE principal_id = $1 AND state IN ('proposed', 'approved', 'delivered')",
+          WHERE principal_id = $1 AND state IN ('proposed', 'approved', 'queued', 'delivered')",
         r"UPDATE agent_room.moderation_case
           SET description = '', reporter_submitted_excerpt = NULL
           WHERE reporter_principal_id = $1",

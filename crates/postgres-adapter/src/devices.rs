@@ -25,6 +25,7 @@ use crate::{
     PostgresRepositories,
     authentication::{decode_principal_account, insert_principal_if_absent, lock_account_by_oidc},
     error::map_sqlx_error,
+    handoffs::fail_targeted_handoffs_for_device,
     outbox::insert_outbox_event,
 };
 
@@ -815,6 +816,7 @@ async fn revoke_device_and_tokens(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
+    fail_targeted_handoffs_for_device(transaction, device_id, revoked_at, operation).await?;
     Ok(())
 }
 

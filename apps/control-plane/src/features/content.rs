@@ -627,7 +627,7 @@ fn decode_hex_nibble(value: u8) -> Result<u8, ()> {
     }
 }
 
-fn sha256_hex(digest: Sha256Digest) -> String {
+pub(crate) fn sha256_hex(digest: Sha256Digest) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(64);
     for byte in digest.as_bytes() {
