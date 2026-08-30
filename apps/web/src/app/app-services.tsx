@@ -35,7 +35,7 @@ export type AppServices = {
   readonly controlPlane: ControlPlaneGateway & ReadinessGateway;
   readonly directSessionCoordinator: DirectSessionCoordinator;
   readonly directSessions: DirectSessionGateway;
-  readonly desktop: DesktopRuntimeGateway;
+  readonly localRuntime: DesktopRuntimeGateway;
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly lobbyEntry: PublicLobbyEntryCoordinator;
@@ -51,24 +51,10 @@ export type AppServices = {
   readonly telemetry: FrontendTelemetryGateway;
 };
 
-export type RuntimeMode = 'desktop' | 'web';
-
-export type DesktopAppServices = {
-  readonly config: RuntimeConfig;
-  readonly desktop: DesktopRuntimeGateway;
-  readonly runtimeMode: 'desktop';
-};
-
-export type WebAppServices = AppServices & {
-  readonly runtimeMode: 'web';
-};
-
-export type RuntimeServices = DesktopAppServices | WebAppServices;
-
-const AppServicesContext = createContext<RuntimeServices | null>(null);
+const AppServicesContext = createContext<AppServices | null>(null);
 
 export type AppServicesProviderProps = PropsWithChildren<{
-  readonly services: RuntimeServices;
+  readonly services: AppServices;
 }>;
 
 export function AppServicesProvider({ children, services }: AppServicesProviderProps) {
@@ -76,17 +62,6 @@ export function AppServicesProvider({ children, services }: AppServicesProviderP
 }
 
 export function useAppServices(): AppServices {
-  const services = useContext(AppServicesContext);
-  if (services === null) {
-    throw new Error('AppServicesProvider is missing.');
-  }
-  if (services.runtimeMode !== 'web') {
-    throw new Error('Web services are unavailable in the desktop runtime.');
-  }
-  return services;
-}
-
-export function useRuntimeServices(): RuntimeServices {
   const services = useContext(AppServicesContext);
   if (services === null) {
     throw new Error('AppServicesProvider is missing.');

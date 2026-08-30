@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { useAppServices } from '@/app/app-services';
-import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import {
   agentInstanceQueryKey,
   productDeviceQueryKey,
@@ -44,7 +44,7 @@ export function AccountWorkspacePage({
     retry: false,
     staleTime: 5_000,
   });
-  const localRuntime = useDesktopRuntime(services.desktop);
+  const localRuntime = useDesktopRuntimeController();
   const fleet = useMemo(
     () =>
       projectAgentFleet({

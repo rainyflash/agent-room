@@ -39,18 +39,7 @@ export default defineConfig(({ mode }) => ({
     }),
   ],
   resolve: {
-    alias: [
-      {
-        find: '@/app/runtime-app-providers',
-        replacement: new URL(
-          mode === 'desktop'
-            ? './src/app/desktop-runtime-app-providers.tsx'
-            : './src/app/runtime-app-providers.tsx',
-          import.meta.url,
-        ).pathname,
-      },
-      { find: '@', replacement: new URL('./src', import.meta.url).pathname },
-    ],
+    alias: [{ find: '@', replacement: new URL('./src', import.meta.url).pathname }],
   },
   server: {
     allowedHosts: ['app.agent-room.localhost', 'localhost', '127.0.0.1'],

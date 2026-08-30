@@ -9,7 +9,7 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAppServices } from '@/app/app-services';
-import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -18,8 +18,8 @@ import { ok } from '@/shared/result';
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
-vi.mock('@/features/desktop/ui/use-desktop-runtime', () => ({
-  useDesktopRuntime: vi.fn(),
+vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
+  useDesktopRuntimeController: vi.fn(),
 }));
 vi.mock('@/features/session/ui/connection-page', () => ({
   ConnectionPage: () => <main>SESSION_RECOVERY</main>,
@@ -72,7 +72,7 @@ beforeEach(() => {
       value: 'ready',
     },
   } as unknown as ReturnType<typeof useSession>);
-  vi.mocked(useDesktopRuntime).mockReturnValue({
+  vi.mocked(useDesktopRuntimeController).mockReturnValue({
     available: false,
     bootstrapDefaultAgent: vi.fn(),
     busy: null,
@@ -120,7 +120,6 @@ describe('首次引导页面', () => {
       config: {
         windowsDownloadUrl: 'https://download.agent-room.test/windows',
       },
-      desktop: {},
       lobbyEntry: {
         enter: vi.fn(),
         enterKnown: vi.fn(),
@@ -150,7 +149,6 @@ describe('首次引导页面', () => {
     const enter = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
       config: { windowsDownloadUrl: 'https://download.agent-room.test/windows' },
-      desktop: {},
       lobbyEntry: { enter, enterKnown: vi.fn() },
       onboarding: { bootstrap },
     } as unknown as ReturnType<typeof useAppServices>);

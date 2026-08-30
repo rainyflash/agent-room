@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
+import '@testing-library/jest-dom/vitest';
+
 import { cleanup, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { AppProviders, resolveRuntimeMode } from '@/app/app-providers';
+import { AppProviders } from '@/app/app-providers';
+import { createCloudRuntime } from '@/app/web-app-providers';
+import type {
+  BridgeRuntime,
+  DesktopRuntimeGateway,
+  DesktopRuntimeSnapshot,
+} from '@/features/desktop/domain/desktop-runtime';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { err, ok } from '@/shared/result';
 
 vi.mock('virtual:pwa-register/react', () => ({
   useRegisterSW: () => ({
@@ -31,26 +40,94 @@ afterEach(() => {
 });
 
 describe('应用组合根', () => {
-  it('桌面构建优先使用设备运行时，即使原生检测暂时不可用', () => {
-    expect(resolveRuntimeMode('desktop', false)).toBe('desktop');
-    expect(resolveRuntimeMode('production', true)).toBe('desktop');
-    expect(resolveRuntimeMode('production', false)).toBe('web');
+  it('云端服务始终存在，本机 Runtime 仅作为同一个服务图中的可选能力', () => {
+    const localRuntime = runtimeGateway(false);
+
+    const runtime = createCloudRuntime(config, localRuntime);
+
+    expect(runtime.services.localRuntime).toBe(localRuntime);
+    expect(runtime.services.agentDirectory).toBeDefined();
+    expect(runtime.services.session.controlPlane).toBe(runtime.services.controlPlane);
+    expect('runtimeMode' in runtime.services).toBe(false);
   });
 
-  it('桌面模式直接渲染产品连接舱且不创建 Web 网络会话', async () => {
-    const fetch = vi.spyOn(globalThis, 'fetch');
+  it('没有本机 Runtime 时仍渲染云端产品入口', async () => {
     window.history.replaceState(null, '', '/');
 
-    render(
-      <I18nextProvider i18n={i18n}>
-        <AppProviders config={config} runtimeMode="desktop" />
-      </I18nextProvider>,
-    );
+    renderApplication(runtimeGateway(false));
 
     expect(
-      await screen.findByRole('heading', { name: 'Starting the local Agent runtime' }),
-    ).not.toBeNull();
-    expect(screen.queryByText('Let real agents enter the same room.')).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+      await screen.findByRole('heading', {
+        name: 'A shared room for agents that are actually working.',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Desktop runtime')).not.toBeInTheDocument();
+  });
+
+  it('检测到本机 Runtime 时增强同一套路由，不再切换到平行桌面产品', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    window.history.replaceState(null, '', '/');
+
+    renderApplication(runtimeGateway(true));
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'A shared room for agents that are actually working.',
+      }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('Desktop runtime')).toBeVisible();
+    expect(screen.queryByText('Starting the local Agent runtime')).not.toBeInTheDocument();
   });
 });
+
+function renderApplication(localRuntime: DesktopRuntimeGateway) {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <AppProviders config={config} localRuntime={localRuntime} />
+    </I18nextProvider>,
+  );
+}
+
+function runtimeGateway(available: boolean): DesktopRuntimeGateway {
+  const bridge: BridgeRuntime = {
+    authorization: null,
+    lifecycle: {
+      automaticRestartCount: 0,
+      changedAtUnixMs: 1,
+      diagnosticCode: null,
+      lastExitCode: null,
+      lastFailureCode: null,
+      nextRetryAtUnixMs: null,
+      ownership: 'managed',
+      phase: 'ready',
+    },
+    session: null,
+  };
+  const snapshot: DesktopRuntimeSnapshot = {
+    agentTarget: null,
+    autostartEnabled: false,
+    bridge,
+    deepLink: null,
+    manualHostConfiguration: {
+      args: [],
+      command: 'C:\\Agent Room\\agent-room-mcp.exe',
+      serverName: 'agent_room',
+      transport: 'stdio',
+    },
+    platform: 'windows',
+    updatesConfigured: false,
+  };
+  return {
+    bootstrapDefaultAgent: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    checkUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    configureAgentRuntime: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    installUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    isAvailable: () => available,
+    openAuthorization: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    readLobby: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    retryBridge: async () => ok(bridge),
+    setAutostart: async (enabled) => ok(enabled),
+    snapshot: async () => ok(snapshot),
+    subscribe: async () => ok(() => undefined),
+  };
+}

@@ -1,4 +1,4 @@
-import { StatusMark } from '@agent-room/ui-system';
+import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { Cloud, Network, PlugZap } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,15 @@ import { useTranslation } from 'react-i18next';
 import type { FleetInstanceStatus } from '@/features/workspace/domain/agent-fleet';
 
 export type WorkspaceStatusValue = FleetInstanceStatus | 'unavailable';
+
+const STATUS_TONE: Readonly<Record<WorkspaceStatusValue, StatusTone>> = {
+  connecting: 'network',
+  degraded: 'alert',
+  offline: 'offline',
+  online: 'active',
+  revoked: 'alert',
+  unavailable: 'idle',
+};
 
 export function ConnectionStatusStrip({
   bridgeStatus,
@@ -62,7 +71,6 @@ function ConnectionStatus({
   readonly status: WorkspaceStatusValue;
 }) {
   const { t } = useTranslation();
-  const tone = status === 'online' ? 'active' : status === 'degraded' ? 'alert' : 'quiet';
   return (
     <div className="workspace-status">
       <span>{icon}</span>
@@ -73,7 +81,7 @@ function ConnectionStatus({
       <StatusMark
         label={t(`workspace.status.${status}`)}
         pulse={status === 'connecting'}
-        tone={tone}
+        tone={STATUS_TONE[status]}
       />
     </div>
   );

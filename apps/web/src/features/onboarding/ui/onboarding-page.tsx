@@ -25,7 +25,7 @@ import {
   targetMatches,
   type OnboardingPhase,
 } from '@/features/onboarding/domain/onboarding';
-import { useDesktopRuntime } from '@/features/desktop/ui/use-desktop-runtime';
+import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { WebSession } from '@/features/session/domain/session';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
@@ -61,7 +61,7 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
-  const { config, desktop, lobbyEntry, onboarding } = useAppServices();
+  const { config, lobbyEntry, onboarding } = useAppServices();
   const locale = principal.locale ?? i18n.resolvedLanguage ?? 'en';
   const bootstrap = useQuery({
     networkMode: 'always',
@@ -70,7 +70,7 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
     retry: false,
     staleTime: 5_000,
   });
-  const runtime = useDesktopRuntime(desktop);
+  const runtime = useDesktopRuntimeController();
   const resolved = bootstrap.data?.ok === true ? bootstrap.data.value : null;
   const expectedTarget =
     resolved === null ? null : targetFor(resolved.agent, resolved.lobby, locale);

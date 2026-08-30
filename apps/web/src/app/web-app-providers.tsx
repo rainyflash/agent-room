@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { useEffect, useMemo } from 'react';
 
-import { AppServicesProvider, type WebAppServices } from '@/app/app-services';
+import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { router } from '@/app/router';
 import { ControlPlaneAutomationGrantClient } from '@/features/automation/adapters/control-plane-automation-grant-client';
 import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
@@ -42,13 +42,13 @@ import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
 
-export type WebAppProvidersProps = {
+export type CloudAppProvidersProps = {
   readonly config: RuntimeConfig;
-  readonly desktop: DesktopRuntimeGateway;
+  readonly localRuntime: DesktopRuntimeGateway;
 };
 
-export function WebAppProviders({ config, desktop }: WebAppProvidersProps) {
-  const runtime = useMemo(() => createWebRuntime(config, desktop), [config, desktop]);
+export function CloudAppProviders({ config, localRuntime }: CloudAppProvidersProps) {
+  const runtime = useMemo(() => createCloudRuntime(config, localRuntime), [config, localRuntime]);
   useVerticalSecurityDriver(runtime.matrixClients);
   return (
     <QueryClientProvider client={runtime.queryClient}>
@@ -61,10 +61,10 @@ export function WebAppProviders({ config, desktop }: WebAppProvidersProps) {
   );
 }
 
-function createWebRuntime(
+export function createCloudRuntime(
   config: RuntimeConfig,
-  desktop: DesktopRuntimeGateway,
-): WebRuntimeComposition {
+  localRuntime: DesktopRuntimeGateway,
+): CloudRuntimeComposition {
   const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
   const onboarding = new OnboardingCoordinator(
     new ControlPlaneOnboardingClient({ baseUrl: config.controlPlaneUrl }),
@@ -98,7 +98,7 @@ function createWebRuntime(
     new MatrixSdkDirectSessionGateway(matrixClients),
     new BrowserDirectBlockRegistry(window.localStorage),
   );
-  const services: WebAppServices = {
+  const services: AppServices = {
     accessManagement: new ControlPlaneAccessManagementClient({
       baseUrl: config.controlPlaneUrl,
     }),
@@ -108,12 +108,12 @@ function createWebRuntime(
     content: new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl }),
     contentVerifier: new BrowserContentVerifier(),
     controlPlane,
-    desktop,
     directSessionCoordinator,
     directSessions,
     handoffs: new WebObserverHandoffGateway(),
     lobby,
     lobbyEntry,
+    localRuntime,
     messagePublisher: new WebObserverMessagePublisher(),
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
@@ -121,7 +121,6 @@ function createWebRuntime(
     onboarding,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms: new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl }),
-    runtimeMode: 'web',
     security: new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys),
     session: { browser: new WindowBrowserGateway(), controlPlane, matrix },
     telemetry,
@@ -136,11 +135,11 @@ function createWebRuntime(
   };
 }
 
-type WebRuntimeComposition = {
+export type CloudRuntimeComposition = {
   readonly accountPreferences: AccountPreferencesStore;
   readonly matrixClients: MatrixClientRegistry;
   readonly queryClient: QueryClient;
-  readonly services: WebAppServices;
+  readonly services: AppServices;
 };
 
 function useVerticalSecurityDriver(matrixClients: MatrixClientRegistry): void {

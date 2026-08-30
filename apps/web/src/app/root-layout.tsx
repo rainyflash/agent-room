@@ -2,6 +2,8 @@ import { Outlet, useLocation } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
+import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { MatrixVerificationInbox } from '@/features/security/ui/matrix-verification-inbox';
 import { SessionProvider } from '@/features/session/ui/session-provider';
 import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
@@ -10,7 +12,13 @@ import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
-  return <WebRootLayout pathname={pathname} />;
+  const services = useAppServices();
+  return (
+    <DesktopRuntimeProvider gateway={services.localRuntime}>
+      <WebRootLayout pathname={pathname} />
+      <DesktopRuntimeSurface telemetry={services.telemetry} />
+    </DesktopRuntimeProvider>
+  );
 }
 
 function WebRootLayout({ pathname }: { readonly pathname: string }) {
