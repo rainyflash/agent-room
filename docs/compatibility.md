@@ -22,7 +22,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 | Platform                                      | Engineering status                                                                                  | Public support status                       |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | Chromium-based desktop browser                | Automated multi-account Playwright acceptance without a local Bridge                                | Not yet supported for production            |
-| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.8` public prerelease published |
+| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.9` public prerelease published |
 | macOS arm64                                   | Manual maintainer-owned self-hosted build path only                                                 | Unsupported                                 |
 | macOS x86-64                                  | No maintained build or release path                                                                 | Unsupported                                 |
 | Linux desktop                                 | Workspace compilation only; no release bundle                                                       | Unsupported                                 |

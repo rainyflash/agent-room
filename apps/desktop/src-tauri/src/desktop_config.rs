@@ -11,6 +11,7 @@ use url::Url;
 use crate::runtime_target::DesktopAgentTarget;
 
 const DEFAULT_CONTROL_PLANE_URL: &str = "https://api.room.the-zeroth.com/";
+const DEFAULT_BROWSER_CONTROL_PLANE_URL: &str = "https://app.room.the-zeroth.com/_agent-room/api/";
 const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.room.the-zeroth.com";
 const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.room.the-zeroth.com/realms/agent-room";
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
@@ -20,6 +21,7 @@ pub(crate) struct DesktopBridgeConfig {
     runtime_root: PathBuf,
     secure_storage_service: SecureStorageService,
     control_plane_url: Url,
+    browser_control_plane_url: Url,
     environment: BTreeMap<String, String>,
 }
 
@@ -38,6 +40,14 @@ impl DesktopBridgeConfig {
         environment.insert(
             "AGENT_ROOM_CONTROL_PLANE_URL".to_owned(),
             control_plane_url.to_string(),
+        );
+        let browser_control_plane_url = normalized_base_url(&validated_url(
+            "AGENT_ROOM_BROWSER_CONTROL_PLANE_URL",
+            DEFAULT_BROWSER_CONTROL_PLANE_URL,
+        )?)?;
+        environment.insert(
+            "AGENT_ROOM_BROWSER_CONTROL_PLANE_URL".to_owned(),
+            browser_control_plane_url.to_string(),
         );
         environment.insert(
             "AGENT_ROOM_MATRIX_BASE_URL".to_owned(),
@@ -76,6 +86,7 @@ impl DesktopBridgeConfig {
             environment,
             secure_storage_service,
             control_plane_url,
+            browser_control_plane_url,
         })
     }
 
@@ -117,6 +128,12 @@ impl DesktopBridgeConfig {
         self.control_plane_url.clone()
     }
 
+    /// 浏览器认证必须从 OIDC 回调所在的站点发起，否则 Host-only 登录 Cookie
+    /// 无法随跨子域回调返回。原生 API 与浏览器认证入口因此刻意分离。
+    pub(crate) fn browser_control_plane_url(&self) -> Url {
+        self.browser_control_plane_url.clone()
+    }
+
     /// 人类云端会话必须与 Bridge/Agent 凭据物理隔离，同时保留测试安装的命名空间隔离。
     pub(crate) fn human_session_storage_service(&self) -> String {
         let digest = URL_SAFE_NO_PAD.encode(Sha256::digest(
@@ -150,6 +167,21 @@ fn validated_url(
         ));
     }
     Ok(value)
+}
+
+fn normalized_base_url(value: &str) -> Result<Url, DesktopConfigFailure> {
+    let mut url = Url::parse(value)
+        .map_err(|_| DesktopConfigFailure::new("desktop.config.service_url_invalid"))?;
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(DesktopConfigFailure::new(
+            "desktop.config.service_url_invalid",
+        ));
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
 }
 
 fn bounded_environment_value(
@@ -214,7 +246,7 @@ impl DesktopConfigFailure {
 
 #[cfg(test)]
 mod tests {
-    use super::validated_url;
+    use super::{normalized_base_url, validated_url};
 
     #[test]
     fn 服务地址只接受_https_或本机_http() {
@@ -222,5 +254,18 @@ mod tests {
         assert!(validated_url("AGENT_ROOM_TEST_MISSING", "http://127.0.0.1:8090").is_ok());
         assert!(validated_url("AGENT_ROOM_TEST_MISSING", "http://room.example").is_err());
         assert!(validated_url("AGENT_ROOM_TEST_MISSING", "https://user@room.example").is_err());
+    }
+
+    #[test]
+    fn 浏览器控制面基址保留代理前缀并规范尾斜杠() {
+        let base = normalized_base_url("https://app.room.example/_agent-room/api")
+            .expect("浏览器控制面基址有效");
+        assert_eq!(
+            base.join("auth/desktop/start")
+                .expect("认证端点可拼接")
+                .as_str(),
+            "https://app.room.example/_agent-room/api/auth/desktop/start"
+        );
+        assert!(normalized_base_url("https://app.room.example/api?tenant=evil").is_err());
     }
 }

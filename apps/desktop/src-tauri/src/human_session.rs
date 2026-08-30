@@ -178,6 +178,7 @@ impl HumanSessionVault for KeyringHumanSessionVault {
 #[derive(Clone)]
 pub(crate) struct HumanSessionRuntime {
     control_plane_url: Url,
+    browser_control_plane_url: Url,
     http: Client,
     vault: Arc<dyn HumanSessionVault>,
     operation_gate: Arc<Mutex<()>>,
@@ -191,6 +192,7 @@ impl HumanSessionRuntime {
             .map_err(|_| HumanSessionFailure::new("desktop.human_session.http_invalid", false))?;
         Ok(Self {
             control_plane_url: config.control_plane_url(),
+            browser_control_plane_url: config.browser_control_plane_url(),
             http,
             vault: Arc::new(KeyringHumanSessionVault::new(
                 config.human_session_storage_service(),
@@ -221,11 +223,11 @@ impl HumanSessionRuntime {
             };
             self.vault.write_pending(&pending)?;
             let mut authorization_url = self
-                .control_plane_url
-                .join("/auth/desktop/start")
+                .browser_control_plane_url
+                .join("auth/desktop/start")
                 .map_err(|_| {
-                    HumanSessionFailure::new("desktop.human_session.url_invalid", false)
-                })?;
+                HumanSessionFailure::new("desktop.human_session.url_invalid", false)
+            })?;
             authorization_url.query_pairs_mut().extend_pairs([
                 ("clientState", client_state.as_str()),
                 ("codeChallenge", pkce_challenge(&pkce_verifier).as_str()),

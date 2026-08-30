@@ -43,6 +43,10 @@ class DesktopCloudAcceptanceTests(unittest.TestCase):
             "http://127.0.0.1:1",
         )
         self.assertEqual(
+            environment["AGENT_ROOM_BROWSER_CONTROL_PLANE_URL"],
+            "http://127.0.0.1:1/",
+        )
+        self.assertEqual(
             environment["AGENT_ROOM_BRIDGE_DATA_DIR"],
             str(root / "bridge-data"),
         )

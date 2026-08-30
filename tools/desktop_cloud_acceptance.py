@@ -197,6 +197,7 @@ def desktop_acceptance_environment(
             "AGENT_ROOM_BRIDGE_DATA_DIR": str(temporary_root / "bridge-data"),
             "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE": secure_storage_service,
             "AGENT_ROOM_CONTROL_PLANE_URL": "http://127.0.0.1:1",
+            "AGENT_ROOM_BROWSER_CONTROL_PLANE_URL": "http://127.0.0.1:1/",
             "AGENT_ROOM_MATRIX_BASE_URL": "http://127.0.0.1:1",
             "AGENT_ROOM_OIDC_ISSUER_URL": "http://127.0.0.1:1",
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": (

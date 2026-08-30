@@ -118,7 +118,7 @@ jobs:
       - name: 验收已发布 Alpha 的版本化下载入口
         env:
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
-          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.8/agent-room-installer-v0.1.0-alpha.8-windows-x86_64.exe
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.9/agent-room-installer-v0.1.0-alpha.9-windows-x86_64.exe
         run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright test e2e/public-alpha-landing.e2e.ts
       - name: 上传浏览器验收产物
         if: ${{ !cancelled() }}
