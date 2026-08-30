@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-clear-human-session"
+description = "Enables the desktop_clear_human_session command without any pre-configured scope."
+commands.allow = ["desktop_clear_human_session"]
+
+[[permission]]
+identifier = "deny-desktop-clear-human-session"
+description = "Denies the desktop_clear_human_session command without any pre-configured scope."
+commands.deny = ["desktop_clear_human_session"]

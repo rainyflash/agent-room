@@ -4,6 +4,7 @@ import type { ReadinessReport } from '@/features/health/domain/readiness';
 import type {
   ControlPlaneGateway,
   AuthenticationIntent,
+  AuthenticationStartOutcome,
   SessionFailure,
   WebSession,
 } from '@/features/session/domain/session';
@@ -75,13 +76,21 @@ export class ControlPlaneClient implements ControlPlaneGateway {
     this.#timeoutMs = timeoutMs;
   }
 
-  beginAuthentication(returnPath: string, intent: AuthenticationIntent = 'sign-in'): void {
+  async beginAuthentication(
+    returnPath: string,
+    intent: AuthenticationIntent = 'sign-in',
+  ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
     const target = controlPlaneEndpoint(this.#baseUrl, '/auth/oidc/start');
     target.searchParams.set('returnTo', safeReturnPath(returnPath));
     target.searchParams.set('importDisplayName', 'true');
     target.searchParams.set('importLocale', 'true');
     target.searchParams.set('intent', intent);
-    this.#navigate(target.toString());
+    try {
+      this.#navigate(target.toString());
+      return ok({ kind: 'browser-navigation' });
+    } catch (error: unknown) {
+      return err(failure('browser', 'browser.authentication_navigation_failed', false, true));
+    }
   }
 
   async readSession(): Promise<Result<WebSession, SessionFailure>> {

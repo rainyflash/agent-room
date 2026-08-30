@@ -33,6 +33,7 @@ import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/m
 import { ControlPlaneAccessManagementClient } from '@/features/security/adapters/control-plane-access-management-client';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
@@ -65,7 +66,10 @@ export function createCloudRuntime(
   config: RuntimeConfig,
   localRuntime: DesktopRuntimeGateway,
 ): CloudRuntimeComposition {
-  const controlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
+  const browserControlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
+  const controlPlane = localRuntime.isAvailable()
+    ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
+    : browserControlPlane;
   const onboarding = new OnboardingCoordinator(
     new ControlPlaneOnboardingClient({ baseUrl: config.controlPlaneUrl }),
   );

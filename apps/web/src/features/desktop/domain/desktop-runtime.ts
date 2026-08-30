@@ -243,6 +243,30 @@ export type DesktopRuntimeFailure = {
   readonly retryable: boolean;
 };
 
+export const desktopHumanSessionChangedSchema = z
+  .object({
+    returnPath: z.string().min(1).max(2_048),
+    session: z
+      .object({
+        authenticatedAtUnixMs: z.number().int().nonnegative(),
+        displayName: z.string().trim().min(1).max(160),
+        expiresAtUnixMs: z.number().int().positive(),
+        locale: z.string().trim().min(2).max(35),
+        matrixUserId: z.string().regex(/^@[^:]+:.+$/u),
+        principalId: z.uuid(),
+        recentlyAuthenticated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.returnPath.startsWith('/') || value.returnPath.startsWith('//')) {
+      context.addIssue({ code: 'custom', message: 'desktop.human_session.return_path_invalid' });
+    }
+  });
+export type DesktopHumanSessionChanged = z.infer<typeof desktopHumanSessionChangedSchema>;
+export type DesktopAuthenticationIntent = 'register' | 'sign-in';
+
 export type DesktopRuntimeEventHandlers = {
   readonly onDeepLink: (target: DesktopDeepLink) => void;
   readonly onFailure: (failure: DesktopRuntimeFailure) => void;
@@ -251,6 +275,11 @@ export type DesktopRuntimeEventHandlers = {
 
 export type DesktopRuntimeGateway = {
   isAvailable(): boolean;
+  beginHumanAuthentication(
+    returnPath: string,
+    intent: DesktopAuthenticationIntent,
+  ): Promise<Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>>;
+  clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>>;
   snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>>;
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;

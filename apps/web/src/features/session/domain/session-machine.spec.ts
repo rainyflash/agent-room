@@ -48,7 +48,7 @@ function dependencies(
     },
   };
   const controlPlane: ControlPlaneGateway = {
-    beginAuthentication: () => undefined,
+    beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
     logout: () => Promise.resolve(ok(undefined)),
     readSession: () => Promise.resolve(ok(session)),
     ...overrides.controlPlane,
@@ -90,6 +90,7 @@ describe('Web 会话状态机', () => {
       controlPlane: {
         beginAuthentication: (path) => {
           requestedPaths.push(path);
+          return Promise.resolve(ok({ kind: 'browser-navigation' }));
         },
         readSession: () =>
           Promise.resolve(
@@ -106,9 +107,40 @@ describe('Web 会话状态机', () => {
     await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
 
     actor.send({ type: 'LOGIN' });
-    await waitFor(actor, (snapshot) => snapshot.matches('authenticating'));
+    await waitFor(actor, (snapshot) => snapshot.matches('awaitingBrowserNavigation'));
 
     expect(requestedPaths).toEqual(['/lobby/public?directory=open']);
+    actor.stop();
+  });
+
+  it('桌面会话建立后重新读取服务端真相而不是伪造本地登录态', async () => {
+    let reads = 0;
+    const runtime = dependencies({
+      controlPlane: {
+        beginAuthentication: () => Promise.resolve(ok({ kind: 'session-established' })),
+        readSession: () => {
+          reads += 1;
+          return reads === 1
+            ? Promise.resolve(
+                err({
+                  boundary: 'control-plane',
+                  code: 'authentication.session_required',
+                  offline: false,
+                  retryable: false,
+                }),
+              )
+            : Promise.resolve(ok(session));
+        },
+      },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+
+    actor.send({ type: 'LOGIN' });
+    const ready = await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    expect(reads).toBe(2);
+    expect(ready.context.principal).toEqual(session);
     actor.stop();
   });
 

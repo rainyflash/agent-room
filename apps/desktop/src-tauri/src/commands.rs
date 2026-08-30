@@ -18,6 +18,7 @@ use crate::{
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
     deep_link::{DeepLinkInbox, DeepLinkTarget},
     desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
+    human_session::{DesktopAuthenticationIntent, HumanSessionFailure, HumanSessionRuntime},
     release_updates::{
         ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
     },
@@ -107,6 +108,32 @@ impl From<DesktopLobbyProjectionFailure> for DesktopCommandFailure {
     fn from(failure: DesktopLobbyProjectionFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
     }
+}
+
+impl From<HumanSessionFailure> for DesktopCommandFailure {
+    fn from(failure: HumanSessionFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_begin_human_authentication(
+    app: AppHandle,
+    sessions: State<'_, HumanSessionRuntime>,
+    return_path: String,
+    intent: DesktopAuthenticationIntent,
+) -> Result<(), DesktopCommandFailure> {
+    Ok(sessions.begin_authentication(&app, &return_path, intent)?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_clear_human_session(
+    app: AppHandle,
+    sessions: State<'_, HumanSessionRuntime>,
+) -> Result<(), DesktopCommandFailure> {
+    Ok(sessions.clear(&app)?)
 }
 
 #[tauri::command]

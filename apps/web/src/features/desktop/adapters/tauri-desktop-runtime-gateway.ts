@@ -10,6 +10,7 @@ import {
   desktopAgentTargetSchema,
   desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
+  desktopHumanSessionChangedSchema,
   releaseUpdateCheckSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
@@ -18,6 +19,8 @@ import {
   type AgentHostPlan,
   type DesktopRuntimeEventHandlers,
   type DesktopAgentTarget,
+  type DesktopAuthenticationIntent,
+  type DesktopHumanSessionChanged,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
@@ -42,8 +45,10 @@ const desktopCommands = {
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
+  beginHumanAuthentication: 'desktop_begin_human_authentication',
   bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
   checkUpdate: 'desktop_check_update',
+  clearHumanSession: 'desktop_clear_human_session',
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   detectHosts: 'desktop_detect_agent_hosts',
   installUpdate: 'desktop_install_update',
@@ -54,6 +59,11 @@ const desktopCommands = {
 } as const;
 
 type DesktopCommand = (typeof desktopCommands)[keyof typeof desktopCommands];
+type DesktopEventName =
+  | 'desktop://deep-link'
+  | 'desktop://human-session-changed'
+  | 'desktop://human-session-failed'
+  | 'desktop://runtime-changed';
 
 export type TauriDesktopTransport = {
   readonly available: () => boolean;
@@ -62,7 +72,7 @@ export type TauriDesktopTransport = {
     arguments_: Record<string, unknown>,
   ) => Promise<unknown>;
   readonly listen: (
-    eventName: 'desktop://deep-link' | 'desktop://runtime-changed',
+    eventName: DesktopEventName,
     listener: (payload: unknown) => void,
   ) => Promise<() => void>;
 };
@@ -79,10 +89,41 @@ const nativeTransport: TauriDesktopTransport = {
 };
 
 export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
+  private authenticationPending = false;
+
   constructor(private readonly transport: TauriDesktopTransport = nativeTransport) {}
 
   isAvailable(): boolean {
     return this.transport.available();
+  }
+
+  async beginHumanAuthentication(
+    returnPath: string,
+    intent: DesktopAuthenticationIntent,
+  ): Promise<Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>> {
+    if (!this.transport.available()) {
+      return err({ code: 'desktop.runtime.unavailable', retryable: false });
+    }
+    if (this.authenticationPending) {
+      return err({ code: 'desktop.human_session.authentication_pending', retryable: false });
+    }
+    this.authenticationPending = true;
+    try {
+      return await this.waitForHumanAuthentication(returnPath, intent);
+    } finally {
+      this.authenticationPending = false;
+    }
+  }
+
+  async clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.clearHumanSession,
+      {},
+      z
+        .undefined()
+        .or(z.null())
+        .transform(() => undefined),
+    );
   }
 
   async snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>> {
@@ -236,6 +277,71 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     } catch (error: unknown) {
       return err(normalizeCommandFailure(error, 'desktop.command.failed'));
     }
+  }
+
+  private async waitForHumanAuthentication(
+    returnPath: string,
+    intent: DesktopAuthenticationIntent,
+  ): Promise<Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>> {
+    return await new Promise((resolve) => {
+      const removers: Array<() => void> = [];
+      let settled = false;
+      const timeout = globalThis.setTimeout(
+        () => {
+          settle(err({ code: 'desktop.human_session.authentication_expired', retryable: false }));
+        },
+        15 * 60 * 1_000 + 30_000,
+      );
+      const settle = (result: Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timeout);
+        for (const remove of removers) {
+          remove();
+        }
+        resolve(result);
+      };
+
+      void (async () => {
+        try {
+          removers.push(
+            await this.transport.listen('desktop://human-session-changed', (payload) => {
+              const parsed = desktopHumanSessionChangedSchema.safeParse(payload);
+              settle(
+                parsed.success
+                  ? ok(parsed.data)
+                  : err({ code: 'desktop.event.invalid_human_session', retryable: false }),
+              );
+            }),
+          );
+          removers.push(
+            await this.transport.listen('desktop://human-session-failed', (payload) => {
+              const parsed = commandFailureSchema.safeParse(payload);
+              settle(
+                parsed.success
+                  ? err(parsed.data)
+                  : err({ code: 'desktop.event.invalid_human_session_failure', retryable: false }),
+              );
+            }),
+          );
+          const started = await this.invokeValidated(
+            desktopCommands.beginHumanAuthentication,
+            { intent, returnPath },
+            z
+              .undefined()
+              .or(z.null())
+              .transform(() => undefined),
+          );
+          if (!started.ok) {
+            settle(started);
+          }
+        } catch (error: unknown) {
+          settle(err(normalizeCommandFailure(error, 'desktop.event.subscribe_failed')));
+        }
+      })();
+    });
   }
 }
 

@@ -1,6 +1,12 @@
 import { assign, fromPromise, setup } from 'xstate';
 
-import type { MatrixConnection, SessionDependencies, SessionFailure, WebSession } from './session';
+import type {
+  AuthenticationStartOutcome,
+  MatrixConnection,
+  SessionDependencies,
+  SessionFailure,
+  WebSession,
+} from './session';
 import { err, ok, type Result } from '@/shared/result';
 
 export type AuthenticationTarget = 'control' | 'matrix';
@@ -58,14 +64,14 @@ export function createSessionMachine(dependencies: SessionDependencies) {
   });
 
   const authenticate = fromPromise<
-    Result<void, SessionFailure>,
+    Result<AuthenticationStartOutcome, SessionFailure>,
     { readonly returnPath: string; readonly target: AuthenticationTarget }
   >(async ({ input }) => {
     if (input.target === 'control') {
-      dependencies.controlPlane.beginAuthentication(input.returnPath);
-      return ok(undefined);
+      return await dependencies.controlPlane.beginAuthentication(input.returnPath);
     }
-    return await dependencies.matrix.beginAuthentication(input.returnPath);
+    const matrix = await dependencies.matrix.beginAuthentication(input.returnPath);
+    return matrix.ok ? ok({ kind: 'browser-navigation' }) : matrix;
   });
 
   const synchronize = fromPromise<
@@ -192,12 +198,6 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         },
       },
       authenticating: {
-        after: {
-          10_000: {
-            actions: 'setNavigationFailure',
-            target: 'degraded',
-          },
-        },
         invoke: {
           id: 'authenticate-session',
           src: 'authenticate',
@@ -206,6 +206,17 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             target: context.authenticationTarget,
           }),
           onDone: [
+            {
+              guard: ({ event }) =>
+                event.output.ok && event.output.value.kind === 'session-established',
+              target: 'booting',
+              actions: 'clearFailure',
+            },
+            {
+              guard: ({ event }) =>
+                event.output.ok && event.output.value.kind === 'browser-navigation',
+              target: 'awaitingBrowserNavigation',
+            },
             {
               guard: ({ event }) => !event.output.ok && event.output.error.offline,
               target: 'offline',
@@ -224,6 +235,15 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           onError: {
             target: 'degraded',
             actions: 'setUnexpectedFailure',
+          },
+        },
+        on: { OFFLINE: 'offline', RETRY: 'booting' },
+      },
+      awaitingBrowserNavigation: {
+        after: {
+          10_000: {
+            actions: 'setNavigationFailure',
+            target: 'degraded',
           },
         },
         on: { OFFLINE: 'offline', RETRY: 'booting' },

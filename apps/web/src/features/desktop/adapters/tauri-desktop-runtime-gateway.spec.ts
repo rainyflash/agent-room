@@ -107,6 +107,46 @@ describe('Tauri 桌面运行时适配器', () => {
     expect(invoke).toHaveBeenCalledWith('desktop_lobby_snapshot', {});
   });
 
+  it('先订阅桌面登录结果再打开系统浏览器，并在完成后释放监听器', async () => {
+    const listeners = new Map<string, (payload: unknown) => void>();
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const listen: TauriDesktopTransport['listen'] = (eventName, listener) => {
+      listeners.set(eventName, listener);
+      return Promise.resolve(() => {
+        listeners.delete(eventName);
+      });
+    };
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke, listen }));
+
+    const pending = gateway.beginHumanAuthentication('/workspace', 'sign-in');
+    await vi.waitFor(() => {
+      expect(listeners.has('desktop://human-session-changed')).toBe(true);
+      expect(listeners.has('desktop://human-session-failed')).toBe(true);
+    });
+    expect(invoke).toHaveBeenCalledWith('desktop_begin_human_authentication', {
+      intent: 'sign-in',
+      returnPath: '/workspace',
+    });
+    listeners.get('desktop://human-session-changed')?.({
+      returnPath: '/workspace',
+      session: {
+        authenticatedAtUnixMs: 1_700_000_000_000,
+        displayName: 'Desktop User',
+        expiresAtUnixMs: 1_700_028_800_000,
+        locale: 'en',
+        matrixUserId: '@desktop:matrix.test',
+        principalId: '018c251e-7b5a-7c7f-8a28-2de53f56a9a3',
+        recentlyAuthenticated: true,
+      },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      value: { returnPath: '/workspace' },
+    });
+    expect(listeners.size).toBe(0);
+  });
+
   it('订阅两个白名单事件并在任一载荷失真时显式失败', async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     const onFailure = vi.fn();

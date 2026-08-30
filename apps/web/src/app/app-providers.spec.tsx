@@ -118,8 +118,11 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
     updatesConfigured: false,
   };
   return {
+    beginHumanAuthentication: async () =>
+      err({ code: 'desktop.test.unavailable', retryable: false }),
     bootstrapDefaultAgent: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
     checkUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    clearHumanSession: async () => ok(undefined),
     configureAgentRuntime: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
     installUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
     isAvailable: () => available,

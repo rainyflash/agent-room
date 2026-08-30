@@ -26,6 +26,8 @@ fn 主窗口能力不包含文件_shell_或进程通配权限() {
     assert_eq!(
         desktop_permissions,
         [
+            "allow-desktop-begin-human-authentication",
+            "allow-desktop-clear-human-session",
             "allow-desktop-runtime-snapshot",
             "allow-desktop-retry-bridge",
             "allow-desktop-set-autostart",

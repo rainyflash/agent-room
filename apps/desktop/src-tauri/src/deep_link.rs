@@ -4,6 +4,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use url::Url;
 
+use crate::human_session::{
+    HUMAN_SESSION_CHANGED_EVENT, HUMAN_SESSION_FAILED_EVENT, HumanSessionRuntime,
+    authentication_callback,
+};
+
 const DEEP_LINK_EVENT: &str = "desktop://deep-link";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -43,6 +48,28 @@ impl DeepLinkInbox {
 pub(crate) fn deliver_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = Url>) {
     let inbox = app.state::<DeepLinkInbox>();
     for url in urls {
+        if let Some(callback) = authentication_callback(&url) {
+            match callback {
+                Ok(callback) => {
+                    let handle = app.clone();
+                    let sessions = app.state::<HumanSessionRuntime>().inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        match sessions.complete_authentication(&handle, callback).await {
+                            Ok(session) => {
+                                let _ = handle.emit(HUMAN_SESSION_CHANGED_EVENT, session);
+                            }
+                            Err(failure) => {
+                                let _ = handle.emit(HUMAN_SESSION_FAILED_EVENT, failure);
+                            }
+                        }
+                    });
+                }
+                Err(failure) => {
+                    let _ = app.emit(HUMAN_SESSION_FAILED_EVENT, failure);
+                }
+            }
+            continue;
+        }
         let Ok(target) = inbox.accept(url.as_str()) else {
             continue;
         };

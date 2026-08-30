@@ -22,6 +22,10 @@ export type SessionFailure = {
 
 export type AuthenticationIntent = 'register' | 'sign-in';
 
+export type AuthenticationStartOutcome =
+  | { readonly kind: 'browser-navigation' }
+  | { readonly kind: 'session-established' };
+
 export type MatrixConnectionStatus = 'ready' | 'reconnecting' | 'failed' | 'stopped';
 
 export type MatrixConnection = {
@@ -41,7 +45,10 @@ export type MatrixRestoreOutcome =
     };
 
 export type ControlPlaneGateway = {
-  beginAuthentication(returnPath: string, intent?: AuthenticationIntent): void;
+  beginAuthentication(
+    returnPath: string,
+    intent?: AuthenticationIntent,
+  ): Promise<Result<AuthenticationStartOutcome, SessionFailure>>;
   logout(): Promise<Result<void, SessionFailure>>;
   readSession(): Promise<Result<WebSession, SessionFailure>>;
 };

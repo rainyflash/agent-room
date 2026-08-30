@@ -1,4 +1,6 @@
 const COMMANDS: &[&str] = &[
+    "desktop_begin_human_authentication",
+    "desktop_clear_human_session",
     "desktop_runtime_snapshot",
     "desktop_retry_bridge",
     "desktop_set_autostart",

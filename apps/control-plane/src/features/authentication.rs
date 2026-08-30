@@ -34,6 +34,7 @@ use crate::{correlation::CorrelationId, error::ApiError};
 
 const LOGIN_COOKIE: &str = "__Host-agent-room-login";
 const SESSION_COOKIE: &str = "__Host-agent-room-session";
+const DESKTOP_SESSION_COOKIE: &str = "__Secure-agent-room-desktop-session";
 
 #[derive(Clone)]
 pub(crate) struct AuthenticationHttpState {
@@ -497,7 +498,14 @@ fn expired_cookie(name: &'static str) -> Cookie<'static> {
 }
 
 pub(crate) fn expired_session_jar(jar: CookieJar) -> CookieJar {
-    jar.add(expired_cookie(SESSION_COOKIE))
+    let mut desktop_cookie = Cookie::build((DESKTOP_SESSION_COOKIE, ""))
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .same_site(SameSite::None)
+        .build();
+    desktop_cookie.make_removal();
+    jar.add(expired_cookie(SESSION_COOKIE)).add(desktop_cookie)
 }
 
 fn login_failure(
@@ -533,7 +541,8 @@ fn accepts_html(headers: &HeaderMap) -> bool {
 }
 
 pub(crate) fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSession> {
-    jar.get(SESSION_COOKIE)
+    jar.get(DESKTOP_SESSION_COOKIE)
+        .or_else(|| jar.get(SESSION_COOKIE))
         .and_then(|cookie| SecretValue::new(cookie.value()).ok())
         .ok_or(MissingSession)
 }
@@ -1102,29 +1111,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 会话端点只从_http_only_cookie_认证() {
-        let response = test_router(Arc::new(FakeAuthentication::default()))
-            .oneshot(
-                Request::builder()
-                    .uri("/auth/session")
-                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
-                    .body(Body::empty())
-                    .expect("请求有效"),
-            )
-            .await
-            .expect("路由执行成功");
+    async fn 会话端点接受隔离的浏览器或桌面_http_only_cookie() {
+        for cookie in [
+            "__Host-agent-room-session=session-secret",
+            "__Secure-agent-room-desktop-session=session-secret",
+        ] {
+            let response = test_router(Arc::new(FakeAuthentication::default()))
+                .oneshot(
+                    Request::builder()
+                        .uri("/auth/session")
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .expect("请求有效"),
+                )
+                .await
+                .expect("路由执行成功");
 
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(header::CACHE_CONTROL),
-            Some(&header::HeaderValue::from_static("no-store"))
-        );
-        let body = to_bytes(response.into_body(), 32 * 1_024)
-            .await
-            .expect("响应正文可读");
-        let json: serde_json::Value = serde_json::from_slice(&body).expect("响应是 JSON");
-        assert_eq!(json["principalId"], "0198b601-77a1-7bb8-83eb-a8fe68c97e42");
-        assert_eq!(json["recentlyAuthenticated"], true);
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers().get(header::CACHE_CONTROL),
+                Some(&header::HeaderValue::from_static("no-store"))
+            );
+            let body = to_bytes(response.into_body(), 32 * 1_024)
+                .await
+                .expect("响应正文可读");
+            let json: serde_json::Value = serde_json::from_slice(&body).expect("响应是 JSON");
+            assert_eq!(json["principalId"], "0198b601-77a1-7bb8-83eb-a8fe68c97e42");
+            assert_eq!(json["recentlyAuthenticated"], true);
+        }
     }
 
     #[tokio::test]

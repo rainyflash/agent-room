@@ -561,6 +561,12 @@
           "markdownDescription": "Enables the desktop_apply_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_begin_human_authentication command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-begin-human-authentication",
+          "markdownDescription": "Enables the desktop_begin_human_authentication command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_bootstrap_default_agent command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-bootstrap-default-agent",
@@ -571,6 +577,12 @@
           "type": "string",
           "const": "allow-desktop-check-update",
           "markdownDescription": "Enables the desktop_check_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_clear_human_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-clear-human-session",
+          "markdownDescription": "Enables the desktop_clear_human_session command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_configure_agent_runtime command without any pre-configured scope.",
@@ -639,6 +651,12 @@
           "markdownDescription": "Denies the desktop_apply_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_begin_human_authentication command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-begin-human-authentication",
+          "markdownDescription": "Denies the desktop_begin_human_authentication command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_bootstrap_default_agent command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-bootstrap-default-agent",
@@ -649,6 +667,12 @@
           "type": "string",
           "const": "deny-desktop-check-update",
           "markdownDescription": "Denies the desktop_check_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_clear_human_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-clear-human-session",
+          "markdownDescription": "Denies the desktop_clear_human_session command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_configure_agent_runtime command without any pre-configured scope.",

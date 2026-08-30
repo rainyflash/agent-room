@@ -6,6 +6,7 @@ mod capability_tests;
 mod commands;
 mod deep_link;
 mod desktop_config;
+mod human_session;
 mod installer_acceptance;
 mod release_update_config;
 mod release_update_state;
@@ -15,14 +16,16 @@ mod webview_migration;
 
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
-    DesktopRuntime, desktop_apply_agent_host, desktop_bootstrap_default_agent,
-    desktop_check_update, desktop_configure_agent_runtime, desktop_detect_agent_hosts,
-    desktop_install_update, desktop_lobby_snapshot, desktop_open_authorization,
-    desktop_plan_agent_host, desktop_remove_agent_host, desktop_retry_bridge,
-    desktop_runtime_snapshot, desktop_set_autostart,
+    DesktopRuntime, desktop_apply_agent_host, desktop_begin_human_authentication,
+    desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
+    desktop_configure_agent_runtime, desktop_detect_agent_hosts, desktop_install_update,
+    desktop_lobby_snapshot, desktop_open_authorization, desktop_plan_agent_host,
+    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
+use human_session::HumanSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
@@ -98,6 +101,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         .manage(DeepLinkInbox::default())
         .invoke_handler(tauri::generate_handler![
             desktop_runtime_snapshot,
+            desktop_begin_human_authentication,
+            desktop_clear_human_session,
             desktop_retry_bridge,
             desktop_set_autostart,
             desktop_open_authorization,
@@ -115,6 +120,11 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             webview_migration::retire_legacy_service_worker(app)?;
             let mut config = DesktopBridgeConfig::from_environment()
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
+            let human_sessions = HumanSessionRuntime::system(&config)
+                .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
+            human_sessions
+                .restore(app.handle())
+                .map_err(|failure| format!("桌面人类会话恢复失败 [{}]", failure.code()))?;
             let targets = Arc::new(
                 RuntimeTargetStore::open(&config.data_root())
                     .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,
@@ -138,6 +148,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 hosts,
                 targets,
             });
+            app.manage(human_sessions);
             setup_tray(app)?;
             setup_deep_links(app)?;
             Ok(())

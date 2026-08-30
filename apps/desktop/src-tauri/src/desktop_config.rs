@@ -4,6 +4,8 @@ use agent_room_bridge_local_adapter::{
     SecureStorageService, bridge_data_root_from_environment, bridge_runtime_root,
     secure_storage_service_from_environment,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest as _, Sha256};
 use url::Url;
 
 use crate::runtime_target::DesktopAgentTarget;
@@ -17,6 +19,7 @@ const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
 pub(crate) struct DesktopBridgeConfig {
     runtime_root: PathBuf,
     secure_storage_service: SecureStorageService,
+    control_plane_url: Url,
     environment: BTreeMap<String, String>,
 }
 
@@ -27,9 +30,14 @@ impl DesktopBridgeConfig {
         let secure_storage_service = secure_storage_service_from_environment()
             .map_err(|_| DesktopConfigFailure::new("desktop.config.secure_storage_invalid"))?;
         let mut environment = BTreeMap::new();
+        let control_plane_url = Url::parse(&validated_url(
+            "AGENT_ROOM_CONTROL_PLANE_URL",
+            DEFAULT_CONTROL_PLANE_URL,
+        )?)
+        .map_err(|_| DesktopConfigFailure::new("desktop.config.service_url_invalid"))?;
         environment.insert(
             "AGENT_ROOM_CONTROL_PLANE_URL".to_owned(),
-            validated_url("AGENT_ROOM_CONTROL_PLANE_URL", DEFAULT_CONTROL_PLANE_URL)?,
+            control_plane_url.to_string(),
         );
         environment.insert(
             "AGENT_ROOM_MATRIX_BASE_URL".to_owned(),
@@ -67,6 +75,7 @@ impl DesktopBridgeConfig {
             runtime_root: bridge_runtime_root(&data_root),
             environment,
             secure_storage_service,
+            control_plane_url,
         })
     }
 
@@ -102,6 +111,18 @@ impl DesktopBridgeConfig {
 
     pub(crate) fn secure_storage_service(&self) -> SecureStorageService {
         self.secure_storage_service.clone()
+    }
+
+    pub(crate) fn control_plane_url(&self) -> Url {
+        self.control_plane_url.clone()
+    }
+
+    /// 人类云端会话必须与 Bridge/Agent 凭据物理隔离，同时保留测试安装的命名空间隔离。
+    pub(crate) fn human_session_storage_service(&self) -> String {
+        let digest = URL_SAFE_NO_PAD.encode(Sha256::digest(
+            self.secure_storage_service.as_str().as_bytes(),
+        ));
+        format!("dev.agent-room.desktop-human.{}", &digest[..22])
     }
 }
 

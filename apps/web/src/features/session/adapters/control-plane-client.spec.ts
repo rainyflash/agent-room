@@ -15,7 +15,7 @@ const validSession = {
 };
 
 describe('ControlPlaneClient', () => {
-  it('把注册意图作为受约束参数发送给身份入口', () => {
+  it('把注册意图作为受约束参数发送给身份入口', async () => {
     const navigate = vi.fn();
     const client = new ControlPlaneClient({
       baseUrl: 'https://api.agent-room.test',
@@ -23,14 +23,17 @@ describe('ControlPlaneClient', () => {
       navigate,
     });
 
-    client.beginAuthentication('/connect', 'register');
+    await expect(client.beginAuthentication('/connect', 'register')).resolves.toEqual({
+      ok: true,
+      value: { kind: 'browser-navigation' },
+    });
 
     expect(navigate).toHaveBeenCalledWith(
       'https://api.agent-room.test/auth/oidc/start?returnTo=%2Fconnect&importDisplayName=true&importLocale=true&intent=register',
     );
   });
 
-  it('通过同源 BFF 登录时保留部署路径前缀', () => {
+  it('通过同源 BFF 登录时保留部署路径前缀', async () => {
     const navigate = vi.fn();
     const client = new ControlPlaneClient({
       baseUrl: 'https://app.agent-room.test/_agent-room/api',
@@ -38,7 +41,7 @@ describe('ControlPlaneClient', () => {
       navigate,
     });
 
-    client.beginAuthentication('/connect', 'register');
+    await client.beginAuthentication('/connect', 'register');
 
     expect(navigate).toHaveBeenCalledWith(
       'https://app.agent-room.test/_agent-room/api/auth/oidc/start?returnTo=%2Fconnect&importDisplayName=true&importLocale=true&intent=register',
