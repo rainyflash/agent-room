@@ -6,7 +6,7 @@ The bundle contributes a skill and a local STDIO MCP definition. The single-inst
 
 ## Approval model
 
-Per-tool Codex approval is user configuration. The adapter neither owns nor silently rewrites it. `approval-policy.example.toml` shows a conservative baseline: identity, previews, and presence may be read directly; opening full content, publishing status, sending messages, and consuming handoffs ask each time. Replace only the plugin selector when the installed marketplace name differs.
+Per-tool Codex approval is user configuration. The adapter neither owns nor silently rewrites it. `approval-policy.example.toml` shows a conservative baseline: identity, previews, and presence may be read directly; listing handoff metadata, opening full content, publishing status, sending messages, and consuming or declining handoffs ask each time. Replace only the plugin selector when the installed marketplace name differs.
 
 ## Local verification
 

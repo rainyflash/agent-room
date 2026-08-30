@@ -30,6 +30,7 @@ EXPECTED_TOOLS = (
     "agent_room_open_content",
     "agent_room_publish_status",
     "agent_room_send_message",
+    "agent_room_list_handoffs",
     "agent_room_consume_handoff",
     "agent_room_decline_handoff",
 )
@@ -133,7 +134,7 @@ def validate_approval_policy(path: Path) -> None:
     if server.get("default_tools_approval_mode") != "prompt":
         raise RuntimeError("非白名单工具必须保持逐次审批")
     if server.get("enabled_tools") != list(EXPECTED_TOOLS):
-        raise RuntimeError("审批策略必须只允许既定的八个工具")
+        raise RuntimeError("审批策略必须只允许既定的九个工具")
     tools = server.get("tools")
     if not isinstance(tools, dict) or set(tools) != set(AUTOMATIC_TOOLS):
         raise RuntimeError("审批策略只能自动放行三个最小只读工具")
@@ -310,6 +311,7 @@ def validate_tool_annotations(tools: list[object]) -> None:
         "agent_room_open_content": (True, False, True, True),
         "agent_room_publish_status": (False, False, True, True),
         "agent_room_send_message": (False, False, False, True),
+        "agent_room_list_handoffs": (True, False, True, True),
         "agent_room_consume_handoff": (False, True, False, True),
         "agent_room_decline_handoff": (False, True, False, True),
     }

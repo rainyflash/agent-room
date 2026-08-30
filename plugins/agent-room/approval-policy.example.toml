@@ -11,6 +11,7 @@ enabled_tools = [
   "agent_room_open_content",
   "agent_room_publish_status",
   "agent_room_send_message",
+  "agent_room_list_handoffs",
   "agent_room_consume_handoff",
   "agent_room_decline_handoff",
 ]
