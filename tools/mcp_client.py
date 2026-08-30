@@ -7,6 +7,7 @@ from contextlib import AbstractContextManager
 import json
 from pathlib import Path
 from queue import Empty, Queue
+import re
 import subprocess
 import threading
 import time
@@ -16,6 +17,7 @@ from typing import Final, TextIO
 JsonObject = dict[str, object]
 LineSanitizer = Callable[[str], str]
 PROTOCOL_VERSION: Final = "2025-11-25"
+STABLE_ERROR_CODE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 class McpClientFailure(RuntimeError):
@@ -125,7 +127,9 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
     def call_tool(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
         result = self.call_tool_result(name, arguments)
         if result.get("isError") is True:
-            raise McpClientFailure(f"MCP 工具 {name} 返回失败。")
+            code = tool_failure_code(result)
+            suffix = f"（错误码 {code}）" if code is not None else ""
+            raise McpClientFailure(f"MCP 工具 {name} 返回失败{suffix}。")
         structured = result.get("structuredContent")
         if not isinstance(structured, dict):
             raise McpClientFailure(f"MCP 工具 {name} 缺少结构化响应。")
@@ -259,6 +263,17 @@ def parse_json_object(text: str, label: str) -> JsonObject:
     if not isinstance(payload, dict):
         raise McpClientFailure(f"{label} 必须是对象。")
     return _string_keyed_object(payload, label)
+
+
+def tool_failure_code(result: Mapping[str, object]) -> str | None:
+    """仅提取可安全写入验收日志的稳定 MCP 错误码。"""
+    structured = result.get("structuredContent")
+    if not isinstance(structured, dict):
+        return None
+    code = structured.get("code")
+    if not isinstance(code, str) or STABLE_ERROR_CODE.fullmatch(code) is None:
+        return None
+    return code
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:
