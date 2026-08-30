@@ -6,10 +6,12 @@ import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
+import { sessionStateName } from '@/features/session/ui/connection-model';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
 import { useSession } from '@/features/session/ui/session-provider';
+import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
@@ -17,6 +19,7 @@ import {
   lobbySearchWithMessage,
   normalizeConnectSearch,
   normalizeLobbySearch,
+  normalizeWorkspaceSearch,
   routeIdentifierSchema,
 } from '@/shared/routing/route-state';
 
@@ -53,6 +56,13 @@ const onboardingRoute = createRoute({
   component: OnboardingPage,
 });
 
+const workspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workspace',
+  validateSearch: normalizeWorkspaceSearch,
+  component: WorkspaceBoundary,
+});
+
 const lobbyInstanceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/lobby/$catalogId/instance/$roomId',
@@ -76,6 +86,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   connectRoute,
   onboardingRoute,
+  workspaceRoute,
   lobbyRoute,
   lobbyInstanceRoute,
   settingsRoute,
@@ -173,6 +184,25 @@ function LobbyInstanceBoundary() {
         selectedMessageId={search.message ?? null}
       />
     </Suspense>
+  );
+}
+
+function WorkspaceBoundary() {
+  const { snapshot } = useSession();
+  const search = workspaceRoute.useSearch();
+  const navigate = workspaceRoute.useNavigate();
+  const principal = snapshot.context.principal;
+  if (sessionStateName(snapshot.value) !== 'ready' || principal === null) {
+    return <ConnectionPage />;
+  }
+  return (
+    <AccountWorkspacePage
+      onSelectAgent={(agentId) => {
+        void navigate({ replace: true, search: { agent: agentId }, to: '/workspace' });
+      }}
+      principal={principal}
+      selectedAgentId={search.agent ?? null}
+    />
   );
 }
 

@@ -27,6 +27,10 @@ export type LobbySearch = {
   readonly message?: string;
 };
 
+export type WorkspaceSearch = {
+  readonly agent?: string;
+};
+
 export function normalizeConnectSearch(search: Record<string, unknown>): ConnectSearch {
   const returnTo = typeof search.returnTo === 'string' ? safeInternalPath(search.returnTo) : null;
   return returnTo === null ? {} : { returnTo };
@@ -42,6 +46,11 @@ export function normalizeLobbySearch(search: Record<string, unknown>): LobbySear
     ...(search.directory === 'open' ? { directory: 'open' as const } : {}),
     ...(message.success ? { message: message.data } : {}),
   };
+}
+
+export function normalizeWorkspaceSearch(search: Record<string, unknown>): WorkspaceSearch {
+  const agent = contextIdentifierSchema.safeParse(search.agent);
+  return agent.success ? { agent: agent.data } : {};
 }
 
 export function lobbySearchWithAgent(search: LobbySearch, agentId: string | null): LobbySearch {

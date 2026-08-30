@@ -6,6 +6,7 @@ import {
   lobbySearchWithMessage,
   normalizeConnectSearch,
   normalizeLobbySearch,
+  normalizeWorkspaceSearch,
 } from '@/shared/routing/route-state';
 
 describe('路由状态规范化', () => {
@@ -35,6 +36,13 @@ describe('路由状态规范化', () => {
       directory: 'open',
       message: '$event:matrix.example',
     });
+  });
+
+  it('只保留合法的工作区 Agent 选择', () => {
+    expect(normalizeWorkspaceSearch({ agent: '0198b601-77a1-7bb8-83eb-a8fe68c97e44' })).toEqual({
+      agent: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+    });
+    expect(normalizeWorkspaceSearch({ agent: 'bad agent' })).toEqual({});
   });
 
   it('更新选中 Agent 时物理删除空查询字段', () => {

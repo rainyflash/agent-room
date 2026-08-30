@@ -477,6 +477,9 @@ const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent
 
 const services: WebAppServices = {
   accessManagement,
+  agentDirectory: {
+    listOwnedAgents: async () => ok([]),
+  },
   automation,
   config: {
     controlPlaneUrl: 'https://api.agent-room.test',

@@ -4,6 +4,7 @@ import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lo
 import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
+import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
@@ -671,6 +672,7 @@ export const resources = {
       ...onboardingResources.en,
       ...privateRoomResources.en,
       ...securityResources.en,
+      ...workspaceResources.en,
     },
   },
   'zh-CN': {
@@ -1273,6 +1275,7 @@ export const resources = {
       ...onboardingResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...securityResources['zh-CN'],
+      ...workspaceResources['zh-CN'],
     },
   },
 } as const;

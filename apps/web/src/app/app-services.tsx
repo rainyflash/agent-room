@@ -23,9 +23,11 @@ import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-se
 import type { ControlPlaneGateway, SessionDependencies } from '@/features/session/domain/session';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
+import type { AgentDirectoryGateway } from '@/features/workspace/domain/agent-directory';
 
 export type AppServices = {
   readonly accessManagement: AccessManagementGateway;
+  readonly agentDirectory: AgentDirectoryGateway;
   readonly automation: AutomationGrantGateway;
   readonly config: RuntimeConfig;
   readonly content: ContentGateway;

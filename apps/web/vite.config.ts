@@ -64,6 +64,7 @@ export default defineConfig(({ mode }) => ({
       ? {
           rollupOptions: {
             input: {
+              accountWorkspaceFixture: 'e2e/fixtures/account-workspace.html',
               application: 'index.html',
               lobbyCapacityFixture: 'e2e/fixtures/lobby-scene.html',
             },

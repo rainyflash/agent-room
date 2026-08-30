@@ -40,6 +40,7 @@ import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { readLanguagePreference } from '@/shared/i18n/i18n';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
+import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
 
 export type WebAppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -101,6 +102,7 @@ function createWebRuntime(
     accessManagement: new ControlPlaneAccessManagementClient({
       baseUrl: config.controlPlaneUrl,
     }),
+    agentDirectory: new ControlPlaneAgentDirectoryClient({ baseUrl: config.controlPlaneUrl }),
     automation: new ControlPlaneAutomationGrantClient({ baseUrl: config.controlPlaneUrl }),
     config,
     content: new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl }),

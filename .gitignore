@@ -34,4 +34,5 @@ Thumbs.db
 /artifacts/
 /reports/
 playwright-report/
+.playwright-cli/
 test-results/
