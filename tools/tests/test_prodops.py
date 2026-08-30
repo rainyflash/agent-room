@@ -510,6 +510,17 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertNotIn("replication     all", rules)
         self.assertIn("hba_file=/etc/postgresql/agent-room-pg-hba.conf", compose)
 
+    def test_控制平面只显式允许_windows_tauri_源站(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "AGENT_ROOM_DESKTOP_ORIGIN: http://tauri.localhost",
+            compose,
+        )
+        self.assertNotIn("AGENT_ROOM_DESKTOP_ORIGIN: '*'", compose)
+
     def test_projection_rebuild_uses_server_side_copy(self) -> None:
         script = ROOT.joinpath("infra", "production", "projection-rebuild.sh").read_text(
             encoding="utf-8"

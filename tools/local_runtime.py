@@ -124,6 +124,7 @@ def control_plane_runtime_environment(
                 "https://api.agent-room.localhost:18443/auth/oidc/callback"
             ),
             "AGENT_ROOM_FRONTEND_ORIGIN": "https://app.agent-room.localhost:18443",
+            "AGENT_ROOM_DESKTOP_ORIGIN": "http://tauri.localhost",
             "AGENT_ROOM_MATRIX_SERVER_NAME": "matrix.agent-room.localhost",
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS": "5000",
             "AGENT_ROOM_LOG_FILTER": "agent_room_control_plane=info,sqlx=warn",
