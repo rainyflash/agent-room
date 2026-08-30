@@ -3,10 +3,15 @@ import { expect, type Locator, type Page } from '@playwright/test';
 export const apiOrigin = 'https://api.agent-room.localhost:18443';
 export const matrixOrigin = 'https://matrix.agent-room.localhost:18443';
 
+export type LiveSessionCredentials = Readonly<{
+  expectedDisplayName: string;
+  password: string;
+  username: string;
+}>;
+
 export async function connectLiveSession(
   page: Page,
-  username: string,
-  password: string,
+  credentials: LiveSessionCredentials,
 ): Promise<string> {
   const login = page.getByRole('button', {
     name: /Sign in to Agent Room|登录 Agent Room/u,
@@ -17,15 +22,15 @@ export async function connectLiveSession(
   await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u);
   const usernameInput = page.locator('input[name="username"]');
   await waitForVisibleSurface(page, usernameInput, 'OIDC 登录表单');
-  await usernameInput.fill(username);
-  await page.locator('input[name="password"]').fill(password);
+  await usernameInput.fill(credentials.username);
+  await page.locator('input[name="password"]').fill(credentials.password);
   await page.locator('input[type="submit"], button[type="submit"]').click();
 
   await expect(page).toHaveURL(/\/connect(?:\?|$)/u);
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
     /Matrix device connection required|需要连接 Matrix 设备/u,
   );
-  await expect(page.locator('.identity-summary')).toContainText('Local Developer');
+  await expect(page.locator('.identity-summary')).toContainText(credentials.expectedDisplayName);
 
   await page.getByRole('button', { name: /Connect Matrix device|连接 Matrix 设备/u }).click();
   await continueThroughMatrixConsentWhenRequired(page);

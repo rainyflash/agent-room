@@ -50,7 +50,11 @@ test('真实浏览器会话创建并幂等重放实例定向交接', async ({ pa
   expect(isAbsolute(resultPath ?? '')).toBe(true);
   const request = input ?? missingInput();
   const failures = collectUnhandledFailures(page);
-  await connectLiveSession(page, username ?? '', password ?? '');
+  await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
   await page.goto(`/lobby/${request.catalogId}`);
   await expect
     .poll(() => new URL(page.url()).pathname, { timeout: 40_000 })

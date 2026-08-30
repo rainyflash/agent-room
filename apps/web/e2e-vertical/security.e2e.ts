@@ -19,19 +19,19 @@ test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', asy
   const recoveryPassphrase = `Agent Room task 27 ${randomUUID()}`;
   const additionalContexts: BrowserContext[] = [];
   try {
-    await connectLiveSession(page, username ?? '', password ?? '');
+    await connectDeveloperSession(page);
     await openSecurity(page);
     await establishEncryptedIdentity(page);
     await setupRecovery(page, recoveryPassphrase);
     const recoverySample = await createRecoverySample(page);
 
     const second = await openDevice(browser, additionalContexts);
-    await connectLiveSession(second, username ?? '', password ?? '');
+    await connectDeveloperSession(second);
     await openSecurity(second);
     await verifySecondDevice(page, second);
 
     const recovered = await openDevice(browser, additionalContexts);
-    await connectLiveSession(recovered, username ?? '', password ?? '');
+    await connectDeveloperSession(recovered);
     await openSecurity(recovered);
     await recoverNewDevice(recovered, recoveryPassphrase);
     await decryptRecoverySample(recovered, recoverySample);
@@ -43,6 +43,14 @@ test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', asy
     );
   }
 });
+
+async function connectDeveloperSession(page: Page): Promise<string> {
+  return await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
+}
 
 async function openDevice(browser: Browser, contexts: BrowserContext[]): Promise<Page> {
   const context = await browser.newContext({

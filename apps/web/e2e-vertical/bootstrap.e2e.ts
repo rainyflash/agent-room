@@ -38,7 +38,11 @@ test('纵向切片使用真实登录幂等创建 Codex Agent', async ({ page }) 
   );
   expect(isAbsolute(resultPath ?? '')).toBe(true);
   const failures = collectUnhandledFailures(page);
-  const matrixUserId = await connectLiveSession(page, username ?? '', password ?? '');
+  const matrixUserId = await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
 
   const responses = await page.evaluate(
     async ({ apiBase, idempotencyKey }) => {
