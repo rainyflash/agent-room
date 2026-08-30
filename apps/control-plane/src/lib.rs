@@ -172,6 +172,7 @@ pub async fn run() -> Result<(), StartupError> {
         runtime.readiness.clone(),
         routes,
         &config.authentication.frontend_origin,
+        &config.authentication.desktop_origin,
         metrics,
     )?;
 
@@ -202,17 +203,21 @@ fn build_router(
     readiness: Arc<ReadinessService>,
     feature_routes: Router,
     frontend_origin: &url::Url,
+    desktop_origin: &url::Url,
     metrics: TelemetryMetrics,
 ) -> Result<Router, StartupError> {
-    let origin =
-        HeaderValue::from_str(&frontend_origin.origin().ascii_serialization()).map_err(|_| {
+    let origins = [frontend_origin, desktop_origin]
+        .into_iter()
+        .map(|origin| HeaderValue::from_str(&origin.origin().ascii_serialization()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
             StartupError::new(
                 "startup.invalid_authentication_config",
-                "前端 Origin 无法转换为安全 HTTP 头".to_owned(),
+                "可信 Origin 无法转换为安全 HTTP 头".to_owned(),
             )
         })?;
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(origin))
+        .allow_origin(AllowOrigin::list(origins))
         .allow_credentials(true)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
@@ -271,6 +276,8 @@ async fn build_identity_router(
             oidc,
             login_attempts: repositories.clone(),
             login_completion: repositories.clone(),
+            desktop_login_completion: repositories.clone(),
+            desktop_session_exchange: repositories.clone(),
             sessions: repositories.clone(),
             suspensions: repositories.clone(),
             secrets: secrets.clone(),
@@ -296,6 +303,7 @@ async fn build_identity_router(
             secrets: secrets.clone(),
         },
         &authentication_config.frontend_origin,
+        &authentication_config.desktop_origin,
     );
     let content_runtime =
         content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
@@ -309,6 +317,7 @@ async fn build_identity_router(
             secrets: secrets.clone(),
             matrix_identities: matrix_identities.clone(),
             frontend_origin: &authentication_config.frontend_origin,
+            desktop_origin: &authentication_config.desktop_origin,
         })
         .await?;
     let (content_routes, content_cleanup, matrix_authority) = content_runtime.into_parts();
@@ -401,6 +410,7 @@ fn build_frontend_telemetry_state(
     FrontendTelemetryHttpState::new(
         authentication,
         &config.authentication.frontend_origin,
+        &config.authentication.desktop_origin,
         metrics,
     )
 }
@@ -414,6 +424,7 @@ fn build_account_http_state(
         accounts,
         authentication,
         &config.authentication.frontend_origin,
+        &config.authentication.desktop_origin,
     )
 }
 
@@ -557,6 +568,7 @@ fn build_agent_feature_states(
                 secrets: dependencies.secrets.clone(),
             },
             &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
         ),
         instances: AgentInstanceHttpState::new(
             AgentInstanceHttpStateDependencies {
@@ -564,6 +576,7 @@ fn build_agent_feature_states(
                 authentication: dependencies.authentication.clone(),
             },
             &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
         ),
         cards: AgentCardHttpState::new(AgentCardHttpDependencies {
             cards,
@@ -587,17 +600,20 @@ fn build_agent_feature_states(
             private_rooms,
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
         ),
         direct_sessions: DirectSessionHttpState::new(
             direct_sessions,
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
         ),
         automation,
         moderation: ModerationHttpState::new(
             moderation,
             dependencies.authentication,
             &config.authentication.frontend_origin,
+            &config.authentication.desktop_origin,
         ),
     })
 }
@@ -646,6 +662,7 @@ fn build_automation_http_state(
             secrets: dependencies.secrets.clone(),
         },
         &config.authentication.frontend_origin,
+        &config.authentication.desktop_origin,
     )
 }
 
@@ -708,6 +725,7 @@ fn build_authentication_http_state(
         service,
         config.issuer_url.clone(),
         config.frontend_origin.clone(),
+        config.desktop_origin.clone(),
         config.login_attempt_ttl,
         config.web_session_ttl,
     )
@@ -1020,6 +1038,7 @@ mod tests {
             Arc::new(readiness),
             axum::Router::new(),
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
+            &url::Url::parse("http://tauri.localhost").expect("测试桌面 Origin 有效"),
             TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")
@@ -1030,6 +1049,53 @@ mod tests {
             .await
             .expect("响应正文可读取");
         serde_json::from_slice(&bytes).expect("响应正文必须是 JSON")
+    }
+
+    #[tokio::test]
+    async fn cors_只回显精确配置的浏览器与桌面_origin() {
+        for origin in [FRONTEND_ORIGIN, "http://tauri.localhost"] {
+            let response = router_with(Ok(()))
+                .oneshot(
+                    Request::builder()
+                        .method(Method::OPTIONS)
+                        .uri("/health/live")
+                        .header(header::ORIGIN, origin)
+                        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                        .body(Body::empty())
+                        .expect("预检请求有效"),
+                )
+                .await
+                .expect("路由执行成功");
+            assert_eq!(
+                response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                Some(&HeaderValue::from_str(origin).expect("Origin 头有效"))
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                Some(&HeaderValue::from_static("true"))
+            );
+        }
+
+        let rejected = router_with(Ok(()))
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/health/live")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .expect("预检请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert!(
+            rejected
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1205,6 +1271,7 @@ mod real_dependency_tests {
             runtime.readiness.clone(),
             axum::Router::new(),
             &frontend_origin,
+            &Url::parse("http://tauri.localhost").expect("测试桌面 Origin 有效"),
             TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")

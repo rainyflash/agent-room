@@ -10,6 +10,8 @@ use agent_room_application::{
     authentication::AuthenticationUseCases, automation::AutomationUseCases,
     devices::DeviceAuthorizationUseCases, ports::SecretFactory,
 };
+
+use crate::features::authentication::TrustedOrigins;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -24,7 +26,7 @@ pub(crate) struct AutomationHttpState {
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
     pub(super) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(super) secrets: Arc<dyn SecretFactory>,
-    pub(super) frontend_origin: String,
+    pub(super) trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct AutomationHttpDependencies {
@@ -38,13 +40,14 @@ impl AutomationHttpState {
     pub(crate) fn new(
         dependencies: AutomationHttpDependencies,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             automation: dependencies.automation,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }

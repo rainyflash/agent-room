@@ -353,6 +353,7 @@ fn test_router(
         moderation,
         authentication,
         &Url::parse(FRONTEND_ORIGIN).expect("前端地址有效"),
+        &Url::parse("http://tauri.localhost").expect("桌面地址有效"),
     ))
     .layer(middleware::from_fn(crate::correlation::attach))
 }

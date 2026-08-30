@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::authentication::{authenticate_session, no_store, origin_matches},
+    features::authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
     telemetry_metrics::TelemetryMetrics,
 };
 
@@ -25,7 +25,7 @@ const MAX_BODY_BYTES: usize = 4 * 1_024;
 #[derive(Clone)]
 pub(crate) struct FrontendTelemetryHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
     metrics: TelemetryMetrics,
 }
 
@@ -33,11 +33,12 @@ impl FrontendTelemetryHttpState {
     pub(crate) fn new(
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &Url,
+        desktop_origin: &Url,
         metrics: TelemetryMetrics,
     ) -> Self {
         Self {
             authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
             metrics,
         }
     }
@@ -148,7 +149,7 @@ async fn record_frontend_metric(
     jar: CookieJar,
     payload: Result<Json<FrontendTelemetryRequest>, JsonRejection>,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return telemetry_error(
             StatusCode::FORBIDDEN,
             "telemetry.invalid_origin",

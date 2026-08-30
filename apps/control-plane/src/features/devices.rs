@@ -34,7 +34,7 @@ use uuid::Uuid;
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::authentication::{authenticate_session, no_store, origin_matches},
+    features::authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
 };
 
 const REGISTER_DEVICE_PATH: &str = "/auth/devices/register";
@@ -53,7 +53,7 @@ pub(crate) struct DeviceHttpState {
     assertion_verifier: Arc<dyn OidcDeviceAssertionVerifier>,
     authentication: Arc<dyn AuthenticationUseCases>,
     secrets: Arc<dyn SecretFactory>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct DeviceHttpDependencies {
@@ -64,13 +64,17 @@ pub(crate) struct DeviceHttpDependencies {
 }
 
 impl DeviceHttpState {
-    pub(crate) fn new(dependencies: DeviceHttpDependencies, frontend_origin: &Url) -> Self {
+    pub(crate) fn new(
+        dependencies: DeviceHttpDependencies,
+        frontend_origin: &Url,
+        desktop_origin: &Url,
+    ) -> Self {
         Self {
             devices: dependencies.devices,
             assertion_verifier: dependencies.assertion_verifier,
             authentication: dependencies.authentication,
             secrets: dependencies.secrets,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
@@ -272,7 +276,7 @@ async fn revoke_device(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(
             ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -686,6 +690,7 @@ mod tests {
                 secrets: Arc::new(SecureSecretFactory),
             },
             &Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
+            &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
         );
         router(state).layer(middleware::from_fn(crate::correlation::attach))
     }

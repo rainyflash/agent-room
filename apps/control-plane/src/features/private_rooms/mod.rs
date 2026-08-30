@@ -9,6 +9,8 @@ use std::sync::Arc;
 use agent_room_application::{
     authentication::AuthenticationUseCases, private_rooms::PrivateRoomUseCases,
 };
+
+use crate::features::authentication::TrustedOrigins;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -21,7 +23,7 @@ const MAX_PRIVATE_ROOM_BODY_BYTES: usize = 64 * 1_024;
 pub(crate) struct PrivateRoomHttpState {
     pub(super) rooms: Arc<dyn PrivateRoomUseCases>,
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
-    pub(super) frontend_origin: String,
+    pub(super) trusted_origins: TrustedOrigins,
 }
 
 impl PrivateRoomHttpState {
@@ -29,11 +31,12 @@ impl PrivateRoomHttpState {
         rooms: Arc<dyn PrivateRoomUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             rooms,
             authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }

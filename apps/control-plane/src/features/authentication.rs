@@ -4,12 +4,19 @@ use agent_room_application::{
     authentication::{
         AuthenticatedPrincipal, AuthenticationFailureKind, AuthenticationIntent,
         AuthenticationRequirement, AuthenticationUseCases, BeginLogin, CompleteLogin,
+        ExchangeDesktopAuthorization, LoginCompletion,
     },
-    ports::{ProfileImportConsent, SafeReturnPath, SecretValue},
+    ports::{
+        DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent, SafeReturnPath,
+        SecretValue,
+    },
 };
 use axum::{
     Json, Router,
-    extract::{Extension, Query, State, rejection::QueryRejection},
+    extract::{
+        Extension, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -33,7 +40,7 @@ pub(crate) struct AuthenticationHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     frontend_origin: Url,
     issuer: Url,
-    serialized_frontend_origin: String,
+    trusted_origins: TrustedOrigins,
     login_failure_redirect: String,
     login_cookie_ttl: CookieDuration,
     session_cookie_ttl: CookieDuration,
@@ -44,11 +51,12 @@ impl AuthenticationHttpState {
     ///
     /// # Errors
     ///
-    /// 前端地址不是纯 Origin，或 Cookie 生命周期无法安全转换时返回配置错误。
+    /// 浏览器/桌面地址不是纯 Origin，或 Cookie 生命周期无法安全转换时返回配置错误。
     pub(crate) fn new(
         authentication: Arc<dyn AuthenticationUseCases>,
         issuer: Url,
         frontend_origin: Url,
+        desktop_origin: Url,
         login_cookie_ttl: Duration,
         session_cookie_ttl: Duration,
     ) -> Result<Self, AuthenticationHttpConfigurationError> {
@@ -58,7 +66,13 @@ impl AuthenticationHttpState {
         {
             return Err(AuthenticationHttpConfigurationError::InvalidFrontendOrigin);
         }
-        let serialized_frontend_origin = frontend_origin.origin().ascii_serialization();
+        if desktop_origin.path() != "/"
+            || desktop_origin.query().is_some()
+            || desktop_origin.fragment().is_some()
+        {
+            return Err(AuthenticationHttpConfigurationError::InvalidDesktopOrigin);
+        }
+        let trusted_origins = TrustedOrigins::new(&frontend_origin, &desktop_origin);
         let login_failure_redirect = frontend_origin
             .join("/connect")
             .map_err(|_| AuthenticationHttpConfigurationError::InvalidFrontendOrigin)?
@@ -69,7 +83,7 @@ impl AuthenticationHttpState {
             authentication,
             frontend_origin,
             issuer,
-            serialized_frontend_origin,
+            trusted_origins,
             login_failure_redirect,
             login_cookie_ttl,
             session_cookie_ttl,
@@ -80,6 +94,8 @@ impl AuthenticationHttpState {
 pub(crate) fn router(state: AuthenticationHttpState) -> Router {
     Router::new()
         .route("/auth/oidc/start", get(begin_login))
+        .route("/auth/desktop/start", get(begin_desktop_login))
+        .route("/auth/desktop/exchange", post(exchange_desktop_login))
         .route("/auth/oidc/callback", get(complete_login))
         .route("/auth/session", get(current_session))
         .route("/auth/logout", post(logout))
@@ -89,6 +105,21 @@ pub(crate) fn router(state: AuthenticationHttpState) -> Router {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BeginLoginQuery {
+    #[serde(default)]
+    return_to: Option<String>,
+    #[serde(default)]
+    import_display_name: bool,
+    #[serde(default)]
+    import_locale: bool,
+    #[serde(default)]
+    intent: BeginLoginIntent,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BeginDesktopLoginQuery {
+    client_state: String,
+    code_challenge: String,
     #[serde(default)]
     return_to: Option<String>,
     #[serde(default)]
@@ -118,6 +149,13 @@ struct CompleteLoginQuery {
     state: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DesktopExchangeRequest {
+    authorization_code: String,
+    pkce_verifier: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionResponse {
@@ -128,6 +166,13 @@ struct SessionResponse {
     authenticated_at_unix_ms: i64,
     expires_at_unix_ms: i64,
     recently_authenticated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopExchangeResponse {
+    session_secret: String,
+    session: SessionResponse,
 }
 
 async fn begin_login(
@@ -152,7 +197,7 @@ async fn begin_login(
     let redirect = match state
         .authentication
         .begin_login(BeginLogin {
-            return_path,
+            delivery: LoginDelivery::Web { return_path },
             profile_import: ProfileImportConsent {
                 display_name: query.import_display_name,
                 locale: query.import_locale,
@@ -161,6 +206,66 @@ async fn begin_login(
                 BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
                 BeginLoginIntent::Register => AuthenticationIntent::Register,
             },
+        })
+        .await
+    {
+        Ok(redirect) => redirect,
+        Err(failure) => {
+            return no_store(ApiError::authentication(failure, correlation_id).into_response());
+        }
+    };
+    let jar = jar.add(secure_cookie(
+        LOGIN_COOKIE,
+        redirect.browser_secret.expose(),
+        state.login_cookie_ttl,
+    ));
+    no_store((jar, Redirect::to(&redirect.authorization_url)).into_response())
+}
+
+async fn begin_desktop_login(
+    State(state): State<AuthenticationHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    query: Result<Query<BeginDesktopLoginQuery>, QueryRejection>,
+    jar: CookieJar,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return no_store(
+            ApiError::invalid_request("authentication.invalid_desktop_login_query", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(return_path) = SafeReturnPath::new(query.return_to.unwrap_or_else(|| "/".to_owned()))
+    else {
+        return no_store(
+            ApiError::invalid_request("authentication.unsafe_return_path", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(client_state) = DesktopClientState::new(query.client_state) else {
+        return no_store(
+            ApiError::invalid_request("authentication.invalid_desktop_state", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(code_challenge) = PkceCodeChallenge::new(query.code_challenge) else {
+        return no_store(
+            ApiError::invalid_request("authentication.invalid_pkce_challenge", correlation_id)
+                .into_response(),
+        );
+    };
+    let redirect = match state
+        .authentication
+        .begin_login(BeginLogin {
+            delivery: LoginDelivery::Desktop {
+                client_state,
+                code_challenge,
+                return_path,
+            },
+            profile_import: ProfileImportConsent {
+                display_name: query.import_display_name,
+                locale: query.import_locale,
+            },
+            intent: map_login_intent(query.intent),
         })
         .await
     {
@@ -234,20 +339,68 @@ async fn complete_login(
             );
         }
     };
-    let Ok(destination) = state.frontend_origin.join(completion.return_path.as_str()) else {
-        return login_failure(
-            &state,
-            &headers,
-            jar,
-            ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
+    match completion {
+        LoginCompletion::Web(completion) => {
+            let Ok(destination) = state.frontend_origin.join(completion.return_path.as_str())
+            else {
+                return login_failure(
+                    &state,
+                    &headers,
+                    jar,
+                    ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
+                );
+            };
+            let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(secure_cookie(
+                SESSION_COOKIE,
+                completion.session_secret.expose(),
+                state.session_cookie_ttl,
+            ));
+            no_store((jar, Redirect::to(destination.as_str())).into_response())
+        }
+        LoginCompletion::Desktop(completion) => {
+            let mut destination =
+                Url::parse("agent-room://auth/callback").expect("固定桌面回调 URL 必须有效");
+            destination.query_pairs_mut().extend_pairs([
+                ("code", completion.authorization_code.expose()),
+                ("state", completion.client_state.expose()),
+            ]);
+            let jar = jar.add(expired_cookie(LOGIN_COOKIE));
+            no_store((jar, Redirect::to(destination.as_str())).into_response())
+        }
+    }
+}
+
+async fn exchange_desktop_login(
+    State(state): State<AuthenticationHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    body: Result<Json<DesktopExchangeRequest>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return no_store(
+            ApiError::invalid_request(
+                "authentication.invalid_desktop_exchange_body",
+                correlation_id,
+            )
+            .into_response(),
         );
     };
-    let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(secure_cookie(
-        SESSION_COOKIE,
-        completion.session_secret.expose(),
-        state.session_cookie_ttl,
-    ));
-    no_store((jar, Redirect::to(destination.as_str())).into_response())
+    match state
+        .authentication
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: &body.authorization_code,
+            pkce_verifier: &body.pkce_verifier,
+        })
+        .await
+    {
+        Ok(completion) => no_store(
+            Json(DesktopExchangeResponse {
+                session_secret: completion.session_secret.expose().to_owned(),
+                session: SessionResponse::from(completion.principal),
+            })
+            .into_response(),
+        ),
+        Err(failure) => no_store(ApiError::authentication(failure, correlation_id).into_response()),
+    }
 }
 
 async fn current_session(
@@ -289,7 +442,7 @@ async fn logout(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
-    if !origin_matches(&headers, &state.serialized_frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(
             ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -323,6 +476,13 @@ fn secure_cookie(name: &'static str, value: &str, max_age: CookieDuration) -> Co
         .same_site(SameSite::Lax)
         .max_age(max_age)
         .build()
+}
+
+const fn map_login_intent(intent: BeginLoginIntent) -> AuthenticationIntent {
+    match intent {
+        BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
+        BeginLoginIntent::Register => AuthenticationIntent::Register,
+    }
 }
 
 fn expired_cookie(name: &'static str) -> Cookie<'static> {
@@ -395,11 +555,30 @@ pub(crate) async fn authenticate_session(
         })
 }
 
-pub(crate) fn origin_matches(headers: &HeaderMap, expected: &str) -> bool {
+#[derive(Debug, Clone)]
+pub(crate) struct TrustedOrigins(Arc<[String]>);
+
+impl TrustedOrigins {
+    pub(crate) fn new(frontend_origin: &Url, desktop_origin: &Url) -> Self {
+        let mut values = vec![
+            frontend_origin.origin().ascii_serialization(),
+            desktop_origin.origin().ascii_serialization(),
+        ];
+        values.sort_unstable();
+        values.dedup();
+        Self(values.into())
+    }
+
+    fn contains(&self, value: &str) -> bool {
+        self.0.iter().any(|trusted| trusted == value)
+    }
+}
+
+pub(crate) fn origin_matches(headers: &HeaderMap, expected: &TrustedOrigins) -> bool {
     headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == expected)
+        .is_some_and(|value| expected.contains(value))
 }
 
 pub(crate) fn no_store(mut response: Response) -> Response {
@@ -455,6 +634,8 @@ pub(crate) fn missing_session_error(correlation_id: CorrelationId) -> ApiError {
 pub(crate) enum AuthenticationHttpConfigurationError {
     #[error("前端 Origin 配置无效")]
     InvalidFrontendOrigin,
+    #[error("桌面 Origin 配置无效")]
+    InvalidDesktopOrigin,
     #[error("Cookie 生命周期配置无效")]
     InvalidCookieLifetime,
 }
@@ -473,9 +654,10 @@ mod tests {
         authentication::{
             AuthenticatedPrincipal, AuthenticationIntent, AuthenticationRequirement,
             AuthenticationResult, AuthenticationUseCases, BeginLogin, CompleteLogin,
-            LoginCompletion, LoginRedirect,
+            DesktopLoginCompletion, DesktopSessionCompletion, ExchangeDesktopAuthorization,
+            LoginCompletion, LoginRedirect, WebLoginCompletion,
         },
-        ports::{PortFuture, SafeReturnPath, SecretValue},
+        ports::{LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
     };
     use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
     use axum::{
@@ -492,6 +674,8 @@ mod tests {
     #[derive(Default)]
     struct FakeAuthentication {
         begin: AtomicUsize,
+        desktop_begin: AtomicUsize,
+        desktop_exchange: AtomicUsize,
         register_begin: AtomicUsize,
         complete: AtomicUsize,
         logout: AtomicUsize,
@@ -507,14 +691,19 @@ mod tests {
                 self.register_begin.fetch_add(1, Ordering::SeqCst);
             }
             Box::pin(async move {
+                if matches!(request.delivery, LoginDelivery::Desktop { .. }) {
+                    self.desktop_begin.fetch_add(1, Ordering::SeqCst);
+                }
                 match request.intent {
                     AuthenticationIntent::SignIn => {
-                        assert_eq!(request.return_path.as_str(), "/rooms/42?tab=chat");
+                        assert!(matches!(
+                            request.delivery.return_path().as_str(),
+                            "/rooms/42?tab=chat" | "/workspace"
+                        ));
                         assert!(request.profile_import.display_name);
-                        assert!(!request.profile_import.locale);
                     }
                     AuthenticationIntent::Register => {
-                        assert_eq!(request.return_path.as_str(), "/onboarding");
+                        assert_eq!(request.delivery.return_path().as_str(), "/onboarding");
                     }
                 }
                 Ok(LoginRedirect {
@@ -534,10 +723,38 @@ mod tests {
                 assert_eq!(request.code, "authorization-code");
                 assert_eq!(request.returned_state, "returned-state");
                 assert_eq!(request.browser_secret.expose(), "browser-secret");
-                Ok(LoginCompletion {
-                    session_secret: SecretValue::new("session-secret").expect("测试密钥有效"),
-                    return_path: SafeReturnPath::new("/rooms/42?tab=chat")
-                        .expect("测试返回路径有效"),
+                if self.desktop_begin.load(Ordering::SeqCst) == 0 {
+                    Ok(LoginCompletion::Web(WebLoginCompletion {
+                        session_secret: SecretValue::new("session-secret").expect("测试密钥有效"),
+                        return_path: SafeReturnPath::new("/rooms/42?tab=chat")
+                            .expect("测试返回路径有效"),
+                        principal: principal(),
+                    }))
+                } else {
+                    Ok(LoginCompletion::Desktop(DesktopLoginCompletion {
+                        authorization_code: SecretValue::new("desktop-authorization-code")
+                            .expect("测试授权码有效"),
+                        client_state: agent_room_application::ports::DesktopClientState::new(
+                            "s".repeat(43),
+                        )
+                        .expect("测试 state 有效"),
+                        return_path: SafeReturnPath::new("/workspace").expect("测试返回路径有效"),
+                    }))
+                }
+            })
+        }
+
+        fn exchange_desktop_authorization<'a>(
+            &'a self,
+            request: ExchangeDesktopAuthorization<'a>,
+        ) -> PortFuture<'a, AuthenticationResult<DesktopSessionCompletion>> {
+            self.desktop_exchange.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                assert_eq!(request.authorization_code, "desktop-authorization-code");
+                assert_eq!(request.pkce_verifier, "v".repeat(43));
+                Ok(DesktopSessionCompletion {
+                    session_secret: SecretValue::new("desktop-session-secret")
+                        .expect("测试会话有效"),
                     principal: principal(),
                 })
             })
@@ -579,6 +796,7 @@ mod tests {
             fake,
             Url::parse("https://identity.example").expect("OIDC issuer 有效"),
             Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
+            Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
             Duration::from_mins(10),
             Duration::from_hours(8),
         )
@@ -727,6 +945,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 桌面登录只把一次性授权码送入自定义协议() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let app = test_router(fake.clone());
+        let start = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
+                        "s".repeat(43),
+                        "c".repeat(43)
+                    ))
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面登录起点可执行");
+        assert_eq!(start.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.desktop_begin.load(Ordering::SeqCst), 1);
+
+        let callback = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
+                    .header(header::COOKIE, "__Host-agent-room-login=browser-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面 OIDC 回调可执行");
+        assert_eq!(callback.status(), StatusCode::SEE_OTHER);
+        let location = callback
+            .headers()
+            .get(header::LOCATION)
+            .expect("必须返回桌面深链")
+            .to_str()
+            .expect("深链有效");
+        assert_eq!(
+            location,
+            format!(
+                "agent-room://auth/callback?code=desktop-authorization-code&state={}",
+                "s".repeat(43)
+            )
+        );
+        assert!(
+            set_cookies(&callback)
+                .iter()
+                .all(|cookie| !cookie.starts_with("__Host-agent-room-session="))
+        );
+    }
+
+    #[tokio::test]
+    async fn 桌面授权码交换返回独立会话且不签发浏览器_cookie() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/desktop/exchange")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"authorizationCode":"desktop-authorization-code","pkceVerifier":"{}"}}"#,
+                        "v".repeat(43)
+                    )))
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面授权码交换可执行");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(set_cookies(&response).is_empty());
+        let body = to_bytes(response.into_body(), 32 * 1_024)
+            .await
+            .expect("响应正文可读");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("响应是 JSON");
+        assert_eq!(json["sessionSecret"], "desktop-session-secret");
+        assert_eq!(
+            json["session"]["principalId"],
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e42"
+        );
+        assert_eq!(fake.desktop_exchange.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn 回调显式拒绝不匹配的授权服务器_issuer() {
         let fake = Arc::new(FakeAuthentication::default());
         let response = test_router(fake.clone())
@@ -827,7 +1128,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 注销要求精确前端_origin_并清除会话_cookie() {
+    async fn 注销仅接受精确的浏览器或桌面_origin_并清除会话_cookie() {
         let fake = Arc::new(FakeAuthentication::default());
         let wrong_origin = test_router(fake.clone())
             .oneshot(
@@ -864,5 +1165,20 @@ mod tests {
                 .any(|cookie| cookie.starts_with("__Host-agent-room-session=")
                     && cookie.contains("Max-Age=0"))
         );
+
+        let desktop_origin = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/logout")
+                    .header(header::ORIGIN, "http://tauri.localhost")
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(desktop_origin.status(), StatusCode::NO_CONTENT);
+        assert_eq!(fake.logout.load(Ordering::SeqCst), 2);
     }
 }

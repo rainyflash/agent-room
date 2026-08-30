@@ -9,6 +9,8 @@ use std::sync::Arc;
 use agent_room_application::{
     authentication::AuthenticationUseCases, moderation::ModerationUseCases,
 };
+
+use crate::features::authentication::TrustedOrigins;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -21,7 +23,7 @@ const MAX_MODERATION_BODY_BYTES: usize = 16 * 1_024;
 pub(crate) struct ModerationHttpState {
     pub(super) moderation: Arc<dyn ModerationUseCases>,
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
-    pub(super) frontend_origin: String,
+    pub(super) trusted_origins: TrustedOrigins,
 }
 
 impl ModerationHttpState {
@@ -29,11 +31,12 @@ impl ModerationHttpState {
         moderation: Arc<dyn ModerationUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             moderation,
             authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }

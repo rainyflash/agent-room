@@ -1,7 +1,9 @@
 use std::env;
 
 use agent_room_application::ports::{
-    LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, PrincipalRegistration,
+    DesktopAuthorizationCodeRegistration, DesktopLoginCompletionTransaction,
+    DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt, LoginAttemptStore,
+    LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge, PrincipalRegistration,
     PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
     SecretValue, WebSessionRegistration, WebSessionStore,
 };
@@ -245,6 +247,109 @@ async fn 会话写入冲突会回滚首次主体投影() {
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 桌面授权码交换原子校验_pkce_过期和重放() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example",
+        "desktop-subject",
+        "桌面用户",
+    );
+    let authorization = DesktopAuthorizationCodeRegistration {
+        code_digest: SecretDigest::from_array([31; 32]),
+        code_challenge: PkceCodeChallenge::new("c".repeat(43)).expect("challenge 有效"),
+        authenticated_at: test_time(0),
+        created_at: test_time(0),
+        expires_at: test_time(600_000),
+    };
+    DesktopLoginCompletionTransaction::complete_desktop(&repositories, &principal, &authorization)
+        .await
+        .expect("桌面授权码应与主体原子写入");
+    let session = DesktopSessionRegistration {
+        id: WebSessionId::from_uuid(Uuid::now_v7()),
+        secret_digest: SecretDigest::from_array([32; 32]),
+        created_at: test_time(1_000),
+        expires_at: test_time(28_801_000),
+    };
+    assert!(
+        DesktopSessionExchangeTransaction::exchange_desktop(
+            &repositories,
+            &authorization.code_digest,
+            &PkceCodeChallenge::new("x".repeat(43)).expect("错误 challenge 仍满足格式"),
+            &session,
+            test_time(1_000),
+        )
+        .await
+        .expect("错误 PKCE 返回空结果")
+        .is_none()
+    );
+    let exchanged = DesktopSessionExchangeTransaction::exchange_desktop(
+        &repositories,
+        &authorization.code_digest,
+        &authorization.code_challenge,
+        &session,
+        test_time(1_000),
+    )
+    .await
+    .expect("正确 PKCE 可交换")
+    .expect("授权码尚未消费");
+    assert_eq!(exchanged.authenticated_at, authorization.authenticated_at);
+    assert!(
+        DesktopSessionExchangeTransaction::exchange_desktop(
+            &repositories,
+            &authorization.code_digest,
+            &authorization.code_challenge,
+            &DesktopSessionRegistration {
+                id: WebSessionId::from_uuid(Uuid::now_v7()),
+                secret_digest: SecretDigest::from_array([33; 32]),
+                created_at: test_time(2_000),
+                expires_at: test_time(28_802_000),
+            },
+            test_time(2_000),
+        )
+        .await
+        .expect("重放返回空结果")
+        .is_none()
+    );
+
+    let expired_authorization = DesktopAuthorizationCodeRegistration {
+        code_digest: SecretDigest::from_array([34; 32]),
+        code_challenge: PkceCodeChallenge::new("e".repeat(43)).expect("challenge 有效"),
+        authenticated_at: test_time(0),
+        created_at: test_time(0),
+        expires_at: test_time(10_000),
+    };
+    DesktopLoginCompletionTransaction::complete_desktop(
+        &repositories,
+        &principal,
+        &expired_authorization,
+    )
+    .await
+    .expect("过期前可写入授权码");
+    assert!(
+        DesktopSessionExchangeTransaction::exchange_desktop(
+            &repositories,
+            &expired_authorization.code_digest,
+            &expired_authorization.code_challenge,
+            &DesktopSessionRegistration {
+                id: WebSessionId::from_uuid(Uuid::now_v7()),
+                secret_digest: SecretDigest::from_array([35; 32]),
+                created_at: test_time(10_000),
+                expires_at: test_time(28_810_000),
+            },
+            test_time(10_000),
+        )
+        .await
+        .expect("到期授权码返回空结果")
+        .is_none()
+    );
+
+    database.close().await;
+}
+
 fn login_attempt(
     browser_byte: u8,
     state_byte: u8,
@@ -257,7 +362,9 @@ fn login_attempt(
         state_digest: SecretDigest::from_array([state_byte; 32]),
         nonce: SecretValue::new("n".repeat(32)).expect("nonce 有效"),
         pkce_verifier: SecretValue::new("v".repeat(43)).expect("PKCE 有效"),
-        return_path: SafeReturnPath::new("/rooms/lobby").expect("回跳路径有效"),
+        delivery: LoginDelivery::Web {
+            return_path: SafeReturnPath::new("/rooms/lobby").expect("回跳路径有效"),
+        },
         profile_import: ProfileImportConsent::default(),
         created_at,
         expires_at,

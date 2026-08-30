@@ -4,14 +4,19 @@ use agent_room_domain::{
     ids::PrincipalId,
     time::{DurationMillis, UtcMillis},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, IdentifierFactory, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
-        OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
-        PortFuture, PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath,
-        SecretFactory, SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
+        Clock, DesktopAuthorizationCodeRegistration, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
+        DesktopSessionRegistration, IdentifierFactory, LoginAttempt, LoginAttemptStore,
+        LoginCompletionTransaction, LoginDelivery, OidcAuthorizationOptions, OidcCodeExchange,
+        OidcFailureKind, OidcGateway, OidcInteraction, PkceCodeChallenge, PortFuture,
+        PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretFactory,
+        SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
     },
 };
 
@@ -69,7 +74,7 @@ pub enum AuthenticationConfigurationError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginLogin {
-    pub return_path: SafeReturnPath,
+    pub delivery: LoginDelivery,
     pub profile_import: ProfileImportConsent,
     pub intent: AuthenticationIntent,
 }
@@ -106,9 +111,34 @@ pub struct AuthenticatedPrincipal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoginCompletion {
+pub struct WebLoginCompletion {
     pub session_secret: SecretValue,
     pub return_path: SafeReturnPath,
+    pub principal: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopLoginCompletion {
+    pub authorization_code: SecretValue,
+    pub client_state: DesktopClientState,
+    pub return_path: SafeReturnPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginCompletion {
+    Web(WebLoginCompletion),
+    Desktop(DesktopLoginCompletion),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExchangeDesktopAuthorization<'a> {
+    pub authorization_code: &'a str,
+    pub pkce_verifier: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSessionCompletion {
+    pub session_secret: SecretValue,
     pub principal: AuthenticatedPrincipal,
 }
 
@@ -165,6 +195,18 @@ pub trait AuthenticationUseCases: Send + Sync {
         request: CompleteLogin<'a>,
     ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>>;
 
+    fn exchange_desktop_authorization<'a>(
+        &'a self,
+        _request: ExchangeDesktopAuthorization<'a>,
+    ) -> PortFuture<'a, AuthenticationResult<DesktopSessionCompletion>> {
+        Box::pin(async {
+            Err(AuthenticationFailure::new(
+                "authentication.exchange_desktop_authorization",
+                AuthenticationFailureKind::InvalidRequest,
+            ))
+        })
+    }
+
     fn authenticate<'a>(
         &'a self,
         session_secret: &'a SecretValue,
@@ -186,6 +228,8 @@ pub struct AuthenticationService {
     oidc: Arc<dyn OidcGateway>,
     login_attempts: Arc<dyn LoginAttemptStore>,
     login_completion: Arc<dyn LoginCompletionTransaction>,
+    desktop_login_completion: Arc<dyn DesktopLoginCompletionTransaction>,
+    desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     sessions: Arc<dyn WebSessionStore>,
     suspensions: Arc<dyn PrincipalSuspensionTransaction>,
     secrets: Arc<dyn SecretFactory>,
@@ -198,6 +242,8 @@ pub struct AuthenticationDependencies {
     pub oidc: Arc<dyn OidcGateway>,
     pub login_attempts: Arc<dyn LoginAttemptStore>,
     pub login_completion: Arc<dyn LoginCompletionTransaction>,
+    pub desktop_login_completion: Arc<dyn DesktopLoginCompletionTransaction>,
+    pub desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     pub sessions: Arc<dyn WebSessionStore>,
     pub suspensions: Arc<dyn PrincipalSuspensionTransaction>,
     pub secrets: Arc<dyn SecretFactory>,
@@ -211,6 +257,8 @@ impl AuthenticationService {
             oidc: dependencies.oidc,
             login_attempts: dependencies.login_attempts,
             login_completion: dependencies.login_completion,
+            desktop_login_completion: dependencies.desktop_login_completion,
+            desktop_session_exchange: dependencies.desktop_session_exchange,
             sessions: dependencies.sessions,
             suspensions: dependencies.suspensions,
             secrets: dependencies.secrets,
@@ -250,7 +298,7 @@ impl AuthenticationService {
             state_digest: self.secrets.digest(authorization.state.expose()),
             nonce: authorization.nonce,
             pkce_verifier: authorization.pkce_verifier,
-            return_path: request.return_path,
+            delivery: request.delivery,
             profile_import: request.profile_import,
             created_at: now,
             expires_at,
@@ -312,31 +360,133 @@ impl AuthenticationService {
             now,
             &self.policy.matrix_server_name,
         );
+        match attempt.delivery {
+            LoginDelivery::Web { return_path } => {
+                let session_secret = self
+                    .secrets
+                    .generate()
+                    .map_err(|_| internal_failure("authentication.complete_login"))?;
+                let session_registration = self.session_registration(
+                    &session_secret,
+                    authenticated_at,
+                    now,
+                    "authentication.complete_login",
+                )?;
+                let session = self
+                    .login_completion
+                    .complete(&principal_registration, &session_registration)
+                    .await
+                    .map_err(|error| {
+                        map_repository_failure("authentication.complete_login", &error)
+                    })?;
+                Ok(LoginCompletion::Web(WebLoginCompletion {
+                    session_secret,
+                    return_path,
+                    principal: session_view(&session, now, &self.policy),
+                }))
+            }
+            LoginDelivery::Desktop {
+                client_state,
+                code_challenge,
+                return_path,
+            } => {
+                let authorization_code = self
+                    .secrets
+                    .generate()
+                    .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
+                let expires_at = now
+                    .checked_add(self.policy.login_attempt_ttl)
+                    .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
+                let authorization = DesktopAuthorizationCodeRegistration {
+                    code_digest: self.secrets.digest(authorization_code.expose()),
+                    code_challenge,
+                    authenticated_at,
+                    created_at: now,
+                    expires_at,
+                };
+                self.desktop_login_completion
+                    .complete_desktop(&principal_registration, &authorization)
+                    .await
+                    .map_err(|error| {
+                        map_repository_failure("authentication.complete_desktop_login", &error)
+                    })?;
+                Ok(LoginCompletion::Desktop(DesktopLoginCompletion {
+                    authorization_code,
+                    client_state,
+                    return_path,
+                }))
+            }
+        }
+    }
+
+    async fn exchange_desktop_authorization_internal(
+        &self,
+        request: ExchangeDesktopAuthorization<'_>,
+    ) -> AuthenticationResult<DesktopSessionCompletion> {
+        validate_authorization_value(request.authorization_code)
+            .and_then(|()| validate_pkce_verifier(request.pkce_verifier))
+            .map_err(|()| {
+                AuthenticationFailure::new(
+                    "authentication.exchange_desktop_authorization",
+                    AuthenticationFailureKind::InvalidRequest,
+                )
+            })?;
+        let code_challenge = derive_pkce_challenge(request.pkce_verifier).map_err(|()| {
+            AuthenticationFailure::new(
+                "authentication.exchange_desktop_authorization",
+                AuthenticationFailureKind::InvalidRequest,
+            )
+        })?;
+        let now = self.clock.now();
         let session_secret = self
             .secrets
             .generate()
-            .map_err(|_| internal_failure("authentication.complete_login"))?;
+            .map_err(|_| internal_failure("authentication.exchange_desktop_authorization"))?;
         let expires_at = now
             .checked_add(self.policy.web_session_ttl)
-            .map_err(|_| internal_failure("authentication.complete_login"))?;
-        let session_registration = WebSessionRegistration {
+            .map_err(|_| internal_failure("authentication.exchange_desktop_authorization"))?;
+        let session_registration = DesktopSessionRegistration {
+            id: self.identifiers.web_session_id(),
+            secret_digest: self.secrets.digest(session_secret.expose()),
+            created_at: now,
+            expires_at,
+        };
+        let code_digest = self.secrets.digest(request.authorization_code);
+        let session = self
+            .desktop_session_exchange
+            .exchange_desktop(&code_digest, &code_challenge, &session_registration, now)
+            .await
+            .map_err(|error| {
+                map_repository_failure("authentication.exchange_desktop_authorization", &error)
+            })?
+            .ok_or_else(|| {
+                AuthenticationFailure::new(
+                    "authentication.exchange_desktop_authorization",
+                    AuthenticationFailureKind::InvalidLoginState,
+                )
+            })?;
+        Ok(DesktopSessionCompletion {
+            session_secret,
+            principal: session_view(&session, now, &self.policy),
+        })
+    }
+
+    fn session_registration(
+        &self,
+        session_secret: &SecretValue,
+        authenticated_at: UtcMillis,
+        now: UtcMillis,
+        operation: &'static str,
+    ) -> AuthenticationResult<WebSessionRegistration> {
+        let expires_at = now
+            .checked_add(self.policy.web_session_ttl)
+            .map_err(|_| internal_failure(operation))?;
+        Ok(WebSessionRegistration {
             id: self.identifiers.web_session_id(),
             secret_digest: self.secrets.digest(session_secret.expose()),
             authenticated_at,
             created_at: now,
             expires_at,
-        };
-        let session = self
-            .login_completion
-            .complete(&principal_registration, &session_registration)
-            .await
-            .map_err(|error| map_repository_failure("authentication.complete_login", &error))?;
-        let principal = session_view(&session, now, &self.policy);
-
-        Ok(LoginCompletion {
-            session_secret,
-            return_path: attempt.return_path,
-            principal,
         })
     }
 
@@ -413,6 +563,13 @@ impl AuthenticationUseCases for AuthenticationService {
         Box::pin(self.complete_login_internal(request))
     }
 
+    fn exchange_desktop_authorization<'a>(
+        &'a self,
+        request: ExchangeDesktopAuthorization<'a>,
+    ) -> PortFuture<'a, AuthenticationResult<DesktopSessionCompletion>> {
+        Box::pin(self.exchange_desktop_authorization_internal(request))
+    }
+
     fn authenticate<'a>(
         &'a self,
         session_secret: &'a SecretValue,
@@ -441,6 +598,22 @@ fn validate_authorization_value(value: &str) -> Result<(), ()> {
         return Err(());
     }
     Ok(())
+}
+
+fn validate_pkce_verifier(value: &str) -> Result<(), ()> {
+    if !(43..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn derive_pkce_challenge(verifier: &str) -> Result<PkceCodeChallenge, ()> {
+    PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+        .map_err(|_| ())
 }
 
 fn validate_authentication_time(

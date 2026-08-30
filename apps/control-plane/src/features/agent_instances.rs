@@ -24,7 +24,7 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::{authenticate_session, no_store, origin_matches},
+        authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         resource_ids::parse_uuid_v7,
     },
 };
@@ -33,7 +33,7 @@ use crate::{
 pub(crate) struct AgentInstanceHttpState {
     instances: Arc<dyn AgentInstanceManagementUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct AgentInstanceHttpStateDependencies {
@@ -45,11 +45,12 @@ impl AgentInstanceHttpState {
     pub(crate) fn new(
         dependencies: AgentInstanceHttpStateDependencies,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             instances: dependencies.instances,
             authentication: dependencies.authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
@@ -148,7 +149,7 @@ async fn revoke_instance(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(invalid_origin(correlation_id).into_response());
     }
     let Ok(instance_id) = parse_uuid_v7(&instance_id).map(AgentInstanceId::from_uuid) else {
@@ -396,6 +397,7 @@ mod tests {
                     authentication: authentication.clone(),
                 },
                 &Url::parse(FRONTEND_ORIGIN).expect("前端 Origin 有效"),
+                &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
             );
             Self {
                 app: router(state).layer(middleware::from_fn(crate::correlation::attach)),

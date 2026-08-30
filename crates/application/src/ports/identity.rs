@@ -16,6 +16,9 @@ const MAX_RETURN_PATH_LENGTH: usize = 2_048;
 const MAX_ISSUER_LENGTH: usize = 2_048;
 const MAX_SUBJECT_LENGTH: usize = 512;
 const MAX_DISPLAY_NAME_LENGTH: usize = 128;
+const MIN_DESKTOP_CLIENT_STATE_LENGTH: usize = 32;
+const MAX_DESKTOP_CLIENT_STATE_LENGTH: usize = 128;
+const PKCE_CODE_CHALLENGE_LENGTH: usize = 43;
 
 /// 只在必须调用协议或持久化边界时短暂暴露的敏感值。
 #[derive(Clone, PartialEq, Eq)]
@@ -78,6 +81,67 @@ impl SafeReturnPath {
             || value.chars().any(char::is_control)
         {
             return Err(IdentityValueError::UnsafeReturnPath);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// 桌面客户端生成并在自定义协议回调中核对的随机状态。
+#[derive(Clone, PartialEq, Eq)]
+pub struct DesktopClientState(String);
+
+impl DesktopClientState {
+    /// 只接受足够长的 base64url 随机值，避免把任意 URL 数据带回桌面进程。
+    ///
+    /// # Errors
+    ///
+    /// 长度不足、超限或包含非 base64url 字符时返回校验错误。
+    pub fn new(value: impl Into<String>) -> Result<Self, IdentityValueError> {
+        let value = value.into();
+        if !(MIN_DESKTOP_CLIENT_STATE_LENGTH..=MAX_DESKTOP_CLIENT_STATE_LENGTH)
+            .contains(&value.len())
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(IdentityValueError::InvalidDesktopClientState);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for DesktopClientState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[桌面状态已脱敏]")
+    }
+}
+
+/// RFC 7636 S256 code challenge。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PkceCodeChallenge(String);
+
+impl PkceCodeChallenge {
+    /// 创建固定长度的 SHA-256 base64url challenge。
+    ///
+    /// # Errors
+    ///
+    /// 值不是 43 字节 base64url 文本时返回校验错误。
+    pub fn new(value: impl Into<String>) -> Result<Self, IdentityValueError> {
+        let value = value.into();
+        if value.len() != PKCE_CODE_CHALLENGE_LENGTH
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(IdentityValueError::InvalidPkceChallenge);
         }
         Ok(Self(value))
     }
@@ -285,13 +349,33 @@ pub trait SecretFactory: Send + Sync {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginDelivery {
+    Web {
+        return_path: SafeReturnPath,
+    },
+    Desktop {
+        client_state: DesktopClientState,
+        code_challenge: PkceCodeChallenge,
+        return_path: SafeReturnPath,
+    },
+}
+
+impl LoginDelivery {
+    pub const fn return_path(&self) -> &SafeReturnPath {
+        match self {
+            Self::Web { return_path } | Self::Desktop { return_path, .. } => return_path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginAttempt {
     pub id: LoginAttemptId,
     pub browser_secret_digest: SecretDigest,
     pub state_digest: SecretDigest,
     pub nonce: SecretValue,
     pub pkce_verifier: SecretValue,
-    pub return_path: SafeReturnPath,
+    pub delivery: LoginDelivery,
     pub profile_import: ProfileImportConsent,
     pub created_at: UtcMillis,
     pub expires_at: UtcMillis,
@@ -350,6 +434,23 @@ pub struct WebSessionRegistration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopAuthorizationCodeRegistration {
+    pub code_digest: SecretDigest,
+    pub code_challenge: PkceCodeChallenge,
+    pub authenticated_at: UtcMillis,
+    pub created_at: UtcMillis,
+    pub expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSessionRegistration {
+    pub id: WebSessionId,
+    pub secret_digest: SecretDigest,
+    pub created_at: UtcMillis,
+    pub expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredWebSession {
     pub id: WebSessionId,
     pub account: PrincipalAccount,
@@ -364,6 +465,24 @@ pub trait LoginCompletionTransaction: Send + Sync {
         principal: &'a PrincipalRegistration,
         session: &'a WebSessionRegistration,
     ) -> PortFuture<'a, RepositoryResult<StoredWebSession>>;
+}
+
+pub trait DesktopLoginCompletionTransaction: Send + Sync {
+    fn complete_desktop<'a>(
+        &'a self,
+        principal: &'a PrincipalRegistration,
+        authorization: &'a DesktopAuthorizationCodeRegistration,
+    ) -> PortFuture<'a, RepositoryResult<PrincipalAccount>>;
+}
+
+pub trait DesktopSessionExchangeTransaction: Send + Sync {
+    fn exchange_desktop<'a>(
+        &'a self,
+        code_digest: &'a SecretDigest,
+        code_challenge: &'a PkceCodeChallenge,
+        session: &'a DesktopSessionRegistration,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>>;
 }
 
 pub trait WebSessionStore: Send + Sync {
@@ -394,6 +513,8 @@ pub enum IdentityValueError {
     UnsafeReturnPath,
     InvalidIssuer,
     InvalidSubject,
+    InvalidDesktopClientState,
+    InvalidPkceChallenge,
 }
 
 fn validate_identity_text(value: &str, maximum_length: usize) -> Result<(), ()> {

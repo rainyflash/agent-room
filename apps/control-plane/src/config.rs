@@ -15,6 +15,7 @@ const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
+const DEFAULT_DESKTOP_ORIGIN: &str = "http://tauri.localhost";
 const DEFAULT_LOBBY_RESERVATION_LIFETIME_MILLIS: u64 = 60 * 1_000;
 const DEFAULT_LOBBY_PROVISIONING_LEASE_MILLIS: u64 = 30 * 1_000;
 const DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS: u64 = 30_000;
@@ -104,6 +105,7 @@ pub(crate) struct AuthenticationConfig {
     pub(crate) device_client_id: String,
     pub(crate) redirect_url: Url,
     pub(crate) frontend_origin: Url,
+    pub(crate) desktop_origin: Url,
     pub(crate) matrix_server_name: String,
     pub(crate) login_attempt_ttl: Duration,
     pub(crate) web_session_ttl: Duration,
@@ -423,6 +425,11 @@ fn read_authentication_config(
         frontend_origin: parse_origin(
             "AGENT_ROOM_FRONTEND_ORIGIN",
             &read_required_text(source, "AGENT_ROOM_FRONTEND_ORIGIN")?,
+        )?,
+        desktop_origin: parse_origin(
+            "AGENT_ROOM_DESKTOP_ORIGIN",
+            &read_optional(source, "AGENT_ROOM_DESKTOP_ORIGIN")
+                .unwrap_or_else(|| DEFAULT_DESKTOP_ORIGIN.to_owned()),
         )?,
         matrix_server_name: read_required_text(source, "AGENT_ROOM_MATRIX_SERVER_NAME")?,
         login_attempt_ttl: read_bounded_duration(

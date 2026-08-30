@@ -38,7 +38,7 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::{authenticate_session, no_store, origin_matches},
+        authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
     },
@@ -56,7 +56,7 @@ pub(crate) struct ContentHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct ContentHttpDependencies {
@@ -67,13 +67,17 @@ pub(crate) struct ContentHttpDependencies {
 }
 
 impl ContentHttpState {
-    pub(crate) fn new(dependencies: ContentHttpDependencies, frontend_origin: &url::Url) -> Self {
+    pub(crate) fn new(
+        dependencies: ContentHttpDependencies,
+        frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
+    ) -> Self {
         Self {
             content: dependencies.content,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
@@ -532,7 +536,7 @@ async fn authenticate_content_request(
         .await
         .map(|device| device.account.principal.id());
     }
-    if !origin_matches(headers, &state.frontend_origin) {
+    if !origin_matches(headers, &state.trusted_origins) {
         return Err(no_store(
             ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -1263,6 +1267,7 @@ mod tests {
                 secrets: Arc::new(SecureSecretFactory),
             },
             &Url::parse(FRONTEND_ORIGIN).expect("前端 Origin 有效"),
+            &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
         ))
         .layer(middleware::from_fn(crate::correlation::attach))
     }

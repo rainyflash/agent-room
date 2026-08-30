@@ -75,6 +75,7 @@ pub(crate) struct ContentRuntimeDependencies<'a> {
     pub(crate) secrets: Arc<dyn SecretFactory>,
     pub(crate) matrix_identities: Arc<MatrixApplicationServiceProvisioner>,
     pub(crate) frontend_origin: &'a url::Url,
+    pub(crate) desktop_origin: &'a url::Url,
 }
 
 struct ContentApplication {
@@ -148,6 +149,7 @@ pub(crate) async fn initialize(
             secrets: dependencies.secrets,
         },
         dependencies.frontend_origin,
+        dependencies.desktop_origin,
     );
     Ok(ContentRuntime {
         routes: crate::features::content::router(state),

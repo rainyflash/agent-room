@@ -39,7 +39,7 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::{authenticate_session, no_store, origin_matches},
+        authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
     },
@@ -58,7 +58,7 @@ pub(crate) struct AgentHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct AgentHttpDependencies {
@@ -70,14 +70,18 @@ pub(crate) struct AgentHttpDependencies {
 }
 
 impl AgentHttpState {
-    pub(crate) fn new(dependencies: AgentHttpDependencies, frontend_origin: &url::Url) -> Self {
+    pub(crate) fn new(
+        dependencies: AgentHttpDependencies,
+        frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
+    ) -> Self {
         Self {
             agents: dependencies.agents,
             verification: dependencies.verification,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
@@ -188,7 +192,7 @@ async fn create_agent(
     jar: CookieJar,
     body: Result<Json<CreateAgentBody>, JsonRejection>,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(invalid_origin(correlation_id).into_response());
     }
     let Ok(request_id) = creation_request_id(&headers) else {
@@ -258,7 +262,7 @@ async fn ensure_default_agent(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(invalid_origin(correlation_id).into_response());
     }
     let actor = match authenticate_session(
@@ -387,7 +391,7 @@ async fn change_membership(
     target: MembershipRouteTarget,
     role: Option<AgentRole>,
 ) -> Response {
-    if !origin_matches(headers, &state.frontend_origin) {
+    if !origin_matches(headers, &state.trusted_origins) {
         return no_store(invalid_origin(correlation_id).into_response());
     }
     let Ok(agent_id) = parse_uuid_v7(&target.agent_id).map(AgentId::from_uuid) else {
@@ -972,6 +976,7 @@ mod tests {
                 secrets: Arc::new(SecureSecretFactory),
             },
             &Url::parse(FRONTEND_ORIGIN).expect("前端 Origin 有效"),
+            &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
         );
         router(state).layer(middleware::from_fn(crate::correlation::attach))
     }

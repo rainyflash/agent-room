@@ -25,7 +25,9 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::{authenticate_session, expired_session_jar, no_store, origin_matches},
+        authentication::{
+            TrustedOrigins, authenticate_session, expired_session_jar, no_store, origin_matches,
+        },
         resource_ids::parse_uuid_v7,
     },
 };
@@ -38,7 +40,7 @@ const DELETION_RECEIPT_SCHEME: &str = "DeletionReceipt ";
 pub(crate) struct AccountHttpState {
     lifecycle: Arc<dyn AccountLifecycleUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
-    frontend_origin: String,
+    trusted_origins: TrustedOrigins,
 }
 
 impl AccountHttpState {
@@ -46,11 +48,12 @@ impl AccountHttpState {
         lifecycle: Arc<dyn AccountLifecycleUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             lifecycle,
             authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
@@ -139,7 +142,7 @@ async fn request_deletion(
     jar: CookieJar,
     body: Result<Json<DeleteAccountBody>, JsonRejection>,
 ) -> Response {
-    if !origin_matches(&headers, &state.frontend_origin) {
+    if !origin_matches(&headers, &state.trusted_origins) {
         return no_store(
             ApiError::new(
                 StatusCode::FORBIDDEN,

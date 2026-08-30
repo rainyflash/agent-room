@@ -10,13 +10,17 @@ use agent_room_application::{
     authentication::{
         AuthenticationDependencies, AuthenticationFailureKind, AuthenticationIntent,
         AuthenticationPolicy, AuthenticationRequirement, AuthenticationService,
-        AuthenticationUseCases, BeginLogin, CompleteLogin,
+        AuthenticationUseCases, BeginLogin, CompleteLogin, ExchangeDesktopAuthorization,
+        LoginCompletion, WebLoginCompletion,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, IdentifierFactory, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
-        OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcGateway,
-        OidcInteraction, OidcResult, PortFuture, PrincipalAccount, PrincipalRegistration,
+        Clock, DesktopAuthorizationCodeRegistration, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
+        DesktopSessionRegistration, IdentifierFactory, LoginAttempt, LoginAttemptStore,
+        LoginCompletionTransaction, LoginDelivery, OidcAuthorizationOptions,
+        OidcAuthorizationRequest, OidcCodeExchange, OidcGateway, OidcInteraction, OidcResult,
+        PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
         PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
         SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
         VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
@@ -32,6 +36,8 @@ use agent_room_domain::{
     },
     time::{DurationMillis, UtcMillis},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 const NOW: i64 = 1_700_000_000_000;
@@ -203,6 +209,8 @@ impl OidcGateway for TestOidc {
 #[derive(Default)]
 struct IdentityState {
     attempt: Option<LoginAttempt>,
+    desktop_authorizations:
+        HashMap<SecretDigest, (DesktopAuthorizationCodeRegistration, PrincipalAccount)>,
     sessions: HashMap<SecretDigest, StoredWebSession>,
     last_registration: Option<PrincipalRegistration>,
 }
@@ -267,6 +275,68 @@ impl LoginCompletionTransaction for InMemoryIdentity {
             state.last_registration = Some(registration.clone());
             state.sessions.insert(session.secret_digest, stored.clone());
             Ok(stored)
+        })
+    }
+}
+
+impl DesktopLoginCompletionTransaction for InMemoryIdentity {
+    fn complete_desktop<'a>(
+        &'a self,
+        registration: &'a PrincipalRegistration,
+        authorization: &'a DesktopAuthorizationCodeRegistration,
+    ) -> PortFuture<'a, RepositoryResult<PrincipalAccount>> {
+        Box::pin(async move {
+            let account = PrincipalAccount {
+                principal: registration.principal.clone(),
+                matrix_user_id: registration.matrix_user_id.clone(),
+                display_name: registration.display_name.clone(),
+                avatar_content_id: registration.avatar_content_id,
+                locale: registration.locale.clone(),
+            };
+            let mut state = self.0.lock().expect("测试锁可用");
+            state.last_registration = Some(registration.clone());
+            state.desktop_authorizations.insert(
+                authorization.code_digest,
+                (authorization.clone(), account.clone()),
+            );
+            Ok(account)
+        })
+    }
+}
+
+impl DesktopSessionExchangeTransaction for InMemoryIdentity {
+    fn exchange_desktop<'a>(
+        &'a self,
+        code_digest: &'a SecretDigest,
+        code_challenge: &'a PkceCodeChallenge,
+        session: &'a DesktopSessionRegistration,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>> {
+        Box::pin(async move {
+            let mut state = self.0.lock().expect("测试锁可用");
+            let matches =
+                state
+                    .desktop_authorizations
+                    .get(code_digest)
+                    .is_some_and(|(authorization, _)| {
+                        authorization.code_challenge == *code_challenge
+                            && now < authorization.expires_at
+                    });
+            let Some((authorization, account)) = matches
+                .then(|| state.desktop_authorizations.remove(code_digest))
+                .flatten()
+            else {
+                return Ok(None);
+            };
+            let stored = StoredWebSession {
+                id: session.id,
+                account,
+                authenticated_at: authorization.authenticated_at,
+                created_at: session.created_at,
+                expires_at: session.expires_at,
+            };
+            state.sessions.insert(session.secret_digest, stored.clone());
+            Ok(Some(stored))
         })
     }
 }
@@ -345,6 +415,8 @@ impl Harness {
                 oidc: oidc.clone(),
                 login_attempts: storage.clone(),
                 login_completion: storage.clone(),
+                desktop_login_completion: storage.clone(),
+                desktop_session_exchange: storage.clone(),
                 sessions: storage.clone(),
                 suspensions: storage.clone(),
                 secrets: Arc::new(TestSecrets::default()),
@@ -367,7 +439,9 @@ impl Harness {
     ) -> agent_room_application::authentication::LoginRedirect {
         self.service
             .begin_login(BeginLogin {
-                return_path: SafeReturnPath::new("/rooms/lobby").expect("返回路径有效"),
+                delivery: LoginDelivery::Web {
+                    return_path: SafeReturnPath::new("/rooms/lobby").expect("返回路径有效"),
+                },
                 profile_import,
                 intent: AuthenticationIntent::SignIn,
             })
@@ -379,16 +453,19 @@ impl Harness {
         &self,
         browser_secret: &SecretValue,
         state: &str,
-    ) -> agent_room_application::authentication::AuthenticationResult<
-        agent_room_application::authentication::LoginCompletion,
-    > {
-        self.service
+    ) -> agent_room_application::authentication::AuthenticationResult<WebLoginCompletion> {
+        let completion = self
+            .service
             .complete_login(CompleteLogin {
                 code: "authorization-code",
                 returned_state: state,
                 browser_secret,
             })
-            .await
+            .await?;
+        match completion {
+            LoginCompletion::Web(completion) => Ok(completion),
+            LoginCompletion::Desktop(_) => panic!("测试请求必须完成 Web 登录"),
+        }
     }
 }
 
@@ -399,7 +476,9 @@ async fn 注册意图被明确映射为_oidc_创建账户交互() {
     harness
         .service
         .begin_login(BeginLogin {
-            return_path: SafeReturnPath::new("/onboarding").expect("返回路径有效"),
+            delivery: LoginDelivery::Web {
+                return_path: SafeReturnPath::new("/onboarding").expect("返回路径有效"),
+            },
             profile_import: ProfileImportConsent::default(),
             intent: AuthenticationIntent::Register,
         })
@@ -433,6 +512,126 @@ async fn 错误浏览器状态不会消费尝试或调用令牌端点() {
         .await
         .expect("错误尝试不应消费正确登录状态");
     assert_eq!(harness.oidc.exchanges.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn 桌面授权码受_pkce_过期和单次消费共同约束() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let verifier = "v".repeat(43);
+    let challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+    let redirect = harness
+        .service
+        .begin_login(BeginLogin {
+            delivery: LoginDelivery::Desktop {
+                client_state: DesktopClientState::new("s".repeat(43)).expect("桌面 state 有效"),
+                code_challenge: challenge,
+                return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+            },
+            profile_import: ProfileImportConsent::default(),
+            intent: AuthenticationIntent::SignIn,
+        })
+        .await
+        .expect("桌面登录应开始");
+    let completion = harness
+        .service
+        .complete_login(CompleteLogin {
+            code: "authorization-code",
+            returned_state: STATE,
+            browser_secret: &redirect.browser_secret,
+        })
+        .await
+        .expect("OIDC 回调应创建桌面授权码");
+    let LoginCompletion::Desktop(completion) = completion else {
+        panic!("桌面登录不得提前创建 Web 会话");
+    };
+    assert_eq!(completion.client_state.expose(), "s".repeat(43));
+    assert!(
+        harness
+            .storage
+            .0
+            .lock()
+            .expect("测试锁可用")
+            .sessions
+            .is_empty()
+    );
+
+    let wrong = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: completion.authorization_code.expose(),
+            pkce_verifier: &"x".repeat(43),
+        })
+        .await
+        .expect_err("错误 verifier 必须失败");
+    assert_eq!(wrong.kind(), AuthenticationFailureKind::InvalidLoginState);
+
+    let exchanged = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: completion.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect("正确 verifier 可交换一次");
+    harness
+        .service
+        .authenticate(
+            &exchanged.session_secret,
+            AuthenticationRequirement::ActiveSession,
+        )
+        .await
+        .expect("交换后的桌面会话有效");
+    let replay = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: completion.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect_err("授权码重放必须失败");
+    assert_eq!(replay.kind(), AuthenticationFailureKind::InvalidLoginState);
+
+    let expired = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = expired
+        .service
+        .begin_login(BeginLogin {
+            delivery: LoginDelivery::Desktop {
+                client_state: DesktopClientState::new("e".repeat(43)).expect("桌面 state 有效"),
+                code_challenge: PkceCodeChallenge::new(
+                    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+                )
+                .expect("PKCE challenge 有效"),
+                return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+            },
+            profile_import: ProfileImportConsent::default(),
+            intent: AuthenticationIntent::SignIn,
+        })
+        .await
+        .expect("桌面登录应开始");
+    let completion = expired
+        .service
+        .complete_login(CompleteLogin {
+            code: "authorization-code",
+            returned_state: STATE,
+            browser_secret: &redirect.browser_secret,
+        })
+        .await
+        .expect("OIDC 回调应创建桌面授权码");
+    let LoginCompletion::Desktop(completion) = completion else {
+        panic!("桌面登录必须返回一次性授权码");
+    };
+    expired.clock.set(NOW + 600_000);
+    let failure = expired
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: completion.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect_err("到期授权码必须失败");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidLoginState);
 }
 
 #[tokio::test]

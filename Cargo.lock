@@ -82,6 +82,7 @@ name = "agent-room-application"
 version = "0.1.0-alpha.7"
 dependencies = [
  "agent-room-domain",
+ "base64 0.22.1",
  "futures-util",
  "serde_json",
  "sha2 0.11.0",

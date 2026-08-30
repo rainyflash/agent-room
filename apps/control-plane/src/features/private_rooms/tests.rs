@@ -559,6 +559,7 @@ fn test_router(rooms: Arc<FakeRooms>, authentication: Arc<FakeAuthentication>) -
         rooms,
         authentication,
         &Url::parse(FRONTEND_ORIGIN).expect("前端地址有效"),
+        &Url::parse("http://tauri.localhost").expect("桌面地址有效"),
     );
     router(state).layer(middleware::from_fn(crate::correlation::attach))
 }

@@ -276,7 +276,7 @@ async fn authenticate_write(
     requirement: AuthenticationRequirement,
     correlation_id: CorrelationId,
 ) -> Result<AuthenticatedPrincipal, Response> {
-    if !origin_matches(headers, &state.frontend_origin) {
+    if !origin_matches(headers, &state.trusted_origins) {
         return Err(no_store(
             ApiError::new(
                 StatusCode::FORBIDDEN,

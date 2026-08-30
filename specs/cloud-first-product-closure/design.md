@@ -81,6 +81,16 @@ Bridge 的 Agent Matrix 凭据绝不能复用为桌面 UI 的用户会话。桌�
 5. Tauri 深链处理器验证 state，并以 verifier 交换桌面会话。
 6. 会话保存到系统凭据存储；Matrix 使用独立桌面设备身份。
 
+协议边界进一步固定如下：
+
+- OIDC Provider PKCE 与桌面客户端 PKCE 是两条独立校验链，不得复用 verifier。
+- Control Plane 只持久化一次性 code 的摘要和 PKCE challenge；code 只在深链中出现一次，交换后原子消费。
+- 桌面长期会话与 Bridge 设备令牌使用不同的系统凭据命名空间，任何一方都不能读取另一方凭据。
+- Tauri 将桌面会话写入 API 域的 `Secure + HttpOnly + SameSite=None` 专用 Cookie；前端 JavaScript 不接触会话秘密。
+- API 只接受显式配置的 Web Origin 与桌面 Origin，禁止 `*`、Origin 反射或通过关闭凭据校验规避 CORS。
+- 桌面启动时从系统凭据存储恢复人类会话；登出时先撤销云端会话，再清除凭据和 WebView Cookie。
+- state 不匹配、code 过期、code 重放、PKCE 不匹配均失败关闭，并且不会创建长期会话。
+
 在该协议完成前，桌面端保留本机 Runtime 管理能力，但不得把 Bridge Agent 会话伪装成人类云端会话。
 
 ## 4. 消息主体演进

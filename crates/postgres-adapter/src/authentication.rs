@@ -1,9 +1,12 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, PortFuture, PrincipalAccount,
-        PrincipalRegistration, PrincipalSuspensionTransaction, SafeReturnPath, SecretDigest,
-        SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
+        DesktopAuthorizationCodeRegistration, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
+        DesktopSessionRegistration, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
+        LoginDelivery, PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
+        PrincipalSuspensionTransaction, SafeReturnPath, SecretDigest, SecretValue,
+        StoredWebSession, WebSessionRegistration, WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -23,14 +26,28 @@ use crate::{
 impl LoginAttemptStore for PostgresRepositories {
     fn create<'a>(&'a self, attempt: &'a LoginAttempt) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async move {
+            let (delivery_kind, desktop_client_state, desktop_pkce_challenge) =
+                match &attempt.delivery {
+                    LoginDelivery::Web { .. } => ("web", None, None),
+                    LoginDelivery::Desktop {
+                        client_state,
+                        code_challenge,
+                        ..
+                    } => (
+                        "desktop",
+                        Some(client_state.expose()),
+                        Some(code_challenge.as_str()),
+                    ),
+                };
             sqlx::query(
                 r"INSERT INTO agent_room.oidc_login_attempt (
                     id, browser_secret_digest, state_digest, nonce, pkce_verifier,
-                    return_path, import_display_name, import_locale, created_at, expires_at
+                    return_path, import_display_name, import_locale, created_at, expires_at,
+                    delivery_kind, desktop_client_state, desktop_pkce_challenge
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     to_timestamp($9::double precision / 1000.0),
-                    to_timestamp($10::double precision / 1000.0)
+                    to_timestamp($10::double precision / 1000.0), $11, $12, $13
                 )",
             )
             .bind(attempt.id.as_uuid())
@@ -38,11 +55,14 @@ impl LoginAttemptStore for PostgresRepositories {
             .bind(attempt.state_digest.as_bytes().as_slice())
             .bind(attempt.nonce.expose())
             .bind(attempt.pkce_verifier.expose())
-            .bind(attempt.return_path.as_str())
+            .bind(attempt.delivery.return_path().as_str())
             .bind(attempt.profile_import.display_name)
             .bind(attempt.profile_import.locale)
             .bind(attempt.created_at.value())
             .bind(attempt.expires_at.value())
+            .bind(delivery_kind)
+            .bind(desktop_client_state)
+            .bind(desktop_pkce_challenge)
             .execute(&self.pool)
             .await
             .map_err(|error| map_sqlx_error("login_attempt.create", &error))?;
@@ -64,7 +84,8 @@ impl LoginAttemptStore for PostgresRepositories {
                      AND state_digest = $2
                      AND consumed_at IS NULL
                      AND expires_at > to_timestamp($3::double precision / 1000.0)
-                   RETURNING id, nonce, pkce_verifier, return_path,
+                   RETURNING id, nonce, pkce_verifier, return_path, delivery_kind,
+                     desktop_client_state, desktop_pkce_challenge,
                      import_display_name, import_locale,
                      floor(extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms,
                      floor(extract(epoch FROM expires_at) * 1000)::bigint AS expires_at_ms",
@@ -112,7 +133,13 @@ impl LoginCompletionTransaction for PostgresRepositories {
                     RepositoryErrorKind::Forbidden,
                 ));
             }
-            insert_web_session(&mut transaction, account.principal.id(), session).await?;
+            insert_web_session(
+                &mut transaction,
+                account.principal.id(),
+                session,
+                "login.complete",
+            )
+            .await?;
             transaction
                 .commit()
                 .await
@@ -125,6 +152,142 @@ impl LoginCompletionTransaction for PostgresRepositories {
                 created_at: session.created_at,
                 expires_at: session.expires_at,
             })
+        })
+    }
+}
+
+impl DesktopLoginCompletionTransaction for PostgresRepositories {
+    fn complete_desktop<'a>(
+        &'a self,
+        principal: &'a PrincipalRegistration,
+        authorization: &'a DesktopAuthorizationCodeRegistration,
+    ) -> PortFuture<'a, RepositoryResult<PrincipalAccount>> {
+        Box::pin(async move {
+            let operation = "desktop_login.complete";
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            insert_principal_if_absent(&mut transaction, principal, operation).await?;
+            let account = lock_account_by_oidc(
+                &mut transaction,
+                &principal.oidc_issuer,
+                &principal.oidc_subject,
+                operation,
+            )
+            .await?;
+            if !account.principal.allows_authentication() {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+            sqlx::query(
+                r"INSERT INTO agent_room.desktop_authorization_code (
+                    code_digest, principal_id, pkce_challenge, authenticated_at,
+                    created_at, expires_at
+                ) VALUES (
+                    $1, $2, $3,
+                    to_timestamp($4::double precision / 1000.0),
+                    to_timestamp($5::double precision / 1000.0),
+                    to_timestamp($6::double precision / 1000.0)
+                )",
+            )
+            .bind(authorization.code_digest.as_bytes().as_slice())
+            .bind(account.principal.id().as_uuid())
+            .bind(authorization.code_challenge.as_str())
+            .bind(authorization.authenticated_at.value())
+            .bind(authorization.created_at.value())
+            .bind(authorization.expires_at.value())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(account)
+        })
+    }
+}
+
+impl DesktopSessionExchangeTransaction for PostgresRepositories {
+    fn exchange_desktop<'a>(
+        &'a self,
+        code_digest: &'a SecretDigest,
+        code_challenge: &'a PkceCodeChallenge,
+        session: &'a DesktopSessionRegistration,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>> {
+        Box::pin(async move {
+            let operation = "desktop_session.exchange";
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let authorization = sqlx::query(
+                r"UPDATE agent_room.desktop_authorization_code
+                   SET consumed_at = to_timestamp($3::double precision / 1000.0)
+                   WHERE code_digest = $1
+                     AND pkce_challenge = $2
+                     AND consumed_at IS NULL
+                     AND expires_at > to_timestamp($3::double precision / 1000.0)
+                   RETURNING principal_id,
+                     floor(extract(epoch FROM authenticated_at) * 1000)::bigint
+                       AS authenticated_at_ms",
+            )
+            .bind(code_digest.as_bytes().as_slice())
+            .bind(code_challenge.as_str())
+            .bind(now.value())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let Some(authorization) = authorization else {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                return Ok(None);
+            };
+            let principal_id =
+                PrincipalId::from_uuid(decode_uuid(&authorization, "principal_id", operation)?);
+            let authenticated_at = decode_time(&authorization, "authenticated_at_ms", operation)?;
+            let account = lock_account_by_id(&mut transaction, principal_id, operation).await?;
+            if !account.principal.allows_authentication() {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+            let web_session = WebSessionRegistration {
+                id: session.id,
+                secret_digest: session.secret_digest,
+                authenticated_at,
+                created_at: session.created_at,
+                expires_at: session.expires_at,
+            };
+            insert_web_session(&mut transaction, principal_id, &web_session, operation).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(Some(StoredWebSession {
+                id: session.id,
+                account,
+                authenticated_at,
+                created_at: session.created_at,
+                expires_at: session.expires_at,
+            }))
         })
     }
 }
@@ -315,10 +478,31 @@ pub(crate) async fn lock_account_by_oidc(
     decode_principal_account(&row, operation)
 }
 
+async fn lock_account_by_id(
+    transaction: &mut Transaction<'_, Postgres>,
+    principal_id: PrincipalId,
+    operation: &'static str,
+) -> RepositoryResult<PrincipalAccount> {
+    let row = sqlx::query(
+        r"SELECT id AS principal_id, status, version, matrix_user_id, display_name,
+             avatar_content_id, locale
+           FROM agent_room.principal
+           WHERE id = $1
+           FOR UPDATE",
+    )
+    .bind(principal_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?
+    .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::CorruptData))?;
+    decode_principal_account(&row, operation)
+}
+
 async fn insert_web_session(
     transaction: &mut Transaction<'_, Postgres>,
     principal_id: PrincipalId,
     session: &WebSessionRegistration,
+    operation: &'static str,
 ) -> RepositoryResult<()> {
     sqlx::query(
         r"INSERT INTO agent_room.web_session (
@@ -338,7 +522,7 @@ async fn insert_web_session(
     .bind(session.expires_at.value())
     .execute(&mut **transaction)
     .await
-    .map_err(|error| map_sqlx_error("login.complete", &error))?;
+    .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 
@@ -355,13 +539,35 @@ fn decode_login_attempt(
         .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
     let return_path =
         SafeReturnPath::new(return_path).map_err(|_| corrupt_data("login_attempt.consume"))?;
+    let delivery_kind: String = row
+        .try_get("delivery_kind")
+        .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
+    let delivery = match delivery_kind.as_str() {
+        "web" => LoginDelivery::Web { return_path },
+        "desktop" => {
+            let client_state: String = row
+                .try_get("desktop_client_state")
+                .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
+            let code_challenge: String = row
+                .try_get("desktop_pkce_challenge")
+                .map_err(|error| map_sqlx_error("login_attempt.consume", &error))?;
+            LoginDelivery::Desktop {
+                client_state: DesktopClientState::new(client_state)
+                    .map_err(|_| corrupt_data("login_attempt.consume"))?,
+                code_challenge: PkceCodeChallenge::new(code_challenge)
+                    .map_err(|_| corrupt_data("login_attempt.consume"))?,
+                return_path,
+            }
+        }
+        _ => return Err(corrupt_data("login_attempt.consume")),
+    };
     Ok(LoginAttempt {
         id,
         browser_secret_digest,
         state_digest,
         nonce,
         pkce_verifier,
-        return_path,
+        delivery,
         profile_import: agent_room_application::ports::ProfileImportConsent {
             display_name: row
                 .try_get("import_display_name")

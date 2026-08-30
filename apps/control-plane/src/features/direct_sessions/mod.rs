@@ -9,6 +9,8 @@ use std::sync::Arc;
 use agent_room_application::{
     authentication::AuthenticationUseCases, direct_sessions::DirectSessionUseCases,
 };
+
+use crate::features::authentication::TrustedOrigins;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -21,7 +23,7 @@ const MAX_DIRECT_SESSION_BODY_BYTES: usize = 8 * 1_024;
 pub(crate) struct DirectSessionHttpState {
     pub(super) sessions: Arc<dyn DirectSessionUseCases>,
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
-    pub(super) frontend_origin: String,
+    pub(super) trusted_origins: TrustedOrigins,
 }
 
 impl DirectSessionHttpState {
@@ -29,11 +31,12 @@ impl DirectSessionHttpState {
         sessions: Arc<dyn DirectSessionUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
+        desktop_origin: &url::Url,
     ) -> Self {
         Self {
             sessions,
             authentication,
-            frontend_origin: frontend_origin.origin().ascii_serialization(),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
         }
     }
 }
