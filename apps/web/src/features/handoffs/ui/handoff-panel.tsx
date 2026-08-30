@@ -1,21 +1,25 @@
-import { useMachine } from '@xstate/react';
 import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
+import { useMachine } from '@xstate/react';
 import {
   ArrowLeft,
   Bot,
-  Clock3,
+  CircleDot,
   FileLock2,
+  Laptop,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
   Send,
   ShieldAlert,
+  Wifi,
+  WifiOff,
   type LucideIcon,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { groupHandoffTargets } from '@/features/handoffs/application/group-handoff-targets';
 import { createHandoffDeliveryMachine } from '@/features/handoffs/application/handoff-delivery-machine';
 import {
   handoffPurposes,
@@ -26,21 +30,24 @@ import {
   type HandoffPurpose,
   type HandoffSnapshot,
   type HandoffStatus,
+  type HandoffTarget,
 } from '@/features/handoffs/domain/handoff';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { BrowserUuidV7Factory, type UuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import type { TranslationKey } from '@/shared/i18n/resources';
 
+import './handoff-panel.css';
+
 const browserHandoffIds = new BrowserUuidV7Factory();
 const expiryMinutes = [5, 15, 60] as const;
 
 const statusTone: Readonly<Record<HandoffStatus, StatusTone>> = Object.freeze({
-  approved: 'network',
   consumed: 'active',
   declined: 'idle',
   delivered: 'active',
   expired: 'idle',
   failed: 'alert',
+  queued: 'network',
   revoked: 'idle',
 });
 
@@ -131,6 +138,10 @@ export function HandoffPanel({
           <p className="eyebrow">{t('handoff.eyebrow')}</p>
           <h3 id="handoff-panel-title">{t('handoff.title')}</h3>
         </div>
+        <span className="handoff-panel__cloud-badge">
+          <CircleDot aria-hidden="true" />
+          {t('handoff.cloudBadge')}
+        </span>
       </header>
       <div className="handoff-panel__source">
         <FileLock2 aria-hidden="true" />
@@ -155,102 +166,110 @@ export function HandoffPanel({
       ) : null}
       {delivery.matches('ready') && selectedTarget !== null ? (
         <form className="handoff-panel__form" onSubmit={submit}>
-          <label className="handoff-field">
-            <span>{t('handoff.field.target')}</span>
-            <select
-              onChange={(event) => {
-                setSelectedInstanceId(event.target.value);
-              }}
-              value={selectedTarget.instanceId}
-            >
-              {delivery.context.targets.map((target) => (
-                <option key={target.instanceId} value={target.instanceId}>
-                  {target.displayName} · {shortId(target.instanceId)}
-                </option>
+          <TargetDirectory
+            language={i18n.resolvedLanguage}
+            onSelect={setSelectedInstanceId}
+            selectedInstanceId={selectedTarget.instanceId}
+            targets={delivery.context.targets}
+          />
+          <section className="handoff-panel__authorization">
+            <header>
+              <span>{t('handoff.authorization.eyebrow')}</span>
+              <strong>{t('handoff.authorization.title')}</strong>
+              <p>{t('handoff.authorization.detail')}</p>
+            </header>
+            <fieldset className="handoff-fieldset">
+              <legend>{t('handoff.field.scope')}</legend>
+              <label>
+                <input checked disabled type="checkbox" />
+                <span>{t(`handoff.permission.${primaryPermission}`)}</span>
+              </label>
+              <label>
+                <input
+                  checked={includeMetadata}
+                  onChange={(event) => {
+                    setIncludeMetadata(event.target.checked);
+                  }}
+                  type="checkbox"
+                />
+                <span>{t('handoff.permission.include_metadata')}</span>
+              </label>
+            </fieldset>
+            <fieldset className="handoff-fieldset handoff-fieldset--grid">
+              <legend>{t('handoff.field.purpose')}</legend>
+              {handoffPurposes.map((option) => (
+                <label key={option}>
+                  <input
+                    checked={purpose === option}
+                    name="handoff-purpose"
+                    onChange={() => {
+                      setPurpose(option);
+                    }}
+                    type="radio"
+                    value={option}
+                  />
+                  <span>{t(`handoff.purpose.${option}`)}</span>
+                </label>
               ))}
-            </select>
-          </label>
-          <fieldset className="handoff-fieldset">
-            <legend>{t('handoff.field.scope')}</legend>
-            <label>
-              <input checked disabled type="checkbox" />
-              <span>{t(`handoff.permission.${primaryPermission}`)}</span>
-            </label>
-            <label>
-              <input
-                checked={includeMetadata}
-                onChange={(event) => {
-                  setIncludeMetadata(event.target.checked);
-                }}
-                type="checkbox"
-              />
-              <span>{t('handoff.permission.include_metadata')}</span>
-            </label>
-          </fieldset>
-          <fieldset className="handoff-fieldset handoff-fieldset--grid">
-            <legend>{t('handoff.field.purpose')}</legend>
-            {handoffPurposes.map((option) => (
-              <label key={option}>
-                <input
-                  checked={purpose === option}
-                  name="handoff-purpose"
-                  onChange={() => {
-                    setPurpose(option);
-                  }}
-                  type="radio"
-                  value={option}
-                />
-                <span>{t(`handoff.purpose.${option}`)}</span>
-              </label>
-            ))}
-          </fieldset>
-          <fieldset className="handoff-fieldset handoff-fieldset--expiry">
-            <legend>{t('handoff.field.expiry')}</legend>
-            {expiryMinutes.map((minutes) => (
-              <label key={minutes}>
-                <input
-                  checked={lifetimeMinutes === minutes}
-                  name="handoff-expiry"
-                  onChange={() => {
-                    setLifetimeMinutes(minutes);
-                  }}
-                  type="radio"
-                  value={minutes}
-                />
-                <span>{t('handoff.expiry.minutes', { count: minutes })}</span>
-              </label>
-            ))}
-          </fieldset>
-          <div className="handoff-panel__warning" role="note">
-            <ShieldAlert aria-hidden="true" />
-            <p>{t('handoff.warning')}</p>
-          </div>
-          <dl className="handoff-panel__review">
-            <div>
-              <dt>{t('handoff.review.target')}</dt>
-              <dd>{selectedTarget.displayName}</dd>
+            </fieldset>
+            <fieldset className="handoff-fieldset handoff-fieldset--expiry">
+              <legend>{t('handoff.field.expiry')}</legend>
+              {expiryMinutes.map((minutes) => (
+                <label key={minutes}>
+                  <input
+                    checked={lifetimeMinutes === minutes}
+                    name="handoff-expiry"
+                    onChange={() => {
+                      setLifetimeMinutes(minutes);
+                    }}
+                    type="radio"
+                    value={minutes}
+                  />
+                  <span>{t('handoff.expiry.minutes', { count: minutes })}</span>
+                </label>
+              ))}
+            </fieldset>
+            <div className="handoff-panel__warning" role="note">
+              <ShieldAlert aria-hidden="true" />
+              <p>{t('handoff.warning')}</p>
             </div>
-            <div>
-              <dt>{t('handoff.review.scope')}</dt>
-              <dd>
-                {permissions.map((permission) => t(`handoff.permission.${permission}`)).join(' · ')}
-              </dd>
-            </div>
-            <div>
-              <dt>{t('handoff.review.purpose')}</dt>
-              <dd>{t(`handoff.purpose.${purpose}`)}</dd>
-            </div>
-            <div>
-              <dt>{t('handoff.review.expiry')}</dt>
-              <dd>{t('handoff.expiry.minutes', { count: lifetimeMinutes })}</dd>
-            </div>
-          </dl>
-          <footer className="handoff-panel__footer">
-            <span>{t('handoff.confirmDetail')}</span>
-            <Button icon={<Send aria-hidden="true" />} tone="network" type="submit">
-              {t('handoff.confirm')}
-            </Button>
-          </footer>
+            <dl className="handoff-panel__review">
+              <div>
+                <dt>{t('handoff.review.target')}</dt>
+                <dd>
+                  {selectedTarget.agentDisplayName} · {selectedTarget.device.label}
+                </dd>
+              </div>
+              <div>
+                <dt>{t('handoff.review.delivery')}</dt>
+                <dd>
+                  {t(
+                    selectedTarget.online
+                      ? 'handoff.target.deliveryNow'
+                      : 'handoff.target.deliveryQueued',
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>{t('handoff.review.scope')}</dt>
+                <dd>
+                  {permissions
+                    .map((permission) => t(`handoff.permission.${permission}`))
+                    .join(' · ')}
+                </dd>
+              </div>
+              <div>
+                <dt>{t('handoff.review.expiry')}</dt>
+                <dd>{t('handoff.expiry.minutes', { count: lifetimeMinutes })}</dd>
+              </div>
+            </dl>
+            <footer className="handoff-panel__footer">
+              <span>{t('handoff.confirmDetail')}</span>
+              <Button icon={<Send aria-hidden="true" />} tone="network" type="submit">
+                {t('handoff.confirm')}
+              </Button>
+            </footer>
+          </section>
         </form>
       ) : null}
       {delivery.matches('submitting') ? (
@@ -271,24 +290,6 @@ export function HandoffPanel({
           label={t('handoff.progress.revoke')}
         />
       ) : null}
-      {delivery.matches('uncertain') ? (
-        <HandoffBoundary
-          detail={t('handoff.uncertain.detail')}
-          icon={Clock3}
-          label={t('handoff.uncertain.title')}
-        >
-          <Button
-            icon={<RefreshCw aria-hidden="true" />}
-            onClick={() => {
-              send({ type: 'QUERY' });
-            }}
-            size="compact"
-            tone="quiet"
-          >
-            {t('handoff.query')}
-          </Button>
-        </HandoffBoundary>
-      ) : null}
       {delivery.matches('active') && delivery.context.snapshot !== null ? (
         <HandoffStatusView
           language={i18n.resolvedLanguage}
@@ -299,10 +300,15 @@ export function HandoffPanel({
             send({ type: 'REVOKE' });
           }}
           snapshot={delivery.context.snapshot}
+          target={selectedTarget}
         />
       ) : null}
       {delivery.matches('resolved') && delivery.context.snapshot !== null ? (
-        <HandoffStatusView language={i18n.resolvedLanguage} snapshot={delivery.context.snapshot} />
+        <HandoffStatusView
+          language={i18n.resolvedLanguage}
+          snapshot={delivery.context.snapshot}
+          target={selectedTarget}
+        />
       ) : null}
       {delivery.matches('failed') ? (
         <HandoffBoundary
@@ -325,6 +331,93 @@ export function HandoffPanel({
         </HandoffBoundary>
       ) : null}
     </motion.section>
+  );
+}
+
+function TargetDirectory({
+  language,
+  onSelect,
+  selectedInstanceId,
+  targets,
+}: {
+  readonly language: string | undefined;
+  readonly onSelect: (instanceId: string) => void;
+  readonly selectedInstanceId: string;
+  readonly targets: readonly HandoffTarget[];
+}) {
+  const { t } = useTranslation();
+  const groups = useMemo(() => groupHandoffTargets(targets), [targets]);
+  return (
+    <fieldset className="handoff-targets">
+      <legend>{t('handoff.field.target')}</legend>
+      <header className="handoff-targets__header">
+        <div>
+          <strong>{t('handoff.targets.title')}</strong>
+          <span>{t('handoff.targets.agentCount', { count: groups.length })}</span>
+        </div>
+        <p>{t('handoff.targets.detail')}</p>
+      </header>
+      <div className="handoff-targets__list">
+        {groups.map((agent) => (
+          <section className="handoff-agent-group" key={agent.agentId}>
+            <header>
+              <span aria-hidden="true" className="handoff-agent-group__avatar">
+                {initials(agent.agentDisplayName)}
+              </span>
+              <div>
+                <strong>{agent.agentDisplayName}</strong>
+                <code>{shortId(agent.agentId)}</code>
+              </div>
+            </header>
+            {agent.devices.map(({ device, targets: deviceTargets }) => (
+              <section className="handoff-device-group" key={device.deviceId}>
+                <header>
+                  <Laptop aria-hidden="true" />
+                  <strong>{device.label}</strong>
+                  <span>{t(`security.access.platform.${device.platform}`)}</span>
+                </header>
+                {deviceTargets.map((target) => (
+                  <label
+                    className="handoff-target"
+                    data-online={target.online ? 'true' : 'false'}
+                    key={target.instanceId}
+                  >
+                    <input
+                      checked={selectedInstanceId === target.instanceId}
+                      name="handoff-target"
+                      onChange={() => {
+                        onSelect(target.instanceId);
+                      }}
+                      type="radio"
+                      value={target.instanceId}
+                    />
+                    <span className="handoff-target__availability">
+                      {target.online ? <Wifi aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
+                    </span>
+                    <span className="handoff-target__identity">
+                      <strong>{target.adapterType}</strong>
+                      <code>{shortId(target.instanceId)}</code>
+                    </span>
+                    <span className="handoff-target__state">
+                      <strong>
+                        {t(target.online ? 'handoff.target.online' : 'handoff.target.offline')}
+                      </strong>
+                      <small>
+                        {target.lastSeenAtUnixMs === null
+                          ? t('handoff.target.neverSeen')
+                          : t('handoff.target.lastSeen', {
+                              time: formatTargetTime(target.lastSeenAtUnixMs, language),
+                            })}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </section>
+            ))}
+          </section>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -368,36 +461,89 @@ function HandoffStatusView({
   onQuery,
   onRevoke,
   snapshot,
+  target,
 }: {
   readonly language: string | undefined;
   readonly onQuery?: () => void;
   readonly onRevoke?: () => void;
   readonly snapshot: HandoffSnapshot;
+  readonly target: HandoffTarget | null;
 }) {
   const { t } = useTranslation();
   return (
     <section className="handoff-panel__status" role="status">
-      <StatusMark
-        label={t(`handoff.status.${snapshot.status}`)}
-        tone={statusTone[snapshot.status]}
-      />
-      <div>
-        <strong>{t(`handoff.status.${snapshot.status}`)}</strong>
-        <p>{t(`handoff.statusDetail.${snapshot.status}`)}</p>
-        <code>{snapshot.handoffId}</code>
-        <span>
-          {t('handoff.expiresAt', {
-            time: new Intl.DateTimeFormat(language, {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            }).format(snapshot.expiresAtUnixMs),
-          })}
-        </span>
-      </div>
+      <header>
+        <StatusMark
+          label={t(`handoff.status.${snapshot.status}`)}
+          tone={statusTone[snapshot.status]}
+        />
+        <div>
+          <p className="eyebrow">{t('handoff.status.eyebrow')}</p>
+          <strong>{t(`handoff.status.${snapshot.status}`)}</strong>
+          <p>{t(`handoff.statusDetail.${snapshot.status}`)}</p>
+        </div>
+      </header>
+      <ol className="handoff-status-timeline">
+        <TimelineStep
+          active={snapshot.status === 'queued'}
+          label={t('handoff.timeline.queued')}
+          timestamp={snapshot.queuedAtUnixMs}
+        />
+        <TimelineStep
+          active={snapshot.status === 'delivered'}
+          label={t('handoff.timeline.delivered')}
+          timestamp={snapshot.deliveredAtUnixMs}
+        />
+        <TimelineStep
+          active={snapshot.status === 'consumed'}
+          label={t('handoff.timeline.consumed')}
+          timestamp={snapshot.consumedAtUnixMs}
+        />
+      </ol>
+      <dl className="handoff-status-facts">
+        <div>
+          <dt>{t('handoff.review.target')}</dt>
+          <dd>
+            {target === null
+              ? shortId(snapshot.targetInstanceId)
+              : `${target.agentDisplayName} · ${target.device.label}`}
+          </dd>
+        </div>
+        <div>
+          <dt>{t('handoff.status.handoffId')}</dt>
+          <dd>
+            <code>{snapshot.handoffId}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>{t('handoff.review.expiry')}</dt>
+          <dd>
+            {t('handoff.expiresAt', {
+              time: new Intl.DateTimeFormat(language, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              }).format(snapshot.expiresAtUnixMs),
+            })}
+          </dd>
+        </div>
+        {snapshot.failureCode === null ? null : (
+          <div>
+            <dt>{t('handoff.status.failureCode')}</dt>
+            <dd>
+              <code>{snapshot.failureCode}</code>
+            </dd>
+          </div>
+        )}
+      </dl>
       {onQuery === undefined && onRevoke === undefined ? null : (
-        <div className="handoff-panel__status-actions">
+        <footer className="handoff-panel__status-actions">
           {onQuery === undefined ? null : (
-            <Button onClick={onQuery} size="compact" tone="quiet">
+            <Button
+              icon={<RefreshCw aria-hidden="true" />}
+              onClick={onQuery}
+              size="compact"
+              tone="quiet"
+            >
               {t('handoff.query')}
             </Button>
           )}
@@ -406,9 +552,29 @@ function HandoffStatusView({
               {t('handoff.revoke')}
             </Button>
           )}
-        </div>
+        </footer>
       )}
     </section>
+  );
+}
+
+function TimelineStep({
+  active,
+  label,
+  timestamp,
+}: {
+  readonly active: boolean;
+  readonly label: string;
+  readonly timestamp: number | null;
+}) {
+  return (
+    <li
+      data-active={active ? 'true' : 'false'}
+      data-complete={timestamp === null ? 'false' : 'true'}
+    >
+      <span aria-hidden="true" />
+      <strong>{label}</strong>
+    </li>
   );
 }
 
@@ -416,15 +582,25 @@ function shortId(value: string): string {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
+function initials(displayName: string): string {
+  return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
+}
+
+function formatTargetTime(value: number, language: string | undefined): string {
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(value);
+}
+
 const handoffFailureMessageKey: Readonly<Record<HandoffFailureCode, TranslationKey>> = {
   'handoff.already_resolved': 'handoff.failure.already_resolved',
   'handoff.authorization_denied': 'handoff.failure.authorization_denied',
-  'handoff.bridge_unavailable': 'handoff.failure.bridge_unavailable',
+  'handoff.cloud_unavailable': 'handoff.failure.cloud_unavailable',
   'handoff.invalid_intent': 'handoff.failure.invalid_intent',
+  'handoff.invalid_response': 'handoff.failure.invalid_response',
   'handoff.not_found': 'handoff.failure.not_found',
-  'handoff.persistence_failed': 'handoff.failure.persistence_failed',
   'handoff.targets_unavailable': 'handoff.failure.targets_unavailable',
-  'handoff.transport_rejected': 'handoff.failure.transport_rejected',
   'handoff.unexpected_failure': 'handoff.failure.unexpected_failure',
 };
 

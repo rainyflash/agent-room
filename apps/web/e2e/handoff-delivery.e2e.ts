@@ -15,17 +15,24 @@ test('已验证正文必须经过精确实例授权才能成为一次性上下�
   await inspector.getByRole('button', { name: 'Give to Agent' }).click();
 
   const panel = inspector.getByRole('region', { name: 'Approve one-time context' });
-  const target = panel.getByRole('combobox', { name: 'Exact target instance' });
-  await expect(target.locator('option')).toHaveCount(1);
-  await expect(target).toHaveValue('01990d9e-8400-7000-8000-000000000012');
+  const targets = panel.getByRole('radio', { name: /desktop/u });
+  await expect(targets).toHaveCount(2);
+  await expect(panel.getByText('Local Codex Agent', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Research Agent', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Online · deliver now', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Offline · queue', { exact: true })).toBeVisible();
+  await panel.getByRole('radio', { name: /claude-desktop/u }).click();
+  await expect(
+    panel.getByText('Queue until this instance reconnects', { exact: true }),
+  ).toBeVisible();
   await expect(panel.getByRole('checkbox', { name: 'Read verified text' })).toBeDisabled();
   await expect(panel.getByRole('radio', { name: 'Summarize' })).toBeChecked();
   await expect(panel.getByRole('radio', { name: '15 min' })).toBeChecked();
 
   await panel.getByRole('button', { name: 'Confirm handoff' }).click();
-  await expect(panel.getByText('Approval sent', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Queued for one instance', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: 'Check status' }).click();
-  await expect(panel.getByText('One-time context ready', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Claimed by target runtime', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: 'Revoke access' }).click();
   await expect(panel.getByText('Access revoked', { exact: true })).toBeVisible();
 
@@ -45,7 +52,7 @@ test('窄屏授权面板保持完整可操作且不会横向溢出', async ({ pa
   await panel.getByRole('radio', { name: '15 min' }).click();
   await expect(panel.getByRole('button', { name: 'Confirm handoff' })).toBeVisible();
   await panel.getByRole('button', { name: 'Confirm handoff' }).click();
-  await expect(panel.getByText('Approval sent', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Queued for one instance', { exact: true })).toBeVisible();
 
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);

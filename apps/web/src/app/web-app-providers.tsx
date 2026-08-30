@@ -10,7 +10,7 @@ import { BrowserDirectBlockRegistry } from '@/features/direct-sessions/adapters/
 import { ControlPlaneDirectSessionClient } from '@/features/direct-sessions/adapters/control-plane-direct-session-client';
 import { MatrixSdkDirectSessionGateway } from '@/features/direct-sessions/adapters/matrix-direct-session-gateway';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
-import { WebObserverHandoffGateway } from '@/features/handoffs/adapters/web-observer-handoff-gateway';
+import { ControlPlaneHandoffGateway } from '@/features/handoffs/adapters/control-plane-handoff-gateway';
 import { ControlPlanePublicLobbyEntryClient } from '@/features/lobby-entry/adapters/control-plane-public-lobby-entry-client';
 import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapters/matrix-public-lobby-entry-gateway';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
@@ -127,7 +127,7 @@ export function createCloudRuntime(
     controlPlane,
     directSessionCoordinator,
     directSessions,
-    handoffs: new WebObserverHandoffGateway(),
+    handoffs: new ControlPlaneHandoffGateway({ baseUrl: config.controlPlaneUrl }),
     lobby,
     lobbyEntry,
     localRuntime,

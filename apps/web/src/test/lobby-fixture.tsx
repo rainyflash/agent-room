@@ -24,7 +24,13 @@ import type {
   HandoffApprovalRequest,
   HandoffGateway,
   HandoffSnapshot,
+  HandoffTarget,
 } from '@/features/handoffs/domain/handoff';
+import {
+  acceptedHandoffFixture,
+  handoffSnapshotFixture,
+  handoffTargetFixture,
+} from '@/features/handoffs/testing/handoff-fixtures';
 import type {
   LobbyAgent,
   LobbyAgentStatus,
@@ -430,27 +436,14 @@ class FixtureHandoffGateway implements HandoffGateway {
 
   approve(request: HandoffApprovalRequest) {
     securityActionCounts.handoffApprovals += 1;
-    this.#snapshot = {
-      expiresAtUnixMs: request.expiresAtUnixMs,
-      handoffId: request.handoffId,
-      status: 'approved',
-    };
-    return Promise.resolve(
-      ok({ handoffId: request.handoffId, kind: 'submitted' as const, reused: false }),
-    );
+    const accepted = acceptedHandoffFixture(request);
+    this.#snapshot = accepted.snapshot;
+    return Promise.resolve(ok(accepted));
   }
 
   listTargets() {
     securityActionCounts.handoffTargetReads += 1;
-    return Promise.resolve(
-      ok([
-        {
-          agentId: '01990d9e-8400-7000-8000-000000000011',
-          displayName: 'Local Codex Agent',
-          instanceId: '01990d9e-8400-7000-8000-000000000012',
-        },
-      ]),
-    );
+    return Promise.resolve(ok([handoffTargetFixture, fixtureOfflineHandoffTarget]));
   }
 
   reconcile() {
@@ -458,7 +451,7 @@ class FixtureHandoffGateway implements HandoffGateway {
     return Promise.resolve(
       snapshot === null
         ? err({ code: 'handoff.not_found' as const, retryable: false })
-        : ok({ ...snapshot, status: 'delivered' as const }),
+        : ok(handoffSnapshotFixture(snapshot.handoffId, 'delivered', snapshot.expiresAtUnixMs)),
     );
   }
 
@@ -467,10 +460,26 @@ class FixtureHandoffGateway implements HandoffGateway {
     return Promise.resolve(
       snapshot === null
         ? err({ code: 'handoff.not_found' as const, retryable: false })
-        : ok({ ...snapshot, status: 'revoked' as const }),
+        : ok(handoffSnapshotFixture(snapshot.handoffId, 'revoked', snapshot.expiresAtUnixMs)),
     );
   }
 }
+
+const fixtureOfflineHandoffTarget: HandoffTarget = Object.freeze({
+  ...handoffTargetFixture,
+  adapterType: 'claude-desktop',
+  agentDisplayName: 'Research Agent',
+  agentId: '01990d9e-8400-7000-8000-000000000021',
+  device: Object.freeze({
+    deviceId: '01990d9e-8400-7000-8000-000000000023',
+    label: 'Travel PC',
+    platform: 'windows',
+  }),
+  instanceId: '01990d9e-8400-7000-8000-000000000022',
+  instanceStatus: 'offline',
+  leaseExpiresAtUnixMs: null,
+  online: false,
+});
 
 const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' });
 

@@ -4,6 +4,7 @@ import {
   type HandoffApprovalRequest,
   validateHandoffApproval,
 } from '@/features/handoffs/domain/handoff';
+import { handoffTargetFixture } from '@/features/handoffs/testing/handoff-fixtures';
 
 describe('上下文交付授权', () => {
   it('接受精确目标、文本范围、用途和一小时内期限', () => {
@@ -54,7 +55,7 @@ describe('上下文交付授权', () => {
     expect(validateHandoffApproval({ ...request(), expiresAtUnixMs: 1_000 }, 1_000)).toContain(
       'expiry_invalid',
     );
-    expect(validateHandoffApproval({ ...request(), expiresAtUnixMs: 3_601_001 }, 1_000)).toContain(
+    expect(validateHandoffApproval({ ...request(), expiresAtUnixMs: 86_401_001 }, 1_000)).toContain(
       'expiry_invalid',
     );
   });
@@ -86,10 +87,6 @@ function request(): HandoffApprovalRequest {
       riskFlags: ['untrusted_instructions'],
       roomId: '!builders:agent-room.test',
     },
-    target: {
-      agentId: '01990d9e-8400-7000-8000-000000000005',
-      displayName: 'Local Codex',
-      instanceId: '01990d9e-8400-7000-8000-000000000006',
-    },
+    target: handoffTargetFixture,
   };
 }

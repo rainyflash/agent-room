@@ -157,54 +157,21 @@ export function createHandoffDeliveryMachine({
           input: ({ context }) => ({ request: context.request }),
           onDone: [
             {
-              guard: ({ event }) => event.output.ok && event.output.value.kind === 'submitted',
+              guard: ({ event }) =>
+                event.output.ok && isHandoffActive(event.output.value.snapshot.status),
               actions: assign({
                 failure: null,
                 recovery: 'none' as const,
-                snapshot: ({ context, event }) =>
-                  event.output.ok
-                    ? snapshotFromSubmission(context.request, event.output.value)
-                    : null,
+                snapshot: ({ event }) => (event.output.ok ? event.output.value.snapshot : null),
               }),
               target: 'active',
             },
             {
-              guard: ({ event }) =>
-                event.output.ok && event.output.value.kind === 'delivery_uncertain',
+              guard: ({ event }) => event.output.ok,
               actions: assign({
                 failure: null,
                 recovery: 'none' as const,
-                snapshot: ({ context, event }) =>
-                  event.output.ok
-                    ? snapshotFromSubmission(context.request, event.output.value)
-                    : null,
-              }),
-              target: 'uncertain',
-            },
-            {
-              guard: ({ event }) =>
-                event.output.ok &&
-                event.output.value.kind === 'resolved' &&
-                isHandoffActive(event.output.value.snapshot.status),
-              actions: assign({
-                failure: null,
-                recovery: 'none' as const,
-                snapshot: ({ event }) =>
-                  event.output.ok && event.output.value.kind === 'resolved'
-                    ? event.output.value.snapshot
-                    : null,
-              }),
-              target: 'active',
-            },
-            {
-              guard: ({ event }) => event.output.ok && event.output.value.kind === 'resolved',
-              actions: assign({
-                failure: null,
-                recovery: 'none' as const,
-                snapshot: ({ event }) =>
-                  event.output.ok && event.output.value.kind === 'resolved'
-                    ? event.output.value.snapshot
-                    : null,
+                snapshot: ({ event }) => (event.output.ok ? event.output.value.snapshot : null),
               }),
               target: 'resolved',
             },
@@ -222,20 +189,18 @@ export function createHandoffDeliveryMachine({
           onError: {
             actions: assign({
               failure: { ...unexpectedFailure, retryable: true },
-              recovery: 'reconcile' as const,
+              recovery: 'approve' as const,
             }),
-            target: 'uncertain',
+            target: 'failed',
           },
         },
       },
       active: {
+        after: { 3_000: { target: 'reconciling' } },
         on: {
           QUERY: { target: 'reconciling' },
           REVOKE: { target: 'revoking' },
         },
-      },
-      uncertain: {
-        on: { QUERY: { target: 'reconciling' } },
       },
       reconciling: {
         invoke: {
@@ -332,19 +297,3 @@ export function createHandoffDeliveryMachine({
 }
 
 export type HandoffDeliveryMachine = ReturnType<typeof createHandoffDeliveryMachine>;
-
-function snapshotFromSubmission(
-  request: HandoffApprovalRequest | null,
-  outcome: HandoffSubmissionOutcome,
-): HandoffSnapshot | null {
-  if (outcome.kind === 'resolved') {
-    return outcome.snapshot;
-  }
-  return request === null
-    ? null
-    : {
-        expiresAtUnixMs: request.expiresAtUnixMs,
-        handoffId: outcome.handoffId,
-        status: 'approved',
-      };
-}

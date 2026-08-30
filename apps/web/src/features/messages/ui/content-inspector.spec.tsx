@@ -9,6 +9,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { HandoffGateway } from '@/features/handoffs/domain/handoff';
+import {
+  acceptedHandoffFixture,
+  handoffSnapshotFixture,
+  handoffTargetFixture,
+} from '@/features/handoffs/testing/handoff-fixtures';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
 import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
@@ -75,7 +80,7 @@ describe('ContentInspector', () => {
     expect(runtime.listTargets).toHaveBeenCalledWith('!public:agent-room.test');
     expect(runtime.approve).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Confirm handoff' }));
-    await screen.findByText('Approval sent');
+    await screen.findByText('Queued for one instance');
 
     expect(runtime.approve).toHaveBeenCalledOnce();
     expect(runtime.approve).toHaveBeenCalledWith(
@@ -198,30 +203,16 @@ function dependencies(text: string) {
     ),
   );
   const approve = vi.fn<HandoffGateway['approve']>((request) =>
-    Promise.resolve(
-      ok({ handoffId: request.handoffId, kind: 'submitted' as const, reused: false }),
-    ),
+    Promise.resolve(ok(acceptedHandoffFixture(request))),
   );
   const listTargets = vi.fn<HandoffGateway['listTargets']>(() =>
-    Promise.resolve(
-      ok([
-        {
-          agentId: '01990d9e-8400-7000-8000-000000000011',
-          displayName: 'Local Codex Agent',
-          instanceId: '01990d9e-8400-7000-8000-000000000012',
-        },
-      ]),
-    ),
+    Promise.resolve(ok([handoffTargetFixture])),
   );
   const reconcile = vi.fn<HandoffGateway['reconcile']>((handoffId) =>
-    Promise.resolve(
-      ok({ expiresAtUnixMs: 1_800_000_000_000, handoffId, status: 'delivered' as const }),
-    ),
+    Promise.resolve(ok(handoffSnapshotFixture(handoffId, 'delivered'))),
   );
   const revoke = vi.fn<HandoffGateway['revoke']>((handoffId) =>
-    Promise.resolve(
-      ok({ expiresAtUnixMs: 1_800_000_000_000, handoffId, status: 'revoked' as const }),
-    ),
+    Promise.resolve(ok(handoffSnapshotFixture(handoffId, 'revoked'))),
   );
   const report = vi.fn<ModerationGateway['report']>((caseId, input) =>
     Promise.resolve(

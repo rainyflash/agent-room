@@ -4,7 +4,7 @@ import type { Result } from '@/shared/result';
 export const handoffPermissions = ['read_text', 'read_attachments', 'include_metadata'] as const;
 export const handoffPurposes = ['inspect', 'summarize', 'reply_draft'] as const;
 export const handoffStatuses = [
-  'approved',
+  'queued',
   'delivered',
   'consumed',
   'declined',
@@ -17,10 +17,26 @@ export type HandoffPermission = (typeof handoffPermissions)[number];
 export type HandoffPurpose = (typeof handoffPurposes)[number];
 export type HandoffStatus = (typeof handoffStatuses)[number];
 
+export type HandoffInstanceStatus = 'connecting' | 'online' | 'degraded' | 'offline' | 'revoked';
+
+export type HandoffTargetDevice = {
+  readonly deviceId: string;
+  readonly label: string;
+  readonly platform: 'windows' | 'macos' | 'linux' | 'web';
+};
+
 export type HandoffTarget = {
   readonly agentId: string;
-  readonly displayName: string;
+  readonly agentAvatarContentId: string | null;
+  readonly agentDisplayName: string;
+  readonly adapterType: string;
+  readonly capabilityVersion: string;
+  readonly device: HandoffTargetDevice;
   readonly instanceId: string;
+  readonly instanceStatus: HandoffInstanceStatus;
+  readonly lastSeenAtUnixMs: number | null;
+  readonly leaseExpiresAtUnixMs: number | null;
+  readonly online: boolean;
 };
 
 export type HandoffSource = {
@@ -42,36 +58,34 @@ export type HandoffApprovalRequest = {
 };
 
 export type HandoffSnapshot = {
+  readonly consumedAtUnixMs: number | null;
+  readonly createdAtUnixMs: number;
+  readonly deliveredAtUnixMs: number | null;
   readonly expiresAtUnixMs: number;
-  readonly failureCode?: string;
+  readonly failureCode: string | null;
   readonly handoffId: string;
+  readonly queuedAtUnixMs: number;
+  readonly resolvedAtUnixMs: number | null;
   readonly status: HandoffStatus;
+  readonly targetAgentId: string;
+  readonly targetInstanceId: string;
+  readonly version: number;
 };
 
-export type HandoffSubmissionOutcome =
-  | {
-      readonly handoffId: string;
-      readonly kind: 'submitted';
-      readonly reused: boolean;
-    }
-  | {
-      readonly handoffId: string;
-      readonly kind: 'delivery_uncertain';
-    }
-  | {
-      readonly kind: 'resolved';
-      readonly snapshot: HandoffSnapshot;
-    };
+export type HandoffSubmissionOutcome = {
+  readonly kind: 'accepted';
+  readonly reused: boolean;
+  readonly snapshot: HandoffSnapshot;
+};
 
 export type HandoffFailureCode =
-  | 'handoff.bridge_unavailable'
-  | 'handoff.targets_unavailable'
-  | 'handoff.invalid_intent'
-  | 'handoff.authorization_denied'
-  | 'handoff.transport_rejected'
-  | 'handoff.persistence_failed'
-  | 'handoff.not_found'
   | 'handoff.already_resolved'
+  | 'handoff.authorization_denied'
+  | 'handoff.cloud_unavailable'
+  | 'handoff.invalid_intent'
+  | 'handoff.invalid_response'
+  | 'handoff.not_found'
+  | 'handoff.targets_unavailable'
   | 'handoff.unexpected_failure';
 
 export type HandoffFailure = {
@@ -99,7 +113,8 @@ export type HandoffRequestIssue =
 const uuidV7Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const matrixRoomIdPattern = /^![^:]+:[^:]+$/u;
 const matrixEventIdPattern = /^\$[^:]+(?::[^:]+)?$/u;
-const maximumHandoffLifetimeMs = 60 * 60 * 1_000;
+const minimumHandoffLifetimeMs = 60_000;
+const maximumHandoffLifetimeMs = 24 * 60 * 60 * 1_000;
 
 export function validateHandoffApproval(
   request: HandoffApprovalRequest,
@@ -121,7 +136,7 @@ export function validateHandoffApproval(
   const lifetime = request.expiresAtUnixMs - approvedAtUnixMs;
   if (
     !Number.isSafeInteger(request.expiresAtUnixMs) ||
-    lifetime <= 0 ||
+    lifetime < minimumHandoffLifetimeMs ||
     lifetime > maximumHandoffLifetimeMs
   ) {
     issues.add('expiry_invalid');
@@ -130,15 +145,26 @@ export function validateHandoffApproval(
 }
 
 export function isHandoffActive(status: HandoffStatus): boolean {
-  return status === 'approved' || status === 'delivered';
+  return status === 'queued' || status === 'delivered';
 }
 
 function validTarget(target: HandoffTarget): boolean {
   return (
     uuidV7Pattern.test(target.agentId) &&
     uuidV7Pattern.test(target.instanceId) &&
-    validDisplayName(target.displayName)
+    uuidV7Pattern.test(target.device.deviceId) &&
+    validDisplayName(target.agentDisplayName) &&
+    validDisplayName(target.device.label) &&
+    target.adapterType.trim().length > 0 &&
+    target.capabilityVersion.trim().length > 0 &&
+    (target.agentAvatarContentId === null || uuidV7Pattern.test(target.agentAvatarContentId)) &&
+    validOptionalTimestamp(target.lastSeenAtUnixMs) &&
+    validOptionalTimestamp(target.leaseExpiresAtUnixMs)
   );
+}
+
+function validOptionalTimestamp(value: number | null): boolean {
+  return value === null || (Number.isSafeInteger(value) && value >= 0);
 }
 
 function validDisplayName(value: string): boolean {
@@ -157,14 +183,21 @@ function validSource(source: HandoffSource): boolean {
     matrixRoomIdPattern.test(source.roomId) &&
     matrixEventIdPattern.test(source.matrixEventId) &&
     uuidV7Pattern.test(source.messageId) &&
-    source.actor.kind === 'agent' &&
-    uuidV7Pattern.test(source.actor.agentId) &&
-    uuidV7Pattern.test(source.actor.instanceId) &&
+    validActor(source.actor) &&
     uuidV7Pattern.test(source.content.contentId) &&
     /^[0-9a-f]{64}$/u.test(source.content.digestSha256) &&
     Number.isSafeInteger(source.content.sizeBytes) &&
-    source.content.sizeBytes >= 0
+    source.content.sizeBytes > 0
   );
+}
+
+function validActor(actor: MessageActor): boolean {
+  if (!validDisplayName(actor.displayName) || !actor.matrixUserId.startsWith('@')) {
+    return false;
+  }
+  return actor.kind === 'agent'
+    ? uuidV7Pattern.test(actor.agentId) && uuidV7Pattern.test(actor.instanceId)
+    : uuidV7Pattern.test(actor.principalId);
 }
 
 function validContentScope(permissions: readonly HandoffPermission[], mediaType: string): boolean {
