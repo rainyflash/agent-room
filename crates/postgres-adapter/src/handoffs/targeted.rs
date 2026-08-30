@@ -179,6 +179,85 @@ impl TargetedHandoffRepository for PostgresRepositories {
     }
 }
 
+async fn insert_targeted_handoff(
+    transaction: &mut Transaction<'_, Postgres>,
+    request: &QueueTargetedHandoff<'_>,
+    byte_length: i64,
+    permissions: Vec<String>,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let fields = request.handoff.fields();
+    let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
+        r"INSERT INTO agent_room.context_handoff (
+               id, principal_id, target_agent_instance_id,
+               source_matrix_room_id, source_matrix_event_id, source_message_id,
+               content_id, allowed_purpose, permissions, state,
+               approved_at, created_at, queued_at, expires_at, request_fingerprint
+           )
+           SELECT $1, $2, $3, $5, $6, $7, $8, $12, $13, 'queued',
+                  to_timestamp($15::double precision / 1000.0),
+                  to_timestamp($15::double precision / 1000.0),
+                  to_timestamp($15::double precision / 1000.0),
+                  to_timestamp($16::double precision / 1000.0), $14
+             FROM agent_room.agent_instance AS target
+             JOIN agent_room.agent AS agent ON agent.id = target.agent_id
+             JOIN agent_room.adapter_binding AS binding ON binding.id = target.adapter_binding_id
+             JOIN agent_room.device AS device ON device.id = target.device_id
+             JOIN agent_room.principal AS device_owner ON device_owner.id = device.principal_id
+             JOIN agent_room.agent_ownership AS ownership
+               ON ownership.agent_id = target.agent_id
+              AND ownership.principal_id = $2
+              AND ownership.revoked_at IS NULL
+              AND ownership.role IN ('owner', 'operator')
+             JOIN agent_room.content_object AS content ON content.id = $8
+             JOIN agent_room.content_access_policy AS policy ON policy.content_id = content.id
+            WHERE target.id = $3
+              AND target.agent_id = $4
+              AND target.revoked_at IS NULL
+              AND target.status <> 'revoked'
+              AND agent.lifecycle_state = 'active'
+              AND binding.state = 'active'
+              AND binding.configuration @> jsonb_build_object(
+                  'capabilities', jsonb_build_array($17::text)
+              )
+              AND device.revoked_at IS NULL
+              AND device.trust_state = 'verified'
+              AND device_owner.status = 'active'
+              AND content.lifecycle_state = 'active'
+              AND content.sha256_digest = $9
+              AND content.byte_length = $10
+              AND content.media_type = $11
+              AND (content.expires_at IS NULL OR content.expires_at >=
+                  to_timestamp($16::double precision / 1000.0))
+              AND policy.matrix_room_id = $5
+              AND policy.matrix_event_id = $6
+              AND policy.revoked_at IS NULL
+           ON CONFLICT (id) DO NOTHING
+           RETURNING id",
+    )
+    .bind(fields.id.as_uuid())
+    .bind(fields.principal_id.as_uuid())
+    .bind(fields.target_instance_id.as_uuid())
+    .bind(fields.target_agent_id.as_uuid())
+    .bind(fields.source_room_id.as_str())
+    .bind(fields.source_event_id.as_str())
+    .bind(fields.source_message_id.as_uuid())
+    .bind(fields.content.content_id().as_uuid())
+    .bind(fields.content.digest().as_bytes().as_slice())
+    .bind(byte_length)
+    .bind(fields.content.media_type().as_str())
+    .bind(fields.purpose.as_str())
+    .bind(permissions)
+    .bind(request.request_fingerprint.as_bytes().as_slice())
+    .bind(fields.created_at.value())
+    .bind(fields.expires_at.value())
+    .bind(TARGETED_HANDOFF_CAPABILITY)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(inserted.is_some())
+}
+
 impl PostgresRepositories {
     async fn queue_targeted_handoff(
         &self,
@@ -199,82 +278,19 @@ impl PostgresRepositories {
             .await
             .map_err(|error| map_sqlx_error(OPERATION, &error))?;
         let result = async {
-            let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
-                r"INSERT INTO agent_room.context_handoff (
-                       id, principal_id, target_agent_instance_id,
-                       source_matrix_room_id, source_matrix_event_id, source_message_id,
-                       content_id, allowed_purpose, permissions, state,
-                       approved_at, created_at, queued_at, expires_at, request_fingerprint
-                   )
-                   SELECT $1, $2, $3, $5, $6, $7, $8, $12, $13, 'queued',
-                          to_timestamp($15::double precision / 1000.0),
-                          to_timestamp($15::double precision / 1000.0),
-                          to_timestamp($15::double precision / 1000.0),
-                          to_timestamp($16::double precision / 1000.0), $14
-                     FROM agent_room.agent_instance AS target
-                     JOIN agent_room.agent AS agent ON agent.id = target.agent_id
-                     JOIN agent_room.adapter_binding AS binding
-                       ON binding.id = target.adapter_binding_id
-                     JOIN agent_room.device AS device ON device.id = target.device_id
-                     JOIN agent_room.principal AS device_owner
-                       ON device_owner.id = device.principal_id
-                     JOIN agent_room.agent_ownership AS ownership
-                       ON ownership.agent_id = target.agent_id
-                      AND ownership.principal_id = $2
-                      AND ownership.revoked_at IS NULL
-                      AND ownership.role IN ('owner', 'operator')
-                     JOIN agent_room.content_object AS content ON content.id = $8
-                     JOIN agent_room.content_access_policy AS policy
-                       ON policy.content_id = content.id
-                    WHERE target.id = $3
-                      AND target.agent_id = $4
-                      AND target.revoked_at IS NULL
-                      AND target.status <> 'revoked'
-                      AND agent.lifecycle_state = 'active'
-                      AND binding.state = 'active'
-                      AND binding.configuration @> jsonb_build_object(
-                          'capabilities', jsonb_build_array($17::text)
-                      )
-                      AND device.revoked_at IS NULL
-                      AND device.trust_state = 'verified'
-                      AND device_owner.status = 'active'
-                      AND content.lifecycle_state = 'active'
-                      AND content.sha256_digest = $9
-                      AND content.byte_length = $10
-                      AND content.media_type = $11
-                      AND (content.expires_at IS NULL OR content.expires_at >=
-                          to_timestamp($16::double precision / 1000.0))
-                      AND policy.matrix_room_id = $5
-                      AND policy.matrix_event_id = $6
-                      AND policy.revoked_at IS NULL
-                   ON CONFLICT (id) DO NOTHING
-                   RETURNING id",
+            let inserted = insert_targeted_handoff(
+                &mut transaction,
+                &request,
+                byte_length,
+                permissions,
+                OPERATION,
             )
-            .bind(fields.id.as_uuid())
-            .bind(fields.principal_id.as_uuid())
-            .bind(fields.target_instance_id.as_uuid())
-            .bind(fields.target_agent_id.as_uuid())
-            .bind(fields.source_room_id.as_str())
-            .bind(fields.source_event_id.as_str())
-            .bind(fields.source_message_id.as_uuid())
-            .bind(fields.content.content_id().as_uuid())
-            .bind(fields.content.digest().as_bytes().as_slice())
-            .bind(byte_length)
-            .bind(fields.content.media_type().as_str())
-            .bind(fields.purpose.as_str())
-            .bind(permissions)
-            .bind(request.request_fingerprint.as_bytes().as_slice())
-            .bind(fields.created_at.value())
-            .bind(fields.expires_at.value())
-            .bind(TARGETED_HANDOFF_CAPABILITY)
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+            .await?;
 
             let stored = load_handoff(&mut *transaction, fields.id, OPERATION)
                 .await?
                 .ok_or_else(|| RepositoryError::new(OPERATION, RepositoryErrorKind::Forbidden))?;
-            if inserted.is_none() {
+            if !inserted {
                 let stored_fingerprint = sqlx::query_scalar::<_, Vec<u8>>(
                     "SELECT request_fingerprint FROM agent_room.context_handoff WHERE id = $1",
                 )

@@ -4,7 +4,7 @@ import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-
 
 const fixturePath = '/e2e/fixtures/lobby-scene.html';
 
-test('桌面发送入口不被控制坞遮挡，并可完成签名发送流程', async ({ page }) => {
+test('桌面发送入口不被控制坞遮挡，并可通过用户 Matrix 会话发送', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
@@ -33,7 +33,7 @@ test('桌面发送入口不被控制坞遮挡，并可完成签名发送流程',
   await expect(composer).toContainText('External links detected');
   await expect(composer).toContainText('HTML markup will remain inert');
 
-  await page.getByRole('button', { name: 'Sign and send' }).click();
+  await page.getByRole('button', { name: 'Send message' }).click();
   await expect(composer).toContainText('Message accepted');
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);

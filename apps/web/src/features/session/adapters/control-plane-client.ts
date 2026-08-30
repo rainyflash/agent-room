@@ -76,7 +76,7 @@ export class ControlPlaneClient implements ControlPlaneGateway {
     this.#timeoutMs = timeoutMs;
   }
 
-  async beginAuthentication(
+  beginAuthentication(
     returnPath: string,
     intent: AuthenticationIntent = 'sign-in',
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
@@ -87,9 +87,11 @@ export class ControlPlaneClient implements ControlPlaneGateway {
     target.searchParams.set('intent', intent);
     try {
       this.#navigate(target.toString());
-      return ok({ kind: 'browser-navigation' });
-    } catch (error: unknown) {
-      return err(failure('browser', 'browser.authentication_navigation_failed', false, true));
+      return Promise.resolve(ok({ kind: 'browser-navigation' }));
+    } catch {
+      return Promise.resolve(
+        err(failure('browser', 'browser.authentication_navigation_failed', false, true)),
+      );
     }
   }
 

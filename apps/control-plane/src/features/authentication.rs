@@ -57,7 +57,7 @@ impl AuthenticationHttpState {
         authentication: Arc<dyn AuthenticationUseCases>,
         issuer: Url,
         frontend_origin: Url,
-        desktop_origin: Url,
+        desktop_origin: &Url,
         login_cookie_ttl: Duration,
         session_cookie_ttl: Duration,
     ) -> Result<Self, AuthenticationHttpConfigurationError> {
@@ -65,18 +65,18 @@ impl AuthenticationHttpState {
             || frontend_origin.query().is_some()
             || frontend_origin.fragment().is_some()
         {
-            return Err(AuthenticationHttpConfigurationError::InvalidFrontendOrigin);
+            return Err(AuthenticationHttpConfigurationError::FrontendOrigin);
         }
         if desktop_origin.path() != "/"
             || desktop_origin.query().is_some()
             || desktop_origin.fragment().is_some()
         {
-            return Err(AuthenticationHttpConfigurationError::InvalidDesktopOrigin);
+            return Err(AuthenticationHttpConfigurationError::DesktopOrigin);
         }
-        let trusted_origins = TrustedOrigins::new(&frontend_origin, &desktop_origin);
+        let trusted_origins = TrustedOrigins::new(&frontend_origin, desktop_origin);
         let login_failure_redirect = frontend_origin
             .join("/connect")
-            .map_err(|_| AuthenticationHttpConfigurationError::InvalidFrontendOrigin)?
+            .map_err(|_| AuthenticationHttpConfigurationError::FrontendOrigin)?
             .to_string();
         let login_cookie_ttl = cookie_duration(login_cookie_ttl)?;
         let session_cookie_ttl = cookie_duration(session_cookie_ttl)?;
@@ -131,7 +131,7 @@ struct BeginDesktopLoginQuery {
     intent: BeginLoginIntent,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum BeginLoginIntent {
     #[default]
@@ -606,9 +606,9 @@ fn cookie_duration(
     duration: Duration,
 ) -> Result<CookieDuration, AuthenticationHttpConfigurationError> {
     let seconds = i64::try_from(duration.as_secs())
-        .map_err(|_| AuthenticationHttpConfigurationError::InvalidCookieLifetime)?;
+        .map_err(|_| AuthenticationHttpConfigurationError::CookieLifetime)?;
     if seconds == 0 {
-        return Err(AuthenticationHttpConfigurationError::InvalidCookieLifetime);
+        return Err(AuthenticationHttpConfigurationError::CookieLifetime);
     }
     Ok(CookieDuration::seconds(seconds))
 }
@@ -642,11 +642,11 @@ pub(crate) fn missing_session_error(correlation_id: CorrelationId) -> ApiError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub(crate) enum AuthenticationHttpConfigurationError {
     #[error("前端 Origin 配置无效")]
-    InvalidFrontendOrigin,
+    FrontendOrigin,
     #[error("桌面 Origin 配置无效")]
-    InvalidDesktopOrigin,
+    DesktopOrigin,
     #[error("Cookie 生命周期配置无效")]
-    InvalidCookieLifetime,
+    CookieLifetime,
 }
 
 #[cfg(test)]
@@ -805,7 +805,7 @@ mod tests {
             fake,
             Url::parse("https://identity.example").expect("OIDC issuer 有效"),
             Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
-            Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
+            &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
             Duration::from_mins(10),
             Duration::from_hours(8),
         )

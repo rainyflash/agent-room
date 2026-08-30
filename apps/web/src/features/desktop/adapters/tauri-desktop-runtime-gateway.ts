@@ -284,7 +284,7 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     intent: DesktopAuthenticationIntent,
   ): Promise<Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>> {
     return await new Promise((resolve) => {
-      const removers: Array<() => void> = [];
+      const removers: (() => void)[] = [];
       let settled = false;
       const timeout = globalThis.setTimeout(
         () => {

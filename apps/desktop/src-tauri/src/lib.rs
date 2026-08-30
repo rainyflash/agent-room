@@ -69,14 +69,7 @@ pub fn run_entrypoint() -> ExitCode {
 /// 当 Tauri 上下文、窗口或插件无法构建时会终止启动。此时继续运行会留下一个
 /// 没有受监管 Bridge 的残缺桌面进程，因此必须显式失败。
 fn run(update_config: Option<ReleaseUpdateConfig>) {
-    let mut builder = tauri::Builder::default();
-    if let Some(config) = &update_config {
-        builder = builder.plugin(
-            tauri_plugin_updater::Builder::new()
-                .pubkey(config.tauri_public_key().to_owned())
-                .build(),
-        );
-    }
+    let mut builder = configure_updater(tauri::Builder::default(), update_config.as_ref());
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(
@@ -171,6 +164,20 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         }
         _ => {}
     });
+}
+
+fn configure_updater(
+    mut builder: tauri::Builder<tauri::Wry>,
+    update_config: Option<&ReleaseUpdateConfig>,
+) -> tauri::Builder<tauri::Wry> {
+    if let Some(config) = &update_config {
+        builder = builder.plugin(
+            tauri_plugin_updater::Builder::new()
+                .pubkey(config.tauri_public_key().to_owned())
+                .build(),
+        );
+    }
+    builder
 }
 
 fn installed_mcp_executable() -> Result<PathBuf, String> {

@@ -453,6 +453,10 @@ impl TargetedHandoff {
     }
 
     /// 目标 Bridge 已领取记录并建立本地一次性上下文包。
+    ///
+    /// # Errors
+    ///
+    /// 当交接不在排队态，或交付时间早于排队时间、晚于授权期限时返回领域错误。
     pub fn mark_delivered(&mut self, delivered_at: UtcMillis) -> DomainResult<()> {
         if self.status == TargetedHandoffStatus::Delivered {
             return Ok(());
@@ -469,6 +473,10 @@ impl TargetedHandoff {
     }
 
     /// 目标 Agent 已消费本地上下文包；重复回执保持幂等。
+    ///
+    /// # Errors
+    ///
+    /// 当交接未交付、交付时间缺失，或消费时间违反交接时间线时返回领域错误。
     pub fn consume(&mut self, consumed_at: UtcMillis) -> DomainResult<()> {
         if self.status == TargetedHandoffStatus::Consumed {
             return Ok(());
@@ -490,6 +498,10 @@ impl TargetedHandoff {
     }
 
     /// 目标实例明确拒绝交接；稳定失败码用于跨设备诊断。
+    ///
+    /// # Errors
+    ///
+    /// 当交接已经终结、拒绝时间违反交接时间线，或重复回执试图改写失败码时返回领域错误。
     pub fn decline(
         &mut self,
         failure_code: HandoffFailureCode,
@@ -499,6 +511,10 @@ impl TargetedHandoff {
     }
 
     /// 创建者撤销尚未消费的交接。
+    ///
+    /// # Errors
+    ///
+    /// 当交接不在排队或已交付状态，或撤销时间违反交接时间线时返回领域错误。
     pub fn revoke(&mut self, revoked_at: UtcMillis) -> DomainResult<()> {
         if self.status == TargetedHandoffStatus::Revoked {
             return Ok(());
@@ -521,6 +537,10 @@ impl TargetedHandoff {
     }
 
     /// 授权期限到达后关闭尚未终结的交接。
+    ///
+    /// # Errors
+    ///
+    /// 当交接已经终结，或观测时间尚未到达授权期限时返回领域错误。
     pub fn expire(&mut self, observed_at: UtcMillis) -> DomainResult<()> {
         if self.status == TargetedHandoffStatus::Expired {
             return Ok(());
@@ -544,6 +564,10 @@ impl TargetedHandoff {
     }
 
     /// 记录排队或交付阶段的稳定失败。
+    ///
+    /// # Errors
+    ///
+    /// 当交接已经终结、失败时间违反交接时间线，或重复回执试图改写失败码时返回领域错误。
     pub fn fail(
         &mut self,
         failure_code: HandoffFailureCode,

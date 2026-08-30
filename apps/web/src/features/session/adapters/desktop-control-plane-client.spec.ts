@@ -8,18 +8,14 @@ import { err, ok } from '@/shared/result';
 import { ControlPlaneClient } from './control-plane-client';
 import { DesktopControlPlaneClient } from './desktop-control-plane-client';
 
-function runtime(
-  overrides: Partial<DesktopRuntimeGateway> = {},
-): DesktopRuntimeGateway {
-  const unused = async (): Promise<never> => {
-    throw new Error('此测试不应调用该桌面能力。');
-  };
+function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntimeGateway {
+  const unused = (): Promise<never> => Promise.reject(new Error('此测试不应调用该桌面能力。'));
   return {
-    beginHumanAuthentication: async () =>
-      err({ code: 'desktop.test.unavailable', retryable: false }),
+    beginHumanAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     bootstrapDefaultAgent: unused,
     checkUpdate: unused,
-    clearHumanSession: async () => ok(undefined),
+    clearHumanSession: () => Promise.resolve(ok(undefined)),
     configureAgentRuntime: unused,
     installUpdate: unused,
     isAvailable: () => true,
@@ -36,8 +32,8 @@ function runtime(
 describe('桌面 Control Plane 会话适配器', () => {
   it('系统浏览器回调完成后才导航，并把结果映射为已建立会话', async () => {
     const navigate = vi.fn();
-    const localRuntime = runtime({
-      beginHumanAuthentication: vi.fn(async () =>
+    const beginHumanAuthentication = vi.fn(() =>
+      Promise.resolve(
         ok({
           returnPath: '/workspace',
           session: {
@@ -51,6 +47,9 @@ describe('桌面 Control Plane 会话适配器', () => {
           },
         }),
       ),
+    );
+    const localRuntime = runtime({
+      beginHumanAuthentication,
     });
     const client = new DesktopControlPlaneClient({
       controlPlane: new ControlPlaneClient({
@@ -65,21 +64,18 @@ describe('桌面 Control Plane 会话适配器', () => {
       ok: true,
       value: { kind: 'session-established' },
     });
-    expect(localRuntime.beginHumanAuthentication).toHaveBeenCalledWith('/workspace', 'sign-in');
+    expect(beginHumanAuthentication).toHaveBeenCalledWith('/workspace', 'sign-in');
     expect(navigate).toHaveBeenCalledWith('/workspace');
   });
 
   it('远端注销失败时仍删除本机凭据，避免共享设备继续使用旧会话', async () => {
-    const clearHumanSession = vi.fn(async () => ok(undefined));
+    const clearHumanSession = vi.fn(() => Promise.resolve(ok(undefined)));
     const client = new DesktopControlPlaneClient({
       controlPlane: new ControlPlaneClient({
         baseUrl: 'https://api.agent-room.test',
         fetch: vi.fn(() =>
           Promise.resolve(
-            Response.json(
-              { code: 'control_plane.unavailable', retryable: true },
-              { status: 503 },
-            ),
+            Response.json({ code: 'control_plane.unavailable', retryable: true }, { status: 503 }),
           ),
         ),
       }),

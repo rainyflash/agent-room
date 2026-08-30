@@ -10,8 +10,8 @@ use agent_room_application::{
     authentication::{
         AuthenticationDependencies, AuthenticationFailureKind, AuthenticationIntent,
         AuthenticationPolicy, AuthenticationRequirement, AuthenticationService,
-        AuthenticationUseCases, BeginLogin, CompleteLogin, ExchangeDesktopAuthorization,
-        LoginCompletion, WebLoginCompletion,
+        AuthenticationUseCases, BeginLogin, CompleteLogin, DesktopLoginCompletion,
+        ExchangeDesktopAuthorization, LoginCompletion, WebLoginCompletion,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -515,37 +515,10 @@ async fn 错误浏览器状态不会消费尝试或调用令牌端点() {
 }
 
 #[tokio::test]
-async fn 桌面授权码受_pkce_过期和单次消费共同约束() {
+async fn 桌面授权码受_pkce_和单次消费约束() {
     let harness = Harness::new(valid_identity(Some(time(NOW))));
     let verifier = "v".repeat(43);
-    let challenge =
-        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
-            .expect("PKCE challenge 有效");
-    let redirect = harness
-        .service
-        .begin_login(BeginLogin {
-            delivery: LoginDelivery::Desktop {
-                client_state: DesktopClientState::new("s".repeat(43)).expect("桌面 state 有效"),
-                code_challenge: challenge,
-                return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
-            },
-            profile_import: ProfileImportConsent::default(),
-            intent: AuthenticationIntent::SignIn,
-        })
-        .await
-        .expect("桌面登录应开始");
-    let completion = harness
-        .service
-        .complete_login(CompleteLogin {
-            code: "authorization-code",
-            returned_state: STATE,
-            browser_secret: &redirect.browser_secret,
-        })
-        .await
-        .expect("OIDC 回调应创建桌面授权码");
-    let LoginCompletion::Desktop(completion) = completion else {
-        panic!("桌面登录不得提前创建 Web 会话");
-    };
+    let completion = issue_desktop_authorization(&harness, &verifier, "s".repeat(43)).await;
     assert_eq!(completion.client_state.expose(), "s".repeat(43));
     assert!(
         harness
@@ -592,38 +565,15 @@ async fn 桌面授权码受_pkce_过期和单次消费共同约束() {
         .await
         .expect_err("授权码重放必须失败");
     assert_eq!(replay.kind(), AuthenticationFailureKind::InvalidLoginState);
+}
 
-    let expired = Harness::new(valid_identity(Some(time(NOW))));
-    let redirect = expired
-        .service
-        .begin_login(BeginLogin {
-            delivery: LoginDelivery::Desktop {
-                client_state: DesktopClientState::new("e".repeat(43)).expect("桌面 state 有效"),
-                code_challenge: PkceCodeChallenge::new(
-                    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
-                )
-                .expect("PKCE challenge 有效"),
-                return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
-            },
-            profile_import: ProfileImportConsent::default(),
-            intent: AuthenticationIntent::SignIn,
-        })
-        .await
-        .expect("桌面登录应开始");
-    let completion = expired
-        .service
-        .complete_login(CompleteLogin {
-            code: "authorization-code",
-            returned_state: STATE,
-            browser_secret: &redirect.browser_secret,
-        })
-        .await
-        .expect("OIDC 回调应创建桌面授权码");
-    let LoginCompletion::Desktop(completion) = completion else {
-        panic!("桌面登录必须返回一次性授权码");
-    };
-    expired.clock.set(NOW + 600_000);
-    let failure = expired
+#[tokio::test]
+async fn 桌面授权码过期后无法交换() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let verifier = "v".repeat(43);
+    let completion = issue_desktop_authorization(&harness, &verifier, "e".repeat(43)).await;
+    harness.clock.set(NOW + 600_000);
+    let failure = harness
         .service
         .exchange_desktop_authorization(ExchangeDesktopAuthorization {
             authorization_code: completion.authorization_code.expose(),
@@ -632,6 +582,42 @@ async fn 桌面授权码受_pkce_过期和单次消费共同约束() {
         .await
         .expect_err("到期授权码必须失败");
     assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidLoginState);
+}
+
+async fn issue_desktop_authorization(
+    harness: &Harness,
+    verifier: &str,
+    client_state: String,
+) -> DesktopLoginCompletion {
+    let challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+    let redirect = harness
+        .service
+        .begin_login(BeginLogin {
+            delivery: LoginDelivery::Desktop {
+                client_state: DesktopClientState::new(client_state).expect("桌面 state 有效"),
+                code_challenge: challenge,
+                return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+            },
+            profile_import: ProfileImportConsent::default(),
+            intent: AuthenticationIntent::SignIn,
+        })
+        .await
+        .expect("桌面登录应开始");
+    let completion = harness
+        .service
+        .complete_login(CompleteLogin {
+            code: "authorization-code",
+            returned_state: STATE,
+            browser_secret: &redirect.browser_secret,
+        })
+        .await
+        .expect("OIDC 回调应创建桌面授权码");
+    match completion {
+        LoginCompletion::Desktop(completion) => completion,
+        LoginCompletion::Web(_) => panic!("桌面登录不得提前创建 Web 会话"),
+    }
 }
 
 #[tokio::test]

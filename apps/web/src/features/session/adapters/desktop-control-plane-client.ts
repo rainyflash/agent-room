@@ -77,7 +77,10 @@ export class DesktopControlPlaneClient implements ControlPlaneGateway, Readiness
   }
 }
 
-function runtimeFailure(failure: { readonly code: string; readonly retryable: boolean }): SessionFailure {
+function runtimeFailure(failure: {
+  readonly code: string;
+  readonly retryable: boolean;
+}): SessionFailure {
   return {
     boundary: 'identity',
     code: failure.code,

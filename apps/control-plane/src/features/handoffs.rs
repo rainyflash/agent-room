@@ -216,11 +216,13 @@ struct HandoffResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct HandoffSourceResponse {
-    matrix_room_id: String,
-    matrix_event_id: String,
-    message_id: String,
+    #[serde(rename = "matrixRoomId")]
+    room: String,
+    #[serde(rename = "matrixEventId")]
+    event: String,
+    #[serde(rename = "messageId")]
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -749,9 +751,9 @@ impl From<TargetedHandoff> for HandoffResponse {
             principal_id: fields.principal_id.to_string(),
             status: value.status().as_str(),
             source: HandoffSourceResponse {
-                matrix_room_id: fields.source_room_id.as_str().to_owned(),
-                matrix_event_id: fields.source_event_id.as_str().to_owned(),
-                message_id: fields.source_message_id.to_string(),
+                room: fields.source_room_id.as_str().to_owned(),
+                event: fields.source_event_id.as_str().to_owned(),
+                message: fields.source_message_id.to_string(),
             },
             target: HandoffTargetReferenceResponse {
                 agent_id: fields.target_agent_id.to_string(),

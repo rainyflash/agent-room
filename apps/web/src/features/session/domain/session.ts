@@ -23,8 +23,7 @@ export type SessionFailure = {
 export type AuthenticationIntent = 'register' | 'sign-in';
 
 export type AuthenticationStartOutcome =
-  | { readonly kind: 'browser-navigation' }
-  | { readonly kind: 'session-established' };
+  { readonly kind: 'browser-navigation' } | { readonly kind: 'session-established' };
 
 export type MatrixConnectionStatus = 'ready' | 'reconnecting' | 'failed' | 'stopped';
 

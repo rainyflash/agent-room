@@ -271,28 +271,17 @@ async fn build_identity_router(
 ) -> Result<IdentityRuntime, StartupError> {
     let authentication_config = &config.authentication;
     let request_timeout = config.dependencies.timeout;
-    let oidc = build_web_oidc(authentication_config, request_timeout)?;
-    let device_oidc = build_device_oidc(authentication_config, request_timeout)?;
-    let policy = authentication_policy(authentication_config)?;
     let repositories = Arc::new(PostgresRepositories::new(runtime.pool().clone()));
     let system_runtime = Arc::new(SystemRuntime);
     let secrets = Arc::new(SecureSecretFactory);
     let matrix_identities = build_matrix_identity_provisioner(config, request_timeout)?;
-    let service = Arc::new(AuthenticationService::new(
-        AuthenticationDependencies {
-            oidc,
-            login_attempts: repositories.clone(),
-            login_completion: repositories.clone(),
-            desktop_login_completion: repositories.clone(),
-            desktop_session_exchange: repositories.clone(),
-            sessions: repositories.clone(),
-            suspensions: repositories.clone(),
-            secrets: secrets.clone(),
-            identifiers: system_runtime.clone(),
-            clock: system_runtime.clone(),
-        },
-        policy,
-    ));
+    let (service, device_oidc) = build_authentication_runtime(
+        authentication_config,
+        request_timeout,
+        &repositories,
+        &system_runtime,
+        &secrets,
+    )?;
     let state = build_authentication_http_state(service.clone(), authentication_config)?;
     let telemetry_state = build_frontend_telemetry_state(config, service.clone(), metrics.clone());
     let devices = build_device_authorization(
@@ -372,6 +361,34 @@ async fn build_identity_router(
         account_deletion,
         operational_metrics,
     })
+}
+
+fn build_authentication_runtime(
+    config: &AuthenticationConfig,
+    request_timeout: Duration,
+    repositories: &Arc<PostgresRepositories>,
+    system_runtime: &Arc<SystemRuntime>,
+    secrets: &Arc<SecureSecretFactory>,
+) -> Result<(Arc<AuthenticationService>, Arc<DiscoveredOidcDeviceGrant>), StartupError> {
+    let oidc = build_web_oidc(config, request_timeout)?;
+    let device_oidc = build_device_oidc(config, request_timeout)?;
+    let policy = authentication_policy(config)?;
+    let service = Arc::new(AuthenticationService::new(
+        AuthenticationDependencies {
+            oidc,
+            login_attempts: repositories.clone(),
+            login_completion: repositories.clone(),
+            desktop_login_completion: repositories.clone(),
+            desktop_session_exchange: repositories.clone(),
+            sessions: repositories.clone(),
+            suspensions: repositories.clone(),
+            secrets: secrets.clone(),
+            identifiers: system_runtime.clone(),
+            clock: system_runtime.clone(),
+        },
+        policy,
+    ));
+    Ok((service, device_oidc))
 }
 
 fn compose_identity_routes(
@@ -542,21 +559,8 @@ fn build_agent_feature_states(
         dependencies.system_runtime.clone(),
         request_timeout,
     );
-    let handoffs = Arc::new(HandoffAccessService::new(HandoffAccessDependencies {
-        access: dependencies.repositories.clone(),
-        clock: dependencies.system_runtime.clone(),
-    }));
-    let targeted_handoffs = Arc::new(TargetedHandoffService::new(TargetedHandoffDependencies {
-        store: dependencies.repositories.clone(),
-        content: dependencies.repositories.clone(),
-        authorizer: dependencies.content_authorizer.clone(),
-        clock: dependencies.system_runtime.clone(),
-        policy: TargetedHandoffPolicy::new(
-            DurationMillis::new(60_000).expect("固定最短交接期限必须有效"),
-            DurationMillis::new(24 * 60 * 60 * 1_000).expect("固定最长交接期限必须有效"),
-        )
-        .expect("固定交接期限范围必须有效"),
-    }));
+    let handoffs = build_handoff_access_service(&dependencies);
+    let targeted_handoffs = build_targeted_handoff_service(&dependencies);
     let entries = build_agent_lobby_entry(
         &config.lobby,
         dependencies.repositories.clone(),
@@ -566,15 +570,7 @@ fn build_agent_feature_states(
     let lobby_observation = Arc::new(PublicLobbyObservationService::new(
         dependencies.repositories.clone(),
     ));
-    let private_rooms = Arc::new(PrivateRoomService::new(PrivateRoomDependencies {
-        store: dependencies.repositories.clone(),
-        matrix_provisioner: dependencies.matrix_identities.clone(),
-        matrix: dependencies.matrix_identities.clone(),
-        principals: dependencies.repositories.clone(),
-        trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
-        identifiers: dependencies.system_runtime.clone(),
-        clock: dependencies.system_runtime.clone(),
-    }));
+    let private_rooms = build_private_room_service(config, &dependencies)?;
     let automation = build_automation_http_state(config, &dependencies);
     let moderation = build_moderation_management(&dependencies);
     let direct_sessions = build_direct_session_management(&dependencies);
@@ -642,6 +638,46 @@ fn build_agent_feature_states(
             &config.authentication.desktop_origin,
         ),
     })
+}
+
+fn build_handoff_access_service(
+    dependencies: &AgentFeatureDependencies,
+) -> Arc<HandoffAccessService> {
+    Arc::new(HandoffAccessService::new(HandoffAccessDependencies {
+        access: dependencies.repositories.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }))
+}
+
+fn build_targeted_handoff_service(
+    dependencies: &AgentFeatureDependencies,
+) -> Arc<TargetedHandoffService> {
+    Arc::new(TargetedHandoffService::new(TargetedHandoffDependencies {
+        store: dependencies.repositories.clone(),
+        content: dependencies.repositories.clone(),
+        authorizer: dependencies.content_authorizer.clone(),
+        clock: dependencies.system_runtime.clone(),
+        policy: TargetedHandoffPolicy::new(
+            DurationMillis::new(60_000).expect("固定最短交接期限必须有效"),
+            DurationMillis::new(24 * 60 * 60 * 1_000).expect("固定最长交接期限必须有效"),
+        )
+        .expect("固定交接期限范围必须有效"),
+    }))
+}
+
+fn build_private_room_service(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Arc<PrivateRoomService>, StartupError> {
+    Ok(Arc::new(PrivateRoomService::new(PrivateRoomDependencies {
+        store: dependencies.repositories.clone(),
+        matrix_provisioner: dependencies.matrix_identities.clone(),
+        matrix: dependencies.matrix_identities.clone(),
+        principals: dependencies.repositories.clone(),
+        trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime.clone(),
+    })))
 }
 
 fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
@@ -751,7 +787,7 @@ fn build_authentication_http_state(
         service,
         config.issuer_url.clone(),
         config.frontend_origin.clone(),
-        config.desktop_origin.clone(),
+        &config.desktop_origin,
         config.login_attempt_ttl,
         config.web_session_ttl,
     )
