@@ -50,6 +50,7 @@ const MAX_AGENT_BODY_BYTES: usize = 64 * 1_024;
 const MAX_ENCODED_HASH_LENGTH: usize = 64;
 const MAX_ENCODED_PUBLIC_KEY_LENGTH: usize = 64;
 const DEVICE_DEFAULT_AGENT_TARGET: &str = "/onboarding/device/default-agent";
+const TARGETED_HANDOFF_CAPABILITY: &str = "targeted_handoff_v1";
 
 #[derive(Clone)]
 pub(crate) struct AgentHttpState {
@@ -550,9 +551,7 @@ fn register_instance_request(
     agent_id: AgentId,
     body: RegisterInstanceBody,
 ) -> Result<RegisterAgentInstance, ()> {
-    if !body.configuration.is_empty() {
-        return Err(());
-    }
+    let configuration = validate_adapter_configuration(body.configuration)?;
     let external_subject_hash = body
         .external_subject_hash
         .map(|value| {
@@ -570,9 +569,25 @@ fn register_instance_request(
         adapter_type: body.adapter_type,
         external_subject_hash,
         capability_version: body.capability_version,
-        configuration: body.configuration,
+        configuration,
         public_signing_key,
     })
+}
+
+fn validate_adapter_configuration(
+    configuration: Map<String, Value>,
+) -> Result<Map<String, Value>, ()> {
+    if configuration.is_empty() {
+        return Ok(configuration);
+    }
+    let valid = configuration.len() == 1
+        && matches!(
+            configuration.get("capabilities"),
+            Some(Value::Array(capabilities))
+                if capabilities.as_slice()
+                    == [Value::String(TARGETED_HANDOFF_CAPABILITY.to_owned())]
+        );
+    valid.then_some(configuration).ok_or(())
 }
 
 fn creation_request_id(headers: &HeaderMap) -> Result<AgentCreationRequestId, ()> {
@@ -1214,7 +1229,9 @@ mod tests {
         let body = json!({
             "adapterType": "codex-desktop",
             "capabilityVersion": "2026-08-24",
-            "configuration": {},
+            "configuration": {
+                "capabilities": ["targeted_handoff_v1"]
+            },
             "publicSigningKey": public_key
         })
         .to_string();
@@ -1258,6 +1275,13 @@ mod tests {
         assert_eq!(registration.agent_id, agent_id());
         assert_eq!(registration.actor.device_id, device_id());
         assert_eq!(registration.adapter_type, "codex-desktop");
+        assert_eq!(
+            registration.configuration,
+            serde_json::Map::from_iter([(
+                "capabilities".to_owned(),
+                json!(["targeted_handoff_v1"]),
+            )])
+        );
         assert_eq!(registration.public_signing_key.as_bytes(), &[7_u8; 32]);
     }
 
@@ -1367,7 +1391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 未注册适配器_schema_时拒绝持久化任意配置() {
+    async fn 未注册配置键不能越过实例登记边界() {
         let agents = Arc::new(FakeAgents::default());
         let devices = Arc::new(FakeDevices::default());
         let body = json!({
@@ -1402,6 +1426,49 @@ mod tests {
                 .expect("Agent 实例记录锁可用")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn 能力列表类型或内容不规范时拒绝实例登记() {
+        for configuration in [
+            json!({ "capabilities": "targeted_handoff_v1" }),
+            json!({ "capabilities": ["unknown"] }),
+            json!({ "capabilities": ["targeted_handoff_v1", "targeted_handoff_v1"] }),
+        ] {
+            let agents = Arc::new(FakeAgents::default());
+            let devices = Arc::new(FakeDevices::default());
+            let body = json!({
+                "adapterType": "codex-desktop",
+                "capabilityVersion": "2026-08-24",
+                "configuration": configuration,
+                "publicSigningKey": URL_SAFE_NO_PAD.encode([7_u8; 32])
+            })
+            .to_string();
+            devices.expect_request(
+                "POST",
+                format!("/agents/{AGENT_UUID}/instances"),
+                body.clone(),
+            );
+            let app = test_router(
+                agents.clone(),
+                Arc::new(FakeAuthentication::default()),
+                devices,
+            );
+
+            let response = app
+                .oneshot(instance_request(&body, true))
+                .await
+                .expect("非法能力配置请求可调用");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(
+                agents
+                    .registration
+                    .lock()
+                    .expect("Agent 实例记录锁可用")
+                    .is_none()
+            );
+        }
     }
 
     fn instance_request(body: &str, include_proof: bool) -> Request<Body> {
