@@ -85,6 +85,7 @@ pub enum IpcScope {
     StatusPublish,
     MessageSend,
     HandoffApprove,
+    HandoffList,
     HandoffConsume,
     HandoffDecline,
 }
@@ -428,6 +429,7 @@ mod tests {
             IpcScope::ContentRead,
             IpcScope::StatusPublish,
             IpcScope::MessageSend,
+            IpcScope::HandoffList,
             IpcScope::HandoffConsume,
             IpcScope::HandoffDecline,
         ];

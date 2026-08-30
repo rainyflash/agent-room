@@ -13,13 +13,15 @@ pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, I
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
     IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
-    IpcBridgeState, IpcConsumedHandoff, IpcContentReference, IpcDeclinedHandoff,
-    IpcDefaultAgentBootstrap, IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose,
-    IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission, IpcListPreviewsRequest,
-    IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
-    IpcMethodValidationFailure, IpcOpenContentRequest, IpcOpenedContent, IpcPresenceSummary,
-    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
-    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+    IpcBridgeState, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
+    IpcDeclinedHandoff, IpcDeclinedTargetedHandoff, IpcDefaultAgentBootstrap,
+    IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
+    IpcHandoffStatus, IpcHandoffSubmission, IpcHumanHandoffSource, IpcListHandoffsRequest,
+    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
+    IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest, IpcOpenedContent,
+    IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus,
+    IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState,
+    IpcWorkStatus,
 };
 pub use wire::{
     IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,

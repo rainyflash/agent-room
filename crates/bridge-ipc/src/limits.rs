@@ -11,6 +11,7 @@ pub const LANGUAGE_BYTES: usize = 35;
 pub const RISK_FLAG_BYTES: usize = 64;
 pub const RISK_FLAGS: usize = 16;
 pub const PREVIEW_PAGE_SIZE: u16 = 50;
+pub const HANDOFF_PAGE_SIZE: u16 = 100;
 pub const PRESENCE_TARGETS: usize = 50;
 pub const INLINE_TEXT_BYTES: usize = 48 * 1_024;
 pub const PROGRESS_BASIS_POINTS: u16 = 10_000;

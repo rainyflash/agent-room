@@ -12,8 +12,8 @@ use serde_json::json;
 use super::{
     BridgeToolClient, BridgeToolFailure,
     inputs::{
-        GetPresenceInput, HandoffInput, ListPreviewsInput, OpenContentInput, PublishStatusInput,
-        SendMessageInput,
+        GetPresenceInput, HandoffInput, ListHandoffsInput, ListPreviewsInput, OpenContentInput,
+        PublishStatusInput, SendMessageInput,
     },
 };
 
@@ -191,6 +191,30 @@ impl AgentRoomMcpServer {
         .await
     }
 
+    /// 列出当前 Agent 实例尚未处理的账号级云端交接，只返回元数据。
+    #[tool(
+        name = "agent_room_list_handoffs",
+        description = "列出发给当前 Agent 实例的待处理云端交接元数据。不会打开正文或改变远端状态。",
+        annotations(
+            title = "查看 Agent Room 待处理交接",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    pub async fn list_handoffs(
+        &self,
+        Parameters(input): Parameters<ListHandoffsInput>,
+    ) -> CallToolResult {
+        self.execute(
+            IpcMethod::ListHandoffs(input.into()),
+            ExpectedResponse::PendingTargetedHandoffs,
+            ResponseTrust::Remote,
+        )
+        .await
+    }
+
     /// 打开一次性交接正文，并在 Bridge 内原子标记为已消费。
     #[tool(
         name = "agent_room_consume_handoff",
@@ -267,6 +291,7 @@ enum ExpectedResponse {
     OpenedContent,
     PublishedStatus,
     SentMessage,
+    PendingTargetedHandoffs,
     ConsumedHandoff,
     DeclinedHandoff,
 }
@@ -281,8 +306,20 @@ impl ExpectedResponse {
                 | (Self::OpenedContent, IpcResponse::OpenedContent { .. })
                 | (Self::PublishedStatus, IpcResponse::PublishedStatus { .. })
                 | (Self::SentMessage, IpcResponse::SentMessage { .. })
-                | (Self::ConsumedHandoff, IpcResponse::ConsumedHandoff { .. })
-                | (Self::DeclinedHandoff, IpcResponse::DeclinedHandoff { .. })
+                | (
+                    Self::PendingTargetedHandoffs,
+                    IpcResponse::PendingTargetedHandoffs { .. }
+                )
+                | (
+                    Self::ConsumedHandoff,
+                    IpcResponse::ConsumedHandoff { .. }
+                        | IpcResponse::ConsumedTargetedHandoff { .. }
+                )
+                | (
+                    Self::DeclinedHandoff,
+                    IpcResponse::DeclinedHandoff { .. }
+                        | IpcResponse::DeclinedTargetedHandoff { .. }
+                )
         )
     }
 
@@ -294,6 +331,7 @@ impl ExpectedResponse {
             Self::OpenedContent => "opened_content",
             Self::PublishedStatus => "published_status",
             Self::SentMessage => "sent_message",
+            Self::PendingTargetedHandoffs => "pending_targeted_handoffs",
             Self::ConsumedHandoff => "consumed_handoff",
             Self::DeclinedHandoff => "declined_handoff",
         }
@@ -339,8 +377,11 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::PublishedStatus { .. } => "published_status",
         IpcResponse::SentMessage { .. } => "sent_message",
         IpcResponse::ApprovedHandoff { .. } => "approved_handoff",
+        IpcResponse::PendingTargetedHandoffs { .. } => "pending_targeted_handoffs",
         IpcResponse::ConsumedHandoff { .. } => "consumed_handoff",
+        IpcResponse::ConsumedTargetedHandoff { .. } => "consumed_targeted_handoff",
         IpcResponse::DeclinedHandoff { .. } => "declined_handoff",
+        IpcResponse::DeclinedTargetedHandoff { .. } => "declined_targeted_handoff",
         IpcResponse::DefaultAgentBootstrap { .. } => "default_agent_bootstrap",
     }
 }
@@ -420,9 +461,9 @@ mod tests {
             BridgeToolClient, BridgeToolFailure,
             bridge::BridgeToolFuture,
             inputs::{
-                GetPresenceInput, HandoffInput, ListPreviewsInput, MessageProvenanceInput,
-                MessageSensitivityInput, OpenContentInput, PublishStatusInput, SendMessageInput,
-                WorkStatusInput,
+                GetPresenceInput, HandoffInput, ListHandoffsInput, ListPreviewsInput,
+                MessageProvenanceInput, MessageSensitivityInput, OpenContentInput,
+                PublishStatusInput, SendMessageInput, WorkStatusInput,
             },
         },
         AgentRoomMcpServer, REMOTE_CONTENT_WARNING, SERVER_INSTRUCTIONS,
@@ -466,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn 服务声明八个独立审批语义的工具() {
+    fn 服务声明九个独立审批语义的工具() {
         let server = AgentRoomMcpServer::new(Arc::new(FakeBridgeClient::default()));
         let tools = server.tool_router.list_all();
         let mut names = tools
@@ -482,6 +523,7 @@ mod tests {
                 "agent_room_decline_handoff",
                 "agent_room_get_presence",
                 "agent_room_get_self",
+                "agent_room_list_handoffs",
                 "agent_room_list_previews",
                 "agent_room_open_content",
                 "agent_room_publish_status",
@@ -517,6 +559,7 @@ mod tests {
         );
         for tool_name in [
             "agent_room_list_previews",
+            "agent_room_list_handoffs",
             "agent_room_get_presence",
             "agent_room_open_content",
         ] {
@@ -542,7 +585,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 八个工具只转发对应的闭合_ipc_方法() {
+    async fn 九个工具只转发对应的闭合_ipc_方法() {
         let fake = Arc::new(FakeBridgeClient::with_responses(fixture_responses()));
         let server = AgentRoomMcpServer::new(fake.clone());
         let id = "00000000-0000-0000-0000-000000000001".to_owned();
@@ -591,6 +634,9 @@ mod tests {
             }))
             .await;
         server
+            .list_handoffs(Parameters(ListHandoffsInput { limit: 20 }))
+            .await;
+        server
             .consume_handoff(Parameters(HandoffInput {
                 handoff_id: id.clone(),
             }))
@@ -608,6 +654,7 @@ mod tests {
                 "open_content",
                 "publish_status",
                 "send_message",
+                "list_handoffs",
                 "consume_handoff",
                 "decline_handoff",
             ]
@@ -711,6 +758,9 @@ mod tests {
                     state: IpcSubmissionState::Submitted,
                     event_id: Some("$event".to_owned()),
                 },
+            }),
+            Ok(IpcResponse::PendingTargetedHandoffs {
+                handoffs: Vec::new(),
             }),
             Ok(IpcResponse::ConsumedHandoff {
                 handoff: IpcConsumedHandoff {

@@ -230,6 +230,18 @@ impl TargetedHandoffInboxService {
         })
     }
 
+    /// 读取一个待处理交接的元数据，不打开正文也不提交云端回执。
+    ///
+    /// # Errors
+    ///
+    /// 交接不存在、已过期或本地存储不可用时返回稳定失败。
+    pub async fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> Result<TargetedHandoff, TargetedHandoffInboxServiceFailure> {
+        self.load_active(handoff_id).await
+    }
+
     /// 明确下载并消费一个交接。正文只有在云端消费回执成功且本地元数据删除后才会返回。
     ///
     /// # Errors
@@ -265,6 +277,17 @@ impl TargetedHandoffInboxService {
                 .fail_local_handoff(
                     handoff,
                     "bridge.content_integrity_mismatch",
+                    TargetedHandoffInboxServiceFailureKind::IntegrityMismatch,
+                )
+                .await;
+        }
+        if media_type_is_text(handoff.fields().content.media_type().as_str())
+            && std::str::from_utf8(opened.bytes.as_ref()).is_err()
+        {
+            return self
+                .fail_local_handoff(
+                    handoff,
+                    "bridge.content_encoding_invalid",
                     TargetedHandoffInboxServiceFailureKind::IntegrityMismatch,
                 )
                 .await;
@@ -388,16 +411,16 @@ fn content_matches(
 
 fn scope_allows_content(handoff: &TargetedHandoff) -> bool {
     let fields = handoff.fields();
-    fields.permissions.contains(
-        if matches!(
-            fields.content.media_type().as_str(),
-            "application/json" | "text/markdown" | "text/plain"
-        ) {
-            HandoffPermission::ReadText
-        } else {
-            HandoffPermission::ReadAttachments
-        },
-    )
+    let required = if media_type_is_text(fields.content.media_type().as_str()) {
+        HandoffPermission::ReadText
+    } else {
+        HandoffPermission::ReadAttachments
+    };
+    fields.permissions.contains(required)
+}
+
+fn media_type_is_text(media_type: &str) -> bool {
+    media_type == "application/json" || media_type.starts_with("text/")
 }
 
 fn matches_target(handoff: &TargetedHandoff, target: TargetedHandoffTarget) -> bool {

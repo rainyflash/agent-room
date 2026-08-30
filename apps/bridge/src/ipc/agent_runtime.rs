@@ -10,7 +10,9 @@ use agent_room_bridge_core::{
         HandoffDeliveryFailure, HandoffDeliveryFailureKind, HandoffDeliveryOutcome,
         HandoffDeliveryService, HandoffReceptionFailure, HandoffReceptionFailureKind,
         HandoffReceptionService, HandoffResolutionOutcome, HandoffStoreFailureKind,
-        HandoffTransportFailureKind, handoff_source_matches_projection,
+        HandoffTransportFailureKind, TargetedHandoffInboxService,
+        TargetedHandoffInboxServiceFailure, TargetedHandoffInboxServiceFailureKind,
+        handoff_source_matches_projection,
     },
     messages::{
         AutomationAuthorizationDenial, AutomationAuthorizationFailure,
@@ -32,12 +34,14 @@ use agent_room_bridge_core::{
 };
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcConsumedHandoff,
-    IpcContentReference, IpcDeclinedHandoff, IpcErrorCategory, IpcGetPresenceRequest,
-    IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus,
-    IpcHandoffSubmission, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance,
-    IpcMessageSensitivity, IpcOpenContentRequest, IpcOpenedContent, IpcPresenceSummary,
-    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
-    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+    IpcConsumedTargetedHandoff, IpcContentReference, IpcDeclinedHandoff,
+    IpcDeclinedTargetedHandoff, IpcErrorCategory, IpcGetPresenceRequest, IpcHandoffPermission,
+    IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
+    IpcHumanHandoffSource, IpcListHandoffsRequest, IpcListPreviewsRequest,
+    IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
+    IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest,
+    IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage,
+    IpcSubmissionState, IpcWorkStatus, limits::INLINE_TEXT_BYTES,
 };
 use agent_room_domain::{
     agent_status::AgentWorkStatus,
@@ -45,7 +49,7 @@ use agent_room_domain::{
     handoff::{
         ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffPermission,
         HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
-        HandoffSourceEventId, HandoffStatus,
+        HandoffSourceEventId, HandoffStatus, TargetedHandoff, TargetedHandoffStatus,
     },
     ids::{
         AgentId, AgentInstanceId, AutomationGrantId, ContentId, HandoffId, MessageId,
@@ -76,6 +80,7 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     publication: Option<Arc<MessagePublicationService>>,
     handoff_delivery: Option<Arc<dyn AgentHandoffDeliveryRuntime>>,
     handoffs: Option<Arc<dyn AgentHandoffRuntime>>,
+    targeted_handoffs: Option<Arc<dyn AgentTargetedHandoffRuntime>>,
     presence: Option<Arc<dyn PresenceProjectionRepository>>,
     room_encryption: MatrixRoomEncryption,
     message_content_protection: Option<Arc<MessageBodyProtectionService>>,
@@ -100,6 +105,7 @@ impl BridgeAgentRuntimeSnapshot {
             publication: None,
             handoff_delivery: None,
             handoffs: None,
+            targeted_handoffs: None,
             presence: None,
             room_encryption: MatrixRoomEncryption::Unencrypted,
             message_content_protection: None,
@@ -138,6 +144,14 @@ impl BridgeAgentRuntimeSnapshot {
 
     pub(crate) fn with_handoffs(mut self, handoffs: Arc<dyn AgentHandoffRuntime>) -> Self {
         self.handoffs = Some(handoffs);
+        self
+    }
+
+    pub(crate) fn with_targeted_handoffs(
+        mut self,
+        handoffs: Arc<dyn AgentTargetedHandoffRuntime>,
+    ) -> Self {
+        self.targeted_handoffs = Some(handoffs);
         self
     }
 
@@ -208,6 +222,72 @@ impl AgentHandoffRuntime for HandoffReceptionService {
         handoff_id: HandoffId,
     ) -> PortFuture<'_, Result<HandoffResolutionOutcome, HandoffReceptionFailure>> {
         Box::pin(HandoffReceptionService::decline(self, handoff_id))
+    }
+}
+
+pub(crate) trait AgentTargetedHandoffRuntime: Send + Sync {
+    fn list_pending(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<TargetedHandoff>, TargetedHandoffInboxServiceFailure>>;
+
+    fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>>;
+
+    fn consume(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<
+        '_,
+        Result<
+            agent_room_bridge_core::handoffs::ConsumedTargetedHandoff,
+            TargetedHandoffInboxServiceFailure,
+        >,
+    >;
+
+    fn decline(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>>;
+}
+
+impl AgentTargetedHandoffRuntime for TargetedHandoffInboxService {
+    fn list_pending(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<TargetedHandoff>, TargetedHandoffInboxServiceFailure>> {
+        Box::pin(TargetedHandoffInboxService::list_pending(self, limit))
+    }
+
+    fn inspect_pending(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>> {
+        Box::pin(TargetedHandoffInboxService::inspect_pending(
+            self, handoff_id,
+        ))
+    }
+
+    fn consume(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<
+        '_,
+        Result<
+            agent_room_bridge_core::handoffs::ConsumedTargetedHandoff,
+            TargetedHandoffInboxServiceFailure,
+        >,
+    > {
+        Box::pin(TargetedHandoffInboxService::consume(self, handoff_id))
+    }
+
+    fn decline(
+        &self,
+        handoff_id: HandoffId,
+    ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>> {
+        Box::pin(TargetedHandoffInboxService::decline(self, handoff_id))
     }
 }
 
@@ -537,8 +617,44 @@ impl AgentRuntimeIpcFacade {
         request: IpcHandoffRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let handoffs = runtime.handoffs.ok_or_else(agent_runtime_unavailable)?;
         let handoff_id = parse_handoff_id(&request.handoff_id)?;
+        if let Some(handoffs) = runtime.targeted_handoffs.as_deref() {
+            match handoffs.inspect_pending(handoff_id).await {
+                Ok(pending) => return consume_targeted_handoff(handoffs, pending).await,
+                Err(failure)
+                    if failure.kind() == TargetedHandoffInboxServiceFailureKind::NotFound => {}
+                Err(failure) => return Err(map_targeted_handoff_failure(failure)),
+            }
+        }
+        self.consume_agent_handoff(&runtime, handoff_id).await
+    }
+
+    pub(super) async fn list_handoffs(
+        &self,
+        request: IpcListHandoffsRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let handoffs = runtime
+            .targeted_handoffs
+            .ok_or_else(agent_runtime_unavailable)?
+            .list_pending(request.limit)
+            .await
+            .map_err(map_targeted_handoff_failure)?
+            .iter()
+            .map(ipc_pending_targeted_handoff)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(IpcResponse::PendingTargetedHandoffs { handoffs })
+    }
+
+    async fn consume_agent_handoff(
+        &self,
+        runtime: &BridgeAgentRuntimeSnapshot,
+        handoff_id: HandoffId,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let handoffs = runtime
+            .handoffs
+            .as_deref()
+            .ok_or_else(agent_runtime_unavailable)?;
         let pending = handoffs
             .inspect_pending(handoff_id)
             .await
@@ -589,9 +705,33 @@ impl AgentRuntimeIpcFacade {
         request: IpcHandoffRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let handoffs = runtime.handoffs.ok_or_else(agent_runtime_unavailable)?;
-        let outcome = handoffs
-            .decline(parse_handoff_id(&request.handoff_id)?)
+        let handoff_id = parse_handoff_id(&request.handoff_id)?;
+        if let Some(handoffs) = runtime.targeted_handoffs.as_deref() {
+            match handoffs.inspect_pending(handoff_id).await {
+                Ok(_) => {
+                    let declined = handoffs
+                        .decline(handoff_id)
+                        .await
+                        .map_err(map_targeted_handoff_failure)?;
+                    if declined.status() != TargetedHandoffStatus::Declined {
+                        return Err(internal_failure("bridge.handoff_resolution_invalid"));
+                    }
+                    return Ok(IpcResponse::DeclinedTargetedHandoff {
+                        handoff: IpcDeclinedTargetedHandoff {
+                            handoff_id: declined.fields().id.to_string(),
+                            status: IpcHandoffStatus::Declined,
+                        },
+                    });
+                }
+                Err(failure)
+                    if failure.kind() == TargetedHandoffInboxServiceFailureKind::NotFound => {}
+                Err(failure) => return Err(map_targeted_handoff_failure(failure)),
+            }
+        }
+        let outcome = runtime
+            .handoffs
+            .ok_or_else(agent_runtime_unavailable)?
+            .decline(handoff_id)
             .await
             .map_err(map_handoff_reception_failure)?;
         if outcome.status() != HandoffStatus::Declined {
@@ -637,6 +777,91 @@ impl AgentRuntimeIpcFacade {
         self.runtime_reader
             .read_agent_runtime()
             .ok_or_else(agent_runtime_unavailable)
+    }
+}
+
+async fn consume_targeted_handoff(
+    handoffs: &dyn AgentTargetedHandoffRuntime,
+    pending: TargetedHandoff,
+) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+    validate_targeted_handoff_content(&pending)?;
+    let consumed = handoffs
+        .consume(pending.fields().id)
+        .await
+        .map_err(map_targeted_handoff_failure)?;
+    if consumed.handoff() != &pending {
+        return Err(internal_failure("bridge.handoff_consumption_mismatch"));
+    }
+    let body = std::str::from_utf8(consumed.body().as_ref())
+        .map_err(|_| internal_failure("bridge.handoff_content_encoding_invalid"))?
+        .to_owned();
+    Ok(IpcResponse::ConsumedTargetedHandoff {
+        handoff: IpcConsumedTargetedHandoff {
+            handoff: ipc_pending_targeted_handoff(&pending)?,
+            body,
+        },
+    })
+}
+
+fn validate_targeted_handoff_content(
+    handoff: &TargetedHandoff,
+) -> Result<(), BridgeIpcDispatchFailure> {
+    let content = &handoff.fields().content;
+    let media_type = content.media_type().as_str();
+    if media_type != "application/json" && !media_type.starts_with("text/") {
+        return Err(invalid_request("bridge.handoff_content_type_unsupported"));
+    }
+    let maximum = u64::try_from(INLINE_TEXT_BYTES)
+        .map_err(|_| internal_failure("bridge.ipc.content_limit_invalid"))?;
+    if content.byte_length().value() > maximum {
+        return Err(invalid_request("bridge.handoff_content_too_large"));
+    }
+    Ok(())
+}
+
+fn ipc_pending_targeted_handoff(
+    handoff: &TargetedHandoff,
+) -> Result<IpcPendingTargetedHandoff, BridgeIpcDispatchFailure> {
+    if handoff.status() != TargetedHandoffStatus::Delivered {
+        return Err(internal_failure("bridge.handoff_state_invalid"));
+    }
+    let fields = handoff.fields();
+    let delivered_at = handoff
+        .delivered_at()
+        .ok_or_else(|| internal_failure("bridge.handoff_timeline_invalid"))?;
+    Ok(IpcPendingTargetedHandoff {
+        handoff_id: fields.id.to_string(),
+        source: IpcHumanHandoffSource {
+            principal_id: fields.principal_id.to_string(),
+        },
+        source_room_id: fields.source_room_id.as_str().to_owned(),
+        source_event_id: fields.source_event_id.as_str().to_owned(),
+        source_message_id: fields.source_message_id.to_string(),
+        status: IpcHandoffStatus::Delivered,
+        purpose: fields.purpose.as_str().to_owned(),
+        permissions: fields
+            .permissions
+            .iter()
+            .map(ipc_handoff_permission)
+            .collect(),
+        content: IpcContentReference {
+            content_id: fields.content.content_id().to_string(),
+            digest_sha256: encode_hex(fields.content.digest().as_bytes()),
+            media_type: fields.content.media_type().as_str().to_owned(),
+            size_bytes: fields.content.byte_length().value(),
+        },
+        created_at_unix_ms: fields.created_at.value(),
+        queued_at_unix_ms: handoff.queued_at().value(),
+        delivered_at_unix_ms: delivered_at.value(),
+        expires_at_unix_ms: fields.expires_at.value(),
+    })
+}
+
+const fn ipc_handoff_permission(permission: HandoffPermission) -> IpcHandoffPermission {
+    match permission {
+        HandoffPermission::ReadText => IpcHandoffPermission::ReadText,
+        HandoffPermission::ReadAttachments => IpcHandoffPermission::ReadAttachments,
+        HandoffPermission::IncludeMetadata => IpcHandoffPermission::IncludeMetadata,
     }
 }
 
@@ -1018,6 +1243,51 @@ fn map_handoff_reception_failure(failure: HandoffReceptionFailure) -> BridgeIpcD
                 }
             },
         ),
+    }
+}
+
+const fn map_targeted_handoff_failure(
+    failure: TargetedHandoffInboxServiceFailure,
+) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        TargetedHandoffInboxServiceFailureKind::InvalidRequest => {
+            invalid_request("bridge.handoff_request_invalid")
+        }
+        TargetedHandoffInboxServiceFailureKind::NotFound => {
+            invalid_request("bridge.handoff_not_found")
+        }
+        TargetedHandoffInboxServiceFailureKind::Expired => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_expired",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        TargetedHandoffInboxServiceFailureKind::PermissionDenied => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_content_denied",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        TargetedHandoffInboxServiceFailureKind::ContentUnavailable => {
+            BridgeIpcDispatchFailure::new(
+                "bridge.handoff_content_unavailable",
+                IpcErrorCategory::DependencyUnavailable,
+                true,
+            )
+        }
+        TargetedHandoffInboxServiceFailureKind::IntegrityMismatch => {
+            internal_failure("bridge.handoff_integrity_failed")
+        }
+        TargetedHandoffInboxServiceFailureKind::QueueUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.handoff_queue_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        TargetedHandoffInboxServiceFailureKind::StorageUnavailable => {
+            BridgeIpcDispatchFailure::new(
+                "bridge.handoff_store_unavailable",
+                IpcErrorCategory::DependencyUnavailable,
+                true,
+            )
+        }
     }
 }
 

@@ -92,6 +92,24 @@ async fn 明确消费才下载正文并在云端回执后删除本地记录() {
 }
 
 #[tokio::test]
+async fn 检查待办只返回元数据且不会打开正文或提交回执() {
+    let fixture = Fixture::new();
+    let queue = Arc::new(测试队列::default());
+    let inbox = Arc::new(内存收件箱::with(fixture.handoff.clone()));
+    let content = Arc::new(测试正文::new(fixture.downloaded()));
+    let service = fixture.service(queue.clone(), inbox, content.clone());
+
+    let inspected = service
+        .inspect_pending(fixture.handoff.fields().id)
+        .await
+        .expect("待办元数据可检查");
+
+    assert_eq!(inspected, fixture.handoff);
+    assert_eq!(content.open_count(), 0);
+    assert!(queue.receipt_statuses().is_empty());
+}
+
+#[tokio::test]
 async fn 正文完整性失败会提交失败回执且绝不返回载荷() {
     let fixture = Fixture::new();
     let queue = Arc::new(测试队列::default());
@@ -108,6 +126,36 @@ async fn 正文完整性失败会提交失败回执且绝不返回载荷() {
         .consume(fixture.handoff.fields().id)
         .await
         .expect_err("完整性失败必须拒绝");
+    assert_eq!(
+        failure.kind(),
+        TargetedHandoffInboxServiceFailureKind::IntegrityMismatch
+    );
+    assert_eq!(queue.receipt_statuses(), vec!["failed"]);
+    assert!(
+        inbox
+            .list(fixture.target, 10)
+            .await
+            .expect("收件箱可读")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn 文本正文不是_utf8_时会失败关闭且绝不把无效字节送进_ipc() {
+    let fixture = Fixture::with_body(vec![0xff, 0xfe, 0xfd]);
+    let queue = Arc::new(测试队列::default());
+    let inbox = Arc::new(内存收件箱::with(fixture.handoff.clone()));
+    let service = fixture.service(
+        queue.clone(),
+        inbox.clone(),
+        Arc::new(测试正文::new(fixture.downloaded())),
+    );
+
+    let failure = service
+        .consume(fixture.handoff.fields().id)
+        .await
+        .expect_err("声明为文本的无效 UTF-8 必须拒绝");
+
     assert_eq!(
         failure.kind(),
         TargetedHandoffInboxServiceFailureKind::IntegrityMismatch
@@ -407,11 +455,14 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_body(b"trusted context".to_vec())
+    }
+
+    fn with_body(body: Vec<u8>) -> Self {
         let target = TargetedHandoffTarget {
             agent_id: AgentId::from_uuid(Uuid::now_v7()),
             instance_id: AgentInstanceId::from_uuid(Uuid::now_v7()),
         };
-        let body = b"trusted context".to_vec();
         let digest = Sha256Digest::from_bytes(Sha256::digest(&body).into());
         let mut handoff = TargetedHandoff::queue(TargetedHandoffFields {
             id: HandoffId::from_uuid(Uuid::now_v7()),

@@ -90,6 +90,7 @@ pub enum IpcScopeName {
     StatusPublish,
     MessageSend,
     HandoffApprove,
+    HandoffList,
     HandoffConsume,
     HandoffDecline,
 }
@@ -174,6 +175,7 @@ impl From<IpcScopeName> for IpcScope {
             IpcScopeName::StatusPublish => Self::StatusPublish,
             IpcScopeName::MessageSend => Self::MessageSend,
             IpcScopeName::HandoffApprove => Self::HandoffApprove,
+            IpcScopeName::HandoffList => Self::HandoffList,
             IpcScopeName::HandoffConsume => Self::HandoffConsume,
             IpcScopeName::HandoffDecline => Self::HandoffDecline,
         }
@@ -192,6 +194,7 @@ impl From<IpcScope> for IpcScopeName {
             IpcScope::StatusPublish => Self::StatusPublish,
             IpcScope::MessageSend => Self::MessageSend,
             IpcScope::HandoffApprove => Self::HandoffApprove,
+            IpcScope::HandoffList => Self::HandoffList,
             IpcScope::HandoffConsume => Self::HandoffConsume,
             IpcScope::HandoffDecline => Self::HandoffDecline,
         }

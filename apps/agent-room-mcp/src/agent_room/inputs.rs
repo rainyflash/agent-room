@@ -1,17 +1,19 @@
 use agent_room_bridge_ipc::{
-    IpcGetPresenceRequest, IpcHandoffRequest, IpcListPreviewsRequest, IpcMessageProvenance,
-    IpcMessageSensitivity, IpcOpenContentRequest, IpcPublishStatusRequest, IpcSendMessageRequest,
-    IpcWorkStatus,
+    IpcGetPresenceRequest, IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest,
+    IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest, IpcPublishStatusRequest,
+    IpcSendMessageRequest, IpcWorkStatus,
     limits::{
-        EVENT_ID_BYTES, INLINE_TEXT_BYTES, LANGUAGE_BYTES, MEDIA_TYPE_BYTES, PRESENCE_TARGETS,
-        PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES, RISK_FLAGS, ROOM_ID_BYTES,
-        SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS, UUID_TEXT_CHARACTERS,
+        EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES, MEDIA_TYPE_BYTES,
+        PRESENCE_TARGETS, PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES, RISK_FLAGS,
+        ROOM_ID_BYTES, SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS,
+        UUID_TEXT_CHARACTERS,
     },
 };
 use rmcp::schemars;
 use serde::Deserialize;
 
 const DEFAULT_PREVIEW_LIMIT: u16 = 20;
+const DEFAULT_HANDOFF_LIMIT: u16 = 20;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +42,25 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
 
 const fn default_preview_limit() -> u16 {
     DEFAULT_PREVIEW_LIMIT
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListHandoffsInput {
+    /// 返回待处理云端交接的数量，范围 1 到 100；正文不会被打开。
+    #[serde(default = "default_handoff_limit")]
+    #[schemars(range(min = 1, max = HANDOFF_PAGE_SIZE))]
+    pub limit: u16,
+}
+
+impl From<ListHandoffsInput> for IpcListHandoffsRequest {
+    fn from(input: ListHandoffsInput) -> Self {
+        Self { limit: input.limit }
+    }
+}
+
+const fn default_handoff_limit() -> u16 {
+    DEFAULT_HANDOFF_LIMIT
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -249,8 +270,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        GetPresenceInput, HandoffInput, ListPreviewsInput, OpenContentInput, PublishStatusInput,
-        SendMessageInput,
+        GetPresenceInput, HandoffInput, ListHandoffsInput, ListPreviewsInput, OpenContentInput,
+        PublishStatusInput, SendMessageInput,
     };
 
     #[test]
@@ -278,6 +299,7 @@ mod tests {
             validate_if_parsed::<OpenContentInput, _>(&bytes, |input| IpcMethod::OpenContent(input.into()));
             validate_if_parsed::<PublishStatusInput, _>(&bytes, |input| IpcMethod::PublishStatus(input.into()));
             validate_if_parsed::<SendMessageInput, _>(&bytes, |input| IpcMethod::SendMessage(input.into()));
+            validate_if_parsed::<ListHandoffsInput, _>(&bytes, |input| IpcMethod::ListHandoffs(input.into()));
             validate_if_parsed::<HandoffInput, _>(&bytes, |input| IpcMethod::ConsumeHandoff(input.into()));
         }
     }

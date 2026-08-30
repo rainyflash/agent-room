@@ -184,6 +184,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::ApproveHandoff(request) => {
                     self.agent_runtime()?.approve_handoff(request).await
                 }
+                IpcMethod::ListHandoffs(request) => {
+                    self.agent_runtime()?.list_handoffs(request).await
+                }
                 IpcMethod::ConsumeHandoff(request) => {
                     self.agent_runtime()?.consume_handoff(request).await
                 }
@@ -771,9 +774,10 @@ mod tests {
     use agent_room_bridge_core::{
         agent_identity::BridgeAgentIdentity,
         handoffs::{
-            ApproveHandoffRequest, ConsumedHandoffContext, HandoffConsumptionOutcome,
-            HandoffDeliveryFailure, HandoffDeliveryOutcome, HandoffReceiptDelivery,
-            HandoffReceptionFailure, HandoffResolutionOutcome,
+            ApproveHandoffRequest, ConsumedHandoffContext, ConsumedTargetedHandoff,
+            HandoffConsumptionOutcome, HandoffDeliveryFailure, HandoffDeliveryOutcome,
+            HandoffReceiptDelivery, HandoffReceptionFailure, HandoffResolutionOutcome,
+            TargetedHandoffInboxServiceFailure, TargetedHandoffInboxServiceFailureKind,
         },
         messages::{
             AutomationAuthorizationGateway, AutomationAuthorizationRequest,
@@ -809,9 +813,10 @@ mod tests {
         IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcCaller, IpcChallenge,
         IpcErrorCategory, IpcFrame, IpcFrameCodec, IpcGetPresenceRequest, IpcHandoffPermission,
         IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
-        IpcMessageProvenance, IpcMessageSensitivity, IpcMethod, IpcOpenContentRequest,
-        IpcPublishStatusRequest, IpcResponse, IpcScopeName, IpcSendMessageRequest, IpcSharedSecret,
-        IpcSubmissionState, IpcVersion, IpcWorkStatus, create_challenge_proof,
+        IpcListHandoffsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
+        IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName,
+        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcVersion, IpcWorkStatus,
+        create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
     use agent_room_domain::{
@@ -819,9 +824,9 @@ mod tests {
         content::{ContentByteLength, ContentMediaType, Sha256Digest},
         devices::DevicePublicSigningKey,
         handoff::{
-            ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffPermission,
-            HandoffPermissions, HandoffPurpose, HandoffSource, HandoffSourceActor,
-            HandoffSourceEventId,
+            ContextHandoff, ContextHandoffFields, HandoffContentReference, HandoffFailureCode,
+            HandoffPermission, HandoffPermissions, HandoffPurpose, HandoffSource,
+            HandoffSourceActor, HandoffSourceEventId, TargetedHandoff, TargetedHandoffFields,
         },
         ids::{
             AgentId, AgentInstanceId, AutomationGrantId, ContentId, HandoffId, MessageId,
@@ -836,6 +841,7 @@ mod tests {
     };
     use agent_room_message_crypto_adapter::{AesGcmMessageContentCipher, MessageContentRootKey};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest as _, Sha256};
     use tempfile::tempdir;
     use tokio::io::duplex;
     use uuid::Uuid;
@@ -846,7 +852,9 @@ mod tests {
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
         BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
         BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler,
-        agent_runtime::{AgentHandoffDeliveryRuntime, AgentHandoffRuntime},
+        agent_runtime::{
+            AgentHandoffDeliveryRuntime, AgentHandoffRuntime, AgentTargetedHandoffRuntime,
+        },
         handle_connection,
     };
 
@@ -993,6 +1001,93 @@ mod tests {
                     HandoffReceiptDelivery::Confirmed,
                 ))
             })
+        }
+    }
+
+    struct 固定定向交接运行时 {
+        pending: Mutex<Option<TargetedHandoff>>,
+        body: Arc<[u8]>,
+    }
+
+    impl 固定定向交接运行时 {
+        fn new(pending: TargetedHandoff, body: Arc<[u8]>) -> Self {
+            Self {
+                pending: Mutex::new(Some(pending)),
+                body,
+            }
+        }
+
+        fn pending(
+            &self,
+            handoff_id: HandoffId,
+        ) -> Result<TargetedHandoff, TargetedHandoffInboxServiceFailure> {
+            self.pending
+                .lock()
+                .expect("定向交接锁可用")
+                .as_ref()
+                .filter(|handoff| handoff.fields().id == handoff_id)
+                .cloned()
+                .ok_or_else(|| {
+                    TargetedHandoffInboxServiceFailure::new(
+                        TargetedHandoffInboxServiceFailureKind::NotFound,
+                    )
+                })
+        }
+    }
+
+    impl AgentTargetedHandoffRuntime for 固定定向交接运行时 {
+        fn list_pending(
+            &self,
+            limit: u16,
+        ) -> PortFuture<'_, Result<Vec<TargetedHandoff>, TargetedHandoffInboxServiceFailure>>
+        {
+            let handoffs = self
+                .pending
+                .lock()
+                .expect("定向交接锁可用")
+                .as_ref()
+                .cloned()
+                .into_iter()
+                .take(usize::from(limit))
+                .collect();
+            Box::pin(async move { Ok(handoffs) })
+        }
+
+        fn inspect_pending(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>> {
+            let outcome = self.pending(handoff_id);
+            Box::pin(async move { outcome })
+        }
+
+        fn consume(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<ConsumedTargetedHandoff, TargetedHandoffInboxServiceFailure>>
+        {
+            let outcome = self.pending(handoff_id).map(|handoff| {
+                self.pending.lock().expect("定向交接锁可用").take();
+                ConsumedTargetedHandoff::new(handoff, self.body.clone())
+            });
+            Box::pin(async move { outcome })
+        }
+
+        fn decline(
+            &self,
+            handoff_id: HandoffId,
+        ) -> PortFuture<'_, Result<TargetedHandoff, TargetedHandoffInboxServiceFailure>> {
+            let outcome = self.pending(handoff_id).map(|mut handoff| {
+                handoff
+                    .decline(
+                        HandoffFailureCode::new("agent.declined").expect("拒绝码有效"),
+                        UtcMillis::new(1_100).expect("拒绝时间有效"),
+                    )
+                    .expect("已送达定向交接可拒绝");
+                self.pending.lock().expect("定向交接锁可用").take();
+                handoff
+            });
+            Box::pin(async move { outcome })
         }
     }
 
@@ -1679,6 +1774,101 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn 云端定向交接列表只暴露人类来源且正文仅由显式消费返回() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+        let body = Arc::<[u8]>::from("云端正文".as_bytes());
+        let pending = 测试已送达定向交接(principal_id, &identity, body.as_ref());
+        let handoff_id = pending.fields().id;
+        let targeted = Arc::new(固定定向交接运行时::new(pending, body));
+        let projections = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity.clone(),
+                    "DEVICE-1",
+                    room_id,
+                    ["handoff.list", "handoff.consume", "handoff.decline"],
+                )
+                .with_targeted_handoffs(targeted),
+            )),
+            projections.clone(),
+            空正文服务(projections),
+            Arc::new(固定时钟),
+        );
+
+        let listed = handler
+            .dispatch(IpcMethod::ListHandoffs(IpcListHandoffsRequest {
+                limit: 20,
+            }))
+            .await
+            .expect("定向交接元数据可列出");
+        let serialized = serde_json::to_string(&listed).expect("交接列表可序列化");
+        assert!(serialized.contains(&principal_id.to_string()));
+        assert!(!serialized.contains("sourceActor"));
+        assert!(!serialized.contains("Codex Agent"));
+        let IpcResponse::PendingTargetedHandoffs { handoffs } = listed else {
+            panic!("必须返回账号级定向交接列表");
+        };
+        assert_eq!(handoffs.len(), 1);
+        assert_eq!(handoffs[0].handoff_id, handoff_id.to_string());
+        assert_eq!(handoffs[0].source.principal_id, principal_id.to_string());
+        assert_eq!(handoffs[0].status, IpcHandoffStatus::Delivered);
+
+        let consumed = handler
+            .dispatch(IpcMethod::ConsumeHandoff(IpcHandoffRequest {
+                handoff_id: handoff_id.to_string(),
+            }))
+            .await
+            .expect("显式消费可打开云端交接正文");
+        assert!(matches!(
+            consumed,
+            IpcResponse::ConsumedTargetedHandoff { handoff }
+                if handoff.handoff.handoff_id == handoff_id.to_string()
+                    && handoff.handoff.source.principal_id == principal_id.to_string()
+                    && handoff.body == "云端正文"
+        ));
+
+        let declined_pending =
+            测试已送达定向交接(principal_id, &identity, "另一条云端正文".as_bytes());
+        let declined_id = declined_pending.fields().id;
+        let declined_runtime = Arc::new(固定定向交接运行时::new(
+            declined_pending,
+            Arc::from("另一条云端正文".as_bytes()),
+        ));
+        let projections = Arc::new(记录预览查询::default());
+        let decline_handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity,
+                    "DEVICE-1",
+                    MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效"),
+                    ["handoff.decline"],
+                )
+                .with_targeted_handoffs(declined_runtime),
+            )),
+            projections.clone(),
+            空正文服务(projections),
+            Arc::new(固定时钟),
+        );
+        let declined = decline_handler
+            .dispatch(IpcMethod::DeclineHandoff(IpcHandoffRequest {
+                handoff_id: declined_id.to_string(),
+            }))
+            .await
+            .expect("定向交接可显式拒绝");
+        assert!(matches!(
+            declined,
+            IpcResponse::DeclinedTargetedHandoff { handoff }
+                if handoff.handoff_id == declined_id.to_string()
+                    && handoff.status == IpcHandoffStatus::Declined
+        ));
+    }
+
     fn 测试_agent_身份() -> BridgeAgentIdentity {
         BridgeAgentIdentity::new(
             AgentId::from_uuid(
@@ -1784,6 +1974,44 @@ mod tests {
         handoff
             .mark_delivered(UtcMillis::new(1_000).expect("送达时间有效"))
             .expect("交接可标记送达");
+        handoff
+    }
+
+    fn 测试已送达定向交接(
+        principal_id: PrincipalId,
+        target: &BridgeAgentIdentity,
+        body: &[u8],
+    ) -> TargetedHandoff {
+        let digest = Sha256Digest::from_bytes(Sha256::digest(body).into());
+        let mut handoff = TargetedHandoff::queue(TargetedHandoffFields {
+            id: HandoffId::from_uuid(Uuid::now_v7()),
+            principal_id,
+            source_room_id: MatrixRoomReference::new("!source:matrix.test").expect("来源房间有效"),
+            source_event_id: HandoffSourceEventId::new("$account-handoff:matrix.test")
+                .expect("来源事件有效"),
+            source_message_id: MessageId::from_uuid(Uuid::now_v7()),
+            target_agent_id: target.agent_id(),
+            target_instance_id: target.agent_instance_id(),
+            content: HandoffContentReference::new(
+                ContentId::from_uuid(Uuid::now_v7()),
+                digest,
+                ContentByteLength::new(u64::try_from(body.len()).expect("正文长度可转换"))
+                    .expect("正文长度有效"),
+                ContentMediaType::new("text/plain").expect("媒体类型有效"),
+            ),
+            permissions: HandoffPermissions::new([
+                HandoffPermission::ReadText,
+                HandoffPermission::IncludeMetadata,
+            ])
+            .expect("权限有效"),
+            purpose: HandoffPurpose::Inspect,
+            created_at: UtcMillis::new(900).expect("创建时间有效"),
+            expires_at: UtcMillis::new(2_000).expect("到期时间有效"),
+        })
+        .expect("定向交接可排队");
+        handoff
+            .mark_delivered(UtcMillis::new(1_000).expect("交付时间有效"))
+            .expect("定向交接可送达");
         handoff
     }
 

@@ -299,7 +299,7 @@ struct AgentOnlineSession {
     handoffs: Arc<HandoffReceptionService>,
     handoff_delivery: Arc<HandoffDeliveryService>,
     handoff_worker: HandoffEventWorker,
-    _targeted_handoffs: Arc<TargetedHandoffInboxService>,
+    targeted_handoffs: Arc<TargetedHandoffInboxService>,
     targeted_handoff_worker: TargetedHandoffWorker,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
     next_batch: Option<MatrixSyncToken>,
@@ -383,6 +383,7 @@ impl BridgeAgentRuntimeState {
             .with_room_encryption(MatrixRoomEncryption::Unencrypted)
             .with_handoff_delivery(online.handoff_delivery.clone())
             .with_handoffs(online.handoffs.clone())
+            .with_targeted_handoffs(online.targeted_handoffs.clone())
             .with_presence(online.presence_projections.clone()),
         ));
     }
@@ -875,7 +876,7 @@ async fn establish_agent_online(
         handoffs,
         handoff_delivery,
         handoff_worker,
-        _targeted_handoffs: targeted_handoffs,
+        targeted_handoffs,
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
         next_batch: None,

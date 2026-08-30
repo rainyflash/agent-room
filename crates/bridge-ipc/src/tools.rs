@@ -16,6 +16,7 @@ pub enum IpcMethod {
     PublishStatus(IpcPublishStatusRequest),
     SendMessage(IpcSendMessageRequest),
     ApproveHandoff(IpcApproveHandoffRequest),
+    ListHandoffs(IpcListHandoffsRequest),
     ConsumeHandoff(IpcHandoffRequest),
     DeclineHandoff(IpcHandoffRequest),
 }
@@ -32,6 +33,7 @@ impl IpcMethod {
             Self::PublishStatus(_) => "publish_status",
             Self::SendMessage(_) => "send_message",
             Self::ApproveHandoff(_) => "approve_handoff",
+            Self::ListHandoffs(_) => "list_handoffs",
             Self::ConsumeHandoff(_) => "consume_handoff",
             Self::DeclineHandoff(_) => "decline_handoff",
         }
@@ -48,6 +50,7 @@ impl IpcMethod {
             Self::PublishStatus(_) => IpcScope::StatusPublish,
             Self::SendMessage(_) => IpcScope::MessageSend,
             Self::ApproveHandoff(_) => IpcScope::HandoffApprove,
+            Self::ListHandoffs(_) => IpcScope::HandoffList,
             Self::ConsumeHandoff(_) => IpcScope::HandoffConsume,
             Self::DeclineHandoff(_) => IpcScope::HandoffDecline,
         }
@@ -68,6 +71,7 @@ impl IpcMethod {
             Self::PublishStatus(request) => request.validate(),
             Self::SendMessage(request) => request.validate(),
             Self::ApproveHandoff(request) => request.validate(),
+            Self::ListHandoffs(request) => request.validate(),
             Self::ConsumeHandoff(request) | Self::DeclineHandoff(request) => request.validate(),
         }
     }
@@ -257,6 +261,21 @@ pub struct IpcHandoffRequest {
     pub handoff_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcListHandoffsRequest {
+    pub limit: u16,
+}
+
+impl IpcListHandoffsRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if !(1..=limits::HANDOFF_PAGE_SIZE).contains(&self.limit) {
+            return Err(failure("bridge.ipc.handoff_limit_invalid"));
+        }
+        Ok(())
+    }
+}
+
 impl IpcHandoffRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_uuid_v7(&self.handoff_id, "bridge.ipc.handoff_id_invalid")
@@ -344,11 +363,20 @@ pub enum IpcResponse {
     ApprovedHandoff {
         handoff: IpcHandoffSubmission,
     },
+    PendingTargetedHandoffs {
+        handoffs: Vec<IpcPendingTargetedHandoff>,
+    },
     ConsumedHandoff {
         handoff: IpcConsumedHandoff,
     },
+    ConsumedTargetedHandoff {
+        handoff: IpcConsumedTargetedHandoff,
+    },
     DeclinedHandoff {
         handoff: IpcDeclinedHandoff,
+    },
+    DeclinedTargetedHandoff {
+        handoff: IpcDeclinedTargetedHandoff,
     },
 }
 
@@ -465,9 +493,48 @@ pub struct IpcConsumedHandoff {
     pub body: String,
 }
 
+/// 账号级云端交接的发起者。该主体是人类账号，不能伪装成 Agent 实例。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcHumanHandoffSource {
+    pub principal_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcPendingTargetedHandoff {
+    pub handoff_id: String,
+    pub source: IpcHumanHandoffSource,
+    pub source_room_id: String,
+    pub source_event_id: String,
+    pub source_message_id: String,
+    pub status: IpcHandoffStatus,
+    pub purpose: String,
+    pub permissions: Vec<IpcHandoffPermission>,
+    pub content: IpcContentReference,
+    pub created_at_unix_ms: i64,
+    pub queued_at_unix_ms: i64,
+    pub delivered_at_unix_ms: i64,
+    pub expires_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcConsumedTargetedHandoff {
+    pub handoff: IpcPendingTargetedHandoff,
+    pub body: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcDeclinedHandoff {
+    pub handoff_id: String,
+    pub status: IpcHandoffStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcDeclinedTargetedHandoff {
     pub handoff_id: String,
     pub status: IpcHandoffStatus,
 }
@@ -654,9 +721,9 @@ mod tests {
 
     use super::{
         IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcHandoffPermission,
-        IpcHandoffPurpose, IpcHandoffRequest, IpcListPreviewsRequest, IpcMessageProvenance,
-        IpcMessageSensitivity, IpcMethod, IpcPublishStatusRequest, IpcSendMessageRequest,
-        IpcWorkStatus,
+        IpcHandoffPurpose, IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest,
+        IpcMessageProvenance, IpcMessageSensitivity, IpcMethod, IpcPublishStatusRequest,
+        IpcSendMessageRequest, IpcWorkStatus,
     };
 
     #[test]
@@ -693,6 +760,10 @@ mod tests {
                 IpcScope::HandoffApprove,
             ),
             (
+                IpcMethod::ListHandoffs(IpcListHandoffsRequest { limit: 20 }),
+                IpcScope::HandoffList,
+            ),
+            (
                 IpcMethod::ConsumeHandoff(IpcHandoffRequest {
                     handoff_id: id.clone(),
                 }),
@@ -724,6 +795,15 @@ mod tests {
                 .expect_err("超限进度必须失败")
                 .code(),
             "bridge.ipc.progress_invalid"
+        );
+
+        let invalid_handoff_page = IpcMethod::ListHandoffs(IpcListHandoffsRequest { limit: 0 });
+        assert_eq!(
+            invalid_handoff_page
+                .validate()
+                .expect_err("空页大小必须失败")
+                .code(),
+            "bridge.ipc.handoff_limit_invalid"
         );
 
         let invalid_message = IpcMethod::SendMessage(IpcSendMessageRequest {
