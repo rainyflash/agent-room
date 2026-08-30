@@ -54,6 +54,7 @@ VERTICAL_PROJECT_NAME: Final = "agent-room-vertical-24"
 VERTICAL_ROOT: Final = ROOT / ".local" / "vertical"
 BOOTSTRAP_RESULT: Final = VERTICAL_ROOT / "bootstrap.json"
 CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
+TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
 SECURITY_LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-27" / "services"
 CATALOG_SEED_ID: Final = "019d2c44-1dc5-7a5b-9e32-2f3c1d4b5a61"
@@ -67,6 +68,7 @@ SECURE_STORAGE_SERVICES: Final = (
 SENDER_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-sender"
 TARGET_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-target"
 BRIDGE_DATA_ROOTS: Final = (SENDER_BRIDGE_DATA_ROOT, TARGET_BRIDGE_DATA_ROOT)
+WEB_PREVIEW_PORT: Final = 14_173
 SECURE_STORAGE_ACCOUNTS: Final = (
     "device-signing-seed",
     "agent-instance-signing-seed-v1",
@@ -85,6 +87,7 @@ EXPECTED_MCP_TOOLS: Final = frozenset(
         "agent_room_open_content",
         "agent_room_publish_status",
         "agent_room_send_message",
+        "agent_room_list_handoffs",
         "agent_room_consume_handoff",
         "agent_room_decline_handoff",
     }
@@ -955,7 +958,7 @@ def web_preview_command() -> list[str]:
         "--host",
         "0.0.0.0",
         "--port",
-        "4173",
+        str(WEB_PREVIEW_PORT),
         "--strictPort",
     ]
 
@@ -989,7 +992,11 @@ def start_web(
             redactor=redactor,
         )
     )
-    wait_for_http("http://127.0.0.1:4173/connect", web, timeout_seconds=60)
+    wait_for_http(
+        f"http://127.0.0.1:{WEB_PREVIEW_PORT}/connect",
+        web,
+        timeout_seconds=60,
+    )
     wait_for_local_https(
         "https://app.agent-room.localhost:18443/connect",
         web,
@@ -1031,6 +1038,68 @@ def bootstrap_agent(environment: Mapping[str, str]) -> dict[str, str]:
         if not result.get(name, "").startswith("@"):
             raise VerticalFailure(f"浏览器引导结果缺少有效 {name}。")
     return result
+
+
+def queue_targeted_handoff_in_browser(
+    *,
+    environment: Mapping[str, str],
+    catalog_id: str,
+    source: Mapping[str, str],
+    target_instance_id: str,
+) -> str:
+    """使用真实人类浏览器会话创建交接，并在服务端验证幂等重放。"""
+    require_uuid_v7(catalog_id, "云端交接来源大厅")
+    for name in ("contentId", "messageId"):
+        require_uuid_v7(require_text(source.get(name), name), name)
+    require_uuid_v7(target_instance_id, "云端交接目标实例")
+    room_id = require_text(source.get("matrixRoomId"), "云端交接来源房间")
+    event_id = require_text(source.get("sourceEventId"), "云端交接来源事件")
+    if not room_id.startswith("!") or not event_id.startswith("$"):
+        raise VerticalFailure("云端交接来源 Matrix 标识无效。")
+
+    handoff_id = new_uuid_v7()
+    TARGETED_HANDOFF_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    TARGETED_HANDOFF_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(
+                environment, "SEED_ADMIN_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_EVIDENCE_TASK": "cloud-first-product-closure",
+            "AGENT_ROOM_VERTICAL_HANDOFF_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_HANDOFF_CONTENT_ID": source["contentId"],
+            "AGENT_ROOM_VERTICAL_HANDOFF_EXPIRES_AT_UNIX_MS": str(
+                int(time.time() * 1_000) + 10 * 60 * 1_000
+            ),
+            "AGENT_ROOM_VERTICAL_HANDOFF_ID": handoff_id,
+            "AGENT_ROOM_VERTICAL_HANDOFF_RESULT": str(TARGETED_HANDOFF_RESULT),
+            "AGENT_ROOM_VERTICAL_HANDOFF_SOURCE_EVENT_ID": event_id,
+            "AGENT_ROOM_VERTICAL_HANDOFF_SOURCE_MESSAGE_ID": source["messageId"],
+            "AGENT_ROOM_VERTICAL_HANDOFF_SOURCE_ROOM_ID": room_id,
+            "AGENT_ROOM_VERTICAL_HANDOFF_TARGET_INSTANCE_ID": target_instance_id,
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "targeted-handoff.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    result = read_string_object(TARGETED_HANDOFF_RESULT)
+    if result.get("handoffId") != handoff_id:
+        raise VerticalFailure("浏览器创建了错误的云端交接。")
+    if result.get("targetInstanceId") != target_instance_id:
+        raise VerticalFailure("浏览器云端交接目标实例漂移。")
+    if result.get("replayed") != "true":
+        raise VerticalFailure("云端交接幂等重放没有复用原记录。")
+    return handoff_id
 
 
 def verify_browser_security(environment: Mapping[str, str]) -> None:
@@ -1299,7 +1368,228 @@ def verify_mcp_workflow(
             require_object(preview.get("content"), "MCP 正文引用").get("contentId"),
             "MCP 正文标识",
         ),
+        "messageBody": message["body"],
+        "sourceEventId": message["eventId"],
     }
+
+
+def verify_cloud_targeted_handoff_workflow(
+    *,
+    environment: Mapping[str, str],
+    catalog_id: str,
+    target_bridge: AuthorizedBridgeRuntime,
+    sender_bridge: AuthorizedBridgeRuntime,
+    source: Mapping[str, str],
+    principal_id: str,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """让浏览器、云端队列和两套隔离 Bridge 完成消费与拒绝闭环。"""
+    target_instance_id = require_text(
+        source.get("agentInstanceId"), "云端交接目标实例"
+    )
+    require_uuid_v7(target_instance_id, "云端交接目标实例")
+    require_uuid_v7(principal_id, "云端交接发起主体")
+
+    previous_generation = target_bridge.observation.agent_online_generation
+    target_bridge.process.stop()
+    consumed_handoff_id = queue_targeted_handoff_in_browser(
+        environment=environment,
+        catalog_id=catalog_id,
+        source=source,
+        target_instance_id=target_instance_id,
+    )
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=sender_bridge.environment,
+        stderr_path=LOG_ROOT / "cloud-handoff-sender-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as sender_client:
+        assert_targeted_handoff_absent(sender_client, consumed_handoff_id)
+
+    target_bridge.process.start()
+    recovered_generation = target_bridge.observation.wait_for_agent_online(
+        target_bridge.process,
+        after_generation=previous_generation,
+        timeout_seconds=180,
+    )
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=target_bridge.environment,
+        stderr_path=LOG_ROOT / "cloud-handoff-target-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as target_client:
+        wait_for_targeted_handoff(
+            target_client,
+            handoff_id=consumed_handoff_id,
+            principal_id=principal_id,
+            timeout_seconds=45,
+        )
+        consume_targeted_handoff(
+            target_client,
+            handoff_id=consumed_handoff_id,
+            source=source,
+            principal_id=principal_id,
+        )
+    assert_targeted_handoff_state(consumed_handoff_id, "consumed")
+
+    declined_handoff_id = queue_targeted_handoff_in_browser(
+        environment=environment,
+        catalog_id=catalog_id,
+        source=source,
+        target_instance_id=target_instance_id,
+    )
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=sender_bridge.environment,
+        stderr_path=LOG_ROOT / "cloud-handoff-isolation-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as sender_client:
+        assert_targeted_handoff_absent(sender_client, declined_handoff_id)
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=target_bridge.environment,
+        stderr_path=LOG_ROOT / "cloud-handoff-decline-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as target_client:
+        wait_for_targeted_handoff(
+            target_client,
+            handoff_id=declined_handoff_id,
+            principal_id=principal_id,
+            timeout_seconds=45,
+        )
+        decline_targeted_handoff(target_client, declined_handoff_id)
+    assert_targeted_handoff_state(declined_handoff_id, "declined")
+
+    return {
+        "consumedHandoffId": consumed_handoff_id,
+        "declinedHandoffId": declined_handoff_id,
+        "offlineRecoveryGeneration": str(recovered_generation),
+    }
+
+
+def pending_targeted_handoffs(client: McpStdioClient) -> tuple[dict[str, object], ...]:
+    response = client.call_tool("agent_room_list_handoffs", {"limit": 100})
+    if response.get("type") != "pending_targeted_handoffs":
+        raise VerticalFailure("MCP 云端交接列表返回了错误响应类型。")
+    handoffs = response.get("handoffs")
+    if not isinstance(handoffs, list):
+        raise VerticalFailure("MCP 云端交接列表缺少数组。")
+    return tuple(require_object(item, "MCP 云端交接元数据") for item in handoffs)
+
+
+def assert_targeted_handoff_absent(client: McpStdioClient, handoff_id: str) -> None:
+    if any(
+        handoff.get("handoffId") == handoff_id
+        for handoff in pending_targeted_handoffs(client)
+    ):
+        raise VerticalFailure("非目标实例读取到了定向交接。")
+
+
+def wait_for_targeted_handoff(
+    client: McpStdioClient,
+    *,
+    handoff_id: str,
+    principal_id: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        for handoff in pending_targeted_handoffs(client):
+            if handoff.get("handoffId") != handoff_id:
+                continue
+            source = require_object(handoff.get("source"), "云端交接人类来源")
+            if source.get("principalId") != principal_id:
+                raise VerticalFailure("云端交接发起主体被错误投影。")
+            if handoff.get("status") != "delivered":
+                raise VerticalFailure("本机收件箱没有保存已领取状态。")
+            return handoff
+        time.sleep(0.4)
+    raise VerticalFailure(f"云端交接未在 {timeout_seconds:.0f} 秒内进入目标收件箱。")
+
+
+def consume_targeted_handoff(
+    client: McpStdioClient,
+    *,
+    handoff_id: str,
+    source: Mapping[str, str],
+    principal_id: str,
+) -> None:
+    response = client.call_tool(
+        "agent_room_consume_handoff", {"handoffId": handoff_id}
+    )
+    if response.get("type") != "consumed_targeted_handoff":
+        raise VerticalFailure("MCP 消费云端交接返回了错误响应类型。")
+    consumed = require_object(response.get("handoff"), "MCP 已消费云端交接")
+    metadata = require_object(consumed.get("handoff"), "MCP 云端交接元数据")
+    actor = require_object(metadata.get("source"), "MCP 云端交接人类来源")
+    content = require_object(metadata.get("content"), "MCP 云端交接正文引用")
+    if actor.get("principalId") != principal_id:
+        raise VerticalFailure("MCP 云端交接伪造了 Agent 发起者。")
+    if metadata.get("handoffId") != handoff_id:
+        raise VerticalFailure("MCP 消费了错误的云端交接。")
+    if metadata.get("sourceRoomId") != source.get("matrixRoomId"):
+        raise VerticalFailure("MCP 云端交接来源房间漂移。")
+    if metadata.get("sourceEventId") != source.get("sourceEventId"):
+        raise VerticalFailure("MCP 云端交接来源事件漂移。")
+    if metadata.get("sourceMessageId") != source.get("messageId"):
+        raise VerticalFailure("MCP 云端交接来源消息漂移。")
+    if content.get("contentId") != source.get("contentId"):
+        raise VerticalFailure("MCP 云端交接正文引用漂移。")
+    if consumed.get("body") != source.get("messageBody"):
+        raise VerticalFailure("MCP 云端交接正文没有保持原始字节内容。")
+    verify_targeted_handoff_is_one_time(client, handoff_id)
+
+
+def decline_targeted_handoff(client: McpStdioClient, handoff_id: str) -> None:
+    response = client.call_tool(
+        "agent_room_decline_handoff", {"handoffId": handoff_id}
+    )
+    if response.get("type") != "declined_targeted_handoff":
+        raise VerticalFailure("MCP 拒绝云端交接返回了错误响应类型。")
+    declined = require_object(response.get("handoff"), "MCP 已拒绝云端交接")
+    if declined.get("handoffId") != handoff_id or declined.get("status") != "declined":
+        raise VerticalFailure("MCP 云端交接拒绝终态不一致。")
+    verify_targeted_handoff_is_one_time(client, handoff_id)
+
+
+def verify_targeted_handoff_is_one_time(
+    client: McpStdioClient, handoff_id: str
+) -> None:
+    replay = client.call_tool_result(
+        "agent_room_consume_handoff", {"handoffId": handoff_id}
+    )
+    structured = replay.get("structuredContent")
+    terminal_codes = frozenset(
+        {"bridge.handoff_already_resolved", "bridge.handoff_not_found"}
+    )
+    if (
+        replay.get("isError") is not True
+        or not isinstance(structured, dict)
+        or structured.get("code") not in terminal_codes
+        or structured.get("retryable") is not False
+    ):
+        code = structured.get("code") if isinstance(structured, dict) else None
+        raise VerticalFailure(
+            f"云端交接二次消费没有安全失败；实际错误码为 {code or '缺失'}。"
+        )
+
+
+def assert_targeted_handoff_state(handoff_id: str, expected_state: str) -> None:
+    require_uuid_v7(handoff_id, "云端交接状态查询标识")
+    if expected_state not in {"consumed", "declined", "expired"}:
+        raise VerticalFailure("拒绝查询未经审计的云端交接终态。")
+    actual = compose_psql(
+        "SELECT state FROM agent_room.context_handoff "
+        f"WHERE id = '{handoff_id}';"
+    )
+    if actual != expected_state:
+        raise VerticalFailure(
+            f"云端交接终态应为 {expected_state}，实际为 {actual or '缺失'}。"
+        )
 
 
 def verify_mcp_identity_response(
@@ -1784,6 +2074,15 @@ def bootstrap() -> None:
                 principal_id=agent["principalId"],
                 redactor=redactor,
             )
+            cloud_handoffs = verify_cloud_targeted_handoff_workflow(
+                environment=environment,
+                catalog_id=catalog_id,
+                target_bridge=target_bridge,
+                sender_bridge=sender_bridge,
+                source=runtime,
+                principal_id=agent["principalId"],
+                redactor=redactor,
+            )
         scanned_logs = verify_sanitized_logs(
             (
                 LOG_ROOT / "control-plane.log",
@@ -1793,6 +2092,10 @@ def bootstrap() -> None:
                 LOG_ROOT / "codex-mcp-reconnect.log",
                 LOG_ROOT / "codex-mcp-sender.log",
                 LOG_ROOT / "codex-mcp.log",
+                LOG_ROOT / "cloud-handoff-sender-mcp.log",
+                LOG_ROOT / "cloud-handoff-target-mcp.log",
+                LOG_ROOT / "cloud-handoff-isolation-mcp.log",
+                LOG_ROOT / "cloud-handoff-decline-mcp.log",
             ),
             redactor,
             additional_secrets=(
@@ -1807,13 +2110,22 @@ def bootstrap() -> None:
                 "agentInstanceId": runtime["agentInstanceId"],
                 "catalogId": catalog_id,
                 "contentId": runtime["contentId"],
+                "consumedTargetedHandoffId": cloud_handoffs[
+                    "consumedHandoffId"
+                ],
                 "correlationId": correlation_id,
+                "declinedTargetedHandoffId": cloud_handoffs[
+                    "declinedHandoffId"
+                ],
                 "handoffId": runtime["handoffId"],
                 "logFilesScanned": str(len(scanned_logs)),
                 "matrixRoomId": runtime["matrixRoomId"],
                 "messageId": runtime["messageId"],
                 "principalId": agent["principalId"],
                 "recoveryGeneration": str(recovery_generation),
+                "targetedHandoffRecoveryGeneration": cloud_handoffs[
+                    "offlineRecoveryGeneration"
+                ],
                 "replyMessageId": runtime["replyMessageId"],
                 "roomInstanceId": runtime["roomInstanceId"],
                 "secureStorageService": TARGET_SECURE_STORAGE_SERVICE,
