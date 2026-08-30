@@ -7,6 +7,7 @@ mod ports;
 mod receipt_incoming_wire;
 mod receipt_wire;
 mod receipts;
+mod targeted_inbox;
 mod targeted_queue;
 mod wire;
 
@@ -39,6 +40,13 @@ pub use receipt_wire::HANDOFF_RECEIPT_EVENT_TYPE;
 pub use receipts::{
     HandoffReceiptDependencies, HandoffReceiptFailure, HandoffReceiptFailureKind,
     HandoffReceiptService,
+};
+pub use targeted_inbox::{
+    ConsumedTargetedHandoff, TARGETED_HANDOFF_INBOX_PAGE_LIMIT, TargetedHandoffClaimOutcome,
+    TargetedHandoffInbox, TargetedHandoffInboxDependencies, TargetedHandoffInboxFailure,
+    TargetedHandoffInboxFailureKind, TargetedHandoffInboxRecordOutcome,
+    TargetedHandoffInboxService, TargetedHandoffInboxServiceFailure,
+    TargetedHandoffInboxServiceFailureKind,
 };
 pub use targeted_queue::{
     TargetedHandoffQueueFailure, TargetedHandoffQueueFailureKind, TargetedHandoffQueueGateway,

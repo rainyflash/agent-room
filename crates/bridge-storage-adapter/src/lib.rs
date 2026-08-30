@@ -5,6 +5,7 @@ mod message_projection;
 mod message_projection_crypto;
 mod message_submissions;
 mod presence_projection;
+mod targeted_handoff_inbox;
 
 pub use database::SqliteBridgeStorageOpenFailure;
 pub use handoff_store::{
@@ -19,3 +20,4 @@ pub use message_submissions::{
     SqliteMessageSubmissionOpenFailure, SqliteMessageSubmissionRepository,
 };
 pub use presence_projection::InMemoryPresenceProjectionRepository;
+pub use targeted_handoff_inbox::SqliteTargetedHandoffInbox;
