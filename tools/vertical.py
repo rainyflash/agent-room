@@ -55,6 +55,7 @@ VERTICAL_ROOT: Final = ROOT / ".local" / "vertical"
 BOOTSTRAP_RESULT: Final = VERTICAL_ROOT / "bootstrap.json"
 CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
+PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
 SECURITY_LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-27" / "services"
 CATALOG_SEED_ID: Final = "019d2c44-1dc5-7a5b-9e32-2f3c1d4b5a61"
@@ -1128,6 +1129,76 @@ def verify_browser_security(environment: Mapping[str, str]) -> None:
     )
 
 
+def run_product_closure_browser(
+    *,
+    environment: Mapping[str, str],
+    agent_id: str,
+    catalog_id: str,
+    target_instance_id: str,
+) -> dict[str, str]:
+    """在 Bridge 全部离线时运行三浏览器、双账户的真实云端闭环。"""
+    for value, label in (
+        (agent_id, "产品闭环共享 Agent"),
+        (catalog_id, "产品闭环公共大厅"),
+        (target_instance_id, "产品闭环目标实例"),
+    ):
+        require_uuid_v7(value, label)
+    PRODUCT_CLOSURE_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    PRODUCT_CLOSURE_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_PRODUCT_CLOSURE_AGENT_ID": agent_id,
+            "AGENT_ROOM_PRODUCT_CLOSURE_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_PRODUCT_CLOSURE_COLLABORATOR_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_PRODUCT_CLOSURE_COLLABORATOR_USERNAME": "collaborator",
+            "AGENT_ROOM_PRODUCT_CLOSURE_OWNER_PASSWORD": required_value(
+                environment, "SEED_ADMIN_PASSWORD"
+            ),
+            "AGENT_ROOM_PRODUCT_CLOSURE_OWNER_USERNAME": "developer",
+            "AGENT_ROOM_PRODUCT_CLOSURE_RESULT": str(PRODUCT_CLOSURE_RESULT),
+            "AGENT_ROOM_PRODUCT_CLOSURE_TARGET_INSTANCE_ID": target_instance_id,
+            "AGENT_ROOM_VERTICAL_EVIDENCE_TASK": "cloud-first-product-closure",
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "product-closure.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    result = read_string_object(PRODUCT_CLOSURE_RESULT)
+    if result.get("browserContextCount") != "3":
+        raise VerticalFailure("产品闭环没有运行三个隔离浏览器上下文。")
+    if result.get("ownerMatrixDeviceCount") != "2":
+        raise VerticalFailure("同一账户没有形成两个独立 Matrix 设备。")
+    for name in (
+        "collaboratorPrincipalId",
+        "contentId",
+        "handoffId",
+        "messageId",
+        "targetInstanceId",
+    ):
+        require_uuid_v7(require_text(result.get(name), name), name)
+    if result.get("targetInstanceId") != target_instance_id:
+        raise VerticalFailure("第二账户选择的交接目标实例发生漂移。")
+    for name in ("collaboratorMatrixUserId", "ownerMatrixUserId"):
+        if not require_text(result.get(name), name).startswith("@"):
+            raise VerticalFailure(f"产品闭环缺少有效 {name}。")
+    if not require_text(result.get("roomId"), "产品闭环 Matrix 房间").startswith("!"):
+        raise VerticalFailure("产品闭环 Matrix 房间标识无效。")
+    if not require_text(result.get("sourceEventId"), "产品闭环 Matrix 事件").startswith("$"):
+        raise VerticalFailure("产品闭环 Matrix 事件标识无效。")
+    return result
+
+
 def start_authorized_bridge(
     *,
     processes: ProcessStack,
@@ -1468,6 +1539,72 @@ def verify_cloud_targeted_handoff_workflow(
     return {
         "consumedHandoffId": consumed_handoff_id,
         "declinedHandoffId": declined_handoff_id,
+        "offlineRecoveryGeneration": str(recovered_generation),
+    }
+
+
+def verify_product_closure_workflow(
+    *,
+    environment: Mapping[str, str],
+    agent_id: str,
+    catalog_id: str,
+    target_bridge: AuthorizedBridgeRuntime,
+    sender_bridge: AuthorizedBridgeRuntime,
+    target_instance_id: str,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """证明纯 Web 无 Bridge 可用，并由恢复后的目标设备消费跨账户交接。"""
+    previous_generation = target_bridge.observation.agent_online_generation
+    sender_bridge.process.stop()
+    target_bridge.process.stop()
+    result = run_product_closure_browser(
+        environment=environment,
+        agent_id=agent_id,
+        catalog_id=catalog_id,
+        target_instance_id=target_instance_id,
+    )
+
+    target_bridge.process.start()
+    recovered_generation = target_bridge.observation.wait_for_agent_online(
+        target_bridge.process,
+        after_generation=previous_generation,
+        timeout_seconds=180,
+    )
+    principal_id = require_text(
+        result.get("collaboratorPrincipalId"), "产品闭环第二账户主体"
+    )
+    source = {
+        "contentId": require_text(result.get("contentId"), "产品闭环正文标识"),
+        "matrixRoomId": require_text(result.get("roomId"), "产品闭环 Matrix 房间"),
+        "messageBody": require_text(result.get("messageBody"), "产品闭环消息正文"),
+        "messageId": require_text(result.get("messageId"), "产品闭环消息标识"),
+        "sourceEventId": require_text(
+            result.get("sourceEventId"), "产品闭环 Matrix 事件"
+        ),
+    }
+    handoff_id = require_text(result.get("handoffId"), "产品闭环交接标识")
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=target_bridge.environment,
+        stderr_path=LOG_ROOT / "product-closure-target-mcp.log",
+        sanitize_line=redactor.redact,
+    ) as target_client:
+        wait_for_targeted_handoff(
+            target_client,
+            handoff_id=handoff_id,
+            principal_id=principal_id,
+            timeout_seconds=45,
+        )
+        consume_targeted_handoff(
+            target_client,
+            handoff_id=handoff_id,
+            source=source,
+            principal_id=principal_id,
+        )
+    assert_targeted_handoff_state(handoff_id, "consumed")
+    return {
+        **result,
         "offlineRecoveryGeneration": str(recovered_generation),
     }
 
@@ -2084,6 +2221,15 @@ def bootstrap() -> None:
                 principal_id=agent["principalId"],
                 redactor=redactor,
             )
+            product_closure = verify_product_closure_workflow(
+                environment=environment,
+                agent_id=agent["agentId"],
+                catalog_id=catalog_id,
+                target_bridge=target_bridge,
+                sender_bridge=sender_bridge,
+                target_instance_id=runtime["agentInstanceId"],
+                redactor=redactor,
+            )
         scanned_logs = verify_sanitized_logs(
             (
                 LOG_ROOT / "control-plane.log",
@@ -2097,6 +2243,7 @@ def bootstrap() -> None:
                 LOG_ROOT / "cloud-handoff-target-mcp.log",
                 LOG_ROOT / "cloud-handoff-isolation-mcp.log",
                 LOG_ROOT / "cloud-handoff-decline-mcp.log",
+                LOG_ROOT / "product-closure-target-mcp.log",
             ),
             redactor,
             additional_secrets=(
@@ -2123,6 +2270,17 @@ def bootstrap() -> None:
                 "matrixRoomId": runtime["matrixRoomId"],
                 "messageId": runtime["messageId"],
                 "principalId": agent["principalId"],
+                "productClosureCollaboratorPrincipalId": product_closure[
+                    "collaboratorPrincipalId"
+                ],
+                "productClosureHandoffId": product_closure["handoffId"],
+                "productClosureMatrixRoomId": product_closure["roomId"],
+                "productClosureOwnerMatrixDevices": product_closure[
+                    "ownerMatrixDeviceCount"
+                ],
+                "productClosureRecoveryGeneration": product_closure[
+                    "offlineRecoveryGeneration"
+                ],
                 "recoveryGeneration": str(recovery_generation),
                 "targetedHandoffRecoveryGeneration": cloud_handoffs[
                     "offlineRecoveryGeneration"
