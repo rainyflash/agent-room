@@ -1,6 +1,6 @@
 # 云端优先版本发布 Runbook
 
-> 当前状态：**尚未执行线上迁移，也尚未发布下一版 Windows Alpha。** 本文是确认后的唯一发布顺序，不是已经完成的部署记录。
+> 当前状态：`v0.1.0-alpha.8` 已按本文顺序完成生产迁移、发布与公开资产复验。本文继续作为后续云端优先版本的规范发布顺序；本次不可变证据见文末执行记录。
 
 ## 目标与不可破坏约束
 
@@ -91,3 +91,11 @@ Go 必须同时满足：
 ## 发布证据
 
 最终记录必须包含 Git SHA、镜像/资产摘要、备份与恢复演练 ID、迁移版本、CORS 响应头、健康检查、浏览器/桌面验收结果和回滚点。全部证据必须脱敏，发布状态写入 `specs/cloud-first-product-closure/task-17-release-candidate.md`。
+
+## 2026-08-30 执行记录
+
+- `v0.1.0-alpha.8` 已从提交 `f8754a5ae1bee195bf07d28f44476663b60c02cd` 构建并作为 Windows testing prerelease 公开；
+- 生产备份、隔离恢复演练、两项加法迁移、Control Plane、Matrix、对象存储和精确 CORS 均通过；
+- 官网 PWA 从旧 Service Worker 显式提示更新，激活后下载地址切换到 `alpha.8`；
+- 公开安装器在候选 Windows 环境和本机原地升级场景中均通过，MCP 真实暴露 9 个工具；
+- 完整摘要、工作流、镜像、回滚点和验收结果记录在 [`task-17-release-candidate.md`](../../specs/cloud-first-product-closure/task-17-release-candidate.md)。

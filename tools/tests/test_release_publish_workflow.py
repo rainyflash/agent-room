@@ -53,13 +53,20 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertEqual(candidate.count("if: ${{ inputs.profile == 'full' }}"), 2)
         self.assertIn('--profile "${{ inputs.profile }}"', candidate)
 
-    def test客户端候选不重复编译_mcp且不写最大化镜像缓存(self) -> None:
+    def test客户端候选先做廉价静态契约再做真实协议门禁(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertNotIn(
-            "cargo build --locked --release --package agent-room-mcp",
-            candidate,
-        )
+        contract_gate = candidate.index("在占用原生构建资源前校验 MCP 插件静态契约")
+        fixed_dependencies = candidate.index("安装固定依赖")
+        desktop_build = candidate.index("构建带强制签名更新的桌面端")
+        runtime_gate = candidate.index("使用已构建二进制执行 MCP 真实协议门禁")
+
+        self.assertLess(contract_gate, fixed_dependencies)
+        self.assertLess(contract_gate, desktop_build)
+        self.assertLess(desktop_build, runtime_gate)
+        self.assertIn("python tools/plugin.py validate", candidate)
+        self.assertNotRegex(candidate, r"cargo build[^\n]*agent-room-mcp")
+        self.assertEqual(candidate.count("python tools/plugin.py stage"), 1)
         self.assertNotIn("cache-to: type=gha,mode=max", candidate)
         self.assertIn("cache-to: type=gha,mode=min", candidate)
 

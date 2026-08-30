@@ -103,6 +103,8 @@ jobs:
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 在占用原生构建资源前校验 MCP 插件静态契约
+        run: python tools/plugin.py validate
       - name: 安装 Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
         with:
@@ -150,13 +152,13 @@ jobs:
           $signature = "$($payloads[0].FullName).sig"
           cargo run --locked --release --package agent-room-release-tool -- verify-tauri --public-key "$env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY" --payload "$($payloads[0].FullName)" --signature $signature
           if ($LASTEXITCODE -ne 0) { throw 'Tauri 更新签名反向验证失败。' }
-      - name: 装配已随桌面端构建的通用 MCP 配置适配器
+      - name: 使用已构建二进制执行 MCP 真实协议门禁
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
         run: |
           python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
-          if ($LASTEXITCODE -ne 0) { throw 'Codex 配置适配器装配失败。' }
+          if ($LASTEXITCODE -ne 0) { throw 'MCP 真实协议与 Codex 插件契约校验失败。' }
       - name: 在干净 Windows 候选机验收安装、运行时与卸载
         env:
           VERSION: ${{ needs.metadata.outputs.version }}

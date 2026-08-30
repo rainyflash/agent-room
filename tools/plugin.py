@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -19,25 +20,32 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_SOURCE = REPOSITORY_ROOT / "plugins" / "agent-room"
+MCP_SERVER_SOURCE = (
+    REPOSITORY_ROOT / "apps" / "agent-room-mcp" / "src" / "agent_room" / "server.rs"
+)
 ARTIFACTS_ROOT = REPOSITORY_ROOT / "artifacts" / "codex-plugin"
 BINARY_BASENAME = "agent-room-mcp"
 MARKETPLACE_NAME = "agent-room-community"
 PLUGIN_SELECTOR = f"agent-room@{MARKETPLACE_NAME}"
-EXPECTED_TOOLS = (
-    "agent_room_get_self",
-    "agent_room_list_previews",
-    "agent_room_get_presence",
-    "agent_room_open_content",
-    "agent_room_publish_status",
-    "agent_room_send_message",
-    "agent_room_list_handoffs",
-    "agent_room_consume_handoff",
-    "agent_room_decline_handoff",
-)
 AUTOMATIC_TOOLS = (
     "agent_room_get_self",
     "agent_room_list_previews",
     "agent_room_get_presence",
+)
+EXPECTED_TOOL_ANNOTATIONS = {
+    "agent_room_get_self": (True, False, True, False),
+    "agent_room_list_previews": (True, False, True, True),
+    "agent_room_get_presence": (True, False, True, True),
+    "agent_room_open_content": (True, False, True, True),
+    "agent_room_publish_status": (False, False, True, True),
+    "agent_room_send_message": (False, False, False, True),
+    "agent_room_list_handoffs": (True, False, True, True),
+    "agent_room_consume_handoff": (False, True, False, True),
+    "agent_room_decline_handoff": (False, True, False, True),
+}
+TOOL_ATTRIBUTE_PATTERN = re.compile(r"#\[\s*tool\s*\(")
+TOOL_NAME_PATTERN = re.compile(
+    r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"'
 )
 
 
@@ -114,10 +122,32 @@ def validate_source() -> None:
         raise RuntimeError("agent_room MCP 服务配置必须是对象")
     if server.get("command") != f"./bin/{BINARY_BASENAME}":
         raise RuntimeError("MCP command 必须指向插件内置的无扩展名原生二进制")
-    validate_approval_policy(approval_policy_path)
+    declared_tools = declared_mcp_tools()
+    annotation_tools = tuple(EXPECTED_TOOL_ANNOTATIONS)
+    if set(declared_tools) != set(annotation_tools):
+        raise RuntimeError(
+            "MCP Rust 工具声明与发行风险标注不一致："
+            f"缺少标注 {set(declared_tools) - set(annotation_tools)}，"
+            f"多余标注 {set(annotation_tools) - set(declared_tools)}"
+        )
+    validate_approval_policy(approval_policy_path, declared_tools)
 
 
-def validate_approval_policy(path: Path) -> None:
+def declared_mcp_tools() -> tuple[str, ...]:
+    source = MCP_SERVER_SOURCE.read_text(encoding="utf-8")
+    tools = tuple(TOOL_NAME_PATTERN.findall(source))
+    if not tools:
+        raise RuntimeError("MCP Rust 源码未声明任何工具")
+    if len(TOOL_ATTRIBUTE_PATTERN.findall(source)) != len(tools):
+        raise RuntimeError("每个 MCP Rust 工具都必须显式声明稳定名称")
+    if len(tools) != len(set(tools)):
+        raise RuntimeError("MCP Rust 源码包含重复工具名称")
+    if not all(name.startswith("agent_room_") for name in tools):
+        raise RuntimeError("MCP Rust 源码包含非 agent_room 命名空间工具")
+    return tools
+
+
+def validate_approval_policy(path: Path, expected_tools: tuple[str, ...]) -> None:
     policy = tomllib.loads(path.read_text(encoding="utf-8"))
     plugins = policy.get("plugins")
     if not isinstance(plugins, dict):
@@ -133,8 +163,8 @@ def validate_approval_policy(path: Path) -> None:
         raise RuntimeError("审批策略必须显式启用 agent_room")
     if server.get("default_tools_approval_mode") != "prompt":
         raise RuntimeError("非白名单工具必须保持逐次审批")
-    if server.get("enabled_tools") != list(EXPECTED_TOOLS):
-        raise RuntimeError("审批策略必须只允许既定的九个工具")
+    if server.get("enabled_tools") != list(expected_tools):
+        raise RuntimeError("审批策略必须按 Rust 声明顺序允许全部 MCP 工具")
     tools = server.get("tools")
     if not isinstance(tools, dict) or set(tools) != set(AUTOMATIC_TOOLS):
         raise RuntimeError("审批策略只能自动放行三个最小只读工具")
@@ -286,7 +316,7 @@ def smoke_test_mcp(binary: Path, working_directory: Path) -> None:
     tools = tools_result.get("tools")
     if not isinstance(tools, list):
         raise RuntimeError("MCP tools/list 未返回工具数组")
-    expected_tools = set(EXPECTED_TOOLS)
+    expected_tools = set(declared_mcp_tools())
     actual_tools = {
         tool.get("name")
         for tool in tools
@@ -304,17 +334,6 @@ def smoke_test_mcp(binary: Path, working_directory: Path) -> None:
 
 
 def validate_tool_annotations(tools: list[object]) -> None:
-    expected = {
-        "agent_room_get_self": (True, False, True, False),
-        "agent_room_list_previews": (True, False, True, True),
-        "agent_room_get_presence": (True, False, True, True),
-        "agent_room_open_content": (True, False, True, True),
-        "agent_room_publish_status": (False, False, True, True),
-        "agent_room_send_message": (False, False, False, True),
-        "agent_room_list_handoffs": (True, False, True, True),
-        "agent_room_consume_handoff": (False, True, False, True),
-        "agent_room_decline_handoff": (False, True, False, True),
-    }
     for tool in tools:
         if not isinstance(tool, dict):
             raise RuntimeError("MCP 工具定义必须是对象")
@@ -328,7 +347,10 @@ def validate_tool_annotations(tools: list[object]) -> None:
             annotations.get("idempotentHint"),
             annotations.get("openWorldHint"),
         )
-        if hints != expected[name]:
+        expected = EXPECTED_TOOL_ANNOTATIONS.get(name)
+        if expected is None:
+            raise RuntimeError(f"MCP 工具 {name} 缺少发行风险标注")
+        if hints != expected:
             raise RuntimeError(f"MCP 工具 {name} 的风险提示与真实语义不一致")
 
 
