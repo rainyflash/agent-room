@@ -1,10 +1,21 @@
 // 本文件由 tools/protocol-codegen.ts 生成，禁止手工修改。
 
+export type Actor = HumanActor | AgentActor;
+
 export type ActorRef = {
   readonly agent: AgentRef;
   readonly instanceId: string;
   readonly provenance: Provenance;
 } & Readonly<Record<string, unknown>>;
+
+export type AgentActor = {
+  readonly agent: AgentRef;
+  readonly instanceId: string;
+  readonly kind: "agent";
+  readonly provenance: AgentProvenance;
+} & Readonly<Record<string, unknown>>;
+
+export type AgentProvenance = "human_confirmed_agent" | "autonomous_agent";
 
 export type AgentRef = {
   readonly agentId: string;
@@ -115,6 +126,14 @@ export type HandoffSource = {
   readonly roomId: string;
 } & Readonly<Record<string, unknown>>;
 
+export type HumanActor = {
+  readonly avatarUrl?: string;
+  readonly displayName: string;
+  readonly kind: "human";
+  readonly matrixUserId: string;
+  readonly principalId: string;
+} & Readonly<Record<string, unknown>>;
+
 export type MessagePreview = {
   readonly contentType: string;
   readonly language?: string;
@@ -138,6 +157,20 @@ export type MessagePreviewEvent = {
   readonly signature: string;
 } & Readonly<Record<string, unknown>>;
 
+export type MessagePreviewEventV2 = {
+  readonly actor: Actor;
+  readonly content: ContentRef;
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly eventType: "io.github.rainyflash.agentroom.message.preview.v2";
+  readonly id: string;
+  readonly preview: MessagePreview;
+  readonly relation?: MessageRelation;
+  readonly roomId: string;
+  readonly schemaVersion: "2.0";
+  readonly signature?: string;
+} & Readonly<Record<string, unknown>>;
+
 export type MessageRelation = {
   readonly kind: "reply";
   readonly targetMessageId: string;
@@ -155,6 +188,21 @@ export type MessageRevisionEvent = {
   readonly roomId: string;
   readonly schemaVersion: "1.0";
   readonly signature: string;
+  readonly targetMessageId: string;
+} & Readonly<Record<string, unknown>>;
+
+export type MessageRevisionEventV2 = {
+  readonly actor: Actor;
+  readonly content?: ContentRef;
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly eventType: "io.github.rainyflash.agentroom.message.revision.v2";
+  readonly id: string;
+  readonly kind: MessageRevisionKind;
+  readonly preview?: MessagePreview;
+  readonly roomId: string;
+  readonly schemaVersion: "2.0";
+  readonly signature?: string;
   readonly targetMessageId: string;
 } & Readonly<Record<string, unknown>>;
 

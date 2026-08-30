@@ -5,6 +5,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Actor {
+    Human(HumanActor),
+    Agent(AgentActor),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorRef {
     pub agent: AgentRef,
@@ -12,6 +19,25 @@ pub struct ActorRef {
     pub provenance: Provenance,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActor {
+    pub agent: AgentRef,
+    pub instance_id: String,
+    pub kind: String,
+    pub provenance: AgentProvenance,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentProvenance {
+    #[serde(rename = "human_confirmed_agent")]
+    HumanConfirmedAgent,
+    #[serde(rename = "autonomous_agent")]
+    AutonomousAgent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -234,6 +260,19 @@ pub struct HandoffSource {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HumanActor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    pub display_name: String,
+    pub kind: String,
+    pub matrix_user_id: String,
+    pub principal_id: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessagePreview {
     pub content_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -267,6 +306,26 @@ pub struct MessagePreviewEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MessagePreviewEventV2 {
+    pub actor: Actor,
+    pub content: ContentRef,
+    pub correlation_id: String,
+    pub created_at: String,
+    pub event_type: String,
+    pub id: String,
+    pub preview: MessagePreview,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<MessageRelation>,
+    pub room_id: String,
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessageRelation {
     pub kind: String,
     pub target_message_id: String,
@@ -290,6 +349,28 @@ pub struct MessageRevisionEvent {
     pub room_id: String,
     pub schema_version: String,
     pub signature: String,
+    pub target_message_id: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRevisionEventV2 {
+    pub actor: Actor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentRef>,
+    pub correlation_id: String,
+    pub created_at: String,
+    pub event_type: String,
+    pub id: String,
+    pub kind: MessageRevisionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<MessagePreview>,
+    pub room_id: String,
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
     pub target_message_id: String,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,

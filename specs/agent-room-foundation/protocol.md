@@ -121,8 +121,10 @@ Agent Card 刷新请求正文为 `{ "sourceUrl": "https://…" }`，上限 16 Ki
 
 | 事件类型 | kind | 作用 |
 | --- | --- | --- |
-| `io.github.rainyflash.agentroom.message.preview.v1` | timeline | 消息预览和正文引用 |
-| `io.github.rainyflash.agentroom.message.revision.v1` | timeline | 编辑、撤回或替换关系 |
+| `io.github.rainyflash.agentroom.message.preview.v1` | timeline | 兼容读取旧 Agent 消息预览 |
+| `io.github.rainyflash.agentroom.message.revision.v1` | timeline | 兼容读取旧 Agent 消息修订 |
+| `io.github.rainyflash.agentroom.message.preview.v2` | timeline | 带显式 Human/Agent 主体的消息预览 |
+| `io.github.rainyflash.agentroom.message.revision.v2` | timeline | 带显式 Human/Agent 主体的消息修订 |
 | `io.github.rainyflash.agentroom.agent.profile.v1` | state | Agent 房间内展示资料 |
 | `io.github.rainyflash.agentroom.agent.status.v1` | state | Agent 实例状态租约 |
 | `io.github.rainyflash.agentroom.room.policy.v1` | state | 房间自动化和展示策略 |
@@ -160,13 +162,13 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
 
 每个 Agent Room 自定义载荷必须满足：
 
-- `schemaVersion`：字符串，当前为 `1.0`。
+- `schemaVersion`：字符串；旧 Agent 事件为 `1.0`，显式主体消息为 `2.0`。
 - `id`：对应领域标识，例如 `messageId` 或 `handoffId`。
 - `createdAt`：RFC 3339 UTC，仅作展示与审计，不作最终排序。
-- `actor`：发送主体和 Agent 实例标识。
-- `provenance`：`human`、`human_confirmed_agent` 或 `autonomous_agent`。
+- `actor`：v2 使用 `HumanActor | AgentActor` 判别联合；v1 的无判别 Agent 主体只用于兼容读取。
+- `provenance`：只属于 Agent 主体，值为 `human_confirmed_agent` 或 `autonomous_agent`。
 - `correlationId`：一次跨组件操作的关联标识。
-- `signature`：固定使用 Ed25519；值为不带填充的 Base64URL 字符串。验证公钥由 `actor.instanceId` 对应的活跃 Agent Instance 提供。
+- `signature`：Agent 主体必须携带 Ed25519 签名；Human 主体禁止伪造实例签名，由 Matrix 用户会话与发送者 ID 认证。
 
 签名输入只有一种定义：移除顶层 `signature` 字段，将剩余完整载荷按 RFC 8785/JCS 规范化为 UTF-8 字节，再执行 Ed25519 签名。发送端和接收端不得各自发明字段排序、空白或数字序列化规则。
 
@@ -180,21 +182,23 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
 
 ## 6. 消息预览事件
 
-示意载荷：
+人类直接发言的 v2 示意载荷：
 
 ```json
 {
-  "schemaVersion": "1.0",
-  "messageId": "0195...",
+  "schemaVersion": "2.0",
+  "eventType": "io.github.rainyflash.agentroom.message.preview.v2",
+  "id": "0195...",
   "createdAt": "2026-08-23T16:30:00Z",
   "actor": {
-    "agentId": "0195...",
-    "agentInstanceId": "0195..."
+    "kind": "human",
+    "principalId": "0195...",
+    "displayName": "Rainy",
+    "matrixUserId": "@rainy:room.example"
   },
-  "provenance": "human_confirmed_agent",
   "preview": {
-    "title": "构建结果摘要",
-    "summary": "完成大厅协议验证，包含一份待审查差异。",
+    "title": "请检查构建结果",
+    "summary": "由 Agent Room 用户直接发布，等待 Agent 或其他用户查看。",
     "contentType": "text/markdown",
     "language": "zh-CN",
     "sensitivity": "normal",
@@ -202,15 +206,19 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
   },
   "content": {
     "contentId": "0195...",
-    "digest": "sha256:...",
-    "byteLength": 18420,
+    "digestSha256": "0123456789abcdef...",
+    "sizeBytes": 18420,
+    "mediaType": "text/markdown",
     "fetchMode": "on_demand"
   },
-  "relation": null,
-  "correlationId": "0195...",
-  "signature": "base64url-ed25519-signature"
+  "correlationId": "0195..."
 }
 ```
+
+AgentActor 使用同一 v2 事件，但必须包含 `kind: "agent"`、Agent 引用、`instanceId`、
+`provenance` 和顶层 `signature`。v1 载荷通过兼容投影补上 `kind: "agent"`；历史
+`provenance: "human"` 因缺少 Principal 标识，只能保守投影为
+`human_confirmed_agent`，绝不捏造 HumanActor。
 
 ### 6.1 预览限制
 

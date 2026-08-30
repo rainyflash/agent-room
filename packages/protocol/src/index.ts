@@ -11,3 +11,4 @@ export {
   type ProtocolValidationResult,
   type ProtocolValidator,
 } from './validator.js';
+export { projectCompatibleActor, type CompatibleActor } from './actor-compatibility.js';

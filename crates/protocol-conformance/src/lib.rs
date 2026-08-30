@@ -1,3 +1,4 @@
+pub mod actor_compatibility;
 pub mod generated;
 
 #[cfg(test)]
@@ -8,7 +9,8 @@ mod tests {
 
     use crate::generated::{
         AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
-        HandoffRequestEvent, MessagePreviewEvent, MessageRevisionEvent, ModerationNoticeEvent,
+        HandoffRequestEvent, MessagePreviewEvent, MessagePreviewEventV2, MessageRevisionEvent,
+        MessageRevisionEventV2, ModerationNoticeEvent,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -48,11 +50,29 @@ mod tests {
         }
         if value.get("eventType")
             == Some(&Value::String(
+                "io.github.rainyflash.agentroom.message.preview.v2".into(),
+            ))
+        {
+            serde_json::from_value::<MessagePreviewEventV2>(value)
+                .expect("v2 消息预览必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType")
+            == Some(&Value::String(
                 "io.github.rainyflash.agentroom.message.revision.v1".into(),
             ))
         {
             serde_json::from_value::<MessageRevisionEvent>(value)
                 .expect("消息修订必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.message.revision.v2".into(),
+            ))
+        {
+            serde_json::from_value::<MessageRevisionEventV2>(value)
+                .expect("v2 消息修订必须符合生成的 Rust 类型");
             return;
         }
         if value.get("eventType")

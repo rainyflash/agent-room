@@ -56,10 +56,32 @@ function toPascalCase(value: string): string {
     .join('');
 }
 
+function unionReferences(value: unknown, context: string): string[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    throw new TypeError(`${context} 必须至少包含两个联合成员`);
+  }
+
+  return value.map((member: unknown, index: number) => {
+    const node = asObject(member, `${context}[${String(index)}]`);
+    return refName(asString(node.$ref, `${context}[${String(index)}].$ref`));
+  });
+}
+
+function unionVariantName(unionName: string, memberName: string): string {
+  const withoutUnionSuffix = memberName.endsWith(unionName)
+    ? memberName.slice(0, -unionName.length)
+    : memberName;
+  return withoutUnionSuffix.length > 0 ? withoutUnionSuffix : memberName;
+}
+
 function typescriptType(nodeValue: unknown): string {
   const node = asObject(nodeValue, '类型节点');
   if ('$ref' in node) {
     return refName(asString(node.$ref, '$ref'));
+  }
+
+  if ('oneOf' in node) {
+    return unionReferences(node.oneOf, 'oneOf').join(' | ');
   }
 
   if ('const' in node) {
@@ -133,6 +155,10 @@ function renderTypeScript(definitions: JsonObject): string {
         return `export type ${name} = ${typescriptType(definition)};`;
       }
 
+      if ('oneOf' in definition) {
+        return `export type ${name} = ${typescriptType(definition)};`;
+      }
+
       if (definition.type !== 'object') {
         throw new Error(`顶层定义 ${name} 必须是对象或枚举`);
       }
@@ -167,6 +193,13 @@ function renderRust(definitions: JsonObject): string {
           )
           .join('\n');
         return `#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\npub enum ${name} {\n${variants}\n}`;
+      }
+
+      if ('oneOf' in definition) {
+        const variants = unionReferences(definition.oneOf, `${name}.oneOf`)
+          .map((memberName) => `    ${unionVariantName(name, memberName)}(${memberName}),`)
+          .join('\n');
+        return `#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]\n#[serde(untagged)]\npub enum ${name} {\n${variants}\n}`;
       }
 
       if (definition.type !== 'object') {

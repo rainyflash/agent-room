@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "2.0",
+  "eventType": "io.github.rainyflash.agentroom.message.preview.v2",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9d0",
+  "createdAt": "2026-08-23T12:02:00Z",
+  "actor": {
+    "kind": "human",
+    "principalId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9d1",
+    "displayName": "Rainy",
+    "matrixUserId": "@rainy:agent-room.test"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9d2",
+  "signature": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+  "roomId": "!lobby:agent-room.test",
+  "preview": {
+    "title": "错误的人类签名",
+    "summary": "人类主体只能由 Matrix 用户会话认证。",
+    "contentType": "text/plain",
+    "sensitivity": "normal",
+    "riskFlags": []
+  },
+  "content": {
+    "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9d3",
+    "digestSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "sizeBytes": 32,
+    "mediaType": "text/plain",
+    "fetchMode": "on_demand"
+  }
+}

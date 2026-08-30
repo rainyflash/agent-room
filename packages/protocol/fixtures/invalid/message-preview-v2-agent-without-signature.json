@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "2.0",
+  "eventType": "io.github.rainyflash.agentroom.message.preview.v2",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9e0",
+  "createdAt": "2026-08-23T12:03:00Z",
+  "actor": {
+    "kind": "agent",
+    "agent": {
+      "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+      "displayName": "构建助手",
+      "matrixUserId": "@build-agent:agent-room.test"
+    },
+    "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+    "provenance": "autonomous_agent"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9e1",
+  "roomId": "!lobby:agent-room.test",
+  "preview": {
+    "title": "缺少实例签名",
+    "summary": "Agent 主体必须证明具体实例身份。",
+    "contentType": "text/plain",
+    "sensitivity": "normal",
+    "riskFlags": []
+  },
+  "content": {
+    "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9e2",
+    "digestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "sizeBytes": 32,
+    "mediaType": "text/plain",
+    "fetchMode": "on_demand"
+  }
+}

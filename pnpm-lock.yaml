@@ -148,7 +148,11 @@ importers:
         specifier: 1.3.0
         version: 1.3.0(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))(workbox-build@7.4.1)(workbox-window@7.4.1)
 
-  packages/protocol: {}
+  packages/protocol:
+    dependencies:
+      '@agent-room/protocol-types':
+        specifier: workspace:*
+        version: link:../protocol-types
 
   packages/protocol-types: {}
 

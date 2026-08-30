@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "2.0",
+  "eventType": "io.github.rainyflash.agentroom.message.revision.v2",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56aa00",
+  "createdAt": "2026-08-23T12:04:00Z",
+  "actor": {
+    "kind": "human",
+    "principalId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b1",
+    "displayName": "Rainy",
+    "matrixUserId": "@rainy:agent-room.test"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56aa01",
+  "roomId": "!lobby:agent-room.test",
+  "targetMessageId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b0",
+  "kind": "redact"
+}

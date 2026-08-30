@@ -11,9 +11,14 @@
     }
   },
   "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@agent-room/protocol-types": "workspace:*"
+  },
   "scripts": {
+    "prebuild": "corepack pnpm@10.28.0 --filter @agent-room/protocol-types build",
     "build": "tsc --project tsconfig.build.json",
     "test": "vitest run src",
+    "pretypecheck": "corepack pnpm@10.28.0 --filter @agent-room/protocol-types build",
     "typecheck": "tsc --project ../../tsconfig.json --noEmit"
   }
 }

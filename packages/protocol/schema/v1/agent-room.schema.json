@@ -6,7 +6,9 @@
     { "$ref": "#/$defs/ErrorEnvelope" },
     { "$ref": "#/$defs/CapabilityManifest" },
     { "$ref": "#/$defs/MessagePreviewEvent" },
+    { "$ref": "#/$defs/MessagePreviewEventV2" },
     { "$ref": "#/$defs/MessageRevisionEvent" },
+    { "$ref": "#/$defs/MessageRevisionEventV2" },
     { "$ref": "#/$defs/ModerationNoticeEvent" },
     { "$ref": "#/$defs/AgentStatusEvent" },
     { "$ref": "#/$defs/HandoffRequestEvent" },
@@ -29,6 +31,10 @@
     "Provenance": {
       "type": "string",
       "enum": ["human", "human_confirmed_agent", "autonomous_agent"]
+    },
+    "AgentProvenance": {
+      "type": "string",
+      "enum": ["human_confirmed_agent", "autonomous_agent"]
     },
     "MessageSensitivity": {
       "type": "string",
@@ -97,6 +103,51 @@
       },
       "additionalProperties": true,
       "maxProperties": 12
+    },
+    "HumanActor": {
+      "type": "object",
+      "required": ["kind", "principalId", "displayName", "matrixUserId"],
+      "properties": {
+        "kind": { "const": "human" },
+        "principalId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "matrixUserId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^@[^:]+:[^:]+$"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 12
+    },
+    "AgentActor": {
+      "type": "object",
+      "required": ["kind", "agent", "instanceId", "provenance"],
+      "properties": {
+        "kind": { "const": "agent" },
+        "agent": { "$ref": "#/$defs/AgentRef" },
+        "instanceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "provenance": { "$ref": "#/$defs/AgentProvenance" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 12
+    },
+    "Actor": {
+      "oneOf": [{ "$ref": "#/$defs/HumanActor" }, { "$ref": "#/$defs/AgentActor" }]
     },
     "HandoffSource": {
       "type": "object",
@@ -334,6 +385,72 @@
       "additionalProperties": true,
       "maxProperties": 24
     },
+    "MessagePreviewEventV2": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "roomId",
+        "preview",
+        "content"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "2.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.message.preview.v2" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/Actor" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "preview": { "$ref": "#/$defs/MessagePreview" },
+        "content": { "$ref": "#/$defs/ContentRef" },
+        "relation": { "$ref": "#/$defs/MessageRelation" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "actor": {
+                "type": "object",
+                "properties": { "kind": { "const": "agent" } },
+                "required": ["kind"]
+              }
+            }
+          },
+          "then": {
+            "properties": { "signature": true },
+            "required": ["signature"]
+          },
+          "else": {
+            "not": {
+              "properties": { "signature": true },
+              "required": ["signature"]
+            }
+          }
+        }
+      ],
+      "additionalProperties": true,
+      "maxProperties": 24
+    },
     "MessageRevisionEvent": {
       "type": "object",
       "required": [
@@ -398,6 +515,95 @@
                 { "properties": { "preview": {} }, "required": ["preview"] },
                 { "properties": { "content": {} }, "required": ["content"] }
               ]
+            }
+          }
+        }
+      ]
+    },
+    "MessageRevisionEventV2": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "actor",
+        "correlationId",
+        "roomId",
+        "targetMessageId",
+        "kind"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "2.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.message.revision.v2" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "$ref": "#/$defs/Actor" },
+        "correlationId": { "type": "string", "format": "uuid" },
+        "signature": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "targetMessageId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "kind": { "$ref": "#/$defs/MessageRevisionKind" },
+        "preview": { "$ref": "#/$defs/MessagePreview" },
+        "content": { "$ref": "#/$defs/ContentRef" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 24,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "replace" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": { "preview": true, "content": true },
+            "required": ["preview", "content"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "properties": { "preview": {} }, "required": ["preview"] },
+                { "properties": { "content": {} }, "required": ["content"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "actor": {
+                "type": "object",
+                "properties": { "kind": { "const": "agent" } },
+                "required": ["kind"]
+              }
+            }
+          },
+          "then": {
+            "properties": { "signature": true },
+            "required": ["signature"]
+          },
+          "else": {
+            "not": {
+              "properties": { "signature": true },
+              "required": ["signature"]
             }
           }
         }
