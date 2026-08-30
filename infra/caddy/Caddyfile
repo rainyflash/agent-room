@@ -33,5 +33,5 @@ https://app.agent-room.localhost {
     Referrer-Policy "no-referrer"
     X-Content-Type-Options "nosniff"
   }
-  reverse_proxy host.docker.internal:4173
+  reverse_proxy host.docker.internal:14173
 }

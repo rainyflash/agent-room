@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const portText = process.env.AGENT_ROOM_E2E_PORT ?? '14173';
+
 export default defineConfig({
   expect: { timeout: 20_000 },
   forbidOnly: true,
@@ -27,12 +29,11 @@ export default defineConfig({
       url: 'http://127.0.0.1:8090/health/live',
     },
     {
-      command:
-        'corepack pnpm@10.28.0 --filter @agent-room/web exec vite preview --host 0.0.0.0 --port 4173 --strictPort',
+      command: `corepack pnpm@10.28.0 --filter @agent-room/web exec vite preview --host 0.0.0.0 --port ${portText} --strictPort`,
       cwd: '../..',
       reuseExistingServer: false,
       timeout: 60_000,
-      url: 'http://127.0.0.1:4173/connect',
+      url: `http://127.0.0.1:${portText}/connect`,
     },
   ],
 });

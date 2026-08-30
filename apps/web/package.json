@@ -7,7 +7,7 @@
     "build": "vite build",
     "build:desktop": "vite build --mode desktop",
     "build:session": "vite build --mode vertical",
-    "dev": "vite --host 0.0.0.0 --port 4173 --strictPort",
+    "dev": "vite --host 0.0.0.0 --port 14173 --strictPort",
     "prebuild": "corepack pnpm@10.28.0 --filter @agent-room/protocol build",
     "prebuild:desktop": "corepack pnpm@10.28.0 --filter @agent-room/protocol build",
     "prebuild:session": "corepack pnpm@10.28.0 --filter @agent-room/protocol build",

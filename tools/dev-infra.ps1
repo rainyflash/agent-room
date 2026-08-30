@@ -216,7 +216,7 @@ function Write-KeycloakRealm {
           'https://api.agent-room.localhost:18443/auth/oidc/callback',
           'http://127.0.0.1:8090/auth/oidc/callback'
         )
-        webOrigins = @('https://app.agent-room.localhost:18443', 'http://localhost:4173')
+        webOrigins = @('https://app.agent-room.localhost:18443', 'http://localhost:14173')
         attributes = @{ 'pkce.code.challenge.method' = 'S256' }
       }
       [ordered]@{
@@ -604,7 +604,7 @@ function Sync-KeycloakClients {
   )
   $webOrigins = @(
     'https://app.agent-room.localhost:18443',
-    'http://localhost:4173'
+    'http://localhost:14173'
   )
   $webClient = Sync-KeycloakClient -Realm 'agent-room' -Headers $headers -Expected ([ordered]@{
     clientId = 'agent-room-web'

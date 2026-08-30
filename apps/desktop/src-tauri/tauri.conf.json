@@ -6,7 +6,7 @@
   "build": {
     "beforeBuildCommand": "corepack pnpm@10.28.0 --filter @agent-room/web build:desktop",
     "beforeDevCommand": "corepack pnpm@10.28.0 --filter @agent-room/web dev",
-    "devUrl": "http://127.0.0.1:4173",
+    "devUrl": "http://127.0.0.1:14173",
     "frontendDist": "../../web/dist"
   },
   "app": {
