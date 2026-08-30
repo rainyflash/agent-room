@@ -5,6 +5,7 @@ import {
   moderationActionListSchema,
   moderationActionSchema,
   moderationAuditListSchema,
+  moderationCapabilitiesSchema,
   moderationCaseListSchema,
   moderationCaseSchema,
   submitModerationReportInputSchema,
@@ -12,6 +13,7 @@ import {
   type ModerationAction,
   type ModerationAuditEvent,
   type ModerationCase,
+  type ModerationCapabilities,
   type ModerationFailure,
   type ModerationGateway,
   type SubmitModerationReportInput,
@@ -73,6 +75,16 @@ export class ControlPlaneModerationClient implements ModerationGateway {
       moderationCaseListSchema,
     );
     return response.ok ? ok(response.value.cases) : response;
+  }
+
+  inspectCapabilities(
+    roomCatalogId: string,
+  ): Promise<Result<ModerationCapabilities, ModerationFailure>> {
+    return this.#jsonRequest(
+      `/rooms/${encodeURIComponent(roomCatalogId)}/moderation/capabilities`,
+      { method: 'GET' },
+      moderationCapabilitiesSchema,
+    );
   }
 
   async listRoomCases(

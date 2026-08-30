@@ -1,8 +1,8 @@
 use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement},
     moderation::{
-        ListModerationAudit, ListMyModerationCases, ListRoomModeration, ListRoomModerationCases,
-        ReverseModerationAction,
+        InspectModerationCapabilities, ListModerationAudit, ListMyModerationCases,
+        ListRoomModeration, ListRoomModerationCases, ReverseModerationAction,
     },
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -18,8 +18,9 @@ use super::{
     ModerationHttpState,
     models::{
         ApplyActionBody, AuditQuery, ModerationActionListResponse, ModerationActionResponse,
-        ModerationAuditListResponse, ModerationCaseListResponse, ModerationCaseResponse,
-        ReverseActionBody, SubmitReportBody, action_id, case_id, catalog_id,
+        ModerationAuditListResponse, ModerationCapabilitiesResponse, ModerationCaseListResponse,
+        ModerationCaseResponse, ReverseActionBody, SubmitReportBody, action_id, case_id,
+        catalog_id,
     },
 };
 use crate::{
@@ -85,6 +86,34 @@ pub(super) async fn list_cases(
         .await
     {
         Ok(cases) => no_store(Json(ModerationCaseListResponse::from(cases)).into_response()),
+        Err(failure) => no_store(ApiError::moderation(failure, correlation_id).into_response()),
+    }
+}
+
+pub(super) async fn inspect_capabilities(
+    State(state): State<ModerationHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Some(room_catalog_id) = catalog_id(&catalog) else {
+        return invalid("moderation.invalid_catalog_id", correlation_id);
+    };
+    let actor = match authenticate_read(&state, &jar, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .moderation
+        .inspect_capabilities(InspectModerationCapabilities {
+            actor,
+            room_catalog_id,
+        })
+        .await
+    {
+        Ok(capabilities) => {
+            no_store(Json(ModerationCapabilitiesResponse::from(capabilities)).into_response())
+        }
         Err(failure) => no_store(ApiError::moderation(failure, correlation_id).into_response()),
     }
 }

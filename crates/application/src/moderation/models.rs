@@ -28,6 +28,18 @@ pub struct ListRoomModerationCases {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectModerationCapabilities {
+    pub actor: AuthenticatedPrincipal,
+    pub room_catalog_id: RoomCatalogId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModerationCapabilities {
+    pub can_moderate_room: bool,
+    pub can_read_audit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyModerationAction {
     pub actor: AuthenticatedPrincipal,
     pub action_id: ModerationActionId,

@@ -6,9 +6,9 @@ use agent_room_application::{
         AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
     },
     moderation::{
-        ApplyModerationAction, ListModerationAudit, ListMyModerationCases, ListRoomModeration,
-        ListRoomModerationCases, ModerationResult, ModerationUseCases, ReverseModerationAction,
-        SubmitModerationReport,
+        ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
+        ListMyModerationCases, ListRoomModeration, ListRoomModerationCases, ModerationCapabilities,
+        ModerationResult, ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
     },
     ports::{PortFuture, SecretValue},
 };
@@ -43,6 +43,7 @@ const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 
 #[derive(Default)]
 struct FakeModeration {
+    capabilities: Mutex<Option<InspectModerationCapabilities>>,
     report: Mutex<Option<SubmitModerationReport>>,
     room_cases: Mutex<Option<ListRoomModerationCases>>,
     action: Mutex<Option<ApplyModerationAction>>,
@@ -51,6 +52,19 @@ struct FakeModeration {
 }
 
 impl ModerationUseCases for FakeModeration {
+    fn inspect_capabilities(
+        &self,
+        request: InspectModerationCapabilities,
+    ) -> PortFuture<'_, ModerationResult<ModerationCapabilities>> {
+        *self.capabilities.lock().expect("治理能力请求锁可用") = Some(request);
+        Box::pin(async {
+            Ok(ModerationCapabilities {
+                can_moderate_room: false,
+                can_read_audit: false,
+            })
+        })
+    }
+
     fn submit_report(
         &self,
         request: SubmitModerationReport,
@@ -104,6 +118,46 @@ impl ModerationUseCases for FakeModeration {
         *self.audit.lock().expect("审计请求锁可用") = Some(request);
         Box::pin(async { Ok(vec![audit_event()]) })
     }
+}
+
+#[tokio::test]
+async fn 治理能力投影对普通成员返回显式否定而不制造权限错误() {
+    let moderation = Arc::new(FakeModeration::default());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let response = test_router(moderation.clone(), authentication.clone())
+        .oneshot(session_request(
+            Method::GET,
+            &format!("/rooms/{CATALOG_UUID}/moderation/capabilities"),
+            &json!({}),
+            false,
+            None,
+        ))
+        .await
+        .expect("治理能力路由可调用");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = response_json(response).await;
+    assert_eq!(body["canModerateRoom"], false);
+    assert_eq!(body["canReadAudit"], false);
+    assert_eq!(
+        moderation
+            .capabilities
+            .lock()
+            .expect("治理能力请求锁可用")
+            .as_ref()
+            .expect("治理能力用例已调用")
+            .room_catalog_id,
+        catalog_id()
+    );
+    assert_eq!(
+        authentication
+            .requirements
+            .lock()
+            .expect("认证要求锁可用")
+            .as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
+    );
 }
 
 #[derive(Default)]

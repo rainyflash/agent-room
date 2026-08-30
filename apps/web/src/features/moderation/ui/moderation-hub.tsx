@@ -12,6 +12,7 @@ import {
   moderationRoomCaseListQueryKey,
   useModerationActions,
   useModerationAudit,
+  useModerationCapabilities,
   useModerationRoomCases,
 } from '@/features/moderation/data/moderation-queries';
 import type {
@@ -53,14 +54,19 @@ export function ModerationHub({
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const casesQuery = useModerationRoomCases(gateway, catalogId);
-  const actionsQuery = useModerationActions(gateway, catalogId);
-  const auditQuery = useModerationAudit(gateway, catalogId);
+  const capabilitiesQuery = useModerationCapabilities(gateway, catalogId);
+  const capabilities =
+    capabilitiesQuery.data?.ok === true ? capabilitiesQuery.data.value : null;
+  const canModerateRoom = capabilities?.canModerateRoom === true;
+  const canReadAudit = capabilities?.canReadAudit === true;
+  const casesQuery = useModerationRoomCases(gateway, catalogId, canModerateRoom);
+  const actionsQuery = useModerationActions(gateway, catalogId, canModerateRoom);
+  const auditQuery = useModerationAudit(gateway, catalogId, canReadAudit);
   const cases = casesQuery.data?.ok === true ? casesQuery.data.value : null;
   const actions = actionsQuery.data?.ok === true ? actionsQuery.data.value : null;
   const audit = auditQuery.data?.ok === true ? auditQuery.data.value : null;
-  const authorized = cases !== null || actions !== null || audit !== null;
-  const authorityPending = casesQuery.isPending || actionsQuery.isPending || auditQuery.isPending;
+  const authorized = canModerateRoom || canReadAudit;
+  const hasVisibleData = cases !== null || actions !== null || audit !== null;
   const mutation = useMutation({
     mutationFn: async (command: ModerationCommand) =>
       command.kind === 'apply'
@@ -98,9 +104,6 @@ export function ModerationHub({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [mutation.isPending, open]);
 
-  if (!authorized && !authorityPending) {
-    return null;
-  }
   if (!authorized) {
     return null;
   }
@@ -113,7 +116,11 @@ export function ModerationHub({
     launcherRef.current?.focus();
   };
   const retry = async (): Promise<void> => {
-    await Promise.all([casesQuery.refetch(), actionsQuery.refetch(), auditQuery.refetch()]);
+    await Promise.all([
+      capabilitiesQuery.refetch(),
+      ...(canModerateRoom ? [casesQuery.refetch(), actionsQuery.refetch()] : []),
+      ...(canReadAudit ? [auditQuery.refetch()] : []),
+    ]);
   };
 
   return (
@@ -185,7 +192,7 @@ export function ModerationHub({
                       onReauthenticate={onReauthenticate}
                     />
                   )}
-                  {cases === null && actions === null ? (
+                  {!hasVisibleData ? (
                     <ModerationBoundary onRetry={retry} />
                   ) : (
                     <div className="moderation-governance__workspace">

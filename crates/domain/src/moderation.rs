@@ -681,17 +681,19 @@ pub enum ModerationRole {
 }
 
 impl ModerationRole {
+    pub const fn can_moderate_room(self) -> bool {
+        matches!(self, Self::RoomManager | Self::PlatformModerator)
+    }
+
     pub const fn allows(self, action: ModerationActionKind) -> bool {
-        match self {
-            Self::None | Self::AuditReader => false,
-            Self::RoomManager | Self::PlatformModerator => matches!(
+        self.can_moderate_room()
+            && matches!(
                 action,
                 ModerationActionKind::Hide
                     | ModerationActionKind::Mute
                     | ModerationActionKind::Kick
                     | ModerationActionKind::Ban
-            ),
-        }
+            )
     }
 
     pub const fn can_read_audit(self) -> bool {

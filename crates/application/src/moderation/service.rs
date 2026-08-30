@@ -4,7 +4,7 @@ use agent_room_domain::{
     ids::AuditEventId,
     moderation::{
         ModerationAction, ModerationActionStatus, ModerationAuditEvent, ModerationAuditOutcome,
-        ModerationCase, ModerationRole,
+        ModerationCase,
     },
 };
 
@@ -19,14 +19,20 @@ use crate::{
 };
 
 use super::{
-    ApplyModerationAction, ListModerationAudit, ListMyModerationCases, ListRoomModeration,
-    ListRoomModerationCases, ModerationFailure, ModerationFailureKind, ModerationResult,
-    ReverseModerationAction, SubmitModerationReport,
+    ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
+    ListMyModerationCases, ListRoomModeration, ListRoomModerationCases, ModerationCapabilities,
+    ModerationFailure, ModerationFailureKind, ModerationResult, ReverseModerationAction,
+    SubmitModerationReport,
 };
 
 const MAXIMUM_AUDIT_PAGE: u16 = 200;
 
 pub trait ModerationUseCases: Send + Sync {
+    fn inspect_capabilities(
+        &self,
+        request: InspectModerationCapabilities,
+    ) -> PortFuture<'_, ModerationResult<ModerationCapabilities>>;
+
     fn submit_report(
         &self,
         request: SubmitModerationReport,
@@ -91,6 +97,34 @@ impl ModerationService {
             clock: dependencies.clock,
             report_policy: dependencies.report_policy,
         }
+    }
+
+    async fn inspect_capabilities_internal(
+        &self,
+        request: InspectModerationCapabilities,
+    ) -> ModerationResult<ModerationCapabilities> {
+        const OPERATION: &str = "moderation.inspect_capabilities";
+        require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        let target = agent_room_domain::moderation::ModerationTarget::new(
+            agent_room_domain::moderation::ModerationTargetKind::Room,
+            request.room_catalog_id.to_string(),
+        )
+        .map_err(|_| failure(OPERATION, ModerationFailureKind::Internal))?;
+        let room_context = self
+            .authority
+            .inspect_room(request.actor.principal_id, request.room_catalog_id, &target)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))?
+            .ok_or_else(|| failure(OPERATION, ModerationFailureKind::NotFound))?;
+        let platform_role = self
+            .authority
+            .platform_role(request.actor.principal_id)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))?;
+        Ok(ModerationCapabilities {
+            can_moderate_room: room_context.role.can_moderate_room(),
+            can_read_audit: platform_role.can_read_audit(),
+        })
     }
 
     async fn submit_report_internal(
@@ -359,7 +393,7 @@ impl ModerationService {
             .await
             .map_err(|error| repository_failure(operation, &error))?
             .ok_or_else(|| failure(operation, ModerationFailureKind::NotFound))?;
-        if matches!(context.role, ModerationRole::None) {
+        if !context.role.can_moderate_room() {
             return Err(failure(operation, ModerationFailureKind::Forbidden));
         }
         Ok(())
@@ -455,6 +489,13 @@ impl ModerationService {
 }
 
 impl ModerationUseCases for ModerationService {
+    fn inspect_capabilities(
+        &self,
+        request: InspectModerationCapabilities,
+    ) -> PortFuture<'_, ModerationResult<ModerationCapabilities>> {
+        Box::pin(self.inspect_capabilities_internal(request))
+    }
+
     fn submit_report(
         &self,
         request: SubmitModerationReport,

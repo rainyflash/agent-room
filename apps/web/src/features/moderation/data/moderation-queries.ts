@@ -9,6 +9,8 @@ export const moderationAuditListQueryKey = (catalogId: string) =>
   ['control-plane', 'moderation', 'audit', catalogId] as const;
 export const moderationRoomCaseListQueryKey = (catalogId: string) =>
   ['control-plane', 'moderation', 'room-cases', catalogId] as const;
+export const moderationCapabilitiesQueryKey = (catalogId: string) =>
+  ['control-plane', 'moderation', 'capabilities', catalogId] as const;
 
 export function moderationCaseListQueryOptions(gateway: ModerationGateway) {
   return queryOptions({
@@ -50,6 +52,19 @@ export function moderationAuditListQueryOptions(gateway: ModerationGateway, cata
   });
 }
 
+export function moderationCapabilitiesQueryOptions(
+  gateway: ModerationGateway,
+  catalogId: string,
+) {
+  return queryOptions({
+    queryFn: async () => await gateway.inspectCapabilities(catalogId),
+    queryKey: moderationCapabilitiesQueryKey(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}
+
 export function useModerationCases(gateway: ModerationGateway, enabled = true) {
   return useQuery({ ...moderationCaseListQueryOptions(gateway), enabled });
 }
@@ -72,4 +87,8 @@ export function useModerationRoomCases(
 
 export function useModerationAudit(gateway: ModerationGateway, catalogId: string, enabled = true) {
   return useQuery({ ...moderationAuditListQueryOptions(gateway, catalogId), enabled });
+}
+
+export function useModerationCapabilities(gateway: ModerationGateway, catalogId: string) {
+  return useQuery(moderationCapabilitiesQueryOptions(gateway, catalogId));
 }

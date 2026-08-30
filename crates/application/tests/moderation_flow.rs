@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     moderation::{
-        ApplyModerationAction, ListModerationAudit, ListRoomModerationCases,
-        ModerationDependencies, ModerationFailureKind, ModerationService, ModerationUseCases,
-        ReverseModerationAction, SubmitModerationReport,
+        ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
+        ListRoomModerationCases, ModerationDependencies, ModerationFailureKind, ModerationService,
+        ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
     },
     persistence::RepositoryResult,
     ports::{
@@ -346,6 +346,38 @@ impl Fixture {
             calls,
         }
     }
+}
+
+#[tokio::test]
+async fn 治理能力投影分别表达房间管理与平台审计权限() {
+    let fixture = Fixture::new();
+    let room_manager = fixture
+        .service
+        .inspect_capabilities(InspectModerationCapabilities {
+            actor: actor(false),
+            room_catalog_id: room_id(),
+        })
+        .await
+        .expect("房间治理能力可读取");
+    assert!(room_manager.can_moderate_room);
+    assert!(!room_manager.can_read_audit);
+
+    *fixture.authority.room_role.lock().expect("房间角色锁可用") = ModerationRole::AuditReader;
+    *fixture
+        .authority
+        .platform_role
+        .lock()
+        .expect("平台角色锁可用") = ModerationRole::AuditReader;
+    let audit_reader = fixture
+        .service
+        .inspect_capabilities(InspectModerationCapabilities {
+            actor: actor(false),
+            room_catalog_id: room_id(),
+        })
+        .await
+        .expect("审计能力可读取");
+    assert!(!audit_reader.can_moderate_room);
+    assert!(audit_reader.can_read_audit);
 }
 
 #[tokio::test]

@@ -53,6 +53,10 @@ pub(crate) fn router(state: ModerationHttpState) -> Router {
             get(handlers::list_room_cases),
         )
         .route(
+            "/rooms/{catalog_id}/moderation/capabilities",
+            get(handlers::inspect_capabilities),
+        )
+        .route(
             "/rooms/{catalog_id}/moderation/actions",
             get(handlers::list_actions).post(handlers::apply_action),
         )

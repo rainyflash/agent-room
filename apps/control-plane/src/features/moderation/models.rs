@@ -1,6 +1,6 @@
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
-    moderation::{ApplyModerationAction, SubmitModerationReport},
+    moderation::{ApplyModerationAction, ModerationCapabilities, SubmitModerationReport},
 };
 use agent_room_domain::{
     ids::{ModerationActionId, ModerationCaseId, RoomCatalogId},
@@ -192,6 +192,22 @@ impl ModerationActionKindBody {
             Self::Mute => ModerationActionKind::Mute,
             Self::Kick => ModerationActionKind::Kick,
             Self::Ban => ModerationActionKind::Ban,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ModerationCapabilitiesResponse {
+    can_moderate_room: bool,
+    can_read_audit: bool,
+}
+
+impl From<ModerationCapabilities> for ModerationCapabilitiesResponse {
+    fn from(capabilities: ModerationCapabilities) -> Self {
+        Self {
+            can_moderate_room: capabilities.can_moderate_room,
+            can_read_audit: capabilities.can_read_audit,
         }
     }
 }

@@ -7,6 +7,34 @@ const ACTION_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e54';
 const CATALOG_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e55';
 
 describe('ControlPlaneModerationClient', () => {
+  it('通过单一能力投影发现治理权限且拒绝额外字段', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ canModerateRoom: false, canReadAudit: true }),
+    );
+    const client = new ControlPlaneModerationClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch: fetchMock,
+    });
+
+    await expect(client.inspectCapabilities(CATALOG_ID)).resolves.toEqual({
+      ok: true,
+      value: { canModerateRoom: false, canReadAudit: true },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://control.agent-room.test/rooms/${CATALOG_ID}/moderation/capabilities`,
+    );
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBe('GET');
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ canModerateRoom: false, canReadAudit: true, role: 'audit_reader' }),
+    );
+    await expect(client.inspectCapabilities(CATALOG_ID)).resolves.toEqual({
+      error: { code: 'moderation.invalid_response', retryable: false },
+      ok: false,
+    });
+  });
+
   it('只提交调用者明确提供的举报摘录并携带幂等案件标识', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

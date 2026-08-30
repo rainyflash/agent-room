@@ -96,6 +96,12 @@ export const moderationActionListSchema = z
 export const moderationAuditListSchema = z
   .object({ events: z.array(moderationAuditEventSchema).max(500).readonly() })
   .strict();
+export const moderationCapabilitiesSchema = z
+  .object({
+    canModerateRoom: z.boolean(),
+    canReadAudit: z.boolean(),
+  })
+  .strict();
 
 export const submitModerationReportInputSchema = z
   .object({
@@ -145,6 +151,7 @@ export type ModerationActionKind = (typeof moderationActionKinds)[number];
 export type ModerationCase = z.output<typeof moderationCaseSchema>;
 export type ModerationAction = z.output<typeof moderationActionSchema>;
 export type ModerationAuditEvent = z.output<typeof moderationAuditEventSchema>;
+export type ModerationCapabilities = z.output<typeof moderationCapabilitiesSchema>;
 export type SubmitModerationReportInput = z.input<typeof submitModerationReportInputSchema>;
 export type ApplyModerationActionInput = z.input<typeof applyModerationActionInputSchema>;
 
@@ -168,6 +175,9 @@ export type ModerationGateway = {
     roomCatalogId: string,
   ): Promise<Result<readonly ModerationAuditEvent[], ModerationFailure>>;
   listCases(): Promise<Result<readonly ModerationCase[], ModerationFailure>>;
+  inspectCapabilities(
+    roomCatalogId: string,
+  ): Promise<Result<ModerationCapabilities, ModerationFailure>>;
   listRoomCases(
     roomCatalogId: string,
   ): Promise<Result<readonly ModerationCase[], ModerationFailure>>;

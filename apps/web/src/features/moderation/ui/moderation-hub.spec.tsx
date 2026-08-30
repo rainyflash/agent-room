@@ -61,13 +61,14 @@ describe('ModerationHub', () => {
     );
   });
 
-  it('三种管理查询都被拒绝时不暴露治理入口', async () => {
-    const gateway = forbiddenGateway();
+  it('普通成员只读取能力投影且不探测任何受限治理资源', async () => {
+    const gateway = unauthorizedGateway();
     renderHub(gateway);
 
-    await waitFor(() => expect(gateway.listRoomCases).toHaveBeenCalledOnce());
-    await waitFor(() => expect(gateway.listActions).toHaveBeenCalledOnce());
-    await waitFor(() => expect(gateway.listAudit).toHaveBeenCalledOnce());
+    await waitFor(() => expect(gateway.inspectCapabilities).toHaveBeenCalledOnce());
+    expect(gateway.listRoomCases).not.toHaveBeenCalled();
+    expect(gateway.listActions).not.toHaveBeenCalled();
+    expect(gateway.listAudit).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Governance' })).not.toBeInTheDocument();
   });
 });
@@ -96,6 +97,9 @@ function authorizedGateway(): ModerationGateway {
   const action = appliedAction();
   return {
     applyAction: vi.fn(() => Promise.resolve(ok(action))),
+    inspectCapabilities: vi.fn(() =>
+      Promise.resolve(ok({ canModerateRoom: true, canReadAudit: true })),
+    ),
     listActions: vi.fn(() => Promise.resolve(ok([]))),
     listAudit: vi.fn(() => Promise.resolve(ok([]))),
     listCases: vi.fn(() => Promise.resolve(ok([moderationCase]))),
@@ -105,13 +109,16 @@ function authorizedGateway(): ModerationGateway {
   };
 }
 
-function forbiddenGateway(): ModerationGateway {
+function unauthorizedGateway(): ModerationGateway {
   const forbidden = {
     code: 'moderation.forbidden',
     retryable: false,
   } as const;
   return {
     applyAction: vi.fn(() => Promise.resolve(err(forbidden))),
+    inspectCapabilities: vi.fn(() =>
+      Promise.resolve(ok({ canModerateRoom: false, canReadAudit: false })),
+    ),
     listActions: vi.fn(() => Promise.resolve(err(forbidden))),
     listAudit: vi.fn(() => Promise.resolve(err(forbidden))),
     listCases: vi.fn(() => Promise.resolve(err(forbidden))),

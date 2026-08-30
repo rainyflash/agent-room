@@ -248,6 +248,7 @@ function dependencies(text: string) {
       Promise.resolve().then(() => {
         throw new Error('not used');
       }),
+    inspectCapabilities: async () => ok({ canModerateRoom: false, canReadAudit: false }),
     listActions: async () => ok([]),
     listAudit: async () => ok([]),
     listCases: async () => ok([]),

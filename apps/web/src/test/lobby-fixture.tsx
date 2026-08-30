@@ -134,6 +134,7 @@ const moderation: ModerationGateway = {
     fixtureModerationActions = Object.freeze([action, ...fixtureModerationActions]);
     return ok(action);
   },
+  inspectCapabilities: async () => ok({ canModerateRoom: true, canReadAudit: false }),
   listActions: async (roomCatalogId) =>
     ok(fixtureModerationActions.filter((action) => action.roomCatalogId === roomCatalogId)),
   listAudit: async () => err({ code: 'moderation.forbidden', retryable: false }),
