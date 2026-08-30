@@ -1,13 +1,16 @@
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
-import { Cloud, Network, PlugZap } from 'lucide-react';
+import { Bot, Cloud, Network, PlugZap } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { FleetInstanceStatus } from '@/features/workspace/domain/agent-fleet';
+import type {
+  WorkspaceConnectionHealth,
+  WorkspaceLayerId,
+  WorkspaceLayerStatus,
+} from '@/features/workspace/domain/connection-health';
+import { formatWorkspaceTime } from '@/features/workspace/ui/workspace-format';
 
-export type WorkspaceStatusValue = FleetInstanceStatus | 'unavailable';
-
-const STATUS_TONE: Readonly<Record<WorkspaceStatusValue, StatusTone>> = {
+const STATUS_TONE: Readonly<Record<WorkspaceLayerStatus, StatusTone>> = {
   connecting: 'network',
   degraded: 'alert',
   offline: 'offline',
@@ -16,59 +19,56 @@ const STATUS_TONE: Readonly<Record<WorkspaceStatusValue, StatusTone>> = {
   unavailable: 'idle',
 };
 
-export function ConnectionStatusStrip({
-  bridgeStatus,
-}: {
-  readonly bridgeStatus: WorkspaceStatusValue;
-}) {
-  const { t } = useTranslation();
+export const WORKSPACE_LAYER_ORDER = [
+  'controlPlane',
+  'matrix',
+  'bridge',
+  'agents',
+] as const satisfies readonly WorkspaceLayerId[];
+
+const LAYER_PRESENTATION = {
+  agents: { icon: <Bot aria-hidden="true" />, labelKey: 'workspace.agents.runtime' },
+  bridge: { icon: <PlugZap aria-hidden="true" />, labelKey: 'workspace.local.bridge' },
+  controlPlane: { icon: <Cloud aria-hidden="true" />, labelKey: 'workspace.cloud.control' },
+  matrix: { icon: <Network aria-hidden="true" />, labelKey: 'workspace.cloud.matrix' },
+} as const satisfies Readonly<
+  Record<WorkspaceLayerId, { readonly icon: ReactNode; readonly labelKey: string }>
+>;
+
+export function ConnectionStatusStrip({ health }: { readonly health: WorkspaceConnectionHealth }) {
+  const { i18n, t } = useTranslation();
   return (
     <section aria-label={t('workspace.connectionStatus.title')} className="workspace-status-strip">
-      <ConnectionStatus
-        icon={<Cloud aria-hidden="true" />}
-        label={t('workspace.cloud.control')}
-        status="online"
-      />
-      <ConnectionStatus
-        icon={<Network aria-hidden="true" />}
-        label={t('workspace.cloud.matrix')}
-        status="online"
-      />
-      <ConnectionStatus
-        icon={<PlugZap aria-hidden="true" />}
-        label={t('workspace.local.bridge')}
-        status={bridgeStatus}
-      />
+      {WORKSPACE_LAYER_ORDER.map((layerId) => {
+        const presentation = LAYER_PRESENTATION[layerId];
+        return (
+          <ConnectionStatus
+            health={health[layerId]}
+            icon={presentation.icon}
+            key={layerId}
+            label={t(presentation.labelKey)}
+            language={i18n.resolvedLanguage}
+          />
+        );
+      })}
     </section>
   );
 }
 
-export function bridgeWorkspaceStatus(
-  available: boolean,
-  phase: string | undefined,
-): WorkspaceStatusValue {
-  if (!available) return 'unavailable';
-  const statuses: Readonly<Record<string, WorkspaceStatusValue>> = {
-    authorization_required: 'connecting',
-    authorized: 'connecting',
-    discovering: 'connecting',
-    halted: 'degraded',
-    ready: 'online',
-    retry_scheduled: 'degraded',
-    starting: 'connecting',
-    stopped: 'offline',
-  };
-  return phase === undefined ? 'connecting' : (statuses[phase] ?? 'degraded');
+export function workspaceStatusTone(status: WorkspaceLayerStatus): StatusTone {
+  return STATUS_TONE[status];
 }
 
 function ConnectionStatus({
+  health,
   icon,
   label,
-  status,
+  language,
 }: {
+  readonly health: WorkspaceConnectionHealth[WorkspaceLayerId];
   readonly icon: ReactNode;
   readonly label: string;
-  readonly status: WorkspaceStatusValue;
+  readonly language: string | undefined;
 }) {
   const { t } = useTranslation();
   return (
@@ -76,12 +76,17 @@ function ConnectionStatus({
       <span>{icon}</span>
       <div>
         <small>{label}</small>
-        <strong>{t(`workspace.status.${status}`)}</strong>
+        <strong>{t(`workspace.status.${health.status}`)}</strong>
+        <time>
+          {health.observedAtUnixMs === null
+            ? t('workspace.diagnostic.neverObserved')
+            : formatWorkspaceTime(health.observedAtUnixMs, language)}
+        </time>
       </div>
       <StatusMark
-        label={t(`workspace.status.${status}`)}
-        pulse={status === 'connecting'}
-        tone={STATUS_TONE[status]}
+        label={t(`workspace.status.${health.status}`)}
+        pulse={health.status === 'connecting'}
+        tone={workspaceStatusTone(health.status)}
       />
     </div>
   );

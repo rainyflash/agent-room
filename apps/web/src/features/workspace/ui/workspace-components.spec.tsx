@@ -10,13 +10,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
 import type { OwnedAgent } from '@/features/workspace/domain/agent-directory';
 import { projectAgentFleet } from '@/features/workspace/domain/agent-fleet';
-import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
-import { AgentInspector } from '@/features/workspace/ui/agent-inspector';
 import {
   bridgeWorkspaceStatus,
-  ConnectionStatusStrip,
-} from '@/features/workspace/ui/connection-status-strip';
+  projectWorkspaceConnectionHealth,
+} from '@/features/workspace/domain/connection-health';
+import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
+import { AgentInspector } from '@/features/workspace/ui/agent-inspector';
+import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
+import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
 const AGENT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
@@ -34,15 +36,18 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe('账号工作区组件', () => {
-  it('把云端连接与未安装的本机 Bridge 分开展示', () => {
-    renderWithI18n(<ConnectionStatusStrip bridgeStatus="unavailable" />);
+  it('按真实投影分别展示四层连接，不伪造云端在线', () => {
+    renderWithI18n(<ConnectionStatusStrip health={fixtureConnectionHealth()} />);
 
     const strip = screen.getByRole('region', { name: 'Service connections' });
     expect(within(strip).getByText('Control plane')).toBeVisible();
     expect(within(strip).getByText('Matrix sync')).toBeVisible();
     expect(within(strip).getByText('This device Bridge')).toBeVisible();
-    expect(within(strip).getAllByText('Online')).toHaveLength(2);
+    expect(within(strip).getByText('Agent runtimes')).toBeVisible();
+    expect(within(strip).getByText('Degraded')).toBeVisible();
+    expect(within(strip).getByText('Offline')).toBeVisible();
     expect(within(strip).getByText('Not installed')).toBeVisible();
+    expect(within(strip).getByText('Online')).toBeVisible();
   });
 
   it('把 Bridge 生命周期映射为稳定的产品状态', () => {
@@ -51,7 +56,15 @@ describe('账号工作区组件', () => {
     expect(bridgeWorkspaceStatus(true, 'ready')).toBe('online');
     expect(bridgeWorkspaceStatus(true, 'retry_scheduled')).toBe('degraded');
     expect(bridgeWorkspaceStatus(true, 'stopped')).toBe('offline');
-    expect(bridgeWorkspaceStatus(true, 'future_phase')).toBe('degraded');
+  });
+
+  it('在独立诊断面板显示观测时间和稳定故障码', () => {
+    renderWithI18n(<WorkspaceDiagnostics health={fixtureConnectionHealth()} orphanCount={0} />);
+
+    expect(screen.getByText('Connection diagnostics')).toBeVisible();
+    expect(screen.getByText('3 service layers need attention.')).toBeVisible();
+    expect(screen.getByText('control.devices_failed')).toBeVisible();
+    expect(screen.getAllByText('Not observed on this client')).toHaveLength(3);
   });
 
   it('展示当前设备和同一 Agent 的运行实例', () => {
@@ -107,6 +120,30 @@ function fixtureFleet() {
     currentMatrixDeviceId: 'WEB-CURRENT',
     devices: [device()],
     instances: [instance()],
+  });
+}
+
+function fixtureConnectionHealth() {
+  return projectWorkspaceConnectionHealth({
+    agents: { failureCode: null, fleet: fixtureFleet(), loading: false },
+    bridge: {
+      available: false,
+      changedAtUnixMs: null,
+      failureCode: null,
+      phase: undefined,
+    },
+    controlPlane: {
+      failureCode: 'control.devices_failed',
+      observedAtUnixMs: null,
+      pending: false,
+      results: [{ ok: true }, { ok: false }, { ok: true }],
+    },
+    matrix: {
+      failureCode: 'matrix.offline',
+      observedAtUnixMs: null,
+      pending: false,
+      result: { ok: false },
+    },
   });
 }
 

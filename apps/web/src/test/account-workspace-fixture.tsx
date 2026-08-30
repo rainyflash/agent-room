@@ -16,6 +16,7 @@ import '@/app/styles.css';
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
 import type { OwnedAgent } from '@/features/workspace/domain/agent-directory';
 import { projectAgentFleet } from '@/features/workspace/domain/agent-fleet';
+import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
 import '@/features/workspace/ui/account-workspace-page.css';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -37,6 +38,27 @@ const fleet = projectAgentFleet({
     instance(primaryAgentId, currentDeviceId, 'Studio workstation', 'codex', 'online'),
     instance(primaryAgentId, remoteDeviceId, 'Travel notebook', 'claude', 'degraded'),
   ],
+});
+const connectionHealth = projectWorkspaceConnectionHealth({
+  agents: { failureCode: null, fleet, loading: false },
+  bridge: {
+    available: false,
+    changedAtUnixMs: null,
+    failureCode: null,
+    phase: undefined,
+  },
+  controlPlane: {
+    failureCode: null,
+    observedAtUnixMs: Date.now() - 2_000,
+    pending: false,
+    results: [{ ok: true }, { ok: true }, { ok: true }],
+  },
+  matrix: {
+    failureCode: null,
+    observedAtUnixMs: Date.now() - 1_000,
+    pending: false,
+    result: { ok: true },
+  },
 });
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
@@ -64,7 +86,7 @@ function WorkspaceFixture() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(primaryAgentId);
   return (
     <AccountWorkspaceView
-      bridgeStatus="unavailable"
+      connectionHealth={connectionHealth}
       failureCode={null}
       fleet={fleet}
       loading={false}

@@ -16,8 +16,8 @@ import {
   useOwnedAgents,
 } from '@/features/workspace/data/agent-directory-query';
 import { projectAgentFleet } from '@/features/workspace/domain/agent-fleet';
+import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
-import { bridgeWorkspaceStatus } from '@/features/workspace/ui/connection-status-strip';
 
 import './account-workspace-page.css';
 
@@ -59,6 +59,52 @@ export function AccountWorkspacePage({
     resultFailureCode(agents.data) ??
     resultFailureCode(devices.data) ??
     resultFailureCode(instances.data);
+  const loading = agents.isPending || devices.isPending || instances.isPending;
+  const bridgeLifecycle = localRuntime.snapshot?.bridge.lifecycle;
+  const connectionHealth = useMemo(
+    () =>
+      projectWorkspaceConnectionHealth({
+        agents: { failureCode, fleet, loading },
+        bridge: {
+          available: localRuntime.available,
+          changedAtUnixMs: bridgeLifecycle?.changedAtUnixMs ?? null,
+          failureCode: bridgeFailureCode(bridgeLifecycle),
+          phase: bridgeLifecycle?.phase,
+        },
+        controlPlane: {
+          failureCode,
+          observedAtUnixMs: latestObservation(
+            agents.dataUpdatedAt,
+            devices.dataUpdatedAt,
+            instances.dataUpdatedAt,
+          ),
+          pending: loading,
+          results: [agents.data, devices.data, instances.data],
+        },
+        matrix: {
+          failureCode: resultFailureCode(matrixSecurity.data),
+          observedAtUnixMs: latestObservation(matrixSecurity.dataUpdatedAt),
+          pending: matrixSecurity.isPending,
+          result: matrixSecurity.data,
+        },
+      }),
+    [
+      agents.data,
+      agents.dataUpdatedAt,
+      bridgeLifecycle,
+      devices.data,
+      devices.dataUpdatedAt,
+      failureCode,
+      fleet,
+      instances.data,
+      instances.dataUpdatedAt,
+      loading,
+      localRuntime.available,
+      matrixSecurity.data,
+      matrixSecurity.dataUpdatedAt,
+      matrixSecurity.isPending,
+    ],
+  );
 
   const refresh = async (): Promise<void> => {
     await Promise.all([
@@ -71,19 +117,34 @@ export function AccountWorkspacePage({
 
   return (
     <AccountWorkspaceView
-      bridgeStatus={bridgeWorkspaceStatus(
-        localRuntime.available,
-        localRuntime.snapshot?.bridge.lifecycle.phase,
-      )}
+      connectionHealth={connectionHealth}
       failureCode={failureCode}
       fleet={fleet}
-      loading={agents.isPending || devices.isPending || instances.isPending}
+      loading={loading}
       onRefresh={() => void refresh()}
       onSelectAgent={onSelectAgent}
       principalDisplayName={principal.displayName}
       selectedAgentId={selectedAgentId}
     />
   );
+}
+
+function bridgeFailureCode(
+  lifecycle:
+    | {
+        readonly diagnosticCode: string | null;
+        readonly lastFailureCode: string | null;
+        readonly phase: string;
+      }
+    | undefined,
+): string | null {
+  if (lifecycle === undefined || lifecycle.phase === 'ready') return null;
+  return lifecycle.diagnosticCode ?? lifecycle.lastFailureCode;
+}
+
+function latestObservation(...timestamps: readonly number[]): number | null {
+  const observed = timestamps.filter((timestamp) => timestamp > 0);
+  return observed.length === 0 ? null : Math.max(...observed);
 }
 
 function resultValue<T>(

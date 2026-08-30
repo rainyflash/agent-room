@@ -6,16 +6,15 @@ import { useTranslation } from 'react-i18next';
 
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import type { AgentFleet, FleetAgent } from '@/features/workspace/domain/agent-fleet';
+import type { WorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
 import { AgentInspector } from '@/features/workspace/ui/agent-inspector';
-import {
-  ConnectionStatusStrip,
-  type WorkspaceStatusValue,
-} from '@/features/workspace/ui/connection-status-strip';
+import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
+import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
 
 export type AccountWorkspaceViewProps = {
-  readonly bridgeStatus: WorkspaceStatusValue;
+  readonly connectionHealth: WorkspaceConnectionHealth;
   readonly failureCode: string | null;
   readonly fleet: AgentFleet;
   readonly loading: boolean;
@@ -26,7 +25,7 @@ export type AccountWorkspaceViewProps = {
 };
 
 export function AccountWorkspaceView({
-  bridgeStatus,
+  connectionHealth,
   failureCode,
   fleet,
   loading,
@@ -68,7 +67,8 @@ export function AccountWorkspaceView({
         </dl>
       </section>
 
-      <ConnectionStatusStrip bridgeStatus={bridgeStatus} />
+      <ConnectionStatusStrip health={connectionHealth} />
+      <WorkspaceDiagnostics health={connectionHealth} orphanCount={fleet.orphanInstances.length} />
 
       {failureCode === null ? null : (
         <WorkspaceBoundary
@@ -107,13 +107,6 @@ export function AccountWorkspaceView({
           <AgentInspector agent={selected} />
         </section>
       ) : null}
-
-      {fleet.orphanInstances.length === 0 ? null : (
-        <p className="account-workspace__diagnostic" role="status">
-          <CircleAlert aria-hidden="true" />
-          {t('workspace.diagnostic.orphans', { count: fleet.orphanInstances.length })}
-        </p>
-      )}
     </main>
   );
 }

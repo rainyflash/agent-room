@@ -14,6 +14,7 @@ export const workspaceResources = {
     'workspace.cloud.control': 'Control plane',
     'workspace.cloud.matrix': 'Matrix sync',
     'workspace.local.bridge': 'This device Bridge',
+    'workspace.agents.runtime': 'Agent runtimes',
     'workspace.connectionStatus.title': 'Service connections',
     'workspace.status.online': 'Online',
     'workspace.status.connecting': 'Connecting',
@@ -50,6 +51,14 @@ export const workspaceResources = {
     'workspace.failed.detail':
       'Cloud data remains authoritative. Retry the failed boundary instead of inferring local state.',
     'workspace.failed.retry': 'Retry',
+    'workspace.diagnostic.title': 'Connection diagnostics',
+    'workspace.diagnostic.healthySummary': 'All observed service layers are online.',
+    'workspace.diagnostic.issueSummary': '{{count}} service layers need attention.',
+    'workspace.diagnostic.issueSummary_one': '{{count}} service layer needs attention.',
+    'workspace.diagnostic.observed': 'Last observation',
+    'workspace.diagnostic.neverObserved': 'Not observed on this client',
+    'workspace.diagnostic.code': 'Stable diagnostic',
+    'workspace.diagnostic.noFailure': 'No failure reported',
     'workspace.diagnostic.orphans':
       '{{count}} instance records could not be matched to an owned Agent. They are hidden pending reconciliation.',
     'workspace.diagnostic.orphans_one':
@@ -70,6 +79,7 @@ export const workspaceResources = {
     'workspace.cloud.control': '控制平面',
     'workspace.cloud.matrix': 'Matrix 同步',
     'workspace.local.bridge': '此设备 Bridge',
+    'workspace.agents.runtime': 'Agent 运行实例',
     'workspace.connectionStatus.title': '服务连接状态',
     'workspace.status.online': '在线',
     'workspace.status.connecting': '连接中',
@@ -104,6 +114,14 @@ export const workspaceResources = {
     'workspace.failed.title': '无法加载账户舰队',
     'workspace.failed.detail': '云端数据仍是权威事实。请重试失败边界，不要从本机状态猜测。',
     'workspace.failed.retry': '重试',
+    'workspace.diagnostic.title': '连接诊断',
+    'workspace.diagnostic.healthySummary': '所有已观测服务层均在线。',
+    'workspace.diagnostic.issueSummary': '{{count}} 个服务层需要处理。',
+    'workspace.diagnostic.issueSummary_one': '{{count}} 个服务层需要处理。',
+    'workspace.diagnostic.observed': '最近观测',
+    'workspace.diagnostic.neverObserved': '此客户端尚未观测',
+    'workspace.diagnostic.code': '稳定诊断码',
+    'workspace.diagnostic.noFailure': '未报告故障',
     'workspace.diagnostic.orphans':
       '{{count}} 条实例记录无法匹配到账户拥有的 Agent，已隐藏并等待对账。',
     'workspace.diagnostic.orphans_one':
