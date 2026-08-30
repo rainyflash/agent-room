@@ -7,6 +7,7 @@ mod ports;
 mod receipt_incoming_wire;
 mod receipt_wire;
 mod receipts;
+mod targeted_queue;
 mod wire;
 
 pub use content::{ProjectedHandoffContentGateway, handoff_source_matches_projection};
@@ -38,5 +39,9 @@ pub use receipt_wire::HANDOFF_RECEIPT_EVENT_TYPE;
 pub use receipts::{
     HandoffReceiptDependencies, HandoffReceiptFailure, HandoffReceiptFailureKind,
     HandoffReceiptService,
+};
+pub use targeted_queue::{
+    TargetedHandoffQueueFailure, TargetedHandoffQueueFailureKind, TargetedHandoffQueueGateway,
+    TargetedHandoffReceipt, TargetedHandoffTarget,
 };
 pub use wire::HANDOFF_REQUEST_EVENT_TYPE;
