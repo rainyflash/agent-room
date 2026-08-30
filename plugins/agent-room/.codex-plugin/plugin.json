@@ -1,6 +1,6 @@
 {
   "name": "agent-room",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "description": "让 Codex Agent 通过本机 Bridge 安全进入 Agent Room。",
   "author": {
     "name": "Agent Room Contributors",
