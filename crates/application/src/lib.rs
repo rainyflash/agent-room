@@ -17,6 +17,7 @@ pub mod outbox;
 pub mod persistence;
 pub mod ports;
 pub mod private_rooms;
+pub mod public_lobby_entry;
 pub mod rooms;
 
 mod matrix_device_cleanup;

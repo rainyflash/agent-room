@@ -10,6 +10,7 @@ use agent_room_application::{
     },
     persistence::RepositoryErrorKind,
     ports::{RoomDirectory, RoomDirectoryQuery, SecretFactory},
+    public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryFailureKind, PublicLobbyEntryUseCases},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
@@ -43,6 +44,7 @@ const MAX_LOBBY_ENTRY_BODY_BYTES: usize = 4 * 1_024;
 #[derive(Clone)]
 pub(crate) struct LobbyHttpState {
     entries: Arc<dyn AgentLobbyEntryUseCases>,
+    public_entries: Arc<dyn PublicLobbyEntryUseCases>,
     directory: Arc<dyn RoomDirectory>,
     observation: Arc<dyn PublicLobbyObservationUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
@@ -52,6 +54,7 @@ pub(crate) struct LobbyHttpState {
 
 pub(crate) struct LobbyHttpDependencies {
     pub(crate) entries: Arc<dyn AgentLobbyEntryUseCases>,
+    pub(crate) public_entries: Arc<dyn PublicLobbyEntryUseCases>,
     pub(crate) directory: Arc<dyn RoomDirectory>,
     pub(crate) observation: Arc<dyn PublicLobbyObservationUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
@@ -63,6 +66,7 @@ impl LobbyHttpState {
     pub(crate) fn new(dependencies: LobbyHttpDependencies) -> Self {
         Self {
             entries: dependencies.entries,
+            public_entries: dependencies.public_entries,
             directory: dependencies.directory,
             observation: dependencies.observation,
             authentication: dependencies.authentication,
@@ -79,6 +83,7 @@ pub(crate) fn router(state: LobbyHttpState) -> Router {
             "/lobbies/{catalog_id}/observation",
             get(resolve_public_lobby_observation),
         )
+        .route("/lobbies/{catalog_id}/entry", post(enter_public_lobby))
         .route(
             "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
             post(enter_lobby),
@@ -276,6 +281,76 @@ async fn resolve_public_lobby_observation(
     }
 }
 
+async fn enter_public_lobby(
+    State(state): State<LobbyHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog_id): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Ok(catalog_id) = parse_uuid_v7(&catalog_id).map(RoomCatalogId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    if let Err(response) = authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        return response;
+    }
+    match state
+        .public_entries
+        .enter(EnterPublicLobby { catalog_id })
+        .await
+    {
+        Ok(target) => no_store(
+            Json(PublicLobbyObservationResponse {
+                catalog: target.catalog_id.to_string(),
+                room_instance: target.room_instance_id.to_string(),
+                matrix_room: target.matrix_room_id.as_str().to_owned(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => {
+            let (status, code, category, message) = match failure.kind() {
+                PublicLobbyEntryFailureKind::NotFound => (
+                    StatusCode::NOT_FOUND,
+                    "lobby.entry_not_found",
+                    ErrorCategory::Validation,
+                    "该公开大厅不存在或不可进入。",
+                ),
+                PublicLobbyEntryFailureKind::ProvisioningBusy => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "lobby.entry_provisioning_busy",
+                    ErrorCategory::Transient,
+                    "公开大厅正在创建，请稍后重试。",
+                ),
+                PublicLobbyEntryFailureKind::DependencyUnavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "lobby.entry_unavailable",
+                    ErrorCategory::DependencyUnavailable,
+                    "公开大厅暂时不可用。",
+                ),
+                PublicLobbyEntryFailureKind::Internal => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "lobby.entry_internal",
+                    ErrorCategory::Transient,
+                    "公开大厅创建发生内部错误。",
+                ),
+            };
+            tracing::warn!(
+                correlation.id = %correlation_id.as_uuid(),
+                failure = ?failure.kind(),
+                retry_at_unix_ms = failure.retry_at().map(agent_room_domain::time::UtcMillis::value),
+                "公开大厅云端入场失败"
+            );
+            no_store(ApiError::new(status, code, category, message, correlation_id).into_response())
+        }
+    }
+}
+
 async fn enter_lobby(
     State(state): State<LobbyHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -404,6 +479,7 @@ mod tests {
             PortFuture, PrincipalAccount, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
             RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
         },
+        public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryResult, PublicLobbyEntryUseCases},
         rooms::{EnterLobbyOutcome, LobbyJoinKind},
     };
     use agent_room_domain::{
@@ -447,6 +523,8 @@ mod tests {
 
     struct FakeDirectory;
 
+    struct FakePublicEntries;
+
     struct FakeAuthentication;
 
     impl RoomDirectory for FakeDirectory {
@@ -477,6 +555,24 @@ mod tests {
                     )
                     .expect("测试 Matrix 房间有效"),
                 }))
+            })
+        }
+    }
+
+    impl PublicLobbyEntryUseCases for FakePublicEntries {
+        fn enter(
+            &self,
+            request: EnterPublicLobby,
+        ) -> PortFuture<'_, PublicLobbyEntryResult<PublicLobbyObservationRoom>> {
+            Box::pin(async move {
+                Ok(PublicLobbyObservationRoom {
+                    catalog_id: request.catalog_id,
+                    room_instance_id: RoomInstanceId::from_uuid(uuid(ROOM_INSTANCE_UUID)),
+                    matrix_room_id: MatrixRoomReference::new(
+                        "!public-lobby:matrix.agent-room.test".to_owned(),
+                    )
+                    .expect("测试 Matrix 房间有效"),
+                })
             })
         }
     }
@@ -746,6 +842,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 已登录用户可要求云端确保公开大厅真实房间() {
+        let response = test_router(
+            Arc::new(FakeEntries::returning(joined_outcome())),
+            Arc::new(FakeDevices::default()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/lobbies/{CATALOG_UUID}/entry"))
+                .header(header::COOKIE, "__Host-agent-room-session=web-session")
+                .body(Body::empty())
+                .expect("公开大厅云端入场请求有效"),
+        )
+        .await
+        .expect("公开大厅云端入场路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            json!({
+                "catalogId": CATALOG_UUID,
+                "roomInstanceId": ROOM_INSTANCE_UUID,
+                "matrixRoomId": "!public-lobby:matrix.agent-room.test"
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn 供给繁忙返回可重试的二零二而不是伪造房间() {
         let entries = Arc::new(FakeEntries::returning(
             EnterLobbyOutcome::ProvisioningBusy {
@@ -799,6 +923,7 @@ mod tests {
         let directory = Arc::new(FakeDirectory);
         let state = LobbyHttpState::new(LobbyHttpDependencies {
             entries,
+            public_entries: Arc::new(FakePublicEntries),
             directory: directory.clone(),
             observation: Arc::new(PublicLobbyObservationService::new(directory)),
             authentication: Arc::new(FakeAuthentication),

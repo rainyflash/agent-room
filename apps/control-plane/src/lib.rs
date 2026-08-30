@@ -49,9 +49,10 @@ use agent_room_application::{
         MatrixUserId, SecretValue,
     },
     private_rooms::{PrivateRoomDependencies, PrivateRoomService},
+    public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     rooms::{
-        LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningPolicy,
-        LobbyProvisioningService,
+        LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
+        LobbyProvisioningPolicy, LobbyProvisioningService,
     },
 };
 use agent_room_domain::time::DurationMillis;
@@ -561,12 +562,23 @@ fn build_agent_feature_states(
     );
     let handoffs = build_handoff_access_service(&dependencies);
     let targeted_handoffs = build_targeted_handoff_service(&dependencies);
-    let entries = build_agent_lobby_entry(
+    let lobby_provisioning = build_lobby_provisioning(
         &config.lobby,
         dependencies.repositories.clone(),
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
     )?;
+    let entries = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        lobby_provisioning.clone(),
+    )?;
+    let public_entries = Arc::new(PublicLobbyEntryService::new(PublicLobbyEntryDependencies {
+        directory: dependencies.repositories.clone(),
+        provisioning: lobby_provisioning,
+    }));
     let lobby_observation = Arc::new(PublicLobbyObservationService::new(
         dependencies.repositories.clone(),
     ));
@@ -612,6 +624,7 @@ fn build_agent_feature_states(
         ),
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
+            public_entries,
             directory: dependencies.repositories.clone(),
             observation: lobby_observation,
             authentication: dependencies.authentication.clone(),
@@ -750,22 +763,11 @@ fn build_agent_lobby_entry(
     repositories: Arc<PostgresRepositories>,
     system_runtime: Arc<SystemRuntime>,
     matrix: Arc<MatrixApplicationServiceProvisioner>,
+    provisioning: Arc<dyn LobbyProvisioningOperation>,
 ) -> Result<Arc<AgentLobbyEntryService>, StartupError> {
     let reservation_lifetime = domain_duration(config.reservation_lifetime)?;
-    let provisioning_lease_lifetime = domain_duration(config.provisioning_lease_lifetime)?;
     let join_policy = LobbyJoinPolicy::new(reservation_lifetime)
         .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
-    let provisioning_policy = LobbyProvisioningPolicy::new(provisioning_lease_lifetime)
-        .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
-    let provisioning = Arc::new(LobbyProvisioningService::new(
-        LobbyProvisioningDependencies {
-            store: repositories.clone(),
-            matrix: matrix.clone(),
-            identifiers: system_runtime.clone(),
-            clock: system_runtime.clone(),
-        },
-        provisioning_policy,
-    ));
     Ok(Arc::new(AgentLobbyEntryService::new(
         AgentLobbyEntryDependencies {
             access: repositories.clone(),
@@ -776,6 +778,26 @@ fn build_agent_lobby_entry(
             clock: system_runtime,
         },
         join_policy,
+    )))
+}
+
+fn build_lobby_provisioning(
+    config: &LobbyConfig,
+    repositories: Arc<PostgresRepositories>,
+    system_runtime: Arc<SystemRuntime>,
+    matrix: Arc<MatrixApplicationServiceProvisioner>,
+) -> Result<Arc<LobbyProvisioningService>, StartupError> {
+    let lease_lifetime = domain_duration(config.provisioning_lease_lifetime)?;
+    let policy = LobbyProvisioningPolicy::new(lease_lifetime)
+        .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
+    Ok(Arc::new(LobbyProvisioningService::new(
+        LobbyProvisioningDependencies {
+            store: repositories,
+            matrix,
+            identifiers: system_runtime.clone(),
+            clock: system_runtime,
+        },
+        policy,
     )))
 }
 

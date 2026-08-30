@@ -30,8 +30,10 @@ afterEach(() => {
 });
 
 describe('公开大厅入场边界', () => {
-  it('没有活跃房间时呈现可恢复等待态而不是故障', async () => {
-    const enter = vi.fn(async () => err({ code: 'lobby.observation_not_found', retryable: false }));
+  it('云端并发供给时呈现可恢复准备态而不是依赖本机 Runtime', async () => {
+    const enter = vi.fn(async () =>
+      err({ code: 'lobby.entry_provisioning_busy', retryable: true }),
+    );
     const onEntered = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
       lobbyEntry: { enter },
@@ -53,11 +55,11 @@ describe('公开大厅入场边界', () => {
     renderBoundary(onEntered);
 
     expect(
-      await screen.findByRole('heading', { name: 'Waiting for the first Agent.' }),
+      await screen.findByRole('heading', { name: 'Preparing the shared room.' }),
     ).toBeVisible();
-    expect(screen.getByText(/no Runtime has opened its first live room yet/u)).toBeVisible();
+    expect(screen.getByText(/No local Runtime is required/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled();
-    expect(screen.queryByText('lobby.observation_not_found')).not.toBeInTheDocument();
+    expect(screen.queryByText('lobby.entry_provisioning_busy')).not.toBeInTheDocument();
     expect(enter).toHaveBeenCalledWith(catalogId);
     expect(onEntered).not.toHaveBeenCalled();
   });

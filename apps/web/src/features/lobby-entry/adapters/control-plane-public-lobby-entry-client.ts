@@ -48,15 +48,12 @@ export class ControlPlanePublicLobbyEntryClient implements PublicLobbyEntryGatew
     }, this.#timeoutMs);
     try {
       const response = await this.#fetch(
-        controlPlaneEndpoint(
-          this.#baseUrl,
-          `/lobbies/${encodeURIComponent(catalogId)}/observation`,
-        ),
+        controlPlaneEndpoint(this.#baseUrl, `/lobbies/${encodeURIComponent(catalogId)}/entry`),
         {
           cache: 'no-store',
           credentials: 'include',
           headers: { Accept: 'application/json' },
-          method: 'GET',
+          method: 'POST',
           signal: controller.signal,
         },
       );

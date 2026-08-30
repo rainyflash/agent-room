@@ -10,8 +10,8 @@ import { LanguageControl } from '@/features/preferences/ui/language-control';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useSession } from '@/features/session/ui/session-provider';
 
-const EMPTY_LOBBY_CODE = 'lobby.observation_not_found';
-const EMPTY_LOBBY_REFRESH_MILLISECONDS = 5_000;
+const PROVISIONING_BUSY_CODE = 'lobby.entry_provisioning_busy';
+const PROVISIONING_REFRESH_MILLISECONDS = 1_500;
 
 const entryCopy = {
   failure: {
@@ -22,9 +22,9 @@ const entryCopy = {
     detail: 'lobbyEntry.loading.detail',
     title: 'lobbyEntry.loading.title',
   },
-  waiting: {
-    detail: 'lobbyEntry.waiting.detail',
-    title: 'lobbyEntry.waiting.title',
+  preparing: {
+    detail: 'lobbyEntry.preparing.detail',
+    title: 'lobbyEntry.preparing.title',
   },
 } as const;
 
@@ -52,8 +52,8 @@ export function PublicLobbyEntryBoundary({
     queryFn: async () => await lobbyEntry.enter(catalogId),
     queryKey: ['public-lobby-entry', catalogId] as const,
     refetchInterval: (query) =>
-      query.state.data?.ok === false && query.state.data.error.code === EMPTY_LOBBY_CODE
-        ? EMPTY_LOBBY_REFRESH_MILLISECONDS
+      query.state.data?.ok === false && query.state.data.error.code === PROVISIONING_BUSY_CODE
+        ? PROVISIONING_REFRESH_MILLISECONDS
         : false,
     retry: false,
     staleTime: 0,
@@ -66,7 +66,11 @@ export function PublicLobbyEntryBoundary({
         ? 'lobby_entry.unexpected_failure'
         : null;
   const phase: EntryPhase =
-    failureCode === null ? 'loading' : failureCode === EMPTY_LOBBY_CODE ? 'waiting' : 'failure';
+    failureCode === null
+      ? 'loading'
+      : failureCode === PROVISIONING_BUSY_CODE
+        ? 'preparing'
+        : 'failure';
   const copy = entryCopy[phase];
 
   useEffect(() => {
@@ -104,7 +108,7 @@ export function PublicLobbyEntryBoundary({
               onClick={() => void entry.refetch()}
               tone="primary"
             >
-              {t(phase === 'waiting' ? 'lobbyEntry.waiting.retry' : 'lobbyEntry.retry')}
+              {t(phase === 'preparing' ? 'lobbyEntry.preparing.retry' : 'lobbyEntry.retry')}
             </Button>
             <a className="lobby-boundary__link" href="/connect">
               {t('lobbyEntry.connect')}

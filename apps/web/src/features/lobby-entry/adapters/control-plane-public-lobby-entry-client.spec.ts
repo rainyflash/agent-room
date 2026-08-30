@@ -9,7 +9,7 @@ const target = {
 };
 
 describe('控制面公开大厅入场适配器', () => {
-  it('使用同源会话读取权威观察房间', async () => {
+  it('使用同源会话要求云端幂等确保权威房间', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(target));
     const gateway = new ControlPlanePublicLobbyEntryClient({
       baseUrl: 'https://api.agent-room.test',
@@ -18,8 +18,8 @@ describe('控制面公开大厅入场适配器', () => {
 
     await expect(gateway.resolve(target.catalogId)).resolves.toEqual({ ok: true, value: target });
     expect(fetch).toHaveBeenCalledWith(
-      new URL(`https://api.agent-room.test/lobbies/${target.catalogId}/observation`),
-      expect.objectContaining({ cache: 'no-store', credentials: 'include', method: 'GET' }),
+      new URL(`https://api.agent-room.test/lobbies/${target.catalogId}/entry`),
+      expect.objectContaining({ cache: 'no-store', credentials: 'include', method: 'POST' }),
     );
   });
 
