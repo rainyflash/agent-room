@@ -52,7 +52,9 @@ describe('Matrix 公开大厅入场适配器', () => {
     });
 
     const joining = gateway.join(roomId);
-    await vi.waitFor(() => expect(clients.listenerCount()).toBe(1));
+    await vi.waitFor(() => {
+      expect(clients.listenerCount()).toBe(1);
+    });
     projection.replace('join');
     clients.publish();
 
@@ -89,7 +91,9 @@ describe('Matrix 公开大厅入场适配器', () => {
     });
 
     const joining = gateway.join(roomId);
-    await vi.waitFor(() => expect(clients.listenerCount()).toBe(1));
+    await vi.waitFor(() => {
+      expect(clients.listenerCount()).toBe(1);
+    });
     clients.replace(null);
 
     await expect(joining).resolves.toEqual({

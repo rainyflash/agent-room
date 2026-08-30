@@ -52,10 +52,7 @@ export function moderationAuditListQueryOptions(gateway: ModerationGateway, cata
   });
 }
 
-export function moderationCapabilitiesQueryOptions(
-  gateway: ModerationGateway,
-  catalogId: string,
-) {
+export function moderationCapabilitiesQueryOptions(gateway: ModerationGateway, catalogId: string) {
   return queryOptions({
     queryFn: async () => await gateway.inspectCapabilities(catalogId),
     queryKey: moderationCapabilitiesQueryKey(catalogId),

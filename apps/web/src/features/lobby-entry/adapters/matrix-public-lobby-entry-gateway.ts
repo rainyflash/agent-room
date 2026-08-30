@@ -73,20 +73,27 @@ async function waitForJoinedMembership(
       if (timeout !== null) globalThis.clearTimeout(timeout);
       resolve(joined);
     };
-    const inspectProjection = (): void => {
+    const inspectProjection = (): boolean => {
       if (clients.current() !== client) {
         finish(false);
-        return;
+        return true;
       }
-      if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) finish(true);
+      if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) {
+        finish(true);
+        return true;
+      }
+      return false;
     };
-    unsubscribe = clients.subscribe(inspectProjection);
-    inspectProjection();
-    if (settled) {
+    unsubscribe = clients.subscribe(() => {
+      inspectProjection();
+    });
+    if (inspectProjection()) {
       unsubscribe();
       return;
     }
-    timeout = globalThis.setTimeout(() => finish(false), timeoutMilliseconds);
+    timeout = globalThis.setTimeout(() => {
+      finish(false);
+    }, timeoutMilliseconds);
   });
 }
 

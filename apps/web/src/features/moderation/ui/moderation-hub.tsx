@@ -55,8 +55,7 @@ export function ModerationHub({
   const closeRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const capabilitiesQuery = useModerationCapabilities(gateway, catalogId);
-  const capabilities =
-    capabilitiesQuery.data?.ok === true ? capabilitiesQuery.data.value : null;
+  const capabilities = capabilitiesQuery.data?.ok === true ? capabilitiesQuery.data.value : null;
   const canModerateRoom = capabilities?.canModerateRoom === true;
   const canReadAudit = capabilities?.canReadAudit === true;
   const casesQuery = useModerationRoomCases(gateway, catalogId, canModerateRoom);

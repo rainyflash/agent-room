@@ -8,9 +8,9 @@ const CATALOG_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e55';
 
 describe('ControlPlaneModerationClient', () => {
   it('通过单一能力投影发现治理权限且拒绝额外字段', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({ canModerateRoom: false, canReadAudit: true }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ canModerateRoom: false, canReadAudit: true }));
     const client = new ControlPlaneModerationClient({
       baseUrl: 'https://control.agent-room.test',
       fetch: fetchMock,

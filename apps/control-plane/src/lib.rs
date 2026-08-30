@@ -122,6 +122,21 @@ struct AgentFeatureHttpStates {
     moderation: ModerationHttpState,
 }
 
+struct AgentIdentityHttpStates {
+    agents: AgentHttpState,
+    instances: AgentInstanceHttpState,
+    cards: AgentCardHttpState,
+}
+
+struct AgentCollaborationHttpStates {
+    handoffs: HandoffHttpState,
+    lobbies: LobbyHttpState,
+    private_rooms: PrivateRoomHttpState,
+    direct_sessions: DirectSessionHttpState,
+    automation: AutomationHttpState,
+    moderation: ModerationHttpState,
+}
+
 struct AgentFeatureDependencies {
     repositories: Arc<PostgresRepositories>,
     system_runtime: Arc<SystemRuntime>,
@@ -334,20 +349,17 @@ async fn build_identity_router(
     )?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
-    let agent_features = build_agent_feature_states(
-        config,
-        request_timeout,
-        AgentFeatureDependencies {
-            repositories,
-            system_runtime,
-            secrets,
-            matrix_identities,
-            authentication: service,
-            devices,
-            matrix_authority,
-            content_authorizer,
-        },
-    )?;
+    let agent_dependencies = AgentFeatureDependencies {
+        repositories,
+        system_runtime,
+        secrets,
+        matrix_identities,
+        authentication: service,
+        devices,
+        matrix_authority,
+        content_authorizer,
+    };
+    let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -538,8 +550,39 @@ fn build_account_lifecycle_service(
 fn build_agent_feature_states(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
-    dependencies: AgentFeatureDependencies,
+    dependencies: &AgentFeatureDependencies,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
+    let AgentIdentityHttpStates {
+        agents,
+        instances,
+        cards,
+    } = build_agent_identity_http_states(config, request_timeout, dependencies);
+    let AgentCollaborationHttpStates {
+        handoffs,
+        lobbies,
+        private_rooms,
+        direct_sessions,
+        automation,
+        moderation,
+    } = build_agent_collaboration_http_states(config, dependencies)?;
+    Ok(AgentFeatureHttpStates {
+        agents,
+        instances,
+        cards,
+        handoffs,
+        lobbies,
+        private_rooms,
+        direct_sessions,
+        automation,
+        moderation,
+    })
+}
+
+fn build_agent_identity_http_states(
+    config: &ControlPlaneConfig,
+    request_timeout: Duration,
+    dependencies: &AgentFeatureDependencies,
+) -> AgentIdentityHttpStates {
     let agents = build_agent_management(
         dependencies.repositories.clone(),
         dependencies.secrets.clone(),
@@ -560,33 +603,7 @@ fn build_agent_feature_states(
         dependencies.system_runtime.clone(),
         request_timeout,
     );
-    let handoffs = build_handoff_access_service(&dependencies);
-    let targeted_handoffs = build_targeted_handoff_service(&dependencies);
-    let lobby_provisioning = build_lobby_provisioning(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-    )?;
-    let entries = build_agent_lobby_entry(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-        lobby_provisioning.clone(),
-    )?;
-    let public_entries = Arc::new(PublicLobbyEntryService::new(PublicLobbyEntryDependencies {
-        directory: dependencies.repositories.clone(),
-        provisioning: lobby_provisioning,
-    }));
-    let lobby_observation = Arc::new(PublicLobbyObservationService::new(
-        dependencies.repositories.clone(),
-    ));
-    let private_rooms = build_private_room_service(config, &dependencies)?;
-    let automation = build_automation_http_state(config, &dependencies);
-    let moderation = build_moderation_management(&dependencies);
-    let direct_sessions = build_direct_session_management(&dependencies);
-    Ok(AgentFeatureHttpStates {
+    AgentIdentityHttpStates {
         agents: AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
@@ -611,6 +628,40 @@ fn build_agent_feature_states(
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         }),
+    }
+}
+
+fn build_agent_collaboration_http_states(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<AgentCollaborationHttpStates, StartupError> {
+    let handoffs = build_handoff_access_service(dependencies);
+    let targeted_handoffs = build_targeted_handoff_service(dependencies);
+    let lobby_provisioning = build_lobby_provisioning(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    )?;
+    let entries = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        lobby_provisioning.clone(),
+    )?;
+    let public_entries = Arc::new(PublicLobbyEntryService::new(PublicLobbyEntryDependencies {
+        directory: dependencies.repositories.clone(),
+        provisioning: lobby_provisioning,
+    }));
+    let lobby_observation = Arc::new(PublicLobbyObservationService::new(
+        dependencies.repositories.clone(),
+    ));
+    let private_rooms = build_private_room_service(config, dependencies)?;
+    let automation = build_automation_http_state(config, dependencies);
+    let moderation = build_moderation_management(dependencies);
+    let direct_sessions = build_direct_session_management(dependencies);
+    Ok(AgentCollaborationHttpStates {
         handoffs: HandoffHttpState::new(
             HandoffHttpDependencies {
                 handoffs,
@@ -646,7 +697,7 @@ fn build_agent_feature_states(
         automation,
         moderation: ModerationHttpState::new(
             moderation,
-            dependencies.authentication,
+            dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origin,
         ),
