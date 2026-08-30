@@ -521,6 +521,51 @@ class ProductionRenderingTests(unittest.TestCase):
         )
         self.assertNotIn("AGENT_ROOM_DESKTOP_ORIGIN: '*'", compose)
 
+    def test_web_生产镜像包含全部传递工作区依赖(self) -> None:
+        package_files = tuple(ROOT.glob("apps/*/package.json")) + tuple(
+            ROOT.glob("packages/*/package.json")
+        )
+        package_paths = {
+            json.loads(path.read_text(encoding="utf-8"))["name"]: path.parent
+            for path in package_files
+        }
+        pending = ["@agent-room/web"]
+        required: set[str] = set()
+        while pending:
+            package_name = pending.pop()
+            if package_name in required:
+                continue
+            required.add(package_name)
+            manifest_path = package_paths[package_name] / "package.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for section in ("dependencies", "devDependencies", "peerDependencies"):
+                dependencies = manifest.get(section, {})
+                pending.extend(
+                    name
+                    for name, version in dependencies.items()
+                    if isinstance(version, str)
+                    and version.startswith("workspace:")
+                    and name in package_paths
+                )
+
+        containerfile = ROOT.joinpath(
+            "infra", "production", "Containerfile.web"
+        ).read_text(encoding="utf-8")
+        install_position = containerfile.index("RUN corepack pnpm@10.28.0 install")
+        build_position = containerfile.index(
+            "RUN corepack pnpm@10.28.0 --filter @agent-room/web build"
+        )
+        for package_name in required:
+            if package_name == "@agent-room/web":
+                continue
+            package_directory = package_paths[package_name].relative_to(ROOT).as_posix()
+            manifest_copy = (
+                f"COPY {package_directory}/package.json {package_directory}/package.json"
+            )
+            source_copy = f"COPY {package_directory} {package_directory}"
+            self.assertLess(containerfile.index(manifest_copy), install_position)
+            self.assertLess(containerfile.index(source_copy), build_position)
+
     def test_projection_rebuild_uses_server_side_copy(self) -> None:
         script = ROOT.joinpath("infra", "production", "projection-rebuild.sh").read_text(
             encoding="utf-8"
