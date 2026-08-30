@@ -1,4 +1,4 @@
-import { RoomEvent, type Room } from 'matrix-js-sdk';
+import type { MatrixClient, Room } from 'matrix-js-sdk';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { err, ok, type Result } from '@/shared/result';
@@ -39,7 +39,10 @@ export class MatrixSdkPublicLobbyEntryGateway implements PublicLobbyMatrixGatewa
       if (current?.getMyMembership() === 'join') return ok(undefined);
       const joined = await client.joinRoom(matrixRoomId);
       const confirmed = await waitForJoinedMembership(
-        client.getRoom(matrixRoomId) ?? joined,
+        this.clients,
+        client,
+        matrixRoomId,
+        joined,
         this.#joinConfirmationTimeoutMilliseconds,
       );
       return confirmed
@@ -51,26 +54,49 @@ export class MatrixSdkPublicLobbyEntryGateway implements PublicLobbyMatrixGatewa
   }
 }
 
-async function waitForJoinedMembership(room: Room, timeoutMilliseconds: number): Promise<boolean> {
-  if (room.getMyMembership() === 'join') return true;
+async function waitForJoinedMembership(
+  clients: MatrixClientSource,
+  client: MatrixClient,
+  matrixRoomId: string,
+  joinResponseRoom: Room,
+  timeoutMilliseconds: number,
+): Promise<boolean> {
+  if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) return true;
   return await new Promise<boolean>((resolve) => {
     let timeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
     let settled = false;
     const finish = (joined: boolean): void => {
       if (settled) return;
       settled = true;
-      room.off(RoomEvent.MyMembership, onMembership);
+      unsubscribe?.();
       if (timeout !== null) globalThis.clearTimeout(timeout);
       resolve(joined);
     };
-    const onMembership = (_room: Room, membership: ReturnType<Room['getMyMembership']>): void => {
-      if (membership === 'join') finish(true);
+    const inspectProjection = (): void => {
+      if (clients.current() !== client) {
+        finish(false);
+        return;
+      }
+      if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) finish(true);
     };
-    room.on(RoomEvent.MyMembership, onMembership);
-    if (room.getMyMembership() === 'join') {
-      finish(true);
+    unsubscribe = clients.subscribe(inspectProjection);
+    inspectProjection();
+    if (settled) {
+      unsubscribe();
       return;
     }
     timeout = globalThis.setTimeout(() => finish(false), timeoutMilliseconds);
   });
+}
+
+function hasJoinedMembership(
+  client: MatrixClient,
+  matrixRoomId: string,
+  joinResponseRoom: Room,
+): boolean {
+  return (
+    client.getRoom(matrixRoomId)?.getMyMembership() === 'join' ||
+    joinResponseRoom.getMyMembership() === 'join'
+  );
 }

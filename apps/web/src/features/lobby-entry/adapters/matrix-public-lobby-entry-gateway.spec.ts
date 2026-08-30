@@ -1,4 +1,4 @@
-import { RoomEvent, type MatrixClient, type Room } from 'matrix-js-sdk';
+import type { MatrixClient, Room } from 'matrix-js-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapters/matrix-public-lobby-entry-gateway';
@@ -41,30 +41,33 @@ describe('Matrix 公开大厅入场适配器', () => {
   });
 
   it('等待同步事件确认延迟收敛的成员关系', async () => {
-    const projection = delayedRoom('invite');
+    const projection = delayedProjection('invite');
     const client = {
-      getRoom: () => projection.room,
-      joinRoom: vi.fn().mockResolvedValue(projection.room),
+      getRoom: () => projection.currentRoom(),
+      joinRoom: vi.fn().mockResolvedValue(room('leave')),
     } as unknown as MatrixClient;
-    const gateway = new MatrixSdkPublicLobbyEntryGateway(source(client), {
+    const clients = reactiveSource(client);
+    const gateway = new MatrixSdkPublicLobbyEntryGateway(clients.source, {
       joinConfirmationTimeoutMilliseconds: 1_000,
     });
 
     const joining = gateway.join(roomId);
-    await vi.waitFor(() => expect(projection.listenerCount()).toBe(1));
-    projection.publish('join');
+    await vi.waitFor(() => expect(clients.listenerCount()).toBe(1));
+    projection.replace('join');
+    clients.publish();
 
     await expect(joining).resolves.toEqual({ ok: true, value: undefined });
-    expect(projection.listenerCount()).toBe(0);
+    expect(clients.listenerCount()).toBe(0);
   });
 
   it('成员关系未在时限内收敛时失败关闭并清理监听器', async () => {
-    const projection = delayedRoom('invite');
+    const projection = delayedProjection('invite');
     const client = {
-      getRoom: () => projection.room,
-      joinRoom: vi.fn().mockResolvedValue(projection.room),
+      getRoom: () => projection.currentRoom(),
+      joinRoom: vi.fn().mockResolvedValue(room('leave')),
     } as unknown as MatrixClient;
-    const gateway = new MatrixSdkPublicLobbyEntryGateway(source(client), {
+    const clients = reactiveSource(client);
+    const gateway = new MatrixSdkPublicLobbyEntryGateway(clients.source, {
       joinConfirmationTimeoutMilliseconds: 1,
     });
 
@@ -72,7 +75,28 @@ describe('Matrix 公开大厅入场适配器', () => {
       error: { code: 'lobby_entry.matrix_join_unconfirmed', retryable: true },
       ok: false,
     });
-    expect(projection.listenerCount()).toBe(0);
+    expect(clients.listenerCount()).toBe(0);
+  });
+
+  it('确认期间客户端租约被替换时立即失败关闭并清理监听器', async () => {
+    const client = {
+      getRoom: () => room('invite'),
+      joinRoom: vi.fn().mockResolvedValue(room('leave')),
+    } as unknown as MatrixClient;
+    const clients = reactiveSource(client);
+    const gateway = new MatrixSdkPublicLobbyEntryGateway(clients.source, {
+      joinConfirmationTimeoutMilliseconds: 1_000,
+    });
+
+    const joining = gateway.join(roomId);
+    await vi.waitFor(() => expect(clients.listenerCount()).toBe(1));
+    clients.replace(null);
+
+    await expect(joining).resolves.toEqual({
+      error: { code: 'lobby_entry.matrix_join_unconfirmed', retryable: true },
+      ok: false,
+    });
+    expect(clients.listenerCount()).toBe(0);
   });
 });
 
@@ -83,38 +107,49 @@ function source(client: MatrixClient | null): MatrixClientSource {
   };
 }
 
-function room(membership: 'invite' | 'join'): Room {
+function room(membership: ReturnType<Room['getMyMembership']>): Room {
   return { getMyMembership: () => membership } as unknown as Room;
 }
 
-type Membership = ReturnType<Room['getMyMembership']>;
-type MembershipListener = (room: Room, membership: Membership) => void;
-
-function delayedRoom(initialMembership: Membership): {
-  readonly listenerCount: () => number;
-  readonly publish: (membership: Membership) => void;
-  readonly room: Room;
+function delayedProjection(initialMembership: ReturnType<Room['getMyMembership']>): {
+  readonly currentRoom: () => Room;
+  readonly replace: (membership: ReturnType<Room['getMyMembership']>) => void;
 } {
-  let membership = initialMembership;
-  const listeners = new Set<MembershipListener>();
-  const candidate = {
-    getMyMembership: () => membership,
-    off: (event: RoomEvent, listener: MembershipListener) => {
-      if (event === RoomEvent.MyMembership) listeners.delete(listener);
-      return candidate;
-    },
-    on: (event: RoomEvent, listener: MembershipListener) => {
-      if (event === RoomEvent.MyMembership) listeners.add(listener);
-      return candidate;
+  let currentRoom = room(initialMembership);
+  return {
+    currentRoom: () => currentRoom,
+    replace: (membership) => {
+      currentRoom = room(membership);
     },
   };
-  const matrixRoom = candidate as unknown as Room;
+}
+
+function reactiveSource(initialClient: MatrixClient | null): {
+  readonly listenerCount: () => number;
+  readonly publish: () => void;
+  readonly replace: (client: MatrixClient | null) => void;
+  readonly source: MatrixClientSource;
+} {
+  let client = initialClient;
+  const listeners = new Set<() => void>();
+  const publish = (): void => {
+    for (const listener of listeners) listener();
+  };
   return {
     listenerCount: () => listeners.size,
-    publish: (nextMembership) => {
-      membership = nextMembership;
-      for (const listener of listeners) listener(matrixRoom, nextMembership);
+    publish,
+    replace: (nextClient) => {
+      client = nextClient;
+      publish();
     },
-    room: matrixRoom,
+    source: {
+      current: () => client,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
   };
 }
