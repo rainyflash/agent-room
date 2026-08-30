@@ -57,19 +57,23 @@ export type OnboardingBootstrap = {
   readonly reusedExistingAgent: boolean;
 };
 
-export type OnboardingPhase =
-  | 'authorizing-runtime'
-  | 'checking-account'
-  | 'checking-agents'
-  | 'configuring-runtime'
-  | 'failed'
-  | 'ready'
-  | 'runtime-required';
+export type OnboardingPhase = 'checking-account' | 'checking-agents' | 'failed' | 'ready';
 
 export type OnboardingFacts = {
   readonly accountReady: boolean;
   readonly bootstrapFailed: boolean;
   readonly bootstrapReady: boolean;
+};
+
+export type OnboardingRuntimePhase =
+  | 'authorization-required'
+  | 'configuration-required'
+  | 'connecting'
+  | 'failed'
+  | 'optional'
+  | 'ready';
+
+export type OnboardingRuntimeFacts = {
   readonly bridgePhase: BridgePhase | null;
   readonly desktopAvailable: boolean;
   readonly runtimeSessionReady: boolean;
@@ -77,15 +81,40 @@ export type OnboardingFacts = {
 };
 
 export function projectOnboardingPhase(facts: OnboardingFacts): OnboardingPhase {
-  if (!facts.accountReady) return 'checking-account';
-  if (facts.bootstrapFailed || facts.bridgePhase === 'halted') return 'failed';
-  if (!facts.bootstrapReady) return 'checking-agents';
-  if (!facts.desktopAvailable) return 'runtime-required';
-  if (!facts.targetMatches) return 'configuring-runtime';
-  if (facts.bridgePhase === 'authorization_required') return 'authorizing-runtime';
-  if (facts.bridgePhase !== 'ready') return 'configuring-runtime';
-  return facts.runtimeSessionReady ? 'ready' : 'failed';
+  return onboardingPhaseRules.find((rule) => rule.matches(facts))?.phase ?? 'ready';
 }
+
+export function projectOnboardingRuntimePhase(
+  facts: OnboardingRuntimeFacts,
+): OnboardingRuntimePhase {
+  return runtimePhaseRules.find((rule) => rule.matches(facts))?.phase ?? 'connecting';
+}
+
+type PhaseRule<TFacts, TPhase extends string> = Readonly<{
+  matches: (facts: TFacts) => boolean;
+  phase: TPhase;
+}>;
+
+const onboardingPhaseRules: readonly PhaseRule<OnboardingFacts, OnboardingPhase>[] = [
+  { matches: (facts) => !facts.accountReady, phase: 'checking-account' },
+  { matches: (facts) => facts.bootstrapFailed, phase: 'failed' },
+  { matches: (facts) => !facts.bootstrapReady, phase: 'checking-agents' },
+];
+
+const runtimePhaseRules: readonly PhaseRule<OnboardingRuntimeFacts, OnboardingRuntimePhase>[] = [
+  { matches: (facts) => !facts.desktopAvailable, phase: 'optional' },
+  { matches: (facts) => !facts.targetMatches, phase: 'configuration-required' },
+  { matches: (facts) => facts.bridgePhase === 'halted', phase: 'failed' },
+  {
+    matches: (facts) => facts.bridgePhase === 'authorization_required',
+    phase: 'authorization-required',
+  },
+  {
+    matches: (facts) => facts.bridgePhase === 'ready' && facts.runtimeSessionReady,
+    phase: 'ready',
+  },
+  { matches: (facts) => facts.bridgePhase === 'ready', phase: 'failed' },
+];
 
 export function selectPublicLobby(
   lobbies: readonly PublicLobby[],

@@ -143,7 +143,7 @@ describe('首次引导页面', () => {
     expect(bootstrap).toHaveBeenCalledWith('en');
   });
 
-  it('Web 预览进入目录边界并由边界等待真实房间', async () => {
+  it('Bridge 停机时仍进入云端目录边界并等待真实房间', async () => {
     const user = userEvent.setup();
     const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: true as const }));
     const enter = vi.fn();
@@ -152,9 +152,40 @@ describe('首次引导页面', () => {
       lobbyEntry: { enter, enterKnown: vi.fn() },
       onboarding: { bootstrap },
     } as unknown as ReturnType<typeof useAppServices>);
+    vi.mocked(useDesktopRuntimeController).mockReturnValue({
+      available: true,
+      bootstrapDefaultAgent: vi.fn(),
+      busy: null,
+      checkUpdate: vi.fn(),
+      configureAgentRuntime: vi.fn(),
+      configureHost: vi.fn(),
+      dismissFailure: vi.fn(),
+      failure: null,
+      hosts: [],
+      installUpdate: vi.fn(),
+      openAuthorization: vi.fn(),
+      refresh: vi.fn(),
+      retryBridge: vi.fn(),
+      setAutostart: vi.fn(),
+      snapshot: {
+        agentTarget: {
+          agentId: agent.agentId,
+          lobbyLanguage: lobby.language,
+          publicLobbyCatalogId: lobby.catalogId,
+        },
+        bridge: {
+          authorization: null,
+          lifecycle: { phase: 'halted' },
+          session: null,
+        },
+      },
+      update: null,
+    } as unknown as ReturnType<typeof useDesktopRuntimeController>);
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Open Web preview' }));
+    const enterLobby = await screen.findByRole('button', { name: 'Enter lobby' });
+    expect(enterLobby).toBeEnabled();
+    await user.click(enterLobby);
 
     expect(enter).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith({

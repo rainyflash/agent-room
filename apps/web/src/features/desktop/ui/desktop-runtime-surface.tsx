@@ -24,10 +24,14 @@ import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runti
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 
 export type DesktopRuntimeSurfaceProps = {
+  readonly placement?: 'action-rail-safe' | 'viewport';
   readonly telemetry?: FrontendTelemetryGateway;
 };
 
-export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps) {
+export function DesktopRuntimeSurface({
+  placement = 'viewport',
+  telemetry,
+}: DesktopRuntimeSurfaceProps) {
   const { i18n, t } = useTranslation();
   const controller = useDesktopRuntimeController();
   const reduceMotion = useReducedMotion();
@@ -39,7 +43,7 @@ export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps)
   const authorization = controller.snapshot?.bridge.authorization ?? null;
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
-  const open = expanded || needsAttention;
+  const open = expanded;
   const selectedUpdate = controller.update?.channel === updateChannel ? controller.update : null;
   const expiry = useMemo(() => {
     if (authorization === null) {
@@ -84,6 +88,7 @@ export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps)
       aria-live={needsAttention ? 'assertive' : 'polite'}
       className="desktop-runtime"
       data-attention={needsAttention ? 'true' : 'false'}
+      data-placement={placement}
     >
       <button
         aria-expanded={open}
@@ -107,7 +112,7 @@ export function DesktopRuntimeSurface({ telemetry }: DesktopRuntimeSurfaceProps)
             animate={{ height: 'auto', opacity: 1 }}
             className="desktop-runtime__panel"
             exit={{ height: 0, opacity: 0 }}
-            initial={needsAttention ? false : { height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
             transition={
               reduceMotion ? { duration: 0 } : { bounce: 0.08, duration: 0.32, type: 'spring' }
             }

@@ -117,7 +117,10 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    expect(await screen.findByText('Authorize this desktop')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    await waitFor(() => {
+      expect(screen.getByText('Authorize this desktop')).toBeVisible();
+    });
     expect(screen.getByText('identity.example')).toBeVisible();
     expect(screen.getByText('ABCD-EFGH')).toBeVisible();
     expect(screen.queryByText(/https:\/\//u)).not.toBeInTheDocument();
@@ -127,7 +130,7 @@ describe('桌面运行时界面', () => {
     });
   });
 
-  it('崩溃预算耗尽后保持停机，只有明确按钮才触发重试', async () => {
+  it('崩溃预算耗尽后只标记注意状态，显式展开后才允许重试', async () => {
     const halted: BridgeRuntime = {
       authorization: null,
       session: null,
@@ -148,12 +151,34 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    expect(await screen.findByText('Automatic restart was stopped')).toBeVisible();
+    const trigger = await screen.findByRole('button', { name: /Desktop runtime/u });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger.closest('aside')).toHaveAttribute('data-attention', 'true');
+    expect(screen.queryByText('Automatic restart was stopped')).not.toBeInTheDocument();
     expect(runtime.retryBridge).not.toHaveBeenCalled();
+    fireEvent.click(trigger);
+    await waitFor(() => {
+      expect(screen.getByText('Automatic restart was stopped')).toBeVisible();
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Retry Bridge' }));
     await waitFor(() => {
       expect(runtime.retryBridge).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('为底部主操作栏声明独立避让位置', async () => {
+    const runtime = gateway(authorizationRuntime);
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface placement="action-rail-safe" />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    const trigger = await screen.findByRole('button', { name: /Desktop runtime/u });
+    expect(trigger.closest('aside')).toHaveAttribute('data-placement', 'action-rail-safe');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('只有签名更新已配置时才允许显式检查并安装同一序号', async () => {

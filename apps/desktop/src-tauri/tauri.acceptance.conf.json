@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "dev.agent-room.desktop.acceptance",
+  "productName": "Agent Room Acceptance",
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.agent-room.localhost:18443 https://matrix.agent-room.localhost https://matrix.agent-room.localhost:18443 wss://matrix.agent-room.localhost wss://matrix.agent-room.localhost:18443; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+    },
+    "windows": [
+      {
+        "center": true,
+        "fullscreen": false,
+        "height": 920,
+        "label": "main",
+        "minHeight": 640,
+        "minWidth": 920,
+        "resizable": true,
+        "title": "Agent Room Acceptance",
+        "width": 1440
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}

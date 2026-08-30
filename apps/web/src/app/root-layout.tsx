@@ -13,10 +13,11 @@ import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const services = useAppServices();
+  const desktopRuntimePlacement = pathname === '/onboarding' ? 'action-rail-safe' : 'viewport';
   return (
     <DesktopRuntimeProvider gateway={services.localRuntime}>
       <WebRootLayout pathname={pathname} />
-      <DesktopRuntimeSurface telemetry={services.telemetry} />
+      <DesktopRuntimeSurface placement={desktopRuntimePlacement} telemetry={services.telemetry} />
     </DesktopRuntimeProvider>
   );
 }

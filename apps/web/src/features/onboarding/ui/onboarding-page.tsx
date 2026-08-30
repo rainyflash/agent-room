@@ -21,9 +21,10 @@ import { useAppServices } from '@/app/app-services';
 import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
 import {
   projectOnboardingPhase,
+  projectOnboardingRuntimePhase,
   targetFor,
   targetMatches,
-  type OnboardingPhase,
+  type OnboardingRuntimePhase,
 } from '@/features/onboarding/domain/onboarding';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { WebSession } from '@/features/session/domain/session';
@@ -38,15 +39,6 @@ const hostNames = {
   'claude-code': 'Claude Code',
   cursor: 'Cursor',
 } as const;
-
-const phaseOrder: readonly OnboardingPhase[] = [
-  'checking-account',
-  'checking-agents',
-  'runtime-required',
-  'configuring-runtime',
-  'authorizing-runtime',
-  'ready',
-];
 
 export function OnboardingPage() {
   const { snapshot } = useSession();
@@ -77,10 +69,14 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
   const runtimeMatches =
     expectedTarget !== null && targetMatches(runtime.snapshot?.agentTarget ?? null, expectedTarget);
   const bridgeSession = runtime.snapshot?.bridge.session ?? null;
-  const runtimeReady =
-    runtimeMatches &&
-    runtime.snapshot?.bridge.lifecycle.phase === 'ready' &&
-    bridgeSession?.agentId === resolved?.agent.agentId;
+  const runtimeSessionReady = bridgeSession?.agentId === resolved?.agent.agentId;
+  const runtimePhase = projectOnboardingRuntimePhase({
+    bridgePhase: runtime.snapshot?.bridge.lifecycle.phase ?? null,
+    desktopAvailable: runtime.available,
+    runtimeSessionReady,
+    targetMatches: runtimeMatches,
+  });
+  const runtimeReady = runtimePhase === 'ready';
   const entry = useMutation({
     mutationFn: async (target: PublicLobbyRouteTarget) => await lobbyEntry.enterKnown(target),
     onSuccess: (result) => {
@@ -99,13 +95,13 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
     accountReady: true,
     bootstrapFailed: bootstrap.data?.ok === false || bootstrap.isError,
     bootstrapReady: resolved !== null,
-    bridgePhase: runtime.snapshot?.bridge.lifecycle.phase ?? null,
-    desktopAvailable: runtime.available,
-    runtimeSessionReady: runtimeReady,
-    targetMatches: runtimeMatches,
   });
   const installedHosts = runtime.hosts.filter((host) => host.installed);
-  const phaseIndex = Math.max(0, phaseOrder.indexOf(phase));
+  const progress = {
+    account: true,
+    agent: resolved !== null,
+    runtime: runtimeReady,
+  } as const;
 
   return (
     <main className="onboarding" id="main-content">
@@ -116,7 +112,7 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
         </a>
         <div className="onboarding__operator">
           <span>{t(`onboarding.phase.${phase}`)}</span>
-          <strong>{principal?.displayName ?? '—'}</strong>
+          <strong>{principal.displayName}</strong>
         </div>
       </header>
 
@@ -132,8 +128,8 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
           <p>{t('onboarding.description')}</p>
           <ol aria-label={t('onboarding.title')} className="onboarding__progress">
             {(['account', 'agent', 'runtime'] as const).map((step, index) => (
-              <li data-complete={phaseIndex > index ? 'true' : 'false'} key={step}>
-                <span>{phaseIndex > index ? <Check aria-hidden="true" /> : `0${index + 1}`}</span>
+              <li data-complete={progress[step] ? 'true' : 'false'} key={step}>
+                <span>{progress[step] ? <Check aria-hidden="true" /> : `0${index + 1}`}</span>
                 {t(`onboarding.${step}`)}
               </li>
             ))}
@@ -187,12 +183,13 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
           </FactCard>
 
           <FactCard
-            detail={runtimeDetail(runtime.available, runtimeMatches, phase, {
+            detail={runtimeDetail(runtimePhase, {
               authorization: t('onboarding.runtime.authorization'),
               configured: t('onboarding.runtime.configured', {
                 agent: resolved?.agent.displayName ?? 'Agent',
               }),
               configuring: t('onboarding.phase.configuring-runtime'),
+              failed: t('onboarding.runtime.failed'),
               waiting: t('onboarding.runtime.waiting'),
               web: t('onboarding.runtime.web'),
             })}
@@ -314,10 +311,10 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
         <a href="/connect">{t('onboarding.signOut')}</a>
         {resolved === null ? null : (
           <Button
-            disabled={entry.isPending || (runtime.available && !runtimeReady)}
+            disabled={entry.isPending}
             icon={<ArrowRight aria-hidden="true" />}
             onClick={() => {
-              if (runtime.available && bridgeSession !== null) {
+              if (runtimeReady && bridgeSession !== null) {
                 entry.mutate({
                   catalogId: resolved.lobby.catalogId,
                   matrixRoomId: bridgeSession.matrixRoomId,
@@ -333,7 +330,7 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
             size="large"
             tone="primary"
           >
-            {t(runtime.available ? 'onboarding.continue' : 'onboarding.webContinue')}
+            {t('onboarding.continue')}
           </Button>
         )}
       </footer>
@@ -372,20 +369,26 @@ function FactCard({ children, detail, icon, status, title }: FactCardProps) {
 }
 
 function runtimeDetail(
-  available: boolean,
-  matches: boolean,
-  phase: OnboardingPhase,
+  phase: OnboardingRuntimePhase,
   copy: {
     readonly authorization: string;
     readonly configured: string;
     readonly configuring: string;
+    readonly failed: string;
     readonly waiting: string;
     readonly web: string;
   },
 ): string {
-  if (!available) return copy.web;
-  if (!matches) return copy.configuring;
-  if (phase === 'authorizing-runtime') return copy.authorization;
-  if (phase !== 'ready') return copy.waiting;
-  return copy.configured;
+  return runtimeCopyByPhase[phase](copy);
 }
+
+const runtimeCopyByPhase: Readonly<
+  Record<OnboardingRuntimePhase, (copy: Parameters<typeof runtimeDetail>[1]) => string>
+> = {
+  'authorization-required': (copy) => copy.authorization,
+  'configuration-required': (copy) => copy.configuring,
+  connecting: (copy) => copy.waiting,
+  failed: (copy) => copy.failed,
+  optional: (copy) => copy.web,
+  ready: (copy) => copy.configured,
+};

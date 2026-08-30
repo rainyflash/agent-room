@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   projectOnboardingPhase,
+  projectOnboardingRuntimePhase,
   selectPublicLobby,
   targetFor,
   targetMatches,
@@ -31,23 +32,34 @@ describe('首次引导领域投影', () => {
     expect(selectPublicLobby(lobbies, 'fr-FR')?.name).toBe('English');
   });
 
-  it('只在账户、Agent 和本机目标事实一致后报告就绪', () => {
+  it('云端引导只依赖账户与服务端事实，不被可选 Bridge 阻塞', () => {
     expect(
       projectOnboardingPhase({
         accountReady: true,
         bootstrapFailed: false,
         bootstrapReady: true,
-        bridgePhase: 'ready',
+      }),
+    ).toBe('ready');
+    expect(
+      projectOnboardingPhase({
+        accountReady: true,
+        bootstrapFailed: true,
+        bootstrapReady: false,
+      }),
+    ).toBe('failed');
+  });
+
+  it('本机 Runtime 独立投影，Bridge 停机不会污染云端引导状态', () => {
+    expect(
+      projectOnboardingRuntimePhase({
+        bridgePhase: 'halted',
         desktopAvailable: true,
         runtimeSessionReady: false,
-        targetMatches: false,
+        targetMatches: true,
       }),
-    ).toBe('configuring-runtime');
+    ).toBe('failed');
     expect(
-      projectOnboardingPhase({
-        accountReady: true,
-        bootstrapFailed: false,
-        bootstrapReady: true,
+      projectOnboardingRuntimePhase({
         bridgePhase: 'ready',
         desktopAvailable: true,
         runtimeSessionReady: true,
@@ -55,16 +67,13 @@ describe('首次引导领域投影', () => {
       }),
     ).toBe('ready');
     expect(
-      projectOnboardingPhase({
-        accountReady: true,
-        bootstrapFailed: false,
-        bootstrapReady: true,
-        bridgePhase: 'ready',
-        desktopAvailable: true,
+      projectOnboardingRuntimePhase({
+        bridgePhase: null,
+        desktopAvailable: false,
         runtimeSessionReady: false,
-        targetMatches: true,
+        targetMatches: false,
       }),
-    ).toBe('failed');
+    ).toBe('optional');
   });
 
   it('桌面目标由权威 Agent 与真实大厅组合且可精确恢复', () => {

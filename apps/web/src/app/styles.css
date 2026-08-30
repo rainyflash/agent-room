@@ -1146,6 +1146,10 @@
   border-color: color-mix(in srgb, var(--color-alert) 56%, var(--ar-paper-18));
 }
 
+.desktop-runtime[data-placement='action-rail-safe'] {
+  bottom: calc(76px + 1rem);
+}
+
 .desktop-runtime__trigger {
   display: grid;
   width: 100%;
@@ -1449,6 +1453,10 @@
     right: 0.65rem;
     bottom: 0.65rem;
     width: calc(100vw - 1.3rem);
+  }
+
+  .desktop-runtime[data-placement='action-rail-safe'] {
+    bottom: calc(124px + 0.65rem);
   }
 
   .desktop-runtime__settings {
