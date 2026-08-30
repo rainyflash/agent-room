@@ -710,6 +710,7 @@ def prepare_environment() -> dict[str, str]:
     )
     environment = read_environment()
     required_value(environment, "SEED_ADMIN_PASSWORD")
+    required_value(environment, "SEED_MEMBER_PASSWORD")
     return environment
 
 

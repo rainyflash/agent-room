@@ -146,6 +146,9 @@ function Write-Environment {
     if (-not $current.ContainsKey('KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET')) {
       $missingValues.KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET = New-RandomSecret
     }
+    if (-not $current.ContainsKey('SEED_MEMBER_PASSWORD')) {
+      $missingValues.SEED_MEMBER_PASSWORD = New-RandomSecret
+    }
     if ($missingValues.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
       $appended = ($missingValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
@@ -181,6 +184,7 @@ function Write-Environment {
     ACCOUNT_DELETION_RECEIPT_SECRET = New-RandomSecret
     CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     SEED_ADMIN_PASSWORD = New-RandomSecret
+    SEED_MEMBER_PASSWORD = New-RandomSecret
     SEED_AGENT_PASSWORD = New-RandomSecret
     SEED_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a3'
   }
@@ -262,6 +266,21 @@ function Write-KeycloakRealm {
           [ordered]@{
             type = 'password'
             value = $Environment.SEED_ADMIN_PASSWORD
+            temporary = $false
+          }
+        )
+      }
+      [ordered]@{
+        username = 'collaborator'
+        enabled = $true
+        emailVerified = $true
+        email = 'collaborator@agent-room.test'
+        firstName = 'Local'
+        lastName = 'Collaborator'
+        credentials = @(
+          [ordered]@{
+            type = 'password'
+            value = $Environment.SEED_MEMBER_PASSWORD
             temporary = $false
           }
         )
