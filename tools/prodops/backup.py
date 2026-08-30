@@ -351,7 +351,12 @@ class BackupRepository:
             if created_at >= cutoff and created_at.date() not in retained_days:
                 retained_days.add(created_at.date())
                 continue
-            shutil.rmtree(self.root / manifest.backup_id)
+            try:
+                shutil.rmtree(self.root / manifest.backup_id)
+            except FileNotFoundError:
+                # 计划任务与人工运维可能同时触发清理；另一进程已经删除目标时，
+                # 当前清理已经达到期望终态，不应让完整备份流程失败。
+                continue
             removed.append(manifest.backup_id)
         self._remove_stale_partials(reference)
         return tuple(removed)

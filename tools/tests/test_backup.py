@@ -4,8 +4,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.prodops.backup import (
     BackupCoordinator,
@@ -142,6 +144,36 @@ class BackupCoordinatorTests(unittest.TestCase):
         removed = repository.prune(30, now=FIXED_NOW)
 
         self.assertEqual(removed, (first.backup_id,))
+        self.assertTrue((self.repository_path / second.backup_id).is_dir())
+
+    def test_prune_tolerates_target_removed_by_concurrent_cleanup(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        old = FIXED_NOW - timedelta(days=40)
+        first = BackupCoordinator(
+            self.config,
+            self.paths,
+            FakeBackupCapture(self.repository_path),
+            repository,
+            clock=lambda: old,
+        ).create()
+        second = BackupCoordinator(
+            self.config,
+            self.paths,
+            FakeBackupCapture(self.repository_path),
+            repository,
+            clock=lambda: old + timedelta(hours=1),
+        ).create()
+        original_rmtree = shutil.rmtree
+
+        def remove_then_report_missing(path: Path) -> None:
+            original_rmtree(path)
+            raise FileNotFoundError(path)
+
+        with patch("tools.prodops.backup.shutil.rmtree", side_effect=remove_then_report_missing):
+            removed = repository.prune(30, now=FIXED_NOW)
+
+        self.assertEqual(removed, ())
+        self.assertFalse((self.repository_path / first.backup_id).exists())
         self.assertTrue((self.repository_path / second.backup_id).is_dir())
 
     def test_account_deletion_ledger_is_monotonic_and_survives_pruning(self) -> None:
