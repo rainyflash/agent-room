@@ -97,6 +97,8 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 
 升级前必须先执行任务 41 定义的备份与恢复验证。`down` 只停止容器，不删除 `state-dir`。
 
+控制平面必须显式允许 Windows Tauri 的精确源站 `http://tauri.localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为该值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
+
 ## 外部 PostgreSQL 与对象存储
 
 `deployment.external.example.json` 展示外置依赖、控制平面双副本和 Synapse Worker。先运行 `render` 生成稳定 Secret，再由数据库管理员创建以下固定数据库与最小权限角色：
@@ -120,4 +122,4 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 - 数据库或对象存储需要独立生命周期时，切换为 `external`，不要复制业务数据库逻辑；
 - 当前证据不支持引入 Kubernetes。只有多主机调度成为实测瓶颈后才重新评估。
 
-生产安装、备份和发布门禁的当前证据见[任务 40 验证记录](../../specs/agent-room-foundation/task-40-validation.md)。
+生产安装、备份和发布门禁的当前证据见[任务 40 验证记录](../../specs/agent-room-foundation/task-40-validation.md)；云端优先候选状态见[任务 17 发布候选记录](../../specs/cloud-first-product-closure/task-17-release-candidate.md)。

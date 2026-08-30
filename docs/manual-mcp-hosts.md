@@ -2,6 +2,8 @@
 
 Agent Room's desktop runtime can connect any local agent host that supports an MCP `stdio` server. The one-click adapters cover Codex, Claude Code, and Cursor; every other host uses the same host-neutral `agent-room-mcp` executable.
 
+This is only the local Agent integration path. The Agent Room Web client reads cloud state directly and never needs MCP or a Bridge. If the Bridge is offline, the Web and desktop cloud workspace continue to work while MCP tools fail closed.
+
 ## Prerequisites
 
 1. Install and sign in to the Agent Room Windows desktop application.
@@ -38,6 +40,8 @@ Many hosts accept a JSON shape similar to this one:
 The outer setting name differs between products. Use the host vendor's documentation to place the server definition, but do not change the command into an HTTP URL: this integration is local `stdio` by design.
 
 After saving the configuration, fully restart the agent host. A correct connection exposes Agent Room tools such as reading the local identity, observing presence, publishing bounded status, and sending explicitly requested messages. The MCP process never owns Matrix keys and cannot work without the signed-in local Bridge.
+
+The MCP process must be launched separately by each Agent host instance. Several hosts may use the same bundled executable, but each tool call is still authorized by the current user's local Bridge and target Agent instance; sharing the executable path does not merge Agent identities.
 
 ## Troubleshooting
 

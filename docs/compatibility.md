@@ -4,30 +4,34 @@ This matrix describes engineering coverage in the repository. It is not a produc
 
 ## Release-train compatibility
 
-| Component                         | Compatibility rule                        | Failure behavior                                                              |
-| --------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------- |
-| Control plane and database schema | Follow ordered release promotion evidence | Startup/migration fails rather than silently skipping required schema         |
-| Web client and control plane      | Same release train                        | Unsupported capabilities are not invoked                                      |
-| Desktop and bundled Bridge        | Same release artifact                     | Supervisor refuses an incompatible sidecar                                    |
-| Generic MCP server and Bridge     | Same release; IPC `1.0` must negotiate    | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
-| Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP    | The desktop reports a bounded plan or conflict and does not overwrite blindly |
-| Federated Agent Room peers        | Protocol `2.0` or previous major `1.0`    | Newest common version is selected; unknown events are bounded read-only data  |
+| Component                         | Compatibility rule                     | Failure behavior                                                              |
+| --------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| Control plane and database schema | Ordered, additive migrations first     | Startup/migration fails rather than silently skipping required schema         |
+| Web/desktop cloud client and API  | Overlapping capability window          | Older clients ignore additive endpoints; newer clients surface missing APIs   |
+| Desktop and bundled Bridge        | Same release artifact                  | Cloud UI remains usable; local runtime actions fail closed                    |
+| Generic MCP server and Bridge     | Same release; IPC `1.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
+| Federated Agent Room peers        | Protocol `2.0` or previous major `1.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 
+The Web client and the Tauri desktop shell use the same cloud ports and domain model. The desktop does not need its co-installed Bridge to browse cloud state. A release may add database columns, tables, and endpoints before a client consumes them, but it must not remove or reinterpret an existing contract in the same promotion. Database rollback is intentionally asymmetric: roll back the compatible application image and leave additive schema in place; never run a destructive down-migration during an incident.
+
 ## Client platforms
 
-| Platform                                      | Engineering status                                                                                         | Public support status                       |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Chromium-based desktop browser                | Automated Playwright acceptance                                                                            | Not yet supported for production            |
-| Windows x86-64 desktop + Bridge + generic MCP | Automated build, clean-machine install/runtime/uninstall acceptance, and same-revision verification passed | `0.1.0-alpha.7` public prerelease published |
-| macOS arm64                                   | Manual maintainer-owned self-hosted build path only                                                        | Unsupported                                 |
-| macOS x86-64                                  | No maintained build or release path                                                                        | Unsupported                                 |
-| Linux desktop                                 | Workspace compilation only; no release bundle                                                              | Unsupported                                 |
-| Firefox and Safari                            | No browser acceptance matrix yet                                                                           | Unsupported                                 |
-| iOS and Android                               | No native client                                                                                           | Unsupported                                 |
+| Platform                                      | Engineering status                                                                                  | Public support status                       |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Chromium-based desktop browser                | Automated multi-account Playwright acceptance without a local Bridge                                | Not yet supported for production            |
+| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.7` public prerelease published |
+| macOS arm64                                   | Manual maintainer-owned self-hosted build path only                                                 | Unsupported                                 |
+| macOS x86-64                                  | No maintained build or release path                                                                 | Unsupported                                 |
+| Linux desktop                                 | Workspace compilation only; no release bundle                                                       | Unsupported                                 |
+| Firefox and Safari                            | No browser acceptance matrix yet                                                                    | Unsupported                                 |
+| iOS and Android                               | No native client                                                                                    | Unsupported                                 |
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
+
+The cloud-first source candidate has passed local same-revision validation but has not yet been promoted to production or published as the next Windows prerelease. Production must allow the exact Tauri origin `http://tauri.localhost`; wildcard origins are forbidden when credentials are enabled.
 
 The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
 

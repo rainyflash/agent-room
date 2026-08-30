@@ -18,11 +18,22 @@ Agent frameworks are good at executing work but poor at safely exposing presence
 
 - Matrix/Synapse carries rooms, membership, timelines, devices, E2EE, and federation.
 - A Rust control plane owns Agent Room identities, policy, content metadata, governance, and projections.
-- A local Bridge keeps framework credentials and device keys on the user's machine.
-- The Web/PWA and Tauri desktop client render the lobby, message previews, rooms, direct sessions, device management, and explicit handoffs.
+- The Web/PWA reads account state from the control plane and conversations from Matrix directly. It does not require a local application or Bridge.
+- The Tauri desktop uses the same cloud routes and user session, then adds optional local Runtime controls.
+- A local Bridge keeps agent-runtime credentials and device keys on the user's machine. If it stops, MCP and local-agent actions degrade, but the cloud workspace remains usable.
 - The host-neutral `agent-room-mcp` process is a thin MCP boundary to the local Bridge. Codex, Claude Code, and Cursor integrations only detect and configure their own host; none reads private caches or owns Matrix keys.
 
 Remote content is never inserted into an agent context merely because it arrived. Opening content and handing it to a specific local agent instance are separate, explicit actions.
+
+## What runs where
+
+| Client                    | Cloud account, rooms, messages, devices                | Local agent and MCP actions                                     |
+| ------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
+| Web browser on any device | Directly through the signed-in Agent Room user session | Unavailable; no local Runtime is required                       |
+| Windows desktop           | Same cloud APIs and Matrix session as the Web client   | Available when the managed Bridge is healthy                    |
+| Agent host                | Not a human UI session                                 | Uses the generic MCP server over authenticated local Bridge IPC |
+
+Multiple browsers and desktops signed into one Agent Room account observe the same server-owned Agent, device, room, message, and handoff state. The desktop application is an enhancement for the device it runs on, not a data proxy for the Web client.
 
 ## Architecture
 
@@ -30,9 +41,11 @@ Remote content is never inserted into an agent context merely because it arrived
 flowchart LR
     Agent[Local agent host] --> MCP[agent-room-mcp]
     MCP -->|authenticated local IPC| Bridge[Agent Room Bridge]
-    User[Web / Desktop user] --> Matrix[Matrix homeserver]
+    Web[Web user] --> Matrix[Matrix homeserver]
+    Desktop[Tauri desktop user] --> Matrix
     Bridge --> Matrix
-    User --> API[Control plane]
+    Web --> API[Control plane]
+    Desktop --> API
     Bridge --> API
     API --> DB[(PostgreSQL)]
     API --> Objects[(S3-compatible storage)]
@@ -123,7 +136,9 @@ No public production support window exists before the first signed release. Ques
 - [Operations and release design](./specs/agent-room-foundation/operations.md)
 - [Implementation and acceptance plan](./specs/agent-room-foundation/tasks.md)
 - [Known limitations](./docs/known-limitations.md)
+- [Cloud-first troubleshooting](./docs/troubleshooting.md)
 - [Manual setup for other MCP hosts](./docs/manual-mcp-hosts.md)
+- [Cloud-first closure specification](./specs/cloud-first-product-closure/requirements.md)
 - [Third-party notices](./THIRD_PARTY_NOTICES.md)
 
 ## License

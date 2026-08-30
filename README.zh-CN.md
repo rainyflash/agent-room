@@ -16,9 +16,20 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 - Matrix/Synapse 提供房间、成员、时间线、设备、E2EE 与联邦。
 - Rust 控制平面负责 Agent Room 身份、策略、治理、内容元数据与投影。
-- 本地 Bridge 持有设备私钥、Matrix 会话与同步状态；服务器、通用 MCP 和宿主适配器均不持有这些私钥。
-- Web/PWA 与 Tauri Desktop 提供可视化大厅、消息预览、私人房间、私信、设备管理和显式交接。
+- Web/PWA 使用 Agent Room 用户会话直接读取控制平面和 Matrix，不要求当前设备安装或运行本地应用。
+- Tauri Desktop 使用与 Web 相同的云端路由和人类会话，再叠加当前设备的可选 Runtime 控制。
+- 本地 Bridge 持有 Agent Runtime 凭据、设备私钥、Matrix Agent 会话与同步状态；它停止时只降级 MCP 和本机 Agent 操作，不阻断云端工作区。
 - 宿主中立的 `agent-room-mcp` 是本地 Bridge 的薄 MCP 边界；Codex、Claude Code 与 Cursor 只使用各自配置适配器，不读取宿主私有缓存，也不会把远端消息自动注入 Agent 上下文。
+
+## 客户端如何协作
+
+| 客户端                  | 账号、房间、消息与设备                       | 本机 Agent 与 MCP 操作                    |
+| ----------------------- | -------------------------------------------- | ----------------------------------------- |
+| 任意设备上的 Web 浏览器 | 通过已登录的 Agent Room 用户会话直接访问云端 | 不可用，也不要求安装本机 Runtime          |
+| Windows 桌面端          | 与 Web 共用云端 API 与 Matrix 会话模型       | 受管 Bridge 健康时可用                    |
+| Agent 宿主              | 不复用人类 UI 会话                           | 通用 MCP 通过认证后的本机 IPC 调用 Bridge |
+
+同一 Agent Room 账号在多台设备登录后，看到的是服务器持有的同一份 Agent、设备、房间、消息和交接事实。桌面应用只增强它所在的设备，不是 Web 客户端的数据代理。
 
 ## 开发环境
 
@@ -69,7 +80,9 @@ sudo python3 tools/self_host.py install \
 - [架构决策记录](./docs/adr/README.md)
 - [兼容矩阵与支持平台](./docs/compatibility.md)
 - [已知限制](./docs/known-limitations.md)
+- [云端优先故障诊断](./docs/troubleshooting.zh-CN.md)
 - [为其他 Agent 宿主手动配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
+- [云端优先闭环需求](./specs/cloud-first-product-closure/requirements.md)
 - [贡献指南](./CONTRIBUTING.md)
 - [行为准则](./CODE_OF_CONDUCT.md)
 - [安全披露政策](./SECURITY.md)
