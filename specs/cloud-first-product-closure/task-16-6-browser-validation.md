@@ -45,6 +45,6 @@ Matrix 房间：!uQYBhjVADmwVJlVJin:matrix.agent-room.localhost
 
 机器可读结果保存在被 Git 忽略的 `.local/vertical/product-closure.json`；失败截图、Trace 与服务日志位于 `artifacts/browser/cloud-first-product-closure/`。运行时证据不提交到仓库，避免把临时账户会话或本机路径固化为产品资产。
 
-## 仍待完成
+## 配套证据
 
-真实 Windows Tauri 进程的 Bridge 离线降级尚未计入本文件的完成条件。该场景属于任务 16.6.3，必须由真实桌面窗口而不是 React 组件测试证明。
+真实 Windows Tauri 进程的 Bridge 离线降级由独立门禁完成，证据见[任务 16.6.3 桌面验证](./task-16-6-desktop-validation.md)。浏览器与桌面两份证据共同构成任务 16.6 的完成条件。

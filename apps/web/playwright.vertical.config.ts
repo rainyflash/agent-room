@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 const evidenceTask = process.env.AGENT_ROOM_VERTICAL_EVIDENCE_TASK ?? 'task-24';
+const containsDesktopCredential = process.env.AGENT_ROOM_DESKTOP_ACCEPTANCE_PASSWORD !== undefined;
 
 export default defineConfig({
   expect: { timeout: 20_000 },
@@ -17,7 +18,7 @@ export default defineConfig({
     browserName: 'chromium',
     ...(process.env.CI ? {} : { channel: 'chrome' as const }),
     ignoreHTTPSErrors: true,
-    screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    screenshot: containsDesktopCredential ? 'off' : 'only-on-failure',
+    trace: containsDesktopCredential ? 'off' : 'retain-on-failure',
   },
 });

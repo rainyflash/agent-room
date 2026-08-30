@@ -350,7 +350,11 @@ async function navigateWithinDesktop(page: Page, path: string): Promise<void> {
 
 async function lobbyName(page: Page): Promise<string> {
   const card = defaultLobbyCard(page);
-  const name = await card.locator('.onboarding-fact__value strong').textContent();
+  const nameValue = card.locator('.onboarding-fact__value strong');
+  await expect
+    .poll(async () => (await nameValue.textContent())?.trim() ?? '', { timeout: 45_000 })
+    .toMatch(/^(?!—$).+/u);
+  const name = await nameValue.textContent();
   if (name === null || name.trim().length === 0 || name.trim() === '—') {
     throw new Error('云端引导没有返回默认公共大厅。');
   }
