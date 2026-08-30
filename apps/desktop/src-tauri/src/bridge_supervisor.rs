@@ -163,7 +163,9 @@ impl BridgeSupervisor {
     pub(crate) fn reconfigure(&self, config: DesktopBridgeConfig) -> Result<(), SupervisorFailure> {
         self.ensure_reconfigurable()?;
         self.input
-            .try_send(ActorInput::Reconfigure { config })
+            .try_send(ActorInput::Reconfigure {
+                config: Box::new(config),
+            })
             .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))
     }
 
@@ -252,7 +254,7 @@ impl BridgeSupervisorActor {
                         self.handle_process_event(event);
                     }
                 }
-                ActorInput::Reconfigure { config } => self.handle_reconfigure(config),
+                ActorInput::Reconfigure { config } => self.handle_reconfigure(*config),
                 ActorInput::Resume => self.handle_resume().await,
                 ActorInput::Shutdown => {
                     self.shutting_down.store(true, Ordering::SeqCst);
@@ -658,7 +660,7 @@ impl BridgeSupervisorActor {
 enum ActorInput {
     ExplicitRetry,
     Reconfigure {
-        config: DesktopBridgeConfig,
+        config: Box<DesktopBridgeConfig>,
     },
     AutomaticRetry {
         generation: u64,
