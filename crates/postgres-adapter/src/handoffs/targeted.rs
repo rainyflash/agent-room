@@ -396,7 +396,7 @@ impl PostgresRepositories {
                         WHERE target.id = $1
                           AND target.device_id = $2
                           AND device.principal_id = $3
-                          AND handoff.state = 'queued'
+                          AND handoff.state IN ('queued', 'delivered')
                           AND handoff.expires_at > to_timestamp($4::double precision / 1000.0)
                           AND target.revoked_at IS NULL
                           AND target.status <> 'revoked'
@@ -408,14 +408,23 @@ impl PostgresRepositories {
                           AND device.revoked_at IS NULL
                           AND device.trust_state = 'verified'
                           AND device_owner.status = 'active'
-                        ORDER BY handoff.queued_at, handoff.id
+                        ORDER BY CASE WHEN handoff.state = 'delivered' THEN 0 ELSE 1 END,
+                                 COALESCE(handoff.delivered_at, handoff.queued_at),
+                                 handoff.id
                         FOR UPDATE OF handoff SKIP LOCKED
                         LIMIT 1
                    )
                    UPDATE agent_room.context_handoff AS handoff
                       SET state = 'delivered',
-                          delivered_at = to_timestamp($4::double precision / 1000.0),
-                          version = version + 1
+                          delivered_at = CASE
+                              WHEN handoff.state = 'queued'
+                              THEN to_timestamp($4::double precision / 1000.0)
+                              ELSE handoff.delivered_at
+                          END,
+                          version = CASE
+                              WHEN handoff.state = 'queued' THEN handoff.version + 1
+                              ELSE handoff.version
+                          END
                      FROM candidate
                     WHERE handoff.id = candidate.id
                     RETURNING handoff.id",

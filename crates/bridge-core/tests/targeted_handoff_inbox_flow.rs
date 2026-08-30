@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use agent_room_application::ports::{Clock, PortFuture};
@@ -46,6 +49,22 @@ async fn 后台领取只保存元数据且不会提前打开正文() {
         inbox.list(fixture.target, 10).await.expect("收件箱可读"),
         vec![fixture.handoff]
     );
+}
+
+#[tokio::test]
+async fn 本地存在待处理交接时不会重复访问云端队列() {
+    let fixture = Fixture::new();
+    let queue = Arc::new(测试队列::with_claim(fixture.handoff.clone()));
+    let inbox = Arc::new(内存收件箱::with(fixture.handoff.clone()));
+    let service = fixture.service(
+        queue.clone(),
+        inbox,
+        Arc::new(测试正文::new(fixture.downloaded())),
+    );
+
+    let outcome = service.claim_once().await.expect("本地待办可恢复");
+    assert!(matches!(outcome, TargetedHandoffClaimOutcome::Pending(_)));
+    assert_eq!(queue.claim_count(), 0, "本地在途任务不得触发重复云端领取");
 }
 
 #[tokio::test]
@@ -175,6 +194,7 @@ async fn 拒绝不下载正文且过期交接从本地清理() {
 struct 测试队列 {
     claim: Mutex<Option<TargetedHandoff>>,
     receipts: Mutex<Vec<&'static str>>,
+    claims: AtomicU32,
     unavailable: bool,
 }
 
@@ -190,12 +210,17 @@ impl 测试队列 {
         Self {
             claim: Mutex::new(None),
             receipts: Mutex::new(Vec::new()),
+            claims: AtomicU32::new(0),
             unavailable: true,
         }
     }
 
     fn receipt_statuses(&self) -> Vec<&'static str> {
         self.receipts.lock().expect("回执锁可用").clone()
+    }
+
+    fn claim_count(&self) -> u32 {
+        self.claims.load(Ordering::SeqCst)
     }
 }
 
@@ -205,6 +230,7 @@ impl TargetedHandoffQueueGateway for 测试队列 {
         _target: TargetedHandoffTarget,
     ) -> PortFuture<'_, Result<Option<TargetedHandoff>, TargetedHandoffQueueFailure>> {
         Box::pin(async move {
+            self.claims.fetch_add(1, Ordering::SeqCst);
             if self.unavailable {
                 return Err(queue_unavailable());
             }

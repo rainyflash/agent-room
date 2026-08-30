@@ -989,6 +989,23 @@ async fn assert_targeted_handoff_consumed(
     .expect("领取事务成功")
     .expect("存在待领取记录");
     assert_eq!(delivered.status(), TargetedHandoffStatus::Delivered);
+    assert_eq!(delivered.fields().id, handoff_id);
+    let redelivered = TargetedHandoffRepository::claim_next(
+        repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            claimed_at: test_time(),
+        },
+    )
+    .await
+    .expect("未回执交接可以安全重领")
+    .expect("已交付记录在终态回执前仍然可见");
+    assert_eq!(redelivered.fields().id, handoff_id);
+    assert_eq!(redelivered.status(), TargetedHandoffStatus::Delivered);
+    assert_eq!(redelivered.delivered_at(), delivered.delivered_at());
+    assert_eq!(redelivered.version(), delivered.version());
     let consumed = TargetedHandoffRepository::record_receipt(
         repositories,
         RecordTargetedHandoffReceipt {
@@ -1004,6 +1021,18 @@ async fn assert_targeted_handoff_consumed(
     .expect("消费回执事务成功")
     .expect("交接存在");
     assert_eq!(consumed.status(), TargetedHandoffStatus::Consumed);
+    let after_receipt = TargetedHandoffRepository::claim_next(
+        repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            claimed_at: test_time(),
+        },
+    )
+    .await
+    .expect("终态后查询队列成功");
+    assert!(after_receipt.is_none(), "终态交接不得再次投递");
 }
 
 async fn assert_target_revocation_fails_pending_handoff(

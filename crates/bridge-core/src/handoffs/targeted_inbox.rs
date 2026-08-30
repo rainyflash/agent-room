@@ -80,6 +80,7 @@ pub trait TargetedHandoffInbox: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetedHandoffClaimOutcome {
     Empty,
+    Pending(Box<TargetedHandoff>),
     Stored(Box<TargetedHandoff>),
 }
 
@@ -157,7 +158,7 @@ impl TargetedHandoffInboxService {
         }
     }
 
-    /// 从云端领取一个工作项并只落本地元数据。
+    /// 在本地没有待处理项时从云端领取一个工作项，并且只落本地元数据。
     ///
     /// # Errors
     ///
@@ -166,6 +167,18 @@ impl TargetedHandoffInboxService {
     pub async fn claim_once(
         &self,
     ) -> Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure> {
+        if let Some(pending) = self
+            .inbox
+            .list(self.target, 1)
+            .await
+            .map_err(|_| {
+                service_failure(TargetedHandoffInboxServiceFailureKind::StorageUnavailable)
+            })?
+            .into_iter()
+            .next()
+        {
+            return Ok(TargetedHandoffClaimOutcome::Pending(Box::new(pending)));
+        }
         let Some(handoff) = self.queue.claim_next(self.target).await.map_err(|_| {
             service_failure(TargetedHandoffInboxServiceFailureKind::QueueUnavailable)
         })?

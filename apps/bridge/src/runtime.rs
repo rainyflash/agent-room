@@ -5,13 +5,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use agent_room_application::ports::{
     Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixRoomEncryption,
     MatrixRoomId, MatrixSyncRequest, MatrixSyncToken, OidcDeviceAuthorizationPrompt,
-    OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, ProfileImportConsent,
+    OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, PortFuture, ProfileImportConsent,
 };
 use agent_room_bridge_core::{
     agent_runtime::{
@@ -33,7 +33,9 @@ use agent_room_bridge_core::{
         HandoffDeliveryDependencies, HandoffDeliveryService, HandoffInstanceDirectory,
         HandoffReceiptDependencies, HandoffReceiptService, HandoffReceptionDependencies,
         HandoffReceptionService, HandoffStore, HandoffTransportFailureKind,
-        ProjectedHandoffContentGateway,
+        ProjectedHandoffContentGateway, TargetedHandoffClaimOutcome, TargetedHandoffInbox,
+        TargetedHandoffInboxDependencies, TargetedHandoffInboxService,
+        TargetedHandoffInboxServiceFailure, TargetedHandoffQueueGateway, TargetedHandoffTarget,
     },
     lobby_session::{
         AgentLobbySessionConfig, AgentLobbySessionFailure, AgentLobbySessionFailureKind,
@@ -69,7 +71,9 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::IpcBridgeState;
-use agent_room_bridge_storage_adapter::{InMemoryPresenceProjectionRepository, SqliteHandoffStore};
+use agent_room_bridge_storage_adapter::{
+    InMemoryPresenceProjectionRepository, SqliteHandoffStore, SqliteTargetedHandoffInbox,
+};
 use agent_room_domain::{
     agent_status::AgentStatusVisibility,
     devices::DevicePlatform,
@@ -110,6 +114,7 @@ use agent_room_bridge::control_plane::{
     ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
     ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneLobbyEntryGateway,
     ReqwestControlPlaneMessageContentGateway, ReqwestControlPlaneOnboardingGateway,
+    ReqwestTargetedHandoffQueueGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -130,6 +135,9 @@ const STATUS_LEASE_LIFETIME_MILLIS: u64 = 300_000;
 const STATUS_RENEWAL_INTERVAL_MILLIS: u64 = 120_000;
 const STATUS_RENEWAL_JITTER_MILLIS: u64 = 15_000;
 const STATUS_ALLOWED_CLOCK_SKEW_MILLIS: u64 = 15_000;
+const TARGETED_HANDOFF_STORED_DELAY: Duration = Duration::from_millis(250);
+const TARGETED_HANDOFF_IDLE_DELAY: Duration = Duration::from_secs(5);
+const TARGETED_HANDOFF_FAILURE_DELAY: Duration = Duration::from_secs(15);
 
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
@@ -249,6 +257,11 @@ struct AgentSessionTarget {
     lobby_catalog_id: RoomCatalogId,
 }
 
+struct AgentHandoffStores {
+    legacy: Arc<SqliteHandoffStore>,
+    targeted: Arc<SqliteTargetedHandoffInbox>,
+}
+
 struct AgentMessageServices {
     sync: Arc<MessageSyncService>,
     projections: Arc<SqliteMessageTimelineRepository>,
@@ -258,6 +271,7 @@ struct AgentMessageServices {
     submissions: Arc<SqliteMessageSubmissionRepository>,
     automation: Arc<dyn AutomationAuthorizationGateway>,
     authenticator: Arc<dyn AgentEventAuthenticator>,
+    content_reader: Arc<dyn MessageContentReadGateway>,
     handoff_content: Arc<dyn HandoffContentGateway>,
     presence: Arc<PresenceSyncService>,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
@@ -269,6 +283,9 @@ struct AgentHandoffServices {
     authenticator: Arc<dyn AgentEventAuthenticator>,
     content: Arc<dyn HandoffContentGateway>,
     store: Arc<dyn HandoffStore>,
+    targeted_queue: Arc<dyn TargetedHandoffQueueGateway>,
+    targeted_inbox: Arc<dyn TargetedHandoffInbox>,
+    targeted_content: Arc<dyn MessageContentReadGateway>,
 }
 
 struct AgentOnlineSession {
@@ -282,6 +299,8 @@ struct AgentOnlineSession {
     handoffs: Arc<HandoffReceptionService>,
     handoff_delivery: Arc<HandoffDeliveryService>,
     handoff_worker: HandoffEventWorker,
+    _targeted_handoffs: Arc<TargetedHandoffInboxService>,
+    targeted_handoff_worker: TargetedHandoffWorker,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
     next_batch: Option<MatrixSyncToken>,
 }
@@ -292,6 +311,44 @@ struct HandoffEventWorker {
 }
 
 impl Drop for HandoffEventWorker {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+trait TargetedHandoffPoller: Send + Sync {
+    fn claim_once(
+        &self,
+    ) -> PortFuture<'_, Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure>>;
+}
+
+impl TargetedHandoffPoller for TargetedHandoffInboxService {
+    fn claim_once(
+        &self,
+    ) -> PortFuture<'_, Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure>>
+    {
+        Box::pin(TargetedHandoffInboxService::claim_once(self))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TargetedHandoffPollingPolicy {
+    stored: Duration,
+    idle: Duration,
+    failure: Duration,
+}
+
+struct TargetedHandoffWorker {
+    task: JoinHandle<()>,
+}
+
+impl TargetedHandoffWorker {
+    fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+}
+
+impl Drop for TargetedHandoffWorker {
     fn drop(&mut self) {
         self.task.abort();
     }
@@ -353,6 +410,7 @@ enum AgentOnlineFailure {
     PresenceSync(PresenceSyncFailure),
     MessageSync(MessageSyncFailure),
     HandoffTransport(HandoffTransportFailureKind),
+    TargetedHandoffWorker,
     InvalidRoom,
 }
 
@@ -368,6 +426,7 @@ enum AgentOnlineFailureKind {
     PresenceSync,
     MessageSync,
     HandoffTransport(HandoffTransportFailureKind),
+    TargetedHandoffWorker,
     InvalidRoom,
 }
 
@@ -384,6 +443,7 @@ impl AgentOnlineFailure {
             Self::PresenceSync(_) => AgentOnlineFailureKind::PresenceSync,
             Self::MessageSync(_) => AgentOnlineFailureKind::MessageSync,
             Self::HandoffTransport(failure) => AgentOnlineFailureKind::HandoffTransport(failure),
+            Self::TargetedHandoffWorker => AgentOnlineFailureKind::TargetedHandoffWorker,
             Self::InvalidRoom => AgentOnlineFailureKind::InvalidRoom,
         }
     }
@@ -471,7 +531,10 @@ async fn initialize_agent_session(
         runtime_secrets,
         device_session,
         matrix,
-        handoff_store,
+        AgentHandoffStores {
+            legacy: handoff_store,
+            targeted: initialize_targeted_handoff_inbox(paths).await?,
+        },
         AgentSessionTarget {
             agent_id,
             lobby_catalog_id,
@@ -508,7 +571,7 @@ async fn compose_agent_session_runtime(
     runtime_secrets: &BridgeRuntimeSecrets,
     device_session: Arc<BridgeSessionService>,
     matrix: Arc<MatrixSdkClientFactory>,
-    handoff_store: Arc<SqliteHandoffStore>,
+    handoff_stores: AgentHandoffStores,
     target: AgentSessionTarget,
 ) -> Result<AgentSessionRuntime, BridgeRuntimeError> {
     let http = ControlPlaneHttpConfig {
@@ -550,17 +613,8 @@ async fn compose_agent_session_runtime(
         target.agent_id,
     )
     .await?;
-    let handoff_gateway = Arc::new(
-        ReqwestControlPlaneHandoffGateway::new(&http, device_session)
-            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
-    );
-    let handoffs = AgentHandoffServices {
-        authorization: handoff_gateway.clone(),
-        directory: handoff_gateway,
-        authenticator: message_services.authenticator.clone(),
-        content: message_services.handoff_content.clone(),
-        store: handoff_store,
-    };
+    let handoffs =
+        compose_agent_handoff_services(&http, device_session, &message_services, handoff_stores)?;
     let state = Arc::new(BridgeAgentRuntimeState::new());
     let lobby_config = AgentLobbySessionConfig::new(
         target.lobby_catalog_id,
@@ -605,6 +659,32 @@ async fn compose_agent_session_runtime(
             domain_duration(config.reconnect_maximum_delay)?,
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    })
+}
+
+fn compose_agent_handoff_services(
+    http: &ControlPlaneHttpConfig,
+    device_session: Arc<BridgeSessionService>,
+    messages: &AgentMessageServices,
+    stores: AgentHandoffStores,
+) -> Result<AgentHandoffServices, BridgeRuntimeError> {
+    let legacy = Arc::new(
+        ReqwestControlPlaneHandoffGateway::new(http, device_session.clone())
+            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
+    let targeted_queue: Arc<dyn TargetedHandoffQueueGateway> = Arc::new(
+        ReqwestTargetedHandoffQueueGateway::new(http, device_session)
+            .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
+    Ok(AgentHandoffServices {
+        authorization: legacy.clone(),
+        directory: legacy,
+        authenticator: messages.authenticator.clone(),
+        content: messages.handoff_content.clone(),
+        store: stores.legacy,
+        targeted_queue,
+        targeted_inbox: stores.targeted,
+        targeted_content: messages.content_reader.clone(),
     })
 }
 
@@ -683,7 +763,7 @@ async fn compose_agent_message_services(
         .map_err(|_| BridgeRuntimeError::presence_policy())?,
     ));
     let handoff_content: Arc<dyn HandoffContentGateway> = Arc::new(
-        ProjectedHandoffContentGateway::new(projections.clone(), content_reader),
+        ProjectedHandoffContentGateway::new(projections.clone(), content_reader.clone()),
     );
     Ok(AgentMessageServices {
         sync,
@@ -694,6 +774,7 @@ async fn compose_agent_message_services(
         submissions,
         automation,
         authenticator,
+        content_reader,
         handoff_content,
         presence,
         presence_projections,
@@ -776,6 +857,13 @@ async fn establish_agent_online(
     }));
     let handoff_worker =
         spawn_handoff_event_worker(handoff_events, handoffs.clone(), handoff_receipts);
+    let (targeted_handoffs, targeted_handoff_worker) = compose_targeted_handoff_runtime(
+        runtime,
+        TargetedHandoffTarget {
+            agent_id: registered.identity().agent_id(),
+            instance_id: registered.identity().agent_instance_id(),
+        },
+    );
     let mut online = AgentOnlineSession {
         runtime: registered,
         lobby,
@@ -787,11 +875,30 @@ async fn establish_agent_online(
         handoffs,
         handoff_delivery,
         handoff_worker,
+        _targeted_handoffs: targeted_handoffs,
+        targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
         next_batch: None,
     };
     sync_agent_online(runtime, &mut online, true).await?;
     Ok(online)
+}
+
+fn compose_targeted_handoff_runtime(
+    runtime: &AgentSessionRuntime,
+    target: TargetedHandoffTarget,
+) -> (Arc<TargetedHandoffInboxService>, TargetedHandoffWorker) {
+    let service = Arc::new(TargetedHandoffInboxService::new(
+        TargetedHandoffInboxDependencies {
+            target,
+            queue: runtime.handoffs.targeted_queue.clone(),
+            inbox: runtime.handoffs.targeted_inbox.clone(),
+            content: runtime.handoffs.targeted_content.clone(),
+            clock: Arc::new(SystemClock),
+        },
+    ));
+    let worker = spawn_targeted_handoff_worker(service.clone());
+    (service, worker)
 }
 
 async fn enter_agent_lobby(
@@ -869,6 +976,53 @@ fn spawn_handoff_event_worker(
         task,
         terminal_failure,
     }
+}
+
+fn spawn_targeted_handoff_worker(poller: Arc<dyn TargetedHandoffPoller>) -> TargetedHandoffWorker {
+    spawn_targeted_handoff_worker_with_policy(
+        poller,
+        TargetedHandoffPollingPolicy {
+            stored: TARGETED_HANDOFF_STORED_DELAY,
+            idle: TARGETED_HANDOFF_IDLE_DELAY,
+            failure: TARGETED_HANDOFF_FAILURE_DELAY,
+        },
+    )
+}
+
+fn spawn_targeted_handoff_worker_with_policy(
+    poller: Arc<dyn TargetedHandoffPoller>,
+    policy: TargetedHandoffPollingPolicy,
+) -> TargetedHandoffWorker {
+    let task = tokio::spawn(async move {
+        loop {
+            let delay = match poller.claim_once().await {
+                Ok(TargetedHandoffClaimOutcome::Stored(handoff)) => {
+                    tracing::info!(
+                        handoff_id = %handoff.fields().id,
+                        "云端定向交接元数据已写入本机收件箱"
+                    );
+                    policy.stored
+                }
+                Ok(TargetedHandoffClaimOutcome::Pending(handoff)) => {
+                    tracing::debug!(
+                        handoff_id = %handoff.fields().id,
+                        "本机仍有待处理定向交接，暂停领取下一条云端任务"
+                    );
+                    policy.idle
+                }
+                Ok(TargetedHandoffClaimOutcome::Empty) => policy.idle,
+                Err(failure) => {
+                    tracing::warn!(
+                        failure_kind = ?failure.kind(),
+                        "云端定向交接轮询暂时失败，将独立重试且不终止 Matrix 会话"
+                    );
+                    policy.failure
+                }
+            };
+            sleep(delay).await;
+        }
+    });
+    TargetedHandoffWorker { task }
 }
 
 async fn sync_agent_online(
@@ -987,6 +1141,15 @@ async fn initialize_handoff_store(
     .await
     .map_err(|failure| BridgeRuntimeError::handoff_store(&failure))?;
     Ok(Arc::new(store))
+}
+
+async fn initialize_targeted_handoff_inbox(
+    paths: &BridgeRuntimePaths,
+) -> Result<Arc<SqliteTargetedHandoffInbox>, BridgeRuntimeError> {
+    let inbox = SqliteTargetedHandoffInbox::open(paths.handoff_database())
+        .await
+        .map_err(|failure| BridgeRuntimeError::handoff_store(&failure))?;
+    Ok(Arc::new(inbox))
 }
 
 async fn run_until_shutdown(
@@ -1235,6 +1398,9 @@ async fn poll_agent_online(
 ) -> Option<Result<(), AgentOnlineFailure>> {
     let mut handoff_failure = active.handoff_worker.terminal_failure.clone();
     loop {
+        if active.targeted_handoff_worker.is_finished() {
+            return Some(Err(AgentOnlineFailure::TargetedHandoffWorker));
+        }
         if let Some(failure) = *handoff_failure.borrow() {
             return Some(Err(AgentOnlineFailure::HandoffTransport(failure)));
         }
@@ -1266,7 +1432,7 @@ async fn wait_for_refresh(plan: SessionRefreshPlan, shutdown: &mut watch::Receiv
         return false;
     };
     tokio::select! {
-        () = sleep(std::time::Duration::from_millis(delay.value())) => false,
+        () = sleep(Duration::from_millis(delay.value())) => false,
         changed = shutdown.changed() => {
             changed.is_err() || *shutdown.borrow_and_update()
         }
@@ -1308,7 +1474,9 @@ fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
                 | AgentLobbySessionFailureKind::ControlPlaneUnavailable
                 | AgentLobbySessionFailureKind::EntryOutcomeUnknown
         ),
-        AgentOnlineFailure::ProvisioningBusy(_) | AgentOnlineFailure::CapacityChanged => true,
+        AgentOnlineFailure::ProvisioningBusy(_)
+        | AgentOnlineFailure::CapacityChanged
+        | AgentOnlineFailure::TargetedHandoffWorker => true,
         AgentOnlineFailure::Matrix(failure) => matches!(
             failure.kind(),
             MatrixFailureKind::RateLimited
@@ -1662,7 +1830,7 @@ fn current_platform() -> DevicePlatform {
     DevicePlatform::Web
 }
 
-fn domain_duration(duration: std::time::Duration) -> Result<DurationMillis, BridgeRuntimeError> {
+fn domain_duration(duration: Duration) -> Result<DurationMillis, BridgeRuntimeError> {
     let milliseconds = u64::try_from(duration.as_millis())
         .map_err(|_| BridgeRuntimeError::configuration("Bridge 时限超出可表示范围".to_owned()))?;
     DurationMillis::new(milliseconds)
@@ -2024,6 +2192,10 @@ impl BridgeRuntimeError {
                 "bridge.handoff_transport_failed",
                 format!("加密交接收件通道已经终止：{failure:?}"),
             ),
+            AgentOnlineFailure::TargetedHandoffWorker => Self::new(
+                "bridge.targeted_handoff_worker_stopped",
+                "云端定向交接轮询任务意外终止",
+            ),
             AgentOnlineFailure::InvalidRoom => Self::new(
                 "bridge.lobby_room_invalid",
                 "控制面返回的大厅 Matrix 房间标识无效",
@@ -2138,10 +2310,27 @@ impl std::error::Error for BridgeRuntimeError {}
 
 #[cfg(test)]
 mod tests {
-    use agent_room_application::ports::{MatrixFailure, MatrixFailureKind, MatrixOperation};
-    use agent_room_bridge_ipc::IpcBridgeState;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        },
+        time::Duration,
+    };
 
-    use super::{BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader};
+    use agent_room_application::ports::{
+        MatrixFailure, MatrixFailureKind, MatrixOperation, PortFuture,
+    };
+    use agent_room_bridge_core::handoffs::{
+        TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure,
+    };
+    use agent_room_bridge_ipc::IpcBridgeState;
+    use tokio::sync::Notify;
+
+    use super::{
+        BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader, TargetedHandoffPoller,
+        TargetedHandoffPollingPolicy, spawn_targeted_handoff_worker_with_policy,
+    };
 
     #[test]
     fn matrix_依赖故障保留恢复与同步的操作维度() {
@@ -2193,5 +2382,53 @@ mod tests {
 
         status.mark_shutting_down();
         assert_eq!(status.read_status().state, IpcBridgeState::ShuttingDown);
+    }
+
+    #[tokio::test]
+    async fn 云端交接轮询器随在线会话销毁而终止() {
+        let poller = Arc::new(计数交接轮询器::default());
+        let worker = spawn_targeted_handoff_worker_with_policy(
+            poller.clone(),
+            TargetedHandoffPollingPolicy {
+                stored: Duration::from_millis(5),
+                idle: Duration::from_millis(5),
+                failure: Duration::from_millis(5),
+            },
+        );
+        tokio::time::timeout(Duration::from_secs(1), poller.first_claim.notified())
+            .await
+            .expect("轮询器应及时启动");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        drop(worker);
+        tokio::task::yield_now().await;
+        let stopped_at = poller.claims.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        assert_eq!(
+            poller.claims.load(Ordering::SeqCst),
+            stopped_at,
+            "在线会话销毁后不得继续轮询云端"
+        );
+    }
+
+    #[derive(Default)]
+    struct 计数交接轮询器 {
+        claims: AtomicU32,
+        first_claim: Notify,
+    }
+
+    impl TargetedHandoffPoller for 计数交接轮询器 {
+        fn claim_once(
+            &self,
+        ) -> PortFuture<'_, Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure>>
+        {
+            Box::pin(async move {
+                if self.claims.fetch_add(1, Ordering::SeqCst) == 0 {
+                    self.first_claim.notify_one();
+                }
+                Ok(TargetedHandoffClaimOutcome::Empty)
+            })
+        }
     }
 }
