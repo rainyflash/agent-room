@@ -26,6 +26,7 @@ const request: HandoffApprovalRequest = {
       agentId: '01990d9e-8400-7000-8000-000000000001',
       displayName: 'Remote Agent',
       instanceId: '01990d9e-8400-7000-8000-000000000002',
+      kind: 'agent',
       matrixUserId: '@remote:agent-room.test',
       provenance: 'autonomous_agent',
     },

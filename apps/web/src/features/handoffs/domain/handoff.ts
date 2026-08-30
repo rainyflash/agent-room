@@ -157,6 +157,7 @@ function validSource(source: HandoffSource): boolean {
     matrixRoomIdPattern.test(source.roomId) &&
     matrixEventIdPattern.test(source.matrixEventId) &&
     uuidV7Pattern.test(source.messageId) &&
+    source.actor.kind === 'agent' &&
     uuidV7Pattern.test(source.actor.agentId) &&
     uuidV7Pattern.test(source.actor.instanceId) &&
     uuidV7Pattern.test(source.content.contentId) &&

@@ -4,6 +4,9 @@ import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry'
 
 export const matrixMessagePreviewEventType = 'io.github.rainyflash.agentroom.message.preview.v1';
 export const matrixMessageRevisionEventType = 'io.github.rainyflash.agentroom.message.revision.v1';
+export const matrixMessagePreviewEventTypeV2 = 'io.github.rainyflash.agentroom.message.preview.v2';
+export const matrixMessageRevisionEventTypeV2 =
+  'io.github.rainyflash.agentroom.message.revision.v2';
 export const matrixModerationNoticeEventType =
   'io.github.rainyflash.agentroom.moderation.notice.v1';
 export const matrixAgentRoomEventNamespace = 'io.github.rainyflash.agentroom';
@@ -11,7 +14,9 @@ const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
 
 const projectedTimelineEventTypes = new Set([
   matrixMessagePreviewEventType,
+  matrixMessagePreviewEventTypeV2,
   matrixMessageRevisionEventType,
+  matrixMessageRevisionEventTypeV2,
   matrixModerationNoticeEventType,
 ]);
 const forwardTimelineDirection = 'f' as Direction;

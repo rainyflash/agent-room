@@ -180,7 +180,7 @@ export function MessageComposer({
             <span>{t('messages.composer.identitySource')}</span>
             <strong>{publication.context.identity.displayName}</strong>
           </div>
-          <span>{t('messages.composer.identity.bridge')}</span>
+          <span>{t('messages.composer.identity.humanSession')}</span>
         </div>
       )}
       {publication.matches('resolvingIdentity') ? (

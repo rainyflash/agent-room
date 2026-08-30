@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { MatrixMessageGateway } from './matrix-message-gateway';
 import {
   matrixMessagePreviewEventType,
+  matrixMessagePreviewEventTypeV2,
   matrixMessageRevisionEventType,
+  matrixMessageRevisionEventTypeV2,
   matrixModerationNoticeEventType,
   type MatrixMessageRoomSnapshot,
   type MatrixMessageSource,
@@ -70,6 +72,85 @@ describe('MatrixMessageGateway', () => {
     expect(result.value.messages[0]?.signatureStatus).toBe('matrix_sender_matched');
     expect(Object.isFrozen(result.value)).toBe(true);
     expect(Object.isFrozen(result.value.messages)).toBe(true);
+  });
+
+  it('把 v2 Human 与 Agent 主体投影为一等判别联合且保持旧事件可读', () => {
+    const human = humanPreviewEvent({ eventId: '$human' });
+    const agent = currentAgentPreviewEvent({ eventId: '$agent' });
+    const legacy = previewEvent({ eventId: '$legacy' });
+    const gateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([legacy, agent, human]) }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.messages.map((message) => message.actor)).toEqual([
+      {
+        displayName: 'Rainy',
+        kind: 'human',
+        matrixUserId: '@rainy:agent-room.test',
+        principalId: '01990d9e-8400-7000-8000-000000000071',
+        provenance: 'human',
+      },
+      {
+        agentId: AGENT_ID,
+        displayName: '构建助手',
+        instanceId: INSTANCE_ID,
+        kind: 'agent',
+        matrixUserId: MATRIX_USER_ID,
+        provenance: 'autonomous_agent',
+      },
+      {
+        agentId: AGENT_ID,
+        avatarUrl: 'https://media.agent-room.test/build-agent.png',
+        displayName: '构建助手',
+        instanceId: INSTANCE_ID,
+        kind: 'agent',
+        matrixUserId: MATRIX_USER_ID,
+        provenance: 'human_confirmed_agent',
+      },
+    ]);
+  });
+
+  it('Human v2 不得携带实例签名，Agent v2 必须携带签名', () => {
+    const signedHuman = humanPreviewEvent({ eventId: '$signed-human' });
+    signedHuman.content = { ...signedHuman.content, signature: 'A'.repeat(43) };
+    const unsignedAgent = currentAgentPreviewEvent({ eventId: '$unsigned-agent' });
+    const unsignedContent = { ...unsignedAgent.content };
+    Reflect.deleteProperty(unsignedContent, 'signature');
+    unsignedAgent.content = unsignedContent;
+    const gateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([signedHuman, unsignedAgent]) }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.messages).toEqual([]);
+    }
+  });
+
+  it('允许原 Human 用户用 v2 修订自己的消息但拒绝其他 Matrix 用户', () => {
+    const base = humanPreviewEvent({ eventId: '$human-base' });
+    const edit = humanRevisionEvent('$human-edit', 'Rainy 更新');
+    const forged = humanRevisionEvent('$human-forged', '伪造更新');
+    forged.sender = '@attacker:agent-room.test';
+    const gateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([base, edit, forged]) }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.messages[0]?.preview?.title).toBe('Rainy 更新');
+      expect(result.value.messages[0]?.edited).toBe(true);
+    }
   });
 
   it('未知与旧命名空间事件只投影安全元数据且永不解析载荷', () => {
@@ -305,6 +386,98 @@ function previewEvent(
     sender: MATRIX_USER_ID,
     serverTimestamp: options.serverTimestamp ?? 100,
     type: matrixMessagePreviewEventType,
+  };
+}
+
+function humanPreviewEvent(options: {
+  readonly eventId: string;
+}): MatrixMessageTimelineEvent & { content: Record<string, unknown> } {
+  return {
+    content: {
+      actor: {
+        displayName: 'Rainy',
+        kind: 'human',
+        matrixUserId: '@rainy:agent-room.test',
+        principalId: '01990d9e-8400-7000-8000-000000000071',
+      },
+      content: contentReference(),
+      correlationId: '01990d9e-8400-7000-8000-000000000072',
+      createdAt: '2026-08-24T17:02:00.000Z',
+      eventType: matrixMessagePreviewEventTypeV2,
+      id: '01990d9e-8400-7000-8000-000000000073',
+      preview: previewContent('Rainy 消息'),
+      roomId: ROOM_ID,
+      schemaVersion: '2.0',
+    },
+    endToEndEncrypted: false,
+    eventId: options.eventId,
+    sender: '@rainy:agent-room.test',
+    serverTimestamp: 300,
+    type: matrixMessagePreviewEventTypeV2,
+  };
+}
+
+function currentAgentPreviewEvent(options: {
+  readonly eventId: string;
+}): MatrixMessageTimelineEvent & { content: Record<string, unknown> } {
+  return {
+    content: {
+      actor: {
+        agent: {
+          agentId: AGENT_ID,
+          displayName: '构建助手',
+          matrixUserId: MATRIX_USER_ID,
+        },
+        instanceId: INSTANCE_ID,
+        kind: 'agent',
+        provenance: 'autonomous_agent',
+      },
+      content: contentReference(),
+      correlationId: '01990d9e-8400-7000-8000-000000000074',
+      createdAt: '2026-08-24T17:03:00.000Z',
+      eventType: matrixMessagePreviewEventTypeV2,
+      id: '01990d9e-8400-7000-8000-000000000075',
+      preview: previewContent('Agent v2 消息'),
+      roomId: ROOM_ID,
+      schemaVersion: '2.0',
+      signature: 'C'.repeat(43),
+    },
+    endToEndEncrypted: false,
+    eventId: options.eventId,
+    sender: MATRIX_USER_ID,
+    serverTimestamp: 200,
+    type: matrixMessagePreviewEventTypeV2,
+  };
+}
+
+function humanRevisionEvent(
+  eventId: string,
+  title: string,
+): MatrixMessageTimelineEvent & { content: Record<string, unknown>; sender: string | undefined } {
+  return {
+    content: {
+      actor: {
+        displayName: 'Rainy',
+        kind: 'human',
+        matrixUserId: '@rainy:agent-room.test',
+        principalId: '01990d9e-8400-7000-8000-000000000071',
+      },
+      content: contentReference(),
+      correlationId: '01990d9e-8400-7000-8000-000000000076',
+      createdAt: '2026-08-24T17:04:00.000Z',
+      eventType: matrixMessageRevisionEventTypeV2,
+      id: '01990d9e-8400-7000-8000-000000000077',
+      kind: 'replace',
+      preview: previewContent(title),
+      roomId: ROOM_ID,
+      schemaVersion: '2.0',
+      targetMessageId: '01990d9e-8400-7000-8000-000000000073',
+    },
+    endToEndEncrypted: false,
+    eventId,
+    sender: '@rainy:agent-room.test',
+    serverTimestamp: 350,
+    type: matrixMessageRevisionEventTypeV2,
   };
 }
 

@@ -415,12 +415,11 @@ class FixtureMessagePublisher implements MessagePublisher {
   resolveIdentity() {
     return Promise.resolve(
       ok({
-        agentId: '01990d9e-8400-7000-8000-000000000001',
         displayName: 'Build Agent',
-        instanceId: '01990d9e-8400-7000-8000-000000000002',
+        kind: 'human' as const,
         matrixUserId: '@build-agent:agent-room.test',
-        provenance: 'human_confirmed_agent' as const,
-        source: 'bridge_agent_instance' as const,
+        principalId: '01990d9e-8400-7000-8000-000000000001',
+        source: 'matrix_human_session' as const,
       }),
     );
   }
@@ -666,6 +665,7 @@ function testMessage(
       agentId: '01990d9e-8400-7000-8000-000000000001',
       displayName: 'Build Agent',
       instanceId: '01990d9e-8400-7000-8000-000000000002',
+      kind: 'agent',
       matrixUserId: '@build-agent:agent-room.test',
       provenance: 'human_confirmed_agent',
     }),

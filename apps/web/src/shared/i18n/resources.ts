@@ -587,7 +587,7 @@ export const resources = {
         'The response media type does not match the preview.',
       'messages.failure.content.invalid_text': 'The verified bytes are not valid UTF-8 text.',
       'messages.failure.unknown': 'An unexpected content boundary failed closed.',
-      'messages.composer.eyebrow': 'SIGNED TRANSMISSION',
+      'messages.composer.eyebrow': 'USER MESSAGE',
       'messages.composer.title': 'Compose room signal',
       'messages.composer.openLabel': 'Open the message composer',
       'messages.composer.resumeLabel': 'Resume the current message submission',
@@ -597,9 +597,9 @@ export const resources = {
       'messages.composer.minimize': 'Minimize without losing submission state',
       'messages.composer.target': 'Target room',
       'messages.composer.identitySource': 'Sending identity',
-      'messages.composer.identity.bridge': 'Local Bridge · Agent instance key',
+      'messages.composer.identity.humanSession': 'Agent Room account · Matrix user session',
       'messages.composer.identityDetail':
-        'Resolving the local Agent instance that will sign this exact preview.',
+        'Verifying that the Agent Room account and active Matrix user are the same person.',
       'messages.composer.identityUnavailable': 'No trusted sending identity is available',
       'messages.composer.retryIdentity': 'Check identity again',
       'messages.composer.field.title': 'Preview title',
@@ -617,14 +617,14 @@ export const resources = {
       'messages.composer.ready': 'A new UUIDv7 submission will be created on send.',
       'messages.composer.issueCount': '{{count}} required field is incomplete',
       'messages.composer.issueCount_other': '{{count}} required fields are incomplete',
-      'messages.composer.send': 'Sign and send',
+      'messages.composer.send': 'Send message',
       'messages.composer.publishDetail':
-        'The Bridge owns upload, signature, Matrix submission and content binding as one idempotent workflow.',
+        'Your user session uploads the body, submits one idempotent Matrix preview and binds content access.',
       'messages.composer.progress.uploading': 'Uploading content by digest',
-      'messages.composer.progress.submitting': 'Submitting the signed preview',
+      'messages.composer.progress.submitting': 'Submitting the user preview',
       'messages.composer.progress.binding': 'Binding content access to the accepted event',
       'messages.composer.reconcileDetail':
-        'Querying the original UUIDv7 submission. No second Matrix send is allowed here.',
+        'Reconciling the original UUIDv7 and Matrix transaction. No new message can be created here.',
       'messages.composer.unknownDetail':
         'The remote commit result is unknown. Sending again is intentionally unavailable; query the original submission instead.',
       'messages.composer.queryStatus': 'Query submission status',
@@ -633,7 +633,7 @@ export const resources = {
       'messages.composer.queryAgain': 'Query again',
       'messages.composer.retrySameSubmission': 'Retry same submission',
       'messages.composer.publishedDetail':
-        'Matrix accepted the signed preview and its content policy is bound.',
+        'Matrix accepted the user preview and its content policy is bound.',
       'messages.composer.newMessage': 'New message',
       'messages.composer.state.resolvingIdentity': 'Resolving identity',
       'messages.composer.state.identityUnavailable': 'Identity unavailable',
@@ -644,10 +644,8 @@ export const resources = {
       'messages.composer.state.reconciling': 'Reconciling submission',
       'messages.composer.state.failed': 'Submission stopped',
       'messages.composer.state.published': 'Message accepted',
-      'messages.failure.publication.bridge_unavailable':
-        'This Web/PWA build is observation-only. Signed Agent sending requires the desktop Bridge transport; the browser will not forge an instance signature.',
       'messages.failure.publication.identity_unavailable':
-        'The local Bridge has no active Agent instance identity for this room.',
+        'The Agent Room account does not match the active Matrix user session.',
       'messages.failure.publication.invalid_intent':
         'The room, UUIDv7 submission, or bounded preview fields are invalid.',
       'messages.failure.publication.content_rejected':
@@ -655,7 +653,7 @@ export const resources = {
       'messages.failure.publication.matrix_rejected':
         'Matrix definitively rejected the submission.',
       'messages.failure.publication.persistence_failed':
-        'The Bridge could not persist the idempotent submission state.',
+        'The browser could not recover the idempotent submission state.',
       'messages.failure.publication.unexpected_failure':
         'A publication boundary failed without a trustworthy result.',
       'pwa.update.title': 'A verified update is ready',
@@ -1199,7 +1197,7 @@ export const resources = {
       'messages.failure.content.media_type_mismatch': '响应媒体类型与预览不一致。',
       'messages.failure.content.invalid_text': '通过校验的字节不是有效 UTF-8 文本。',
       'messages.failure.unknown': '发生了意外故障，正文已按失败关闭。',
-      'messages.composer.eyebrow': '签名传输',
+      'messages.composer.eyebrow': '用户消息',
       'messages.composer.title': '撰写房间信号',
       'messages.composer.openLabel': '打开消息发送器',
       'messages.composer.resumeLabel': '继续当前消息提交',
@@ -1209,8 +1207,8 @@ export const resources = {
       'messages.composer.minimize': '最小化但保留提交状态',
       'messages.composer.target': '目标房间',
       'messages.composer.identitySource': '发送身份',
-      'messages.composer.identity.bridge': '本地 Bridge · Agent 实例密钥',
-      'messages.composer.identityDetail': '正在解析将为本次预览签名的本地 Agent 实例。',
+      'messages.composer.identity.humanSession': 'Agent Room 账户 · Matrix 用户会话',
+      'messages.composer.identityDetail': '正在验证 Agent Room 账户与当前 Matrix 用户属于同一人。',
       'messages.composer.identityUnavailable': '没有可用的可信发送身份',
       'messages.composer.retryIdentity': '重新检查身份',
       'messages.composer.field.title': '预览标题',
@@ -1228,14 +1226,14 @@ export const resources = {
       'messages.composer.ready': '发送时才会创建新的 UUIDv7 提交标识。',
       'messages.composer.issueCount': '还有 {{count}} 个必填项不完整',
       'messages.composer.issueCount_other': '还有 {{count}} 个必填项不完整',
-      'messages.composer.send': '签名并发送',
+      'messages.composer.send': '发送消息',
       'messages.composer.publishDetail':
-        'Bridge 将上传、签名、Matrix 提交和正文绑定作为一个幂等工作流执行。',
+        '用户会话会以同一幂等意图完成正文上传、Matrix 预览提交与内容权限绑定。',
       'messages.composer.progress.uploading': '正在按摘要上传正文',
-      'messages.composer.progress.submitting': '正在提交已签名预览',
+      'messages.composer.progress.submitting': '正在提交用户预览',
       'messages.composer.progress.binding': '正在把正文权限绑定到已接受事件',
       'messages.composer.reconcileDetail':
-        '正在查询原 UUIDv7 提交；这里绝不会发起第二次 Matrix 发送。',
+        '正在对账原 UUIDv7 与 Matrix 事务；这里不可能创建新的消息。',
       'messages.composer.unknownDetail':
         '远端提交结果未知。系统刻意禁止再次发送，只允许查询原提交。',
       'messages.composer.queryStatus': '查询提交状态',
@@ -1243,7 +1241,7 @@ export const resources = {
         'Matrix 已接受预览，但正文权限仍需对账；不得重新发送消息。',
       'messages.composer.queryAgain': '再次查询',
       'messages.composer.retrySameSubmission': '重试同一提交',
-      'messages.composer.publishedDetail': 'Matrix 已接受签名预览，正文策略也已绑定。',
+      'messages.composer.publishedDetail': 'Matrix 已接受用户预览，正文策略也已绑定。',
       'messages.composer.newMessage': '新消息',
       'messages.composer.state.resolvingIdentity': '正在解析身份',
       'messages.composer.state.identityUnavailable': '身份不可用',
@@ -1254,14 +1252,12 @@ export const resources = {
       'messages.composer.state.reconciling': '正在对账提交',
       'messages.composer.state.failed': '提交已停止',
       'messages.composer.state.published': '消息已接受',
-      'messages.failure.publication.bridge_unavailable':
-        '当前 Web/PWA 版本只提供观察能力。Agent 签名发送需要桌面 Bridge 传输；浏览器不会伪造实例签名。',
       'messages.failure.publication.identity_unavailable':
-        '本地 Bridge 没有可用于该房间的活跃 Agent 实例身份。',
+        'Agent Room 账户与当前 Matrix 用户会话不一致。',
       'messages.failure.publication.invalid_intent': '房间、UUIDv7 提交标识或受限预览字段无效。',
       'messages.failure.publication.content_rejected': '内容服务拒绝了上传或绑定请求。',
       'messages.failure.publication.matrix_rejected': 'Matrix 已明确拒绝本次提交。',
-      'messages.failure.publication.persistence_failed': 'Bridge 无法持久化幂等提交状态。',
+      'messages.failure.publication.persistence_failed': '浏览器无法恢复幂等提交状态。',
       'messages.failure.publication.unexpected_failure': '发布边界失败，且没有可信结果。',
       'pwa.update.title': '已验证的新版本可用',
       'pwa.update.action': '重新加载更新',

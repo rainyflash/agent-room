@@ -23,12 +23,11 @@ import { err, ok } from '@/shared/result';
 
 const submissionId = '01990d9e-8400-7000-8000-000000000003';
 const identity: MessagePublisherIdentity = {
-  agentId: '01990d9e-8400-7000-8000-000000000001',
   displayName: 'Build Agent',
-  instanceId: '01990d9e-8400-7000-8000-000000000002',
+  kind: 'human',
   matrixUserId: '@build-agent:agent-room.test',
-  provenance: 'human_confirmed_agent',
-  source: 'bridge_agent_instance',
+  principalId: '01990d9e-8400-7000-8000-000000000001',
+  source: 'matrix_human_session',
 };
 const unknown: MessagePublicationResult = ok({
   kind: 'pending_reconciliation',
@@ -52,7 +51,7 @@ afterEach(cleanup);
 describe('MessageComposer', () => {
   it('折叠时不探测身份、不上传正文也不查询 Matrix', async () => {
     const runtime = publisher({
-      identityResult: err({ code: 'publication.bridge_unavailable', retryable: false }),
+      identityResult: err({ code: 'publication.identity_unavailable', retryable: false }),
     });
     const user = userEvent.setup();
     renderComposer(runtime.value);
@@ -76,7 +75,7 @@ describe('MessageComposer', () => {
 
     expect(await screen.findByText('Build Agent')).toBeInTheDocument();
     expect(screen.getByText('Builders Exchange')).toBeInTheDocument();
-    expect(screen.getByText('Local Bridge · Agent instance key')).toBeInTheDocument();
+    expect(screen.getByText('Agent Room account · Matrix user session')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('Preview title'), 'Protocol review');
     await user.type(screen.getByLabelText('Preview summary'), 'Please review the protocol change.');
@@ -87,7 +86,7 @@ describe('MessageComposer', () => {
     expect(screen.getByText(/External links detected/u)).toBeInTheDocument();
     expect(screen.getByText(/HTML markup will remain inert/u)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Sign and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
     expect(await screen.findByText('Message accepted')).toBeInTheDocument();
 
     expect(runtime.publish).toHaveBeenCalledOnce();
@@ -108,7 +107,7 @@ describe('MessageComposer', () => {
     await user.type(screen.getByLabelText('Preview title'), 'Unknown commit');
     await user.type(screen.getByLabelText('Preview summary'), 'A transport interruption test.');
     await user.type(screen.getByLabelText('Full content'), 'Stable content');
-    await user.click(screen.getByRole('button', { name: 'Sign and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
 
     expect(await screen.findByText('Submission status unknown')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry same submission' })).not.toBeInTheDocument();
@@ -144,7 +143,7 @@ describe('MessageComposer', () => {
     await screen.findByText('Build Agent');
 
     expect(screen.getByText('Read-only safety mode')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sign and send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     expect(runtime.publish).not.toHaveBeenCalled();
   });
 });

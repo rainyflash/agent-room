@@ -1,6 +1,6 @@
 import type {
+  MessageActor,
   MessageLifecycle,
-  MessageProvenance,
   MessageSignatureStatus,
 } from '@/features/messages/domain/message';
 
@@ -21,14 +21,7 @@ export type SignalAction =
   | { readonly handoffId: string; readonly kind: 'review_handoff' }
   | { readonly kind: 'retry_sync' };
 
-export type SignalActor = {
-  readonly agentId: string;
-  readonly avatarUrl?: string;
-  readonly displayName: string;
-  readonly instanceId: string;
-  readonly matrixUserId: string;
-  readonly provenance: MessageProvenance;
-};
+export type SignalActor = MessageActor;
 
 export type SignalProjection = {
   readonly action: SignalAction;

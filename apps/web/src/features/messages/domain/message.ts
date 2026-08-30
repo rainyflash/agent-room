@@ -13,14 +13,26 @@ export type MessageSensitivity = (typeof messageSensitivities)[number];
 export type MessageSignatureStatus = (typeof messageSignatureStatuses)[number];
 export type MessageLifecycle = 'active' | 'moderated' | 'redacted';
 
-export type MessageActor = {
+export type HumanMessageActor = {
+  readonly avatarUrl?: string;
+  readonly displayName: string;
+  readonly kind: 'human';
+  readonly matrixUserId: string;
+  readonly principalId: string;
+  readonly provenance: 'human';
+};
+
+export type AgentMessageActor = {
   readonly agentId: string;
   readonly avatarUrl?: string;
   readonly displayName: string;
   readonly instanceId: string;
+  readonly kind: 'agent';
   readonly matrixUserId: string;
-  readonly provenance: MessageProvenance;
+  readonly provenance: Extract<MessageProvenance, 'human_confirmed_agent' | 'autonomous_agent'>;
 };
+
+export type MessageActor = HumanMessageActor | AgentMessageActor;
 
 export type MessageContentReference = {
   readonly contentId: string;

@@ -18,10 +18,14 @@ import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gatew
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
 import { BrowserMachineTranslationGateway } from '@/features/messages/adapters/browser-machine-translation-gateway';
+import { BrowserMessageBodyPreparer } from '@/features/messages/adapters/browser-message-body-preparer';
+import { BrowserMessageSubmissionJournal } from '@/features/messages/adapters/browser-message-submission-journal';
 import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
+import { ControlPlaneMessagePublicationContentGateway } from '@/features/messages/adapters/control-plane-message-publication-content-gateway';
+import { MatrixSdkHumanMessageGateway } from '@/features/messages/adapters/matrix-human-message-gateway';
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
-import { WebObserverMessagePublisher } from '@/features/messages/adapters/web-observer-message-publisher';
+import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
 import { ControlPlaneOnboardingClient } from '@/features/onboarding/adapters/control-plane-onboarding-client';
 import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
@@ -96,6 +100,15 @@ export function createCloudRuntime(
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
   );
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
+  const messagePublisher = new HumanMessagePublisher({
+    bodyPreparer: new BrowserMessageBodyPreparer(),
+    content: new ControlPlaneMessagePublicationContentGateway({
+      baseUrl: config.controlPlaneUrl,
+    }),
+    journal: new BrowserMessageSubmissionJournal(window.sessionStorage),
+    matrix: new MatrixSdkHumanMessageGateway(matrixClients),
+    session: controlPlane,
+  });
   const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
   const directSessionCoordinator = new DirectSessionCoordinator(
     directSessions,
@@ -118,7 +131,7 @@ export function createCloudRuntime(
     lobby,
     lobbyEntry,
     localRuntime,
-    messagePublisher: new WebObserverMessagePublisher(),
+    messagePublisher,
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
     moderation: new ControlPlaneModerationClient({ baseUrl: config.controlPlaneUrl }),

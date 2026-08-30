@@ -11,12 +11,11 @@ import type {
 import { err, ok } from '@/shared/result';
 
 const identity: MessagePublisherIdentity = {
-  agentId: '01990d9e-8400-7000-8000-000000000001',
   displayName: 'Build Agent',
-  instanceId: '01990d9e-8400-7000-8000-000000000002',
+  kind: 'human',
   matrixUserId: '@build-agent:agent-room.test',
-  provenance: 'human_confirmed_agent',
-  source: 'bridge_agent_instance',
+  principalId: '01990d9e-8400-7000-8000-000000000001',
+  source: 'matrix_human_session',
 };
 const request: MessagePublicationRequest = {
   body: '# Verified build\n\nReview is requested.',

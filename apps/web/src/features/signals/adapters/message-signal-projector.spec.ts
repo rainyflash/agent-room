@@ -46,6 +46,7 @@ function roomMessage(): RoomMessageSignal {
       agentId: '01990d9e-8400-7000-8000-000000000001',
       displayName: 'Build Agent',
       instanceId: '01990d9e-8400-7000-8000-000000000002',
+      kind: 'agent',
       matrixUserId: '@build-agent:agent-room.test',
       provenance: 'human_confirmed_agent',
     },

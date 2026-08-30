@@ -1,4 +1,4 @@
-import type { MessageProvenance, MessageSensitivity } from './message';
+import type { MessageContentReference, MessageRelation, MessageSensitivity } from './message';
 import type { Result } from '@/shared/result';
 
 export const publicationMediaTypes = ['text/markdown', 'text/plain'] as const;
@@ -10,12 +10,11 @@ export type PublicationProgressStage = (typeof publicationProgressStages)[number
 export type PublicationRiskFlag = (typeof publicationRiskFlags)[number];
 
 export type MessagePublisherIdentity = {
-  readonly agentId: string;
   readonly displayName: string;
-  readonly instanceId: string;
+  readonly kind: 'human';
   readonly matrixUserId: string;
-  readonly provenance: Extract<MessageProvenance, 'human_confirmed_agent' | 'autonomous_agent'>;
-  readonly source: 'bridge_agent_instance';
+  readonly principalId: string;
+  readonly source: 'matrix_human_session';
 };
 
 export type MessagePublicationDraft = {
@@ -52,7 +51,6 @@ export type MessagePublicationOutcome =
     };
 
 export type MessagePublicationFailureCode =
-  | 'publication.bridge_unavailable'
   | 'publication.identity_unavailable'
   | 'publication.invalid_intent'
   | 'publication.content_rejected'
@@ -75,6 +73,89 @@ export type MessagePublisher = {
   ): Promise<MessagePublicationResult>;
   reconcile(submissionId: string): Promise<MessagePublicationResult>;
   resolveIdentity(): Promise<Result<MessagePublisherIdentity, MessagePublicationFailure>>;
+};
+
+export type PreparedMessageBody = {
+  readonly bytes: Uint8Array<ArrayBuffer>;
+  readonly digestSha256: string;
+};
+
+export type MessageBodyPreparer = {
+  prepare(body: string): Promise<Result<PreparedMessageBody, MessagePublicationFailure>>;
+};
+
+export type MessageContentUploadRequest = {
+  readonly body: PreparedMessageBody;
+  readonly mediaType: PublicationMediaType;
+  readonly roomId: string;
+  readonly submissionId: string;
+};
+
+export type MessageContentBindingRequest = {
+  readonly contentId: string;
+  readonly matrixEventId: string;
+  readonly roomId: string;
+};
+
+export type MessagePublicationContentGateway = {
+  bind(request: MessageContentBindingRequest): Promise<Result<void, MessagePublicationFailure>>;
+  upload(
+    request: MessageContentUploadRequest,
+  ): Promise<Result<MessageContentReference, MessagePublicationFailure>>;
+};
+
+export type HumanMessagePreviewEvent = {
+  readonly actor: Omit<MessagePublisherIdentity, 'source'>;
+  readonly content: MessageContentReference & { readonly fetchMode: 'on_demand' };
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly eventType: 'io.github.rainyflash.agentroom.message.preview.v2';
+  readonly id: string;
+  readonly preview: {
+    readonly contentType: PublicationMediaType;
+    readonly language?: string;
+    readonly riskFlags: readonly string[];
+    readonly sensitivity: MessageSensitivity;
+    readonly summary: string;
+    readonly title: string;
+  };
+  readonly relation?: MessageRelation;
+  readonly roomId: string;
+  readonly schemaVersion: '2.0';
+};
+
+export type MatrixPublicationRequest = {
+  readonly event: HumanMessagePreviewEvent;
+  readonly roomId: string;
+  readonly transactionId: string;
+};
+
+export type MatrixPublicationFailure = {
+  readonly kind: 'ambiguous' | 'rejected' | 'unavailable';
+  readonly retryable: boolean;
+};
+
+export type HumanMatrixPublicationGateway = {
+  currentUserId(): string | null;
+  findByTransaction(roomId: string, transactionId: string): string | null;
+  publish(
+    request: MatrixPublicationRequest,
+  ): Promise<Result<{ readonly matrixEventId: string }, MatrixPublicationFailure>>;
+};
+
+export type MessageSubmissionRecord = {
+  readonly content: MessageContentReference;
+  readonly event: HumanMessagePreviewEvent;
+  readonly fingerprint: string;
+  readonly matrixEventId?: string;
+  readonly roomId: string;
+  readonly submissionId: string;
+  readonly transactionId: string;
+};
+
+export type MessageSubmissionJournal = {
+  read(submissionId: string): Result<MessageSubmissionRecord | null, MessagePublicationFailure>;
+  write(record: MessageSubmissionRecord): Result<void, MessagePublicationFailure>;
 };
 
 export type PublicationDraftIssue =

@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import {
   matrixMessagePreviewEventType,
+  matrixMessagePreviewEventTypeV2,
   matrixMessageRevisionEventType,
+  matrixMessageRevisionEventTypeV2,
   matrixModerationNoticeEventType,
   matrixAgentRoomEventNamespace,
   type MatrixMessageRoomSnapshot,
@@ -46,7 +48,7 @@ const mediaTypeSchema = z
   .min(3)
   .max(128)
   .regex(/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/u);
-const actorSchema = z
+const legacyActorSchema = z
   .looseObject({
     agent: z
       .looseObject({
@@ -64,6 +66,40 @@ const actorSchema = z
     provenance: z.enum(messageProvenances),
   })
   .superRefine(limitProperties(12));
+const agentReferenceSchema = z
+  .looseObject({
+    agentId: uuidV7Schema,
+    avatarUrl: z
+      .string()
+      .max(2_048)
+      .regex(/^https:\/\//u)
+      .optional(),
+    displayName: z.string().min(1).max(80),
+    matrixUserId: matrixUserIdSchema,
+  })
+  .superRefine(limitProperties(16));
+const humanActorSchema = z
+  .looseObject({
+    avatarUrl: z
+      .string()
+      .max(2_048)
+      .regex(/^https:\/\//u)
+      .optional(),
+    displayName: z.string().min(1).max(80),
+    kind: z.literal('human'),
+    matrixUserId: matrixUserIdSchema,
+    principalId: uuidV7Schema,
+  })
+  .superRefine(limitProperties(16));
+const agentActorSchema = z
+  .looseObject({
+    agent: agentReferenceSchema,
+    instanceId: uuidV7Schema,
+    kind: z.literal('agent'),
+    provenance: z.enum(['human_confirmed_agent', 'autonomous_agent']),
+  })
+  .superRefine(limitProperties(12));
+const currentActorSchema = z.discriminatedUnion('kind', [humanActorSchema, agentActorSchema]);
 const contentSchema = z
   .looseObject({
     contentId: uuidV7Schema,
@@ -107,31 +143,58 @@ const relationSchema = z
     targetMessageId: uuidV7Schema,
   })
   .superRefine(limitProperties(8));
-const commonEventShape = {
-  actor: actorSchema,
+const signatureSchema = z
+  .string()
+  .min(43)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/u);
+const legacyCommonEventShape = {
+  actor: legacyActorSchema,
   correlationId: z.uuid(),
   createdAt: z.iso.datetime({ offset: true }),
   id: uuidV7Schema,
   roomId: matrixRoomIdSchema,
   schemaVersion: z.literal('1.0'),
-  signature: z
-    .string()
-    .min(43)
-    .max(128)
-    .regex(/^[A-Za-z0-9_-]+$/u),
+  signature: signatureSchema,
 };
-const previewEventSchema = z
+const currentCommonEventShape = {
+  actor: currentActorSchema,
+  correlationId: z.uuid(),
+  createdAt: z.iso.datetime({ offset: true }),
+  id: uuidV7Schema,
+  roomId: matrixRoomIdSchema,
+  schemaVersion: z.literal('2.0'),
+  signature: signatureSchema.optional(),
+};
+const legacyPreviewEventSchema = z
   .looseObject({
-    ...commonEventShape,
+    ...legacyCommonEventShape,
     content: contentSchema,
     eventType: z.literal(matrixMessagePreviewEventType),
     preview: previewSchema,
     relation: relationSchema.optional(),
   })
   .superRefine(limitProperties(24));
-const revisionEventSchema = z
+const currentPreviewEventSchema = z
   .looseObject({
-    ...commonEventShape,
+    ...currentCommonEventShape,
+    content: contentSchema,
+    eventType: z.literal(matrixMessagePreviewEventTypeV2),
+    preview: previewSchema,
+    relation: relationSchema.optional(),
+  })
+  .superRefine((event, context) => {
+    limitProperties(24)(event, context);
+    const signatureMatchesActor =
+      event.actor.kind === 'human' ? event.signature === undefined : event.signature !== undefined;
+    if (!signatureMatchesActor) {
+      context.addIssue({ code: 'custom', message: '签名存在性与主体类型不一致。' });
+    }
+  });
+const previewEventSchema = z.union([legacyPreviewEventSchema, currentPreviewEventSchema]);
+const legacyRevisionEventSchema = z
+  .looseObject({
+    ...legacyCommonEventShape,
     content: contentSchema.optional(),
     eventType: z.literal(matrixMessageRevisionEventType),
     kind: z.enum(['replace', 'redact', 'moderate']),
@@ -151,6 +214,36 @@ const revisionEventSchema = z
       context.addIssue({ code: 'custom', message: '非替换修订不得携带正文引用。' });
     }
   });
+const currentRevisionEventSchema = z
+  .looseObject({
+    ...currentCommonEventShape,
+    content: contentSchema.optional(),
+    eventType: z.literal(matrixMessageRevisionEventTypeV2),
+    kind: z.enum(['replace', 'redact', 'moderate']),
+    preview: previewSchema.optional(),
+    targetMessageId: uuidV7Schema,
+  })
+  .superRefine((revision, context) => {
+    limitProperties(24)(revision, context);
+    const signatureMatchesActor =
+      revision.actor.kind === 'human'
+        ? revision.signature === undefined
+        : revision.signature !== undefined;
+    if (!signatureMatchesActor) {
+      context.addIssue({ code: 'custom', message: '签名存在性与主体类型不一致。' });
+    }
+    const hasReplacement = revision.preview !== undefined && revision.content !== undefined;
+    if (revision.kind === 'replace' ? !hasReplacement : hasReplacement) {
+      context.addIssue({ code: 'custom', message: '修订载荷与修订类型不一致。' });
+    }
+    if (
+      revision.kind !== 'replace' &&
+      (revision.preview !== undefined || revision.content !== undefined)
+    ) {
+      context.addIssue({ code: 'custom', message: '非替换修订不得携带正文引用。' });
+    }
+  });
+const revisionEventSchema = z.union([legacyRevisionEventSchema, currentRevisionEventSchema]);
 const moderationNoticeSchema = z
   .object({
     actionId: uuidV7Schema,
@@ -257,7 +350,10 @@ function projectRoom(
       continue;
     }
     seenMatrixEventIds.add(eventId);
-    if (timelineEvent.type === matrixMessagePreviewEventType) {
+    if (
+      timelineEvent.type === matrixMessagePreviewEventType ||
+      timelineEvent.type === matrixMessagePreviewEventTypeV2
+    ) {
       const parsed = parsePreview(room.roomId, timelineEvent);
       if (parsed === null || messages.has(parsed.messageId)) {
         continue;
@@ -269,7 +365,10 @@ function projectRoom(
       pendingRevisions.delete(parsed.messageId);
       continue;
     }
-    if (timelineEvent.type === matrixMessageRevisionEventType) {
+    if (
+      timelineEvent.type === matrixMessageRevisionEventType ||
+      timelineEvent.type === matrixMessageRevisionEventTypeV2
+    ) {
       const revision = parseRevision(room.roomId, timelineEvent);
       if (revision === null) {
         continue;
@@ -366,7 +465,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
   if (
     !parsed.success ||
     parsed.data.roomId !== roomId ||
-    parsed.data.actor.agent.matrixUserId !== event.sender ||
+    actorMatrixUserId(parsed.data) !== event.sender ||
     parsed.data.preview.contentType !== parsed.data.content.mediaType ||
     event.eventId === undefined ||
     !validServerTimestamp(event.serverTimestamp)
@@ -394,7 +493,7 @@ function parseRevision(roomId: string, event: MatrixMessageTimelineEvent): Parse
   if (
     !parsed.success ||
     parsed.data.roomId !== roomId ||
-    parsed.data.actor.agent.matrixUserId !== event.sender
+    actorMatrixUserId(parsed.data) !== event.sender
   ) {
     return null;
   }
@@ -408,7 +507,7 @@ function parseRevision(roomId: string, event: MatrixMessageTimelineEvent): Parse
     ...(parsed.data.content === undefined ? {} : { content: toContent(parsed.data.content) }),
     kind: parsed.data.kind,
     ...(parsed.data.preview === undefined ? {} : { preview: toPreview(parsed.data.preview) }),
-    sender: parsed.data.actor.agent.matrixUserId,
+    sender: actorMatrixUserId(parsed.data),
     targetMessageId: parsed.data.targetMessageId,
   };
 }
@@ -432,15 +531,46 @@ function applyRevision(target: MutableMessage, revision: ParsedRevision): void {
 }
 
 function toActor(event: ParsedPreviewEvent): MessageActor {
+  if (event.schemaVersion === '2.0') {
+    if (event.actor.kind === 'human') {
+      return Object.freeze({
+        ...(event.actor.avatarUrl === undefined ? {} : { avatarUrl: event.actor.avatarUrl }),
+        displayName: event.actor.displayName,
+        kind: 'human',
+        matrixUserId: event.actor.matrixUserId,
+        principalId: event.actor.principalId,
+        provenance: 'human',
+      });
+    }
+    const agent = event.actor.agent;
+    return Object.freeze({
+      agentId: agent.agentId,
+      ...(agent.avatarUrl === undefined ? {} : { avatarUrl: agent.avatarUrl }),
+      displayName: agent.displayName,
+      instanceId: event.actor.instanceId,
+      kind: 'agent',
+      matrixUserId: agent.matrixUserId,
+      provenance: event.actor.provenance,
+    });
+  }
   const agent = event.actor.agent;
   return Object.freeze({
     agentId: agent.agentId,
     ...(agent.avatarUrl === undefined ? {} : { avatarUrl: agent.avatarUrl }),
     displayName: agent.displayName,
     instanceId: event.actor.instanceId,
+    kind: 'agent',
     matrixUserId: agent.matrixUserId,
-    provenance: event.actor.provenance,
+    provenance:
+      event.actor.provenance === 'autonomous_agent' ? 'autonomous_agent' : 'human_confirmed_agent',
   });
+}
+
+function actorMatrixUserId(event: ParsedPreviewEvent | ParsedRevisionEvent): string {
+  if (event.schemaVersion === '1.0') {
+    return event.actor.agent.matrixUserId;
+  }
+  return event.actor.kind === 'human' ? event.actor.matrixUserId : event.actor.agent.matrixUserId;
 }
 
 function toContent(content: z.output<typeof contentSchema>): MessageContentReference {

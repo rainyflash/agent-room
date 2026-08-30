@@ -74,7 +74,7 @@
   - 保持旧 Agent 事件可读。
   - _需求：5、8_
 
-- [ ] 12. 实现云端用户消息发布
+- [x] 12. 实现云端用户消息发布
   - 使用浏览器/桌面用户 Matrix 会话发送用户消息。
   - 继续使用内容票据、幂等 submission 和渐进式正文查看。
   - 删除 `WebObserverMessagePublisher`。
