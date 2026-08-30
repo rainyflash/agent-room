@@ -31,8 +31,9 @@ use agent_room_domain::{
     },
     content::{ContentByteLength, ContentMediaType, Sha256Digest},
     handoff::{
-        HandoffContentReference, HandoffPermission, HandoffPermissions, HandoffPurpose,
-        HandoffSourceEventId, TargetedHandoff, TargetedHandoffFields, TargetedHandoffStatus,
+        HandoffContentReference, HandoffFailureCode, HandoffPermission, HandoffPermissions,
+        HandoffPurpose, HandoffSourceEventId, TargetedHandoff, TargetedHandoffFields,
+        TargetedHandoffStatus,
     },
     identity::Principal,
     ids::{
@@ -871,7 +872,7 @@ async fn 上下文交接授权在同一快照返回两个精确实例及主体�
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 定向交接支持离线排队幂等领取回执并随目标撤销终止() {
+async fn 定向交接覆盖离线排队领取消费拒绝重放过期目标隔离和撤销() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let fixture = prepare_instance_fixture(&database.runtime, &repositories, 77).await;
@@ -888,6 +889,19 @@ async fn 定向交接支持离线排队幂等领取回执并随目标撤销终�
         .await
         .expect("离线目标实例注册成功");
     let target_instance_id = target.instance.id();
+    let other_target_registration = instance_registration(
+        AgentInstanceRegistrationRequestId::from_uuid(Uuid::now_v7()),
+        fixture.owner_id,
+        fixture.owner_device,
+        fixture.agent_id,
+        SecretDigest::from_array([84; 32]),
+        [85; 32],
+        [86; 32],
+    );
+    let other_target = register_instance(&repositories, &other_target_registration)
+        .await
+        .expect("隔离对照实例注册成功");
+    let other_target_instance_id = other_target.instance.id();
     let handoff_id = queue_targeted_handoff_fixture(
         &database.runtime,
         &repositories,
@@ -896,6 +910,28 @@ async fn 定向交接支持离线排队幂等领取回执并随目标撤销终�
     )
     .await;
     assert_targeted_handoff_consumed(&repositories, &fixture, target_instance_id, handoff_id).await;
+    assert_target_instance_isolation(
+        &database.runtime,
+        &repositories,
+        &fixture,
+        target_instance_id,
+        other_target_instance_id,
+    )
+    .await;
+    assert_targeted_handoff_declined(
+        &database.runtime,
+        &repositories,
+        &fixture,
+        target_instance_id,
+    )
+    .await;
+    assert_targeted_handoff_expired(
+        &database.runtime,
+        &repositories,
+        &fixture,
+        target_instance_id,
+    )
+    .await;
     assert_target_revocation_fails_pending_handoff(
         &database.runtime,
         &repositories,
@@ -930,8 +966,7 @@ async fn queue_targeted_handoff_fixture(
     let handoff_id = HandoffId::from_uuid(Uuid::now_v7());
     let handoff = targeted_handoff(
         handoff_id,
-        fixture.owner_id,
-        fixture.agent_id,
+        fixture,
         target_instance_id,
         content_id,
         room_id,
@@ -1036,6 +1071,218 @@ async fn assert_targeted_handoff_consumed(
     assert!(after_receipt.is_none(), "终态交接不得再次投递");
 }
 
+async fn assert_target_instance_isolation(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+    target_instance_id: AgentInstanceId,
+    other_target_instance_id: AgentInstanceId,
+) {
+    let handoff_id = queue_distinct_targeted_handoff(
+        pool,
+        repositories,
+        fixture,
+        target_instance_id,
+        "$target-isolation:matrix.test",
+        87,
+        test_time_after(120_000),
+    )
+    .await;
+    let wrong_target = TargetedHandoffRepository::claim_next(
+        repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id: other_target_instance_id,
+            claimed_at: test_time(),
+        },
+    )
+    .await
+    .expect("对照实例领取查询成功");
+    assert!(wrong_target.is_none(), "非目标实例不得领取交接");
+    let still_queued = TargetedHandoffRepository::find_for_principal(
+        repositories,
+        handoff_id,
+        fixture.owner_id,
+        test_time(),
+    )
+    .await
+    .expect("隔离验证后可查询交接")
+    .expect("目标交接仍存在");
+    assert_eq!(still_queued.status(), TargetedHandoffStatus::Queued);
+    assert_targeted_handoff_consumed(repositories, fixture, target_instance_id, handoff_id).await;
+}
+
+async fn assert_targeted_handoff_declined(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+    target_instance_id: AgentInstanceId,
+) {
+    let handoff_id = queue_distinct_targeted_handoff(
+        pool,
+        repositories,
+        fixture,
+        target_instance_id,
+        "$target-decline:matrix.test",
+        88,
+        test_time_after(120_000),
+    )
+    .await;
+    let delivered = TargetedHandoffRepository::claim_next(
+        repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            claimed_at: test_time(),
+        },
+    )
+    .await
+    .expect("拒绝场景领取成功")
+    .expect("拒绝场景存在待领取记录");
+    assert_eq!(delivered.fields().id, handoff_id);
+    let decline_code = HandoffFailureCode::new("handoff.user_declined").expect("拒绝码有效");
+    let declined = TargetedHandoffRepository::record_receipt(
+        repositories,
+        RecordTargetedHandoffReceipt {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            handoff_id,
+            outcome: TargetedHandoffReceiptOutcome::Declined(decline_code.clone()),
+            recorded_at: test_time(),
+        },
+    )
+    .await
+    .expect("拒绝回执事务成功")
+    .expect("拒绝交接存在");
+    assert_eq!(declined.status(), TargetedHandoffStatus::Declined);
+    assert_eq!(declined.failure_code(), Some(&decline_code));
+    let replayed = TargetedHandoffRepository::record_receipt(
+        repositories,
+        RecordTargetedHandoffReceipt {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            handoff_id,
+            outcome: TargetedHandoffReceiptOutcome::Declined(decline_code),
+            recorded_at: test_time_after(1),
+        },
+    )
+    .await
+    .expect("相同拒绝回执可安全重放")
+    .expect("重放时交接仍可审计");
+    assert_eq!(replayed.version(), declined.version());
+    let conflicting_replay = TargetedHandoffRepository::record_receipt(
+        repositories,
+        RecordTargetedHandoffReceipt {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            handoff_id,
+            outcome: TargetedHandoffReceiptOutcome::Consumed,
+            recorded_at: test_time_after(2),
+        },
+    )
+    .await
+    .expect_err("拒绝后不得改写为已消费");
+    assert_eq!(conflicting_replay.kind(), RepositoryErrorKind::Conflict);
+}
+
+async fn assert_targeted_handoff_expired(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+    target_instance_id: AgentInstanceId,
+) {
+    let expires_at = test_time_after(1_000);
+    let handoff_id = queue_distinct_targeted_handoff(
+        pool,
+        repositories,
+        fixture,
+        target_instance_id,
+        "$target-expiry:matrix.test",
+        89,
+        expires_at,
+    )
+    .await;
+    let after_expiry = test_time_after(1_001);
+    let claimed = TargetedHandoffRepository::claim_next(
+        repositories,
+        ClaimTargetedHandoff {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            claimed_at: after_expiry,
+        },
+    )
+    .await
+    .expect("到期队列查询成功");
+    assert!(claimed.is_none(), "到期交接不得被领取");
+    let expired = TargetedHandoffRepository::find_for_principal(
+        repositories,
+        handoff_id,
+        fixture.owner_id,
+        after_expiry,
+    )
+    .await
+    .expect("到期交接可查询")
+    .expect("到期交接审计记录保留");
+    assert_eq!(expired.status(), TargetedHandoffStatus::Expired);
+    let late_receipt = TargetedHandoffRepository::record_receipt(
+        repositories,
+        RecordTargetedHandoffReceipt {
+            principal_id: fixture.owner_id,
+            device_id: fixture.owner_device,
+            target_instance_id,
+            handoff_id,
+            outcome: TargetedHandoffReceiptOutcome::Consumed,
+            recorded_at: after_expiry,
+        },
+    )
+    .await
+    .expect_err("到期后不得接受消费回执");
+    assert_eq!(late_receipt.kind(), RepositoryErrorKind::Conflict);
+}
+
+async fn queue_distinct_targeted_handoff(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    fixture: &InstanceFixture,
+    target_instance_id: AgentInstanceId,
+    event_id: &str,
+    fingerprint_byte: u8,
+    expires_at: UtcMillis,
+) -> HandoffId {
+    let room_id = "!targeted-handoff:matrix.test";
+    let content_id = ContentId::from_uuid(Uuid::now_v7());
+    seed_targeted_handoff_content(pool, fixture.owner_id, content_id, room_id, event_id).await;
+    let handoff_id = HandoffId::from_uuid(Uuid::now_v7());
+    let handoff = targeted_handoff_expiring_at(
+        handoff_id,
+        fixture,
+        target_instance_id,
+        content_id,
+        room_id,
+        event_id,
+        expires_at,
+    );
+    let queued = TargetedHandoffRepository::queue(
+        repositories,
+        QueueTargetedHandoff {
+            handoff: &handoff,
+            request_fingerprint: TargetedHandoffRequestFingerprint::from_bytes(
+                [fingerprint_byte; 32],
+            ),
+        },
+    )
+    .await
+    .expect("独立交接排队成功");
+    assert!(matches!(queued, QueueTargetedHandoffOutcome::Created(_)));
+    handoff_id
+}
+
 async fn assert_target_revocation_fails_pending_handoff(
     pool: &PgPool,
     repositories: &PostgresRepositories,
@@ -1050,8 +1297,7 @@ async fn assert_target_revocation_fails_pending_handoff(
     let pending_id = HandoffId::from_uuid(Uuid::now_v7());
     let pending = targeted_handoff(
         pending_id,
-        fixture.owner_id,
-        fixture.agent_id,
+        fixture,
         target_instance_id,
         second_content_id,
         room_id,
@@ -1085,9 +1331,7 @@ async fn assert_target_revocation_fails_pending_handoff(
     .expect("审计记录保留");
     assert_eq!(failed.status(), TargetedHandoffStatus::Failed);
     assert_eq!(
-        failed
-            .failure_code()
-            .map(agent_room_domain::handoff::HandoffFailureCode::as_str),
+        failed.failure_code().map(HandoffFailureCode::as_str),
         Some("handoff.target_revoked")
     );
 }
@@ -1590,20 +1834,39 @@ async fn seed_targeted_handoff_content(
 
 fn targeted_handoff(
     id: HandoffId,
-    principal_id: PrincipalId,
-    target_agent_id: AgentId,
+    fixture: &InstanceFixture,
     target_instance_id: AgentInstanceId,
     content_id: ContentId,
     room_id: &str,
     event_id: &str,
 ) -> TargetedHandoff {
+    targeted_handoff_expiring_at(
+        id,
+        fixture,
+        target_instance_id,
+        content_id,
+        room_id,
+        event_id,
+        test_time_after(120_000),
+    )
+}
+
+fn targeted_handoff_expiring_at(
+    id: HandoffId,
+    fixture: &InstanceFixture,
+    target_instance_id: AgentInstanceId,
+    content_id: ContentId,
+    room_id: &str,
+    event_id: &str,
+    expires_at: UtcMillis,
+) -> TargetedHandoff {
     TargetedHandoff::queue(TargetedHandoffFields {
         id,
-        principal_id,
+        principal_id: fixture.owner_id,
         source_room_id: MatrixRoomReference::new(room_id).expect("房间有效"),
         source_event_id: HandoffSourceEventId::new(event_id).expect("事件有效"),
         source_message_id: MessageId::from_uuid(Uuid::now_v7()),
-        target_agent_id,
+        target_agent_id: fixture.agent_id,
         target_instance_id,
         content: HandoffContentReference::new(
             content_id,
@@ -1618,9 +1881,7 @@ fn targeted_handoff(
         .expect("交接权限有效"),
         purpose: HandoffPurpose::Summarize,
         created_at: test_time(),
-        expires_at: test_time()
-            .checked_add(DurationMillis::new(120_000).expect("交接期限有效"))
-            .expect("交接到期时间有效"),
+        expires_at,
     })
     .expect("交接领域对象有效")
 }
@@ -1724,6 +1985,12 @@ async fn assert_instance_registration_failure(
 
 fn test_time() -> UtcMillis {
     UtcMillis::new(1_700_000_000_000).expect("测试时间戳必须有效")
+}
+
+fn test_time_after(milliseconds: u64) -> UtcMillis {
+    test_time()
+        .checked_add(DurationMillis::new(milliseconds).expect("测试时间偏移有效"))
+        .expect("偏移后的测试时间有效")
 }
 
 fn agent_card_snapshot(agent_id: AgentId, seed: u8, fetched_at: i64) -> AgentCardSnapshot {
