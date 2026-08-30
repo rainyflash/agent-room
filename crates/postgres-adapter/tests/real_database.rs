@@ -47,7 +47,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 45] = [
+const EXPECTED_TABLES: [&str; 46] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -65,6 +65,7 @@ const EXPECTED_TABLES: [&str; 45] = [
     "content_object",
     "content_upload_request",
     "context_handoff",
+    "desktop_authorization_code",
     "device",
     "device_access_token",
     "device_authorization_receipt",
@@ -1550,17 +1551,18 @@ async fn seed_targeted_handoff_content(
         r"INSERT INTO agent_room.content_object (
                id, owner_principal_id, storage_key, sha256_digest, byte_length,
                media_type, encryption_mode, scan_state, lifecycle_state,
-               expires_at, created_at
+               expires_at, created_at, updated_at
            ) VALUES (
                $1, $2, $3, $4, 256, 'text/markdown', 'server_side', 'clean', 'active',
                to_timestamp($5::double precision / 1000.0),
+               to_timestamp($6::double precision / 1000.0),
                to_timestamp($6::double precision / 1000.0)
            )",
     )
     .bind(content_id.as_uuid())
     .bind(principal_id.as_uuid())
     .bind(format!("content/{content_id}/targeted-handoff"))
-    .bind(vec![0x42; 32])
+    .bind(vec![0x42_u8; 32])
     .bind(expires_at.value())
     .bind(test_time().value())
     .execute(pool)
@@ -1569,9 +1571,10 @@ async fn seed_targeted_handoff_content(
     sqlx::query(
         r"INSERT INTO agent_room.content_access_policy (
                id, content_id, matrix_room_id, matrix_event_id,
-               access_mode, created_at
+               access_mode, created_at, updated_at
            ) VALUES (
                $1, $2, $3, $4, 'room_member',
+               to_timestamp($5::double precision / 1000.0),
                to_timestamp($5::double precision / 1000.0)
            )",
     )
