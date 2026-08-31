@@ -8,6 +8,7 @@ mod deep_link;
 mod desktop_config;
 mod human_session;
 mod installer_acceptance;
+mod loopback_callback;
 mod release_update_config;
 mod release_update_state;
 mod release_updates;

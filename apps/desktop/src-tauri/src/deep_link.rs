@@ -5,8 +5,7 @@ use tauri::{AppHandle, Emitter as _, Manager as _};
 use url::Url;
 
 use crate::human_session::{
-    HUMAN_SESSION_CHANGED_EVENT, HUMAN_SESSION_FAILED_EVENT, HumanSessionRuntime,
-    authentication_callback,
+    HumanSessionRuntime, authentication_callback, complete_authentication_callback,
 };
 
 const DEEP_LINK_EVENT: &str = "desktop://deep-link";
@@ -54,18 +53,15 @@ pub(crate) fn deliver_deep_links(app: &AppHandle, urls: impl IntoIterator<Item =
                     let handle = app.clone();
                     let sessions = app.state::<HumanSessionRuntime>().inner().clone();
                     tauri::async_runtime::spawn(async move {
-                        match sessions.complete_authentication(&handle, callback).await {
-                            Ok(session) => {
-                                let _ = handle.emit(HUMAN_SESSION_CHANGED_EVENT, session);
-                            }
-                            Err(failure) => {
-                                let _ = handle.emit(HUMAN_SESSION_FAILED_EVENT, failure);
-                            }
-                        }
+                        complete_authentication_callback(&handle, &sessions, Ok(callback)).await;
                     });
                 }
                 Err(failure) => {
-                    let _ = app.emit(HUMAN_SESSION_FAILED_EVENT, failure);
+                    let handle = app.clone();
+                    let sessions = app.state::<HumanSessionRuntime>().inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        complete_authentication_callback(&handle, &sessions, Err(failure)).await;
+                    });
                 }
             }
             continue;

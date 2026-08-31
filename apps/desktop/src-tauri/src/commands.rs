@@ -118,13 +118,15 @@ impl From<HumanSessionFailure> for DesktopCommandFailure {
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn desktop_begin_human_authentication(
+pub(crate) async fn desktop_begin_human_authentication(
     app: AppHandle,
     sessions: State<'_, HumanSessionRuntime>,
     return_path: String,
     intent: DesktopAuthenticationIntent,
 ) -> Result<(), DesktopCommandFailure> {
-    Ok(sessions.begin_authentication(&app, &return_path, intent)?)
+    Ok(sessions
+        .begin_authentication(&app, &return_path, intent)
+        .await?)
 }
 
 #[tauri::command]

@@ -174,9 +174,18 @@ async function issueDesktopSession(
     const clientState = randomUrlSafeValue();
     const pkceVerifier = randomUrlSafeValue();
     const codeChallenge = createHash('sha256').update(pkceVerifier).digest('base64url');
+    const loopbackCallback = 'http://127.0.0.1:49152/auth/callback';
+    await page.route(`${loopbackCallback}**`, async (route) => {
+      await route.fulfill({
+        body: '<!doctype html><title>Agent Room desktop callback accepted</title>',
+        contentType: 'text/html',
+        status: 200,
+      });
+    });
     const start = new URL('/auth/desktop/start', apiOrigin);
     start.searchParams.set('clientState', clientState);
     start.searchParams.set('codeChallenge', codeChallenge);
+    start.searchParams.set('callbackUrl', loopbackCallback);
     start.searchParams.set('returnTo', '/workspace');
     start.searchParams.set('importDisplayName', 'true');
     start.searchParams.set('importLocale', 'true');
@@ -189,8 +198,8 @@ async function issueDesktopSession(
     await page.locator('input[type="submit"], button[type="submit"]').click();
     const callback = await callbackResponse;
     const callbackUrl = callback.headers().location;
-    if (!callbackUrl?.startsWith('agent-room://auth/callback')) {
-      throw new Error('桌面 OIDC 回调没有返回受信任的自定义协议地址。');
+    if (!callbackUrl?.startsWith(loopbackCallback)) {
+      throw new Error('桌面 OIDC 回调没有返回受信任的本机回环地址。');
     }
     const parsedCallback = new URL(callbackUrl);
     expect(parsedCallback.searchParams.get('state')).toBe(clientState);

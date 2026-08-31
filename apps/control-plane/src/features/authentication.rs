@@ -25,6 +25,7 @@ use axum_extra::extract::{
     CookieJar,
     cookie::{Cookie, SameSite},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::Duration as CookieDuration;
@@ -35,6 +36,9 @@ use crate::{correlation::CorrelationId, error::ApiError};
 const LOGIN_COOKIE: &str = "__Host-agent-room-login";
 const SESSION_COOKIE: &str = "__Host-agent-room-session";
 const DESKTOP_SESSION_COOKIE: &str = "__Secure-agent-room-desktop-session";
+const DESKTOP_CALLBACK_COOKIE: &str = "__Host-agent-room-desktop-callback";
+const LEGACY_DESKTOP_CALLBACK_URL: &str = "agent-room://auth/callback";
+const LOOPBACK_CALLBACK_PATH: &str = "/auth/callback";
 
 #[derive(Clone)]
 pub(crate) struct AuthenticationHttpState {
@@ -122,6 +126,8 @@ struct BeginDesktopLoginQuery {
     client_state: String,
     code_challenge: String,
     #[serde(default)]
+    callback_url: Option<String>,
+    #[serde(default)]
     return_to: Option<String>,
     #[serde(default)]
     import_display_name: bool,
@@ -137,6 +143,65 @@ enum BeginLoginIntent {
     #[default]
     SignIn,
     Register,
+}
+
+#[derive(Debug, Clone)]
+enum DesktopCallbackDestination {
+    LegacyProtocol,
+    Loopback(Url),
+}
+
+impl DesktopCallbackDestination {
+    fn from_query(value: Option<String>) -> Result<Self, ()> {
+        value.map_or(Ok(Self::LegacyProtocol), |value| {
+            Self::loopback(Url::parse(&value).map_err(|_| ())?)
+        })
+    }
+
+    fn from_cookie(jar: &CookieJar) -> Result<Self, ()> {
+        let Some(cookie) = jar.get(DESKTOP_CALLBACK_COOKIE) else {
+            return Ok(Self::LegacyProtocol);
+        };
+        let decoded = URL_SAFE_NO_PAD.decode(cookie.value()).map_err(|_| ())?;
+        let value = String::from_utf8(decoded).map_err(|_| ())?;
+        Self::loopback(Url::parse(&value).map_err(|_| ())?)
+    }
+
+    fn loopback(url: Url) -> Result<Self, ()> {
+        if url.scheme() != "http"
+            || url.host_str() != Some("127.0.0.1")
+            || url.port().is_none_or(|port| port == 0)
+            || url.username() != ""
+            || url.password().is_some()
+            || url.path() != LOOPBACK_CALLBACK_PATH
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(());
+        }
+        Ok(Self::Loopback(url))
+    }
+
+    fn redirect_url(&self, completion: &DesktopLoginCompletion) -> Url {
+        let mut destination = match self {
+            Self::LegacyProtocol => {
+                Url::parse(LEGACY_DESKTOP_CALLBACK_URL).expect("固定桌面回调 URL 必须有效")
+            }
+            Self::Loopback(url) => url.clone(),
+        };
+        destination.query_pairs_mut().extend_pairs([
+            ("code", completion.authorization_code.expose()),
+            ("state", completion.client_state.expose()),
+        ]);
+        destination
+    }
+
+    fn encoded_cookie_value(&self) -> Option<String> {
+        match self {
+            Self::LegacyProtocol => None,
+            Self::Loopback(url) => Some(URL_SAFE_NO_PAD.encode(url.as_str())),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,6 +319,16 @@ async fn begin_desktop_login(
                 .into_response(),
         );
     };
+    let Ok(callback_destination) = DesktopCallbackDestination::from_query(query.callback_url)
+    else {
+        return no_store(
+            ApiError::invalid_request(
+                "authentication.invalid_desktop_callback_url",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    };
     let mut jar = jar;
     if matches!(query.intent, BeginLoginIntent::SignIn)
         && let Ok(session_secret) = session_secret(&jar)
@@ -268,7 +343,9 @@ async fn begin_desktop_login(
             })
             .await
         {
-            Ok(completion) => return desktop_login_success(jar, &completion),
+            Ok(completion) => {
+                return desktop_login_success(jar, &completion, &callback_destination);
+            }
             Err(failure) if failure.kind() == AuthenticationFailureKind::InvalidSession => {
                 jar = expired_session_jar(jar);
             }
@@ -303,6 +380,7 @@ async fn begin_desktop_login(
         redirect.browser_secret.expose(),
         state.login_cookie_ttl,
     ));
+    let jar = with_desktop_callback_cookie(jar, &callback_destination, state.login_cookie_ttl);
     no_store((jar, Redirect::to(&redirect.authorization_url)).into_response())
 }
 
@@ -381,18 +459,32 @@ async fn complete_login(
             ));
             no_store((jar, Redirect::to(destination.as_str())).into_response())
         }
-        LoginCompletion::Desktop(completion) => desktop_login_success(jar, &completion),
+        LoginCompletion::Desktop(completion) => {
+            let Ok(callback_destination) = DesktopCallbackDestination::from_cookie(&jar) else {
+                return login_failure(
+                    &state,
+                    &headers,
+                    jar,
+                    ApiError::invalid_request(
+                        "authentication.invalid_desktop_callback_url",
+                        correlation_id,
+                    ),
+                );
+            };
+            desktop_login_success(jar, &completion, &callback_destination)
+        }
     }
 }
 
-fn desktop_login_success(jar: CookieJar, completion: &DesktopLoginCompletion) -> Response {
-    let mut destination =
-        Url::parse("agent-room://auth/callback").expect("固定桌面回调 URL 必须有效");
-    destination.query_pairs_mut().extend_pairs([
-        ("code", completion.authorization_code.expose()),
-        ("state", completion.client_state.expose()),
-    ]);
-    let jar = jar.add(expired_cookie(LOGIN_COOKIE));
+fn desktop_login_success(
+    jar: CookieJar,
+    completion: &DesktopLoginCompletion,
+    callback_destination: &DesktopCallbackDestination,
+) -> Response {
+    let destination = callback_destination.redirect_url(completion);
+    let jar = jar
+        .add(expired_cookie(LOGIN_COOKIE))
+        .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
     no_store((jar, Redirect::to(destination.as_str())).into_response())
 }
 
@@ -504,6 +596,17 @@ fn secure_cookie(name: &'static str, value: &str, max_age: CookieDuration) -> Co
         .build()
 }
 
+fn with_desktop_callback_cookie(
+    jar: CookieJar,
+    destination: &DesktopCallbackDestination,
+    max_age: CookieDuration,
+) -> CookieJar {
+    match destination.encoded_cookie_value() {
+        Some(value) => jar.add(secure_cookie(DESKTOP_CALLBACK_COOKIE, &value, max_age)),
+        None => jar.add(expired_cookie(DESKTOP_CALLBACK_COOKIE)),
+    }
+}
+
 const fn map_login_intent(intent: BeginLoginIntent) -> AuthenticationIntent {
     match intent {
         BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
@@ -539,7 +642,9 @@ fn login_failure(
     jar: CookieJar,
     error: ApiError,
 ) -> Response {
-    let jar = jar.add(expired_cookie(LOGIN_COOKIE));
+    let jar = jar
+        .add(expired_cookie(LOGIN_COOKIE))
+        .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
     if accepts_html(headers) {
         tracing::warn!(
             correlation.id = error.correlation_id(),
@@ -1000,7 +1105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 桌面登录只把一次性授权码送入自定义协议() {
+    async fn 桌面_oidc_登录把一次性授权码送回绑定的本机端口() {
         let fake = Arc::new(FakeAuthentication::default());
         let app = test_router(fake.clone());
         let start = app
@@ -1008,7 +1113,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!(
-                        "/auth/desktop/start?clientState={}&codeChallenge={}&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&callbackUrl=http%3A%2F%2F127.0.0.1%3A49152%2Fauth%2Fcallback&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
                         "s".repeat(43),
                         "c".repeat(43)
                     ))
@@ -1019,12 +1124,20 @@ mod tests {
             .expect("桌面登录起点可执行");
         assert_eq!(start.status(), StatusCode::SEE_OTHER);
         assert_eq!(fake.desktop_begin.load(Ordering::SeqCst), 1);
+        let callback_cookie = set_cookies(&start)
+            .into_iter()
+            .find(|cookie| cookie.starts_with("__Host-agent-room-desktop-callback="))
+            .and_then(|cookie| cookie.split(';').next().map(str::to_owned))
+            .expect("桌面本机回调必须绑定到登录事务");
 
         let callback = app
             .oneshot(
                 Request::builder()
                     .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
-                    .header(header::COOKIE, "__Host-agent-room-login=browser-secret")
+                    .header(
+                        header::COOKIE,
+                        format!("__Host-agent-room-login=browser-secret; {callback_cookie}"),
+                    )
                     .body(Body::empty())
                     .expect("请求有效"),
             )
@@ -1034,13 +1147,13 @@ mod tests {
         let location = callback
             .headers()
             .get(header::LOCATION)
-            .expect("必须返回桌面深链")
+            .expect("必须返回桌面回环地址")
             .to_str()
-            .expect("深链有效");
+            .expect("回环地址有效");
         assert_eq!(
             location,
             format!(
-                "agent-room://auth/callback?code=desktop-authorization-code&state={}",
+                "http://127.0.0.1:49152/auth/callback?code=desktop-authorization-code&state={}",
                 "s".repeat(43)
             )
         );
@@ -1049,6 +1162,10 @@ mod tests {
                 .iter()
                 .all(|cookie| !cookie.starts_with("__Host-agent-room-session="))
         );
+        assert!(set_cookies(&callback).iter().any(|cookie| {
+            cookie.starts_with("__Host-agent-room-desktop-callback=")
+                && cookie.contains("Max-Age=0")
+        }));
     }
 
     #[tokio::test]
@@ -1058,7 +1175,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!(
-                        "/auth/desktop/start?clientState={}&codeChallenge={}&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&callbackUrl=http%3A%2F%2F127.0.0.1%3A49153%2Fauth%2Fcallback&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
                         "s".repeat(43),
                         "c".repeat(43)
                     ))
@@ -1078,7 +1195,7 @@ mod tests {
                 .to_str()
                 .expect("深链有效"),
             format!(
-                "agent-room://auth/callback?code=desktop-authorization-code&state={}",
+                "http://127.0.0.1:49153/auth/callback?code=desktop-authorization-code&state={}",
                 "s".repeat(43)
             )
         );
@@ -1087,6 +1204,64 @@ mod tests {
         assert!(set_cookies(&response).iter().any(|cookie| {
             cookie.starts_with("__Host-agent-room-login=") && cookie.contains("Max-Age=0")
         }));
+    }
+
+    #[tokio::test]
+    async fn 桌面登录拒绝非回环或可变路径的回调地址() {
+        for callback in [
+            "https%3A%2F%2Fevil.example%2Fauth%2Fcallback",
+            "http%3A%2F%2Flocalhost%3A49152%2Fauth%2Fcallback",
+            "http%3A%2F%2F127.0.0.1%3A49152%2Fother",
+            "http%3A%2F%2F127.0.0.1%3A49152%2Fauth%2Fcallback%3Fnext%3Devil",
+        ] {
+            let fake = Arc::new(FakeAuthentication::default());
+            let response = test_router(fake.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/auth/desktop/start?clientState={}&codeChallenge={}&callbackUrl={callback}&returnTo=%2Fworkspace",
+                            "s".repeat(43),
+                            "c".repeat(43)
+                        ))
+                        .body(Body::empty())
+                        .expect("请求有效"),
+                )
+                .await
+                .expect("路由执行成功");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(fake.begin.load(Ordering::SeqCst), 0);
+            assert_eq!(fake.desktop_session_authorization.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn 旧桌面版本仍可回退到自定义协议() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&returnTo=%2Fworkspace",
+                        "s".repeat(43),
+                        "c".repeat(43)
+                    ))
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("旧桌面登录可执行");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get(header::LOCATION),
+            Some(
+                &header::HeaderValue::from_str(&format!(
+                    "agent-room://auth/callback?code=desktop-authorization-code&state={}",
+                    "s".repeat(43)
+                ))
+                .expect("旧回调头有效")
+            )
+        );
     }
 
     #[tokio::test]

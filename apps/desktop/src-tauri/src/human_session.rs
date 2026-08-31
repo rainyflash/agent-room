@@ -9,11 +9,14 @@ use keyring::{Entry, Error as KeyringError};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
-use tauri::{AppHandle, Manager as _};
+use tauri::{AppHandle, Emitter as _, Manager as _};
 use tauri_plugin_opener::OpenerExt as _;
 use url::Url;
 
-use crate::desktop_config::DesktopBridgeConfig;
+use crate::{
+    desktop_config::DesktopBridgeConfig,
+    loopback_callback::{LoopbackCallbackFailure, LoopbackCallbackListener},
+};
 
 pub(crate) const HUMAN_SESSION_CHANGED_EVENT: &str = "desktop://human-session-changed";
 pub(crate) const HUMAN_SESSION_FAILED_EVENT: &str = "desktop://human-session-failed";
@@ -201,13 +204,17 @@ impl HumanSessionRuntime {
         })
     }
 
-    pub(crate) fn begin_authentication(
+    pub(crate) async fn begin_authentication(
         &self,
         app: &AppHandle,
         return_path: &str,
         intent: DesktopAuthenticationIntent,
     ) -> HumanSessionResult<()> {
         validate_return_path(return_path)?;
+        let callback_listener = LoopbackCallbackListener::bind().await.map_err(|_| {
+            HumanSessionFailure::new("desktop.human_session.loopback_bind_failed", true)
+        })?;
+        let callback_url = callback_listener.callback_url().to_string();
         let (authorization_url, client_state) = {
             let _guard = self
                 .operation_gate
@@ -235,6 +242,7 @@ impl HumanSessionRuntime {
                 ("importDisplayName", "true"),
                 ("importLocale", "true"),
                 ("intent", intent.as_str()),
+                ("callbackUrl", callback_url.as_str()),
             ]);
             (authorization_url, client_state)
         };
@@ -249,6 +257,13 @@ impl HumanSessionRuntime {
                 true,
             ));
         }
+        let handle = app.clone();
+        let sessions = self.clone();
+        tauri::async_runtime::spawn(async move {
+            sessions
+                .receive_loopback_callback(handle, callback_listener)
+                .await;
+        });
         Ok(())
     }
 
@@ -419,6 +434,47 @@ impl HumanSessionRuntime {
         }
         Ok(())
     }
+
+    async fn receive_loopback_callback(&self, app: AppHandle, listener: LoopbackCallbackListener) {
+        let request = match listener.wait(PENDING_AUTHENTICATION_TTL).await {
+            Ok(request) => request,
+            Err(failure) => {
+                let _ = app.emit(
+                    HUMAN_SESSION_FAILED_EVENT,
+                    loopback_callback_failure(failure),
+                );
+                focus_main_window(&app);
+                return;
+            }
+        };
+        let callback = parse_loopback_authentication_callback(request.callback_url());
+        let authenticated = complete_authentication_callback(&app, self, callback).await;
+        let _ = request.respond(authenticated).await;
+    }
+}
+
+/// 完成回调、广播唯一结果并把桌面窗口带回前台。
+pub(crate) async fn complete_authentication_callback(
+    app: &AppHandle,
+    sessions: &HumanSessionRuntime,
+    callback: HumanSessionResult<HumanAuthenticationCallback>,
+) -> bool {
+    let result = match callback {
+        Ok(callback) => sessions.complete_authentication(app, callback).await,
+        Err(failure) => Err(failure),
+    };
+    let authenticated = match result {
+        Ok(session) => {
+            let _ = app.emit(HUMAN_SESSION_CHANGED_EVENT, session);
+            true
+        }
+        Err(failure) => {
+            let _ = app.emit(HUMAN_SESSION_FAILED_EVENT, failure);
+            false
+        }
+    };
+    focus_main_window(app);
+    authenticated
 }
 
 pub(crate) fn authentication_callback(
@@ -439,6 +495,26 @@ fn parse_authentication_callback(url: &Url) -> HumanSessionResult<HumanAuthentic
     {
         return Err(invalid_callback());
     }
+    parse_callback_parameters(url)
+}
+
+fn parse_loopback_authentication_callback(
+    url: &Url,
+) -> HumanSessionResult<HumanAuthenticationCallback> {
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().is_none()
+        || url.username() != ""
+        || url.password().is_some()
+        || url.path() != "/auth/callback"
+        || url.fragment().is_some()
+    {
+        return Err(invalid_callback());
+    }
+    parse_callback_parameters(url)
+}
+
+fn parse_callback_parameters(url: &Url) -> HumanSessionResult<HumanAuthenticationCallback> {
     let mut authorization_code = None;
     let mut client_state = None;
     for (name, value) in url.query_pairs() {
@@ -461,6 +537,14 @@ fn parse_authentication_callback(url: &Url) -> HumanSessionResult<HumanAuthentic
         authorization_code,
         client_state,
     })
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
 
 fn validate_pending(
@@ -572,6 +656,17 @@ const fn state_unavailable() -> HumanSessionFailure {
     HumanSessionFailure::new("desktop.human_session.state_unavailable", true)
 }
 
+const fn loopback_callback_failure(failure: LoopbackCallbackFailure) -> HumanSessionFailure {
+    match failure {
+        LoopbackCallbackFailure::Timeout => {
+            HumanSessionFailure::new("desktop.human_session.loopback_timeout", true)
+        }
+        LoopbackCallbackFailure::Unavailable => {
+            HumanSessionFailure::new("desktop.human_session.loopback_unavailable", true)
+        }
+    }
+}
+
 type HumanSessionResult<TValue> = Result<TValue, HumanSessionFailure>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -599,7 +694,8 @@ impl HumanSessionFailure {
 mod tests {
     use super::{
         HumanAuthenticationCallback, PendingAuthentication, authentication_callback,
-        parse_authentication_callback, pkce_challenge, validate_pending, validate_return_path,
+        parse_authentication_callback, parse_loopback_authentication_callback, pkce_challenge,
+        validate_pending, validate_return_path,
     };
     use url::Url;
 
@@ -630,6 +726,28 @@ mod tests {
             authentication_callback(&Url::parse("agent-room://lobby/id").expect("大厅 URL 有效"))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn 本机_http_回调必须使用随机回环端口与固定路径() {
+        let valid = Url::parse(
+            "http://127.0.0.1:49152/auth/callback?code=one-time-code&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+        )
+        .expect("回环 URL 有效");
+        assert!(parse_loopback_authentication_callback(&valid).is_ok());
+
+        for invalid in [
+            "http://localhost:49152/auth/callback?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+            "http://127.0.0.1/auth/callback?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+            "http://127.0.0.1:49152/other?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+            "https://127.0.0.1:49152/auth/callback?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+        ] {
+            let url = Url::parse(invalid).expect("测试 URL 可解析");
+            assert!(
+                parse_loopback_authentication_callback(&url).is_err(),
+                "应拒绝 {invalid}"
+            );
+        }
     }
 
     #[test]

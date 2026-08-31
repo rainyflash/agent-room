@@ -77,7 +77,7 @@ Bridge 的 Agent Matrix 凭据绝不能复用为桌面 UI 的用户会话。桌�
 1. 桌面端生成 PKCE verifier/challenge 和随机 state。
 2. Control Plane 创建短期桌面授权事务。
 3. 系统浏览器完成现有 OIDC 登录。
-4. Control Plane 回调到 `agent-room://auth/callback`，只携带一次性 code 与 state。
+4. 桌面端先绑定 `127.0.0.1` 随机端口，Control Plane 校验固定 `/auth/callback` 路径后回调该端口，只携带一次性 code 与 state；`agent-room://auth/callback` 仅服务于旧客户端兼容。
 5. Tauri 深链处理器验证 state，并以 verifier 交换桌面会话。
 6. 会话保存到系统凭据存储；Matrix 使用独立桌面设备身份。
 
