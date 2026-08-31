@@ -58,7 +58,20 @@ GitHub runner 是短生命周期环境，但它仍是在线信任边界。Enviro
 
 ## 4. 数据库与服务端晋级
 
-发布记录严格按以下顺序推进，工具拒绝跳步：
+先用标准命令生成部署证据，禁止临时手写易漂移的 JSON。每个 `--check` 都必须来自刚执行完的真实探针、备份验证或恢复演练：
+
+```bash
+python tools/release_promotion.py evidence \
+  --version 0.2.0 \
+  --revision <40-hex-git-sha> \
+  --stage database-expanded \
+  --check backup-verified="最新生产备份摘要验证通过" \
+  --check restore-drill="隔离恢复演练通过" \
+  --captured-at-unix-seconds <unix> \
+  --output database-expanded-evidence.json
+```
+
+随后严格按以下顺序推进发布记录，工具拒绝跳步：
 
 ```bash
 python tools/release_promotion.py advance \

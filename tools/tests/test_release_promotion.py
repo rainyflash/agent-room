@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
+import argparse
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,7 +10,9 @@ import unittest
 from tools.release_promotion import (
     PromotionFailure,
     advance,
+    create_evidence,
     initialize,
+    parse_evidence_check,
     verify,
     verify_evidence,
 )
@@ -65,6 +68,67 @@ class ReleasePromotionTests(unittest.TestCase):
                 "b" * 64,
                 1_800_000_000,
             )
+
+    def test_create_evidence_writes_valid_checked_document(self) -> None:
+        output = self.root / "database-expanded-evidence.json"
+
+        create_evidence(
+            "0.2.0",
+            self.revision,
+            "database-expanded",
+            (("backup-verified", "最新生产备份及摘要验证通过。"),),
+            1_800_000_000,
+            output,
+        )
+
+        document = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(document["kind"], "agent-room.release-deployment-evidence")
+        self.assertEqual(document["stage"], "database-expanded")
+        self.assertEqual(
+            document["checks"],
+            [
+                {
+                    "name": "backup-verified",
+                    "passed": True,
+                    "detail": "最新生产备份及摘要验证通过。",
+                }
+            ],
+        )
+
+    def test_create_evidence_rejects_empty_checks_and_overwrite(self) -> None:
+        output = self.root / "compatible-server-evidence.json"
+        with self.assertRaises(PromotionFailure):
+            create_evidence(
+                "0.2.0",
+                self.revision,
+                "compatible-server",
+                (),
+                1_800_000_000,
+                output,
+            )
+
+        create_evidence(
+            "0.2.0",
+            self.revision,
+            "compatible-server",
+            (("health", "服务健康。"),),
+            1_800_000_000,
+            output,
+        )
+        with self.assertRaises(PromotionFailure):
+            create_evidence(
+                "0.2.0",
+                self.revision,
+                "compatible-server",
+                (("health", "服务健康。"),),
+                1_800_000_000,
+                output,
+            )
+
+    def test_parse_evidence_check_requires_name_and_detail(self) -> None:
+        self.assertEqual(parse_evidence_check("health=服务健康"), ("health", "服务健康"))
+        with self.assertRaises(argparse.ArgumentTypeError):
+            parse_evidence_check("health=")
 
     def test_tampered_history_is_rejected(self) -> None:
         current = self.root / "candidate.json"

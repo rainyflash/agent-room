@@ -32,6 +32,15 @@ class PromotionFailure(RuntimeError):
     """表示发布晋级记录无效或试图跳过门禁。"""
 
 
+def parse_evidence_check(value: str) -> tuple[str, str]:
+    """解析命令行中的证据检查，拒绝空名称和空详情。"""
+
+    name, separator, detail = value.partition("=")
+    if not separator or not name.strip() or not detail.strip():
+        raise argparse.ArgumentTypeError("check 必须使用非空的 NAME=DETAIL 格式。")
+    return name.strip(), detail.strip()
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -40,6 +49,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     init_parser.add_argument("--version", required=True)
     init_parser.add_argument("--revision", required=True)
     init_parser.add_argument("--output", type=Path, required=True)
+
+    create_evidence_parser = subcommands.add_parser(
+        "evidence", help="生成经过 Schema 校验的部署证据"
+    )
+    create_evidence_parser.add_argument("--version", required=True)
+    create_evidence_parser.add_argument("--revision", required=True)
+    create_evidence_parser.add_argument(
+        "--stage", choices=("database-expanded", "compatible-server"), required=True
+    )
+    create_evidence_parser.add_argument(
+        "--check",
+        action="append",
+        type=parse_evidence_check,
+        required=True,
+        metavar="NAME=DETAIL",
+        help="追加一个已通过的检查；可重复传入",
+    )
+    create_evidence_parser.add_argument(
+        "--captured-at-unix-seconds", type=int, required=True
+    )
+    create_evidence_parser.add_argument("--output", type=Path, required=True)
 
     advance_parser = subcommands.add_parser("advance", help="按顺序推进一个发布阶段")
     advance_parser.add_argument("--record", type=Path, required=True)
@@ -165,6 +195,52 @@ def initialize(version: str, revision: str, output: Path) -> None:
             "revision": revision,
             "stage": "candidate",
             "history": [],
+        },
+    )
+
+
+def create_evidence(
+    version: str,
+    revision: str,
+    stage: str,
+    checks: Sequence[tuple[str, str]],
+    captured_at_unix_seconds: int,
+    output: Path,
+) -> None:
+    """生成只能表达“已通过”事实的部署证据，避免手写 JSON 漂移。"""
+
+    validate_version(version)
+    if not REVISION_PATTERN.fullmatch(revision):
+        raise PromotionFailure("revision 必须是完整 Git SHA。")
+    if stage not in {"database-expanded", "compatible-server"}:
+        raise PromotionFailure("部署证据阶段必须是 database-expanded 或 compatible-server。")
+    if captured_at_unix_seconds < 0:
+        raise PromotionFailure("capturedAtUnixSeconds 不能为负数。")
+    if not checks:
+        raise PromotionFailure("部署证据至少需要一个已通过检查。")
+
+    normalized_checks: list[dict[str, object]] = []
+    for name, detail in checks:
+        if not name.strip() or not detail.strip():
+            raise PromotionFailure("部署证据检查名称和详情不能为空。")
+        normalized_checks.append(
+            {
+                "name": name.strip(),
+                "passed": True,
+                "detail": detail.strip(),
+            }
+        )
+    write_new(
+        output,
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "kind": DEPLOYMENT_EVIDENCE_KIND,
+            "version": version,
+            "revision": revision,
+            "capturedAtUnixSeconds": captured_at_unix_seconds,
+            "result": "passed",
+            "stage": stage,
+            "checks": normalized_checks,
         },
     )
 
@@ -306,6 +382,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parse_args(argv)
         if args.command == "init":
             initialize(args.version, args.revision, args.output)
+        elif args.command == "evidence":
+            create_evidence(
+                args.version,
+                args.revision,
+                args.stage,
+                args.check,
+                args.captured_at_unix_seconds,
+                args.output,
+            )
         elif args.command == "advance":
             advance(
                 args.record,
