@@ -10,13 +10,14 @@ use sha2::{Digest as _, Sha256};
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, DesktopAuthorizationCodeRegistration, DesktopClientState,
-        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
-        DesktopSessionRegistration, IdentifierFactory, LoginAttempt, LoginAttemptStore,
-        LoginCompletionTransaction, LoginDelivery, OidcAuthorizationOptions, OidcCodeExchange,
-        OidcFailureKind, OidcGateway, OidcInteraction, PkceCodeChallenge, PortFuture,
-        PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretFactory,
-        SecretValue, StoredWebSession, WebSessionRegistration, WebSessionStore,
+        Clock, DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
+        DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentifierFactory,
+        LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
+        OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
+        PkceCodeChallenge, PortFuture, PrincipalSuspensionTransaction, ProfileImportConsent,
+        SafeReturnPath, SecretFactory, SecretValue, StoredWebSession, WebSessionRegistration,
+        WebSessionStore,
     },
 };
 
@@ -124,6 +125,14 @@ pub struct DesktopLoginCompletion {
     pub return_path: SafeReturnPath,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthorizeDesktopSession<'a> {
+    pub session_secret: &'a SecretValue,
+    pub client_state: DesktopClientState,
+    pub code_challenge: PkceCodeChallenge,
+    pub return_path: SafeReturnPath,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginCompletion {
     Web(WebLoginCompletion),
@@ -207,6 +216,18 @@ pub trait AuthenticationUseCases: Send + Sync {
         })
     }
 
+    fn authorize_desktop_session<'a>(
+        &'a self,
+        _request: AuthorizeDesktopSession<'a>,
+    ) -> PortFuture<'a, AuthenticationResult<DesktopLoginCompletion>> {
+        Box::pin(async {
+            Err(AuthenticationFailure::new(
+                "authentication.authorize_desktop_session",
+                AuthenticationFailureKind::InvalidRequest,
+            ))
+        })
+    }
+
     fn authenticate<'a>(
         &'a self,
         session_secret: &'a SecretValue,
@@ -229,6 +250,7 @@ pub struct AuthenticationService {
     login_attempts: Arc<dyn LoginAttemptStore>,
     login_completion: Arc<dyn LoginCompletionTransaction>,
     desktop_login_completion: Arc<dyn DesktopLoginCompletionTransaction>,
+    desktop_session_authorization: Arc<dyn DesktopSessionAuthorizationTransaction>,
     desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     sessions: Arc<dyn WebSessionStore>,
     suspensions: Arc<dyn PrincipalSuspensionTransaction>,
@@ -243,6 +265,7 @@ pub struct AuthenticationDependencies {
     pub login_attempts: Arc<dyn LoginAttemptStore>,
     pub login_completion: Arc<dyn LoginCompletionTransaction>,
     pub desktop_login_completion: Arc<dyn DesktopLoginCompletionTransaction>,
+    pub desktop_session_authorization: Arc<dyn DesktopSessionAuthorizationTransaction>,
     pub desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     pub sessions: Arc<dyn WebSessionStore>,
     pub suspensions: Arc<dyn PrincipalSuspensionTransaction>,
@@ -258,6 +281,7 @@ impl AuthenticationService {
             login_attempts: dependencies.login_attempts,
             login_completion: dependencies.login_completion,
             desktop_login_completion: dependencies.desktop_login_completion,
+            desktop_session_authorization: dependencies.desktop_session_authorization,
             desktop_session_exchange: dependencies.desktop_session_exchange,
             sessions: dependencies.sessions,
             suspensions: dependencies.suspensions,
@@ -471,6 +495,44 @@ impl AuthenticationService {
         })
     }
 
+    async fn authorize_desktop_session_internal(
+        &self,
+        request: AuthorizeDesktopSession<'_>,
+    ) -> AuthenticationResult<DesktopLoginCompletion> {
+        let now = self.clock.now();
+        let authorization_code = self
+            .secrets
+            .generate()
+            .map_err(|_| internal_failure("authentication.authorize_desktop_session"))?;
+        let expires_at = now
+            .checked_add(self.policy.login_attempt_ttl)
+            .map_err(|_| internal_failure("authentication.authorize_desktop_session"))?;
+        let grant = DesktopAuthorizationGrant {
+            code_digest: self.secrets.digest(authorization_code.expose()),
+            code_challenge: request.code_challenge,
+            created_at: now,
+            expires_at,
+        };
+        let session_digest = self.secrets.digest(request.session_secret.expose());
+        self.desktop_session_authorization
+            .authorize_desktop_session(&session_digest, &grant, now)
+            .await
+            .map_err(|error| {
+                map_repository_failure("authentication.authorize_desktop_session", &error)
+            })?
+            .ok_or_else(|| {
+                AuthenticationFailure::new(
+                    "authentication.authorize_desktop_session",
+                    AuthenticationFailureKind::InvalidSession,
+                )
+            })?;
+        Ok(DesktopLoginCompletion {
+            authorization_code,
+            client_state: request.client_state,
+            return_path: request.return_path,
+        })
+    }
+
     fn session_registration(
         &self,
         session_secret: &SecretValue,
@@ -568,6 +630,13 @@ impl AuthenticationUseCases for AuthenticationService {
         request: ExchangeDesktopAuthorization<'a>,
     ) -> PortFuture<'a, AuthenticationResult<DesktopSessionCompletion>> {
         Box::pin(self.exchange_desktop_authorization_internal(request))
+    }
+
+    fn authorize_desktop_session<'a>(
+        &'a self,
+        request: AuthorizeDesktopSession<'a>,
+    ) -> PortFuture<'a, AuthenticationResult<DesktopLoginCompletion>> {
+        Box::pin(self.authorize_desktop_session_internal(request))
     }
 
     fn authenticate<'a>(

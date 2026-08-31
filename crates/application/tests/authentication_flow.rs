@@ -10,20 +10,20 @@ use agent_room_application::{
     authentication::{
         AuthenticationDependencies, AuthenticationFailureKind, AuthenticationIntent,
         AuthenticationPolicy, AuthenticationRequirement, AuthenticationService,
-        AuthenticationUseCases, BeginLogin, CompleteLogin, DesktopLoginCompletion,
-        ExchangeDesktopAuthorization, LoginCompletion, WebLoginCompletion,
+        AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin, CompleteLogin,
+        DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion, WebLoginCompletion,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, DesktopAuthorizationCodeRegistration, DesktopClientState,
-        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
-        DesktopSessionRegistration, IdentifierFactory, LoginAttempt, LoginAttemptStore,
-        LoginCompletionTransaction, LoginDelivery, OidcAuthorizationOptions,
-        OidcAuthorizationRequest, OidcCodeExchange, OidcGateway, OidcInteraction, OidcResult,
-        PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
-        PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
-        SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
-        VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+        Clock, DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
+        DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentifierFactory,
+        LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
+        OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcGateway,
+        OidcInteraction, OidcResult, PkceCodeChallenge, PortFuture, PrincipalAccount,
+        PrincipalRegistration, PrincipalSuspensionTransaction, ProfileImportConsent,
+        SafeReturnPath, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
+        StoredWebSession, VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -304,6 +304,44 @@ impl DesktopLoginCompletionTransaction for InMemoryIdentity {
     }
 }
 
+impl DesktopSessionAuthorizationTransaction for InMemoryIdentity {
+    fn authorize_desktop_session<'a>(
+        &'a self,
+        session_secret_digest: &'a SecretDigest,
+        grant: &'a DesktopAuthorizationGrant,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>> {
+        Box::pin(async move {
+            let mut state = self.0.lock().expect("测试锁可用");
+            let Some(session) = state
+                .sessions
+                .get(session_secret_digest)
+                .filter(|session| now < session.expires_at)
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            if !session.account.principal.allows_authentication() {
+                return Err(RepositoryError::new(
+                    "test.desktop_session.authorize",
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+            let authorization = DesktopAuthorizationCodeRegistration {
+                code_digest: grant.code_digest,
+                code_challenge: grant.code_challenge.clone(),
+                authenticated_at: session.authenticated_at,
+                created_at: grant.created_at,
+                expires_at: grant.expires_at,
+            };
+            state
+                .desktop_authorizations
+                .insert(grant.code_digest, (authorization, session.account.clone()));
+            Ok(Some(session))
+        })
+    }
+}
+
 impl DesktopSessionExchangeTransaction for InMemoryIdentity {
     fn exchange_desktop<'a>(
         &'a self,
@@ -416,6 +454,7 @@ impl Harness {
                 login_attempts: storage.clone(),
                 login_completion: storage.clone(),
                 desktop_login_completion: storage.clone(),
+                desktop_session_authorization: storage.clone(),
                 desktop_session_exchange: storage.clone(),
                 sessions: storage.clone(),
                 suspensions: storage.clone(),
@@ -565,6 +604,63 @@ async fn 桌面授权码受_pkce_和单次消费约束() {
         .await
         .expect_err("授权码重放必须失败");
     assert_eq!(replay.kind(), AuthenticationFailureKind::InvalidLoginState);
+}
+
+#[tokio::test]
+async fn 有效_web_会话无需再次_oidc_认证即可签发桌面授权码() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let web = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("Web 登录应完成");
+    let verifier = "w".repeat(43);
+    let challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+
+    let desktop = harness
+        .service
+        .authorize_desktop_session(AuthorizeDesktopSession {
+            session_secret: &web.session_secret,
+            client_state: DesktopClientState::new("b".repeat(43)).expect("桌面 state 有效"),
+            code_challenge: challenge,
+            return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+        })
+        .await
+        .expect("有效 Web 会话可签发桌面授权码");
+    assert_eq!(harness.oidc.exchanges.load(Ordering::SeqCst), 1);
+
+    let exchanged = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: desktop.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect("桌面授权码可由原进程完成 PKCE 交换");
+    assert_eq!(exchanged.principal.principal_id, web.principal.principal_id);
+    assert_eq!(
+        exchanged.principal.authenticated_at,
+        web.principal.authenticated_at
+    );
+}
+
+#[tokio::test]
+async fn 无效_web_会话不能签发桌面授权码() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let unknown = SecretValue::new("unknown-web-session").expect("测试会话格式有效");
+    let failure = harness
+        .service
+        .authorize_desktop_session(AuthorizeDesktopSession {
+            session_secret: &unknown,
+            client_state: DesktopClientState::new("u".repeat(43)).expect("桌面 state 有效"),
+            code_challenge: PkceCodeChallenge::new("c".repeat(43)).expect("challenge 有效"),
+            return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+        })
+        .await
+        .expect_err("未知 Web 会话必须被拒绝");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
 }
 
 #[tokio::test]

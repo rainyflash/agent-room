@@ -443,6 +443,14 @@ pub struct DesktopAuthorizationCodeRegistration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopAuthorizationGrant {
+    pub code_digest: SecretDigest,
+    pub code_challenge: PkceCodeChallenge,
+    pub created_at: UtcMillis,
+    pub expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSessionRegistration {
     pub id: WebSessionId,
     pub secret_digest: SecretDigest,
@@ -473,6 +481,19 @@ pub trait DesktopLoginCompletionTransaction: Send + Sync {
         principal: &'a PrincipalRegistration,
         authorization: &'a DesktopAuthorizationCodeRegistration,
     ) -> PortFuture<'a, RepositoryResult<PrincipalAccount>>;
+}
+
+pub trait DesktopSessionAuthorizationTransaction: Send + Sync {
+    /// 使用仍然有效的浏览器会话签发一次性桌面授权码。
+    ///
+    /// 实现必须在同一事务中验证会话、主体状态并写入授权码；无效或过期会话返回
+    /// `None`，不得退化为未绑定主体的授权。
+    fn authorize_desktop_session<'a>(
+        &'a self,
+        session_secret_digest: &'a SecretDigest,
+        grant: &'a DesktopAuthorizationGrant,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>>;
 }
 
 pub trait DesktopSessionExchangeTransaction: Send + Sync {

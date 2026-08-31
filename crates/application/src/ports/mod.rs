@@ -74,7 +74,8 @@ pub use handoffs::{
     TargetedHandoffRequestFingerprint, TargetedHandoffTargetRecord,
 };
 pub use identity::{
-    DesktopAuthorizationCodeRegistration, DesktopClientState, DesktopLoginCompletionTransaction,
+    DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant, DesktopClientState,
+    DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
     DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentityValueError,
     LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
     OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,

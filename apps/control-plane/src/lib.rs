@@ -392,6 +392,7 @@ fn build_authentication_runtime(
             login_attempts: repositories.clone(),
             login_completion: repositories.clone(),
             desktop_login_completion: repositories.clone(),
+            desktop_session_authorization: repositories.clone(),
             desktop_session_exchange: repositories.clone(),
             sessions: repositories.clone(),
             suspensions: repositories.clone(),

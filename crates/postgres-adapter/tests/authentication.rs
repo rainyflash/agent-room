@@ -1,7 +1,8 @@
 use std::env;
 
 use agent_room_application::ports::{
-    DesktopAuthorizationCodeRegistration, DesktopLoginCompletionTransaction,
+    DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant,
+    DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
     DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt, LoginAttemptStore,
     LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge, PrincipalRegistration,
     PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
@@ -346,6 +347,82 @@ async fn 桌面授权码交换原子校验_pkce_过期和重放() {
         .expect("到期授权码返回空结果")
         .is_none()
     );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 有效_web_会话可原子签发桌面授权码() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example",
+        "web-to-desktop-subject",
+        "跨端用户",
+    );
+    let web_session = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 41);
+    let stored = LoginCompletionTransaction::complete(&repositories, &principal, &web_session)
+        .await
+        .expect("Web 会话应建立");
+    let grant = DesktopAuthorizationGrant {
+        code_digest: SecretDigest::from_array([42; 32]),
+        code_challenge: PkceCodeChallenge::new("g".repeat(43)).expect("challenge 有效"),
+        created_at: test_time(1_000),
+        expires_at: test_time(601_000),
+    };
+
+    let source = DesktopSessionAuthorizationTransaction::authorize_desktop_session(
+        &repositories,
+        &web_session.secret_digest,
+        &grant,
+        test_time(1_000),
+    )
+    .await
+    .expect("有效 Web 会话可签发授权码")
+    .expect("Web 会话仍有效");
+    assert_eq!(source.account.principal.id(), stored.account.principal.id());
+
+    let desktop_session = DesktopSessionRegistration {
+        id: WebSessionId::from_uuid(Uuid::now_v7()),
+        secret_digest: SecretDigest::from_array([43; 32]),
+        created_at: test_time(2_000),
+        expires_at: test_time(28_802_000),
+    };
+    let exchanged = DesktopSessionExchangeTransaction::exchange_desktop(
+        &repositories,
+        &grant.code_digest,
+        &grant.code_challenge,
+        &desktop_session,
+        test_time(2_000),
+    )
+    .await
+    .expect("授权码可交换")
+    .expect("授权码尚未消费");
+    assert_eq!(
+        exchanged.account.principal.id(),
+        stored.account.principal.id()
+    );
+    assert_eq!(exchanged.authenticated_at, stored.authenticated_at);
+
+    WebSessionStore::revoke(&repositories, &web_session.secret_digest, test_time(3_000))
+        .await
+        .expect("Web 会话可撤销");
+    let rejected = DesktopSessionAuthorizationTransaction::authorize_desktop_session(
+        &repositories,
+        &web_session.secret_digest,
+        &DesktopAuthorizationGrant {
+            code_digest: SecretDigest::from_array([44; 32]),
+            code_challenge: PkceCodeChallenge::new("r".repeat(43)).expect("challenge 有效"),
+            created_at: test_time(4_000),
+            expires_at: test_time(604_000),
+        },
+        test_time(4_000),
+    )
+    .await
+    .expect("撤销会话只返回空结果");
+    assert!(rejected.is_none());
 
     database.close().await;
 }

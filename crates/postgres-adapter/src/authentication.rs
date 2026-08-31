@@ -1,12 +1,13 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        DesktopAuthorizationCodeRegistration, DesktopClientState,
-        DesktopLoginCompletionTransaction, DesktopSessionExchangeTransaction,
-        DesktopSessionRegistration, LoginAttempt, LoginAttemptStore, LoginCompletionTransaction,
-        LoginDelivery, PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
-        PrincipalSuspensionTransaction, SafeReturnPath, SecretDigest, SecretValue,
-        StoredWebSession, WebSessionRegistration, WebSessionStore,
+        DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant, DesktopClientState,
+        DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
+        DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt,
+        LoginAttemptStore, LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge,
+        PortFuture, PrincipalAccount, PrincipalRegistration, PrincipalSuspensionTransaction,
+        SafeReturnPath, SecretDigest, SecretValue, StoredWebSession, WebSessionRegistration,
+        WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -187,31 +188,96 @@ impl DesktopLoginCompletionTransaction for PostgresRepositories {
                     RepositoryErrorKind::Forbidden,
                 ));
             }
-            sqlx::query(
-                r"INSERT INTO agent_room.desktop_authorization_code (
-                    code_digest, principal_id, pkce_challenge, authenticated_at,
-                    created_at, expires_at
-                ) VALUES (
-                    $1, $2, $3,
-                    to_timestamp($4::double precision / 1000.0),
-                    to_timestamp($5::double precision / 1000.0),
-                    to_timestamp($6::double precision / 1000.0)
-                )",
+            insert_desktop_authorization(
+                &mut transaction,
+                account.principal.id(),
+                authorization,
+                operation,
             )
-            .bind(authorization.code_digest.as_bytes().as_slice())
-            .bind(account.principal.id().as_uuid())
-            .bind(authorization.code_challenge.as_str())
-            .bind(authorization.authenticated_at.value())
-            .bind(authorization.created_at.value())
-            .bind(authorization.expires_at.value())
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+            .await?;
             transaction
                 .commit()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(account)
+        })
+    }
+}
+
+impl DesktopSessionAuthorizationTransaction for PostgresRepositories {
+    fn authorize_desktop_session<'a>(
+        &'a self,
+        session_secret_digest: &'a SecretDigest,
+        grant: &'a DesktopAuthorizationGrant,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>> {
+        Box::pin(async move {
+            let operation = "desktop_session.authorize";
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let row = sqlx::query(
+                r"SELECT web_session.id AS session_id, principal.id AS principal_id,
+                     principal.status, principal.version, principal.matrix_user_id,
+                     principal.display_name, principal.avatar_content_id, principal.locale,
+                     floor(extract(epoch FROM web_session.authenticated_at) * 1000)::bigint
+                       AS authenticated_at_ms,
+                     floor(extract(epoch FROM web_session.created_at) * 1000)::bigint
+                       AS created_at_ms,
+                     floor(extract(epoch FROM web_session.expires_at) * 1000)::bigint
+                       AS expires_at_ms
+                   FROM agent_room.web_session AS web_session
+                   JOIN agent_room.principal AS principal
+                     ON principal.id = web_session.principal_id
+                   WHERE web_session.secret_digest = $1
+                     AND web_session.revoked_at IS NULL
+                     AND web_session.expires_at > to_timestamp($2::double precision / 1000.0)
+                   FOR UPDATE OF web_session, principal",
+            )
+            .bind(session_secret_digest.as_bytes().as_slice())
+            .bind(now.value())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let Some(row) = row else {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                return Ok(None);
+            };
+            let session = decode_stored_session(&row)?;
+            if !session.account.principal.allows_authentication() {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+            let authorization = DesktopAuthorizationCodeRegistration {
+                code_digest: grant.code_digest,
+                code_challenge: grant.code_challenge.clone(),
+                authenticated_at: session.authenticated_at,
+                created_at: grant.created_at,
+                expires_at: grant.expires_at,
+            };
+            insert_desktop_authorization(
+                &mut transaction,
+                session.account.principal.id(),
+                &authorization,
+                operation,
+            )
+            .await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(Some(session))
         })
     }
 }
@@ -520,6 +586,35 @@ async fn insert_web_session(
     .bind(session.authenticated_at.value())
     .bind(session.created_at.value())
     .bind(session.expires_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
+}
+
+async fn insert_desktop_authorization(
+    transaction: &mut Transaction<'_, Postgres>,
+    principal_id: PrincipalId,
+    authorization: &DesktopAuthorizationCodeRegistration,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    sqlx::query(
+        r"INSERT INTO agent_room.desktop_authorization_code (
+            code_digest, principal_id, pkce_challenge, authenticated_at,
+            created_at, expires_at
+        ) VALUES (
+            $1, $2, $3,
+            to_timestamp($4::double precision / 1000.0),
+            to_timestamp($5::double precision / 1000.0),
+            to_timestamp($6::double precision / 1000.0)
+        )",
+    )
+    .bind(authorization.code_digest.as_bytes().as_slice())
+    .bind(principal_id.as_uuid())
+    .bind(authorization.code_challenge.as_str())
+    .bind(authorization.authenticated_at.value())
+    .bind(authorization.created_at.value())
+    .bind(authorization.expires_at.value())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;

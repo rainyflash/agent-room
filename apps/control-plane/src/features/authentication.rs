@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use agent_room_application::{
     authentication::{
         AuthenticatedPrincipal, AuthenticationFailureKind, AuthenticationIntent,
-        AuthenticationRequirement, AuthenticationUseCases, BeginLogin, CompleteLogin,
-        ExchangeDesktopAuthorization, LoginCompletion,
+        AuthenticationRequirement, AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin,
+        CompleteLogin, DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion,
     },
     ports::{
         DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent, SafeReturnPath,
@@ -254,6 +254,29 @@ async fn begin_desktop_login(
                 .into_response(),
         );
     };
+    let mut jar = jar;
+    if matches!(query.intent, BeginLoginIntent::SignIn)
+        && let Ok(session_secret) = session_secret(&jar)
+    {
+        match state
+            .authentication
+            .authorize_desktop_session(AuthorizeDesktopSession {
+                session_secret: &session_secret,
+                client_state: client_state.clone(),
+                code_challenge: code_challenge.clone(),
+                return_path: return_path.clone(),
+            })
+            .await
+        {
+            Ok(completion) => return desktop_login_success(jar, &completion),
+            Err(failure) if failure.kind() == AuthenticationFailureKind::InvalidSession => {
+                jar = expired_session_jar(jar);
+            }
+            Err(failure) => {
+                return no_store(ApiError::authentication(failure, correlation_id).into_response());
+            }
+        }
+    }
     let redirect = match state
         .authentication
         .begin_login(BeginLogin {
@@ -358,17 +381,19 @@ async fn complete_login(
             ));
             no_store((jar, Redirect::to(destination.as_str())).into_response())
         }
-        LoginCompletion::Desktop(completion) => {
-            let mut destination =
-                Url::parse("agent-room://auth/callback").expect("固定桌面回调 URL 必须有效");
-            destination.query_pairs_mut().extend_pairs([
-                ("code", completion.authorization_code.expose()),
-                ("state", completion.client_state.expose()),
-            ]);
-            let jar = jar.add(expired_cookie(LOGIN_COOKIE));
-            no_store((jar, Redirect::to(destination.as_str())).into_response())
-        }
+        LoginCompletion::Desktop(completion) => desktop_login_success(jar, &completion),
     }
+}
+
+fn desktop_login_success(jar: CookieJar, completion: &DesktopLoginCompletion) -> Response {
+    let mut destination =
+        Url::parse("agent-room://auth/callback").expect("固定桌面回调 URL 必须有效");
+    destination.query_pairs_mut().extend_pairs([
+        ("code", completion.authorization_code.expose()),
+        ("state", completion.client_state.expose()),
+    ]);
+    let jar = jar.add(expired_cookie(LOGIN_COOKIE));
+    no_store((jar, Redirect::to(destination.as_str())).into_response())
 }
 
 async fn exchange_desktop_login(
@@ -662,9 +687,9 @@ mod tests {
     use agent_room_application::{
         authentication::{
             AuthenticatedPrincipal, AuthenticationIntent, AuthenticationRequirement,
-            AuthenticationResult, AuthenticationUseCases, BeginLogin, CompleteLogin,
-            DesktopLoginCompletion, DesktopSessionCompletion, ExchangeDesktopAuthorization,
-            LoginCompletion, LoginRedirect, WebLoginCompletion,
+            AuthenticationResult, AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin,
+            CompleteLogin, DesktopLoginCompletion, DesktopSessionCompletion,
+            ExchangeDesktopAuthorization, LoginCompletion, LoginRedirect, WebLoginCompletion,
         },
         ports::{LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
     };
@@ -684,6 +709,7 @@ mod tests {
     struct FakeAuthentication {
         begin: AtomicUsize,
         desktop_begin: AtomicUsize,
+        desktop_session_authorization: AtomicUsize,
         desktop_exchange: AtomicUsize,
         register_begin: AtomicUsize,
         complete: AtomicUsize,
@@ -765,6 +791,26 @@ mod tests {
                     session_secret: SecretValue::new("desktop-session-secret")
                         .expect("测试会话有效"),
                     principal: principal(),
+                })
+            })
+        }
+
+        fn authorize_desktop_session<'a>(
+            &'a self,
+            request: AuthorizeDesktopSession<'a>,
+        ) -> PortFuture<'a, AuthenticationResult<DesktopLoginCompletion>> {
+            self.desktop_session_authorization
+                .fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                assert_eq!(request.session_secret.expose(), "session-secret");
+                assert_eq!(request.client_state.expose(), "s".repeat(43));
+                assert_eq!(request.code_challenge.as_str(), "c".repeat(43));
+                assert_eq!(request.return_path.as_str(), "/workspace");
+                Ok(DesktopLoginCompletion {
+                    authorization_code: SecretValue::new("desktop-authorization-code")
+                        .expect("测试授权码有效"),
+                    client_state: request.client_state,
+                    return_path: request.return_path,
                 })
             })
         }
@@ -1003,6 +1049,44 @@ mod tests {
                 .iter()
                 .all(|cookie| !cookie.starts_with("__Host-agent-room-session="))
         );
+    }
+
+    #[tokio::test]
+    async fn 桌面登录优先复用同源有效_web_会话() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&returnTo=%2Fworkspace&importDisplayName=true&importLocale=true",
+                        "s".repeat(43),
+                        "c".repeat(43)
+                    ))
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面登录起点可执行");
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .expect("必须返回桌面深链")
+                .to_str()
+                .expect("深链有效"),
+            format!(
+                "agent-room://auth/callback?code=desktop-authorization-code&state={}",
+                "s".repeat(43)
+            )
+        );
+        assert_eq!(fake.desktop_session_authorization.load(Ordering::SeqCst), 1);
+        assert_eq!(fake.desktop_begin.load(Ordering::SeqCst), 0);
+        assert!(set_cookies(&response).iter().any(|cookie| {
+            cookie.starts_with("__Host-agent-room-login=") && cookie.contains("Max-Age=0")
+        }));
     }
 
     #[tokio::test]
