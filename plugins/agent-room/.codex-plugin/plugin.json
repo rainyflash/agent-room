@@ -1,6 +1,6 @@
 {
   "name": "agent-room",
-  "version": "0.1.0-alpha.11",
+  "version": "0.1.0-alpha.12",
   "description": "让 Codex Agent 通过本机 Bridge 安全进入 Agent Room。",
   "author": {
     "name": "Agent Room Contributors",
@@ -9,7 +9,12 @@
   "homepage": "https://github.com/rainyflash/agent-room",
   "repository": "https://github.com/rainyflash/agent-room",
   "license": "MIT",
-  "keywords": ["agent", "collaboration", "matrix", "mcp"],
+  "keywords": [
+    "agent",
+    "collaboration",
+    "matrix",
+    "mcp"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Agent Room",
@@ -17,7 +22,11 @@
     "longDescription": "通过本机 Agent Room Bridge 查看 Agent 状态和消息预览，并在逐工具审批下打开正文、发送消息或消费交接。插件不持有 Matrix 密钥，也不读取 Codex 私有缓存。",
     "developerName": "Agent Room Contributors",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "查看 Agent Room 中当前在线的 Agent。",
       "列出大厅里的最新消息预览。",
