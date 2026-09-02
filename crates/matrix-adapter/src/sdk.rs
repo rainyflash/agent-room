@@ -176,7 +176,7 @@ impl MatrixSdkClientFactory {
         let client = self.build_client(MatrixOperation::RestoreSession).await?;
         // 必须在 restore_session 启动长期 E2EE 任务前检查持久冲突标记。
         // Windows 不允许移动仍被这些任务持有的 SQLite 文件。
-        reject_recorded_crypto_identity_conflict(&client).await?;
+        reject_recorded_crypto_identity_conflict(&client, MatrixOperation::RestoreSession).await?;
         let sdk_session = to_sdk_session(session)?;
         let first_attempt = client
             .matrix_auth()
@@ -223,20 +223,18 @@ impl MatrixSdkClientFactory {
 /// Matrix SDK 会在首次发现重复一次性密钥时把冲突写入 State Store，后续启动
 /// 不再重复广播同一诊断。恢复会话时必须读取这个持久标记，否则客户端会永久
 /// 卡在无意义的 `/keys/upload` 重试中，且应用层永远看不到原始 400 响应。
-async fn reject_recorded_crypto_identity_conflict(client: &Client) -> MatrixResult<()> {
+async fn reject_recorded_crypto_identity_conflict(
+    client: &Client,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
     let recorded = client
         .state_store()
         .get_kv_data(StateStoreDataKey::OneTimeKeyAlreadyUploaded)
         .await
-        .map_err(|_| {
-            MatrixFailure::new(
-                MatrixOperation::RestoreSession,
-                MatrixFailureKind::DependencyUnavailable,
-            )
-        })?;
+        .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable))?;
     if recorded.is_some() {
         return Err(MatrixFailure::new(
-            MatrixOperation::RestoreSession,
+            operation,
             MatrixFailureKind::CryptographicIdentityConflict,
         ));
     }
@@ -395,6 +393,10 @@ impl MatrixGateway for MatrixSdkGateway {
                 .sync_once(settings)
                 .await
                 .map_err(|error| map_sdk_error(MatrixOperation::Sync, &error))?;
+            // Matrix SDK 会把 `/keys/upload` 的重复一次性密钥错误吞进后台加密任务，
+            // `sync_once` 本身仍可能返回成功。同步边界必须主动读取持久故障标记，
+            // 否则 Bridge 会假装在线并永久重试同一组无效密钥。
+            reject_recorded_crypto_identity_conflict(&self.client, MatrixOperation::Sync).await?;
             map_sync_response(&response)
         })
     }
@@ -1032,11 +1034,39 @@ mod tests {
             .await
             .expect("重复密钥标记可持久化");
 
-        let failure = reject_recorded_crypto_identity_conflict(&client)
-            .await
-            .expect_err("旧设备加密身份必须触发上层的一次性恢复");
+        let failure =
+            reject_recorded_crypto_identity_conflict(&client, MatrixOperation::RestoreSession)
+                .await
+                .expect_err("旧设备加密身份必须触发上层的一次性恢复");
 
         assert_eq!(failure.operation(), MatrixOperation::RestoreSession);
+        assert_eq!(
+            failure.kind(),
+            MatrixFailureKind::CryptographicIdentityConflict
+        );
+    }
+
+    #[tokio::test]
+    async fn 同步边界读取重复一次性密钥标记时保留同步操作维度() {
+        let client = Client::builder()
+            .homeserver_url("http://127.0.0.1:18008")
+            .build()
+            .await
+            .expect("内存客户端可创建");
+        client
+            .state_store()
+            .set_kv_data(
+                StateStoreDataKey::OneTimeKeyAlreadyUploaded,
+                StateStoreDataValue::OneTimeKeyAlreadyUploaded,
+            )
+            .await
+            .expect("重复密钥标记可持久化");
+
+        let failure = reject_recorded_crypto_identity_conflict(&client, MatrixOperation::Sync)
+            .await
+            .expect_err("同步边界必须把后台加密冲突提升到 Bridge");
+
+        assert_eq!(failure.operation(), MatrixOperation::Sync);
         assert_eq!(
             failure.kind(),
             MatrixFailureKind::CryptographicIdentityConflict
