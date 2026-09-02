@@ -8,6 +8,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-desktop-begin-human-authentication",
+    "allow-desktop-begin-matrix-authentication",
     "allow-desktop-clear-human-session",
     "allow-desktop-runtime-snapshot",
     "allow-desktop-retry-bridge",

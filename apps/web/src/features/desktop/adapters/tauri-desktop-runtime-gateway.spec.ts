@@ -163,6 +163,46 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it.each([
+    [
+      '序列化失败对象',
+      JSON.stringify({ code: 'desktop.matrix_session.loopback_bind_failed', retryable: true }),
+      { code: 'desktop.matrix_session.loopback_bind_failed', retryable: true },
+    ],
+    [
+      'Error 消息中的失败对象',
+      new Error(
+        JSON.stringify({ code: 'desktop.matrix_session.browser_open_failed', retryable: true }),
+      ),
+      { code: 'desktop.matrix_session.browser_open_failed', retryable: true },
+    ],
+    [
+      'Tauri ACL 拒绝',
+      'Command desktop_begin_matrix_authentication not allowed by ACL',
+      { code: 'desktop.command.permission_denied', retryable: false },
+    ],
+  ])('保留%s的可操作诊断', async (_caseName, rejection, expected) => {
+    const gateway = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockRejectedValue(rejection) }),
+    );
+
+    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
+      error: expected,
+      ok: false,
+    });
+  });
+
+  it('拒绝畸形或过大的原生命令错误而不把任意文本提升为故障码', async () => {
+    const gateway = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockRejectedValue(`{${'x'.repeat(1_024)}}`) }),
+    );
+
+    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
+      error: { code: 'desktop.command.failed', retryable: true },
+      ok: false,
+    });
+  });
+
   it('订阅两个白名单事件并在任一载荷失真时显式失败', async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     const onFailure = vi.fn();

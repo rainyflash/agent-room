@@ -567,6 +567,12 @@
           "markdownDescription": "Enables the desktop_begin_human_authentication command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_begin_matrix_authentication command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-begin-matrix-authentication",
+          "markdownDescription": "Enables the desktop_begin_matrix_authentication command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_bootstrap_default_agent command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-bootstrap-default-agent",
@@ -655,6 +661,12 @@
           "type": "string",
           "const": "deny-desktop-begin-human-authentication",
           "markdownDescription": "Denies the desktop_begin_human_authentication command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_begin_matrix_authentication command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-begin-matrix-authentication",
+          "markdownDescription": "Denies the desktop_begin_matrix_authentication command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_bootstrap_default_agent command without any pre-configured scope.",

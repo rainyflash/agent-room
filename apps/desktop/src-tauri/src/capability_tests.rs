@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::desktop_command_surface::DESKTOP_COMMANDS;
+
 #[test]
 fn 主窗口能力不包含文件_shell_或进程通配权限() {
     let capability: Value = serde_json::from_str(include_str!("../capabilities/main.json"))
@@ -23,26 +25,29 @@ fn 主窗口能力不包含文件_shell_或进程通配权限() {
         .copied()
         .filter(|permission| permission.starts_with("allow-desktop-"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        desktop_permissions,
-        [
-            "allow-desktop-begin-human-authentication",
-            "allow-desktop-clear-human-session",
-            "allow-desktop-runtime-snapshot",
-            "allow-desktop-retry-bridge",
-            "allow-desktop-set-autostart",
-            "allow-desktop-open-authorization",
-            "allow-desktop-check-update",
-            "allow-desktop-install-update",
-            "allow-desktop-detect-agent-hosts",
-            "allow-desktop-plan-agent-host",
-            "allow-desktop-apply-agent-host",
-            "allow-desktop-remove-agent-host",
-            "allow-desktop-bootstrap-default-agent",
-            "allow-desktop-configure-agent-runtime",
-            "allow-desktop-lobby-snapshot",
-        ]
-    );
+    let expected = DESKTOP_COMMANDS
+        .iter()
+        .map(|command| format!("allow-{}", command.replace('_', "-")))
+        .collect::<Vec<_>>();
+    assert_eq!(desktop_permissions, expected);
+}
+
+#[test]
+fn invoke_handler_与权限命令面完全一致() {
+    let source = include_str!("lib.rs");
+    let handler = source
+        .split_once(".invoke_handler(tauri::generate_handler![")
+        .and_then(|(_, suffix)| suffix.split_once("])"))
+        .map(|(body, _)| body)
+        .expect("桌面入口必须只包含一个可解析的 invoke handler");
+    let registered = handler
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_suffix(','))
+        .filter(|line| line.starts_with("desktop_"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(registered, DESKTOP_COMMANDS);
 }
 
 #[test]

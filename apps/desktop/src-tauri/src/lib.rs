@@ -6,6 +6,8 @@ mod bridge_supervisor;
 mod capability_tests;
 mod commands;
 mod deep_link;
+#[cfg(test)]
+mod desktop_command_surface;
 mod desktop_config;
 mod human_session;
 mod installer_acceptance;
@@ -97,10 +99,10 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         ))
         .manage(DeepLinkInbox::default())
         .invoke_handler(tauri::generate_handler![
-            desktop_runtime_snapshot,
             desktop_begin_human_authentication,
             desktop_begin_matrix_authentication,
             desktop_clear_human_session,
+            desktop_runtime_snapshot,
             desktop_retry_bridge,
             desktop_set_autostart,
             desktop_open_authorization,

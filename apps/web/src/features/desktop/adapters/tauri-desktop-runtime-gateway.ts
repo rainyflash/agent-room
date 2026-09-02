@@ -43,6 +43,10 @@ const commandFailureSchema = z
   })
   .strict();
 
+const serializedCommandFailureSchema = z.string().trim().min(1).max(1_024);
+const commandFailureEnvelopeSchema = z.looseObject({ message: serializedCommandFailureSchema });
+const tauriAclDenialPattern = /^Command [a-zA-Z0-9_:|.-]+ not allowed by ACL$/u;
+
 const desktopCommands = {
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
@@ -369,5 +373,31 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
 function normalizeCommandFailure(error: unknown, fallbackCode: string): DesktopRuntimeFailure {
   const parsed = commandFailureSchema.safeParse(error);
-  return parsed.success ? parsed.data : { code: fallbackCode, retryable: true };
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  const serialized = readSerializedCommandFailure(error);
+  if (serialized === null) {
+    return { code: fallbackCode, retryable: true };
+  }
+  if (tauriAclDenialPattern.test(serialized)) {
+    return { code: 'desktop.command.permission_denied', retryable: false };
+  }
+
+  try {
+    const decoded = commandFailureSchema.safeParse(JSON.parse(serialized) as unknown);
+    return decoded.success ? decoded.data : { code: fallbackCode, retryable: true };
+  } catch {
+    return { code: fallbackCode, retryable: true };
+  }
+}
+
+function readSerializedCommandFailure(error: unknown): string | null {
+  const direct = serializedCommandFailureSchema.safeParse(error);
+  if (direct.success) {
+    return direct.data;
+  }
+  const envelope = commandFailureEnvelopeSchema.safeParse(error);
+  return envelope.success ? envelope.data.message : null;
 }
