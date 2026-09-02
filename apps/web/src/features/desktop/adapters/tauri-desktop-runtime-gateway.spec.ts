@@ -147,6 +147,22 @@ describe('Tauri 桌面运行时适配器', () => {
     expect(listeners.size).toBe(0);
   });
 
+  it('Matrix 登录通过原生命令返回一次性授权而不订阅 WebView 导航', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      loginToken: 'single-use-token',
+      returnPath: '/lobby/public',
+    });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
+      ok: true,
+      value: { loginToken: 'single-use-token', returnPath: '/lobby/public' },
+    });
+    expect(invoke).toHaveBeenCalledWith('desktop_begin_matrix_authentication', {
+      returnPath: '/lobby/public',
+    });
+  });
+
   it('订阅两个白名单事件并在任一载荷失真时显式失败', async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     const onFailure = vi.fn();

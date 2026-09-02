@@ -523,7 +523,7 @@ const services: AppServices = {
     },
     controlPlane: fixtureControlPlane,
     matrix: {
-      beginAuthentication: async () => ok(undefined),
+      beginAuthentication: async () => ok({ kind: 'browser-navigation' }),
       logout: async () => ok(undefined),
       restore: async () => ok({ kind: 'authentication-required' }),
     },

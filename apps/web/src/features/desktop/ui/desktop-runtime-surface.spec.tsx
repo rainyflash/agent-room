@@ -77,6 +77,8 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: async () =>
       err({ code: 'desktop.test.unavailable', retryable: false }),
+    beginMatrixAuthentication: async () =>
+      err({ code: 'desktop.test.unavailable', retryable: false }),
     bootstrapDefaultAgent: async () =>
       ok({
         agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',

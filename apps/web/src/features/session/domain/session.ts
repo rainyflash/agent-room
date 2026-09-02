@@ -53,7 +53,9 @@ export type ControlPlaneGateway = {
 };
 
 export type MatrixGateway = {
-  beginAuthentication(returnPath: string): Promise<Result<void, SessionFailure>>;
+  beginAuthentication(
+    returnPath: string,
+  ): Promise<Result<AuthenticationStartOutcome, SessionFailure>>;
   logout(): Promise<Result<void, SessionFailure>>;
   restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>>;
 };

@@ -54,7 +54,7 @@ function dependencies(
     ...overrides.controlPlane,
   };
   const matrix: MatrixGateway = {
-    beginAuthentication: () => Promise.resolve(ok(undefined)),
+    beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
     logout: () => Promise.resolve(ok(undefined)),
     restore: () =>
       Promise.resolve(
@@ -141,6 +141,30 @@ describe('Web 会话状态机', () => {
 
     expect(reads).toBe(2);
     expect(ready.context.principal).toEqual(session);
+    actor.stop();
+  });
+
+  it('桌面 Matrix 授权完成后直接恢复设备会话而不等待页面跳转', async () => {
+    let restores = 0;
+    const runtime = dependencies({
+      matrix: {
+        beginAuthentication: () => Promise.resolve(ok({ kind: 'session-established' })),
+        restore: () => {
+          restores += 1;
+          return restores === 1
+            ? Promise.resolve(ok({ kind: 'authentication-required' }))
+            : Promise.resolve(ok({ connection: connection(), kind: 'connected' }));
+        },
+      },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+
+    actor.send({ type: 'LOGIN' });
+    const ready = await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    expect(restores).toBe(2);
+    expect(ready.context.connection?.userId).toBe(session.matrixUserId);
     actor.stop();
   });
 

@@ -7,7 +7,8 @@ use tokio::{
 };
 use url::Url;
 
-const CALLBACK_PATH: &str = "/auth/callback";
+const HUMAN_SESSION_CALLBACK_PATH: &str = "/auth/callback";
+const MATRIX_SESSION_CALLBACK_PREFIX: &str = "/matrix/callback/";
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1_024;
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -20,11 +21,29 @@ pub(crate) struct LoopbackCallbackListener {
 }
 
 impl LoopbackCallbackListener {
-    pub(crate) async fn bind() -> io::Result<Self> {
+    pub(crate) async fn bind_human_session() -> io::Result<Self> {
+        Self::bind_path(HUMAN_SESSION_CALLBACK_PATH).await
+    }
+
+    pub(crate) async fn bind_matrix_session(transaction_id: &str) -> io::Result<Self> {
+        if !(32..=128).contains(&transaction_id.len())
+            || !transaction_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Matrix 回调事务标识无效",
+            ));
+        }
+        Self::bind_path(&format!("{MATRIX_SESSION_CALLBACK_PREFIX}{transaction_id}")).await
+    }
+
+    async fn bind_path(callback_path: &str) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let port = listener.local_addr()?.port();
         let callback_url = Url::parse(&format!(
-            "http://{}:{port}{CALLBACK_PATH}",
+            "http://{}:{port}{callback_path}",
             Ipv4Addr::LOCALHOST
         ))
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -128,7 +147,7 @@ async fn read_callback_url(stream: &mut TcpStream, callback_base: &Url) -> Resul
     if parts.next().is_some()
         || method != "GET"
         || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
-        || !target.starts_with(CALLBACK_PATH)
+        || !target.starts_with(callback_base.path())
         || target.starts_with("//")
         || target.contains('#')
     {
@@ -151,7 +170,7 @@ async fn read_callback_url(stream: &mut TcpStream, callback_base: &Url) -> Resul
     if callback.scheme() != "http"
         || callback.host_str() != callback_base.host_str()
         || callback.port() != callback_base.port()
-        || callback.path() != CALLBACK_PATH
+        || callback.path() != callback_base.path()
         || callback.fragment().is_some()
         || callback.query().is_none()
     {
@@ -202,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn 回环监听器只接受自身端口上的闭合回调() {
-        let listener = LoopbackCallbackListener::bind()
+        let listener = LoopbackCallbackListener::bind_human_session()
             .await
             .expect("回环端口可绑定");
         let callback_base = listener.callback_url().clone();
@@ -241,6 +260,23 @@ mod tests {
                 .await
                 .expect("客户端任务完成")
                 .starts_with("HTTP/1.1 200 OK")
+        );
+    }
+
+    #[tokio::test]
+    async fn matrix_回调使用不可猜测事务路径并拒绝相邻路径() {
+        let transaction_id = "abcdefghijklmnopqrstuvwxyzABCDEF0123456789_-";
+        let listener = LoopbackCallbackListener::bind_matrix_session(transaction_id)
+            .await
+            .expect("Matrix 回环端口可绑定");
+        assert_eq!(
+            listener.callback_url().path(),
+            format!("/matrix/callback/{transaction_id}")
+        );
+        assert!(
+            LoopbackCallbackListener::bind_matrix_session("unsafe/path")
+                .await
+                .is_err()
         );
     }
 }

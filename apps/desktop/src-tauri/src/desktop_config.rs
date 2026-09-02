@@ -22,6 +22,7 @@ pub(crate) struct DesktopBridgeConfig {
     secure_storage_service: SecureStorageService,
     control_plane_url: Url,
     browser_control_plane_url: Url,
+    matrix_base_url: Url,
     environment: BTreeMap<String, String>,
 }
 
@@ -49,9 +50,13 @@ impl DesktopBridgeConfig {
             "AGENT_ROOM_BROWSER_CONTROL_PLANE_URL".to_owned(),
             browser_control_plane_url.to_string(),
         );
+        let matrix_base_url = normalized_base_url(&validated_url(
+            "AGENT_ROOM_MATRIX_BASE_URL",
+            DEFAULT_MATRIX_BASE_URL,
+        )?)?;
         environment.insert(
             "AGENT_ROOM_MATRIX_BASE_URL".to_owned(),
-            validated_url("AGENT_ROOM_MATRIX_BASE_URL", DEFAULT_MATRIX_BASE_URL)?,
+            matrix_base_url.to_string(),
         );
         environment.insert(
             "AGENT_ROOM_OIDC_ISSUER_URL".to_owned(),
@@ -87,6 +92,7 @@ impl DesktopBridgeConfig {
             secure_storage_service,
             control_plane_url,
             browser_control_plane_url,
+            matrix_base_url,
         })
     }
 
@@ -132,6 +138,10 @@ impl DesktopBridgeConfig {
     /// 无法随跨子域回调返回。原生 API 与浏览器认证入口因此刻意分离。
     pub(crate) fn browser_control_plane_url(&self) -> Url {
         self.browser_control_plane_url.clone()
+    }
+
+    pub(crate) fn matrix_base_url(&self) -> Url {
+        self.matrix_base_url.clone()
     }
 
     /// 人类云端会话必须与 Bridge/Agent 凭据物理隔离，同时保留测试安装的命名空间隔离。

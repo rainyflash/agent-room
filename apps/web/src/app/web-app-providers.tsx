@@ -38,6 +38,7 @@ import { ControlPlaneAccessManagementClient } from '@/features/security/adapters
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
+import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
@@ -80,8 +81,9 @@ export function createCloudRuntime(
   const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
   const matrixClients = new MatrixClientRegistry();
   const secretStorageKeys = new MatrixSecretStorageKeyCache();
-  const matrix = new MatrixWebGateway({
+  const matrixCore = new MatrixWebGateway({
     baseUrl: config.matrixHomeserverUrl,
+    deviceDisplayName: localRuntime.isAvailable() ? 'Agent Room Desktop' : 'Agent Room Web',
     onClientActivity: (client) => {
       matrixClients.refresh(client);
     },
@@ -90,6 +92,9 @@ export function createCloudRuntime(
     },
     secretStorageKeys,
   });
+  const matrix = localRuntime.isAvailable()
+    ? new DesktopMatrixGateway({ matrix: matrixCore, runtime: localRuntime })
+    : matrixCore;
   const accountPreferences = new AccountPreferencesStore(
     new MatrixAccountPreferencesGateway(matrixClients),
     { language: readLanguagePreference(window.localStorage), lobbyView: 'scene' },

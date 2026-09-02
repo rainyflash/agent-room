@@ -1,4 +1,5 @@
 mod agent_runtime;
+mod authentication_values;
 mod bridge_lifecycle;
 mod bridge_supervisor;
 #[cfg(test)]
@@ -9,6 +10,7 @@ mod desktop_config;
 mod human_session;
 mod installer_acceptance;
 mod loopback_callback;
+mod matrix_session;
 mod release_update_config;
 mod release_update_state;
 mod release_updates;
@@ -18,15 +20,16 @@ mod webview_migration;
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
     DesktopRuntime, desktop_apply_agent_host, desktop_begin_human_authentication,
-    desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
-    desktop_configure_agent_runtime, desktop_detect_agent_hosts, desktop_install_update,
-    desktop_lobby_snapshot, desktop_open_authorization, desktop_plan_agent_host,
-    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_set_autostart,
+    desktop_begin_matrix_authentication, desktop_bootstrap_default_agent, desktop_check_update,
+    desktop_clear_human_session, desktop_configure_agent_runtime, desktop_detect_agent_hosts,
+    desktop_install_update, desktop_lobby_snapshot, desktop_open_authorization,
+    desktop_plan_agent_host, desktop_remove_agent_host, desktop_retry_bridge,
+    desktop_runtime_snapshot, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use human_session::HumanSessionRuntime;
+use matrix_session::MatrixSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
@@ -96,6 +99,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         .invoke_handler(tauri::generate_handler![
             desktop_runtime_snapshot,
             desktop_begin_human_authentication,
+            desktop_begin_matrix_authentication,
             desktop_clear_human_session,
             desktop_retry_bridge,
             desktop_set_autostart,
@@ -116,6 +120,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
             let human_sessions = HumanSessionRuntime::system(&config)
                 .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
+            let matrix_sessions = MatrixSessionRuntime::system(&config);
             human_sessions
                 .restore(app.handle())
                 .map_err(|failure| format!("桌面人类会话恢复失败 [{}]", failure.code()))?;
@@ -143,6 +148,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 targets,
             });
             app.manage(human_sessions);
+            app.manage(matrix_sessions);
             setup_tray(app)?;
             setup_deep_links(app)?;
             Ok(())

@@ -21,6 +21,25 @@ describe('MatrixWebGateway', () => {
     });
   });
 
+  it('拒绝桌面边界传入的空令牌或站外返回路径', async () => {
+    const gateway = new MatrixWebGateway({
+      baseUrl: 'https://matrix.agent-room.test',
+      sessionStorage: memoryStorage(),
+      url: () => new URL('https://app.agent-room.test/connect'),
+    });
+
+    await expect(gateway.exchangeAuthenticationGrant('', '/connect')).resolves.toMatchObject({
+      error: { code: 'matrix.invalid_desktop_authentication_grant' },
+      ok: false,
+    });
+    await expect(
+      gateway.exchangeAuthenticationGrant('single-use', '//evil.example'),
+    ).resolves.toMatchObject({
+      error: { code: 'matrix.invalid_desktop_authentication_grant' },
+      ok: false,
+    });
+  });
+
   it('拒绝 connect 之外的 loginToken 并立即从 URL 清除', async () => {
     const replacements: string[] = [];
     const gateway = new MatrixWebGateway({

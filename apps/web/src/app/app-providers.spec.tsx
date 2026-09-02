@@ -8,6 +8,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppProviders } from '@/app/app-providers';
 import { createCloudRuntime } from '@/app/web-app-providers';
+import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import type {
   BridgeRuntime,
   DesktopRuntimeGateway,
@@ -78,6 +79,13 @@ describe('应用组合根', () => {
     expect(await screen.findByText('Desktop runtime')).toBeVisible();
     expect(screen.queryByText('Starting the local Agent runtime')).not.toBeInTheDocument();
   });
+
+  it('桌面组合根只替换 Matrix 认证入口而保留同一云端服务图', () => {
+    const runtime = createCloudRuntime(config, runtimeGateway(true));
+
+    expect(runtime.services.session.matrix).toBeInstanceOf(DesktopMatrixGateway);
+    expect(runtime.services.lobby).toBeDefined();
+  });
 });
 
 function renderApplication(localRuntime: DesktopRuntimeGateway) {
@@ -119,6 +127,8 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
   };
   return {
     beginHumanAuthentication: async () =>
+      err({ code: 'desktop.test.unavailable', retryable: false }),
+    beginMatrixAuthentication: async () =>
       err({ code: 'desktop.test.unavailable', retryable: false }),
     bootstrapDefaultAgent: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
     checkUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),

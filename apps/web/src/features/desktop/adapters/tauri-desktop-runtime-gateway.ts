@@ -11,6 +11,7 @@ import {
   desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
   desktopHumanSessionChangedSchema,
+  desktopMatrixAuthenticationGrantSchema,
   releaseUpdateCheckSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
@@ -21,6 +22,7 @@ import {
   type DesktopAgentTarget,
   type DesktopAuthenticationIntent,
   type DesktopHumanSessionChanged,
+  type DesktopMatrixAuthenticationGrant,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
@@ -46,6 +48,7 @@ const desktopCommands = {
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
   beginHumanAuthentication: 'desktop_begin_human_authentication',
+  beginMatrixAuthentication: 'desktop_begin_matrix_authentication',
   bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
   checkUpdate: 'desktop_check_update',
   clearHumanSession: 'desktop_clear_human_session',
@@ -89,7 +92,8 @@ const nativeTransport: TauriDesktopTransport = {
 };
 
 export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
-  private authenticationPending = false;
+  private humanAuthenticationPending = false;
+  private matrixAuthenticationPending = false;
 
   constructor(private readonly transport: TauriDesktopTransport = nativeTransport) {}
 
@@ -104,14 +108,32 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     if (!this.transport.available()) {
       return err({ code: 'desktop.runtime.unavailable', retryable: false });
     }
-    if (this.authenticationPending) {
+    if (this.humanAuthenticationPending) {
       return err({ code: 'desktop.human_session.authentication_pending', retryable: false });
     }
-    this.authenticationPending = true;
+    this.humanAuthenticationPending = true;
     try {
       return await this.waitForHumanAuthentication(returnPath, intent);
     } finally {
-      this.authenticationPending = false;
+      this.humanAuthenticationPending = false;
+    }
+  }
+
+  async beginMatrixAuthentication(
+    returnPath: string,
+  ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>> {
+    if (this.matrixAuthenticationPending) {
+      return err({ code: 'desktop.matrix_session.authentication_pending', retryable: false });
+    }
+    this.matrixAuthenticationPending = true;
+    try {
+      return await this.invokeValidated(
+        desktopCommands.beginMatrixAuthentication,
+        { returnPath },
+        desktopMatrixAuthenticationGrantSchema,
+      );
+    } finally {
+      this.matrixAuthenticationPending = false;
     }
   }
 

@@ -7,7 +7,7 @@ import type {
   SessionFailure,
   WebSession,
 } from './session';
-import { err, ok, type Result } from '@/shared/result';
+import { err, type Result } from '@/shared/result';
 
 export type AuthenticationTarget = 'control' | 'matrix';
 
@@ -70,8 +70,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     if (input.target === 'control') {
       return await dependencies.controlPlane.beginAuthentication(input.returnPath);
     }
-    const matrix = await dependencies.matrix.beginAuthentication(input.returnPath);
-    return matrix.ok ? ok({ kind: 'browser-navigation' }) : matrix;
+    return await dependencies.matrix.beginAuthentication(input.returnPath);
   });
 
   const synchronize = fromPromise<

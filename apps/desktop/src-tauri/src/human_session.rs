@@ -14,6 +14,10 @@ use tauri_plugin_opener::OpenerExt as _;
 use url::Url;
 
 use crate::{
+    authentication_values::{
+        MIN_RANDOM_VALUE_LENGTH, generate_random_url_safe_value, is_valid_random_url_safe_value,
+        is_valid_return_path,
+    },
     desktop_config::DesktopBridgeConfig,
     loopback_callback::{LoopbackCallbackFailure, LoopbackCallbackListener},
 };
@@ -26,10 +30,7 @@ const PENDING_AUTHENTICATION_ACCOUNT: &str = "human-authentication-pending-v1";
 const HUMAN_SESSION_ACCOUNT: &str = "human-session-v1";
 const PENDING_AUTHENTICATION_TTL: Duration = Duration::from_mins(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const MIN_RANDOM_VALUE_LENGTH: usize = 32;
-const MAX_RANDOM_VALUE_LENGTH: usize = 128;
 const MAX_AUTHORIZATION_CODE_LENGTH: usize = 4_096;
-const MAX_RETURN_PATH_LENGTH: usize = 2_048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -211,9 +212,11 @@ impl HumanSessionRuntime {
         intent: DesktopAuthenticationIntent,
     ) -> HumanSessionResult<()> {
         validate_return_path(return_path)?;
-        let callback_listener = LoopbackCallbackListener::bind().await.map_err(|_| {
-            HumanSessionFailure::new("desktop.human_session.loopback_bind_failed", true)
-        })?;
+        let callback_listener = LoopbackCallbackListener::bind_human_session()
+            .await
+            .map_err(|_| {
+                HumanSessionFailure::new("desktop.human_session.loopback_bind_failed", true)
+            })?;
         let callback_url = callback_listener.callback_url().to_string();
         let (authorization_url, client_state) = {
             let _guard = self
@@ -594,11 +597,7 @@ fn validate_persisted_session(session: &PersistedHumanSession, now: i64) -> Huma
 }
 
 fn validate_return_path(value: &str) -> HumanSessionResult<()> {
-    if !value.starts_with('/')
-        || value.starts_with("//")
-        || value.len() > MAX_RETURN_PATH_LENGTH
-        || value.chars().any(char::is_control)
-    {
+    if !is_valid_return_path(value) {
         return Err(HumanSessionFailure::new(
             "desktop.human_session.return_path_invalid",
             false,
@@ -608,18 +607,12 @@ fn validate_return_path(value: &str) -> HumanSessionResult<()> {
 }
 
 fn random_url_safe_value() -> HumanSessionResult<String> {
-    let mut entropy = [0_u8; 32];
-    getrandom::fill(&mut entropy)
-        .map_err(|_| HumanSessionFailure::new("desktop.human_session.entropy_unavailable", true))?;
-    Ok(URL_SAFE_NO_PAD.encode(entropy))
+    generate_random_url_safe_value()
+        .map_err(|_| HumanSessionFailure::new("desktop.human_session.entropy_unavailable", true))
 }
 
 fn validate_random_value(value: &str) -> HumanSessionResult<()> {
-    if !(MIN_RANDOM_VALUE_LENGTH..=MAX_RANDOM_VALUE_LENGTH).contains(&value.len())
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
+    if !is_valid_random_url_safe_value(value) {
         return Err(invalid_callback());
     }
     Ok(())

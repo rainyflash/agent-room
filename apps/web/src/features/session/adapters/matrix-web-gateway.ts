@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { failure } from '@/features/session/adapters/control-plane-client';
 import type {
+  AuthenticationStartOutcome,
   MatrixConnection,
   MatrixConnectionStatus,
   MatrixGateway,
@@ -16,6 +17,7 @@ import { err, ok, type Result } from '@/shared/result';
 const MATRIX_SESSION_KEY = 'agent-room.matrix-session.v1';
 const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
+const MAX_LOGIN_TOKEN_LENGTH = 4_096;
 
 const storedSessionSchema = z
   .object({
@@ -43,6 +45,7 @@ const whoAmISchema = z.looseObject({
 
 export type MatrixWebGatewayOptions = {
   readonly baseUrl: string;
+  readonly deviceDisplayName?: string;
   readonly indexedDB?: IDBFactory;
   readonly localStorage?: Storage;
   readonly navigate?: (url: string) => void;
@@ -58,6 +61,7 @@ export type MatrixWebGatewayOptions = {
 
 export class MatrixWebGateway implements MatrixGateway {
   readonly #baseUrl: string;
+  readonly #deviceDisplayName: string;
   readonly #indexedDB: IDBFactory | undefined;
   readonly #localStorage: Storage | undefined;
   readonly #navigate: (url: string) => void;
@@ -70,9 +74,11 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
   #activeConnection: BrowserMatrixConnection | null = null;
+  #freshAuthenticationReturnPath: string | undefined;
 
   constructor({
     baseUrl,
+    deviceDisplayName = 'Agent Room Web',
     indexedDB = window.indexedDB,
     localStorage = window.localStorage,
     navigate = (url) => {
@@ -90,6 +96,7 @@ export class MatrixWebGateway implements MatrixGateway {
     url = () => new URL(window.location.href),
   }: MatrixWebGatewayOptions) {
     this.#baseUrl = baseUrl;
+    this.#deviceDisplayName = deviceDisplayName;
     this.#indexedDB = indexedDB;
     this.#localStorage = localStorage;
     this.#navigate = navigate;
@@ -103,7 +110,9 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#url = url;
   }
 
-  async beginAuthentication(returnPath: string): Promise<Result<void, SessionFailure>> {
+  async beginAuthentication(
+    returnPath: string,
+  ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
@@ -120,10 +129,25 @@ export class MatrixWebGateway implements MatrixGateway {
         sdk.SSOAction.LOGIN,
       );
       this.#navigate(loginUrl);
-      return ok(undefined);
+      return ok({ kind: 'browser-navigation' });
     } catch {
       return err(failure('matrix', 'matrix.sso_start_failed', !this.#online(), true));
     }
+  }
+
+  async exchangeAuthenticationGrant(
+    loginToken: string,
+    returnPath: string,
+  ): Promise<Result<void, SessionFailure>> {
+    if (!isValidLoginToken(loginToken) || !isSafeReturnPath(returnPath)) {
+      return err(failure('matrix', 'matrix.invalid_desktop_authentication_grant', false, false));
+    }
+    const exchanged = await this.#exchangeLoginToken(loginToken);
+    if (!exchanged.ok) {
+      return exchanged;
+    }
+    this.#freshAuthenticationReturnPath = returnPath;
+    return ok(undefined);
   }
 
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
@@ -152,6 +176,10 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#clearStoredSession();
       return err(failure('identity', 'matrix.identity_mismatch', false, false));
     }
+    const returnPath =
+      capturedToken === null
+        ? this.#takeFreshAuthenticationReturnPath()
+        : this.#consumeReturnPath();
 
     const sdk = await import('matrix-js-sdk');
     const store =
@@ -225,7 +253,6 @@ export class MatrixWebGateway implements MatrixGateway {
       );
       this.#activeConnection = connection;
       this.#onClientChange(client);
-      const returnPath = capturedToken === null ? undefined : this.#consumeReturnPath();
       return ok({
         connection,
         kind: 'connected',
@@ -280,6 +307,12 @@ export class MatrixWebGateway implements MatrixGateway {
     }
   }
 
+  #takeFreshAuthenticationReturnPath(): string | undefined {
+    const returnPath = this.#freshAuthenticationReturnPath;
+    this.#freshAuthenticationReturnPath = undefined;
+    return returnPath;
+  }
+
   async #exchangeLoginToken(
     loginToken: string,
   ): Promise<Result<StoredMatrixSession, SessionFailure>> {
@@ -288,7 +321,7 @@ export class MatrixWebGateway implements MatrixGateway {
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
       const decoded = loginResponseSchema.safeParse(
         await client.loginRequest({
-          initial_device_display_name: 'Agent Room Web',
+          initial_device_display_name: this.#deviceDisplayName,
           refresh_token: true,
           token: loginToken,
           type: 'm.login.token',
@@ -535,7 +568,21 @@ function matrixStatus(state: SyncState, states: typeof SyncState): MatrixConnect
 }
 
 function safeReturnPath(path: string): string {
-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\') ? path : '/connect';
+  return isSafeReturnPath(path) ? path : '/connect';
+}
+
+function isSafeReturnPath(path: string): boolean {
+  return (
+    path.startsWith('/') &&
+    !path.startsWith('//') &&
+    !path.includes('\\') &&
+    path.length <= 2_048 &&
+    !/\p{Cc}/u.test(path)
+  );
+}
+
+function isValidLoginToken(token: string): boolean {
+  return token.length > 0 && token.length <= MAX_LOGIN_TOKEN_LENGTH && !/\p{Cc}/u.test(token);
 }
 
 function stableHash(value: string): string {

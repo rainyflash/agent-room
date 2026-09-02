@@ -13,6 +13,8 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
   return {
     beginHumanAuthentication: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    beginMatrixAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     bootstrapDefaultAgent: unused,
     checkUpdate: unused,
     clearHumanSession: () => Promise.resolve(ok(undefined)),
