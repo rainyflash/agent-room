@@ -62,17 +62,17 @@ def replace_text_version(path: Path, old: str, new: str) -> None:
 
 def replace_json_version(path: Path, old: str, new: str) -> None:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        source = path.read_text(encoding="utf-8")
+        document = json.loads(source)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise VersionBumpFailure(f"无法读取 JSON：{path}") from error
     if not isinstance(document, dict) or document.get("version") != old:
         raise VersionBumpFailure(f"JSON version 与 workspace 不一致：{path}")
-    document["version"] = new
-    path.write_text(
-        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    pattern = re.compile(rf'("version"\s*:\s*"){re.escape(old)}(")')
+    updated, count = pattern.subn(rf"\g<1>{new}\g<2>", source)
+    if count != 1:
+        raise VersionBumpFailure(f"JSON version 字段必须唯一：{path}")
+    path.write_text(updated, encoding="utf-8", newline="\n")
 
 
 def validate_managed_files(root: Path, old: str) -> None:

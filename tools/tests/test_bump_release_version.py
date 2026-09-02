@@ -57,6 +57,24 @@ class BumpReleaseVersionTests(unittest.TestCase):
             bump(self.root, "0.1.0-alpha.2", refresh_lock=False)
         self.assertEqual(workspace_version(self.root), "0.1.0-alpha.1")
 
+    def test_json_升版只替换版本且保留既有格式(self) -> None:
+        path = self.root / JSON_VERSION_FILES[0]
+        source = (
+            "{\n"
+            '  "name": "desktop",\n'
+            '  "version": "0.1.0-alpha.1",\n'
+            '  "keywords": ["agent", "room"]\n'
+            "}\n"
+        )
+        path.write_text(source, encoding="utf-8")
+
+        bump(self.root, "0.1.0-alpha.2", refresh_lock=False)
+
+        self.assertEqual(
+            path.read_text(encoding="utf-8"),
+            source.replace("0.1.0-alpha.1", "0.1.0-alpha.2"),
+        )
+
     def test_拒绝非法版本(self) -> None:
         with self.assertRaisesRegex(VersionBumpFailure, "SemVer"):
             bump(self.root, "alpha two", refresh_lock=False)
