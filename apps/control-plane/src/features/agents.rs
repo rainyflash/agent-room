@@ -7,6 +7,7 @@ use agent_room_application::{
     agents::{
         AgentManagementUseCases, ChangeAgentMembership, CreateAgent, EnsureDefaultAgent,
         EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+        RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
@@ -100,6 +101,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
             put(grant_membership).delete(revoke_membership),
         )
         .route("/agents/{agent_id}/instances", post(register_instance))
+        .route(
+            "/agent-instances/{instance_id}/matrix-session",
+            post(rotate_instance_matrix_session),
+        )
         .route(
             "/agent-instances/{instance_id}/verification",
             get(resolve_instance_verification),
@@ -479,6 +484,53 @@ async fn register_instance(
     }
 }
 
+async fn rotate_instance_matrix_session(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(instance_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request_target = format!("/agent-instances/{instance_id}/matrix-session");
+    let Ok(instance_id) = parse_uuid_v7(&instance_id).map(AgentInstanceId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    let Ok(body_text) = std::str::from_utf8(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_matrix_session_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "POST",
+        &request_target,
+        body_text,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    if !body.is_empty() {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_matrix_session_body", correlation_id)
+                .into_response(),
+        );
+    }
+    match state
+        .agents
+        .rotate_instance_matrix_session(RotateAgentInstanceMatrixSession { actor, instance_id })
+        .await
+    {
+        Ok(session) => no_store(Json(AgentInstanceResponse::from(session)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
 async fn resolve_instance_verification(
     State(state): State<AgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -675,6 +727,38 @@ impl From<RegisteredAgentInstance> for AgentInstanceResponse {
     }
 }
 
+impl From<RotatedAgentInstanceMatrixSession> for AgentInstanceResponse {
+    fn from(value: RotatedAgentInstanceMatrixSession) -> Self {
+        Self {
+            agent_id: value.instance.instance.agent_id().to_string(),
+            display_name: value.instance.agent_display_name,
+            avatar_content_id: value
+                .instance
+                .agent_avatar_content_id
+                .map(|id| id.to_string()),
+            adapter_binding_id: value.instance.instance.adapter_binding_id().to_string(),
+            agent_instance_id: value.instance.instance.id().to_string(),
+            matrix_user_id: value
+                .matrix_session
+                .metadata()
+                .user_id()
+                .as_str()
+                .to_owned(),
+            matrix_device_id: value
+                .matrix_session
+                .metadata()
+                .device_id()
+                .as_str()
+                .to_owned(),
+            access_token: value.matrix_session.access_token().expose().to_owned(),
+            refresh_token: value
+                .matrix_session
+                .refresh_token()
+                .map(|token| token.expose().to_owned()),
+        }
+    }
+}
+
 impl From<AgentInstanceVerificationRecord> for AgentInstanceVerificationResponse {
     fn from(value: AgentInstanceVerificationRecord) -> Self {
         Self {
@@ -702,7 +786,8 @@ mod tests {
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
             EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
-            RegisteredAgentInstance,
+            RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
+            RotatedAgentInstanceMatrixSession,
         },
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -714,9 +799,9 @@ mod tests {
             RevokedDevice,
         },
         ports::{
-            AgentInstanceVerificationRecord, MatrixDeviceId, MatrixSession, MatrixSessionMetadata,
-            MatrixUserId, PortFuture, PrincipalAccount, RegisteredAgent, SecretFactory,
-            SecretValue, StoredAgentInstanceRegistration,
+            AgentInstanceManagementRecord, AgentInstanceVerificationRecord, MatrixDeviceId,
+            MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture, PrincipalAccount,
+            RegisteredAgent, SecretFactory, SecretValue, StoredAgentInstanceRegistration,
         },
     };
     use agent_room_domain::{
@@ -724,7 +809,7 @@ mod tests {
             AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey,
             AgentMatrixDeviceId, AgentRole, AgentVisibility,
         },
-        devices::Device,
+        devices::{Device, DevicePlatform, DeviceTrustState},
         identity::Principal,
         ids::{AdapterBindingId, AgentId, AgentInstanceId, DeviceId, PrincipalId},
         time::UtcMillis,
@@ -759,6 +844,7 @@ mod tests {
         default_agent_ensures: AtomicUsize,
         device_default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
+        rotation: Mutex<Option<RotateAgentInstanceMatrixSession>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
     }
 
@@ -802,6 +888,14 @@ mod tests {
         ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>> {
             *self.registration.lock().expect("Agent 实例记录锁可用") = Some(request);
             Box::pin(async { Ok(registered_instance()) })
+        }
+
+        fn rotate_instance_matrix_session(
+            &self,
+            request: RotateAgentInstanceMatrixSession,
+        ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
+            *self.rotation.lock().expect("Matrix 会话轮换记录锁可用") = Some(request);
+            Box::pin(async { Ok(rotated_instance()) })
         }
 
         fn change_membership(
@@ -1286,6 +1380,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn matrix_会话轮换使用独立设备签名端点而不重放注册正文() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let target = format!("/agent-instances/{INSTANCE_UUID}/matrix-session");
+        devices.expect_request("POST", target.clone(), String::new());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+
+        let response = app
+            .oneshot(matrix_session_rotation_request(true))
+            .await
+            .expect("Matrix 会话轮换路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentInstanceId"], INSTANCE_UUID);
+        assert_eq!(payload["matrixDeviceId"], "AR_TEST");
+        assert_eq!(payload["accessToken"], "rotated-agent-device-access-token");
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+        let rotation = agents
+            .rotation
+            .lock()
+            .expect("Matrix 会话轮换记录锁可用")
+            .clone()
+            .expect("Matrix 会话轮换用例已调用");
+        assert_eq!(rotation.instance_id.to_string(), INSTANCE_UUID);
+        assert_eq!(rotation.actor.device_id, device_id());
+    }
+
+    #[tokio::test]
     async fn 缺失设备证明时不会触碰认证或_agent_用例() {
         let agents = Arc::new(FakeAgents::default());
         let devices = Arc::new(FakeDevices::default());
@@ -1531,6 +1658,26 @@ mod tests {
         request.body(Body::empty()).expect("实例验签材料请求有效")
     }
 
+    fn matrix_session_rotation_request(include_proof: bool) -> Request<Body> {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(format!("/agent-instances/{INSTANCE_UUID}/matrix-session"))
+            .header(header::AUTHORIZATION, "Bearer device-access-token");
+        if include_proof {
+            request = request
+                .header("x-agent-room-device-id", DEVICE_UUID)
+                .header("x-agent-room-proof-issued-at", "1700000000000")
+                .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+                .header(
+                    "x-agent-room-proof-signature",
+                    URL_SAFE_NO_PAD.encode([9_u8; 64]),
+                );
+        }
+        request
+            .body(Body::empty())
+            .expect("Matrix 会话轮换请求有效")
+    }
+
     async fn response_json(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), 64 * 1_024)
             .await
@@ -1580,6 +1727,35 @@ mod tests {
                     MatrixDeviceId::new("AR_TEST").expect("测试 Matrix 设备标识有效"),
                 ),
                 SecretValue::new("agent-device-access-token").expect("测试设备令牌有效"),
+                None,
+            ),
+        }
+    }
+
+    fn rotated_instance() -> RotatedAgentInstanceMatrixSession {
+        let registered = registered_instance();
+        RotatedAgentInstanceMatrixSession {
+            instance: AgentInstanceManagementRecord {
+                instance: registered.registration.instance,
+                agent_matrix_user_id: matrix_user_id().as_str().to_owned(),
+                agent_display_name: "Codex Builder".to_owned(),
+                agent_avatar_content_id: None,
+                adapter_type: "codex-desktop".to_owned(),
+                capability_version: "2026-08-24".to_owned(),
+                device_label: "Windows 工作站".to_owned(),
+                device_platform: DevicePlatform::Windows,
+                device_trust_state: DeviceTrustState::Verified,
+                created_at: time(1_700_000_000_000),
+                last_seen_at: None,
+                revoked_at: None,
+                matrix_device_revoked_at: None,
+            },
+            matrix_session: MatrixSession::new(
+                MatrixSessionMetadata::new(
+                    matrix_user_id(),
+                    MatrixDeviceId::new("AR_TEST").expect("测试 Matrix 设备标识有效"),
+                ),
+                SecretValue::new("rotated-agent-device-access-token").expect("测试轮换令牌有效"),
                 None,
             ),
         }

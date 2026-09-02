@@ -186,6 +186,11 @@ pub trait ControlPlaneAgentRuntimeGateway: Send + Sync {
         &'a self,
         intent: &'a AgentRuntimeRegistrationIntent,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>>;
+
+    fn rotate_matrix_session<'a>(
+        &'a self,
+        current: &'a RegisteredAgentRuntime,
+    ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>>;
 }
 
 pub trait AgentRuntimeRequestIdFactory: Send + Sync {
@@ -344,7 +349,7 @@ impl AgentRuntimeSessionService {
 
         let recovered = self
             .control_plane
-            .register(&intent)
+            .rotate_matrix_session(&current)
             .await
             .map_err(|error| {
                 map_control_plane_failure("bridge.agent_runtime.recover_matrix_session", error)

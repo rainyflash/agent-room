@@ -140,6 +140,42 @@ impl AgentInstanceManagementRepository for PostgresRepositories {
                 .collect()
         })
     }
+
+    fn find_active_for_device(
+        &self,
+        principal_id: PrincipalId,
+        device_id: DeviceId,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceManagementRecord>>> {
+        Box::pin(async move {
+            let operation = "agent_instance.matrix_session.find";
+            let query = format!(
+                r"SELECT {MANAGEMENT_SELECT}
+                   {MANAGEMENT_FROM}
+                   WHERE instance.id = $1
+                     AND instance.device_id = $2
+                     AND ownership.principal_id = $3
+                     AND ownership.revoked_at IS NULL
+                     AND ownership.role IN ('owner', 'operator')
+                     AND principal.status = 'active'
+                     AND device.trust_state = 'verified'
+                     AND device.revoked_at IS NULL
+                     AND agent.lifecycle_state = 'active'
+                     AND binding.state = 'active'
+                     AND instance.revoked_at IS NULL
+                     AND instance.status <> 'revoked'"
+            );
+            let row = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(instance_id.as_uuid())
+                .bind(device_id.as_uuid())
+                .bind(principal_id.as_uuid())
+                .fetch_optional(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| decode_management_record(&row, operation))
+                .transpose()
+        })
+    }
 }
 
 impl AgentInstanceRevocationTransaction for PostgresRepositories {

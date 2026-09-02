@@ -4,13 +4,14 @@ use agent_room_application::{
     agents::{
         AgentManagementDependencies, AgentManagementFailureKind, AgentManagementService,
         AgentManagementUseCases, CreateAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
-        ListAgents, RegisterAgentInstance,
+        ListAgents, RegisterAgentInstance, RotateAgentInstanceMatrixSession,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
+        AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
         Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
@@ -22,9 +23,10 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     agents::{
-        AdapterSubjectHash, Agent, AgentInstancePublicSigningKey, AgentMemberships, AgentRole,
-        AgentVisibility,
+        AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
+        AgentInstanceStatus, AgentMatrixDeviceId, AgentMemberships, AgentRole, AgentVisibility,
     },
+    devices::{DevicePlatform, DeviceTrustState},
     identity::Principal,
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
@@ -255,6 +257,7 @@ impl AgentMembershipTransaction for FakeMembershipChanges {
 #[derive(Default)]
 struct FakeInstances {
     registrations: Mutex<Vec<AgentInstanceRegistration>>,
+    active_instance: Mutex<Option<AgentInstanceManagementRecord>>,
 }
 
 impl AgentInstanceRegistrationTransaction for FakeInstances {
@@ -273,6 +276,25 @@ impl AgentInstanceRegistrationTransaction for FakeInstances {
                 instance: registration.instance.clone(),
             })
         })
+    }
+}
+
+impl AgentInstanceManagementRepository for FakeInstances {
+    fn list_for_principal(
+        &self,
+        _principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentInstanceManagementRecord>>> {
+        Box::pin(async { unreachable!("Agent 管理测试不会列出实例") })
+    }
+
+    fn find_active_for_device(
+        &self,
+        _principal_id: PrincipalId,
+        _device_id: DeviceId,
+        _instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceManagementRecord>>> {
+        let record = self.active_instance.lock().expect("活跃实例锁可用").clone();
+        Box::pin(async move { Ok(record) })
     }
 }
 
@@ -538,6 +560,41 @@ async fn viewer_在写事务和_matrix_签发前即被拒绝() {
 }
 
 #[tokio::test]
+async fn 会话恢复按现有实例直接轮换而不重放注册请求() {
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let actor = authenticated_device(owner_id);
+    let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
+    let instances = Arc::new(FakeInstances::default());
+    *instances.active_instance.lock().expect("活跃实例锁可用") =
+        Some(managed_instance(agent_id, actor.device_id, instance_id));
+    let matrix = Arc::new(FakeMatrixIdentities {
+        server_name: "matrix.test".to_owned(),
+        issued_sessions: Mutex::new(0),
+        corrupt_session_identity: false,
+    });
+    let service = service(
+        unused_creation(agent_id),
+        Some(registered_agent(agent_id)),
+        None,
+        instances,
+        matrix.clone(),
+    );
+
+    let rotated = service
+        .rotate_instance_matrix_session(RotateAgentInstanceMatrixSession { actor, instance_id })
+        .await
+        .expect("同一设备持有的活跃实例可轮换 Matrix 会话");
+
+    assert_eq!(rotated.instance.instance.id(), instance_id);
+    assert_eq!(
+        rotated.matrix_session.access_token().expose(),
+        "rotated-agent-device-session-token"
+    );
+    assert_eq!(*matrix.issued_sessions.lock().expect("测试锁不得中毒"), 1);
+}
+
+#[tokio::test]
 async fn matrix_返回错主体时拒绝把凭据交给_bridge() {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
@@ -574,7 +631,8 @@ fn service(
         agents: Arc::new(FakeAgentRepository { registration }),
         memberships: Arc::new(FakeMemberships { memberships }),
         membership_changes: Arc::new(FakeMembershipChanges),
-        instances,
+        instances: instances.clone(),
+        managed_instances: instances,
         matrix_identities: matrix.clone(),
         matrix_sessions: matrix,
         secrets: Arc::new(TestSecrets),
@@ -614,6 +672,42 @@ fn register_request(principal_id: PrincipalId, agent_id: AgentId) -> RegisterAge
         capability_version: "1.0".to_owned(),
         configuration: Map::new(),
         public_signing_key: AgentInstancePublicSigningKey::new(vec![9; 32]).expect("实例公钥有效"),
+    }
+}
+
+fn managed_instance(
+    agent_id: AgentId,
+    device_id: DeviceId,
+    instance_id: AgentInstanceId,
+) -> AgentInstanceManagementRecord {
+    let binding_id = AdapterBindingId::from_uuid(Uuid::now_v7());
+    let matrix_device_id =
+        AgentMatrixDeviceId::new("AR_TEST".to_owned()).expect("Matrix 设备标识有效");
+    let instance = AgentInstance::restore(
+        instance_id,
+        agent_id,
+        device_id,
+        binding_id,
+        AgentInstancePublicSigningKey::new(vec![9; 32]).expect("实例公钥有效"),
+        matrix_device_id,
+        AgentInstanceStatus::Connecting,
+        None,
+    )
+    .expect("实例记录有效");
+    AgentInstanceManagementRecord {
+        instance,
+        agent_matrix_user_id: format!("@_agent_{}:matrix.test", agent_id.as_uuid().simple()),
+        agent_display_name: "Build Agent".to_owned(),
+        agent_avatar_content_id: None,
+        adapter_type: "codex".to_owned(),
+        capability_version: "1.0".to_owned(),
+        device_label: "Windows 工作站".to_owned(),
+        device_platform: DevicePlatform::Windows,
+        device_trust_state: DeviceTrustState::Verified,
+        created_at: time(NOW - 60_000),
+        last_seen_at: None,
+        revoked_at: None,
+        matrix_device_revoked_at: None,
     }
 }
 

@@ -87,6 +87,7 @@ impl AgentRuntimeRequestIdFactory for 固定请求标识 {
 struct 队列控制面 {
     responses: Mutex<VecDeque<ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>>>,
     requests: Mutex<Vec<AgentRuntimeRegistrationIntent>>,
+    rotations: Mutex<Vec<RegisteredAgentRuntime>>,
 }
 
 impl 队列控制面 {
@@ -96,6 +97,7 @@ impl 队列控制面 {
         Self {
             responses: Mutex::new(responses.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
+            rotations: Mutex::new(Vec::new()),
         }
     }
 }
@@ -115,6 +117,23 @@ impl ControlPlaneAgentRuntimeGateway for 队列控制面 {
             .lock()
             .expect("请求记录锁可用")
             .push(intent.clone());
+        Box::pin(async move { response })
+    }
+
+    fn rotate_matrix_session<'a>(
+        &'a self,
+        current: &'a RegisteredAgentRuntime,
+    ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
+        let response = self
+            .responses
+            .lock()
+            .expect("响应队列锁可用")
+            .pop_front()
+            .expect("测试已配置控制面响应");
+        self.rotations
+            .lock()
+            .expect("轮换记录锁可用")
+            .push(current.clone());
         Box::pin(async move { response })
     }
 }
@@ -178,6 +197,7 @@ async fn 未知提交保留同一请求标识供下次安全重试() {
     let requests = gateway.requests.lock().expect("请求记录锁可用");
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].request_id(), requests[1].request_id());
+    assert!(gateway.rotations.lock().expect("轮换记录锁可用").is_empty());
 }
 
 #[tokio::test]
@@ -246,9 +266,9 @@ async fn 加密身份恢复只替换同一实例的_matrix_凭据() {
 
     assert_eq!(result, recovered);
     assert_ne!(result.matrix_session(), initial.matrix_session());
-    let requests = gateway.requests.lock().expect("请求记录锁可用");
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].request_id(), requests[1].request_id());
+    assert_eq!(gateway.requests.lock().expect("请求记录锁可用").len(), 1);
+    let rotations = gateway.rotations.lock().expect("轮换记录锁可用");
+    assert_eq!(rotations.as_slice(), [initial]);
     assert!(matches!(
         credentials.current.lock().expect("凭据锁可用").as_ref(),
         Some(StoredAgentRuntimeCredentials::Ready { runtime, .. })

@@ -7,7 +7,8 @@ use agent_room_domain::{
         AgentMatrixDeviceId, AgentRole, AgentVisibility,
     },
     ids::{
-        AgentCreationRequestId, AgentId, AgentInstanceRegistrationRequestId, ContentId, PrincipalId,
+        AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
+        ContentId, PrincipalId,
     },
 };
 use serde_json::{Map, Value};
@@ -18,6 +19,7 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
+        AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
         Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
@@ -88,6 +90,18 @@ pub struct RegisteredAgentInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RotateAgentInstanceMatrixSession {
+    pub actor: AuthenticatedDevice,
+    pub instance_id: AgentInstanceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RotatedAgentInstanceMatrixSession {
+    pub instance: AgentInstanceManagementRecord,
+    pub matrix_session: MatrixSession,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeAgentMembership {
     pub actor: AuthenticatedPrincipal,
     pub agent_id: AgentId,
@@ -153,6 +167,11 @@ pub trait AgentManagementUseCases: Send + Sync {
         request: RegisterAgentInstance,
     ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>>;
 
+    fn rotate_instance_matrix_session(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>>;
+
     fn change_membership(
         &self,
         request: ChangeAgentMembership,
@@ -165,6 +184,7 @@ pub struct AgentManagementService {
     memberships: Arc<dyn AgentMembershipRepository>,
     membership_changes: Arc<dyn AgentMembershipTransaction>,
     instances: Arc<dyn AgentInstanceRegistrationTransaction>,
+    managed_instances: Arc<dyn AgentInstanceManagementRepository>,
     matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
     matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
     secrets: Arc<dyn SecretFactory>,
@@ -178,6 +198,7 @@ pub struct AgentManagementDependencies {
     pub memberships: Arc<dyn AgentMembershipRepository>,
     pub membership_changes: Arc<dyn AgentMembershipTransaction>,
     pub instances: Arc<dyn AgentInstanceRegistrationTransaction>,
+    pub managed_instances: Arc<dyn AgentInstanceManagementRepository>,
     pub matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
     pub matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
     pub secrets: Arc<dyn SecretFactory>,
@@ -193,6 +214,7 @@ impl AgentManagementService {
             memberships: dependencies.memberships,
             membership_changes: dependencies.membership_changes,
             instances: dependencies.instances,
+            managed_instances: dependencies.managed_instances,
             matrix_identities: dependencies.matrix_identities,
             matrix_sessions: dependencies.matrix_sessions,
             secrets: dependencies.secrets,
@@ -420,6 +442,49 @@ impl AgentManagementService {
         })
     }
 
+    async fn rotate_instance_matrix_session_internal(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> AgentManagementResult<RotatedAgentInstanceMatrixSession> {
+        let operation = "agent_instance.matrix_session.rotate";
+        ensure_active_device(&request.actor, self.clock.now(), operation)?;
+        let instance = self
+            .managed_instances
+            .find_active_for_device(
+                request.actor.account.principal.id(),
+                request.actor.device_id,
+                request.instance_id,
+            )
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?
+            .ok_or_else(|| failure(operation, AgentManagementFailureKind::NotFound))?;
+        let matrix_user_id = MatrixUserId::new(instance.agent_matrix_user_id.clone())
+            .map_err(|_| internal_failure(operation))?;
+        let matrix_device_id =
+            MatrixDeviceId::new(instance.instance.matrix_device_id().as_str().to_owned())
+                .map_err(|_| internal_failure(operation))?;
+        let session_request = MatrixAgentDeviceSessionRequest::new(
+            matrix_user_id.clone(),
+            matrix_device_id.clone(),
+            format!("Agent Room · {}", instance.adapter_type),
+        )
+        .map_err(|_| internal_failure(operation))?;
+        let matrix_session = self
+            .matrix_sessions
+            .rotate_device_session(&session_request)
+            .await
+            .map_err(|error| map_matrix_failure(operation, error.kind()))?;
+        if matrix_session.metadata().user_id() != &matrix_user_id
+            || matrix_session.metadata().device_id() != &matrix_device_id
+        {
+            return Err(internal_failure(operation));
+        }
+        Ok(RotatedAgentInstanceMatrixSession {
+            instance,
+            matrix_session,
+        })
+    }
+
     async fn change_membership_internal(
         &self,
         request: ChangeAgentMembership,
@@ -477,6 +542,13 @@ impl AgentManagementUseCases for AgentManagementService {
         request: RegisterAgentInstance,
     ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>> {
         Box::pin(self.register_instance_internal(request))
+    }
+
+    fn rotate_instance_matrix_session(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
+        Box::pin(self.rotate_instance_matrix_session_internal(request))
     }
 
     fn change_membership(

@@ -299,6 +299,37 @@ impl ReqwestControlPlaneAgentRuntimeGateway {
             .map_err(|error| agent_runtime_transport_failure(&error))?;
         decode_agent_runtime_response(response, intent.agent_id()).await
     }
+
+    async fn rotate_matrix_session_internal(
+        &self,
+        current: &RegisteredAgentRuntime,
+    ) -> ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime> {
+        let request_target = format!(
+            "/agent-instances/{}/matrix-session",
+            current.identity().agent_instance_id()
+        );
+        let authorized = self
+            .authorizer
+            .authorize("POST", &request_target, "")
+            .await
+            .map_err(map_agent_runtime_session_failure)?;
+        let request_url = self
+            .base_url
+            .join(request_target.trim_start_matches('/'))
+            .map_err(|_| agent_runtime_failure(ControlPlaneAgentRuntimeFailureKind::Internal))?;
+        let request = signed_agent_runtime_request(
+            self.client.post(request_url),
+            &authorized,
+            "POST",
+            &request_target,
+        )?;
+        let response = request
+            .body(Vec::new())
+            .send()
+            .await
+            .map_err(|error| agent_runtime_transport_failure(&error))?;
+        decode_agent_runtime_response(response, current.identity().agent_id()).await
+    }
 }
 
 impl ReqwestControlPlaneOnboardingGateway {
@@ -378,6 +409,13 @@ impl ControlPlaneAgentRuntimeGateway for ReqwestControlPlaneAgentRuntimeGateway 
         intent: &'a AgentRuntimeRegistrationIntent,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
         Box::pin(self.register_internal(intent))
+    }
+
+    fn rotate_matrix_session<'a>(
+        &'a self,
+        current: &'a RegisteredAgentRuntime,
+    ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
+        Box::pin(self.rotate_matrix_session_internal(current))
     }
 }
 
@@ -1083,12 +1121,16 @@ mod tests {
 
     use agent_room_application::{
         devices::{DeviceRequestProof, DeviceRequestProofPayload},
-        ports::{DeviceSignature, PortFuture, SecretFactory, SecretValue},
+        ports::{
+            DeviceSignature, MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId,
+            PortFuture, SecretFactory, SecretValue,
+        },
     };
     use agent_room_bridge_core::{
+        agent_identity::BridgeAgentIdentity,
         agent_runtime::{
             AgentRuntimeRegistrationIntent, ControlPlaneAgentRuntimeFailureKind,
-            ControlPlaneAgentRuntimeGateway,
+            ControlPlaneAgentRuntimeGateway, RegisteredAgentRuntime,
         },
         agent_verification::{
             AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailureKind,
@@ -1105,7 +1147,10 @@ mod tests {
     use agent_room_domain::{
         agents::AgentInstancePublicSigningKey,
         devices::{DevicePlatform, DevicePublicSigningKey},
-        ids::{AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId},
+        ids::{
+            AdapterBindingId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
+            DeviceId,
+        },
         rooms::RoomLanguage,
         time::UtcMillis,
     };
@@ -1378,6 +1423,50 @@ mod tests {
                 },
                 "publicSigningKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn matrix_会话恢复调用独立轮换端点且签名空正文() {
+        let app = Router::new().route(
+            "/agent-instances/{instance_id}/matrix-session",
+            post(
+                |Path(instance_id): Path<String>, headers: HeaderMap, request: Request| async move {
+                    let valid = instance_id == INSTANCE_ID
+                        && header(&headers, "authorization") == Some("Bearer access-token")
+                        && header(&headers, "x-agent-room-device-id")
+                            == Some("00000000-0000-0000-0000-000000000001")
+                        && header(&headers, "x-agent-room-proof-issued-at") == Some("1000")
+                        && header(&headers, "x-agent-room-proof-nonce") == Some("0123456789abcdef")
+                        && request.body().size_hint().exact() == Some(0);
+                    if valid {
+                        (StatusCode::OK, Json(valid_agent_runtime_response())).into_response()
+                    } else {
+                        StatusCode::BAD_REQUEST.into_response()
+                    }
+                },
+            ),
+        );
+        let authorizer = Arc::new(测试请求授权器::default());
+        let gateway = agent_runtime_gateway(spawn_server(app).await, authorizer.clone());
+
+        let runtime = gateway
+            .rotate_matrix_session(&agent_runtime())
+            .await
+            .expect("规范 Matrix 会话轮换响应可解析");
+
+        assert_eq!(runtime.identity().agent_instance_id(), instance_id());
+        assert_eq!(
+            authorizer
+                .requests
+                .lock()
+                .expect("授权请求记录锁可用")
+                .as_slice(),
+            [(
+                "POST".to_owned(),
+                format!("/agent-instances/{INSTANCE_ID}/matrix-session"),
+                String::new(),
+            )]
         );
     }
 
@@ -1702,6 +1791,31 @@ mod tests {
             AgentInstancePublicSigningKey::new(vec![7; 32]).expect("测试实例公钥有效"),
         )
         .expect("测试登记意图有效")
+    }
+
+    fn agent_runtime() -> RegisteredAgentRuntime {
+        let matrix_user_id = MatrixUserId::new("@agent:example.org").expect("Matrix 用户有效");
+        RegisteredAgentRuntime::new(
+            BridgeAgentIdentity::new(
+                agent_id(),
+                "Codex Builder",
+                matrix_user_id.as_str(),
+                instance_id(),
+            )
+            .expect("Agent 运行身份有效"),
+            AdapterBindingId::from_uuid(
+                Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e48").expect("测试绑定标识有效"),
+            ),
+            MatrixSession::new(
+                MatrixSessionMetadata::new(
+                    matrix_user_id,
+                    MatrixDeviceId::new("AR_TEST").expect("Matrix 设备有效"),
+                ),
+                secret("old-agent-device-access-token"),
+                None,
+            ),
+        )
+        .expect("测试 Agent 运行时有效")
     }
 
     fn agent_id() -> AgentId {

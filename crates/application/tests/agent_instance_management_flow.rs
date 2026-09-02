@@ -140,6 +140,22 @@ impl AgentInstanceManagementRepository for FakeInstances {
             )
         })
     }
+
+    fn find_active_for_device(
+        &self,
+        _principal_id: PrincipalId,
+        device_id: DeviceId,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceManagementRecord>>> {
+        let record = self
+            .records
+            .iter()
+            .find(|record| {
+                record.instance.id() == instance_id && record.instance.device_id() == device_id
+            })
+            .cloned();
+        Box::pin(async move { Ok(record) })
+    }
 }
 
 struct FakeRevocations {

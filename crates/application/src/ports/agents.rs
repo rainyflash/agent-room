@@ -203,6 +203,13 @@ pub trait AgentInstanceManagementRepository: Send + Sync {
         &self,
         principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<AgentInstanceManagementRecord>>>;
+
+    fn find_active_for_device(
+        &self,
+        principal_id: PrincipalId,
+        device_id: DeviceId,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceManagementRecord>>>;
 }
 
 pub trait AgentInstanceRevocationTransaction: Send + Sync {
