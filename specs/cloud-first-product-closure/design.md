@@ -81,6 +81,8 @@ Bridge 的 Agent Matrix 凭据绝不能复用为桌面 UI 的用户会话。桌�
 5. Tauri 深链处理器验证 state，并以 verifier 交换桌面会话。
 6. 会话保存到系统凭据存储；Matrix 使用独立桌面设备身份。
 
+Matrix 设备 SSO 与控制面会话是两条隔离链路。浏览器版继续使用 `/connect?loginToken=...` 回跳；桌面版由 Tauri 绑定带随机事务段的 `127.0.0.1` 回调路径，再用系统浏览器打开 Matrix SSO。原生层只把一次性 `loginToken` 返回给 Matrix 会话 Adapter，随后由既有 Matrix SDK 完成令牌交换、身份一致性校验、Rust Crypto 初始化和同步。主 WebView 永远不导航到 Synapse、Keycloak 或其他远程认证页面。
+
 协议边界进一步固定如下：
 
 - OIDC Provider PKCE 与桌面客户端 PKCE 是两条独立校验链，不得复用 verifier。
