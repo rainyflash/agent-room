@@ -38,6 +38,7 @@ impl MatrixOperation {
             self,
             Self::InitializeStore
                 | Self::ProvisionAgentUser
+                | Self::IssueAgentDeviceSession
                 | Self::RevokeAgentDeviceSession
                 | Self::DeactivateAccount
                 | Self::Login
@@ -292,5 +293,10 @@ mod tests {
             ),
             MatrixRecoveryAction::Reauthenticate
         );
+    }
+
+    #[test]
+    fn 设备会话签发允许在结果未知后安全重试() {
+        assert!(MatrixOperation::IssueAgentDeviceSession.is_safe_to_retry());
     }
 }
