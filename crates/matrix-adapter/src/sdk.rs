@@ -48,7 +48,10 @@ use matrix_sdk::{
     },
     store::RoomLoadSettings,
 };
-use matrix_sdk_base::crypto::{CollectStrategy, DecryptionSettings, TrustRequirement};
+use matrix_sdk_base::{
+    crypto::{CollectStrategy, DecryptionSettings, TrustRequirement},
+    store::StateStoreDataKey,
+};
 
 use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
@@ -171,6 +174,9 @@ impl MatrixSdkClientFactory {
 
     async fn restore_client(&self, session: &MatrixSession) -> MatrixResult<Client> {
         let client = self.build_client(MatrixOperation::RestoreSession).await?;
+        // 必须在 restore_session 启动长期 E2EE 任务前检查持久冲突标记。
+        // Windows 不允许移动仍被这些任务持有的 SQLite 文件。
+        reject_recorded_crypto_identity_conflict(&client).await?;
         let sdk_session = to_sdk_session(session)?;
         let first_attempt = client
             .matrix_auth()
@@ -212,6 +218,29 @@ impl MatrixSdkClientFactory {
             .disable_retry()
             .timeout(self.configuration.request_timeout())
     }
+}
+
+/// Matrix SDK 会在首次发现重复一次性密钥时把冲突写入 State Store，后续启动
+/// 不再重复广播同一诊断。恢复会话时必须读取这个持久标记，否则客户端会永久
+/// 卡在无意义的 `/keys/upload` 重试中，且应用层永远看不到原始 400 响应。
+async fn reject_recorded_crypto_identity_conflict(client: &Client) -> MatrixResult<()> {
+    let recorded = client
+        .state_store()
+        .get_kv_data(StateStoreDataKey::OneTimeKeyAlreadyUploaded)
+        .await
+        .map_err(|_| {
+            MatrixFailure::new(
+                MatrixOperation::RestoreSession,
+                MatrixFailureKind::DependencyUnavailable,
+            )
+        })?;
+    if recorded.is_some() {
+        return Err(MatrixFailure::new(
+            MatrixOperation::RestoreSession,
+            MatrixFailureKind::CryptographicIdentityConflict,
+        ));
+    }
+    Ok(())
 }
 
 fn is_rebuildable_state_cache_error(error: &matrix_sdk::Error) -> bool {
@@ -927,12 +956,13 @@ mod tests {
     use agent_room_application::ports::{
         MatrixFailureKind, MatrixOperation, MatrixRoomKind, SecretValue,
     };
-    use matrix_sdk::ruma::room::RoomType;
+    use matrix_sdk::{Client, ruma::room::RoomType};
+    use matrix_sdk_base::store::{StateStoreDataKey, StateStoreDataValue};
     use tempfile::tempdir;
 
     use crate::{
         MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkStoreConfiguration,
-        sdk::map_creation_content,
+        sdk::{map_creation_content, reject_recorded_crypto_identity_conflict},
     };
 
     #[test]
@@ -984,6 +1014,33 @@ mod tests {
 
         assert_eq!(failure.operation(), MatrixOperation::InitializeStore);
         assert_eq!(failure.kind(), MatrixFailureKind::DependencyUnavailable);
+    }
+
+    #[tokio::test]
+    async fn 已持久化的重复一次性密钥标记会拒绝恢复旧设备身份() {
+        let client = Client::builder()
+            .homeserver_url("http://127.0.0.1:18008")
+            .build()
+            .await
+            .expect("内存客户端可创建");
+        client
+            .state_store()
+            .set_kv_data(
+                StateStoreDataKey::OneTimeKeyAlreadyUploaded,
+                StateStoreDataValue::OneTimeKeyAlreadyUploaded,
+            )
+            .await
+            .expect("重复密钥标记可持久化");
+
+        let failure = reject_recorded_crypto_identity_conflict(&client)
+            .await
+            .expect_err("旧设备加密身份必须触发上层的一次性恢复");
+
+        assert_eq!(failure.operation(), MatrixOperation::RestoreSession);
+        assert_eq!(
+            failure.kind(),
+            MatrixFailureKind::CryptographicIdentityConflict
+        );
     }
 
     #[test]

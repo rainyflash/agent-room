@@ -1577,6 +1577,7 @@ fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
             MatrixFailureKind::RateLimited
                 | MatrixFailureKind::Timeout
                 | MatrixFailureKind::DependencyUnavailable
+                | MatrixFailureKind::CryptographicIdentityConflict
                 | MatrixFailureKind::StaleSyncToken
         ),
         AgentOnlineFailure::SigningIdentity(failure) => {
@@ -2427,8 +2428,9 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader, TargetedHandoffPoller,
-        TargetedHandoffPollingPolicy, spawn_targeted_handoff_worker_with_policy,
+        AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
+        TargetedHandoffPoller, TargetedHandoffPollingPolicy, is_reconnectable_agent_online_failure,
+        spawn_targeted_handoff_worker_with_policy,
     };
 
     #[test]
@@ -2447,6 +2449,16 @@ mod tests {
             "bridge.matrix_restore_dependency_unavailable"
         );
         assert_eq!(sync.code(), "bridge.matrix_sync_dependency_unavailable");
+    }
+
+    #[test]
+    fn 在线阶段发现加密身份冲突后允许释放连接并进入一次性恢复() {
+        let failure = AgentOnlineFailure::Matrix(MatrixFailure::new(
+            MatrixOperation::Sync,
+            MatrixFailureKind::CryptographicIdentityConflict,
+        ));
+
+        assert!(is_reconnectable_agent_online_failure(failure));
     }
 
     #[test]
