@@ -189,6 +189,7 @@ const fn matrix_failure_kind(kind: MatrixFailureKind) -> AgentLobbyEntryFailureK
         MatrixFailureKind::UnknownCommit => AgentLobbyEntryFailureKind::UnknownCommit,
         MatrixFailureKind::InvalidConfiguration
         | MatrixFailureKind::InvalidResponse
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => AgentLobbyEntryFailureKind::Internal,
     }

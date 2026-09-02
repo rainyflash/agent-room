@@ -634,6 +634,9 @@ fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
         crate::ports::MatrixFailureKind::RateLimited => "matrix.rate_limited",
         crate::ports::MatrixFailureKind::Timeout => "matrix.timeout",
         crate::ports::MatrixFailureKind::DependencyUnavailable => "matrix.unavailable",
+        crate::ports::MatrixFailureKind::CryptographicIdentityConflict => {
+            "matrix.crypto_identity_conflict"
+        }
         crate::ports::MatrixFailureKind::InvalidResponse => "matrix.invalid_response",
         crate::ports::MatrixFailureKind::UnknownCommit => "matrix.unknown_commit",
         crate::ports::MatrixFailureKind::StaleSyncToken => "matrix.stale_sync_token",

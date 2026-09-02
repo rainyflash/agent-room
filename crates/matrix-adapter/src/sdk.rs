@@ -55,7 +55,9 @@ use crate::{
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response},
-    store_recovery::{quarantine_invalid_state_cache, recover_query_statistics},
+    store_recovery::{
+        quarantine_invalid_state_cache, quarantine_session_store, recover_query_statistics,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -122,6 +124,26 @@ impl MatrixSdkClientFactory {
     ) -> MatrixResult<MatrixSdkHandoffConnection> {
         let client = self.restore_client(session).await?;
         handoff_connection_from_client(client, self.configuration.sync_timeline_limit())
+    }
+
+    /// 隔离与当前 Matrix 设备加密身份绑定的全部可再生本地 Store。
+    ///
+    /// 调用方必须先释放所有由本工厂创建的客户端连接。原文件会保留在恢复目录，
+    /// 不执行不可逆删除。
+    ///
+    /// # Errors
+    ///
+    /// Store 不在磁盘上，或文件无法原子移动时返回 Matrix 基础设施错误。
+    pub fn quarantine_device_session_store(&self) -> MatrixResult<bool> {
+        let MatrixSdkStore::EncryptedSqlite(store) = &self.store else {
+            return Ok(false);
+        };
+        quarantine_session_store(store.path()).map_err(|_| {
+            MatrixFailure::new(
+                MatrixOperation::InitializeStore,
+                MatrixFailureKind::DependencyUnavailable,
+            )
+        })
     }
 
     async fn build_client(&self, operation: MatrixOperation) -> MatrixResult<Client> {

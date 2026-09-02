@@ -241,6 +241,7 @@ const fn map_matrix_failure_kind(kind: MatrixFailureKind) -> AgentInstanceCleanu
         MatrixFailureKind::InvalidConfiguration
         | MatrixFailureKind::NotFound
         | MatrixFailureKind::Conflict
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::InvalidResponse
         | MatrixFailureKind::StaleSyncToken => {
             AgentInstanceCleanupFailureKind::InvalidStoredIdentity

@@ -191,6 +191,7 @@ const fn matrix_failure_kind(kind: crate::ports::MatrixFailureKind) -> PublicLob
         | crate::ports::MatrixFailureKind::Conflict
         | crate::ports::MatrixFailureKind::UnknownCommit
         | crate::ports::MatrixFailureKind::InvalidConfiguration
+        | crate::ports::MatrixFailureKind::CryptographicIdentityConflict
         | crate::ports::MatrixFailureKind::InvalidResponse
         | crate::ports::MatrixFailureKind::StaleSyncToken
         | crate::ports::MatrixFailureKind::UnsupportedVersion => {

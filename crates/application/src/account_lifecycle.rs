@@ -425,6 +425,7 @@ fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
         MatrixFailureKind::RateLimited => "matrix.rate_limited",
         MatrixFailureKind::Timeout => "matrix.timeout",
         MatrixFailureKind::DependencyUnavailable => "matrix.unavailable",
+        MatrixFailureKind::CryptographicIdentityConflict => "matrix.crypto_identity_conflict",
         MatrixFailureKind::InvalidResponse => "matrix.invalid_response",
         MatrixFailureKind::UnknownCommit => "matrix.unknown_commit",
         MatrixFailureKind::StaleSyncToken => "matrix.stale_sync_token",

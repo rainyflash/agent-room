@@ -744,6 +744,7 @@ const fn map_matrix_failure(
         | MatrixFailureKind::Forbidden
         | MatrixFailureKind::NotFound
         | MatrixFailureKind::InvalidConfiguration
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::InvalidResponse
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => AgentManagementFailureKind::Internal,

@@ -10,6 +10,12 @@ use uuid::Uuid;
 
 const STATE_DATABASE: &str = "matrix-sdk-state.sqlite3";
 const RECOVERY_DIRECTORY: &str = "recovered-store-backups";
+const SESSION_DATABASES: [&str; 4] = [
+    "matrix-sdk-state.sqlite3",
+    "matrix-sdk-crypto.sqlite3",
+    "matrix-sdk-event-cache.sqlite3",
+    "matrix-sdk-media.sqlite3",
+];
 const QUERY_STATISTICS_TABLES: [&str; 2] = ["sqlite_stat1", "sqlite_stat4"];
 
 pub(crate) fn recover_query_statistics(store_root: &Path) -> Result<bool, StoreRecoveryFailure> {
@@ -60,6 +66,33 @@ pub(crate) fn quarantine_invalid_state_cache(
         .join(RECOVERY_DIRECTORY)
         .join(Uuid::now_v7().to_string());
     move_database_to_quarantine(&state_database, &quarantine)?;
+    Ok(true)
+}
+
+pub(crate) fn quarantine_session_store(store_root: &Path) -> Result<bool, StoreRecoveryFailure> {
+    let quarantine = store_root
+        .join(RECOVERY_DIRECTORY)
+        .join(Uuid::now_v7().to_string());
+    fs::create_dir_all(&quarantine).map_err(StoreRecoveryFailure::Filesystem)?;
+    let mut moved = Vec::new();
+    for database_name in SESSION_DATABASES {
+        let database = store_root.join(database_name);
+        for (original, backup) in database_companions(&database, &quarantine)
+            .into_iter()
+            .filter(|(original, _)| original.exists())
+        {
+            if let Err(error) = fs::rename(&original, &backup) {
+                rollback_moves(&moved);
+                let _ = fs::remove_dir(&quarantine);
+                return Err(StoreRecoveryFailure::Filesystem(error));
+            }
+            moved.push((original, backup));
+        }
+    }
+    if moved.is_empty() {
+        let _ = fs::remove_dir(&quarantine);
+        return Ok(false);
+    }
     Ok(true)
 }
 
@@ -323,7 +356,7 @@ mod tests {
 
     use super::{
         RECOVERY_DIRECTORY, STATE_DATABASE, quarantine_invalid_state_cache,
-        recover_query_statistics,
+        quarantine_session_store, recover_query_statistics,
     };
 
     #[test]
@@ -400,6 +433,41 @@ mod tests {
         assert!(quarantine.join(format!("{STATE_DATABASE}-shm")).is_file());
         assert!(!quarantine.join("matrix-sdk-crypto.sqlite3").exists());
         assert!(!quarantine.join("matrix-sdk-crypto.sqlite3-wal").exists());
+    }
+
+    #[test]
+    fn 加密身份冲突会原子隔离整套可再生_store() {
+        let directory = tempdir().expect("临时目录可创建");
+        for database in [
+            "matrix-sdk-state.sqlite3",
+            "matrix-sdk-crypto.sqlite3",
+            "matrix-sdk-event-cache.sqlite3",
+            "matrix-sdk-media.sqlite3",
+        ] {
+            std::fs::write(directory.path().join(database), database).expect("Store 可创建");
+            std::fs::write(directory.path().join(format!("{database}-wal")), b"wal")
+                .expect("WAL 可创建");
+        }
+
+        assert!(quarantine_session_store(directory.path()).expect("Store 可隔离"));
+
+        for database in [
+            "matrix-sdk-state.sqlite3",
+            "matrix-sdk-crypto.sqlite3",
+            "matrix-sdk-event-cache.sqlite3",
+            "matrix-sdk-media.sqlite3",
+        ] {
+            assert!(!directory.path().join(database).exists());
+            assert!(!directory.path().join(format!("{database}-wal")).exists());
+        }
+        let backups = std::fs::read_dir(directory.path().join(RECOVERY_DIRECTORY))
+            .expect("隔离目录存在")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("隔离目录可读取");
+        assert_eq!(backups.len(), 1);
+        let quarantine = backups[0].path();
+        assert!(quarantine.join("matrix-sdk-crypto.sqlite3").is_file());
+        assert!(quarantine.join("matrix-sdk-state.sqlite3-wal").is_file());
     }
 
     fn create_analyzed_database(path: &Path) {

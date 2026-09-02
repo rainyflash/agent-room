@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use agent_room_application::ports::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
@@ -6,6 +6,10 @@ use agent_room_application::ports::{
 use agent_room_domain::time::DurationMillis;
 use matrix_sdk::ruma::api::error::{ErrorKind, RetryAfter};
 use matrix_sdk::{ClientBuildError, Error, HttpError};
+use matrix_sdk::{
+    encryption::DuplicateOneTimeKeyErrorMessage,
+    ruma::api::error::{ErrorBody, StandardErrorBody},
+};
 
 pub(crate) fn map_sdk_error(operation: MatrixOperation, error: &Error) -> MatrixFailure {
     if let Some(api_error) = error.as_client_api_error() {
@@ -80,6 +84,9 @@ fn map_api_error(
     operation: MatrixOperation,
     error: &matrix_sdk::ruma::api::error::Error,
 ) -> MatrixFailure {
+    if operation == MatrixOperation::Sync && is_duplicate_one_time_key_error(error) {
+        return MatrixFailure::new(operation, MatrixFailureKind::CryptographicIdentityConflict);
+    }
     if error.status_code == reqwest::StatusCode::FORBIDDEN {
         let kind = if operation == MatrixOperation::Login {
             MatrixFailureKind::AuthenticationRejected
@@ -117,6 +124,16 @@ fn map_api_error(
         }
         _ => map_status(operation, error.status_code.as_u16()),
     }
+}
+
+fn is_duplicate_one_time_key_error(error: &matrix_sdk::ruma::api::error::Error) -> bool {
+    if error.status_code != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let ErrorBody::Standard(StandardErrorBody { message, .. }) = &error.body else {
+        return false;
+    };
+    DuplicateOneTimeKeyErrorMessage::from_str(message).is_ok()
 }
 
 fn map_status(operation: MatrixOperation, status: u16) -> MatrixFailure {
@@ -198,6 +215,31 @@ mod tests {
         assert_eq!(
             map_api_error(MatrixOperation::Sync, &error).kind(),
             MatrixFailureKind::StaleSyncToken
+        );
+    }
+
+    #[test]
+    fn 重复一次性密钥被识别为加密身份冲突() {
+        let message = concat!(
+            r#"One time key signed_curve25519:AAAAAAAAAAA already exists. "#,
+            r#"Old key: {"key":"dBcZBzQaiQYWf6rBPh2QypIOB/dxSoTeyaFaxNNbeHs","signatures":{"@example:matrix.org":{"ed25519:AAAAAAAAAA":"Fk45zHAbrd+1j9wZXLjL2Y/+DU/Mnz9yuvlfYBOOT7qExN2Jdud+5BAuNs8nZ/caS4wTF39Kg3zQpzaGERoCBg"}}};"#,
+            r#" new key: {'key': 'CY0TWVK1/Kj3ZADuBcGe3UKvpT+IKAPMUsMeJhSDqno', 'signatures': {'@example:matrix.org': {'ed25519:AAAAAAAAAA': 'BQ9Gp0p+6srF+c8OyruqKKd9R4yaub3THYAyyBB/7X/rG8BwcAqFynzl1aGyFYun4Q+087a5OSiglCXI+/kQAA'}}}"#
+        );
+        let error = ApiError::new(
+            StatusCode::BAD_REQUEST,
+            ErrorBody::Standard(StandardErrorBody::new(
+                ErrorKind::BadJson,
+                message.to_owned(),
+            )),
+        );
+
+        assert_eq!(
+            map_api_error(MatrixOperation::Sync, &error).kind(),
+            MatrixFailureKind::CryptographicIdentityConflict
+        );
+        assert_ne!(
+            map_api_error(MatrixOperation::Login, &error).kind(),
+            MatrixFailureKind::CryptographicIdentityConflict
         );
     }
 

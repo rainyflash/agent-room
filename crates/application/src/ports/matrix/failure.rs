@@ -74,6 +74,7 @@ pub enum MatrixFailureKind {
     RateLimited,
     Timeout,
     DependencyUnavailable,
+    CryptographicIdentityConflict,
     InvalidResponse,
     UnknownCommit,
     StaleSyncToken,
@@ -126,6 +127,7 @@ pub enum MatrixRecoveryAction {
     ReconcileSubmission,
     ResetSyncCursor,
     Reauthenticate,
+    RotateDeviceSession,
     Stop,
 }
 
@@ -171,6 +173,9 @@ impl MatrixRetryPolicy {
             MatrixFailureKind::UnknownCommit => MatrixRecoveryAction::ReconcileSubmission,
             MatrixFailureKind::StaleSyncToken => MatrixRecoveryAction::ResetSyncCursor,
             MatrixFailureKind::Unauthenticated => MatrixRecoveryAction::Reauthenticate,
+            MatrixFailureKind::CryptographicIdentityConflict => {
+                MatrixRecoveryAction::RotateDeviceSession
+            }
             MatrixFailureKind::RateLimited if completed_attempts < self.maximum_attempts => {
                 let delay = failure
                     .retry_after()

@@ -100,6 +100,7 @@ pub(crate) const fn matrix(operation: &'static str, error: MatrixFailure) -> Pri
         | MatrixFailureKind::AuthenticationRejected
         | MatrixFailureKind::Forbidden
         | MatrixFailureKind::NotFound
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::InvalidResponse
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => PrivateRoomFailureKind::Internal,

@@ -103,6 +103,7 @@ pub(crate) const fn matrix(operation: &'static str, error: MatrixFailure) -> Dir
         | MatrixFailureKind::AuthenticationRejected
         | MatrixFailureKind::Forbidden
         | MatrixFailureKind::NotFound
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::InvalidResponse
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => DirectSessionFailureKind::Internal,
