@@ -129,10 +129,10 @@
   - [x] 17.5 发布并从公开资产复验下一版 Windows Alpha。
   - _需求：1—9_
 
-- [ ] 18. 修复桌面 Matrix SSO 的主窗口导航泄漏
+- [x] 18. 修复桌面 Matrix SSO 的主窗口导航泄漏
   - [x] 18.1 把回环监听器泛化为固定人类会话路径与随机 Matrix 事务路径。
   - [x] 18.2 增加原生 Matrix SSO Runtime，只通过系统浏览器接收一次性 `loginToken`。
   - [x] 18.3 以 Adapter 组合桌面认证与既有 Matrix SDK 会话，Web 行为保持不变。
   - [x] 18.4 状态机区分浏览器跳转与桌面会话已建立，并完成 Rust/TypeScript 全量回归。
-  - [ ] 18.5 发布 Windows Alpha 11，并在真实安装程序中验证主 WebView 不离开 Agent Room、Matrix 达到 `PREPARED`、大厅可用。
+  - [x] 18.5 发布 Windows Alpha 14，并在真实 Windows 安装程序中验证主 WebView 不离开 Agent Room、Matrix 达到 `PREPARED`、大厅可用；公开发布、升级安装和通用 MCP `ready` 状态均已完成验收，详见[任务 18 验收记录](task-18-desktop-matrix-sso-verification.md)。
   - _需求：2、7、8_
