@@ -249,6 +249,63 @@ struct AgentSessionRuntime {
     sync_timeout: DurationMillis,
     initial_session: Option<AgentOnlineSession>,
     reconnect_policy: ReconnectPolicy,
+    matrix_identity_recovery: MatrixIdentityRecovery,
+}
+
+const MATRIX_IDENTITY_RECOVERY_UNTOUCHED: u8 = 0;
+const MATRIX_IDENTITY_RECOVERY_STORE_QUARANTINED: u8 = 1;
+const MATRIX_IDENTITY_RECOVERY_COMPLETE: u8 = 2;
+
+struct MatrixIdentityRecovery {
+    phase: AtomicU8,
+}
+
+impl MatrixIdentityRecovery {
+    const fn new() -> Self {
+        Self {
+            phase: AtomicU8::new(MATRIX_IDENTITY_RECOVERY_UNTOUCHED),
+        }
+    }
+
+    fn prepare_store(&self, matrix: &MatrixSdkClientFactory) -> Result<bool, MatrixFailure> {
+        loop {
+            match self.phase.load(Ordering::Acquire) {
+                MATRIX_IDENTITY_RECOVERY_COMPLETE => return Ok(false),
+                MATRIX_IDENTITY_RECOVERY_STORE_QUARANTINED => return Ok(true),
+                MATRIX_IDENTITY_RECOVERY_UNTOUCHED => {
+                    if self
+                        .phase
+                        .compare_exchange(
+                            MATRIX_IDENTITY_RECOVERY_UNTOUCHED,
+                            MATRIX_IDENTITY_RECOVERY_STORE_QUARANTINED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    if let Err(failure) = matrix.quarantine_device_session_store() {
+                        self.phase
+                            .store(MATRIX_IDENTITY_RECOVERY_UNTOUCHED, Ordering::Release);
+                        return Err(failure);
+                    }
+                    return Ok(true);
+                }
+                _ => {
+                    return Err(MatrixFailure::new(
+                        MatrixOperation::InitializeStore,
+                        MatrixFailureKind::InvalidResponse,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn complete(&self) {
+        self.phase
+            .store(MATRIX_IDENTITY_RECOVERY_COMPLETE, Ordering::Release);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -660,6 +717,7 @@ async fn compose_agent_session_runtime(
             domain_duration(config.reconnect_maximum_delay)?,
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+        matrix_identity_recovery: MatrixIdentityRecovery::new(),
     })
 }
 
@@ -783,6 +841,41 @@ async fn compose_agent_message_services(
 }
 
 async fn establish_agent_online(
+    runtime: &AgentSessionRuntime,
+) -> Result<AgentOnlineSession, AgentOnlineFailure> {
+    match establish_agent_online_once(runtime).await {
+        Err(AgentOnlineFailure::Matrix(failure))
+            if failure.kind() == MatrixFailureKind::CryptographicIdentityConflict =>
+        {
+            recover_matrix_identity(runtime).await?;
+            establish_agent_online_once(runtime).await
+        }
+        result => result,
+    }
+}
+
+async fn recover_matrix_identity(runtime: &AgentSessionRuntime) -> Result<(), AgentOnlineFailure> {
+    if !runtime
+        .matrix_identity_recovery
+        .prepare_store(runtime.matrix.as_ref())
+        .map_err(AgentOnlineFailure::Matrix)?
+    {
+        return Err(AgentOnlineFailure::Matrix(MatrixFailure::new(
+            MatrixOperation::Sync,
+            MatrixFailureKind::InvalidResponse,
+        )));
+    }
+    tracing::warn!("检测到 Matrix 设备加密身份冲突，已隔离本地 Store 并轮换会话");
+    runtime
+        .service
+        .recover_matrix_session(&runtime.config)
+        .await
+        .map_err(AgentOnlineFailure::AgentRuntime)?;
+    runtime.matrix_identity_recovery.complete();
+    Ok(())
+}
+
+async fn establish_agent_online_once(
     runtime: &AgentSessionRuntime,
 ) -> Result<AgentOnlineSession, AgentOnlineFailure> {
     let registered = runtime
@@ -2284,6 +2377,10 @@ impl BridgeRuntimeError {
                     "Agent Matrix 服务或本地依赖暂时不可用",
                 ),
             },
+            MatrixFailureKind::CryptographicIdentityConflict => (
+                "bridge.matrix_crypto_identity_conflict",
+                "Agent Matrix 设备加密身份发生冲突",
+            ),
             MatrixFailureKind::StaleSyncToken => (
                 "bridge.matrix_sync_token_stale",
                 "Agent Matrix 同步游标已失效",

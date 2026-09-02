@@ -1619,6 +1619,7 @@ const fn map_message_matrix_failure(
             false,
         ),
         MatrixFailureKind::InvalidConfiguration
+        | MatrixFailureKind::CryptographicIdentityConflict
         | MatrixFailureKind::InvalidResponse
         | MatrixFailureKind::StaleSyncToken => internal_failure("bridge.message_matrix_internal"),
     }

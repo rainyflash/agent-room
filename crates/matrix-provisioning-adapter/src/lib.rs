@@ -543,8 +543,9 @@ mod tests {
 
     use agent_room_application::ports::{
         MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
-        MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-        MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, MatrixUserId, SecretValue,
+        MatrixAgentDeviceSessionRotator, MatrixAgentDeviceSessionTarget,
+        MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
+        MatrixDeviceId, MatrixFailureKind, MatrixUserId, SecretValue,
     };
     use agent_room_domain::ids::AgentId;
     use axum::{
@@ -654,6 +655,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 轮换设备会话必须先撤销旧密钥再签发新凭据() {
+        let server = TestServer::start(TestMode::Success).await;
+        let request = MatrixAgentDeviceSessionRequest::new(
+            managed_user_id(),
+            MatrixDeviceId::new("AR_INSTANCE_1").expect("设备标识有效"),
+            "Agent Room 实例".to_owned(),
+        )
+        .expect("会话请求有效");
+
+        let session = provisioner(&server.url)
+            .rotate_device_session(&request)
+            .await
+            .expect("设备会话可以轮换");
+
+        assert_eq!(session.metadata().user_id(), request.user_id());
+        assert_eq!(session.metadata().device_id(), request.device_id());
+        assert_eq!(
+            *server.state.request_sequence.lock().await,
+            ["revoke", "login"]
+        );
+    }
+
+    #[tokio::test]
     async fn 普通_matrix_用户不能借用_application_service_撤销设备() {
         let server = TestServer::start(TestMode::Success).await;
         let target = MatrixAgentDeviceSessionTarget::new(
@@ -742,6 +766,7 @@ mod tests {
     struct TestState {
         mode: TestMode,
         authenticated_requests: Mutex<usize>,
+        request_sequence: Mutex<Vec<&'static str>>,
     }
 
     impl TestServer {
@@ -749,6 +774,7 @@ mod tests {
             let state = Arc::new(TestState {
                 mode,
                 authenticated_requests: Mutex::new(0),
+                request_sequence: Mutex::new(Vec::new()),
             });
             let app = Router::new()
                 .route("/_matrix/client/v3/register", post(register))
@@ -819,6 +845,7 @@ mod tests {
         Json(payload): Json<Value>,
     ) -> impl IntoResponse {
         record_authentication(&state, &headers).await;
+        state.request_sequence.lock().await.push("login");
         assert_eq!(payload["type"], "m.login.application_service");
         assert_eq!(payload["device_id"], "AR_INSTANCE_1");
         (
@@ -844,6 +871,7 @@ mod tests {
         Json(payload): Json<Value>,
     ) -> impl IntoResponse {
         record_authentication(&state, &headers).await;
+        state.request_sequence.lock().await.push("revoke");
         assert!(matches!(
             device_id.as_str(),
             "AR INSTANCE 1" | "AR_INSTANCE_1"
