@@ -4,9 +4,10 @@ use std::{net::IpAddr, time::Duration};
 
 use agent_room_application::ports::{
     MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
-    MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-    MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-    MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture, SecretValue,
+    MatrixAgentDeviceSessionRotator, MatrixAgentDeviceSessionTarget,
+    MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
+    MatrixDeviceId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixSession,
+    MatrixSessionMetadata, MatrixUserId, PortFuture, SecretValue,
 };
 use agent_room_domain::time::DurationMillis;
 use futures_util::StreamExt;
@@ -328,6 +329,22 @@ impl MatrixAgentDeviceSessionRevoker for MatrixApplicationServiceProvisioner {
         target: &'a MatrixAgentDeviceSessionTarget,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(self.revoke_device_session_internal(target))
+    }
+}
+
+impl MatrixAgentDeviceSessionRotator for MatrixApplicationServiceProvisioner {
+    fn rotate_device_session<'a>(
+        &'a self,
+        request: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>> {
+        Box::pin(async move {
+            let target = MatrixAgentDeviceSessionTarget::new(
+                request.user_id().clone(),
+                request.device_id().clone(),
+            );
+            self.revoke_device_session_internal(&target).await?;
+            self.issue_device_session_internal(request).await
+        })
     }
 }
 

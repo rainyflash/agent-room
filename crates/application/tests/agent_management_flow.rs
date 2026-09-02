@@ -13,11 +13,11 @@ use agent_room_application::{
         AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
-        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner,
-        MatrixAgentUserRegistration, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, OutboxMessage,
-        PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue, StoredAgentInstanceRegistration,
+        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
+        MatrixAgentIdentityProvisioner, MatrixAgentUserRegistration, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixSession, MatrixSessionMetadata,
+        MatrixUserId, OutboxMessage, PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest,
+        SecretFactory, SecretGenerationFailure, SecretValue, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -323,6 +323,28 @@ impl MatrixAgentIdentityProvisioner for FakeMatrixIdentities {
     }
 }
 
+impl MatrixAgentDeviceSessionRotator for FakeMatrixIdentities {
+    fn rotate_device_session<'a>(
+        &'a self,
+        request: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>> {
+        Box::pin(async move {
+            *self.issued_sessions.lock().expect("测试锁不得中毒") += 1;
+            let user_id = if self.corrupt_session_identity {
+                MatrixUserId::new("@_agent_00000000000000000000000000000000:matrix.test")
+                    .expect("伪造用户标识有效")
+            } else {
+                request.user_id().clone()
+            };
+            Ok(MatrixSession::new(
+                MatrixSessionMetadata::new(user_id, request.device_id().clone()),
+                SecretValue::new("rotated-agent-device-session-token").expect("测试 Token 有效"),
+                None,
+            ))
+        })
+    }
+}
+
 #[tokio::test]
 async fn 创建_agent_先预留稳定标识再对账_matrix_身份() {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
@@ -553,7 +575,8 @@ fn service(
         memberships: Arc::new(FakeMemberships { memberships }),
         membership_changes: Arc::new(FakeMembershipChanges),
         instances,
-        matrix_identities: matrix,
+        matrix_identities: matrix.clone(),
+        matrix_sessions: matrix,
         secrets: Arc::new(TestSecrets),
         identifiers: Arc::new(TestIdentifiers),
         clock: Arc::new(StaticClock),

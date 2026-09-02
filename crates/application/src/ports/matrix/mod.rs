@@ -49,6 +49,17 @@ pub trait MatrixAgentDeviceSessionRevoker: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
+/// 为稳定 Agent 实例轮换唯一有效的 Matrix 设备会话。
+///
+/// 实现必须先幂等撤销目标设备，再签发同一用户和设备标识的新会话。这样同一注册
+/// 请求在结果未知后重放时，不会留下两套可同时使用的设备凭据或加密钥匙。
+pub trait MatrixAgentDeviceSessionRotator: Send + Sync {
+    fn rotate_device_session<'a>(
+        &'a self,
+        request: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
+}
+
 /// 由受限后台工作流擦除一个本地 Matrix 人类账户。
 ///
 /// 实现必须验证目标属于本 Homeserver，并把“已经停用”视为幂等成功。管理员凭据不得暴露给前端。

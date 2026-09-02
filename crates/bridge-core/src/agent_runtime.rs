@@ -261,22 +261,7 @@ impl AgentRuntimeSessionService {
         &self,
         config: &AgentRuntimeSessionConfig,
     ) -> AgentRuntimeSessionResult<RegisteredAgentRuntime> {
-        let signer = self
-            .signing_identities
-            .load_or_create()
-            .map_err(|error| map_credential_failure("bridge.agent_runtime.load_key", error))?;
-        let device_public_key = signer
-            .public_key()
-            .map_err(|error| map_credential_failure("bridge.agent_runtime.public_key", error))?;
-        let public_signing_key = AgentInstancePublicSigningKey::new(
-            device_public_key.as_bytes().to_vec(),
-        )
-        .map_err(|_| {
-            failure(
-                "bridge.agent_runtime.public_key",
-                AgentRuntimeSessionFailureKind::Internal,
-            )
-        })?;
+        let public_signing_key = self.load_public_signing_key()?;
 
         let intent = match self
             .credentials
@@ -315,7 +300,7 @@ impl AgentRuntimeSessionService {
             .control_plane
             .register(&intent)
             .await
-            .map_err(map_control_plane_failure)?;
+            .map_err(|error| map_control_plane_failure("bridge.agent_runtime.register", error))?;
         validate_registration(&intent, &runtime)?;
         self.credentials
             .replace(&StoredAgentRuntimeCredentials::Ready {
@@ -326,6 +311,71 @@ impl AgentRuntimeSessionService {
                 map_credential_failure("bridge.agent_runtime.persist_session", error)
             })?;
         Ok(runtime)
+    }
+
+    /// 重放已持久化的登记意图，并原子替换同一实例的 Matrix 设备会话。
+    ///
+    /// 该操作只允许轮换访问凭据；Agent、实例、适配器绑定、Matrix 用户和设备标识
+    /// 任一发生变化都会拒绝写入，避免恢复流程静默劫持身份。
+    ///
+    /// # Errors
+    ///
+    /// 尚无就绪登记、配置漂移、控制面轮换失败或安全存储不可用时返回稳定错误。
+    pub async fn recover_matrix_session(
+        &self,
+        config: &AgentRuntimeSessionConfig,
+    ) -> AgentRuntimeSessionResult<RegisteredAgentRuntime> {
+        let public_signing_key = self.load_public_signing_key()?;
+        let (intent, current) = match self
+            .credentials
+            .load()
+            .map_err(|error| map_credential_failure("bridge.agent_runtime.load", error))?
+        {
+            Some(StoredAgentRuntimeCredentials::Ready { intent, runtime }) => (intent, *runtime),
+            Some(StoredAgentRuntimeCredentials::RegistrationPending(_)) | None => {
+                return Err(failure(
+                    "bridge.agent_runtime.recover_matrix_session",
+                    AgentRuntimeSessionFailureKind::NotFound,
+                ));
+            }
+        };
+        ensure_compatible(config, &intent, &public_signing_key)?;
+        validate_registration(&intent, &current)?;
+
+        let recovered = self
+            .control_plane
+            .register(&intent)
+            .await
+            .map_err(|error| {
+                map_control_plane_failure("bridge.agent_runtime.recover_matrix_session", error)
+            })?;
+        validate_registration(&intent, &recovered)?;
+        validate_recovered_identity(&current, &recovered)?;
+        self.credentials
+            .replace(&StoredAgentRuntimeCredentials::Ready {
+                intent,
+                runtime: Box::new(recovered.clone()),
+            })
+            .map_err(|error| {
+                map_credential_failure("bridge.agent_runtime.persist_recovery", error)
+            })?;
+        Ok(recovered)
+    }
+
+    fn load_public_signing_key(&self) -> AgentRuntimeSessionResult<AgentInstancePublicSigningKey> {
+        let signer = self
+            .signing_identities
+            .load_or_create()
+            .map_err(|error| map_credential_failure("bridge.agent_runtime.load_key", error))?;
+        let device_public_key = signer
+            .public_key()
+            .map_err(|error| map_credential_failure("bridge.agent_runtime.public_key", error))?;
+        AgentInstancePublicSigningKey::new(device_public_key.as_bytes().to_vec()).map_err(|_| {
+            failure(
+                "bridge.agent_runtime.public_key",
+                AgentRuntimeSessionFailureKind::Internal,
+            )
+        })
     }
 }
 
@@ -356,6 +406,26 @@ fn validate_registration(
     {
         return Err(failure(
             "bridge.agent_runtime.validate_response",
+            AgentRuntimeSessionFailureKind::InvalidControlPlaneResponse,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_recovered_identity(
+    current: &RegisteredAgentRuntime,
+    recovered: &RegisteredAgentRuntime,
+) -> AgentRuntimeSessionResult<()> {
+    let current_session = current.matrix_session().metadata();
+    let recovered_session = recovered.matrix_session().metadata();
+    if current.identity().agent_id() != recovered.identity().agent_id()
+        || current.identity().agent_instance_id() != recovered.identity().agent_instance_id()
+        || current.adapter_binding_id() != recovered.adapter_binding_id()
+        || current_session.user_id() != recovered_session.user_id()
+        || current_session.device_id() != recovered_session.device_id()
+    {
+        return Err(failure(
+            "bridge.agent_runtime.validate_recovery",
             AgentRuntimeSessionFailureKind::InvalidControlPlaneResponse,
         ));
     }
@@ -416,6 +486,7 @@ fn map_credential_failure(
 }
 
 fn map_control_plane_failure(
+    operation: &'static str,
     failure: ControlPlaneAgentRuntimeFailure,
 ) -> AgentRuntimeSessionFailure {
     let kind = match failure.kind() {
@@ -439,7 +510,7 @@ fn map_control_plane_failure(
         }
         ControlPlaneAgentRuntimeFailureKind::Internal => AgentRuntimeSessionFailureKind::Internal,
     };
-    AgentRuntimeSessionFailure::new("bridge.agent_runtime.register", kind)
+    AgentRuntimeSessionFailure::new(operation, kind)
 }
 
 const fn failure(

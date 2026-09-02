@@ -20,10 +20,10 @@ use crate::{
         AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
-        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner,
-        MatrixAgentLocalpart, MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind,
-        MatrixSession, MatrixUserId, OutboxMessage, PortFuture, RegisteredAgent, SecretFactory,
-        StoredAgentInstanceRegistration,
+        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
+        MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
+        MatrixDeviceId, MatrixFailureKind, MatrixSession, MatrixUserId, OutboxMessage, PortFuture,
+        RegisteredAgent, SecretFactory, StoredAgentInstanceRegistration,
     },
 };
 
@@ -166,6 +166,7 @@ pub struct AgentManagementService {
     membership_changes: Arc<dyn AgentMembershipTransaction>,
     instances: Arc<dyn AgentInstanceRegistrationTransaction>,
     matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
+    matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
     secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
@@ -178,6 +179,7 @@ pub struct AgentManagementDependencies {
     pub membership_changes: Arc<dyn AgentMembershipTransaction>,
     pub instances: Arc<dyn AgentInstanceRegistrationTransaction>,
     pub matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
+    pub matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
     pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
@@ -192,6 +194,7 @@ impl AgentManagementService {
             membership_changes: dependencies.membership_changes,
             instances: dependencies.instances,
             matrix_identities: dependencies.matrix_identities,
+            matrix_sessions: dependencies.matrix_sessions,
             secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -401,8 +404,8 @@ impl AgentManagementService {
         )
         .map_err(|_| internal_failure(operation))?;
         let session = self
-            .matrix_identities
-            .issue_device_session(&session_request)
+            .matrix_sessions
+            .rotate_device_session(&session_request)
             .await
             .map_err(|error| map_matrix_failure(operation, error.kind()))?;
         if session.metadata().user_id() != &matrix_user_id

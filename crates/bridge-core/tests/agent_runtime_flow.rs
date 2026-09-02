@@ -226,6 +226,66 @@ async fn 控制面返回其他_agent_身份时不写入就绪凭据() {
     ));
 }
 
+#[tokio::test]
+async fn 加密身份恢复只替换同一实例的_matrix_凭据() {
+    let credentials = Arc::new(内存运行凭据库::default());
+    let initial = runtime_with("matrix-access-token", INSTANCE_ID);
+    let recovered = runtime_with("rotated-matrix-access-token", INSTANCE_ID);
+    let gateway = Arc::new(队列控制面::new([
+        Ok(initial.clone()),
+        Ok(recovered.clone()),
+    ]));
+    let service = service(credentials.clone(), gateway.clone());
+    let config = config(agent_id(), "codex-desktop");
+
+    service.ensure_session(&config).await.expect("首次登记成功");
+    let result = service
+        .recover_matrix_session(&config)
+        .await
+        .expect("同一身份的会话可以轮换");
+
+    assert_eq!(result, recovered);
+    assert_ne!(result.matrix_session(), initial.matrix_session());
+    let requests = gateway.requests.lock().expect("请求记录锁可用");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].request_id(), requests[1].request_id());
+    assert!(matches!(
+        credentials.current.lock().expect("凭据锁可用").as_ref(),
+        Some(StoredAgentRuntimeCredentials::Ready { runtime, .. })
+            if runtime.as_ref() == &recovered
+    ));
+}
+
+#[tokio::test]
+async fn 加密身份恢复拒绝控制面静默切换实例() {
+    let credentials = Arc::new(内存运行凭据库::default());
+    let gateway = Arc::new(队列控制面::new([
+        Ok(runtime_with("matrix-access-token", INSTANCE_ID)),
+        Ok(runtime_with(
+            "rotated-matrix-access-token",
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e50",
+        )),
+    ]));
+    let service = service(credentials.clone(), gateway);
+    let config = config(agent_id(), "codex-desktop");
+    let initial = service.ensure_session(&config).await.expect("首次登记成功");
+
+    let failure = service
+        .recover_matrix_session(&config)
+        .await
+        .expect_err("实例漂移必须被拒绝");
+
+    assert_eq!(
+        failure.kind(),
+        AgentRuntimeSessionFailureKind::InvalidControlPlaneResponse
+    );
+    assert!(matches!(
+        credentials.current.lock().expect("凭据锁可用").as_ref(),
+        Some(StoredAgentRuntimeCredentials::Ready { runtime, .. })
+            if runtime.as_ref() == &initial
+    ));
+}
+
 fn service(
     credentials: Arc<内存运行凭据库>,
     control_plane: Arc<队列控制面>,
@@ -244,13 +304,25 @@ fn config(agent_id: AgentId, adapter_type: &str) -> AgentRuntimeSessionConfig {
 }
 
 fn runtime(agent_id: AgentId) -> RegisteredAgentRuntime {
+    runtime_with_agent(agent_id, "matrix-access-token", INSTANCE_ID)
+}
+
+fn runtime_with(access_token: &str, instance_id: &str) -> RegisteredAgentRuntime {
+    runtime_with_agent(agent_id(), access_token, instance_id)
+}
+
+fn runtime_with_agent(
+    agent_id: AgentId,
+    access_token: &str,
+    instance_id: &str,
+) -> RegisteredAgentRuntime {
     let user_id =
         MatrixUserId::new(format!("@agent_{agent_id}:example.org")).expect("用户标识有效");
     let identity = BridgeAgentIdentity::new(
         agent_id,
         "Codex Builder",
         user_id.as_str(),
-        AgentInstanceId::from_uuid(uuid(INSTANCE_ID)),
+        AgentInstanceId::from_uuid(uuid(instance_id)),
     )
     .expect("Agent 身份有效");
     RegisteredAgentRuntime::new(
@@ -261,7 +333,7 @@ fn runtime(agent_id: AgentId) -> RegisteredAgentRuntime {
                 user_id,
                 MatrixDeviceId::new("AR_TEST").expect("Matrix 设备标识有效"),
             ),
-            SecretValue::new("matrix-access-token").expect("访问令牌有效"),
+            SecretValue::new(access_token).expect("访问令牌有效"),
             Some(SecretValue::new("matrix-refresh-token").expect("刷新令牌有效")),
         ),
     )
