@@ -74,11 +74,16 @@ const desktop = new TauriDesktopRuntimeGateway({
   },
   listen: async () => () => undefined,
 });
-const onboarding = new OnboardingCoordinator({
-  ensureDefaultAgent: async () => err({ code: 'fixture.unavailable', retryable: false }),
-  listAgents: async () => err({ code: 'fixture.unavailable', retryable: false }),
-  listPublicLobbies: async () => err({ code: 'fixture.unavailable', retryable: false }),
-});
+const roomDirectory = {
+  list: async () => err({ code: 'fixture.unavailable', retryable: false }),
+};
+const onboarding = new OnboardingCoordinator(
+  {
+    ensureDefaultAgent: async () => err({ code: 'fixture.unavailable', retryable: false }),
+    listAgents: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  },
+  roomDirectory,
+);
 const localPreferencesGateway: AccountPreferencesGateway = {
   read: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
   scope: () => null,
@@ -514,6 +519,7 @@ const services: AppServices = {
   onboarding,
   privateRoomMatrix,
   privateRooms,
+  roomDirectory,
   security,
   session: {
     browser: {

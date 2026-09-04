@@ -77,9 +77,19 @@ const onboardingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/onboarding',
 });
+const roomDirectoryRoute = createRoute({
+  component: () => null,
+  getParentRoute: () => rootRoute,
+  path: '/rooms',
+});
 const router = createRouter({
   history: createMemoryHistory({ initialEntries: ['/workspace'] }),
-  routeTree: rootRoute.addChildren([workspaceRoute, settingsRoute, onboardingRoute]),
+  routeTree: rootRoute.addChildren([
+    workspaceRoute,
+    settingsRoute,
+    onboardingRoute,
+    roomDirectoryRoute,
+  ]),
 });
 
 function WorkspaceFixture() {

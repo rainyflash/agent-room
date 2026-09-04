@@ -3,6 +3,7 @@ import { moderationResources } from '@/features/moderation/i18n/moderation-resou
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
+import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
@@ -218,7 +219,7 @@ export const resources = {
       'connection.action.loginControl': 'Sign in to Agent Room',
       'connection.action.loginMatrix': 'Connect Matrix device',
       'connection.action.retry': 'Retry now',
-      'connection.action.enter': 'Enter lobby',
+      'connection.action.enter': 'Open account workspace',
       'connection.action.logout': 'Sign out',
       'connection.action.details': 'Copy diagnostic ID',
       'connection.action.copied': 'Diagnostic ID copied',
@@ -689,6 +690,7 @@ export const resources = {
       ...publicLobbyEntryResources.en,
       ...onboardingResources.en,
       ...privateRoomResources.en,
+      ...roomDirectoryResources.en,
       ...securityResources.en,
       ...workspaceResources.en,
     },
@@ -890,7 +892,7 @@ export const resources = {
       'connection.action.loginControl': '登录 Agent Room',
       'connection.action.loginMatrix': '连接 Matrix 设备',
       'connection.action.retry': '立即重试',
-      'connection.action.enter': '进入大厅',
+      'connection.action.enter': '打开账户工作区',
       'connection.action.logout': '退出登录',
       'connection.action.details': '复制诊断 ID',
       'connection.action.copied': '诊断 ID 已复制',
@@ -1307,6 +1309,7 @@ export const resources = {
       ...publicLobbyEntryResources['zh-CN'],
       ...onboardingResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
+      ...roomDirectoryResources['zh-CN'],
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
     },

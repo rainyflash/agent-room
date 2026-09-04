@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
+import type { OnboardingAgent, OnboardingGateway } from '@/features/onboarding/domain/onboarding';
 import type {
-  OnboardingAgent,
-  OnboardingGateway,
-  PublicLobby,
-} from '@/features/onboarding/domain/onboarding';
+  PublicRoomDirectoryGateway,
+  PublicRoomSummary,
+} from '@/features/room-directory/domain/public-room-directory';
 import { err, ok } from '@/shared/result';
 
 const agent: OnboardingAgent = {
@@ -18,7 +18,7 @@ const agent: OnboardingAgent = {
   slug: 'first-agent',
   visibility: 'private',
 };
-const lobby: PublicLobby = {
+const lobby: PublicRoomSummary = {
   activeInstanceCount: 1,
   catalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
   description: '',
@@ -31,7 +31,7 @@ const lobby: PublicLobby = {
 describe('首次引导协调器', () => {
   it('已有 Agent 时直接复用，绝不调用创建端点', async () => {
     const gateway = fixtureGateway([agent]);
-    const result = await new OnboardingCoordinator(gateway).bootstrap('en-US');
+    const result = await new OnboardingCoordinator(gateway, roomDirectory()).bootstrap('en-US');
 
     expect(result).toEqual(ok({ agent, lobby, reusedExistingAgent: true }));
     expect(gateway.ensureDefaultAgent.mock.calls).toHaveLength(0);
@@ -39,15 +39,15 @@ describe('首次引导协调器', () => {
 
   it('空账户只调用服务端幂等默认 Agent 端点一次', async () => {
     const gateway = fixtureGateway([]);
-    const result = await new OnboardingCoordinator(gateway).bootstrap('en');
+    const result = await new OnboardingCoordinator(gateway, roomDirectory()).bootstrap('en');
 
     expect(result).toEqual(ok({ agent, lobby, reusedExistingAgent: false }));
     expect(gateway.ensureDefaultAgent.mock.calls).toHaveLength(1);
   });
 
   it('公共大厅不存在时显式失败而不发明目录项', async () => {
-    const gateway = fixtureGateway([agent], []);
-    const result = await new OnboardingCoordinator(gateway).bootstrap('en');
+    const gateway = fixtureGateway([agent]);
+    const result = await new OnboardingCoordinator(gateway, roomDirectory([])).bootstrap('en');
 
     expect(result).toEqual(err({ code: 'onboarding.public_lobby_unavailable', retryable: true }));
   });
@@ -55,11 +55,13 @@ describe('首次引导协调器', () => {
 
 function fixtureGateway(
   agents: readonly OnboardingAgent[],
-  lobbies: readonly PublicLobby[] = [lobby],
 ): OnboardingGateway & { ensureDefaultAgent: ReturnType<typeof vi.fn> } {
   return {
     ensureDefaultAgent: vi.fn(() => Promise.resolve(ok(agent))),
     listAgents: vi.fn(() => Promise.resolve(ok(agents))),
-    listPublicLobbies: vi.fn(() => Promise.resolve(ok(lobbies))),
   };
+}
+
+function roomDirectory(rooms: readonly PublicRoomSummary[] = [lobby]): PublicRoomDirectoryGateway {
+  return { list: vi.fn(() => Promise.resolve(ok(rooms))) };
 }

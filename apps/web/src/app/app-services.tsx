@@ -14,6 +14,7 @@ import type { MachineTranslationGateway } from '@/features/messages/domain/machi
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import type { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
+import type { PublicRoomDirectoryGateway } from '@/features/room-directory/domain/public-room-directory';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -46,6 +47,7 @@ export type AppServices = {
   readonly onboarding: OnboardingCoordinator;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
+  readonly roomDirectory: PublicRoomDirectoryGateway;
   readonly security: MatrixSecurityGateway;
   readonly session: SessionDependencies;
   readonly telemetry: FrontendTelemetryGateway;

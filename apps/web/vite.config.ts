@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => ({
               accountWorkspaceFixture: 'e2e/fixtures/account-workspace.html',
               application: 'index.html',
               lobbyCapacityFixture: 'e2e/fixtures/lobby-scene.html',
+              roomDirectoryFixture: 'e2e/fixtures/room-directory.html',
             },
           },
         }

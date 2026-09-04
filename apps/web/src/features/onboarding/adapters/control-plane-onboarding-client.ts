@@ -3,11 +3,9 @@ import { z } from 'zod';
 import {
   onboardingAgentListSchema,
   onboardingAgentSchema,
-  publicLobbyDirectorySchema,
   type OnboardingAgent,
   type OnboardingFailure,
   type OnboardingGateway,
-  type PublicLobby,
 } from '@/features/onboarding/domain/onboarding';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
@@ -54,15 +52,6 @@ export class ControlPlaneOnboardingClient implements OnboardingGateway {
     return parsed.success
       ? ok(parsed.data)
       : err({ code: 'onboarding.agent_response_invalid', retryable: true });
-  }
-
-  async listPublicLobbies(): Promise<Result<readonly PublicLobby[], OnboardingFailure>> {
-    const response = await this.#request('/lobbies/public', 'GET');
-    if (!response.ok) return response;
-    const parsed = publicLobbyDirectorySchema.safeParse(response.value);
-    return parsed.success
-      ? ok(parsed.data.lobbies)
-      : err({ code: 'onboarding.lobbies_response_invalid', retryable: true });
   }
 
   async #request(path: string, method: 'GET' | 'PUT'): Promise<Result<unknown, OnboardingFailure>> {

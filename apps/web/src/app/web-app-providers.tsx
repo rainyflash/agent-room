@@ -34,6 +34,7 @@ import { AccountPreferencesStore } from '@/features/preferences/application/acco
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
 import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters/control-plane-private-room-client';
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
+import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlaneAccessManagementClient } from '@/features/security/adapters/control-plane-access-management-client';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
@@ -75,8 +76,12 @@ export function createCloudRuntime(
   const controlPlane = localRuntime.isAvailable()
     ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
     : browserControlPlane;
+  const roomDirectory = new ControlPlanePublicRoomDirectoryClient({
+    baseUrl: config.controlPlaneUrl,
+  });
   const onboarding = new OnboardingCoordinator(
     new ControlPlaneOnboardingClient({ baseUrl: config.controlPlaneUrl }),
+    roomDirectory,
   );
   const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
   const matrixClients = new MatrixClientRegistry();
@@ -143,6 +148,7 @@ export function createCloudRuntime(
     onboarding,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms: new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl }),
+    roomDirectory,
     security: new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys),
     session: { browser: new WindowBrowserGateway(), controlPlane, matrix },
     telemetry,

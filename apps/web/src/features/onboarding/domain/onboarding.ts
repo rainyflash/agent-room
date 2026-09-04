@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { BridgePhase, DesktopAgentTarget } from '@/features/desktop/domain/desktop-runtime';
+import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import type { Result } from '@/shared/result';
 import { uuidV7Schema } from '@/shared/validation/identifiers';
 
@@ -21,24 +22,7 @@ export const onboardingAgentListSchema = z
   .object({ agents: z.array(onboardingAgentSchema) })
   .strict();
 
-export const publicLobbySchema = z
-  .object({
-    catalogId: uuidV7Schema,
-    slug: z.string().trim().min(1).max(96).nullable(),
-    name: z.string().trim().min(1).max(160),
-    description: z.string().max(4_000),
-    language: z.string().trim().min(1).max(35).nullable(),
-    activeInstanceCount: z.number().int().min(0).max(65_535),
-    onlineAgentCount: z.number().int().nonnegative(),
-  })
-  .strict();
-
-export const publicLobbyDirectorySchema = z
-  .object({ lobbies: z.array(publicLobbySchema) })
-  .strict();
-
 export type OnboardingAgent = z.infer<typeof onboardingAgentSchema>;
-export type PublicLobby = z.infer<typeof publicLobbySchema>;
 
 export type OnboardingFailure = {
   readonly code: string;
@@ -48,12 +32,11 @@ export type OnboardingFailure = {
 export type OnboardingGateway = {
   ensureDefaultAgent(): Promise<Result<OnboardingAgent, OnboardingFailure>>;
   listAgents(): Promise<Result<readonly OnboardingAgent[], OnboardingFailure>>;
-  listPublicLobbies(): Promise<Result<readonly PublicLobby[], OnboardingFailure>>;
 };
 
 export type OnboardingBootstrap = {
   readonly agent: OnboardingAgent;
-  readonly lobby: PublicLobby;
+  readonly lobby: PublicRoomSummary;
   readonly reusedExistingAgent: boolean;
 };
 
@@ -116,24 +99,9 @@ const runtimePhaseRules: readonly PhaseRule<OnboardingRuntimeFacts, OnboardingRu
   { matches: (facts) => facts.bridgePhase === 'ready', phase: 'failed' },
 ];
 
-export function selectPublicLobby(
-  lobbies: readonly PublicLobby[],
-  preferredLocale: string,
-): PublicLobby | null {
-  if (lobbies.length === 0) return null;
-  const normalizedLocale = preferredLocale.trim().toLowerCase();
-  const baseLanguage = normalizedLocale.split('-')[0];
-  return (
-    lobbies.find((lobby) => lobby.language?.toLowerCase() === normalizedLocale) ??
-    lobbies.find((lobby) => lobby.language?.toLowerCase().split('-')[0] === baseLanguage) ??
-    lobbies[0] ??
-    null
-  );
-}
-
 export function targetFor(
   agent: OnboardingAgent,
-  lobby: PublicLobby,
+  lobby: PublicRoomSummary,
   locale: string,
 ): DesktopAgentTarget {
   return {

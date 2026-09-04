@@ -3,12 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   projectOnboardingPhase,
   projectOnboardingRuntimePhase,
-  selectPublicLobby,
   targetFor,
   targetMatches,
   type OnboardingAgent,
-  type PublicLobby,
 } from '@/features/onboarding/domain/onboarding';
+import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 
 const agent: OnboardingAgent = {
   agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
@@ -21,17 +20,9 @@ const agent: OnboardingAgent = {
   visibility: 'private',
 };
 
-const englishLobby = lobby('0198b601-77a2-7f41-b4f4-940f291951b8', 'English', 'en', 30);
 const chineseLobby = lobby('0198b601-77a3-74f1-b4f4-940f291951b9', '中文', 'zh-CN', 12);
-const lobbies: readonly PublicLobby[] = [englishLobby, chineseLobby];
 
 describe('首次引导领域投影', () => {
-  it('优先选择精确语言，再选择同语系，最后保留服务端排序', () => {
-    expect(selectPublicLobby(lobbies, 'zh-CN')?.name).toBe('中文');
-    expect(selectPublicLobby(lobbies, 'zh-TW')?.name).toBe('中文');
-    expect(selectPublicLobby(lobbies, 'fr-FR')?.name).toBe('English');
-  });
-
   it('云端引导只依赖账户与服务端事实，不被可选 Bridge 阻塞', () => {
     expect(
       projectOnboardingPhase({
@@ -88,7 +79,12 @@ describe('首次引导领域投影', () => {
   });
 });
 
-function lobby(catalogId: string, name: string, language: string, online: number): PublicLobby {
+function lobby(
+  catalogId: string,
+  name: string,
+  language: string,
+  online: number,
+): PublicRoomSummary {
   return {
     activeInstanceCount: 1,
     catalogId,

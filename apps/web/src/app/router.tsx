@@ -10,6 +10,7 @@ import { sessionStateName } from '@/features/session/ui/connection-model';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
+import { RoomDirectoryPage } from '@/features/room-directory/ui/room-directory-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import {
@@ -63,6 +64,12 @@ const workspaceRoute = createRoute({
   component: WorkspaceBoundary,
 });
 
+const roomDirectoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rooms',
+  component: RoomDirectoryBoundary,
+});
+
 const lobbyInstanceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/lobby/$catalogId/instance/$roomId',
@@ -87,6 +94,7 @@ const routeTree = rootRoute.addChildren([
   connectRoute,
   onboardingRoute,
   workspaceRoute,
+  roomDirectoryRoute,
   lobbyRoute,
   lobbyInstanceRoute,
   settingsRoute,
@@ -204,6 +212,14 @@ function WorkspaceBoundary() {
       selectedAgentId={search.agent ?? null}
     />
   );
+}
+
+function RoomDirectoryBoundary() {
+  const { snapshot } = useSession();
+  if (sessionStateName(snapshot.value) !== 'ready' || snapshot.context.principal === null) {
+    return <ConnectionPage />;
+  }
+  return <RoomDirectoryPage />;
 }
 
 function SettingsBoundary() {

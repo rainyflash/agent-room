@@ -1,6 +1,6 @@
 import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { CircleAlert, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { CircleAlert, LoaderCircle, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -45,6 +45,10 @@ export function AccountWorkspaceView({
           <span>{t('app.name')}</span>
         </a>
         <div className="account-workspace__topbar-actions">
+          <Link to="/rooms">
+            <Radio aria-hidden="true" />
+            <span>{t('workspace.rooms')}</span>
+          </Link>
           <LanguageControl />
           <Link params={{ section: 'security' }} to="/settings/$section">
             <ShieldCheck aria-hidden="true" />

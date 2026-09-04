@@ -15,6 +15,7 @@ test('账号工作区明确展示四层独立连接事实和诊断', async ({ pa
   await expect(connections.getByText('Not installed')).toBeVisible();
   await expect(page.getByText('Connection diagnostics')).toBeVisible();
   await expect(page.getByText('2 service layers need attention.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Rooms' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
