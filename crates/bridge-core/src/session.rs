@@ -8,6 +8,7 @@ use agent_room_domain::{
     ids::DeviceId,
     time::{DurationMillis, UtcMillis},
 };
+use tokio::sync::Mutex;
 
 use crate::ports::{
     BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialState,
@@ -104,6 +105,7 @@ pub struct BridgeSessionService {
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
     policy: BridgeSessionPolicy,
+    session_lock: Mutex<()>,
 }
 
 pub struct BridgeSessionDependencies {
@@ -141,6 +143,7 @@ impl BridgeSessionService {
             secrets: dependencies.secrets,
             clock: dependencies.clock,
             policy,
+            session_lock: Mutex::new(()),
         }
     }
 
@@ -150,6 +153,8 @@ impl BridgeSessionService {
     ///
     /// 未授权、刷新结果未知、控制平面不可用或 OS 安全存储失败时返回稳定错误。
     pub async fn active_session(&self) -> BridgeSessionResult<ActiveBridgeSession> {
+        // 持锁覆盖凭据读取到刷新结果持久化；等待者必须重新读取，不能重用旧轮换令牌。
+        let _session_guard = self.session_lock.lock().await;
         let mut stored = self
             .credentials
             .load()
