@@ -71,6 +71,13 @@ pub struct EnsureDefaultAgentForDevice {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateHostAgentForDevice {
+    pub request_id: AgentCreationRequestId,
+    pub actor: AuthenticatedDevice,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterAgentInstance {
     pub request_id: AgentInstanceRegistrationRequestId,
     pub actor: AuthenticatedDevice,
@@ -162,6 +169,11 @@ pub trait AgentManagementUseCases: Send + Sync {
         request: CreateAgent,
     ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>>;
 
+    fn create_host_agent_for_device(
+        &self,
+        request: CreateHostAgentForDevice,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>>;
+
     fn register_instance(
         &self,
         request: RegisterAgentInstance,
@@ -228,11 +240,35 @@ impl AgentManagementService {
         request: CreateAgent,
     ) -> AgentManagementResult<RegisteredAgent> {
         let operation = "agent.create";
-        validate_agent_profile(&request)?;
+        validate_agent_profile(&request.slug, &request.display_name, &request.description)?;
         ensure_active_principal(&request.actor, self.clock.now(), operation)?;
         let proposed_agent_id = self.identifiers.agent_id();
         self.create_agent_with_id(AgentCreationDraft::from(request), proposed_agent_id)
             .await
+    }
+
+    async fn create_host_agent_for_device_internal(
+        &self,
+        request: CreateHostAgentForDevice,
+    ) -> AgentManagementResult<RegisteredAgent> {
+        let operation = "agent.create_host_for_device";
+        ensure_active_device(&request.actor, self.clock.now(), operation)?;
+        // slug 必须在重试时稳定，不能取决于每次新提议的 Agent ID。
+        let slug = format!("host-{}", request.request_id.as_uuid().simple());
+        validate_agent_profile(&slug, &request.display_name, "")?;
+        self.create_agent_with_id(
+            AgentCreationDraft {
+                request_id: request.request_id,
+                owner_id: request.actor.account.principal.id(),
+                slug,
+                display_name: request.display_name,
+                description: String::new(),
+                avatar_content_id: None,
+                visibility: AgentVisibility::Private,
+            },
+            self.identifiers.agent_id(),
+        )
+        .await
     }
 
     async fn create_agent_with_id(
@@ -537,6 +573,13 @@ impl AgentManagementUseCases for AgentManagementService {
         Box::pin(self.create_agent_internal(request))
     }
 
+    fn create_host_agent_for_device(
+        &self,
+        request: CreateHostAgentForDevice,
+    ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+        Box::pin(self.create_host_agent_for_device_internal(request))
+    }
+
     fn register_instance(
         &self,
         request: RegisterAgentInstance,
@@ -559,14 +602,18 @@ impl AgentManagementUseCases for AgentManagementService {
     }
 }
 
-fn validate_agent_profile(request: &CreateAgent) -> AgentManagementResult<()> {
-    let valid_slug = !request.slug.is_empty()
-        && request.slug.len() <= MAX_SLUG_LENGTH
-        && request.slug.bytes().enumerate().all(|(index, byte)| {
+fn validate_agent_profile(
+    slug: &str,
+    display_name: &str,
+    description: &str,
+) -> AgentManagementResult<()> {
+    let valid_slug = !slug.is_empty()
+        && slug.len() <= MAX_SLUG_LENGTH
+        && slug.bytes().enumerate().all(|(index, byte)| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || (byte == b'-' && index > 0)
         });
-    let valid_name = valid_text(&request.display_name, MAX_DISPLAY_NAME_LENGTH, false);
-    let valid_description = valid_text(&request.description, MAX_DESCRIPTION_LENGTH, true);
+    let valid_name = valid_text(display_name, MAX_DISPLAY_NAME_LENGTH, false);
+    let valid_description = valid_text(description, MAX_DESCRIPTION_LENGTH, true);
     if valid_slug && valid_name && valid_description {
         Ok(())
     } else {
