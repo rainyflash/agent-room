@@ -1,8 +1,9 @@
+import type { RoomSpeech } from '../domain/room-speech';
+import type { LobbySceneProjection } from '../domain/scene-projection';
 import { useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
-import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import type { LobbySceneLabels } from '@/features/lobby/scene/lobby-scene';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
 import {
@@ -18,11 +19,19 @@ export type LobbySpatialViewHandle = { focus(): void };
 
 export function LobbySpatialView({
   room,
+  projection,
+  speech,
+  onOpenSpeech,
+  onSelectHuman,
   selectedAgentId,
   onSelectAgent,
   ref,
 }: {
   readonly room: LobbyRoom;
+  readonly projection: LobbySceneProjection;
+  readonly speech: readonly RoomSpeech[];
+  readonly onOpenSpeech: (id: string) => void;
+  readonly onSelectHuman: (id: string) => void;
   readonly selectedAgentId: string | null;
   readonly onSelectAgent: (id: string | null) => void;
   readonly ref: Ref<LobbySpatialViewHandle>;
@@ -35,14 +44,11 @@ export function LobbySpatialView({
   const list = useRef<ListModeRosterHandle>(null);
   const [zoom, setZoom] = useState(1);
   const mode = requirement === null ? preferences.snapshot.values.lobbyView : 'list';
-  const projection = useMemo(
-    () => projectLobbyScene(room, selectedAgentId),
-    [room, selectedAgentId],
-  );
   const languageKey = i18n.resolvedLanguage ?? i18n.language;
   const labels = useMemo<LobbySceneLabels>(
     () => ({
       canvas: t('lobby.scene.canvasLabel'),
+      self: t('roomGame.self'),
       zones: {
         active: t('lobby.zone.active'),
         attention: t('lobby.zone.attention'),
@@ -60,6 +66,9 @@ export function LobbySpatialView({
         {mode === 'scene' ? (
           <LobbySceneSurface
             labels={labels}
+            speech={speech}
+            onOpenSpeech={onOpenSpeech}
+            onSelectHuman={onSelectHuman}
             languageKey={languageKey}
             onSceneInitialized={(durationMs) => {
               void telemetry.record({

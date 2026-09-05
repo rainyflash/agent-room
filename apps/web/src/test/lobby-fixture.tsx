@@ -38,6 +38,8 @@ import type {
   LobbyGateway,
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
+import type { LobbyFixtureControls } from './lobby-fixture-controls';
+import { roomHumans } from '@/features/lobby/domain/room-participants';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
@@ -70,8 +72,13 @@ import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-inje
 
 const fixtureAgentCount =
   new URLSearchParams(window.location.search).get('agents') === '200' ? 200 : 24;
-const room = testRoom(fixtureAgentCount);
-Object.defineProperty(window, '__agentRoomFixtureScene', { value: projectLobbyScene(room, null) });
+let room = testRoom(fixtureAgentCount);
+const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
+let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
+Object.defineProperty(window, '__agentRoomFixtureScene', {
+  configurable: true,
+  get: () => fixtureScene,
+});
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const desktop = new TauriDesktopRuntimeGateway({
   available: () => false,
@@ -102,9 +109,15 @@ const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, 
   lobbyView: 'scene',
 });
 let fixtureRoot: Root | null = null;
+const lobbyListeners = new Set<() => void>();
 const lobby: LobbyGateway = {
   read: () => ok(room),
-  subscribe: () => noop,
+  subscribe: (_roomId, listener) => {
+    lobbyListeners.add(listener);
+    return () => {
+      lobbyListeners.delete(listener);
+    };
+  },
 };
 const lobbyEntry = new PublicLobbyEntryCoordinator(
   {
@@ -115,7 +128,7 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
   },
 );
 const conversationListeners = new Set<() => void>();
-const publishedConversations: RoomMessageSignal[] = [];
+let publishedConversations: RoomMessageSignal[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
@@ -134,6 +147,93 @@ const messages: MessageGateway = {
     };
   },
 };
+const fixtureControls: LobbyFixtureControls = {
+  receive: (input) => {
+    const agent = room.agents[input.agentIndex ?? 0];
+    if (agent === undefined) throw new Error('测试发言引用了不存在的 Agent');
+    const messageId = crypto.randomUUID();
+    publishedConversations.push({
+      actor:
+        input.human === true
+          ? {
+              kind: 'human',
+              provenance: 'human',
+              matrixUserId: '@guest:matrix.test',
+              displayName: 'Room visitor',
+              principalId: 'fixture-guest',
+            }
+          : {
+              kind: 'agent',
+              provenance: 'human_confirmed_agent',
+              matrixUserId: agent.matrixUserId,
+              displayName: agent.displayName,
+              agentId: agent.agentId,
+              instanceId: agent.instanceIds[0] ?? 'fixture-instance',
+            },
+      content: null,
+      edited: false,
+      endToEndEncrypted: false,
+      lifecycle: 'active',
+      matrixEventId: `$fixture-${messageId}`,
+      messageId,
+      preview: {
+        conversation: { text: input.text, mentions: [] },
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        summary: input.text,
+        title: 'Room conversation',
+      },
+      roomId: input.roomId ?? room.roomId,
+      serverTimestamp: Date.now() - (input.ageMs ?? 0),
+      signatureStatus: 'matrix_sender_matched',
+    });
+    updateFixtureScene();
+    for (const listener of conversationListeners) listener();
+    return messageId;
+  },
+  redact: (messageId) => {
+    publishedConversations = publishedConversations.map((message) =>
+      message.messageId === messageId
+        ? { ...message, lifecycle: 'redacted', preview: null }
+        : message,
+    );
+    updateFixtureScene();
+    for (const listener of conversationListeners) listener();
+  },
+  joinAgent: () => {
+    const agent = testAgent(250);
+    room = {
+      ...room,
+      agents: [...room.agents, agent],
+      joinedMemberIds: [...(room.joinedMemberIds ?? []), agent.matrixUserId],
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+    return agent.agentId;
+  },
+  leaveAgent: (agentId) => {
+    const agent = room.agents.find((entry) => entry.agentId === agentId);
+    room = {
+      ...room,
+      agents: room.agents.filter((entry) => entry.agentId !== agentId),
+      joinedMemberIds: room.joinedMemberIds?.filter((id) => id !== agent?.matrixUserId) ?? [],
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  },
+};
+Object.defineProperty(window, '__agentRoomFixtureControls', {
+  configurable: true,
+  value: fixtureControls,
+});
+function updateFixtureScene(): void {
+  fixtureScene = projectLobbyScene(room, null, {
+    previous: fixtureScene.layout,
+    humans: roomHumans(room, publishedConversations, fixtureIdentity),
+  });
+}
+
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
 let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
 const moderation: ModerationGateway = {
@@ -465,6 +565,7 @@ class FixtureMessagePublisher implements MessagePublisher {
         serverTimestamp: Date.now(),
         signatureStatus: 'matrix_sender_matched',
       });
+      updateFixtureScene();
       for (const listener of conversationListeners) listener();
     }
     return Promise.resolve(
@@ -700,6 +801,11 @@ function testRoom(agentCount: number): LobbyRoom {
   return Object.freeze({
     agents: Object.freeze(Array.from({ length: agentCount }, (_, index) => testAgent(index))),
     name: 'Builders Exchange',
+    joinedMemberIds: [
+      '@fixture:matrix.test',
+      '@guest:matrix.test',
+      ...Array.from({ length: agentCount }, (_, index) => testAgent(index).matrixUserId),
+    ],
     observedAtUnixMs: Date.now(),
     roomId: '!builders:agent-room.test',
     topic: 'Live coordination across verified local Agent instances',

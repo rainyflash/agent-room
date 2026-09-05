@@ -18,6 +18,8 @@ import './conversation-panel.css';
 const emptyParticipants: readonly ConversationParticipant[] = [];
 
 export type ConversationPanelProps = {
+  readonly active?: boolean;
+  readonly focusMessageId?: string | null;
   readonly messages: readonly RoomMessageSignal[];
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
@@ -30,6 +32,8 @@ export type ConversationPanelProps = {
 };
 
 export function ConversationPanel({
+  active = true,
+  focusMessageId = null,
   messages,
   participants = emptyParticipants,
   publisher,
@@ -49,12 +53,19 @@ export function ConversationPanel({
   const timelineElement = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const [unseen, setUnseen] = useState(false);
+  const focusedMessage = useRef<HTMLDivElement>(null);
   const latestEvent = timeline.at(-1)?.matrixEventId;
   useEffect(() => {
     const element = timelineElement.current;
+    if (!active) return;
     if (following.current && element !== null) element.scrollTop = element.scrollHeight;
     else if (latestEvent !== undefined) setUnseen(true);
-  }, [latestEvent]);
+  }, [active, latestEvent]);
+  useEffect(() => {
+    if (!active || focusMessageId === null || focusedMessage.current === null) return;
+    focusedMessage.current.scrollIntoView({ block: 'center' });
+    focusedMessage.current.focus({ preventScroll: true });
+  }, [active, focusMessageId]);
   const names = useMemo(
     () =>
       new Map([
@@ -129,7 +140,13 @@ export function ConversationPanel({
             const previous = timeline[index - 1];
             const day = new Date(message.serverTimestamp).toDateString();
             return (
-              <div key={message.messageId}>
+              <div
+                key={message.messageId}
+                data-conversation-message-id={message.messageId}
+                data-focused={message.messageId === focusMessageId}
+                tabIndex={-1}
+                ref={message.messageId === focusMessageId ? focusedMessage : undefined}
+              >
                 {previous === undefined ||
                 new Date(previous.serverTimestamp).toDateString() !== day ? (
                   <div className="conversation-day">

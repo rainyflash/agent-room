@@ -1,5 +1,9 @@
+import { SceneSpeechLayer, type SceneSpeechLayerHandle } from './scene-speech-layer';
+import type { RoomSpeech } from '../domain/room-speech';
+import type { SceneFrame } from '../scene/scene-character';
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useId,
   useImperativeHandle,
@@ -28,6 +32,9 @@ export type LobbySceneSurfaceHandle = {
 };
 
 export type LobbySceneSurfaceProps = {
+  readonly speech?: readonly RoomSpeech[];
+  readonly onOpenSpeech?: (id: string) => void;
+  readonly onSelectHuman?: (id: string) => void;
   readonly labels: LobbySceneLabels;
   readonly languageKey: string;
   readonly onSelectAgent: (agentId: string | null) => void;
@@ -38,9 +45,28 @@ export type LobbySceneSurfaceProps = {
 
 export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneSurfaceProps>(
   function LobbySceneSurface(
-    { labels, languageKey, onSceneInitialized, onSelectAgent, onZoomChange, projection },
+    {
+      labels,
+      languageKey,
+      onSceneInitialized,
+      onSelectAgent,
+      onZoomChange,
+      projection,
+      speech = [],
+      onOpenSpeech,
+      onSelectHuman,
+    },
     forwardedRef,
   ) {
+    const bubbleLayer = useRef<SceneSpeechLayerHandle>(null);
+    const humanSelection = useRef(onSelectHuman);
+    humanSelection.current = onSelectHuman;
+    const onFrame = useCallback((frame: SceneFrame): void => {
+      bubbleLayer.current?.position(frame);
+    }, []);
+    const [keyboardFocus, setKeyboardFocus] = useState(false);
+    const externalSelection = useRef(projection.selectedAgentId);
+    externalSelection.current = projection.selectedAgentId;
     const hostRef = useRef<HTMLDivElement>(null);
     const canvasHostRef = useRef<HTMLDivElement>(null);
     const handleRef = useRef<LobbySceneHandle | null>(null);
@@ -57,8 +83,12 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
       ? activeAgentId
       : (projection.selectedAgentId ?? projection.nodes[0]?.agentId ?? null);
     const sceneProjection = useMemo(
-      () => ({ ...projection, selectedAgentId: normalizedActiveAgentId }),
-      [normalizedActiveAgentId, projection],
+      () => ({
+        ...projection,
+        selectedAgentId:
+          projection.selectedAgentId ?? (keyboardFocus ? normalizedActiveAgentId : null),
+      }),
+      [keyboardFocus, normalizedActiveAgentId, projection],
     );
     const projectionRef = useRef(projection);
     const selectRef = useRef(onSelectAgent);
@@ -96,6 +126,10 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
           const handle = await mountPixiLobbyScene({
             host,
             labels,
+            onFrame,
+            onSelectHuman: (id) => {
+              humanSelection.current?.(id);
+            },
             onSelectAgent: (agentId) => {
               selectRef.current(agentId);
             },
@@ -108,6 +142,8 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             handle.destroy();
           } else {
             handleRef.current = handle;
+            handle.update(projectionRef.current);
+            if (externalSelection.current !== null) handle.focusAgent?.(externalSelection.current);
             initializedRef.current?.(performance.now() - startedAt);
           }
         })
@@ -121,11 +157,18 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
         handleRef.current?.destroy();
         handleRef.current = null;
       };
-    }, [labels, languageKey, renderer]);
+    }, [labels, languageKey, renderer, onFrame]);
 
     useEffect(() => {
       handleRef.current?.update(sceneProjection);
     }, [sceneProjection]);
+
+    useEffect(() => {
+      if (projection.selectedAgentId !== null) {
+        if (renderer === 'pixi') handleRef.current?.focusAgent?.(projection.selectedAgentId);
+        else svgHandleRef.current?.focusAgent(projection.selectedAgentId);
+      }
+    }, [projection.selectedAgentId, renderer]);
 
     useEffect(() => {
       if (projection.selectedAgentId !== null) {
@@ -153,6 +196,12 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
           aria-describedby={instructionsId}
           aria-label={labels.canvas}
           className="lobby-scene"
+          onFocus={() => {
+            setKeyboardFocus(true);
+          }}
+          onBlur={() => {
+            setKeyboardFocus(false);
+          }}
           onKeyDown={(event) => {
             if (moveActiveAgent(event.key)) {
               event.preventDefault();
@@ -177,6 +226,10 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             ) : (
               <SvgLobbyScene
                 labels={labels}
+                onFrame={onFrame}
+                onSelectHuman={(id) => {
+                  humanSelection.current?.(id);
+                }}
                 onSelectAgent={onSelectAgent}
                 onZoomChange={onZoomChange}
                 projection={sceneProjection}
@@ -190,6 +243,13 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             optionId={optionId}
           />
         </div>
+        <SceneSpeechLayer
+          speech={speech}
+          onOpen={(id) => {
+            onOpenSpeech?.(id);
+          }}
+          ref={bubbleLayer}
+        />
         <SceneSelectionAnnouncement
           activeAgentId={normalizedActiveAgentId}
           instructionsId={instructionsId}

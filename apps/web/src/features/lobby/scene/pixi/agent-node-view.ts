@@ -1,8 +1,6 @@
+import type { SceneCharacter } from '../scene-character';
 import type { Container, FederatedPointerEvent } from 'pixi.js';
-import type {
-  LobbyAgentNodeProjection,
-  LobbySceneDetail,
-} from '@/features/lobby/domain/scene-projection';
+import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
 import { characterBodyArt, characterStatusColor } from '../character-art';
 import type { CharacterPose } from '../character-motion';
 import { shapeGraphics } from './shape-graphics';
@@ -11,7 +9,7 @@ type PixiModule = typeof import('pixi.js');
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export type AgentNodeViewOptions = {
   readonly detail: LobbySceneDetail;
-  readonly node: LobbyAgentNodeProjection;
+  readonly node: SceneCharacter;
   readonly onSelect: (agentId: string) => void;
   readonly selected: boolean;
 };
@@ -33,6 +31,7 @@ export function createAgentNodeView(
   container.addChild(character);
   container.position.set(node.x, node.y);
   container.eventMode = 'static';
+  let hovered = false;
   container.cursor = 'pointer';
   container.hitArea = new pixi.Rectangle(-28 * size, -82 * size, 56 * size, 98 * size);
   container.accessible = false;
@@ -63,7 +62,7 @@ export function createAgentNodeView(
     .fill('#dab493')
     .roundRect(13, -33, 7, 22, 3)
     .fill('#dab493');
-  body.addChild(arms, shapeGraphics(pixi, characterBodyArt(node.agentId)));
+  body.addChild(arms, shapeGraphics(pixi, characterBodyArt(node.characterId, node.kind)));
   character.addChild(body);
   if (node.status === 'offline') character.alpha = 0.56;
   const marker = new pixi.Graphics()
@@ -101,25 +100,27 @@ export function createAgentNodeView(
     },
   });
   label.position.set(0, 14);
-  label.visible = selected || options.detail !== 'distant';
+  label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
   character.addChild(label);
   container.on('pointerover', () => {
+    hovered = true;
     label.visible = true;
     body.scale.set(1.07);
   });
   container.on('pointerout', () => {
-    label.visible = selected || options.detail !== 'distant';
+    hovered = false;
+    label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
     body.scale.set(1);
   });
   container.on('pointertap', (event: FederatedPointerEvent) => {
     event.stopPropagation();
-    options.onSelect(node.agentId);
+    options.onSelect(node.characterId);
   });
   return {
     container,
     animate: (pose) => {
       container.position.set(pose.x, pose.y);
-      container.zIndex = pose.y;
+      container.zIndex = selected || hovered ? 10000 : pose.y;
       body.position.y = -Math.abs(pose.stride) * 0.42;
       leftLeg.position.y = pose.stride;
       rightLeg.position.y = -pose.stride;

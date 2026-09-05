@@ -1,4 +1,6 @@
-import { nearbyWalkableFloor, projectFloorPoint, type FloorPoint } from './room-floor';
+import { allocateRoomLayout, roamingRadius, type RoomLayout } from './room-layout';
+import type { RoomHuman } from './room-participants';
+import { projectFloorPoint, type FloorPoint } from './room-floor';
 import type { LobbyAgent, LobbyAgentStatus, LobbyRoom } from './lobby';
 
 export const lobbyZoneIds = ['active', 'attention', 'available'] as const;
@@ -24,13 +26,24 @@ export type LobbyZoneProjection = LobbyBounds & {
 
 export type LobbyAgentNodeProjection = LobbyAgent & {
   readonly radius: number;
+  readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;
   readonly x: number;
   readonly y: number;
   readonly zoneId: LobbyZoneId;
 };
 
+export type LobbyHumanNodeProjection = RoomHuman & {
+  readonly characterId: string;
+  readonly floorPosition: FloorPoint;
+  readonly radius: number;
+  readonly x: number;
+  readonly y: number;
+};
+
 export type LobbySceneProjection = {
+  readonly humans?: readonly LobbyHumanNodeProjection[];
+  readonly layout?: RoomLayout;
   readonly nodes: readonly LobbyAgentNodeProjection[];
   readonly observedAtUnixMs: number;
   readonly roomId: string;
@@ -65,24 +78,61 @@ const ZONE_BY_STATUS: Readonly<Record<LobbyAgentStatus, LobbyZoneId>> = Object.f
 export function projectLobbyScene(
   room: LobbyRoom,
   selectedAgentId: string | null,
-): LobbySceneProjection {
-  const nodes = lobbyZoneIds.flatMap((zoneId) => {
-    const agents = room.agents
-      .filter((agent) => ZONE_BY_STATUS[agent.status] === zoneId)
-      .toSorted(compareAgents);
-    return layoutZone(
-      agents,
-      ZONES[zoneId],
-      clamp(40 - Math.sqrt(room.agents.length) * 1.25, 20, 34),
-    );
+  options: { readonly previous?: RoomLayout; readonly humans?: readonly RoomHuman[] } = {},
+): LobbySceneProjection & { readonly layout: RoomLayout } {
+  const humans = options.humans ?? [];
+  const requests = [
+    ...room.agents.map((agent) => ({
+      id: agent.agentId,
+      preferred: ZONES[ZONE_BY_STATUS[agent.status]],
+    })),
+    ...humans.map((human) => ({
+      id: `human:${human.matrixUserId}`,
+      preferred: { x: 1000, y: 830, width: 600, height: 100 },
+    })),
+  ];
+  const layout = allocateRoomLayout(requests, options.previous);
+  const nodes = room.agents
+    .toSorted((a, b) => a.agentId.localeCompare(b.agentId))
+    .flatMap((agent): LobbyAgentNodeProjection[] => {
+      const floor = layout.get(agent.agentId);
+      if (floor === undefined) return [];
+      return [
+        Object.freeze({
+          ...agent,
+          radius: 26,
+          floorPosition: floor,
+          roamingRadius: roamingRadius(floor, layout),
+          ...projectFloorPoint(floor),
+          zoneId: ZONE_BY_STATUS[agent.status],
+        }),
+      ];
+    });
+  const humanNodes = humans.flatMap((human): LobbyHumanNodeProjection[] => {
+    const characterId = `human:${human.matrixUserId}`;
+    const floor = layout.get(characterId);
+    return floor === undefined
+      ? []
+      : [
+          Object.freeze({
+            ...human,
+            characterId,
+            radius: 28,
+            floorPosition: floor,
+            ...projectFloorPoint(floor),
+          }),
+        ];
   });
-  const selected = nodes.some((node) => node.agentId === selectedAgentId) ? selectedAgentId : null;
   return Object.freeze({
     nodes: Object.freeze(nodes),
+    humans: Object.freeze(humanNodes),
+    layout,
     observedAtUnixMs: room.observedAtUnixMs,
     roomId: room.roomId,
     roomName: room.name,
-    selectedAgentId: selected,
+    selectedAgentId: nodes.some((node) => node.agentId === selectedAgentId)
+      ? selectedAgentId
+      : null,
     ...(room.topic === undefined ? {} : { topic: room.topic }),
     world: WORLD,
     zones: Object.freeze(lobbyZoneIds.map((zoneId) => ZONES[zoneId])),
@@ -110,75 +160,4 @@ export function sceneDetailForZoom(zoom: number): LobbySceneDetail {
     return 'distant';
   }
   return zoom < 1.18 ? 'medium' : 'near';
-}
-
-function layoutZone(
-  agents: readonly LobbyAgent[],
-  zone: LobbyZoneProjection,
-  radius: number,
-): LobbyAgentNodeProjection[] {
-  if (agents.length === 0) {
-    return [];
-  }
-  const contentBounds = {
-    height: Math.max(1, zone.height - 82),
-    width: Math.max(1, zone.width - 36),
-    x: zone.x + 18,
-    y: zone.y + 62,
-  };
-  const aspectRatio = contentBounds.width / contentBounds.height;
-  const columns = Math.max(1, Math.ceil(Math.sqrt(agents.length * aspectRatio)));
-  const rows = Math.ceil(agents.length / columns);
-  const cellWidth = contentBounds.width / columns;
-  const cellHeight = contentBounds.height / rows;
-  const jitterLimit = Math.min(cellWidth, cellHeight) * 0.08;
-
-  return agents.map((agent, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const seed = stableHash(agent.agentId);
-    const jitterX = signedUnit(seed) * jitterLimit;
-    const jitterY = signedUnit(mixHash(seed)) * jitterLimit;
-    const floorPosition = nearbyWalkableFloor({
-      x: contentBounds.x + (column + 0.5) * cellWidth + jitterX,
-      y: contentBounds.y + (row + 0.5) * cellHeight + jitterY,
-    });
-    return Object.freeze({
-      ...agent,
-      radius,
-      floorPosition: Object.freeze(floorPosition),
-      ...projectFloorPoint(floorPosition),
-      zoneId: zone.id,
-    });
-  });
-}
-
-function compareAgents(left: LobbyAgent, right: LobbyAgent): number {
-  const hashDifference = stableHash(left.agentId) - stableHash(right.agentId);
-  return hashDifference === 0 ? left.agentId.localeCompare(right.agentId) : hashDifference;
-}
-
-function stableHash(value: string): number {
-  let hash = 2_166_136_261;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return hash >>> 0;
-}
-
-function mixHash(value: number): number {
-  let mixed = value ^ (value >>> 16);
-  mixed = Math.imul(mixed, 0x7feb_352d);
-  mixed ^= mixed >>> 15;
-  mixed = Math.imul(mixed, 0x846c_a68b);
-  return (mixed ^ (mixed >>> 16)) >>> 0;
-}
-
-function signedUnit(value: number): number {
-  return (value / 0xffff_ffff) * 2 - 1;
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), maximum);
 }

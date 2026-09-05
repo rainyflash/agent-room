@@ -1,3 +1,4 @@
+import { sceneCharacters, type SceneCharacter, type SceneFrame } from '../scene-character';
 import {
   forwardRef,
   useCallback,
@@ -9,14 +10,20 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { LobbySceneLabels } from '../lobby-scene';
-import type { LobbyAgentNodeProjection, LobbySceneProjection } from '../../domain/scene-projection';
+import type { LobbySceneProjection } from '../../domain/scene-projection';
 import { ViewportController, type CameraSnapshot } from '../viewport-controller';
 import { characterBodyArt, characterStatusColor } from '../character-art';
 import { roomGroundArt, roomPlaques, roomPropsArt } from '../room-art';
 import { SceneShapes } from './scene-shapes';
 
-export type SvgLobbySceneHandle = { resetViewport(): void; zoomBy(factor: number): void };
+export type SvgLobbySceneHandle = {
+  resetViewport(): void;
+  focusAgent(agentId: string): void;
+  zoomBy(factor: number): void;
+};
 export type SvgLobbySceneProps = {
+  readonly onFrame?: (frame: SceneFrame) => void;
+  readonly onSelectHuman?: (matrixUserId: string) => void;
   readonly labels: LobbySceneLabels;
   readonly onSelectAgent: (agentId: string | null) => void;
   readonly onZoomChange: (zoom: number) => void;
@@ -27,7 +34,10 @@ const ground = roomGroundArt();
 const furniture = roomPropsArt();
 
 export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>(
-  function SvgLobbyScene({ labels, onSelectAgent, onZoomChange, projection }, forwardedRef) {
+  function SvgLobbyScene(
+    { labels, onSelectAgent, onZoomChange, onFrame, onSelectHuman, projection },
+    forwardedRef,
+  ) {
     const hostRef = useRef<SVGSVGElement>(null);
     const controllerRef = useRef<ViewportController | null>(null);
     const pointers = useRef(new Map<number, Point>());
@@ -50,6 +60,11 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     useImperativeHandle(
       forwardedRef,
       () => ({
+        focusAgent: (id) => {
+          const node = projection.nodes.find((candidate) => candidate.agentId === id);
+          if (node !== undefined && controllerRef.current !== null)
+            commitCamera(controllerRef.current.focusOn(node.x, node.y - 35));
+        },
         resetViewport: () => {
           if (controllerRef.current !== null) commitCamera(controllerRef.current.reset());
         },
@@ -57,7 +72,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
           if (controllerRef.current !== null) commitCamera(controllerRef.current.zoomBy(factor));
         },
       }),
-      [commitCamera],
+      [commitCamera, projection.nodes],
     );
 
     useEffect(() => {
@@ -89,29 +104,44 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
       if (!gestureMoved.current) onSelectAgent(agentId);
       gestureMoved.current = false;
     };
+    const characters = sceneCharacters(projection, labels.self);
+    useEffect(() => {
+      onFrame?.({
+        ...viewport,
+        characters: characters.map((node) => ({
+          characterId: node.characterId,
+          x: camera.x + node.x * camera.scale,
+          y: camera.y + (node.y - 95 * Math.max(0.83, node.radius / 27)) * camera.scale,
+        })),
+      });
+    }, [camera, projection, viewport, onFrame, labels.self]);
     const objects = [
       ...furniture.map((prop, index) => ({
         key: `prop-${String(index)}`,
         depth: prop.depth,
         element: <SceneShapes shapes={prop.shapes} />,
       })),
-      ...projection.nodes.map((node) => ({
-        key: node.agentId,
-        depth: node.y,
+      ...characters.map((node) => ({
+        key: node.characterId,
+        depth: node.characterId === projection.selectedAgentId ? 10000 : node.y,
         element: (
           <g
             className="lobby-scene__svg-agent"
-            data-selected={node.agentId === projection.selectedAgentId}
+            data-character-id={node.characterId}
+            data-selected={node.characterId === projection.selectedAgentId}
             onClick={(event) => {
               event.stopPropagation();
-              select(node.agentId);
+              if (node.kind === 'human') {
+                if (!gestureMoved.current) onSelectHuman?.(node.matrixUserId);
+                gestureMoved.current = false;
+              } else select(node.characterId);
             }}
             transform={`translate(${String(node.x)} ${String(node.y)}) scale(${String(Math.max(0.83, node.radius / 27))})`}
           >
             <SvgCharacter
               node={node}
-              selected={node.agentId === projection.selectedAgentId}
-              showName={camera.scale >= 0.68}
+              selected={node.characterId === projection.selectedAgentId}
+              showName={node.kind === 'human' || camera.scale >= 0.68}
             />
           </g>
         ),
@@ -206,7 +236,7 @@ function SvgCharacter({
   selected,
   showName,
 }: {
-  readonly node: LobbyAgentNodeProjection;
+  readonly node: SceneCharacter;
   readonly selected: boolean;
   readonly showName: boolean;
 }) {
@@ -223,7 +253,7 @@ function SvgCharacter({
         <rect x="2" y="-4" width="12" height="6" rx="2" fill="#eee9d7" />
         <rect x="-20" y="-33" width="7" height="22" rx="3" fill="#dab493" />
         <rect x="13" y="-33" width="7" height="22" rx="3" fill="#dab493" />
-        <SceneShapes shapes={characterBodyArt(node.agentId)} />
+        <SceneShapes shapes={characterBodyArt(node.characterId, node.kind)} />
         <circle
           cx="19"
           cy="-61"

@@ -7,10 +7,16 @@ import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-sur
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
-import { LobbyRoomStore } from '@/features/lobby/application/lobby-room-store';
+import { LobbyExperienceStore } from '@/features/lobby/application/lobby-experience-store';
+import { RoomActivityStore } from '@/features/lobby/application/room-activity-store';
+import {
+  RoomMessagesProvider,
+  useRoomMessages,
+} from '@/features/messages/ui/room-messages-context';
+import { projectRoomSpeech } from '@/features/lobby/domain/room-speech';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
-import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
+import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
 import { LobbyRoomActions } from '@/features/lobby/ui/lobby-room-actions';
@@ -47,8 +53,11 @@ export type LobbyPageProps = {
 };
 
 export function LobbyPage(props: LobbyPageProps) {
-  const { lobby } = useAppServices();
-  const store = useMemo(() => new LobbyRoomStore(lobby, props.roomId), [lobby, props.roomId]);
+  const { lobby, messages } = useAppServices();
+  const store = useMemo(
+    () => new LobbyExperienceStore(lobby, messages, props.roomId, props.principal),
+    [lobby, messages, props.roomId, props.principal?.matrixUserId, props.principal?.displayName],
+  );
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   if (state.kind !== 'ready')
     return (
@@ -57,7 +66,11 @@ export function LobbyPage(props: LobbyPageProps) {
         <DesktopRuntimeSurface />
       </>
     );
-  return <ReadyLobby {...props} key={state.room.roomId} room={state.room} />;
+  return (
+    <RoomMessagesProvider store={store.messages}>
+      <ReadyLobby {...props} key={state.room.roomId} room={state.room} scene={state.projection} />
+    </RoomMessagesProvider>
+  );
 }
 
 function ReadyLobby({
@@ -72,23 +85,59 @@ function ReadyLobby({
   onOpenRoomPanel,
   principal,
   room,
+  scene,
   selectedAgentId,
   selectedDirectSessionId,
   selectedMessageId,
   view,
-}: LobbyPageProps & { readonly room: LobbyRoom }) {
+}: LobbyPageProps & { readonly room: LobbyRoom; readonly scene: LobbySceneProjection }) {
   const { t } = useTranslation();
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
   const projection = useMemo(
-    () => projectLobbyScene(room, selectedAgentId),
-    [room, selectedAgentId],
+    () => ({
+      ...scene,
+      selectedAgentId: room.agents.some((agent) => agent.agentId === selectedAgentId)
+        ? selectedAgentId
+        : null,
+    }),
+    [scene, room.agents, selectedAgentId],
   );
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
   const activeView = selectedDirectSessionId !== null && view === 'space' ? 'conversation' : view;
+  const { store: messageStore } = useRoomMessages(room.roomId);
+  const activityStore = useMemo(
+    () => new RoomActivityStore(messageStore, principal?.matrixUserId ?? null),
+    [messageStore, principal?.matrixUserId],
+  );
+  const activity = useSyncExternalStore(
+    activityStore.subscribe,
+    activityStore.getSnapshot,
+    activityStore.getSnapshot,
+  );
+  const speech = useMemo(
+    () => projectRoomSpeech(projection, activity.recent),
+    [projection, activity.recent],
+  );
+  const publicConversationVisible =
+    activeView === 'conversation' && selectedDirectSessionId === null;
+  const [focusedConversationMessageId, setFocusedConversationMessageId] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    activityStore.setVisible(publicConversationVisible);
+  }, [activityStore, publicConversationVisible]);
+  const openRoomPanel = (nextView: 'conversation' | 'resources'): void => {
+    setFocusedConversationMessageId(null);
+    onOpenRoomPanel(nextView);
+  };
+  const openSpeech = (messageId: string): void => {
+    onOpenRoomPanel('conversation');
+    setFocusedConversationMessageId(messageId);
+  };
   const panelView = activeView === 'resources' ? 'resources' : 'conversation';
   useEffect(() => {
     if (selectedAgentId !== null && projection.selectedAgentId === null)
@@ -150,6 +199,12 @@ function ReadyLobby({
       <div className="room-scene">
         <LobbySpatialView
           room={room}
+          projection={projection}
+          speech={speech}
+          onOpenSpeech={openSpeech}
+          onSelectHuman={() => {
+            openRoomPanel('conversation');
+          }}
           selectedAgentId={selectedAgentId}
           onSelectAgent={selectAgent}
           ref={spatial}
@@ -168,23 +223,48 @@ function ReadyLobby({
         {...(room.topic === undefined ? {} : { topic: room.topic })}
       />
       <p className="room-scene-hint">{t('roomGame.hint')}</p>
+      <div className="room-human-presence" role="group" aria-label={t('roomGame.people')}>
+        {(projection.humans ?? []).slice(0, 3).map((human) => (
+          <button
+            type="button"
+            key={human.matrixUserId}
+            onClick={() => {
+              openRoomPanel('conversation');
+            }}
+            aria-label={t(human.isSelf ? 'roomGame.selfCharacter' : 'roomGame.humanCharacter', {
+              name: human.displayName,
+            })}
+          >
+            <UsersRound aria-hidden="true" />
+            <span>{human.isSelf ? t('roomGame.self') : human.displayName}</span>
+          </button>
+        ))}
+      </div>
       <DesktopRuntimeSurface placement="game" />
       <nav className="room-toolbelt" aria-label={t('roomGame.actions')}>
         <button
           type="button"
           aria-pressed={activeView === 'conversation' && selectedDirectSessionId === null}
           onClick={() => {
-            onOpenRoomPanel('conversation');
+            openRoomPanel('conversation');
           }}
         >
           <MessageCircle aria-hidden="true" />
           {t('roomGame.chat')}
+          {activity.unread === 0 ? null : (
+            <span
+              className="room-unread"
+              aria-label={t('roomGame.unread', { count: activity.unread })}
+            >
+              {activity.unread > 99 ? '99+' : activity.unread}
+            </span>
+          )}
         </button>
         <button
           type="button"
           aria-pressed={activeView === 'resources' && selectedDirectSessionId === null}
           onClick={() => {
-            onOpenRoomPanel('resources');
+            openRoomPanel('resources');
           }}
         >
           <Files aria-hidden="true" />
@@ -226,6 +306,8 @@ function ReadyLobby({
         >
           <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
             <MessageLayer
+              active={publicConversationVisible}
+              focusedConversationMessageId={focusedConversationMessageId}
               participants={room.agents}
               catalogId={catalogId}
               onSelectedMessageChange={onSelectedMessageChange}

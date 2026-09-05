@@ -1,11 +1,11 @@
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { AnimatePresence } from 'motion/react';
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import { MessageRoomStore } from '@/features/messages/application/message-room-store';
+import { useRoomMessages } from './room-messages-context';
 import type { ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
@@ -14,6 +14,8 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly active?: boolean;
+  readonly focusedConversationMessageId?: string | null;
   readonly view?: 'conversation' | 'resources';
   readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
@@ -27,6 +29,8 @@ export type MessageLayerProps = {
 };
 
 export function MessageLayer({
+  active = true,
+  focusedConversationMessageId = null,
   view = 'conversation',
   participants,
   catalogId,
@@ -44,13 +48,11 @@ export function MessageLayer({
     contentVerifier,
     handoffs,
     messagePublisher,
-    messages,
     messageTranslation,
     moderation,
     telemetry,
   } = useAppServices();
-  const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
-  const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const { state, store } = useRoomMessages(roomId);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
   const projectedSignals = useMemo(
@@ -81,6 +83,7 @@ export function MessageLayer({
   useEffect(() => {
     const latestEventId = projectedMessages[0]?.matrixEventId ?? null;
     if (
+      !active ||
       onLatestDisplayed === undefined ||
       latestEventId === null ||
       displayedEventId.current === latestEventId
@@ -89,13 +92,15 @@ export function MessageLayer({
     }
     displayedEventId.current = latestEventId;
     onLatestDisplayed(latestEventId);
-  }, [onLatestDisplayed, projectedMessages]);
+  }, [active, onLatestDisplayed, projectedMessages]);
 
   return (
     <>
       <div className={`message-workspace message-workspace--${variant}`} data-view={view}>
         <div className="message-workspace__conversation" hidden={view !== 'conversation'}>
           <ConversationPanel
+            active={active && view === 'conversation'}
+            focusMessageId={focusedConversationMessageId}
             variant={variant}
             key={`chat:${roomId}`}
             writesAllowed={writesAllowed}

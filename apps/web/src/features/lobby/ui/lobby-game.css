@@ -465,3 +465,130 @@
     height: 80px;
   }
 }
+
+.scene-speech-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 16;
+  overflow: hidden;
+}
+.scene-speech {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 208px;
+  max-width: calc(100% - 24px);
+  padding: 10px 13px;
+  border: 1px solid #d2dcc4;
+  border-radius: 14px 14px 14px 3px;
+  background: #fffef7f5;
+  color: #34442d;
+  box-shadow: 0 5px 20px #51664124;
+  pointer-events: auto;
+  text-align: left;
+}
+.scene-speech:hover {
+  background: #fff;
+  border-color: #728c60;
+}
+.scene-speech strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: #60724e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scene-speech > span {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.room-unread {
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 20px;
+  color: #fff;
+  background: #92513b;
+  font-size: 10px;
+  font-weight: 700;
+}
+.room-human-presence {
+  position: absolute;
+  z-index: 17;
+  left: 24px;
+  top: 106px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 280px;
+}
+.room-human-presence button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 130px;
+  border: 1px solid #cbd8be;
+  border-radius: 20px;
+  padding: 6px 10px;
+  color: #42593b;
+  background: #f4f8edec;
+  font-size: 11px;
+}
+.room-human-presence svg {
+  width: 13px;
+  height: 13px;
+}
+.room-human-presence span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-panel__timeline [data-focused='true'] {
+  outline: 2px solid #8b9c6e;
+  outline-offset: -2px;
+  border-radius: 9px;
+  background: #edf2e4;
+}
+.lobby-game .agent-inspector .ar-button--primary {
+  background: #536f43;
+  color: #fffef1;
+  border-color: #536f43;
+}
+.lobby-game .agent-inspector .ar-button--alert {
+  background: #f5e5d8;
+  color: #8a4233;
+  border-color: #e5c7b7;
+}
+.lobby-game .desktop-runtime[data-placement='game'] {
+  top: 150px;
+}
+@media (max-width: 767px) {
+  .scene-speech {
+    width: 175px;
+    padding: 8px 10px;
+  }
+  .scene-speech > span {
+    font-size: 11px;
+  }
+  .room-human-presence {
+    top: 126px;
+    left: 12px;
+    max-width: calc(100% - 24px);
+  }
+  .room-human-presence button {
+    font-size: 10px;
+  }
+  .room-unread {
+    min-width: 16px;
+    height: 16px;
+    font-size: 9px;
+    padding: 0 4px;
+  }
+}

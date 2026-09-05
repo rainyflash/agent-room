@@ -1,4 +1,4 @@
-import type { LobbyAgentNodeProjection } from '@/features/lobby/domain/scene-projection';
+import type { SceneCharacter } from './scene-character';
 import {
   characterSeed,
   isWalkableFloor,
@@ -14,19 +14,26 @@ export type CharacterPose = {
 };
 
 export function characterPose(
-  node: LobbyAgentNodeProjection,
+  node: SceneCharacter,
   elapsedSeconds: number,
   movingAllowed: boolean,
 ): CharacterPose {
   const still = { x: node.x, y: node.y, stride: 0, facing: 1, moving: false };
-  if (!movingAllowed || node.floorPosition === undefined || node.status === 'offline') return still;
-  const seed = characterSeed(node.agentId);
+  if (
+    !movingAllowed ||
+    node.floorPosition === undefined ||
+    node.status === 'offline' ||
+    node.status === 'present'
+  )
+    return still;
+  const seed = characterSeed(node.characterId);
   const time = elapsedSeconds + (seed % 1300) / 100;
   if (node.status !== 'idle' && node.status !== 'completed') {
     return { ...still, stride: Math.sin(time * 2) * 0.7 };
   }
   const angle = (seed % 628) / 100;
-  const distance = 34 + (seed % 36);
+  const distance = Math.min(34 + (seed % 36), node.roamingRadius ?? 69);
+  if (distance < 3) return { ...still, stride: Math.sin(time * 2) * 0.5 };
   const target = {
     x: node.floorPosition.x + Math.cos(angle) * distance,
     y: node.floorPosition.y + Math.sin(angle) * distance,

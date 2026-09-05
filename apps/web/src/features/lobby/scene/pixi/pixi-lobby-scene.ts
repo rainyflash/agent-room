@@ -1,3 +1,4 @@
+import { sceneCharacters, type SceneFrame } from '../scene-character';
 import type { Application, Container, FederatedPointerEvent, FederatedWheelEvent } from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
 import { createRoomProps, createZoneLayer } from './zone-layer';
@@ -29,7 +30,10 @@ export async function mountPixiLobbyScene(
 }
 
 class PixiLobbyScene implements LobbySceneHandle {
-  readonly #callbacks: Pick<LobbySceneMountOptions, 'onSelectAgent' | 'onZoomChange'>;
+  readonly #callbacks: Pick<
+    LobbySceneMountOptions,
+    'onSelectAgent' | 'onZoomChange' | 'onFrame' | 'onSelectHuman'
+  >;
   readonly #camera: ViewportController;
   readonly #host: HTMLElement;
   readonly #labels: LobbySceneMountOptions['labels'];
@@ -146,6 +150,13 @@ class PixiLobbyScene implements LobbySceneHandle {
     app?.destroy({ removeView: true }, { children: true, context: true });
   }
 
+  focusAgent(agentId: string): void {
+    const node = this.#projection.nodes.find((candidate) => candidate.agentId === agentId);
+    if (node === undefined) return;
+    this.#callbacks.onZoomChange(this.#camera.focusOn(node.x, node.y - 35).scale);
+    this.#scheduleRender();
+  }
+
   resetViewport(): void {
     this.#callbacks.onZoomChange(this.#camera.reset().scale);
     this.#scheduleRender();
@@ -235,14 +246,20 @@ class PixiLobbyScene implements LobbySceneHandle {
     world.scale.set(camera.scale);
     const detail: LobbySceneDetail = sceneDetailForZoom(camera.scale);
     const viewport = this.#camera.viewport();
-    const visible = visibleLobbyNodes(this.#projection, {
-      ...viewport,
-      x: viewport.x - 120,
-      y: viewport.y - 120,
-      width: viewport.width + 240,
-      height: viewport.height + 240,
-    });
-    const visibleIds = new Set(visible.map((node) => node.agentId));
+    const visibleAgents = new Set(
+      visibleLobbyNodes(this.#projection, {
+        ...viewport,
+        x: viewport.x - 120,
+        y: viewport.y - 120,
+        width: viewport.width + 240,
+        height: viewport.height + 240,
+      }).map((node) => node.agentId),
+    );
+    const visible = sceneCharacters(this.#projection, this.#labels.self).filter(
+      (node) => node.kind === 'human' || visibleAgents.has(node.characterId),
+    );
+    const frameCharacters: SceneFrame['characters'][number][] = [];
+    const visibleIds = new Set(visible.map((node) => node.characterId));
     for (const [id, stored] of this.#views) {
       if (!visibleIds.has(id)) {
         stored.view.destroy();
@@ -250,28 +267,50 @@ class PixiLobbyScene implements LobbySceneHandle {
       }
     }
     for (const node of visible) {
-      const selected = node.agentId === this.#projection.selectedAgentId;
-      const signature = [node.displayName, node.status, node.radius, detail, selected].join(':');
-      let stored = this.#views.get(node.agentId);
+      const selected = node.characterId === this.#projection.selectedAgentId;
+      const signature = [
+        node.displayName,
+        node.status,
+        node.kind,
+        node.radius,
+        detail,
+        selected,
+      ].join(':');
+      let stored = this.#views.get(node.characterId);
       if (stored?.signature !== signature) {
         stored?.view.destroy();
         const view = createAgentNodeView(this.#pixi, {
           detail,
           node,
-          onSelect: this.#selectAgent,
+          onSelect: (id) => {
+            if (node.kind === 'human') {
+              if (!this.#gestureMoved) this.#callbacks.onSelectHuman?.(node.matrixUserId);
+            } else this.#selectAgent(id);
+          },
           selected,
         });
         objects.addChild(view.container);
         stored = { signature, view };
-        this.#views.set(node.agentId, stored);
+        this.#views.set(node.characterId, stored);
       }
-      stored.view.animate(characterPose(node, this.#elapsedSeconds, !this.#motion.matches));
+      const pose = characterPose(node, this.#elapsedSeconds, !this.#motion.matches && !selected);
+      stored.view.animate(pose);
+      frameCharacters.push({
+        characterId: node.characterId,
+        x: camera.x + pose.x * camera.scale,
+        y: camera.y + (pose.y - 95 * Math.max(0.83, node.radius / 27)) * camera.scale,
+      });
     }
     if (!animation)
       this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - started);
     app.render();
+    this.#callbacks.onFrame?.({
+      width: app.screen.width,
+      height: app.screen.height,
+      characters: frameCharacters,
+    });
     if (!animation) {
-      this.#host.dataset.agentRoomRenderedNodes = String(visible.length);
+      this.#host.dataset.agentRoomRenderedNodes = String(visibleAgents.size);
       this.#host.dataset.agentRoomTextureCount = String(
         (app.renderer as TextureAwareRenderer).texture?.managedTextures?.length ?? 0,
       );

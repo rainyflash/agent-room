@@ -39,6 +39,18 @@ export class ViewportController {
     return this.snapshot();
   }
 
+  focusOn(worldX: number, worldY: number): CameraSnapshot {
+    this.#scale = Math.max(this.#scale, this.#screenWidth < 768 ? 0.55 : 0.72);
+    this.#x =
+      this.#screenWidth * (this.#screenWidth < 768 ? 0.5 : 0.35) -
+      finiteOrZero(worldX) * this.#scale;
+    this.#y =
+      this.#screenHeight * (this.#screenWidth < 768 ? 0.2 : 0.48) -
+      finiteOrZero(worldY) * this.#scale;
+    this.#clampPosition();
+    return this.snapshot();
+  }
+
   reset(): CameraSnapshot {
     const availableWidth = Math.max(1, this.#screenWidth - this.#padding * 2);
     const availableHeight = Math.max(1, this.#screenHeight - this.#padding * 2);

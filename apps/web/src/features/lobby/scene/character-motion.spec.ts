@@ -1,3 +1,4 @@
+import { sceneCharacters } from './scene-character';
 import { describe, expect, it } from 'vitest';
 import type { LobbyAgent, LobbyAgentStatus } from '../domain/lobby';
 import {
@@ -34,7 +35,7 @@ const scene = projectLobbyScene(
 
 describe('角色活动与家具边界', () => {
   it('所有角色出生在可行走的地面，家具内部会寻找安全位置', () => {
-    for (const node of scene.nodes) {
+    for (const node of sceneCharacters(scene)) {
       expect(node.floorPosition).toBeDefined();
       expect(isWalkableFloor(node.floorPosition ?? { x: 0, y: 0 })).toBe(true);
     }
@@ -48,7 +49,7 @@ describe('角色活动与家具边界', () => {
 
   it('走动覆盖完整循环且不会穿过家具或走出房间', () => {
     let walking = 0;
-    for (const node of scene.nodes) {
+    for (const node of sceneCharacters(scene)) {
       for (let time = 0; time < 36; time += 0.5) {
         const pose = characterPose(node, time, true);
         const floorX = ((pose.x - 1100) / 0.82 + (pose.y - 200) / 0.38) / 2;
@@ -62,7 +63,7 @@ describe('角色活动与家具边界', () => {
 
   it('离线和减少动画状态保持静止，不改写业务投影', () => {
     const before = structuredClone(scene);
-    for (const node of scene.nodes) {
+    for (const node of sceneCharacters(scene)) {
       const still = { x: node.x, y: node.y, stride: 0, facing: 1, moving: false };
       expect(characterPose(node, 20, false)).toEqual(still);
       if (node.status === 'offline') expect(characterPose(node, 7, true)).toEqual(still);

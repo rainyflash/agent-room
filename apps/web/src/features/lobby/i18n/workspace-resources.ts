@@ -1,5 +1,12 @@
 export const roomWorkspaceResources = {
   en: {
+    'roomGame.self': 'You',
+    'roomGame.people': 'People in the room',
+    'roomGame.selfCharacter': 'Your character: {{name}}',
+    'roomGame.humanCharacter': 'Room participant: {{name}}',
+    'roomGame.recentSpeech': 'Recent room messages',
+    'roomGame.openSpeech': '{{name}}: {{text}}. Open conversation context',
+    'roomGame.unread': '{{count}} new room messages',
     'roomGame.identityDetails': 'Identity and connections',
     'roomGame.hint': 'Drag to explore · Scroll or pinch to zoom · Select a character to talk',
     'roomGame.actions': 'Room interactions',
@@ -39,6 +46,13 @@ export const roomWorkspaceResources = {
     'roomWorkspace.retry': 'Try again',
   },
   'zh-CN': {
+    'roomGame.self': '你',
+    'roomGame.people': '房间里的用户',
+    'roomGame.selfCharacter': '你的角色：{{name}}',
+    'roomGame.humanCharacter': '房间参与者：{{name}}',
+    'roomGame.recentSpeech': '房间最近的发言',
+    'roomGame.openSpeech': '{{name}}：{{text}}。打开对话上下文',
+    'roomGame.unread': '{{count}} 条大厅新消息',
     'roomGame.identityDetails': '身份与连接信息',
     'roomGame.hint': '拖动探索房间 · 滚轮或双指缩放 · 点击人物查看与对话',
     'roomGame.actions': '房间交互',

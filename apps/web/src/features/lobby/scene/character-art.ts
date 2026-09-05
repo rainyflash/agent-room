@@ -2,7 +2,8 @@ import type { LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 import { characterSeed } from '@/features/lobby/domain/room-floor';
 import type { SceneShape } from './room-art';
 
-export const characterStatusColor: Readonly<Record<LobbyAgentStatus, string>> = {
+export const characterStatusColor: Readonly<Record<LobbyAgentStatus | 'present', string>> = {
+  present: '#446d9b',
   working: '#416944',
   idle: '#357c84',
   completed: '#54752c',
@@ -11,10 +12,15 @@ export const characterStatusColor: Readonly<Record<LobbyAgentStatus, string>> = 
   offline: '#797c72',
 };
 
-export function characterBodyArt(agentId: string): readonly SceneShape[] {
+export function characterBodyArt(
+  agentId: string,
+  kind: 'agent' | 'human' = 'agent',
+): readonly SceneShape[] {
   const seed = characterSeed(agentId);
   const outfit =
-    ['#8e9dcb', '#88b6a7', '#d3aa73', '#b58ba7', '#7facc4', '#d39079'][seed % 6] ?? '#8e9dcb';
+    kind === 'human'
+      ? '#749bc5'
+      : (['#8e9dcb', '#88b6a7', '#d3aa73', '#b58ba7', '#7facc4', '#d39079'][seed % 6] ?? '#8e9dcb');
   const skin = ['#f3d1b1', '#e8b895', '#b98361', '#dfad87'][seed % 4] ?? '#f3d1b1';
   const hair = ['#4b473d', '#785d49', '#50535d', '#9b7757'][seed % 4] ?? '#4b473d';
   return [

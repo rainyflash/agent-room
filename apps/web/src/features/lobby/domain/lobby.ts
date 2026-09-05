@@ -27,6 +27,7 @@ export type LobbyAgent = {
 };
 
 export type LobbyRoom = {
+  readonly joinedMemberIds?: readonly string[];
   readonly agents: readonly LobbyAgent[];
   readonly name: string;
   readonly observedAtUnixMs: number;
