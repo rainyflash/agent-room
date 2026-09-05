@@ -85,3 +85,23 @@ describe('路由状态规范化', () => {
     ).toEqual({});
   });
 });
+
+describe('大厅视图路由', () => {
+  it('恢复有效视图并忽略无效值和私聊空间视图', () => {
+    expect(normalizeLobbySearch({ view: 'resources' })).toEqual({ view: 'resources' });
+    expect(normalizeLobbySearch({ view: 'space' })).toEqual({ view: 'space' });
+    expect(normalizeLobbySearch({ view: 'unknown' })).toEqual({});
+    expect(normalizeLobbySearch({ direct: 'private-room', view: 'space' })).toEqual({
+      direct: 'private-room',
+    });
+  });
+  it('检查资料时保留视图，进入私聊回到对话', () => {
+    expect(lobbySearchWithMessage({ view: 'resources' }, '$message')).toEqual({
+      view: 'resources',
+      message: '$message',
+    });
+    expect(lobbySearchWithDirectSession({ view: 'space' }, 'private-room')).toEqual({
+      direct: 'private-room',
+    });
+  });
+});

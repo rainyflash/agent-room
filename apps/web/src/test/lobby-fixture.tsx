@@ -13,6 +13,7 @@ import type {
 } from '@/features/automation/domain/automation-grant';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import type {
   DirectAgent,
@@ -37,6 +38,7 @@ import type {
   LobbyGateway,
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
+import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -436,9 +438,9 @@ class FixtureMessagePublisher implements MessagePublisher {
         actor: {
           kind: 'human',
           provenance: 'human',
-          displayName: 'Build Agent',
-          matrixUserId: '@build-agent:agent-room.test',
-          principalId: '01990d9e-8400-7000-8000-000000000001',
+          displayName: 'Fixture operator',
+          matrixUserId: '@fixture:matrix.test',
+          principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
         },
         content: null,
         edited: false,
@@ -485,10 +487,10 @@ class FixtureMessagePublisher implements MessagePublisher {
   resolveIdentity() {
     return Promise.resolve(
       ok({
-        displayName: 'Build Agent',
+        displayName: 'Fixture operator',
         kind: 'human' as const,
-        matrixUserId: '@build-agent:agent-room.test',
-        principalId: '01990d9e-8400-7000-8000-000000000001',
+        matrixUserId: '@fixture:matrix.test',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
         source: 'matrix_human_session' as const,
       }),
     );
@@ -604,6 +606,10 @@ const services: AppServices = {
 };
 
 function LobbyFixture() {
+  const [view, setView] = useState<RoomWorkspaceView>(() => {
+    const requested = new URLSearchParams(window.location.search).get('view');
+    return requested === 'space' || requested === 'resources' ? requested : 'conversation';
+  });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
@@ -612,28 +618,40 @@ function LobbyFixture() {
       <QueryClientProvider client={queryClient}>
         <AppServicesProvider services={services}>
           <AccountPreferencesProvider store={accountPreferences}>
-            <LobbyPage
-              catalogId="01990d9e-8400-7000-8000-000000000401"
-              onEnterRoom={() => undefined}
-              onExitRoom={() => undefined}
-              onOpenSecurity={() => undefined}
-              onSelectedAgentChange={setSelectedAgentId}
-              onSelectedDirectSessionChange={setSelectedDirectSessionId}
-              onSelectedMessageChange={setSelectedMessageId}
-              principal={{
-                authenticatedAtUnixMs: Date.now(),
-                displayName: 'Fixture operator',
-                expiresAtUnixMs: Date.now() + 60_000,
-                locale: 'en',
-                matrixUserId: '@fixture:matrix.test',
-                principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-                recentlyAuthenticated: true,
-              }}
-              roomId={room.roomId}
-              selectedAgentId={selectedAgentId}
-              selectedDirectSessionId={selectedDirectSessionId}
-              selectedMessageId={selectedMessageId}
-            />
+            <DesktopRuntimeProvider gateway={desktop}>
+              <LobbyPage
+                catalogId="01990d9e-8400-7000-8000-000000000401"
+                onEnterRoom={() => undefined}
+                onExitRoom={() => undefined}
+                onOpenSecurity={() => undefined}
+                view={view}
+                onViewChange={(nextView) => {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('view', nextView);
+                  window.history.replaceState(null, '', url);
+                  setView(nextView);
+                }}
+                onSelectedAgentChange={setSelectedAgentId}
+                onSelectedDirectSessionChange={(id) => {
+                  setSelectedDirectSessionId(id);
+                  setView('conversation');
+                }}
+                onSelectedMessageChange={setSelectedMessageId}
+                principal={{
+                  authenticatedAtUnixMs: Date.now(),
+                  displayName: 'Fixture operator',
+                  expiresAtUnixMs: Date.now() + 60_000,
+                  locale: 'en',
+                  matrixUserId: '@fixture:matrix.test',
+                  principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                  recentlyAuthenticated: true,
+                }}
+                roomId={room.roomId}
+                selectedAgentId={selectedAgentId}
+                selectedDirectSessionId={selectedDirectSessionId}
+                selectedMessageId={selectedMessageId}
+              />
+            </DesktopRuntimeProvider>
           </AccountPreferencesProvider>
         </AppServicesProvider>
       </QueryClientProvider>

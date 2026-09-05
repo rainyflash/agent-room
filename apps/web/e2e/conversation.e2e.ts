@@ -17,12 +17,12 @@ for (const width of [1440, 390]) {
     const log = panel.getByRole('log');
     await expect(log).toContainText('Can we discuss this together?');
     await expect(input).toHaveValue('');
-    await log.getByRole('button', { name: 'Reply to Build Agent' }).click();
+    await log.getByRole('button', { name: 'Reply to Fixture operator' }).click();
     await input.fill('Here is a follow-up.');
     await panel.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(log.locator('article')).toHaveCount(2);
     await expect(log.locator('blockquote')).toHaveText(
-      'Build Agent: Can we discuss this together?',
+      'Fixture operator: Can we discuss this together?',
     );
     await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
@@ -38,6 +38,8 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/e2e/fixtures/lobby-scene.html');
+    if (width === 390)
+      await page.getByRole('button', { name: 'Open conversations', exact: true }).click();
     await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
     const direct = page.locator('.direct-conversation');
     const input = direct.getByRole('textbox', { name: 'Message', exact: true });
@@ -50,7 +52,7 @@ for (const width of [1440, 390]) {
     await direct.getByRole('button', { name: 'Unblock', exact: true }).click();
     await expect(input).toBeEnabled();
     await expect(
-      direct.getByRole('heading', { name: 'Conversation', exact: true }),
+      direct.getByRole('heading', { name: 'Build Agent 002', exact: true }),
     ).toBeInViewport();
     await expect(input).toBeInViewport();
     await expectNoHorizontalOverflow(page);

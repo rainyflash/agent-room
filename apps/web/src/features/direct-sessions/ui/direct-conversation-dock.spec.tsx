@@ -8,6 +8,7 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { DirectSession } from '@/features/direct-sessions/domain/direct-session';
+import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -79,7 +80,13 @@ function renderDock(
 ) {
   return render(
     <I18nextProvider i18n={i18n}>
+      <DirectSessionNavigation
+        activeCatalogId={activeCatalogId}
+        controller={runtime}
+        onActivate={onActiveSessionChange}
+      />
       <DirectConversationDock
+        view="conversation"
         activeCatalogId={activeCatalogId}
         controller={runtime}
         onActiveSessionChange={onActiveSessionChange}

@@ -130,7 +130,7 @@ test('真实 Windows Tauri 进程在 Bridge 离线时仍浏览云端工作区与
   const enterLobby = desktopPage.getByRole('button', { name: /Enter lobby|进入大厅/u });
   await expect(enterLobby).toBeEnabled();
   await enterLobby.click();
-  await expect(desktopPage.locator('.lobby-shell')).toBeVisible({ timeout: 45_000 });
+  await expect(desktopPage.locator('.lobby-workspace')).toBeVisible({ timeout: 45_000 });
   await expect(desktopPage).toHaveURL(/\/lobby\/[^/]+\/instance\/[^/]+/u);
 
   await writeFile(

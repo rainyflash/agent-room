@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 
 import { safeInternalPath } from '@/shared/browser/window-browser-gateway';
 
@@ -21,6 +22,7 @@ export type ConnectSearch = {
 };
 
 export type LobbySearch = {
+  readonly view?: Exclude<RoomWorkspaceView, 'conversation'>;
   readonly agent?: string;
   readonly direct?: string;
   readonly directory?: 'open';
@@ -45,6 +47,9 @@ export function normalizeLobbySearch(search: Record<string, unknown>): LobbySear
     ...(direct.success ? { direct: direct.data } : {}),
     ...(search.directory === 'open' ? { directory: 'open' as const } : {}),
     ...(message.success ? { message: message.data } : {}),
+    ...(search.view === 'resources' || (search.view === 'space' && !direct.success)
+      ? { view: search.view }
+      : {}),
   };
 }
 
@@ -56,6 +61,7 @@ export function normalizeWorkspaceSearch(search: Record<string, unknown>): Works
 export function lobbySearchWithAgent(search: LobbySearch, agentId: string | null): LobbySearch {
   return {
     ...(agentId === null ? {} : { agent: agentId }),
+    ...(search.view === undefined ? {} : { view: search.view }),
     ...(agentId === null && search.direct !== undefined ? { direct: search.direct } : {}),
     ...(search.directory === undefined ? {} : { directory: search.directory }),
     ...(agentId === null && search.message !== undefined ? { message: search.message } : {}),
@@ -78,5 +84,10 @@ export function lobbySearchWithMessage(search: LobbySearch, messageId: string | 
     ...(search.direct === undefined ? {} : { direct: search.direct }),
     ...(search.directory === undefined ? {} : { directory: search.directory }),
     ...(messageId === null ? {} : { message: messageId }),
+    ...(search.view === undefined ? {} : { view: search.view }),
   };
+}
+
+export function lobbySearchWithView(search: LobbySearch, view: RoomWorkspaceView): LobbySearch {
+  return normalizeLobbySearch({ ...search, view });
 }

@@ -14,6 +14,7 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly view?: 'conversation' | 'resources';
   readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
@@ -26,6 +27,7 @@ export type MessageLayerProps = {
 };
 
 export function MessageLayer({
+  view = 'conversation',
   participants,
   catalogId,
   onLatestDisplayed,
@@ -36,6 +38,7 @@ export function MessageLayer({
   variant = 'room',
   writesAllowed = true,
 }: MessageLayerProps) {
+  const { t } = useTranslation();
   const {
     content,
     contentVerifier,
@@ -90,36 +93,54 @@ export function MessageLayer({
 
   return (
     <>
-      <div className={`message-hub message-hub--${variant}`}>
-        <ConversationPanel
-          key={`chat:${roomId}`}
-          writesAllowed={writesAllowed}
-          publisher={messagePublisher}
-          roomId={roomId}
-          roomName={roomName}
-          messages={projectedMessages}
-          {...(participants === undefined ? {} : { participants })}
-          state={state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'}
-        />
-        <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
-        {state.kind === 'loading' ? null : (
-          <SignalDock
-            defaultExpanded={variant === 'direct'}
-            onAction={handleSignalAction}
-            onRetry={store.retry}
-            selectedSignalId={selectedSignalId}
-            signals={projectedSignals}
-            state={state.kind === 'ready' ? 'ready' : 'failed'}
-          />
-        )}
-        {writesAllowed ? (
-          <MessageComposer
-            key={roomId}
+      <div className={`message-workspace message-workspace--${variant}`} data-view={view}>
+        <div className="message-workspace__conversation" hidden={view !== 'conversation'}>
+          <ConversationPanel
+            variant={variant}
+            key={`chat:${roomId}`}
+            writesAllowed={writesAllowed}
             publisher={messagePublisher}
             roomId={roomId}
             roomName={roomName}
+            messages={projectedMessages}
+            {...(participants === undefined ? {} : { participants })}
+            state={
+              state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
+            }
           />
-        ) : null}
+        </div>
+        <section className="message-workspace__resources" hidden={view !== 'resources'}>
+          <header className="message-workspace__intro">
+            <h2>
+              {t(
+                variant === 'direct'
+                  ? 'roomWorkspace.privateResources'
+                  : 'roomWorkspace.resourcesTitle',
+              )}
+            </h2>
+            <p>{t('roomWorkspace.resourcesDetail')}</p>
+          </header>
+          <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
+          {state.kind === 'loading' ? null : (
+            <SignalDock
+              defaultExpanded
+              embedded
+              onAction={handleSignalAction}
+              onRetry={store.retry}
+              selectedSignalId={selectedSignalId}
+              signals={projectedSignals}
+              state={state.kind === 'ready' ? 'ready' : 'failed'}
+            />
+          )}
+          {writesAllowed ? (
+            <MessageComposer
+              key={roomId}
+              publisher={messagePublisher}
+              roomId={roomId}
+              roomName={roomName}
+            />
+          ) : null}
+        </section>
       </div>
       <AnimatePresence>
         {selectedMessage === null ? null : (

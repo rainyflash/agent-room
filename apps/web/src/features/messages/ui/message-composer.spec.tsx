@@ -60,7 +60,7 @@ describe('MessageComposer', () => {
     expect(runtime.publish).not.toHaveBeenCalled();
     expect(runtime.reconcile).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Open the message composer' }));
+    await user.click(screen.getByRole('button', { name: 'Share a resource' }));
 
     expect(await screen.findByText('No trusted sending identity is available')).toBeInTheDocument();
     expect(runtime.resolveIdentity).toHaveBeenCalledOnce();
@@ -71,7 +71,7 @@ describe('MessageComposer', () => {
     const runtime = publisher({ publishResults: [published] });
     const user = userEvent.setup();
     renderComposer(runtime.value);
-    await user.click(screen.getByRole('button', { name: 'Open the message composer' }));
+    await user.click(screen.getByRole('button', { name: 'Share a resource' }));
 
     expect(await screen.findByText('Build Agent')).toBeInTheDocument();
     expect(screen.getByText('Builders Exchange')).toBeInTheDocument();
@@ -86,8 +86,8 @@ describe('MessageComposer', () => {
     expect(screen.getByText(/External links detected/u)).toBeInTheDocument();
     expect(screen.getByText(/HTML markup will remain inert/u)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }));
-    expect(await screen.findByText('Message accepted')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Share resource' }));
+    expect(await screen.findByText('Resource shared')).toBeInTheDocument();
 
     expect(runtime.publish).toHaveBeenCalledOnce();
     expect(runtime.publish.mock.calls[0]?.[0]).toMatchObject({
@@ -102,28 +102,26 @@ describe('MessageComposer', () => {
     const runtime = publisher({ publishResults: [unknown], reconcileResults: [published] });
     const user = userEvent.setup();
     renderComposer(runtime.value);
-    await user.click(screen.getByRole('button', { name: 'Open the message composer' }));
+    await user.click(screen.getByRole('button', { name: 'Share a resource' }));
     await screen.findByText('Build Agent');
     await user.type(screen.getByLabelText('Preview title'), 'Unknown commit');
     await user.type(screen.getByLabelText('Preview summary'), 'A transport interruption test.');
     await user.type(screen.getByLabelText('Full content'), 'Stable content');
-    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await user.click(screen.getByRole('button', { name: 'Share resource' }));
 
     expect(await screen.findByText('Submission status unknown')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry same submission' })).not.toBeInTheDocument();
     expect(runtime.publish).toHaveBeenCalledOnce();
 
-    await user.click(
-      screen.getByRole('button', { name: 'Minimize without losing submission state' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Keep draft and return to resources' }));
     expect(
-      screen.getByRole('button', { name: 'Resume the current message submission' }),
+      screen.getByRole('button', { name: 'Continue sharing this resource' }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Resume the current message submission' }));
+    await user.click(screen.getByRole('button', { name: 'Continue sharing this resource' }));
     await user.click(screen.getByRole('button', { name: 'Query submission status' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Message accepted')).toBeInTheDocument();
+      expect(screen.getByText('Resource shared')).toBeInTheDocument();
     });
     expect(runtime.publish).toHaveBeenCalledOnce();
     expect(runtime.reconcile).toHaveBeenCalledOnce();
@@ -139,11 +137,11 @@ describe('MessageComposer', () => {
     };
     const user = userEvent.setup();
     renderComposer(runtime.value, compatibility);
-    await user.click(screen.getByRole('button', { name: 'Open the message composer' }));
+    await user.click(screen.getByRole('button', { name: 'Share a resource' }));
     await screen.findByText('Build Agent');
 
     expect(screen.getByText('Read-only safety mode')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Share resource' })).toBeDisabled();
     expect(runtime.publish).not.toHaveBeenCalled();
   });
 });

@@ -1,32 +1,30 @@
-import { Button } from '@agent-room/ui-system';
-import { ShieldCheck } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-
 import { useAppServices } from '@/app/app-services';
-import { AutomationGrantHub } from '@/features/automation/ui/automation-grant-hub';
+import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { LobbyRoomStore } from '@/features/lobby/application/lobby-room-store';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
+import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
-import type { LobbySceneLabels } from '@/features/lobby/scene/lobby-scene';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
-import { LobbySceneSurface } from '@/features/lobby/ui/lobby-scene-surface';
-import type { LobbySceneSurfaceHandle } from '@/features/lobby/ui/lobby-scene-surface';
+import { LobbyRoomActions } from '@/features/lobby/ui/lobby-room-actions';
+import {
+  LobbySpatialView,
+  type LobbySpatialViewHandle,
+} from '@/features/lobby/ui/lobby-spatial-view';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
-import { SignalDock, type LobbyViewMode } from '@/features/lobby/ui/signal-dock';
-import { useListModeRequirement } from '@/features/lobby/ui/use-list-mode-requirement';
+import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
+import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
+import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
-import { ModerationHub } from '@/features/moderation/ui/moderation-hub';
-import { PrivateRoomHub } from '@/features/private-rooms/ui/private-room-hub';
-import { useAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
 import type { WebSession } from '@/features/session/domain/session';
-import { resolveFrontendSurface } from '@/features/telemetry/adapters/runtime-surface';
+import './lobby-workspace.css';
 
 export type LobbyPageProps = {
   readonly catalogId: string;
@@ -36,61 +34,28 @@ export type LobbyPageProps = {
   readonly onSelectedAgentChange: (agentId: string | null) => void;
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
+  readonly onViewChange: (view: RoomWorkspaceView) => void;
   readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
   readonly selectedDirectSessionId: string | null;
   readonly selectedMessageId: string | null;
+  readonly view: RoomWorkspaceView;
 };
 
-export function LobbyPage({
-  catalogId,
-  onEnterRoom,
-  onExitRoom,
-  onOpenSecurity,
-  onSelectedAgentChange,
-  onSelectedDirectSessionChange,
-  onSelectedMessageChange,
-  principal,
-  roomId,
-  selectedAgentId,
-  selectedDirectSessionId,
-  selectedMessageId,
-}: LobbyPageProps) {
+export function LobbyPage(props: LobbyPageProps) {
   const { lobby } = useAppServices();
-  const roomStore = useMemo(() => new LobbyRoomStore(lobby, roomId), [lobby, roomId]);
-  const state = useSyncExternalStore(
-    roomStore.subscribe,
-    roomStore.getSnapshot,
-    roomStore.getSnapshot,
-  );
-
-  if (state.kind !== 'ready') {
-    return <LobbyStateBoundary onRetry={roomStore.retry} state={state} />;
-  }
-
-  return (
-    <ReadyLobby
-      catalogId={catalogId}
-      key={state.room.roomId}
-      onEnterRoom={onEnterRoom}
-      onExitRoom={onExitRoom}
-      onOpenSecurity={onOpenSecurity}
-      onSelectedAgentChange={onSelectedAgentChange}
-      onSelectedDirectSessionChange={onSelectedDirectSessionChange}
-      onSelectedMessageChange={onSelectedMessageChange}
-      principal={principal}
-      room={state.room}
-      selectedAgentId={selectedAgentId}
-      selectedDirectSessionId={selectedDirectSessionId}
-      selectedMessageId={selectedMessageId}
-    />
-  );
+  const store = useMemo(() => new LobbyRoomStore(lobby, props.roomId), [lobby, props.roomId]);
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  if (state.kind !== 'ready')
+    return (
+      <>
+        <LobbyStateBoundary onRetry={store.retry} state={state} />
+        <DesktopRuntimeSurface />
+      </>
+    );
+  return <ReadyLobby {...props} key={state.room.roomId} room={state.room} />;
 }
-
-type ReadyLobbyProps = Omit<LobbyPageProps, 'roomId'> & {
-  readonly room: LobbyRoom;
-};
 
 function ReadyLobby({
   catalogId,
@@ -100,151 +65,158 @@ function ReadyLobby({
   onSelectedAgentChange,
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
+  onViewChange,
   principal,
   room,
   selectedAgentId,
   selectedDirectSessionId,
   selectedMessageId,
-}: ReadyLobbyProps) {
-  const { i18n, t } = useTranslation();
-  const { accessManagement, automation, controlPlane, moderation, telemetry } = useAppServices();
-  const accountPreferences = useAccountPreferences();
-  const listModeRequirement = useListModeRequirement();
-  const compact = listModeRequirement === 'compact';
-  const listRef = useRef<ListModeRosterHandle>(null);
-  const sceneRef = useRef<LobbySceneSurfaceHandle>(null);
-  const [zoom, setZoom] = useState(1);
+  view,
+}: LobbyPageProps & { readonly room: LobbyRoom }) {
+  const { t } = useTranslation();
   const directSessions = useDirectSessionController(principal !== null);
+  const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
+  const members = useRef<ListModeRosterHandle>(null);
+  const membersButton = useRef<HTMLButtonElement>(null);
+  const spatial = useRef<LobbySpatialViewHandle>(null);
   const projection = useMemo(
     () => projectLobbyScene(room, selectedAgentId),
     [room, selectedAgentId],
   );
-  const preferredMode = accountPreferences.snapshot.values.lobbyView;
-  const mode: LobbyViewMode = listModeRequirement !== null ? 'list' : preferredMode;
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
-  const languageKey = i18n.resolvedLanguage ?? i18n.language;
-  const labels = useMemo<LobbySceneLabels>(
-    () => ({
-      canvas: t('lobby.scene.canvasLabel'),
-      zones: {
-        active: t('lobby.zone.active'),
-        attention: t('lobby.zone.attention'),
-        available: t('lobby.zone.available'),
-      },
-    }),
-    [languageKey, t],
-  );
-
+  const activeView = selectedDirectSessionId !== null && view === 'space' ? 'conversation' : view;
   useEffect(() => {
-    if (selectedAgentId !== null && projection.selectedAgentId === null) {
+    if (selectedAgentId !== null && projection.selectedAgentId === null)
       onSelectedAgentChange(null);
-    }
   }, [onSelectedAgentChange, projection.selectedAgentId, selectedAgentId]);
 
-  const restoreSelectionFocus = (): void => {
-    if (mode === 'scene') {
-      sceneRef.current?.focus();
-    } else {
-      listRef.current?.focusSelected();
-    }
+  const closeDrawer = (): void => {
+    setDrawer(null);
   };
+  const selectAgent = (id: string | null): void => {
+    closeDrawer();
+    onSelectedAgentChange(id);
+  };
+  const navigation = (
+    <WorkspaceNavigation
+      activeDirectId={selectedDirectSessionId}
+      controller={directSessions}
+      onActivateRoom={() => {
+        closeDrawer();
+        onSelectedDirectSessionChange(null);
+      }}
+      onActivateDirect={(id) => {
+        closeDrawer();
+        onSelectedDirectSessionChange(id);
+      }}
+      roomName={room.name}
+      userName={principal?.displayName ?? null}
+      actions={
+        principal === null ? null : (
+          <LobbyRoomActions
+            catalogId={catalogId}
+            roomName={room.name}
+            principal={principal}
+            onEnterRoom={onEnterRoom}
+            onExitRoom={onExitRoom}
+            onOpenSecurity={onOpenSecurity}
+          />
+        )
+      }
+    />
+  );
+  const roster = (attachRef: boolean) => (
+    <div className="workspace-members">
+      <ListModeRoster
+        agents={room.agents}
+        onSelectAgent={selectAgent}
+        selectedAgentId={selectedAgentId}
+        variant="compact"
+        ref={attachRef ? members : null}
+      />
+      <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
+    </div>
+  );
 
   return (
-    <main className="lobby-shell" id="main-content">
+    <main className="lobby-workspace" id="main-content" data-view={activeView}>
       <p aria-atomic="true" aria-live="polite" className="sr-only">
-        {t('lobby.liveSummary', {
-          count: room.agents.length,
-          room: room.name,
-        })}
+        {t('lobby.liveSummary', { count: room.agents.length, room: room.name })}
       </p>
-      <RoomBeacon
-        actions={
-          principal === null ? undefined : (
-            <>
-              <ModerationHub
-                catalogId={catalogId}
-                gateway={moderation}
-                onReauthenticate={() => {
-                  void controlPlane.beginAuthentication(
-                    `${window.location.pathname}${window.location.search}${window.location.hash}`,
-                  );
-                }}
-                recentlyAuthenticated={principal.recentlyAuthenticated}
-                roomName={room.name}
-              />
-              <AutomationGrantHub
-                accessManagement={accessManagement}
-                automation={automation}
-                catalogId={catalogId}
-                onReauthenticate={() => {
-                  void controlPlane.beginAuthentication(
-                    `${window.location.pathname}${window.location.search}${window.location.hash}`,
-                  );
-                }}
-                recentlyAuthenticated={principal.recentlyAuthenticated}
-                roomName={room.name}
-              />
-              <Button
-                aria-label={t('security.launcher')}
-                className="security-launcher"
-                icon={<ShieldCheck aria-hidden="true" />}
-                onClick={onOpenSecurity}
-                size="compact"
-                tone="quiet"
+      <div className="workspace-sidebar-slot">{navigation}</div>
+      <section className="workspace-body">
+        <RoomBeacon
+          agentCount={room.agents.length}
+          membersButtonRef={membersButton}
+          roomName={room.name}
+          onOpenNavigation={() => {
+            setDrawer('navigation');
+          }}
+          onOpenMembers={() => {
+            setDrawer('members');
+          }}
+          {...(room.topic === undefined ? {} : { topic: room.topic })}
+        />
+        <div className="workspace-body__layout">
+          <div className="workspace-main">
+            <WorkspaceViewTabs
+              value={activeView}
+              onChange={onViewChange}
+              allowSpace={selectedDirectSessionId === null}
+            />
+            <div
+              className="workspace-main__panels"
+              id="workspace-current-view"
+              role="tabpanel"
+              aria-labelledby={`workspace-tab-${activeView}`}
+            >
+              <div
+                className="workspace-room-content"
+                hidden={selectedDirectSessionId !== null || activeView === 'space'}
               >
-                {t('security.launcher')}
-              </Button>
-              <PrivateRoomHub
-                currentCatalogId={catalogId}
-                onEnterRoom={onEnterRoom}
-                onExitRoom={onExitRoom}
-                principal={principal}
-              />
-            </>
-          )
-        }
-        agentCount={room.agents.length}
-        catalogId={catalogId}
-        roomName={room.name}
-        {...(room.topic === undefined ? {} : { topic: room.topic })}
-      />
-      <div className={`lobby-stage lobby-stage--${mode}`}>
-        {mode === 'scene' ? (
-          <>
-            <LobbySceneSurface
-              labels={labels}
-              languageKey={languageKey}
-              onSceneInitialized={(durationMs) => {
-                void telemetry.record({
-                  metric: 'scene_initialization',
-                  surface: resolveFrontendSurface(),
-                  value: durationMs,
-                });
-              }}
-              onSelectAgent={onSelectedAgentChange}
-              onZoomChange={setZoom}
-              projection={projection}
-              ref={sceneRef}
-            />
-            {projection.nodes.length === 0 ? <EmptyLobby /> : null}
-          </>
-        ) : (
-          <>
-            {listModeRequirement !== null && !compact ? (
-              <div className="scene-fallback" role="status">
-                <span>{t(`lobby.scene.listMode.${listModeRequirement}`)}</span>
+                <MessageLayer
+                  participants={room.agents}
+                  catalogId={catalogId}
+                  onSelectedMessageChange={onSelectedMessageChange}
+                  roomId={room.roomId}
+                  roomName={room.name}
+                  selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+                  view={activeView === 'resources' ? 'resources' : 'conversation'}
+                />
               </div>
-            ) : null}
-            <ListModeRoster
-              agents={room.agents}
-              onSelectAgent={onSelectedAgentChange}
-              ref={listRef}
-              selectedAgentId={projection.selectedAgentId}
-            />
-          </>
-        )}
-      </div>
+              {activeView === 'space' ? (
+                <LobbySpatialView
+                  room={room}
+                  selectedAgentId={selectedAgentId}
+                  onSelectAgent={selectAgent}
+                  ref={spatial}
+                />
+              ) : null}
+              <DirectConversationDock
+                activeCatalogId={selectedDirectSessionId}
+                controller={directSessions}
+                onActiveSessionChange={onSelectedDirectSessionChange}
+                onSelectedMessageChange={onSelectedMessageChange}
+                selectedMessageId={selectedMessageId}
+                view={activeView === 'resources' ? 'resources' : 'conversation'}
+              />
+            </div>
+          </div>
+          {activeView === 'space' ? null : (
+            <div className="workspace-members-slot">{roster(true)}</div>
+          )}
+        </div>
+      </section>
+      {drawer === null ? null : (
+        <WorkspaceDrawer
+          label={t(drawer === 'navigation' ? 'roomWorkspace.navigation' : 'roomWorkspace.members')}
+          variant={drawer}
+          onClose={closeDrawer}
+        >
+          {drawer === 'navigation' ? navigation : roster(false)}
+        </WorkspaceDrawer>
+      )}
       <AnimatePresence>
         {selectedAgent === null ? null : (
           <AgentInspector
@@ -256,63 +228,25 @@ function ReadyLobby({
             }
             onBlock={() => {
               void directSessions.setBlocked(toDirectAgent(selectedAgent), true).then((result) => {
-                if (result.ok) {
-                  onSelectedAgentChange(null);
-                }
+                if (result.ok) onSelectedAgentChange(null);
               });
             }}
             onClose={() => {
-              restoreSelectionFocus();
+              if (activeView === 'space') spatial.current?.focus();
+              else if (members.current?.focusSelected() !== true) membersButton.current?.focus();
               onSelectedAgentChange(null);
             }}
             onMessage={(agentId) => {
               void directSessions.openAgent(agentId).then((result) => {
-                if (!result.ok) {
-                  return;
+                if (result.ok) {
+                  onSelectedAgentChange(null);
+                  onSelectedDirectSessionChange(result.value.catalogId);
                 }
-                onSelectedAgentChange(null);
-                onSelectedDirectSessionChange(result.value.catalogId);
               });
             }}
           />
         )}
       </AnimatePresence>
-      {selectedDirectSessionId === null ? (
-        <MessageLayer
-          participants={room.agents}
-          catalogId={catalogId}
-          onSelectedMessageChange={onSelectedMessageChange}
-          roomId={room.roomId}
-          roomName={room.name}
-          selectedMessageId={selectedMessageId}
-        />
-      ) : null}
-      <DirectConversationDock
-        activeCatalogId={selectedDirectSessionId}
-        controller={directSessions}
-        onActiveSessionChange={onSelectedDirectSessionChange}
-        onSelectedMessageChange={onSelectedMessageChange}
-        selectedMessageId={selectedMessageId}
-      />
-      {compact || selectedDirectSessionId !== null ? null : (
-        <SignalDock
-          mode={mode}
-          onModeChange={(nextMode) => {
-            if (nextMode === 'scene' && listModeRequirement !== null) {
-              return;
-            }
-            accountPreferences.setLobbyView(nextMode);
-          }}
-          onResetViewport={() => {
-            sceneRef.current?.resetViewport();
-          }}
-          onZoomBy={(factor) => {
-            sceneRef.current?.zoomBy(factor);
-          }}
-          sceneAvailable={listModeRequirement === null}
-          zoom={zoom}
-        />
-      )}
     </main>
   );
 }
@@ -324,15 +258,4 @@ function toDirectAgent(agent: LobbyRoom['agents'][number]): DirectAgent {
     displayName: agent.displayName,
     matrixUserId: agent.matrixUserId,
   });
-}
-
-function EmptyLobby() {
-  const { t } = useTranslation();
-  return (
-    <section aria-labelledby="empty-lobby-title" className="empty-lobby">
-      <p className="eyebrow">{t('lobby.empty.eyebrow')}</p>
-      <h1 id="empty-lobby-title">{t('lobby.empty.title')}</h1>
-      <p>{t('lobby.empty.detail')}</p>
-    </section>
-  );
 }

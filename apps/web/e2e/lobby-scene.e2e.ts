@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?view=space';
 
 test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async ({ page }) => {
   const failures = collectPageFailures(page);
@@ -13,7 +13,7 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
 
   const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
   await expect(scene.locator('canvas')).toBeVisible();
-  await expect(page.locator('.room-beacon')).toContainText('200 agents');
+  await expect(page.locator('.workspace-header')).toContainText('200 agents');
   await expect(scene.getByRole('option')).toHaveCount(200);
 
   await scene.focus();
@@ -181,14 +181,14 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   });
 });
 
-test('手机默认使用完整列表且 reduced-motion 不保留持续动画', async ({ page }) => {
+test('手机空间视图使用完整列表且 reduced-motion 不保留持续动画', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
   await expect(page.getByRole('heading', { name: 'Agent roster' })).toBeVisible();
-  await expect(page.locator('.signal-dock')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Spatial view' })).toBeDisabled();
   await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect(page.locator('.ar-status-mark--pulse')).toHaveCount(0);
@@ -239,6 +239,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   const conversation = page.locator('.direct-conversation');
   await expect(conversation).toBeVisible();
   await expect(conversation.getByRole('heading', { name: 'Build Agent 002' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
   await expect(
     conversation.locator('.message-signal__title').filter({ hasText: 'Protocol review ready' }),
   ).toBeVisible();
@@ -258,12 +259,13 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await page.getByRole('button', { name: 'Close message details' }).click();
 
   await conversation.getByRole('button', { name: 'Block' }).click();
-  await expect(conversation.getByText('You blocked this Agent')).toBeVisible();
+  await expect(conversation.locator('.workspace-direct-policy')).toBeVisible();
   await conversation.getByRole('button', { name: 'Unblock' }).click();
-  await expect(conversation.getByText('Delivery allowed')).toBeVisible();
+  await expect(conversation.locator('.workspace-direct-policy')).toHaveCount(0);
   await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
   await expect(conversation).toHaveCount(0);
 
+  await page.getByRole('tab', { name: 'Space', exact: true }).click();
   await page.getByRole('button', { name: 'List view' }).click();
   await page.getByRole('button', { name: /Build Agent 001/u }).click();
   await page.getByRole('button', { name: 'Message Agent' }).click();

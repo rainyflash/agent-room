@@ -1,3 +1,4 @@
+import { openRoomSettings } from './support/workspace-navigation';
 import { expect, test } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
@@ -9,6 +10,7 @@ test('私人房间三步创建只陈述真实安全边界', async ({ page }) => 
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
+  await openRoomSettings(page);
   await page.getByRole('button', { name: 'Private rooms' }).click();
   const dialog = page.getByRole('dialog', { name: 'Private rooms' });
   await expect(dialog).toBeVisible();
@@ -44,6 +46,7 @@ test('私人房间 Sheet 在手机上不产生横向溢出', async ({ page }) =>
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
+  await openRoomSettings(page);
   await page.getByRole('button', { name: 'Private rooms' }).click();
   await expect(page.getByRole('dialog', { name: 'Private rooms' })).toBeVisible();
   await expectNoHorizontalOverflow(page);

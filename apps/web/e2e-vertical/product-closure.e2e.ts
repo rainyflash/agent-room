@@ -126,7 +126,8 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
     const messageBody = `Second Agent Room account verified cloud delivery at ${new Date().toISOString()}.`;
     await publishHumanMessage(collaborator, messageTitle, messageBody);
     await verifyRemoteMessage(ownerPrimary, messageTitle, messageBody);
-    await expect(ownerSecondary.locator('.message-dock__headline')).toContainText(messageTitle, {
+    await ownerSecondary.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
+    await expect(ownerSecondary.locator('.message-dock__list')).toContainText(messageTitle, {
       timeout: 45_000,
     });
 
@@ -260,24 +261,26 @@ async function enterPublicLobby(page: Page, catalogId: string): Promise<string> 
 }
 
 async function publishHumanMessage(page: Page, title: string, body: string): Promise<void> {
-  await page.getByRole('button', { name: /Open the message composer|打开消息发送器/u }).click();
+  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
+  await page.getByRole('button', { name: /Share a resource|分享资料/u }).click();
   await expect(page.locator('.message-composer__identity')).toContainText('Local Collaborator', {
     timeout: 40_000,
   });
   await page.getByLabel(/Preview title|预览标题/u).fill(title);
   await page.getByLabel(/Preview summary|预览摘要/u).fill('Cross-account cloud message closure.');
   await page.getByLabel(/Full content|完整正文/u).fill(body);
-  await page.getByRole('button', { name: /Send message|发送消息/u }).click();
-  await expect(page.getByText(/Message accepted|消息已接受/u)).toBeVisible({ timeout: 45_000 });
+  await page.getByRole('button', { name: /Share resource|发布资料/u }).click();
+  await expect(page.getByText(/Resource shared|资料已分享/u)).toBeVisible({ timeout: 45_000 });
   await page
     .getByRole('button', {
-      name: /Close and discard the composer|关闭并丢弃发送器/u,
+      name: /Close and discard this resource|关闭并丢弃这份资料/u,
     })
     .click();
 }
 
 async function verifyRemoteMessage(page: Page, title: string, body: string): Promise<void> {
-  const headline = page.locator('.message-dock__headline').filter({ hasText: title });
+  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
+  const headline = page.locator('.message-signal').filter({ hasText: title });
   await expect(headline).toBeVisible({ timeout: 45_000 });
   await headline.click();
   await expect(page.locator('.content-inspector')).toContainText('Local Collaborator');
@@ -294,7 +297,8 @@ async function createTargetedHandoffFromMessage(
   body: string,
   targetInstanceId: string,
 ) {
-  const headline = page.locator('.message-dock__headline').filter({ hasText: title });
+  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
+  const headline = page.locator('.message-signal').filter({ hasText: title });
   await expect(headline).toBeVisible({ timeout: 45_000 });
   await headline.click();
   await page.getByRole('button', { name: /Open full content|打开完整正文/u }).click();

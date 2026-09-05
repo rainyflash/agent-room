@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?view=resources';
 
 test('已验证正文必须经过精确实例授权才能成为一次性上下文', async ({ page }) => {
   const failures = collectPageFailures(page);
@@ -60,7 +60,6 @@ test('窄屏授权面板保持完整可操作且不会横向溢出', async ({ pa
 
 async function openInspector(page: Page): Promise<Locator> {
   await page.goto(fixturePath);
-  await page.getByRole('button', { name: 'Expand signal timeline' }).click();
   await page
     .getByRole('list', { name: 'Room signal timeline' })
     .getByRole('button', { name: /Protocol review ready/u })

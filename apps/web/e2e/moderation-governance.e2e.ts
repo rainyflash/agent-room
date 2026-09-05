@@ -1,15 +1,15 @@
+import { openRoomSettings } from './support/workspace-navigation';
 import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?view=resources';
 
 test('举报不读取受保护正文且房间治理动作可撤销', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  await page.getByRole('button', { name: 'Expand signal timeline' }).click();
   await page
     .getByRole('list', { name: 'Room signal timeline' })
     .getByRole('button', { name: /Protocol review ready/u })
@@ -28,6 +28,7 @@ test('举报不读取受保护正文且房间治理动作可撤销', async ({ pa
     .click();
   await page.getByRole('button', { name: 'Close message details' }).click();
 
+  await openRoomSettings(page);
   await page.getByRole('button', { name: 'Governance' }).click();
   const governance = page.getByRole('dialog', { name: /Room governance/u });
   await expect(

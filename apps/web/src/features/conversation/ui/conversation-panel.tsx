@@ -1,11 +1,13 @@
-import { Button } from '@agent-room/ui-system';
-import { AtSign, ChevronDown, ChevronUp, MessageCircle, Reply, Send, X } from 'lucide-react';
+import { ArrowDown, ArrowUpRight, MessageCircle, Radio, UsersRound } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   conversationMessages,
   type ConversationParticipant,
 } from '@/features/conversation/domain/conversation';
+import { ConversationComposer } from '@/features/conversation/ui/conversation-composer';
+import { ConversationMessage } from '@/features/conversation/ui/conversation-message';
 import { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
 import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/browser-submission-id-factory';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
@@ -24,6 +26,7 @@ export type ConversationPanelProps = {
   readonly writesAllowed?: boolean;
   readonly state: 'ready' | 'loading' | 'failed';
   readonly submissionIds?: MessageSubmissionIdFactory;
+  readonly variant?: 'room' | 'direct';
 };
 
 export function ConversationPanel({
@@ -35,20 +38,23 @@ export function ConversationPanel({
   writesAllowed = true,
   state,
   submissionIds,
+  variant = 'room',
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
   const runtime = useRuntimeCompatibility();
-  const [expanded, setExpanded] = useState(true);
+  const reduceMotion = useReducedMotion();
   const input = useRef<HTMLTextAreaElement>(null);
   const composer = useConversationComposer(publisher, roomId, submissionIds);
   const timeline = useMemo(() => conversationMessages(messages), [messages]);
   const timelineElement = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const [unseen, setUnseen] = useState(false);
   const latestEvent = timeline.at(-1)?.matrixEventId;
   useEffect(() => {
     const element = timelineElement.current;
     if (following.current && element !== null) element.scrollTop = element.scrollHeight;
-  }, [latestEvent, expanded]);
+    else if (latestEvent !== undefined) setUnseen(true);
+  }, [latestEvent]);
   const names = useMemo(
     () =>
       new Map([
@@ -61,268 +67,156 @@ export function ConversationPanel({
       ]),
     [messages, participants],
   );
-  const { publication } = composer;
-  const pending = publication.matches('unknown') || publication.matches('acceptedBindingPending');
-  const submitting = publication.matches('publishing') || publication.matches('reconciling');
-  const failed = publication.matches('failed');
-  const unavailable = publication.matches('identityUnavailable');
-  const canSend =
-    writesAllowed &&
-    runtime.writes.allowed &&
-    state === 'ready' &&
-    composer.editable &&
-    composer.valid;
-  const time = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
+  const messagesById = useMemo(
+    () => new Map(messages.map((message) => [message.messageId, message])),
+    [messages],
+  );
+  const canEdit = writesAllowed && runtime.writes.allowed && composer.editable;
+  const canSend = canEdit && state === 'ready' && composer.valid;
+  const language = i18n.resolvedLanguage;
+  const time = useMemo(
+    () => new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }),
+    [language],
+  );
+  const date = useMemo(
+    () => new Intl.DateTimeFormat(language, { month: 'long', day: 'numeric' }),
+    [language],
+  );
   return (
-    <section
-      className={`conversation-panel${expanded ? '' : ' conversation-panel--collapsed'}`}
-      aria-label={t('conversation.title')}
-    >
-      <header className="conversation-panel__header">
-        <MessageCircle aria-hidden="true" />
-        <div>
-          <h2>{t('conversation.title')}</h2>
-          <span>{roomName}</span>
-        </div>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-label={t(expanded ? 'conversation.collapse' : 'conversation.open')}
-          onClick={() => {
-            setExpanded(!expanded);
+    <section className="conversation-panel" aria-label={t('conversation.title')}>
+      <h2 className="sr-only">{t('conversation.title')}</h2>
+      <div className="conversation-panel__context">
+        <UsersRound aria-hidden="true" />
+        <span>
+          {t(variant === 'direct' ? 'roomWorkspace.privateHint' : 'conversation.everyone')}
+        </span>
+        <span className="conversation-panel__room">{roomName}</span>
+      </div>
+      <div className="conversation-panel__history">
+        <div
+          className="conversation-panel__timeline"
+          ref={timelineElement}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            following.current =
+              element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+            if (following.current) setUnseen(false);
           }}
+          role="log"
+          aria-label={t('conversation.title')}
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-busy={state === 'loading'}
         >
-          {expanded ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
-        </button>
-      </header>
-      {expanded ? (
-        <>
-          <div
-            className="conversation-panel__timeline"
-            ref={timelineElement}
-            onScroll={(event) => {
-              const element = event.currentTarget;
-              following.current =
-                element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-            }}
-            role="log"
-            aria-label={t('conversation.title')}
-            aria-live="polite"
-            aria-relevant="additions text"
-          >
-            {state === 'loading' ? (
-              <p>{t('conversation.loading')}</p>
-            ) : state === 'failed' ? (
-              <p role="alert">{t('conversation.unavailable')}</p>
-            ) : timeline.length === 0 ? (
-              <p className="conversation-panel__empty">{t('conversation.empty')}</p>
-            ) : null}
-            {timeline.map((message) => {
-              const chat = message.preview?.conversation;
-              const parent =
-                message.relation === undefined
-                  ? null
-                  : messages.find(
-                      (candidate) => candidate.messageId === message.relation?.targetMessageId,
-                    );
-              return (
-                <article
-                  className="conversation-message"
-                  data-actor-kind={message.actor.kind}
-                  key={message.messageId}
-                >
-                  <header>
-                    <strong>{message.actor.displayName}</strong>
-                    <span>
-                      {t(
-                        message.actor.kind === 'human'
-                          ? 'conversation.human'
-                          : 'conversation.agent',
-                      )}
-                    </span>
-                    <time dateTime={new Date(message.serverTimestamp).toISOString()}>
-                      {time.format(message.serverTimestamp)}
-                    </time>
-                  </header>
-                  {message.relation === undefined ? null : (
-                    <blockquote>
-                      {parent?.lifecycle === 'active'
-                        ? `${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`
-                        : t('conversation.referenced')}
-                    </blockquote>
-                  )}
-                  {chat?.mentions.length ? (
-                    <div className="conversation-message__mentions">
-                      {chat.mentions.map((id) => (
-                        <span key={id} title={id}>
-                          @{names.get(id) ?? id}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <p>{chat?.text}</p>
+          {state === 'loading' ? (
+            <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
+          ) : state === 'failed' ? (
+            <p className="conversation-panel__boundary" role="alert">
+              {t('conversation.unavailable')}
+            </p>
+          ) : timeline.length === 0 ? (
+            <motion.div
+              className="conversation-panel__empty"
+              initial={reduceMotion === true ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            >
+              <div className="conversation-panel__empty-icon">
+                <MessageCircle aria-hidden="true" />
+              </div>
+              <p className="conversation-panel__eyebrow">{t('conversation.emptyEyebrow')}</p>
+              <h3>{t('conversation.emptyTitle')}</h3>
+              <p>{t('conversation.empty')}</p>
+              <div className="conversation-panel__starters">
+                {(['introduce', 'idea'] as const).map((starter) => (
                   <button
                     type="button"
-                    disabled={!composer.editable}
-                    aria-label={t('conversation.reply', { name: message.actor.displayName })}
+                    key={starter}
+                    disabled={!canEdit}
                     onClick={() => {
-                      composer.respond(message);
+                      composer.changeText(t(`conversation.starter.${starter}`));
                       input.current?.focus();
                     }}
                   >
-                    <Reply aria-hidden="true" />
-                    {t('conversation.reply', { name: message.actor.displayName })}
-                  </button>
-                </article>
-              );
-            })}
-          </div>
-          <form
-            className="conversation-panel__composer"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (canSend) composer.submit();
-            }}
-          >
-            {composer.reply === null ? null : (
-              <div className="conversation-panel__reply">
-                <Reply aria-hidden="true" />
-                <span>
-                  {t('conversation.replying', { name: composer.reply.actor.displayName })}
-                </span>
-                <button
-                  type="button"
-                  disabled={!composer.editable}
-                  aria-label={t('conversation.cancelReply')}
-                  onClick={composer.cancelReply}
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </div>
-            )}
-            {composer.mentions.length === 0 ? null : (
-              <div className="conversation-panel__mentions">
-                {composer.mentions.map((id) => (
-                  <button
-                    type="button"
-                    key={id}
-                    disabled={!composer.editable}
-                    aria-label={t('conversation.removeMention', { name: names.get(id) ?? id })}
-                    onClick={() => {
-                      composer.removeMention(id);
-                    }}
-                  >
-                    @{names.get(id) ?? id}
-                    <X aria-hidden="true" />
+                    {t(`conversation.starter.${starter}`)}
+                    <ArrowUpRight aria-hidden="true" />
                   </button>
                 ))}
               </div>
-            )}
-            <label className="sr-only" htmlFor={`chat-${roomId}`}>
-              {t('conversation.input')}
-            </label>
-            <textarea
-              id={`chat-${roomId}`}
-              ref={input}
-              rows={2}
-              maxLength={8_000}
-              placeholder={t('conversation.placeholder')}
-              value={composer.text}
-              disabled={!composer.editable || !runtime.writes.allowed || !writesAllowed}
-              onChange={(event) => {
-                composer.changeText(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  if (canSend) composer.submit();
-                }
-              }}
-            />
-            <div className="conversation-panel__tools">
-              <label>
-                <AtSign aria-hidden="true" />
-                <span className="sr-only">{t('conversation.mention')}</span>
-                <select
-                  aria-label={t('conversation.mention')}
-                  value=""
-                  disabled={!composer.editable || composer.mentions.length >= 8}
-                  onChange={(event) => {
-                    if (event.target.value) {
-                      composer.mention(event.target.value);
-                      input.current?.focus();
-                    }
+            </motion.div>
+          ) : null}
+          {timeline.map((message, index) => {
+            const previous = timeline[index - 1];
+            const day = new Date(message.serverTimestamp).toDateString();
+            return (
+              <div key={message.messageId}>
+                {previous === undefined ||
+                new Date(previous.serverTimestamp).toDateString() !== day ? (
+                  <div className="conversation-day">
+                    <span>{date.format(message.serverTimestamp)}</span>
+                  </div>
+                ) : null}
+                <ConversationMessage
+                  message={message}
+                  parent={
+                    message.relation === undefined
+                      ? undefined
+                      : messagesById.get(message.relation.targetMessageId)
+                  }
+                  names={names}
+                  time={time}
+                  editable={canEdit}
+                  own={
+                    message.actor.matrixUserId ===
+                    composer.publication.context.identity?.matrixUserId
+                  }
+                  onReply={(target) => {
+                    composer.respond(target);
+                    input.current?.focus();
                   }}
-                >
-                  <option value="">{t('conversation.mention')}</option>
-                  {participants
-                    .filter((participant) => !composer.mentions.includes(participant.matrixUserId))
-                    .map((participant) => (
-                      <option key={participant.matrixUserId} value={participant.matrixUserId}>
-                        {participant.displayName}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <span>{t('conversation.count', { count: Array.from(composer.text).length })}</span>
-              <Button
-                type="submit"
-                disabled={!canSend}
-                icon={<Send aria-hidden="true" />}
-                size="compact"
-              >
-                {t(submitting ? 'conversation.sending' : 'conversation.send')}
-              </Button>
-            </div>
-            {composer.text.length > 0 && !composer.valid ? (
-              <p role="alert">{t('conversation.invalid')}</p>
-            ) : null}
-            {publication.matches('published') ? (
-              <p role="status">{t('conversation.sent')}</p>
-            ) : null}
-            {pending ? (
-              <div role="status">
-                <p>{t('conversation.pending')}</p>
-                <Button onClick={composer.reconcile} size="compact">
-                  {t('conversation.check')}
-                </Button>
+                />
               </div>
-            ) : null}
-            {failed ? (
-              <div role="alert">
-                <p>{t('conversation.failed')}</p>
-                {publication.context.failure?.retryable ? (
-                  <Button onClick={composer.retry} size="compact">
-                    {t('conversation.retry')}
-                  </Button>
-                ) : null}
-                {publication.can({ type: 'CLOSE' }) ? (
-                  <Button onClick={composer.edit} size="compact">
-                    {t('conversation.edit')}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-            {unavailable ? (
-              <div role="alert">
-                <p>{t('conversation.unavailable')}</p>
-                <Button onClick={composer.retryIdentity} size="compact">
-                  {t('conversation.retry')}
-                </Button>
-              </div>
-            ) : null}
-          </form>
-          <details className="conversation-panel__availability">
-            <summary>{t('conversation.details')}</summary>
+            );
+          })}
+        </div>
+        {unseen ? (
+          <button
+            className="conversation-panel__latest"
+            type="button"
+            onClick={() => {
+              const element = timelineElement.current;
+              if (element !== null) element.scrollTop = element.scrollHeight;
+              following.current = true;
+              setUnseen(false);
+            }}
+          >
+            <ArrowDown aria-hidden="true" />
+            {t('conversation.latest')}
+          </button>
+        ) : null}
+      </div>
+      <ConversationComposer
+        composer={composer}
+        participants={participants}
+        names={names}
+        roomId={roomId}
+        canSend={canSend}
+        writesAllowed={writesAllowed}
+        input={input}
+      />
+      <div className="conversation-panel__footer">
+        <details className="conversation-panel__availability">
+          <summary>
+            <Radio aria-hidden="true" />
+            {t('conversation.details')}
+          </summary>
+          <div>
             <p>{t('conversation.runtime')}</p>
             <p>{t('conversation.help')}</p>
-          </details>
-        </>
-      ) : null}
+          </div>
+        </details>
+        <span className="conversation-panel__keyboard">{t('conversation.keyboard')}</span>
+      </div>
     </section>
   );
 }
