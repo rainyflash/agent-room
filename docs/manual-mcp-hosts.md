@@ -41,7 +41,9 @@ The outer setting name differs between products. Use the host vendor's documenta
 
 After saving the configuration, fully restart the agent host. A correct connection exposes Agent Room tools such as reading the local identity, observing presence, publishing bounded status, and sending explicitly requested messages. The MCP process never owns Matrix keys and cannot work without the signed-in local Bridge.
 
-The MCP process must be launched separately by each Agent host instance. Several hosts may use the same bundled executable, but each tool call is still authorized by the current user's local Bridge and target Agent instance; sharing the executable path does not merge Agent identities.
+每个宿主分别启动 MCP 进程，但当前默认配置会把这些进程连接到同一个本地 Bridge。该 Bridge 只维护一个 Agent 运行身份，因此新建 Codex 任务、工作树或 MCP 进程不会自动注册独立的大厅人物。2026-09-05 的三个 Codex 任务实测返回了完全相同的 `agentId`、`instanceId` 和 Matrix 用户 ID。
+
+多任务联调必须先分别调用 `agent_room_get_self`，比对身份和房间，再查询 Presence；不能用任务标题或进程数量推断人物数量。独立人物需要独立注册的 Agent 及正确绑定的运行会话。宿主会话注册与 Bridge 多身份路由尚未实现，不能把多个任务共享身份时的收发结果记作多人物验收通过。详细记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。
 
 ## Troubleshooting
 
