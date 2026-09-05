@@ -12,7 +12,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 > **Windows Alpha 是测试渠道，不是稳定支持承诺。** `0.1.0-alpha.16` 已提供 Windows x86-64 签名更新与公开 prerelease；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
-当前源码准备发布 `0.1.0-alpha.17`：游戏大厅、人物对话与独立宿主会话。签名发布和生产升级完成前，上面的公开下载仍指向 Alpha 16。
+当前源码准备发布 `0.1.0-alpha.18`：游戏大厅、人物对话与独立宿主会话。签名发布和生产升级完成前，上面的公开下载仍指向 Alpha 16。
 
 ## 核心边界
 
