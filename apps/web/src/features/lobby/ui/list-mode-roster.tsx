@@ -1,11 +1,13 @@
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { Search } from 'lucide-react';
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 
 export type ListModeRosterProps = {
+  readonly variant?: 'full' | 'compact';
   readonly agents: readonly LobbyAgent[];
   readonly onSelectAgent: (agentId: string) => void;
   readonly selectedAgentId: string | null;
@@ -13,7 +15,7 @@ export type ListModeRosterProps = {
 };
 
 export type ListModeRosterHandle = {
-  focusSelected(): void;
+  focusSelected(): boolean;
 };
 
 const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
@@ -26,35 +28,37 @@ const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freez
 });
 
 export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterProps>(
-  function ListModeRoster({ agents, onSelectAgent, selectedAgentId, selfAgentId }, forwardedRef) {
+  function ListModeRoster(
+    { agents, onSelectAgent, selectedAgentId, selfAgentId, variant = 'full' },
+    forwardedRef,
+  ) {
     const { t } = useTranslation();
+    const headingId = useId();
     const selectedButtonRef = useRef<HTMLButtonElement>(null);
     const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
     const [query, setQuery] = useState('');
     const [status, setStatus] = useState<LobbyAgentStatus | 'all'>('all');
-    const filteredAgents = useMemo(() => {
-      const normalizedQuery = query.trim().toLocaleLowerCase();
-      return agents.filter((agent) => {
-        const matchesQuery =
-          normalizedQuery.length === 0 ||
-          agent.displayName.toLocaleLowerCase().includes(normalizedQuery) ||
-          agent.matrixUserId.toLocaleLowerCase().includes(normalizedQuery);
-        return matchesQuery && (status === 'all' || agent.status === status);
-      });
-    }, [agents, query, status]);
+    const filteredAgents = useMemo(
+      () => filterLobbyAgents(agents, query, status),
+      [agents, query, status],
+    );
 
     useImperativeHandle(forwardedRef, () => ({
       focusSelected: () => {
-        selectedButtonRef.current?.focus();
+        const selected = selectedButtonRef.current;
+        selected?.focus();
+        return selected !== null && document.activeElement === selected;
       },
     }));
 
     return (
-      <section aria-labelledby="lobby-roster-title" className="list-roster">
+      <section aria-labelledby={headingId} className={`list-roster list-roster--${variant}`}>
         <header className="list-roster__header">
           <div>
             <p className="eyebrow">{t('lobby.roster.eyebrow')}</p>
-            <h1 id="lobby-roster-title">{t('lobby.roster.title')}</h1>
+            <h2 id={headingId}>
+              {t(variant === 'compact' ? 'roomWorkspace.members' : 'lobby.roster.title')}
+            </h2>
           </div>
           <span>{t('lobby.roster.count', { count: filteredAgents.length })}</span>
         </header>
@@ -138,7 +142,11 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                       {agent.displayName}
                       {agent.agentId === selfAgentId ? <em>{t('lobby.agent.self')}</em> : null}
                     </strong>
-                    <span>{agent.matrixUserId}</span>
+                    <span>
+                      {variant === 'compact'
+                        ? t(`lobby.status.${agent.status}`)
+                        : agent.matrixUserId}
+                    </span>
                   </span>
                   <span className="roster-agent__summary">
                     {agent.summary ?? t(`lobby.status.${agent.status}`)}

@@ -5,6 +5,8 @@
 enabled = true
 default_tools_approval_mode = "prompt"
 enabled_tools = [
+  "agent_room_open_session",
+  "agent_room_close_session",
   "agent_room_get_self",
   "agent_room_list_previews",
   "agent_room_get_presence",

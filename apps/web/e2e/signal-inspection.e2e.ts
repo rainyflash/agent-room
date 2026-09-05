@@ -2,20 +2,17 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?view=resources';
 
-test('信号坞默认单行，正文必须经显式点击才读取并保持惰性', async ({ page }) => {
+test('资料视图显示摘要，正文必须经显式点击才读取并保持惰性', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  const dock = page.getByRole('region', { name: 'Signal dock' });
+  const dock = page.getByRole('region', { name: 'Resources', exact: true });
   await expect(dock).toBeVisible();
-  const compactBox = await dock.boundingBox();
-  expect(compactBox?.height).toBeLessThanOrEqual(60);
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
 
-  await page.getByRole('button', { name: 'Expand signal timeline' }).click();
   const timeline = page.getByRole('list', { name: 'Room signal timeline' });
   await expect(timeline.getByRole('button')).toHaveCount(2);
   await timeline.getByRole('button', { name: /Protocol review ready/u }).click();

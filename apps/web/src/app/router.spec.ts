@@ -4,6 +4,8 @@ import {
   lobbySearchWithAgent,
   lobbySearchWithDirectSession,
   lobbySearchWithMessage,
+  lobbySearchWithView,
+  lobbySearchWithRoomPanel,
   normalizeConnectSearch,
   normalizeLobbySearch,
   normalizeWorkspaceSearch,
@@ -83,5 +85,40 @@ describe('路由状态规范化', () => {
         null,
       ),
     ).toEqual({});
+  });
+});
+
+describe('大厅视图路由', () => {
+  it('恢复有效视图并忽略无效值和私聊空间视图', () => {
+    expect(normalizeLobbySearch({ view: 'resources' })).toEqual({ view: 'resources' });
+    expect(normalizeLobbySearch({ view: 'space' })).toEqual({});
+    expect(normalizeLobbySearch({ view: 'unknown' })).toEqual({});
+    expect(normalizeLobbySearch({ direct: 'private-room', view: 'space' })).toEqual({
+      direct: 'private-room',
+    });
+  });
+  it('关闭面板回到房间，打开大厅面板退出私聊', () => {
+    expect(
+      lobbySearchWithView(
+        { direct: 'private-room', message: '$message', view: 'resources' },
+        'space',
+      ),
+    ).toEqual({});
+    expect(
+      lobbySearchWithRoomPanel(
+        { direct: 'private-room', agent: 'agent-01', message: '$message', directory: 'open' },
+        'conversation',
+      ),
+    ).toEqual({ view: 'conversation', directory: 'open' });
+    expect(normalizeLobbySearch({ view: 'conversation' })).toEqual({ view: 'conversation' });
+  });
+  it('检查资料时保留视图，进入私聊回到对话', () => {
+    expect(lobbySearchWithMessage({ view: 'resources' }, '$message')).toEqual({
+      view: 'resources',
+      message: '$message',
+    });
+    expect(lobbySearchWithDirectSession({}, 'private-room')).toEqual({
+      direct: 'private-room',
+    });
   });
 });

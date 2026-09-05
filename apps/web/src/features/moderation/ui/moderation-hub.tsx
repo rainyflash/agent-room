@@ -1,3 +1,4 @@
+import { useOverlayContainer } from '@/shared/ui/overlay-container';
 import { Button } from '@agent-room/ui-system';
 import { CircleAlert, Gavel, LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -48,6 +49,7 @@ export function ModerationHub({
   roomName,
 }: ModerationHubProps) {
   const { t } = useTranslation();
+  const overlayContainer = useOverlayContainer();
   const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion();
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
@@ -231,7 +233,7 @@ export function ModerationHub({
             </motion.div>
           ) : null}
         </AnimatePresence>,
-        document.body,
+        overlayContainer,
       )}
     </>
   );

@@ -19,12 +19,13 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use agent_room_protocol_conformance::generated::{
-    ActorRef, ContentRef, MessagePreview as WireMessagePreview, MessagePreviewEvent,
-    MessageRevisionEvent, MessageRevisionKind as WireMessageRevisionKind,
-    MessageSensitivity as WireMessageSensitivity, Provenance,
+    Actor, ActorRef, ContentRef, MessagePreview as WireMessagePreview,
+    MessageRevisionKind as WireMessageRevisionKind, MessageSensitivity as WireMessageSensitivity,
+    Provenance,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::DateTime;
+use serde::Deserialize;
 use serde_json::Value;
 use uuid::{Uuid, Version};
 
@@ -167,17 +168,20 @@ impl MessageSyncService {
                 }
                 match parse_pending_message(room.room_id(), event) {
                     Ok(pending) => {
-                        let decision = self
-                            .authenticator
-                            .authenticate(
-                                pending.agent_id,
-                                pending.instance_id,
-                                pending.origin_server_timestamp,
-                                &pending.canonical_event,
-                                &pending.signature,
-                            )
-                            .await
-                            .map_err(MessageSyncFailure::authentication)?;
+                        let decision = match &pending.authentication {
+                            Some(authentication) => self
+                                .authenticator
+                                .authenticate(
+                                    authentication.agent_id,
+                                    authentication.instance_id,
+                                    authentication.origin_server_timestamp,
+                                    &authentication.canonical_event,
+                                    &authentication.signature,
+                                )
+                                .await
+                                .map_err(MessageSyncFailure::authentication)?,
+                            None => MessageAuthenticationDecision::Trusted,
+                        };
                         match decision {
                             MessageAuthenticationDecision::Trusted => {
                                 mutations.push(pending.mutation);
@@ -245,6 +249,10 @@ impl MessageSyncService {
 
 struct PendingMessage {
     mutation: MessageProjectionMutation,
+    authentication: Option<PendingAgentAuthentication>,
+}
+
+struct PendingAgentAuthentication {
     agent_id: AgentId,
     instance_id: AgentInstanceId,
     origin_server_timestamp: UtcMillis,
@@ -268,25 +276,32 @@ fn parse_pending_message(
         .and_then(|timestamp| UtcMillis::new(timestamp).ok())
         .ok_or(MessageSyncIssueReason::MissingEnvelope)?;
     validate_property_limits(event.content())?;
-    let (canonical_event, signature) = canonical_and_signature(event.content())?;
     let mutation = match event.event_type().as_str() {
-        PREVIEW_EVENT_TYPE => parse_preview_event(room_id, event)?,
-        REVISION_EVENT_TYPE => parse_revision_event(room_id, event)?,
+        PREVIEW_EVENT_TYPE | PREVIEW_EVENT_TYPE_V2 => parse_preview_event(room_id, event)?,
+        REVISION_EVENT_TYPE | REVISION_EVENT_TYPE_V2 => parse_revision_event(room_id, event)?,
         _ => return Err(MessageSyncIssueReason::InvalidEnvelope),
     };
-    let identity = match &mutation {
-        MessageProjectionMutation::Preview(preview) => preview.actor.identity(),
-        MessageProjectionMutation::Revision(revision) => revision.actor.identity(),
+    let actor = match &mutation {
+        MessageProjectionMutation::Preview(preview) => &preview.actor,
+        MessageProjectionMutation::Revision(revision) => &revision.actor,
     };
-    let agent_id = identity.agent_id();
-    let instance_id = identity.agent_instance_id();
+    let authentication = match actor.agent_identity() {
+        Some(identity) => {
+            let (canonical_event, signature) = canonical_and_signature(event.content())?;
+            Some(PendingAgentAuthentication {
+                agent_id: identity.agent_id(),
+                instance_id: identity.agent_instance_id(),
+                origin_server_timestamp,
+                canonical_event,
+                signature,
+            })
+        }
+        None if event.content().get("signature").is_none() => None,
+        None => return Err(MessageSyncIssueReason::InvalidEnvelope),
+    };
     Ok(PendingMessage {
         mutation,
-        agent_id,
-        instance_id,
-        origin_server_timestamp,
-        canonical_event,
-        signature,
+        authentication,
     })
 }
 
@@ -294,18 +309,18 @@ fn parse_preview_event(
     room_id: &MatrixRoomId,
     event: &MatrixTimelineEvent,
 ) -> Result<MessageProjectionMutation, MessageSyncIssueReason> {
-    let wire = serde_json::from_value::<MessagePreviewEvent>(event.content().clone())
+    let wire = serde_json::from_value::<IncomingPreviewEvent>(event.content().clone())
         .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
     validate_common(
         &wire.schema_version,
         &wire.event_type,
-        PREVIEW_EVENT_TYPE,
+        event.event_type().as_str(),
         &wire.room_id,
         room_id,
         &wire.correlation_id,
     )?;
     let context_id = wire.id.clone();
-    let actor = parse_actor(wire.actor, event)?;
+    let actor = parse_message_actor(wire.actor, event)?;
     let preview = parse_preview(wire.preview)?;
     let content = parse_content(&wire.content, &preview, &context_id, event)?;
     let relation = wire
@@ -339,18 +354,18 @@ fn parse_revision_event(
     room_id: &MatrixRoomId,
     event: &MatrixTimelineEvent,
 ) -> Result<MessageProjectionMutation, MessageSyncIssueReason> {
-    let wire = serde_json::from_value::<MessageRevisionEvent>(event.content().clone())
+    let wire = serde_json::from_value::<IncomingRevisionEvent>(event.content().clone())
         .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
     validate_common(
         &wire.schema_version,
         &wire.event_type,
-        REVISION_EVENT_TYPE,
+        event.event_type().as_str(),
         &wire.room_id,
         room_id,
         &wire.correlation_id,
     )?;
     let context_id = wire.id.clone();
-    let actor = parse_actor(wire.actor, event)?;
+    let actor = parse_message_actor(wire.actor, event)?;
     let (kind, preview, content) = match wire.kind {
         WireMessageRevisionKind::Replace => {
             let preview = parse_preview(
@@ -391,6 +406,80 @@ fn parse_revision_event(
             content,
         },
     ))
+}
+
+const PREVIEW_EVENT_TYPE_V2: &str = "io.github.rainyflash.agentroom.message.preview.v2";
+const REVISION_EVENT_TYPE_V2: &str = "io.github.rainyflash.agentroom.message.revision.v2";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IncomingPreviewEvent {
+    schema_version: String,
+    event_type: String,
+    id: String,
+    created_at: String,
+    actor: Value,
+    correlation_id: String,
+    room_id: String,
+    preview: WireMessagePreview,
+    content: ContentRef,
+    relation: Option<agent_room_protocol_conformance::generated::MessageRelation>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IncomingRevisionEvent {
+    schema_version: String,
+    event_type: String,
+    id: String,
+    created_at: String,
+    actor: Value,
+    correlation_id: String,
+    room_id: String,
+    target_message_id: String,
+    kind: WireMessageRevisionKind,
+    preview: Option<WireMessagePreview>,
+    content: Option<ContentRef>,
+}
+
+fn parse_message_actor(
+    value: Value,
+    event: &MatrixTimelineEvent,
+) -> Result<ProjectedMessageActor, MessageSyncIssueReason> {
+    if matches!(
+        event.event_type().as_str(),
+        PREVIEW_EVENT_TYPE | REVISION_EVENT_TYPE
+    ) {
+        return parse_actor(
+            serde_json::from_value(value).map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
+            event,
+        );
+    }
+    let actor: Actor =
+        serde_json::from_value(value).map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
+    match actor {
+        Actor::Human(human) if human.kind == "human" => {
+            let sender = event.sender().ok_or(MessageSyncIssueReason::MissingEnvelope)?;
+            if sender.as_str() != human.matrix_user_id { return Err(MessageSyncIssueReason::SenderMismatch); }
+            if human.display_name.trim().is_empty() || human.display_name.chars().count() > 80
+                || human.display_name.chars().any(char::is_control)
+                || human.avatar_url.as_ref().is_some_and(|url| !url.starts_with("https://") || url.len() > 2048 || url.chars().any(char::is_control)) {
+                return Err(MessageSyncIssueReason::InvalidEnvelope);
+            }
+            Ok(ProjectedMessageActor::Human {
+                principal_id: agent_room_domain::ids::PrincipalId::from_uuid(parse_v7(&human.principal_id)?),
+                display_name: human.display_name, matrix_user_id: sender.clone(), avatar_url: human.avatar_url,
+            })
+        }
+        Actor::Agent(agent) if agent.kind == "agent" => parse_actor(ActorRef {
+            agent: agent.agent, instance_id: agent.instance_id,
+            provenance: match agent.provenance {
+                agent_room_protocol_conformance::generated::AgentProvenance::HumanConfirmedAgent => Provenance::HumanConfirmedAgent,
+                agent_room_protocol_conformance::generated::AgentProvenance::AutonomousAgent => Provenance::AutonomousAgent,
+            }, extensions: agent.extensions,
+        }, event),
+        _ => Err(MessageSyncIssueReason::InvalidEnvelope),
+    }
 }
 
 fn parse_actor(
@@ -441,7 +530,7 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
         .collect::<Result<Vec<_>, _>>()
         .and_then(MessageRiskFlags::new)
         .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?;
-    Ok(MessagePreview::new(
+    let mut result = MessagePreview::new(
         MessageTitle::new(preview.title).map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
         MessageSummary::new(preview.summary)
             .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
@@ -450,7 +539,20 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
         language,
         sensitivity,
         risk_flags,
-    ))
+    );
+    if let Some(conversation) = preview.conversation {
+        if result.content_type().as_str() != "text/plain" {
+            return Err(MessageSyncIssueReason::InvalidEnvelope);
+        }
+        result = result.with_conversation(
+            agent_room_domain::messages::ConversationMessage::new(
+                conversation.text,
+                conversation.mentions,
+            )
+            .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
+        );
+    }
+    Ok(result)
 }
 
 fn parse_content(
@@ -514,7 +616,15 @@ fn validate_common(
     if event_room_id != room_id.as_str() {
         return Err(MessageSyncIssueReason::RoomMismatch);
     }
-    if schema_version != "1.0"
+    if schema_version
+        != if matches!(
+            expected_event_type,
+            PREVIEW_EVENT_TYPE_V2 | REVISION_EVENT_TYPE_V2
+        ) {
+            "2.0"
+        } else {
+            "1.0"
+        }
         || event_type != expected_event_type
         || Uuid::parse_str(correlation_id).is_err()
     {
@@ -601,10 +711,12 @@ fn validate_property_limits(content: &Value) -> Result<(), MessageSyncIssueReaso
         .get("actor")
         .ok_or(MessageSyncIssueReason::InvalidEnvelope)
         .and_then(|value| bounded_object(value, 12))?;
-    actor
-        .get("agent")
-        .ok_or(MessageSyncIssueReason::InvalidEnvelope)
-        .and_then(|value| bounded_object(value, 12))?;
+    if actor.get("kind").and_then(Value::as_str) != Some("human") {
+        actor
+            .get("agent")
+            .ok_or(MessageSyncIssueReason::InvalidEnvelope)
+            .and_then(|value| bounded_object(value, 12))?;
+    }
     if let Some(preview) = object.get("preview") {
         bounded_object(preview, 16)?;
     }
@@ -634,7 +746,7 @@ fn bounded_object(
 fn is_message_event(event: &MatrixTimelineEvent) -> bool {
     matches!(
         event.event_type().as_str(),
-        PREVIEW_EVENT_TYPE | REVISION_EVENT_TYPE
+        PREVIEW_EVENT_TYPE | REVISION_EVENT_TYPE | PREVIEW_EVENT_TYPE_V2 | REVISION_EVENT_TYPE_V2
     )
 }
 

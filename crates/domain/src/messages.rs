@@ -236,6 +236,53 @@ impl MessageRiskFlags {
     }
 }
 
+/// 聊天文本是用户选择直接发布到会话的内容，不能携带工具授权。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationMessage {
+    text: String,
+    mentions: Vec<String>,
+}
+
+impl ConversationMessage {
+    /// 创建有界聊天文本和稳定身份提及。
+    ///
+    /// # Errors
+    ///
+    /// 空白文本、控制字符、过长文本、重复或无效提及时拒绝。
+    pub fn new(text: String, mentions: Vec<String>) -> DomainResult<Self> {
+        let valid_text = !text.trim().is_empty()
+            && text.chars().count() <= 4000
+            && !text
+                .chars()
+                .any(|ch| ch.is_control() && ch != '\n' && ch != '\t');
+        let unique = mentions.iter().collect::<BTreeSet<_>>();
+        let valid_mentions = mentions.len() <= 8
+            && unique.len() == mentions.len()
+            && mentions.iter().all(|id| {
+                id.len() <= 255
+                    && id.starts_with('@')
+                    && !id.chars().any(char::is_whitespace)
+                    && !id.chars().any(char::is_control)
+                    && id[1..]
+                        .split_once(':')
+                        .is_some_and(|(local, server)| !local.is_empty() && !server.is_empty())
+            });
+        if !valid_text || !valid_mentions {
+            return Err(DomainError::Validation {
+                field: "conversation",
+                reason: "聊天文本或提及超出允许范围",
+            });
+        }
+        Ok(Self { text, mentions })
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    pub fn mentions(&self) -> &[String] {
+        &self.mentions
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessagePreview {
     title: MessageTitle,
@@ -244,6 +291,7 @@ pub struct MessagePreview {
     language: Option<MessageLanguage>,
     sensitivity: MessageSensitivity,
     risk_flags: MessageRiskFlags,
+    conversation: Option<ConversationMessage>,
 }
 
 impl MessagePreview {
@@ -262,7 +310,17 @@ impl MessagePreview {
             language,
             sensitivity,
             risk_flags,
+            conversation: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_conversation(mut self, conversation: ConversationMessage) -> Self {
+        self.conversation = Some(conversation);
+        self
+    }
+    pub const fn conversation(&self) -> Option<&ConversationMessage> {
+        self.conversation.as_ref()
     }
 
     pub const fn title(&self) -> &MessageTitle {

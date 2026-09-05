@@ -72,6 +72,7 @@ const MAXIMUM_HANDOFF_LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
 
 #[derive(Clone)]
 pub(crate) struct BridgeAgentRuntimeSnapshot {
+    room_authority: Option<Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>>,
     identity: BridgeAgentIdentity,
     matrix_device_id: String,
     room_id: MatrixRoomId,
@@ -94,6 +95,7 @@ impl BridgeAgentRuntimeSnapshot {
         granted_capabilities: impl IntoIterator<Item = &'static str>,
     ) -> Self {
         Self {
+            room_authority: None,
             identity,
             matrix_device_id: matrix_device_id.into(),
             room_id,
@@ -110,6 +112,49 @@ impl BridgeAgentRuntimeSnapshot {
             room_encryption: MatrixRoomEncryption::Unencrypted,
             message_content_protection: None,
         }
+    }
+
+    pub(crate) fn with_room_authority(
+        mut self,
+        authority: Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>,
+    ) -> Self {
+        self.room_authority = Some(authority);
+        self
+    }
+
+    async fn message_room(
+        &self,
+        requested: Option<String>,
+    ) -> Result<(MatrixRoomId, MatrixRoomEncryption), BridgeIpcDispatchFailure> {
+        let Some(authority) = &self.room_authority else {
+            return Ok((
+                requested_room(requested, &self.room_id)?,
+                self.room_encryption,
+            ));
+        };
+        let room = requested
+            .map(MatrixRoomId::new)
+            .transpose()
+            .map_err(|_| invalid_request("bridge.ipc.room_id_invalid"))?
+            .unwrap_or_else(|| self.room_id.clone());
+        let current = authority
+            .inspect_room_authority(&room, self.identity.matrix_user_id())
+            .await
+            .map_err(|failure| {
+                BridgeIpcDispatchFailure::new(
+                    "bridge.room_authority_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    failure.kind() != MatrixFailureKind::Forbidden,
+                )
+            })?;
+        if !current.is_joined() {
+            return Err(BridgeIpcDispatchFailure::new(
+                "bridge.room_not_joined",
+                IpcErrorCategory::Authorization,
+                false,
+            ));
+        }
+        Ok((room, current.encryption()))
     }
 
     pub(crate) fn with_status(mut self, status: Arc<AgentStatusPublicationHandle>) -> Self {
@@ -339,23 +384,31 @@ impl AgentRuntimeIpcFacade {
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let room_id = requested_room(request.room_id, &runtime.room_id)?;
+        let (room_id, _) = runtime.message_room(request.room_id).await?;
         let cursor = request
             .before_event_id
             .map(MatrixEventId::new)
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
-        let query = MessagePreviewQuery::new(room_id, cursor, request.limit)
-            .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;
+        let after = request
+            .after_event_id
+            .map(MatrixEventId::new)
+            .transpose()
+            .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
+        let query = match after {
+            Some(after) => MessagePreviewQuery::after(room_id, after, request.limit),
+            None => MessagePreviewQuery::new(room_id, cursor, request.limit),
+        }
+        .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;
         let page = self
             .previews
             .list_previews(&query)
             .await
             .map_err(map_preview_query_failure)?;
-        Ok(IpcResponse::MessagePreviews {
-            previews: page.previews().iter().map(ipc_preview).collect(),
-            next_cursor: page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
-        })
+        bounded_preview_response(
+            page.previews().iter().map(ipc_preview),
+            page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
+        )
     }
 
     pub(super) async fn get_presence(
@@ -363,7 +416,7 @@ impl AgentRuntimeIpcFacade {
         request: IpcGetPresenceRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
+        let (room_id, _) = runtime.message_room(Some(request.room_id)).await?;
         let agent_ids = request
             .agent_ids
             .iter()
@@ -426,10 +479,11 @@ impl AgentRuntimeIpcFacade {
         request: IpcOpenContentRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
+        let (room_id, _) = runtime.message_room(request.room_id).await?;
         let content_id = parse_content_id(&request.content_id)?;
         let opened = self
             .content
-            .open(&OpenMessageContentRequest::new(runtime.room_id, content_id))
+            .open(&OpenMessageContentRequest::new(room_id, content_id))
             .await
             .map_err(map_content_open_failure)?;
         let source = opened.source();
@@ -455,7 +509,15 @@ impl AgentRuntimeIpcFacade {
         request: IpcSendMessageRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
+        let (room_id, room_encryption) = runtime.message_room(Some(request.room_id)).await?;
+        if room_id != runtime.room_id && request.provenance == IpcMessageProvenance::AutonomousAgent
+        {
+            return Err(BridgeIpcDispatchFailure::new(
+                "bridge.automation_room_mismatch",
+                IpcErrorCategory::Authorization,
+                false,
+            ));
+        }
         let publication = runtime.publication.ok_or_else(agent_runtime_unavailable)?;
         let submission_id = request
             .submission_id
@@ -477,7 +539,7 @@ impl AgentRuntimeIpcFacade {
             .collect::<Result<Vec<_>, _>>()
             .and_then(MessageRiskFlags::new)
             .map_err(|_| invalid_request("bridge.ipc.risk_flags_invalid"))?;
-        let preview = MessagePreview::new(
+        let mut preview = MessagePreview::new(
             MessageTitle::new(request.title)
                 .map_err(|_| invalid_request("bridge.ipc.message_title_invalid"))?,
             MessageSummary::new(request.summary)
@@ -487,6 +549,15 @@ impl AgentRuntimeIpcFacade {
             message_sensitivity(request.sensitivity),
             risk_flags,
         );
+        if request.chat {
+            preview = preview.with_conversation(
+                agent_room_domain::messages::ConversationMessage::new(
+                    request.body.clone(),
+                    request.mentions,
+                )
+                .map_err(|_| invalid_request("bridge.ipc.conversation_invalid"))?,
+            );
+        }
         let protection = runtime
             .message_content_protection
             .as_ref()
@@ -495,7 +566,7 @@ impl AgentRuntimeIpcFacade {
             .protect(&ProtectMessageBodyRequest {
                 submission_id,
                 room_id: &room_id,
-                room_encryption: runtime.room_encryption,
+                room_encryption,
                 media_type: &media_type,
                 plaintext: request.body.as_bytes(),
                 expires_at: None,
@@ -555,7 +626,11 @@ impl AgentRuntimeIpcFacade {
             return Err(invalid_request("bridge.ipc.handoff_expiry_invalid"));
         }
         let permissions = handoff_permissions(request.permissions, source.preview.content_type())?;
-        let source_identity = source.actor.identity().clone();
+        let source_identity = source
+            .actor
+            .agent_identity()
+            .ok_or_else(|| invalid_request("bridge.handoff_requires_cloud_human_source"))?
+            .clone();
         let handoff = ContextHandoff::propose(ContextHandoffFields {
             id: parse_handoff_id(&request.handoff_id)?,
             requester_agent_id: runtime.identity.agent_id(),
@@ -774,6 +849,25 @@ impl AgentRuntimeIpcFacade {
     }
 
     fn runtime_snapshot(&self) -> Result<BridgeAgentRuntimeSnapshot, BridgeIpcDispatchFailure> {
+        match self.status_reader.read_status().state {
+            agent_room_bridge_ipc::IpcBridgeState::Offline => {
+                return Err(BridgeIpcDispatchFailure::new(
+                    self.status_reader
+                        .failure_code()
+                        .unwrap_or("bridge.agent_runtime_failed"),
+                    IpcErrorCategory::DependencyUnavailable,
+                    false,
+                ));
+            }
+            agent_room_bridge_ipc::IpcBridgeState::ShuttingDown => {
+                return Err(BridgeIpcDispatchFailure::new(
+                    "bridge.agent_runtime_stopping",
+                    IpcErrorCategory::DependencyUnavailable,
+                    false,
+                ));
+            }
+            _ => {}
+        }
         self.runtime_reader
             .read_agent_runtime()
             .ok_or_else(agent_runtime_unavailable)
@@ -1010,15 +1104,41 @@ const fn map_presence_projection_failure(
 }
 
 fn ipc_actor(actor: &ProjectedMessageActor) -> IpcActorSummary {
-    IpcActorSummary {
-        agent: ipc_agent(actor.identity()),
-        instance_id: actor.identity().agent_instance_id().to_string(),
-        provenance: ipc_provenance(actor.provenance()),
+    match actor {
+        ProjectedMessageActor::Agent {
+            identity,
+            provenance,
+            ..
+        } => IpcActorSummary::Agent {
+            agent: ipc_agent(identity),
+            instance_id: identity.agent_instance_id().to_string(),
+            provenance: ipc_provenance(*provenance),
+        },
+        ProjectedMessageActor::Human {
+            principal_id,
+            display_name,
+            matrix_user_id,
+            avatar_url,
+        } => IpcActorSummary::Human {
+            principal_id: principal_id.to_string(),
+            display_name: display_name.clone(),
+            matrix_user_id: matrix_user_id.as_str().to_owned(),
+            avatar_url: avatar_url.clone(),
+        },
     }
 }
 
 fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
+        conversation: preview.preview.conversation().map(|chat| {
+            agent_room_bridge_ipc::IpcConversationMessage {
+                text: chat.text().to_owned(),
+                mentions: chat.mentions().to_vec(),
+            }
+        }),
+        reply_to_message_id: preview.relation.map(|relation| match relation {
+            MessageRelation::ReplyTo(id) => id.to_string(),
+        }),
         message_id: preview.message_id.to_string(),
         event_id: preview.event_id.as_str().to_owned(),
         room_id: preview.room_id.as_str().to_owned(),
@@ -1731,4 +1851,127 @@ const fn internal_failure(code: &'static str) -> BridgeIpcDispatchFailure {
 
 const fn invalid_request(code: &'static str) -> BridgeIpcDispatchFailure {
     BridgeIpcDispatchFailure::new(code, IpcErrorCategory::Validation, false)
+}
+
+// 以序列化后的字节分页，为 64 KiB IPC 帧留下信封余量；不能按条数假设聊天很短。
+fn bounded_preview_response(
+    candidates: impl IntoIterator<Item = IpcMessagePreviewSummary>,
+    mut next_cursor: Option<String>,
+) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+    let mut previews: Vec<IpcMessagePreviewSummary> = Vec::new();
+    let mut bytes = 0;
+    for preview in candidates {
+        let size = serde_json::to_vec(&preview)
+            .map_err(|_| internal_failure("bridge.preview_encoding_failed"))?
+            .len()
+            + 1;
+        if bytes + size > 48 * 1024 {
+            if previews.is_empty() {
+                return Err(invalid_request("bridge.preview_too_large"));
+            }
+            next_cursor = previews.last().map(|item| item.event_id.clone());
+            break;
+        }
+        bytes += size;
+        previews.push(preview);
+    }
+    Ok(IpcResponse::MessagePreviews {
+        previews,
+        next_cursor,
+    })
+}
+
+#[cfg(test)]
+mod conversation_tests {
+    use super::*;
+    use agent_room_application::ports::{
+        MatrixPowerLevel, MatrixResult, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
+        MatrixUserId,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct CurrentMembership(AtomicBool);
+    impl MatrixRoomAuthorityGateway for CurrentMembership {
+        fn inspect_room_authority<'a>(
+            &'a self,
+            room_id: &'a MatrixRoomId,
+            user_id: &'a MatrixUserId,
+        ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
+            Box::pin(async move {
+                assert_eq!(room_id.as_str(), "!private:matrix.test");
+                assert_eq!(user_id.as_str(), "@agent:matrix.test");
+                Ok(if self.0.load(Ordering::SeqCst) {
+                    MatrixRoomAuthority::joined(MatrixPowerLevel::Finite(0))
+                        .with_encryption(MatrixRoomEncryption::EndToEnd)
+                } else {
+                    MatrixRoomAuthority::not_joined()
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn 其他会话使用实时成员权限且移除后立即拒绝() {
+        let authority = Arc::new(CurrentMembership(AtomicBool::new(true)));
+        let identity = BridgeAgentIdentity::new(
+            AgentId::from_uuid(Uuid::now_v7()),
+            "Agent",
+            "@agent:matrix.test",
+            AgentInstanceId::from_uuid(Uuid::now_v7()),
+        )
+        .expect("身份有效");
+        let runtime = BridgeAgentRuntimeSnapshot::new(
+            identity,
+            "DEVICE",
+            MatrixRoomId::new("!public:matrix.test").expect("大厅"),
+            ["previews.read"],
+        )
+        .with_room_authority(authority.clone());
+        let result = runtime
+            .message_room(Some("!private:matrix.test".to_owned()))
+            .await
+            .expect("已加入可读");
+        assert_eq!(result.1, MatrixRoomEncryption::EndToEnd);
+        authority.0.store(false, Ordering::SeqCst);
+        let failure = runtime
+            .message_room(Some("!private:matrix.test".to_owned()))
+            .await
+            .expect_err("权限变更后不可读");
+        assert_eq!(failure.code, "bridge.room_not_joined");
+    }
+
+    #[test]
+    fn 最长聊天按字节分页且下一游标指向实际返回的末条消息() {
+        let candidate: IpcMessagePreviewSummary = serde_json::from_value(serde_json::json!({
+            "conversation": { "text": "😀".repeat(4000), "mentions": [] }, "replyToMessageId": null,
+            "messageId": Uuid::now_v7().to_string(), "eventId": "$sample", "roomId": "!room:matrix.test",
+            "actor": { "kind": "human", "principalId": Uuid::now_v7().to_string(), "displayName": "用户", "matrixUserId": "@user:matrix.test", "avatarUrl": null },
+            "createdAtUnixMs": 1, "title": "标题", "summary": "摘要", "content": { "contentId": Uuid::now_v7().to_string(), "digestSha256": "a".repeat(64), "mediaType": "text/plain", "sizeBytes": 16000 }, "language": null, "sensitivity": "normal", "riskFlags": []
+        })).expect("预览有效");
+        let response = bounded_preview_response(
+            (0..50).map(|index| IpcMessagePreviewSummary {
+                event_id: format!("$event-{index}"),
+                ..candidate.clone()
+            }),
+            None,
+        )
+        .expect("自动分页");
+        let IpcResponse::MessagePreviews {
+            previews,
+            next_cursor,
+        } = &response
+        else {
+            panic!("必须返回预览");
+        };
+        assert!(!previews.is_empty() && previews.len() < 50);
+        assert_eq!(
+            next_cursor.as_deref(),
+            previews.last().map(|preview| preview.event_id.as_str())
+        );
+        let frame = agent_room_bridge_ipc::IpcFrame::Response {
+            correlation_id: Uuid::now_v7(),
+            result: response,
+        };
+        assert!(serde_json::to_vec(&frame).expect("可编码").len() < 64 * 1024);
+    }
 }

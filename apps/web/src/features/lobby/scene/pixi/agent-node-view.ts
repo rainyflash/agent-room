@@ -1,91 +1,115 @@
-import type { Container, FederatedPointerEvent } from 'pixi.js';
-
-import type { LobbyAgentStatus } from '@/features/lobby/domain/lobby';
-import type {
-  LobbyAgentNodeProjection,
-  LobbySceneDetail,
-} from '@/features/lobby/domain/scene-projection';
+import type { SceneCharacter } from '../scene-character';
+import type { Container, FederatedPointerEvent, Sprite } from 'pixi.js';
+import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
+import type { CharacterPose } from '../character-motion';
+import type { CharacterParts } from './character-texture-cache';
 
 type PixiModule = typeof import('pixi.js');
-
-const STATUS_COLOR: Readonly<Record<LobbyAgentStatus, number>> = Object.freeze({
-  blocked: 0xff_6b_3d,
-  completed: 0x9f_e8_70,
-  idle: 0x66_c9_d8,
-  offline: 0x72_76_71,
-  waiting_input: 0xff_6b_3d,
-  working: 0x9f_e8_70,
-});
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-
 export type AgentNodeViewOptions = {
+  readonly body: Sprite;
+  readonly parts: CharacterParts;
   readonly detail: LobbySceneDetail;
-  readonly node: LobbyAgentNodeProjection;
+  readonly node: SceneCharacter;
+  readonly onInvalidate: () => void;
   readonly onSelect: (agentId: string) => void;
   readonly selected: boolean;
 };
+export type AgentCharacterView = {
+  readonly container: Container;
+  readonly depth: number;
+  animate(pose: CharacterPose): void;
+  destroy(): void;
+};
 
-export function createAgentNodeView(pixi: PixiModule, options: AgentNodeViewOptions): Container {
-  const { node } = options;
+export function createAgentNodeView(
+  pixi: PixiModule,
+  options: AgentNodeViewOptions,
+): AgentCharacterView {
+  const { node, selected, parts } = options;
   const container = new pixi.Container();
+  const size = Math.max(0.83, node.radius / 27);
+  const character = new pixi.Container();
+  character.scale.set(size);
+  container.addChild(character);
   container.position.set(node.x, node.y);
   container.eventMode = 'static';
+  let hovered = false;
+  let depth = selected ? 10000 : node.y;
   container.cursor = 'pointer';
-  container.hitArea = new pixi.Circle(0, 0, node.radius + 10);
-  // 可访问语义由 React DOM 映射统一提供，避免 Pixi Overlay 生成第二套重复焦点树。
+  container.hitArea = new pixi.Rectangle(-28 * size, -82 * size, 56 * size, 98 * size);
   container.accessible = false;
-
-  if (options.selected) {
-    container.addChild(
-      new pixi.Graphics()
-        .circle(0, 0, node.radius + 9)
-        .stroke({ alpha: 0.78, color: 0xf2_f0_e9, width: 2 }),
-    );
-  }
-  container.addChild(
-    new pixi.Graphics()
-      .circle(0, 0, node.radius + 3)
-      .stroke({
-        alpha: node.status === 'offline' ? 0.42 : 0.96,
-        color: STATUS_COLOR[node.status],
-        width: 3,
-      })
-      .circle(0, 0, node.radius)
-      .fill({ color: 0x1a_1d_19 }),
-  );
-  if (options.detail !== 'distant') {
-    container.addChild(
-      new pixi.Text({
-        anchor: 0.5,
-        style: {
-          fill: 0xf2_f0_e9,
-          fontFamily: 'Instrument Sans, sans-serif',
-          fontSize: Math.max(12, node.radius * 0.62),
-          fontWeight: '600',
-        },
-        text: monogram(node.displayName),
-      }),
-    );
-  }
-  if (options.detail === 'near') {
-    const label = new pixi.Text({
-      anchor: { x: 0.5, y: 0 },
+  character.addChild(parts.shadow);
+  if (parts.selectionRing !== null) character.addChild(parts.selectionRing);
+  const { leftLeg, rightLeg, arms } = parts;
+  character.addChild(leftLeg, rightLeg);
+  const body = new pixi.Container();
+  body.addChild(arms, options.body);
+  character.addChild(body);
+  if (node.status === 'offline') character.alpha = 0.56;
+  character.addChild(parts.marker);
+  if (parts.bubble !== null) {
+    const badge = new pixi.Text({
+      text: node.status === 'blocked' ? '!' : '?',
+      anchor: 0.5,
       style: {
-        fill: 0xf2_f0_e9,
+        fill: '#74502e',
         fontFamily: 'Instrument Sans, sans-serif',
-        fontSize: 14,
-        fontWeight: '500',
+        fontSize: 19,
+        fontWeight: '700',
       },
-      text: truncateLabel(node.displayName),
     });
-    label.position.set(0, node.radius + 12);
-    container.addChild(label);
+    badge.position.set(2, -80);
+    character.addChild(parts.bubble, badge);
   }
+  const label = new pixi.Text({
+    text: truncateLabel(node.displayName),
+    anchor: { x: 0.5, y: 0 },
+    style: {
+      fill: '#354b3e',
+      fontFamily: 'Instrument Sans, Noto Sans SC, sans-serif',
+      fontSize: 18,
+      fontWeight: '600',
+      stroke: { color: '#f7f3df', width: 3 },
+    },
+  });
+  label.position.set(0, 14);
+  label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
+  character.addChild(label);
+  container.on('pointerover', () => {
+    hovered = true;
+    label.visible = true;
+    body.scale.set(1.07);
+    options.onInvalidate();
+  });
+  container.on('pointerout', () => {
+    hovered = false;
+    label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
+    body.scale.set(1);
+    options.onInvalidate();
+  });
   container.on('pointertap', (event: FederatedPointerEvent) => {
     event.stopPropagation();
-    options.onSelect(node.agentId);
+    options.onSelect(node.characterId);
   });
-  return container;
+  return {
+    container,
+    get depth() {
+      return depth;
+    },
+    animate: (pose) => {
+      container.position.set(pose.x, pose.y);
+      depth = selected || hovered ? 10000 : pose.y;
+      body.position.y = -Math.abs(pose.stride) * 0.42;
+      leftLeg.position.y = pose.stride;
+      rightLeg.position.y = -pose.stride;
+      arms.rotation = pose.stride * 0.015;
+      body.skew.x = pose.facing * (pose.moving ? 0.045 : 0);
+    },
+    destroy: () => {
+      container.destroy({ children: true });
+    },
+  };
 }
 
 export function monogram(displayName: string): string {
@@ -95,7 +119,7 @@ export function monogram(displayName: string): string {
 
 function truncateLabel(displayName: string): string {
   const characters = graphemes(displayName.trim());
-  return characters.length <= 18 ? displayName.trim() : `${characters.slice(0, 17).join('')}…`;
+  return characters.length <= 20 ? displayName.trim() : `${characters.slice(0, 19).join('')}…`;
 }
 
 function graphemes(value: string): string[] {

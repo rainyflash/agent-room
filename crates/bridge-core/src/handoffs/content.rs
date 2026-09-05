@@ -95,7 +95,9 @@ pub fn handoff_source_matches_projection(
     let fields = handoff.fields();
     let expected_source = &fields.source;
     let expected_actor = expected_source.actor();
-    let actual_actor = source.actor.identity();
+    let Some(actual_actor) = source.actor.agent_identity() else {
+        return false;
+    };
     source.room_id.as_str() == expected_source.room_id().as_str()
         && source.event_id.as_str() == expected_source.event_id().as_str()
         && source.message_id == expected_source.message_id()

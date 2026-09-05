@@ -1,3 +1,4 @@
+import { openRoomSettings } from './support/workspace-navigation';
 import { expect, test } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
@@ -9,6 +10,7 @@ test('自动发言授权从明确影响确认到撤销均保持精确且可见',
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
+  await openRoomSettings(page);
   await page.getByRole('button', { name: 'Automation' }).click();
   const dialog = page.getByRole('dialog', { name: 'Automation grants' });
   await expect(dialog).toBeVisible();
@@ -45,6 +47,7 @@ test('自动发言授权在窄屏退化为全屏面板且没有横向溢出', as
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
+  await openRoomSettings(page);
   await page.getByRole('button', { name: 'Automation' }).click();
   await expect(page.getByRole('dialog', { name: 'Automation grants' })).toBeVisible();
   await expectNoHorizontalOverflow(page);

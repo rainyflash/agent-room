@@ -204,7 +204,7 @@ fn handoff(
     source: &ProjectedMessagePreview,
     permissions: impl IntoIterator<Item = HandoffPermission>,
 ) -> ContextHandoff {
-    let actor = source.actor.identity();
+    let actor = source.actor.agent_identity().expect("测试来源为 Agent");
     let mut handoff = ContextHandoff::propose(ContextHandoffFields {
         id: HandoffId::from_uuid(Uuid::now_v7()),
         requester_agent_id: AgentId::from_uuid(Uuid::now_v7()),

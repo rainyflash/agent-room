@@ -14,16 +14,25 @@ use agent_room_domain::{
 use crate::agent_identity::BridgeAgentIdentity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectedMessageActor {
-    identity: BridgeAgentIdentity,
-    provenance: MessageProvenance,
-    instance_verification: ProjectedActorInstanceVerification,
+pub enum ProjectedMessageActor {
+    Agent {
+        identity: BridgeAgentIdentity,
+        provenance: MessageProvenance,
+        instance_verification: ProjectedActorInstanceVerification,
+    },
+    Human {
+        principal_id: agent_room_domain::ids::PrincipalId,
+        display_name: String,
+        matrix_user_id: agent_room_application::ports::MatrixUserId,
+        avatar_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectedActorInstanceVerification {
     Active,
     RevokedAfterEvent,
+    MatrixSenderMatched,
 }
 
 impl ProjectedActorInstanceVerification {
@@ -31,13 +40,14 @@ impl ProjectedActorInstanceVerification {
         match self {
             Self::Active => "active",
             Self::RevokedAfterEvent => "revoked_after_event",
+            Self::MatrixSenderMatched => "matrix_sender_matched",
         }
     }
 }
 
 impl ProjectedMessageActor {
     pub const fn new(identity: BridgeAgentIdentity, provenance: MessageProvenance) -> Self {
-        Self {
+        Self::Agent {
             identity,
             provenance,
             instance_verification: ProjectedActorInstanceVerification::Active,
@@ -47,22 +57,48 @@ impl ProjectedMessageActor {
     #[must_use]
     pub const fn with_instance_verification(
         mut self,
-        instance_verification: ProjectedActorInstanceVerification,
+        verification: ProjectedActorInstanceVerification,
     ) -> Self {
-        self.instance_verification = instance_verification;
+        if let Self::Agent {
+            instance_verification,
+            ..
+        } = &mut self
+        {
+            *instance_verification = verification;
+        }
         self
     }
 
-    pub const fn identity(&self) -> &BridgeAgentIdentity {
-        &self.identity
+    pub const fn agent_identity(&self) -> Option<&BridgeAgentIdentity> {
+        match self {
+            Self::Agent { identity, .. } => Some(identity),
+            Self::Human { .. } => None,
+        }
     }
 
     pub const fn provenance(&self) -> MessageProvenance {
-        self.provenance
+        match self {
+            Self::Agent { provenance, .. } => *provenance,
+            Self::Human { .. } => MessageProvenance::Human,
+        }
     }
 
     pub const fn instance_verification(&self) -> ProjectedActorInstanceVerification {
-        self.instance_verification
+        match self {
+            Self::Agent {
+                instance_verification,
+                ..
+            } => *instance_verification,
+            Self::Human { .. } => ProjectedActorInstanceVerification::MatrixSenderMatched,
+        }
+    }
+
+    /// 人类权限绑定到已经过 Matrix 校验的发送者，不能相信载荷自称的账号归属。
+    pub fn subject_key(&self) -> String {
+        match self {
+            Self::Agent { identity, .. } => identity.agent_id().to_string(),
+            Self::Human { matrix_user_id, .. } => format!("human:{}", matrix_user_id.as_str()),
+        }
     }
 }
 
@@ -121,7 +157,13 @@ impl MessageProjectionMutation {
             Self::Preview(preview) => &mut preview.actor,
             Self::Revision(revision) => &mut revision.actor,
         };
-        actor.instance_verification = ProjectedActorInstanceVerification::RevokedAfterEvent;
+        if let ProjectedMessageActor::Agent {
+            instance_verification,
+            ..
+        } = actor
+        {
+            *instance_verification = ProjectedActorInstanceVerification::RevokedAfterEvent;
+        }
     }
 }
 
@@ -243,6 +285,7 @@ const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessagePreviewQuery {
+    after_event_id: Option<MatrixEventId>,
     room_id: MatrixRoomId,
     before_event_id: Option<MatrixEventId>,
     limit: u16,
@@ -270,12 +313,32 @@ impl MessagePreviewQuery {
         Ok(Self {
             room_id,
             before_event_id,
+            after_event_id: None,
             limit,
         })
     }
 
     pub const fn room_id(&self) -> &MatrixRoomId {
         &self.room_id
+    }
+
+    /// 创建只包含指定事件之后内容的增量查询。
+    ///
+    /// # Errors
+    ///
+    /// 分页大小无效时返回错误。
+    pub fn after(
+        room_id: MatrixRoomId,
+        cursor: MatrixEventId,
+        limit: u16,
+    ) -> Result<Self, MessagePreviewQueryError> {
+        let mut query = Self::new(room_id, None, limit)?;
+        query.after_event_id = Some(cursor);
+        Ok(query)
+    }
+
+    pub const fn after_event_id(&self) -> Option<&MatrixEventId> {
+        self.after_event_id.as_ref()
     }
 
     pub const fn before_event_id(&self) -> Option<&MatrixEventId> {

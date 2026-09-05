@@ -2,12 +2,19 @@ use agent_room_bridge_core::ipc::IpcScope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::limits;
+use crate::{IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessionRequest, limits};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcMethod {
     BridgeStatus,
+    OpenHostSession(IpcOpenHostSessionRequest),
+    CloseHostSession(IpcCloseHostSessionRequest),
+    WithSession {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        method: Box<IpcMethod>,
+    },
     GetSelf,
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
@@ -25,6 +32,9 @@ impl IpcMethod {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::BridgeStatus => "bridge_status",
+            Self::OpenHostSession(_) => "open_host_session",
+            Self::CloseHostSession(_) => "close_host_session",
+            Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
@@ -42,6 +52,8 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus => IpcScope::BridgeStatusRead,
+            Self::OpenHostSession(_) | Self::CloseHostSession(_) => IpcScope::HostSessionsManage,
+            Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) => IpcScope::PreviewsRead,
@@ -64,6 +76,22 @@ impl IpcMethod {
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
             Self::BridgeStatus | Self::GetSelf => Ok(()),
+            Self::OpenHostSession(request) => request.validate(),
+            Self::CloseHostSession(request) => request.validate(),
+            Self::WithSession { session_id, method } => {
+                crate::host_sessions::validate_session_id(session_id)?;
+                if matches!(
+                    method.as_ref(),
+                    Self::WithSession { .. }
+                        | Self::OpenHostSession(_)
+                        | Self::CloseHostSession(_)
+                        | Self::BootstrapDefaultAgent(_)
+                        | Self::BridgeStatus
+                ) {
+                    return Err(failure("bridge.ipc.session_method_invalid"));
+                }
+                method.validate()
+            }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
@@ -96,6 +124,8 @@ impl IpcBootstrapDefaultAgentRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcListPreviewsRequest {
+    #[serde(default)]
+    pub after_event_id: Option<String>,
     pub room_id: Option<String>,
     pub before_event_id: Option<String>,
     pub limit: u16,
@@ -103,6 +133,15 @@ pub struct IpcListPreviewsRequest {
 
 impl IpcListPreviewsRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if self.after_event_id.is_some() && self.before_event_id.is_some() {
+            return Err(failure("bridge.ipc.event_cursor_invalid"));
+        }
+        validate_optional_bounded(
+            self.after_event_id.as_deref(),
+            limits::EVENT_ID_BYTES,
+            "bridge.ipc.event_id_invalid",
+        )?;
+
         validate_optional_bounded(
             self.room_id.as_deref(),
             limits::ROOM_ID_BYTES,
@@ -147,11 +186,15 @@ impl IpcGetPresenceRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcOpenContentRequest {
+    pub room_id: Option<String>,
     pub content_id: String,
 }
 
 impl IpcOpenContentRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if let Some(room_id) = &self.room_id {
+            validate_bounded(room_id, limits::ROOM_ID_BYTES, "bridge.ipc.room_id_invalid")?;
+        }
         validate_uuid(&self.content_id, "bridge.ipc.content_id_invalid")
     }
 }
@@ -192,6 +235,10 @@ impl IpcPublishStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcSendMessageRequest {
+    #[serde(default)]
+    pub chat: bool,
+    #[serde(default)]
+    pub mentions: Vec<String>,
     pub submission_id: Option<String>,
     pub automation_grant_id: Option<String>,
     pub room_id: String,
@@ -209,6 +256,16 @@ pub struct IpcSendMessageRequest {
 
 impl IpcSendMessageRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if self.chat {
+            agent_room_bridge_core::messages::validate_chat(&self.body, &self.mentions)
+                .map_err(|_| failure("bridge.ipc.conversation_invalid"))?;
+            if self.media_type != "text/plain" {
+                return Err(failure("bridge.ipc.conversation_invalid"));
+            }
+        } else if !self.mentions.is_empty() {
+            return Err(failure("bridge.ipc.conversation_invalid"));
+        }
+
         if let Some(submission_id) = &self.submission_id {
             validate_uuid_v7(submission_id, "bridge.ipc.submission_id_invalid")?;
         }
@@ -332,6 +389,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    HostSession {
+        session: IpcHostSessionSummary,
+    },
     BridgeStatus {
         state: IpcBridgeState,
         #[serde(rename = "startedAtUnixMs")]
@@ -410,11 +470,21 @@ pub struct IpcAgentSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct IpcActorSummary {
-    pub agent: IpcAgentSummary,
-    pub instance_id: String,
-    pub provenance: IpcMessageProvenance,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum IpcActorSummary {
+    #[serde(rename_all = "camelCase")]
+    Agent {
+        agent: IpcAgentSummary,
+        instance_id: String,
+        provenance: IpcMessageProvenance,
+    },
+    #[serde(rename_all = "camelCase")]
+    Human {
+        principal_id: String,
+        display_name: String,
+        matrix_user_id: String,
+        avatar_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,6 +499,8 @@ pub struct IpcContentReference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcMessagePreviewSummary {
+    pub conversation: Option<IpcConversationMessage>,
+    pub reply_to_message_id: Option<String>,
     pub message_id: String,
     pub event_id: String,
     pub room_id: String,
@@ -709,7 +781,7 @@ fn validate_risk_flags(flags: &[String]) -> Result<(), IpcMethodValidationFailur
     Ok(())
 }
 
-const fn failure(code: &'static str) -> IpcMethodValidationFailure {
+pub(crate) const fn failure(code: &'static str) -> IpcMethodValidationFailure {
     IpcMethodValidationFailure { code }
 }
 
@@ -739,6 +811,7 @@ mod tests {
             ),
             (
                 IpcMethod::ListPreviews(IpcListPreviewsRequest {
+                    after_event_id: None,
                     room_id: None,
                     before_event_id: None,
                     limit: 20,
@@ -807,6 +880,8 @@ mod tests {
         );
 
         let invalid_message = IpcMethod::SendMessage(IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
             submission_id: None,
             automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
@@ -829,6 +904,8 @@ mod tests {
         );
 
         let invalid_reply = IpcMethod::SendMessage(IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
             submission_id: None,
             automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
@@ -913,6 +990,8 @@ mod tests {
         provenance: IpcMessageProvenance,
     ) -> IpcMethod {
         IpcMethod::SendMessage(IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
             submission_id: None,
             automation_grant_id,
             room_id: "!room:matrix.test".to_owned(),
@@ -948,4 +1027,11 @@ mod tests {
         }));
         assert!(unknown.is_err());
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IpcConversationMessage {
+    pub text: String,
+    pub mentions: Vec<String>,
 }

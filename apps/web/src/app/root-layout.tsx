@@ -15,9 +15,11 @@ export function RootLayout() {
   const services = useAppServices();
   const desktopRuntimePlacement = pathname === '/onboarding' ? 'action-rail-safe' : 'viewport';
   return (
-    <DesktopRuntimeProvider gateway={services.localRuntime}>
+    <DesktopRuntimeProvider gateway={services.localRuntime} telemetry={services.telemetry}>
       <WebRootLayout pathname={pathname} />
-      <DesktopRuntimeSurface placement={desktopRuntimePlacement} telemetry={services.telemetry} />
+      {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
+        <DesktopRuntimeSurface placement={desktopRuntimePlacement} />
+      )}
     </DesktopRuntimeProvider>
   );
 }

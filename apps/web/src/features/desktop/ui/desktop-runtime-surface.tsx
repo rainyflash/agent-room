@@ -14,32 +14,25 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { BridgePhase, ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
+import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
 import { desktopPhaseMessage } from '@/features/desktop/domain/desktop-connection';
 import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
-import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 
 export type DesktopRuntimeSurfaceProps = {
-  readonly placement?: 'action-rail-safe' | 'viewport';
-  readonly telemetry?: FrontendTelemetryGateway;
+  readonly placement?: 'action-rail-safe' | 'viewport' | 'game';
 };
 
-export function DesktopRuntimeSurface({
-  placement = 'viewport',
-  telemetry,
-}: DesktopRuntimeSurfaceProps) {
+export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntimeSurfaceProps) {
   const { i18n, t } = useTranslation();
   const controller = useDesktopRuntimeController();
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
-  const previousPhase = useRef<BridgePhase | null>(null);
-  const reconnectStartedAt = useRef<number | null>(null);
   const authorization = controller.snapshot?.bridge.authorization ?? null;
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
@@ -54,30 +47,6 @@ export function DesktopRuntimeSurface({
       minute: '2-digit',
     }).format(new Date(authorization.expiresAtUnixMs));
   }, [authorization, i18n.resolvedLanguage]);
-
-  useEffect(() => {
-    if (!controller.available || telemetry === undefined || previousPhase.current === phase) {
-      return;
-    }
-    const now = performance.now();
-    if (phase === 'retry_scheduled' || phase === 'starting') {
-      reconnectStartedAt.current ??= now;
-    }
-    if (phase === 'ready' && reconnectStartedAt.current !== null) {
-      void telemetry.record({
-        metric: 'bridge_reconnect',
-        surface: 'desktop',
-        value: now - reconnectStartedAt.current,
-      });
-      reconnectStartedAt.current = null;
-    }
-    void telemetry.record({
-      metric: 'bridge_availability',
-      surface: 'desktop',
-      value: phase === 'ready' ? 1 : 0,
-    });
-    previousPhase.current = phase;
-  }, [controller.available, phase, telemetry]);
 
   if (!controller.available) {
     return null;

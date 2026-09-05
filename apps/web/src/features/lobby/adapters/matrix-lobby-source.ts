@@ -42,7 +42,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
       return { kind: 'matrix-unavailable' };
     }
     const room = client.getRoom(roomId);
-    if (room === null) {
+    if (room?.getMyMembership() !== 'join') {
       return { kind: 'room-not-joined' };
     }
     const state = room.getLiveTimeline().getState(forwardTimelineDirection);

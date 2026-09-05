@@ -168,6 +168,7 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
     .toSorted((left, right) => left.agentId.localeCompare(right.agentId));
   return Object.freeze({
     agents: Object.freeze(agents),
+    joinedMemberIds: Object.freeze([...room.joinedMemberIds]),
     name: room.name,
     observedAtUnixMs,
     roomId: room.roomId,

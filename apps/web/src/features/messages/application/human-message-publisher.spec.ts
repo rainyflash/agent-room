@@ -179,6 +179,7 @@ function dependencies(
     publish.mockResolvedValueOnce(result);
   }
   const matrix = {
+    protectBody: (_request, body) => Promise.resolve(ok({ body })),
     currentUserId: () => options.matrixUserId ?? '@rainy:agent-room.test',
     findByTransaction: vi.fn(() => null),
     publish,
@@ -194,6 +195,15 @@ function dependencies(
 }
 
 class MemoryJournal implements MessageSubmissionJournal {
+  releaseBody() {
+    return undefined;
+  }
+  readBody() {
+    return ok(null);
+  }
+  writeBody() {
+    return ok(undefined);
+  }
   readonly #records = new Map<string, MessageSubmissionRecord>();
 
   read(submissionId: string) {
@@ -239,3 +249,23 @@ function digest(value: string): string {
   }
   return hash.toString(16).padStart(8, '0').repeat(8);
 }
+
+it('聊天完整文本和引用写入 Matrix，切换账号后禁止恢复旧账号提交', async () => {
+  const runtime = dependencies();
+  const publisher = new HumanMessagePublisher(runtime.value);
+  const intent = {
+    ...request(),
+    mediaType: 'text/plain' as const,
+    body: '请一起讨论',
+    conversation: { text: '请一起讨论', mentions: ['@agent:matrix.test'] },
+    relation: { kind: 'reply' as const, targetMessageId: '01990d9e-8400-7000-8000-000000000099' },
+  };
+  const result = await publisher.publish(intent, () => undefined);
+  expect(result.ok).toBe(true);
+  const sent = runtime.matrix.publish.mock.calls[0]?.[0];
+  expect(sent?.event.preview.conversation).toEqual(intent.conversation);
+  expect(sent?.event.relation).toEqual(intent.relation);
+  runtime.value.matrix.currentUserId = () => '@other:agent-room.test';
+  expect((await publisher.reconcile(submissionId)).ok).toBe(false);
+  expect(runtime.matrix.publish).toHaveBeenCalledOnce();
+});

@@ -134,6 +134,13 @@ pub struct ContentRef {
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationMessage {
+    pub mentions: Vec<String>,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCategory {
     #[serde(rename = "validation")]
@@ -275,6 +282,8 @@ pub struct HumanActor {
 #[serde(rename_all = "camelCase")]
 pub struct MessagePreview {
     pub content_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<ConversationMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub risk_flags: Vec<String>,

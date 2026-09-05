@@ -42,6 +42,8 @@ pub struct IpcProtocolVersion {
 
 impl IpcProtocolVersion {
     pub const V1_0: Self = Self { major: 1, minor: 0 };
+    pub const V2_0: Self = Self { major: 2, minor: 0 };
+    pub const V3_0: Self = Self { major: 3, minor: 0 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -79,6 +81,7 @@ pub enum IpcScope {
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
+    HostSessionsManage,
     PreviewsRead,
     PresenceRead,
     ContentRead,
@@ -142,6 +145,7 @@ impl IpcHandshakeOffer {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpcHandshakeAgreement {
+    caller: IpcCallerKind,
     selected_version: IpcProtocolVersion,
     granted_scopes: BTreeSet<IpcScope>,
 }
@@ -174,6 +178,7 @@ impl IpcHandshakeAgreement {
             ));
         }
         Ok(Self {
+            caller: offer.caller(),
             selected_version,
             granted_scopes,
         })
@@ -181,6 +186,10 @@ impl IpcHandshakeAgreement {
 
     pub const fn selected_version(&self) -> IpcProtocolVersion {
         self.selected_version
+    }
+
+    pub const fn caller(&self) -> IpcCallerKind {
+        self.caller
     }
 
     pub const fn granted_scopes(&self) -> &BTreeSet<IpcScope> {
@@ -199,7 +208,20 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
         match caller {
             IpcCallerKind::McpServer => {
-                !matches!(scope, IpcScope::AgentBootstrap | IpcScope::HandoffApprove)
+                matches!(
+                    scope,
+                    IpcScope::BridgeStatusRead
+                        | IpcScope::SelfRead
+                        | IpcScope::HostSessionsManage
+                        | IpcScope::PreviewsRead
+                        | IpcScope::PresenceRead
+                        | IpcScope::ContentRead
+                        | IpcScope::StatusPublish
+                        | IpcScope::MessageSend
+                        | IpcScope::HandoffList
+                        | IpcScope::HandoffConsume
+                        | IpcScope::HandoffDecline
+                )
             }
             IpcCallerKind::DesktopShell => {
                 matches!(

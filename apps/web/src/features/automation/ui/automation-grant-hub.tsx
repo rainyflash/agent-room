@@ -1,3 +1,4 @@
+import { useOverlayContainer } from '@/shared/ui/overlay-container';
 import { Button } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Bot, CircleAlert, LoaderCircle, RefreshCw, X } from 'lucide-react';
@@ -44,6 +45,7 @@ export function AutomationGrantHub({
   roomName,
 }: AutomationGrantHubProps) {
   const { t } = useTranslation();
+  const overlayContainer = useOverlayContainer();
   const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion();
   const grantsQuery = useAutomationGrantList(automation);
@@ -239,7 +241,7 @@ export function AutomationGrantHub({
             </motion.div>
           ) : null}
         </AnimatePresence>,
-        document.body,
+        overlayContainer,
       )}
     </>
   );

@@ -1,4 +1,6 @@
 mod automation;
+mod chat;
+pub use chat::validate_chat;
 mod content;
 mod crypto;
 mod incoming;

@@ -1,3 +1,7 @@
+import {
+  validConversation,
+  type ConversationMessage,
+} from '@/features/conversation/domain/conversation';
 import type { MessageContentReference, MessageRelation, MessageSensitivity } from './message';
 import type { Result } from '@/shared/result';
 
@@ -18,6 +22,8 @@ export type MessagePublisherIdentity = {
 };
 
 export type MessagePublicationDraft = {
+  readonly conversation?: ConversationMessage;
+  readonly relation?: MessageRelation;
   readonly body: string;
   readonly language?: string;
   readonly mediaType: PublicationMediaType;
@@ -84,7 +90,13 @@ export type MessageBodyPreparer = {
   prepare(body: string): Promise<Result<PreparedMessageBody, MessagePublicationFailure>>;
 };
 
+export type ProtectedMessageBody = {
+  readonly body: PreparedMessageBody;
+  readonly encryption?: MessageContentReference['encryption'];
+};
+
 export type MessageContentUploadRequest = {
+  readonly encryptionMode?: 'server_side' | 'client_e2ee';
   readonly body: PreparedMessageBody;
   readonly mediaType: PublicationMediaType;
   readonly roomId: string;
@@ -112,6 +124,7 @@ export type HumanMessagePreviewEvent = {
   readonly eventType: 'io.github.rainyflash.agentroom.message.preview.v2';
   readonly id: string;
   readonly preview: {
+    readonly conversation?: ConversationMessage;
     readonly contentType: PublicationMediaType;
     readonly language?: string;
     readonly riskFlags: readonly string[];
@@ -136,6 +149,10 @@ export type MatrixPublicationFailure = {
 };
 
 export type HumanMatrixPublicationGateway = {
+  protectBody(
+    request: MessagePublicationRequest,
+    body: PreparedMessageBody,
+  ): Promise<Result<ProtectedMessageBody, MessagePublicationFailure>>;
   currentUserId(): string | null;
   findByTransaction(roomId: string, transactionId: string): string | null;
   publish(
@@ -154,11 +171,16 @@ export type MessageSubmissionRecord = {
 };
 
 export type MessageSubmissionJournal = {
+  releaseBody(scope: string, submissionId: string): void;
+  readBody(scope: string): Result<ProtectedMessageBody | null, MessagePublicationFailure>;
+  writeBody(scope: string, value: ProtectedMessageBody): Result<void, MessagePublicationFailure>;
   read(submissionId: string): Result<MessageSubmissionRecord | null, MessagePublicationFailure>;
   write(record: MessageSubmissionRecord): Result<void, MessagePublicationFailure>;
 };
 
 export type PublicationDraftIssue =
+  | 'conversation_invalid'
+  | 'relation_invalid'
   | 'body_empty'
   | 'body_too_large'
   | 'language_invalid'
@@ -184,6 +206,17 @@ export function validatePublicationDraft(
   draft: MessagePublicationDraft,
 ): readonly PublicationDraftIssue[] {
   const issues = new Set<PublicationDraftIssue>();
+  if (
+    draft.conversation !== undefined &&
+    (!validConversation(draft.conversation) ||
+      draft.body !== draft.conversation.text ||
+      draft.mediaType !== 'text/plain')
+  ) {
+    issues.add('conversation_invalid');
+  }
+  if (draft.relation !== undefined && !uuidV7Pattern.test(draft.relation.targetMessageId)) {
+    issues.add('relation_invalid');
+  }
   if (draft.body.trim().length === 0) {
     issues.add('body_empty');
   }

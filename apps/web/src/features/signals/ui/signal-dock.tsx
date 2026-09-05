@@ -18,7 +18,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -48,6 +48,7 @@ const presentationByKind: Readonly<Record<SignalKind, SignalPresentation>> = Obj
 });
 
 export type SignalDockProps = {
+  readonly embedded?: boolean;
   readonly defaultExpanded?: boolean;
   readonly onAction: (action: SignalAction) => void;
   readonly onRetry: () => void;
@@ -57,6 +58,7 @@ export type SignalDockProps = {
 };
 
 export function SignalDock({
+  embedded = false,
   defaultExpanded = false,
   onAction,
   onRetry,
@@ -65,6 +67,7 @@ export function SignalDock({
   state,
 }: SignalDockProps) {
   const { i18n, t } = useTranslation();
+  const headingId = useId();
   const orderedSignals = useMemo(() => orderSignalProjections(signals), [signals]);
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [filter, setFilter] = useState<SignalKind | 'all'>('all');
@@ -92,8 +95,8 @@ export function SignalDock({
 
   return (
     <section
-      aria-labelledby="signal-dock-title"
-      className={`message-dock${expanded ? ' message-dock--expanded' : ''}`}
+      aria-labelledby={headingId}
+      className={`message-dock${embedded ? ' message-dock--embedded' : ''}${expanded ? ' message-dock--expanded' : ''}`}
       data-frozen={frozen}
     >
       <header className="message-dock__header">
@@ -101,7 +104,7 @@ export function SignalDock({
           <Radio aria-hidden="true" />
           <div>
             <p className="eyebrow">{t('signals.dock.eyebrow')}</p>
-            <h2 id="signal-dock-title">{t('signals.dock.title')}</h2>
+            <h2 id={headingId}>{t(embedded ? 'roomWorkspace.resources' : 'signals.dock.title')}</h2>
           </div>
         </div>
         <DockHeadline featuredSignal={featuredSignal} onAction={onAction} state={state} />
@@ -113,7 +116,7 @@ export function SignalDock({
             <button aria-label={t('signals.dock.retry')} onClick={onRetry} type="button">
               <RefreshCw aria-hidden="true" />
             </button>
-          ) : displayedSignals.length === 0 ? null : (
+          ) : displayedSignals.length === 0 || embedded ? null : (
             <button
               aria-expanded={expanded}
               aria-label={t(expanded ? 'signals.dock.collapse' : 'signals.dock.expand')}

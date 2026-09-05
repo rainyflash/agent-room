@@ -121,6 +121,8 @@ use agent_room_bridge_storage_adapter::{
 };
 
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
+mod host_sessions;
+use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
     "self.read",
     "previews.read",
@@ -182,6 +184,17 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
             initialize_onboarding(&config, device_session.service.clone())?,
         )),
     };
+    let host_sessions = Arc::new(HostSessionRegistry::new(Arc::new(
+        host_sessions::HostAgentRuntimeFactory::new(
+            config.clone(),
+            paths.clone(),
+            device_session.service.clone(),
+        )?,
+    )));
+    let request_handler = Arc::new(SessionAwareIpcHandler {
+        default: request_handler,
+        sessions: host_sessions.clone(),
+    });
     let server = BridgeIpcServer::bind(
         &paths,
         runtime_secrets.installation_id().clone(),
@@ -201,7 +214,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     }
     status.finish_starting();
     announce_supervisor_ready()?;
-    run_until_shutdown(server, status, device_session, agent_session).await
+    run_until_shutdown(server, status, device_session, agent_session, host_sessions).await
 }
 
 fn initialize_onboarding(
@@ -248,6 +261,7 @@ struct AgentSessionRuntime {
     status_policy: AgentStatusLeasePolicy,
     sync_timeout: DurationMillis,
     initial_session: Option<AgentOnlineSession>,
+    report_to_desktop_supervisor: bool,
     reconnect_policy: ReconnectPolicy,
     matrix_identity_recovery: MatrixIdentityRecovery,
 }
@@ -350,6 +364,7 @@ struct AgentOnlineSession {
     lobby: JoinedAgentLobby,
     room_id: MatrixRoomId,
     matrix: Arc<dyn MatrixGateway>,
+    room_authority: Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>,
     status: Arc<AgentStatusPublicationHandle>,
     publication: Arc<MessagePublicationService>,
     content_protection: Arc<MessageBodyProtectionService>,
@@ -364,7 +379,42 @@ struct AgentOnlineSession {
 
 struct HandoffEventWorker {
     task: JoinHandle<()>,
+    shutdown: watch::Sender<bool>,
     terminal_failure: watch::Receiver<Option<HandoffTransportFailureKind>>,
+}
+
+impl AgentOnlineSession {
+    async fn disconnect(&mut self) {
+        self.stop_workers().await;
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.status.publish(HostAgentState::Disconnected),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(failure)) => {
+                tracing::warn!(failure_kind = ?failure.kind(), "人物退出状态发布失败，将由租约到期回收");
+            }
+            Err(_) => {
+                tracing::warn!("人物退出状态发布超时，将由租约到期回收");
+            }
+        }
+    }
+
+    async fn stop_workers(&mut self) {
+        self.handoff_worker.shutdown.send_replace(true);
+        self.targeted_handoff_worker.shutdown.send_replace(true);
+        let (handoff, targeted) = tokio::join!(
+            &mut self.handoff_worker.task,
+            &mut self.targeted_handoff_worker.task,
+        );
+        for result in [handoff, targeted] {
+            if let Err(error) = result {
+                tracing::warn!(%error, "人物后台任务退出异常");
+            }
+        }
+    }
 }
 
 impl Drop for HandoffEventWorker {
@@ -397,6 +447,7 @@ struct TargetedHandoffPollingPolicy {
 
 struct TargetedHandoffWorker {
     task: JoinHandle<()>,
+    shutdown: watch::Sender<bool>,
 }
 
 impl TargetedHandoffWorker {
@@ -434,6 +485,7 @@ impl BridgeAgentRuntimeState {
                 online.room_id.clone(),
                 FOUNDATION_AGENT_CAPABILITIES,
             )
+            .with_room_authority(online.room_authority.clone())
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
             .with_message_content_protection(online.content_protection.clone())
@@ -695,6 +747,7 @@ async fn compose_agent_session_runtime(
         service,
         signing_identities,
         config: agent_config,
+        report_to_desktop_supervisor: true,
         lobby,
         lobby_config,
         matrix,
@@ -944,12 +997,7 @@ async fn establish_agent_online_once(
         transport: handoff_transport,
         store: runtime.handoffs.store.clone(),
     }));
-    let handoff_receipts = Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
-        identity: registered.identity().clone(),
-        clock: Arc::new(SystemClock),
-        authenticator: runtime.handoffs.authenticator.clone(),
-        store: runtime.handoffs.store.clone(),
-    }));
+    let handoff_receipts = compose_handoff_receipts(runtime, registered.identity().clone());
     let handoff_worker =
         spawn_handoff_event_worker(handoff_events, handoffs.clone(), handoff_receipts);
     let (targeted_handoffs, targeted_handoff_worker) = compose_targeted_handoff_runtime(
@@ -960,6 +1008,7 @@ async fn establish_agent_online_once(
         },
     );
     let mut online = AgentOnlineSession {
+        room_authority: connection.room_authority_gateway_handle(),
         runtime: registered,
         lobby,
         room_id,
@@ -975,8 +1024,23 @@ async fn establish_agent_online_once(
         presence_projections: runtime.presence_projections.clone(),
         next_batch: None,
     };
-    sync_agent_online(runtime, &mut online, true).await?;
+    if let Err(failure) = sync_agent_online(runtime, &mut online, true).await {
+        online.stop_workers().await;
+        return Err(failure);
+    }
     Ok(online)
+}
+
+fn compose_handoff_receipts(
+    runtime: &AgentSessionRuntime,
+    identity: agent_room_bridge_core::agent_identity::BridgeAgentIdentity,
+) -> Arc<HandoffReceiptService> {
+    Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
+        identity,
+        clock: Arc::new(SystemClock),
+        authenticator: runtime.handoffs.authenticator.clone(),
+        store: runtime.handoffs.store.clone(),
+    }))
 }
 
 fn compose_targeted_handoff_runtime(
@@ -1022,9 +1086,18 @@ fn spawn_handoff_event_worker(
     receipts: Arc<HandoffReceiptService>,
 ) -> HandoffEventWorker {
     let (terminal_sender, terminal_failure) = watch::channel(None);
+    let (shutdown, mut stop) = watch::channel(false);
     let task = tokio::spawn(async move {
         loop {
-            let event = match events.receive().await {
+            if *stop.borrow() {
+                return;
+            }
+            // 只取消等待事件，已经开始验证或持久化的交接必须完成。
+            let received = tokio::select! {
+                _ = stop.changed() => return,
+                received = events.receive() => received,
+            };
+            let event = match received {
                 Ok(event) => event,
                 Err(failure) if failure.kind() == HandoffTransportFailureKind::Rejected => {
                     tracing::warn!(
@@ -1069,6 +1142,7 @@ fn spawn_handoff_event_worker(
     });
     HandoffEventWorker {
         task,
+        shutdown,
         terminal_failure,
     }
 }
@@ -1088,8 +1162,12 @@ fn spawn_targeted_handoff_worker_with_policy(
     poller: Arc<dyn TargetedHandoffPoller>,
     policy: TargetedHandoffPollingPolicy,
 ) -> TargetedHandoffWorker {
+    let (shutdown, mut stop) = watch::channel(false);
     let task = tokio::spawn(async move {
         loop {
+            if *stop.borrow() {
+                return;
+            }
             let delay = match poller.claim_once().await {
                 Ok(TargetedHandoffClaimOutcome::Stored(handoff)) => {
                     tracing::info!(
@@ -1114,10 +1192,16 @@ fn spawn_targeted_handoff_worker_with_policy(
                     policy.failure
                 }
             };
-            sleep(delay).await;
+            if *stop.borrow() {
+                return;
+            }
+            tokio::select! {
+                _ = stop.changed() => return,
+                () = sleep(delay) => {},
+            }
         }
     });
-    TargetedHandoffWorker { task }
+    TargetedHandoffWorker { task, shutdown }
 }
 
 async fn sync_agent_online(
@@ -1252,6 +1336,7 @@ async fn run_until_shutdown(
     status: Arc<BridgeRuntimeStatus>,
     device_session: DeviceSessionRuntime,
     agent_session: Option<AgentSessionRuntime>,
+    host_sessions: Arc<HostSessionRegistry>,
 ) -> Result<(), BridgeRuntimeError> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut server_task = tokio::spawn(server.run(shutdown_receiver));
@@ -1262,7 +1347,18 @@ async fn run_until_shutdown(
         shutdown_sender.subscribe(),
     ));
 
-    tokio::select! {
+    let janitor_sessions = host_sessions.clone();
+    let mut janitor_shutdown = shutdown_sender.subscribe();
+    let janitor = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_mins(1));
+        loop {
+            tokio::select! {
+                _ = janitor_shutdown.changed() => break,
+                _ = interval.tick() => janitor_sessions.expire_idle().await,
+            }
+        }
+    });
+    let result = async { tokio::select! {
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|_| BridgeRuntimeError::shutdown_signal())?;
             status.mark_shutting_down();
@@ -1299,7 +1395,13 @@ async fn run_until_shutdown(
                 .map_err(BridgeRuntimeError::ipc)?;
             Err(BridgeRuntimeError::session_stopped_early())
         }
-    }
+    } }.await;
+    shutdown_sender.send_replace(true);
+    host_sessions.shutdown().await;
+    janitor
+        .await
+        .map_err(|_| BridgeRuntimeError::session_task())?;
+    result
 }
 
 async fn maintain_sessions(
@@ -1405,12 +1507,12 @@ async fn maintain_agent_session(
     loop {
         if let Some(active) = online.as_mut() {
             let Some(sync) = poll_agent_online(&runtime, active, &mut shutdown).await else {
+                active.disconnect().await;
+                runtime.state.clear();
                 return;
             };
             match sync {
-                Ok(()) => {
-                    backoff.record_connected();
-                }
+                Ok(()) => backoff.record_connected(),
                 Err(failure) if is_reconnectable_agent_online_failure(failure) => {
                     status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
                     runtime.state.clear();
@@ -1421,16 +1523,19 @@ async fn maintain_agent_session(
                         retry_after_ms = delay.value(),
                         "Agent Matrix 会话暂时不可用，已安排完整重连"
                     );
+                    active.stop_workers().await;
                     online = None;
                     retry_delay = Some(delay);
                 }
                 Err(failure) => {
-                    status.mark_fatal();
+                    status.mark_agent_failure(failure);
                     runtime.state.clear();
                     tracing::error!(
                         failure_kind = ?failure.kind(),
                         "Agent Matrix 会话进入离线态，禁止不安全重试"
                     );
+                    active.stop_workers().await;
+                    drop(online.take());
                     wait_for_shutdown(&mut shutdown).await;
                     return;
                 }
@@ -1449,7 +1554,9 @@ async fn maintain_agent_session(
                 backoff.record_connected();
                 status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, true);
                 runtime.state.publish(&agent_online);
-                if let Err(error) = announce_agent_online(&agent_online) {
+                if runtime.report_to_desktop_supervisor
+                    && let Err(error) = announce_agent_online(&agent_online)
+                {
                     tracing::warn!(error_code = error.code(), "Agent 已上线但终端不可写");
                 }
                 online = Some(agent_online);
@@ -1458,7 +1565,9 @@ async fn maintain_agent_session(
                 status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
                 runtime.state.clear();
                 let delay = retry_delay_for_agent_failure(failure, &mut backoff);
-                if let Err(error) = announce_supervisor_diagnostic(failure) {
+                if runtime.report_to_desktop_supervisor
+                    && let Err(error) = announce_supervisor_diagnostic(failure)
+                {
                     tracing::warn!(
                         error_code = error.code(),
                         "Agent 暂时失败诊断无法写入监督通道"
@@ -1473,7 +1582,7 @@ async fn maintain_agent_session(
                 retry_delay = Some(delay);
             }
             Err(failure) => {
-                status.mark_fatal();
+                status.mark_agent_failure(failure);
                 runtime.state.clear();
                 tracing::error!(
                     failure_kind = ?failure.kind(),
@@ -1493,20 +1602,28 @@ async fn poll_agent_online(
 ) -> Option<Result<(), AgentOnlineFailure>> {
     let mut handoff_failure = active.handoff_worker.terminal_failure.clone();
     loop {
+        if *shutdown.borrow() {
+            return None;
+        }
         if active.targeted_handoff_worker.is_finished() {
             return Some(Err(AgentOnlineFailure::TargetedHandoffWorker));
         }
         if let Some(failure) = *handoff_failure.borrow() {
             return Some(Err(AgentOnlineFailure::HandoffTransport(failure)));
         }
+        let sync = sync_agent_online(runtime, active, false);
+        tokio::pin!(sync);
         tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow_and_update() {
+                    // 同步包含设备签名与令牌刷新，关闭不能把共享认证取消在半途。
+                    let _ = sync.await;
                     return None;
                 }
             }
-            result = sync_agent_online(runtime, active, false) => return Some(result),
+            result = &mut sync => return Some(result),
             changed = handoff_failure.changed() => {
+                let _ = sync.await;
                 let failure = if changed.is_ok() {
                     (*handoff_failure.borrow())
                         .unwrap_or(HandoffTransportFailureKind::Internal)
@@ -1683,6 +1800,7 @@ struct BridgeRuntimeStatus {
     ready_components: AtomicU8,
     starting: AtomicBool,
     fatal: AtomicBool,
+    fatal_code: std::sync::OnceLock<&'static str>,
     shutting_down: AtomicBool,
     started_at_unix_ms: i64,
 }
@@ -1701,6 +1819,7 @@ impl BridgeRuntimeStatus {
             ready_components: AtomicU8::new(0),
             starting: AtomicBool::new(true),
             fatal: AtomicBool::new(false),
+            fatal_code: std::sync::OnceLock::new(),
             shutting_down: AtomicBool::new(false),
             started_at_unix_ms,
         }
@@ -1721,6 +1840,12 @@ impl BridgeRuntimeStatus {
 
     fn mark_fatal(&self) {
         self.fatal.store(true, Ordering::Release);
+    }
+
+    fn mark_agent_failure(&self, failure: AgentOnlineFailure) {
+        self.fatal_code
+            .get_or_init(|| BridgeRuntimeError::agent_online(failure).code());
+        self.mark_fatal();
     }
 
     fn mark_shutting_down(&self) {
@@ -1745,6 +1870,10 @@ impl BridgeRuntimeStatus {
 }
 
 impl BridgeStatusReader for BridgeRuntimeStatus {
+    fn failure_code(&self) -> Option<&'static str> {
+        self.fatal_code.get().copied()
+    }
+
     fn read_status(&self) -> BridgeStatusSnapshot {
         BridgeStatusSnapshot {
             state: self.state(),
@@ -2495,6 +2624,22 @@ mod tests {
         assert_eq!(status.read_status().state, IpcBridgeState::ShuttingDown);
     }
 
+    #[test]
+    fn 人物永久失败保留原始错误码且不覆盖其他运行时() {
+        let desktop = BridgeRuntimeStatus::new(1_000, false);
+        desktop.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, true);
+        desktop.finish_starting();
+        let character = BridgeRuntimeStatus::new(1_000, true);
+        character.mark_agent_failure(AgentOnlineFailure::InvalidRoom);
+        assert_eq!(character.read_status().state, IpcBridgeState::Offline);
+        assert_eq!(
+            character.failure_code(),
+            Some(BridgeRuntimeError::agent_online(AgentOnlineFailure::InvalidRoom).code())
+        );
+        assert_eq!(desktop.read_status().state, IpcBridgeState::Ready);
+        assert_eq!(desktop.failure_code(), None);
+    }
+
     #[tokio::test]
     async fn 云端交接轮询器随在线会话销毁而终止() {
         let poller = Arc::new(计数交接轮询器::default());
@@ -2527,6 +2672,50 @@ mod tests {
     struct 计数交接轮询器 {
         claims: AtomicU32,
         first_claim: Notify,
+    }
+
+    #[derive(Default)]
+    struct 在途交接轮询器 {
+        entered: Notify,
+        release: Notify,
+        completed: AtomicU32,
+    }
+
+    impl TargetedHandoffPoller for 在途交接轮询器 {
+        fn claim_once(
+            &self,
+        ) -> PortFuture<'_, Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure>>
+        {
+            Box::pin(async move {
+                self.entered.notify_one();
+                self.release.notified().await;
+                self.completed.fetch_add(1, Ordering::SeqCst);
+                Ok(TargetedHandoffClaimOutcome::Empty)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn 正常关闭等待已发出的交接请求完成且不再领取下一条() {
+        let poller = Arc::new(在途交接轮询器::default());
+        let mut worker = spawn_targeted_handoff_worker_with_policy(
+            poller.clone(),
+            TargetedHandoffPollingPolicy {
+                stored: Duration::from_millis(1),
+                idle: Duration::from_millis(1),
+                failure: Duration::from_millis(1),
+            },
+        );
+        poller.entered.notified().await;
+        worker.shutdown.send_replace(true);
+        assert!(!worker.task.is_finished());
+        assert_eq!(poller.completed.load(Ordering::SeqCst), 0);
+        poller.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), &mut worker.task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(poller.completed.load(Ordering::SeqCst), 1);
     }
 
     impl TargetedHandoffPoller for 计数交接轮询器 {

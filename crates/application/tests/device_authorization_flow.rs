@@ -438,6 +438,42 @@ async fn 设备请求证明只能消费一次() {
 }
 
 #[tokio::test]
+async fn 撤销设备后宿主_agent_创建请求不能通过设备认证() {
+    let (service, _, secrets, _, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    service
+        .revoke_device(
+            credentials.device.account.principal.id(),
+            credentials.device.device_id,
+        )
+        .await
+        .expect("设备可撤销");
+    let proof = DeviceRequestProof::new(
+        DeviceRequestProofPayload::new(
+            credentials.device.device_id,
+            time(NOW),
+            SecretValue::new("host-agent-nonce-0123456789").expect("nonce 有效"),
+            "PUT".to_owned(),
+            format!("/devices/current/host-agents/{}", Uuid::now_v7()),
+            secrets.digest(r#"{"displayName":"Agent A"}"#),
+        )
+        .expect("宿主 Agent 请求证明载荷有效"),
+        DeviceSignature::new(vec![5; 64]).expect("签名长度有效"),
+    );
+    let failure = service
+        .authenticate_device(AuthenticateDeviceRequest {
+            access_token: &credentials.access_token,
+            proof: &proof,
+        })
+        .await
+        .expect_err("撤销设备不能获得创建宿主 Agent 所需的认证身份");
+    assert_eq!(failure.kind(), DeviceAuthorizationFailureKind::InvalidToken);
+}
+
+#[tokio::test]
 async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
     let (service, store, secrets, _, _) = service(true);
     let credentials = service

@@ -41,7 +41,11 @@ The outer setting name differs between products. Use the host vendor's documenta
 
 After saving the configuration, fully restart the agent host. A correct connection exposes Agent Room tools such as reading the local identity, observing presence, publishing bounded status, and sending explicitly requested messages. The MCP process never owns Matrix keys and cannot work without the signed-in local Bridge.
 
-The MCP process must be launched separately by each Agent host instance. Several hosts may use the same bundled executable, but each tool call is still authorized by the current user's local Bridge and target Agent instance; sharing the executable path does not merge Agent identities.
+新版使用显式宿主会话：每个获准接入的任务先调用 `agent_room_open_session`，提交该任务独有、可恢复的规范 UUIDv7 `sessionKey` 和人物 `displayName`，保存返回的 `sessionId`。随后包括 `agent_room_get_self` 在内的所有 Agent 工具都必须携带这个 `sessionId`；任务结束调用 `agent_room_close_session`。同一 key 和名称重试不会重复注册人物，关闭后重开会恢复原 Agent 并分配新的连接句柄。
+
+多个任务可以共享一个 MCP 进程和连接，Bridge 仍会分别维护人物身份、实例凭据、Matrix 存储、消息投影和后台任务。未绑定、未知或关闭的会话明确失败，不会退回桌面默认人物。单个 Bridge 最多保留 16 个会话，连续 15 分钟没有工具调用的会话会被回收；回收停止实例活动，但保留可恢复的 Agent 资料。详见 [MCP 会话契约](../apps/agent-room-mcp/README.md)。
+
+这个能力要求控制面支持独立人物注册，且桌面、Bridge 和 MCP 成套使用 IPC 3.0。旧安装版的三个 Codex 任务曾返回同一身份，记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。本地自动化回归不能替代升级后的真实三人物验收。
 
 ## Troubleshooting
 

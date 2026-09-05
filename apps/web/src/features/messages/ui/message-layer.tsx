@@ -1,9 +1,11 @@
+import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
+import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { AnimatePresence } from 'motion/react';
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import { MessageRoomStore } from '@/features/messages/application/message-room-store';
+import { useRoomMessages } from './room-messages-context';
 import type { ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
@@ -12,6 +14,10 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly active?: boolean;
+  readonly focusedConversationMessageId?: string | null;
+  readonly view?: 'conversation' | 'resources';
+  readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -19,9 +25,14 @@ export type MessageLayerProps = {
   readonly roomName: string;
   readonly selectedMessageId: string | null;
   readonly variant?: 'direct' | 'room';
+  readonly writesAllowed?: boolean;
 };
 
 export function MessageLayer({
+  active = true,
+  focusedConversationMessageId = null,
+  view = 'conversation',
+  participants,
   catalogId,
   onLatestDisplayed,
   onSelectedMessageChange,
@@ -29,23 +40,27 @@ export function MessageLayer({
   roomName,
   selectedMessageId,
   variant = 'room',
+  writesAllowed = true,
 }: MessageLayerProps) {
+  const { t } = useTranslation();
   const {
     content,
     contentVerifier,
     handoffs,
     messagePublisher,
-    messages,
     messageTranslation,
     moderation,
     telemetry,
   } = useAppServices();
-  const store = useMemo(() => new MessageRoomStore(messages, roomId), [messages, roomId]);
-  const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const { state, store } = useRoomMessages(roomId);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
   const projectedSignals = useMemo(
-    () => projectMessageSignals(projectedMessages, variant === 'direct' ? 'direct' : 'room'),
+    () =>
+      projectMessageSignals(
+        projectedMessages.filter((message) => message.preview?.conversation === undefined),
+        variant === 'direct' ? 'direct' : 'room',
+      ),
     [projectedMessages, variant],
   );
   const selectedMessage =
@@ -68,6 +83,7 @@ export function MessageLayer({
   useEffect(() => {
     const latestEventId = projectedMessages[0]?.matrixEventId ?? null;
     if (
+      !active ||
       onLatestDisplayed === undefined ||
       latestEventId === null ||
       displayedEventId.current === latestEventId
@@ -76,28 +92,60 @@ export function MessageLayer({
     }
     displayedEventId.current = latestEventId;
     onLatestDisplayed(latestEventId);
-  }, [onLatestDisplayed, projectedMessages]);
+  }, [active, onLatestDisplayed, projectedMessages]);
 
   return (
     <>
-      <div className={`message-hub message-hub--${variant}`}>
-        <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
-        {state.kind === 'loading' ? null : (
-          <SignalDock
-            defaultExpanded={variant === 'direct'}
-            onAction={handleSignalAction}
-            onRetry={store.retry}
-            selectedSignalId={selectedSignalId}
-            signals={projectedSignals}
-            state={state.kind === 'ready' ? 'ready' : 'failed'}
+      <div className={`message-workspace message-workspace--${variant}`} data-view={view}>
+        <div className="message-workspace__conversation" hidden={view !== 'conversation'}>
+          <ConversationPanel
+            active={active && view === 'conversation'}
+            focusMessageId={focusedConversationMessageId}
+            variant={variant}
+            key={`chat:${roomId}`}
+            writesAllowed={writesAllowed}
+            publisher={messagePublisher}
+            roomId={roomId}
+            roomName={roomName}
+            messages={projectedMessages}
+            {...(participants === undefined ? {} : { participants })}
+            state={
+              state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
+            }
           />
-        )}
-        <MessageComposer
-          key={roomId}
-          publisher={messagePublisher}
-          roomId={roomId}
-          roomName={roomName}
-        />
+        </div>
+        <section className="message-workspace__resources" hidden={view !== 'resources'}>
+          <header className="message-workspace__intro">
+            <h2>
+              {t(
+                variant === 'direct'
+                  ? 'roomWorkspace.privateResources'
+                  : 'roomWorkspace.resourcesTitle',
+              )}
+            </h2>
+            <p>{t('roomWorkspace.resourcesDetail')}</p>
+          </header>
+          <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
+          {state.kind === 'loading' ? null : (
+            <SignalDock
+              defaultExpanded
+              embedded
+              onAction={handleSignalAction}
+              onRetry={store.retry}
+              selectedSignalId={selectedSignalId}
+              signals={projectedSignals}
+              state={state.kind === 'ready' ? 'ready' : 'failed'}
+            />
+          )}
+          {writesAllowed ? (
+            <MessageComposer
+              key={roomId}
+              publisher={messagePublisher}
+              roomId={roomId}
+              roomName={roomName}
+            />
+          ) : null}
+        </section>
       </div>
       <AnimatePresence>
         {selectedMessage === null ? null : (

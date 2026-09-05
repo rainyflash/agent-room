@@ -15,6 +15,7 @@ import type {
 import { err, ok } from '@/shared/result';
 
 const request: ContentInspectionRequest = {
+  roomId: '!room:matrix.test',
   matrixEventId: '$event',
   messageId: '01990d9e-8400-7000-8000-000000000003',
   reference: {
@@ -62,7 +63,7 @@ describe('正文检视状态机', () => {
       request.reference.contentId,
       'short-lived-ticket',
     );
-    expect(runtime.verify).toHaveBeenCalledWith(downloaded, request.reference);
+    expect(runtime.verify).toHaveBeenCalledWith(downloaded, request.reference, request.roomId);
     expect(ready.context.content).toEqual(verified);
     expect(ready.context.downloaded).toBeNull();
     expect(ready.context.ticket).toBeNull();

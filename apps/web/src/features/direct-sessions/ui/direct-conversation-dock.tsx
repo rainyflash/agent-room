@@ -1,23 +1,17 @@
 import { initials } from '@/shared/ui/display-name';
 
 import { Button, StatusMark } from '@agent-room/ui-system';
-import {
-  EyeOff,
-  LoaderCircle,
-  MessageCircle,
-  RefreshCw,
-  ShieldBan,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+import { EyeOff, LoaderCircle, RefreshCw, ShieldBan, ShieldCheck, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import type { DirectSession } from '@/features/direct-sessions/domain/direct-session';
+import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 
 export type DirectConversationDockProps = {
+  readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly activeCatalogId: string | null;
   readonly controller: DirectSessionController;
   readonly onActiveSessionChange: (catalogId: string | null) => void;
@@ -26,6 +20,7 @@ export type DirectConversationDockProps = {
 };
 
 export function DirectConversationDock({
+  view,
   activeCatalogId,
   controller,
   onActiveSessionChange,
@@ -38,25 +33,16 @@ export function DirectConversationDock({
     activeCatalogId === null
       ? null
       : (controller.sessions.find((session) => session.catalogId === activeCatalogId) ?? null);
-  const visible = controller.sessions.length > 0 || activeCatalogId !== null;
+  const visible = activeCatalogId !== null;
 
   if (!visible) {
     return null;
   }
 
   return (
-    <section
-      aria-label={t('directSessions.dock.label')}
-      className={`direct-session-dock${activeCatalogId === null ? '' : ' direct-session-dock--open'}`}
-    >
-      <SessionRail
-        activeCatalogId={activeCatalogId}
-        loading={controller.loading}
-        onActivate={onActiveSessionChange}
-        sessions={controller.sessions}
-      />
+    <section aria-label={t('directSessions.dock.label')} className="workspace-direct-content">
       <AnimatePresence mode="wait">
-        {activeCatalogId === null ? null : activeSession === null ? (
+        {activeSession === null ? (
           <motion.aside
             animate={{ opacity: 1, y: 0 }}
             className="direct-conversation direct-conversation--boundary"
@@ -107,6 +93,7 @@ export function DirectConversationDock({
           </motion.aside>
         ) : (
           <Conversation
+            view={view}
             controller={controller}
             key={activeSession.catalogId}
             onClose={() => {
@@ -123,54 +110,8 @@ export function DirectConversationDock({
   );
 }
 
-function SessionRail({
-  activeCatalogId,
-  loading,
-  onActivate,
-  sessions,
-}: {
-  readonly activeCatalogId: string | null;
-  readonly loading: boolean;
-  readonly onActivate: (catalogId: string) => void;
-  readonly sessions: readonly DirectSession[];
-}) {
-  const { t } = useTranslation();
-  return (
-    <nav aria-label={t('directSessions.rail.label')} className="direct-session-rail">
-      <div className="direct-session-rail__brand" title={t('directSessions.rail.title')}>
-        <MessageCircle aria-hidden="true" />
-      </div>
-      <div className="direct-session-rail__sessions">
-        {sessions.map((session) => (
-          <button
-            aria-label={t('directSessions.rail.open', { name: session.target.displayName })}
-            aria-pressed={activeCatalogId === session.catalogId}
-            className="direct-session-rail__session"
-            data-lifecycle={session.lifecycle}
-            key={session.catalogId}
-            onClick={() => {
-              onActivate(session.catalogId);
-            }}
-            type="button"
-          >
-            <span aria-hidden="true">{initials(session.target.displayName)}</span>
-            <StatusMark
-              label={t(`directSessions.lifecycle.${session.lifecycle}`)}
-              tone={session.lifecycle === 'active' ? 'network' : 'offline'}
-            />
-          </button>
-        ))}
-        {loading && sessions.length === 0 ? (
-          <span className="direct-session-rail__loading">
-            <LoaderCircle aria-hidden="true" />
-          </span>
-        ) : null}
-      </div>
-    </nav>
-  );
-}
-
 function Conversation({
+  view,
   controller,
   onClose,
   onSelectedMessageChange,
@@ -178,6 +119,7 @@ function Conversation({
   selectedMessageId,
   session,
 }: {
+  readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly controller: DirectSessionController;
   readonly onClose: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -237,6 +179,9 @@ function Conversation({
         </div>
         <div className="direct-conversation__actions">
           <Button
+            aria-label={t(
+              principalBlocked ? 'directSessions.action.unblock' : 'directSessions.action.block',
+            )}
             disabled={controller.blocking}
             icon={
               controller.blocking ? (
@@ -265,6 +210,14 @@ function Conversation({
           </button>
         </div>
       </header>
+      {session.contactPolicy.deliveryAllowed ? null : (
+        <p className="workspace-direct-policy" role="status">
+          <ShieldBan aria-hidden="true" />
+          {t(
+            remoteBlocked ? 'directSessions.policy.remoteBlocked' : 'directSessions.policy.blocked',
+          )}
+        </p>
+      )}
       {controller.failure === null ? null : (
         <div className="direct-conversation__failure" role="alert">
           <span>{t('directSessions.failure', { code: controller.failure.code })}</span>
@@ -282,12 +235,10 @@ function Conversation({
       )}
       {session.lifecycle === 'active' && matrixRoomId !== null ? (
         <div className="direct-conversation__messages">
-          <div className="direct-conversation__principle">
-            <ShieldCheck aria-hidden="true" />
-            <strong>{t('directSessions.conversation.previewTitle')}</strong>
-            <span>{t('directSessions.conversation.previewDetail')}</span>
-          </div>
           <MessageLayer
+            view={view}
+            writesAllowed={session.contactPolicy.deliveryAllowed}
+            participants={[session.target]}
             catalogId={session.catalogId}
             onLatestDisplayed={(matrixEventId) => {
               void controller.markDisplayed(matrixRoomId, matrixEventId);

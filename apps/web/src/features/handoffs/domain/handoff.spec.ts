@@ -90,3 +90,20 @@ function request(): HandoffApprovalRequest {
     target: handoffTargetFixture,
   };
 }
+
+it('密钥委派尚未实现时不把密文作为可消费的普通资料交接', () => {
+  const base = request();
+  const encryption = {
+    algorithm: 'io.github.rainyflash.agentroom.content.aes-256-gcm.v1' as const,
+    contextId: base.source.messageId,
+    keyBase64Url: 'a'.repeat(43),
+    nonceBase64Url: 'a'.repeat(16),
+    plaintextSizeBytes: 14,
+  };
+  expect(
+    validateHandoffApproval(
+      { ...base, source: { ...base.source, content: { ...base.source.content, encryption } } },
+      1000,
+    ),
+  ).toContain('source_invalid');
+});

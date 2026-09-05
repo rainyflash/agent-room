@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?view=space';
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] as const;
 
 test('大厅通过 WCAG 2.2 AA 自动扫描与纯键盘主流程', async ({ page }) => {
@@ -26,6 +26,7 @@ test('大厅通过 WCAG 2.2 AA 自动扫描与纯键盘主流程', async ({ page
   await expect(closeButton).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(scene).toBeFocused();
+  await expect(page.getByRole('complementary')).toHaveCount(0);
 
   const results = await new AxeBuilder({ page }).withTags([...wcagTags]).analyze();
   expect(results.violations).toEqual([]);
@@ -55,6 +56,7 @@ test('等效 200% 放大视口下无 Canvas 也能完成核心任务', async ({ 
   // 1280 CSS 像素宽窗口在 200% 放大后的可用布局宽度等效为 640 CSS 像素。
   await page.setViewportSize({ height: 720, width: 640 });
   await page.goto(fixturePath);
+  await page.getByRole('button', { name: 'List view', exact: true }).click();
 
   await expect(page.locator('canvas')).toHaveCount(0);
   const firstAgent = page.getByRole('button', { name: /Build Agent 001/u });

@@ -48,8 +48,8 @@ describe('大厅场景投影', () => {
     const visible = visibleLobbyNodes(projection, {
       height: 300,
       width: 400,
-      x: 0,
-      y: 0,
+      x: 1000,
+      y: 350,
       zoom: 1,
     });
 

@@ -29,6 +29,19 @@ describe('ViewportController', () => {
     });
   });
 
+  it.each([390, 1440])('选中人物时镜头放大，并让角色留在 %s 宽视口可操作区域', (width) => {
+    const controller = new ViewportController({ height: 1500, width: 2600 });
+    controller.resize(width, 900);
+    const camera = controller.focusOn(1200, 450);
+    const x = camera.x + 1200 * camera.scale;
+    const y = camera.y + 450 * camera.scale;
+    expect(camera.scale).toBeGreaterThanOrEqual(0.55);
+    expect(x).toBeGreaterThan(20);
+    expect(x).toBeLessThan(width - 20);
+    expect(y).toBeGreaterThan(120);
+    expect(y).toBeLessThan(600);
+  });
+
   it('窗口变化保持原世界中心并拒绝非有限输入', () => {
     const controller = new ViewportController({ height: 1_000, width: 2_000 }, { padding: 0 });
     controller.resize(1_000, 500);

@@ -24,6 +24,10 @@ export class MessageRoomStore {
     this.#roomId = roomId;
   }
 
+  get roomId(): string {
+    return this.#roomId;
+  }
+
   readonly getSnapshot = (): MessageRoomState => this.#state;
 
   readonly retry = (): void => {

@@ -127,6 +127,7 @@ pub(crate) async fn read_desktop_lobby(
         next_cursor,
     } = gateway
         .invoke(IpcMethod::ListPreviews(IpcListPreviewsRequest {
+            after_event_id: None,
             room_id: Some(room_id),
             before_event_id: None,
             limit: DESKTOP_MESSAGE_PREVIEW_LIMIT,

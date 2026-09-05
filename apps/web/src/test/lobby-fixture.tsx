@@ -13,6 +13,7 @@ import type {
 } from '@/features/automation/domain/automation-grant';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
+import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import type {
   DirectAgent,
@@ -37,6 +38,10 @@ import type {
   LobbyGateway,
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
+import type { LobbyFixtureControls } from './lobby-fixture-controls';
+import { roomHumans } from '@/features/lobby/domain/room-participants';
+import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
+import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -65,7 +70,15 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 
-const room = testRoom(200);
+const fixtureAgentCount =
+  new URLSearchParams(window.location.search).get('agents') === '200' ? 200 : 24;
+let room = testRoom(fixtureAgentCount);
+const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
+let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
+Object.defineProperty(window, '__agentRoomFixtureScene', {
+  configurable: true,
+  get: () => fixtureScene,
+});
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const desktop = new TauriDesktopRuntimeGateway({
   available: () => false,
@@ -96,9 +109,15 @@ const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, 
   lobbyView: 'scene',
 });
 let fixtureRoot: Root | null = null;
+const lobbyListeners = new Set<() => void>();
 const lobby: LobbyGateway = {
   read: () => ok(room),
-  subscribe: () => noop,
+  subscribe: (_roomId, listener) => {
+    lobbyListeners.add(listener);
+    return () => {
+      lobbyListeners.delete(listener);
+    };
+  },
 };
 const lobbyEntry = new PublicLobbyEntryCoordinator(
   {
@@ -108,16 +127,113 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
     join: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
   },
 );
+const conversationListeners = new Set<() => void>();
+let publishedConversations: RoomMessageSignal[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
-      messages: testMessages(requestedRoomId),
+      messages: [
+        ...testMessages(requestedRoomId),
+        ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
+      ],
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
     }),
-  subscribe: () => noop,
+  subscribe: (_roomId, listener) => {
+    conversationListeners.add(listener);
+    return () => {
+      conversationListeners.delete(listener);
+    };
+  },
 };
+const fixtureControls: LobbyFixtureControls = {
+  receive: (input) => {
+    const agent = room.agents[input.agentIndex ?? 0];
+    if (agent === undefined) throw new Error('测试发言引用了不存在的 Agent');
+    const messageId = crypto.randomUUID();
+    publishedConversations.push({
+      actor:
+        input.human === true
+          ? {
+              kind: 'human',
+              provenance: 'human',
+              matrixUserId: '@guest:matrix.test',
+              displayName: 'Room visitor',
+              principalId: 'fixture-guest',
+            }
+          : {
+              kind: 'agent',
+              provenance: 'human_confirmed_agent',
+              matrixUserId: agent.matrixUserId,
+              displayName: agent.displayName,
+              agentId: agent.agentId,
+              instanceId: agent.instanceIds[0] ?? 'fixture-instance',
+            },
+      content: null,
+      edited: false,
+      endToEndEncrypted: false,
+      lifecycle: 'active',
+      matrixEventId: `$fixture-${messageId}`,
+      messageId,
+      preview: {
+        conversation: { text: input.text, mentions: [] },
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        summary: input.text,
+        title: 'Room conversation',
+      },
+      roomId: input.roomId ?? room.roomId,
+      serverTimestamp: Date.now() - (input.ageMs ?? 0),
+      signatureStatus: 'matrix_sender_matched',
+    });
+    updateFixtureScene();
+    for (const listener of conversationListeners) listener();
+    return messageId;
+  },
+  redact: (messageId) => {
+    publishedConversations = publishedConversations.map((message) =>
+      message.messageId === messageId
+        ? { ...message, lifecycle: 'redacted', preview: null }
+        : message,
+    );
+    updateFixtureScene();
+    for (const listener of conversationListeners) listener();
+  },
+  joinAgent: () => {
+    const agent = testAgent(250);
+    room = {
+      ...room,
+      agents: [...room.agents, agent],
+      joinedMemberIds: [...(room.joinedMemberIds ?? []), agent.matrixUserId],
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+    return agent.agentId;
+  },
+  leaveAgent: (agentId) => {
+    const agent = room.agents.find((entry) => entry.agentId === agentId);
+    room = {
+      ...room,
+      agents: room.agents.filter((entry) => entry.agentId !== agentId),
+      joinedMemberIds: room.joinedMemberIds?.filter((id) => id !== agent?.matrixUserId) ?? [],
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  },
+};
+Object.defineProperty(window, '__agentRoomFixtureControls', {
+  configurable: true,
+  value: fixtureControls,
+});
+function updateFixtureScene(): void {
+  fixtureScene = projectLobbyScene(room, null, {
+    previous: fixtureScene.layout,
+    humans: roomHumans(room, publishedConversations, fixtureIdentity),
+  });
+}
+
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
 let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
 const moderation: ModerationGateway = {
@@ -421,6 +537,37 @@ class FixtureMessagePublisher implements MessagePublisher {
   ) {
     securityActionCounts.messagePublishes += 1;
     onProgress('submitting');
+    if (request.conversation !== undefined) {
+      publishedConversations.push({
+        actor: {
+          kind: 'human',
+          provenance: 'human',
+          displayName: 'Fixture operator',
+          matrixUserId: '@fixture:matrix.test',
+          principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+        },
+        content: null,
+        edited: false,
+        endToEndEncrypted: false,
+        lifecycle: 'active',
+        matrixEventId: `$fixture-${request.submissionId}`,
+        messageId: request.submissionId,
+        preview: {
+          conversation: request.conversation,
+          contentType: request.mediaType,
+          riskFlags: request.riskFlags,
+          sensitivity: request.sensitivity,
+          summary: request.summary,
+          title: request.title,
+        },
+        ...(request.relation === undefined ? {} : { relation: request.relation }),
+        roomId: request.roomId,
+        serverTimestamp: Date.now(),
+        signatureStatus: 'matrix_sender_matched',
+      });
+      updateFixtureScene();
+      for (const listener of conversationListeners) listener();
+    }
     return Promise.resolve(
       ok({
         kind: 'published' as const,
@@ -445,10 +592,10 @@ class FixtureMessagePublisher implements MessagePublisher {
   resolveIdentity() {
     return Promise.resolve(
       ok({
-        displayName: 'Build Agent',
+        displayName: 'Fixture operator',
         kind: 'human' as const,
-        matrixUserId: '@build-agent:agent-room.test',
-        principalId: '01990d9e-8400-7000-8000-000000000001',
+        matrixUserId: '@fixture:matrix.test',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
         source: 'matrix_human_session' as const,
       }),
     );
@@ -564,36 +711,75 @@ const services: AppServices = {
 };
 
 function LobbyFixture() {
+  const [view, setView] = useState<RoomWorkspaceView>(() => {
+    const requested = new URLSearchParams(window.location.search).get('view');
+    return requested === 'conversation' || requested === 'resources' ? requested : 'space';
+  });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const updateView = (nextView: RoomWorkspaceView): void => {
+    const url = new URL(window.location.href);
+    if (nextView === 'space') url.searchParams.delete('view');
+    else url.searchParams.set('view', nextView);
+    window.history.replaceState(null, '', url);
+    setView(nextView);
+  };
   return (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
         <AppServicesProvider services={services}>
           <AccountPreferencesProvider store={accountPreferences}>
-            <LobbyPage
-              catalogId="01990d9e-8400-7000-8000-000000000401"
-              onEnterRoom={() => undefined}
-              onExitRoom={() => undefined}
-              onOpenSecurity={() => undefined}
-              onSelectedAgentChange={setSelectedAgentId}
-              onSelectedDirectSessionChange={setSelectedDirectSessionId}
-              onSelectedMessageChange={setSelectedMessageId}
-              principal={{
-                authenticatedAtUnixMs: Date.now(),
-                displayName: 'Fixture operator',
-                expiresAtUnixMs: Date.now() + 60_000,
-                locale: 'en',
-                matrixUserId: '@fixture:matrix.test',
-                principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-                recentlyAuthenticated: true,
-              }}
-              roomId={room.roomId}
-              selectedAgentId={selectedAgentId}
-              selectedDirectSessionId={selectedDirectSessionId}
-              selectedMessageId={selectedMessageId}
-            />
+            <DesktopRuntimeProvider gateway={desktop}>
+              <LobbyPage
+                catalogId="01990d9e-8400-7000-8000-000000000401"
+                onEnterRoom={() => undefined}
+                onExitRoom={() => undefined}
+                onOpenSecurity={() => undefined}
+                view={view}
+                onViewChange={(nextView) => {
+                  if (nextView === 'space') {
+                    setSelectedDirectSessionId(null);
+                    setSelectedMessageId(null);
+                  }
+                  updateView(nextView);
+                }}
+                onOpenRoomPanel={(nextView) => {
+                  setSelectedDirectSessionId(null);
+                  setSelectedAgentId(null);
+                  setSelectedMessageId(null);
+                  updateView(nextView);
+                }}
+                onSelectedAgentChange={(id) => {
+                  setSelectedAgentId(id);
+                  if (id !== null) {
+                    setSelectedDirectSessionId(null);
+                    setSelectedMessageId(null);
+                    updateView('space');
+                  }
+                }}
+                onSelectedDirectSessionChange={(id) => {
+                  setSelectedDirectSessionId(id);
+                  setSelectedAgentId(null);
+                  setSelectedMessageId(null);
+                  updateView(id === null ? 'space' : 'conversation');
+                }}
+                onSelectedMessageChange={setSelectedMessageId}
+                principal={{
+                  authenticatedAtUnixMs: Date.now(),
+                  displayName: 'Fixture operator',
+                  expiresAtUnixMs: Date.now() + 60_000,
+                  locale: 'en',
+                  matrixUserId: '@fixture:matrix.test',
+                  principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                  recentlyAuthenticated: true,
+                }}
+                roomId={room.roomId}
+                selectedAgentId={selectedAgentId}
+                selectedDirectSessionId={selectedDirectSessionId}
+                selectedMessageId={selectedMessageId}
+              />
+            </DesktopRuntimeProvider>
           </AccountPreferencesProvider>
         </AppServicesProvider>
       </QueryClientProvider>
@@ -615,6 +801,11 @@ function testRoom(agentCount: number): LobbyRoom {
   return Object.freeze({
     agents: Object.freeze(Array.from({ length: agentCount }, (_, index) => testAgent(index))),
     name: 'Builders Exchange',
+    joinedMemberIds: [
+      '@fixture:matrix.test',
+      '@guest:matrix.test',
+      ...Array.from({ length: agentCount }, (_, index) => testAgent(index).matrixUserId),
+    ],
     observedAtUnixMs: Date.now(),
     roomId: '!builders:agent-room.test',
     topic: 'Live coordination across verified local Agent instances',

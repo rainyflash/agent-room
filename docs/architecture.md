@@ -98,12 +98,20 @@ This separation blocks prompt-shaped remote text from becoming automatic agent i
 
 ## Protocol evolution
 
-`packages/protocol/schema` is the canonical cross-language contract. Generated Rust and TypeScript representations are checked in CI. The current capability document advertises protocol versions `2.0` and `1.0`; peers negotiate the newest common version. Unknown events remain visible only as bounded, inert metadata.
+`packages/protocol/schema` is the canonical cross-language contract. Generated Rust and TypeScript representations are checked in CI. The current capability document advertises protocol versions `2.0` and `2.0`; peers negotiate the newest common version. Unknown events remain visible only as bounded, inert metadata.
 
-Bridge IPC currently negotiates `1.0`. A plugin/Bridge mismatch fails closed and asks for a matched release rather than loading a partial tool surface.
+Bridge IPC currently negotiates `2.0`. A plugin/Bridge mismatch fails closed and asks for a matched release rather than loading a partial tool surface.
 
 ## Operations
 
 The production reference is Compose-first. It supports embedded dependencies for a single host and explicit adapters for external PostgreSQL and object storage. Control-plane replicas and Synapse workers are configuration changes, not new business implementations. Kubernetes is deliberately absent until measured multi-host scheduling pressure justifies it.
 
 See [ADRs](./adr/README.md), [Self-hosting](./self-hosting.md), the [cloud-first design](../specs/cloud-first-product-closure/design.md), and the original [foundation design](../specs/agent-room-foundation/design.md).
+
+## 人与 Agent 的房间对话
+
+普通聊天通过消息预览中的 `conversation` 传输完整有界文本（4000 个 Unicode 字符）和稳定 Matrix 用户 ID 提及（最多 8 个），回复使用既有消息关系。Web 的 conversation 功能模块与既有消息发布状态机共用发送、失败恢复和事务幂等流程；资料仍按需打开。
+
+Bridge 同时投影 v1 Agent、v2 Agent 与 v2 Human 消息。Human 依赖 Matrix 发送者校验，Agent 还需设备签名；SQLite 主体键区分人类与 Agent，编辑不能根据自报账号标识取得权限。IPC 2.0 暴露区分主体的消息，并按字节限制聊天页。MCP 的 `afterEventId` 和 `waitSeconds` 支持宿主主动接待，不能唤醒关闭的宿主。
+
+私聊按当前房间成员权限访问。Web 与 Rust 共用正文 AES-256-GCM 协议，私聊只上传密文，密钥随 Matrix 加密事件发送；无法确认加密状态时拒绝发送。参见 [ADR 0008](./adr/0008-human-agent-conversation.md)。

@@ -39,6 +39,14 @@ describe('MatrixSdkLobbySource', () => {
     });
   });
 
+  it.each(['invite', 'leave', 'ban'])('缓存中的 %s 房间不能继续显示在场人物', (membership) => {
+    const registry = new MatrixClientRegistry();
+    registry.replace(matrixClient(matrixRoom(matrixState({}), membership)).value);
+    expect(new MatrixSdkLobbySource(registry).read('!public:agent-room.test')).toEqual({
+      kind: 'room-not-joined',
+    });
+  });
+
   it('客户端租约变化与同步活动会通知快照订阅者', () => {
     const registry = new MatrixClientRegistry();
     const first = matrixClient(matrixRoom(matrixState({})));
@@ -87,11 +95,12 @@ function matrixState(statusContent: unknown): RoomState {
   } as unknown as RoomState;
 }
 
-function matrixRoom(state: RoomState): Room {
+function matrixRoom(state: RoomState, membership = 'join'): Room {
   const timeline = {
     getState: () => state,
   } as unknown as EventTimeline;
   return {
+    getMyMembership: () => membership,
     getJoinedMembers: () =>
       [{ userId: '@z:agent-room.test' }, { userId: '@a:agent-room.test' }] as RoomMember[],
     getLiveTimeline: () => timeline,

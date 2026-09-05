@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Dura
 
 use agent_room_application::ports::Clock;
 use agent_room_bridge_core::ipc::{
-    FoundationIpcScopePolicy, IpcHandshakeAgreement, IpcHandshakeFailureKind,
+    FoundationIpcScopePolicy, IpcCallerKind, IpcHandshakeAgreement, IpcHandshakeFailureKind,
     IpcHandshakeNegotiator, IpcInstallationId, IpcProtocolVersion,
 };
 use agent_room_bridge_core::messages::{MessageTimelineQueryRepository, OpenMessageContentService};
@@ -49,9 +49,12 @@ pub(crate) struct BridgeStatusSnapshot {
 
 pub(crate) trait BridgeStatusReader: Send + Sync {
     fn read_status(&self) -> BridgeStatusSnapshot;
+    fn failure_code(&self) -> Option<&'static str> {
+        None
+    }
 }
 
-type BridgeIpcDispatchFuture<'a> =
+pub(crate) type BridgeIpcDispatchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<IpcResponse, BridgeIpcDispatchFailure>> + Send + 'a>>;
 
 pub(crate) trait BridgeIpcRequestHandler: Send + Sync {
@@ -157,6 +160,13 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::OpenHostSession(_)
+                | IpcMethod::CloseHostSession(_)
+                | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
+                    "bridge.host_session.unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    false,
+                )),
                 IpcMethod::BridgeStatus => {
                     let status = self.status_reader.read_status();
                     Ok(IpcResponse::BridgeStatus {
@@ -247,6 +257,12 @@ pub(crate) struct BridgeIpcDispatchFailure {
 }
 
 impl BridgeIpcDispatchFailure {
+    pub(crate) const fn code(&self) -> &'static str {
+        self.code
+    }
+    pub(crate) const fn retryable(&self) -> bool {
+        self.retryable
+    }
     pub(crate) const fn new(
         code: &'static str,
         category: IpcErrorCategory,
@@ -405,7 +421,7 @@ where
     }
 
     let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
@@ -512,27 +528,13 @@ where
         };
 
         let method_name = method.name();
-        if let Err(failure) = method.validate() {
+        if let Err(failure) = authorize_method(&method, agreement) {
             send_error(
                 &mut *stream,
                 Some(correlation_id),
-                failure.code(),
-                IpcErrorCategory::Validation,
-                false,
-            )
-            .await?;
-            continue;
-        }
-        if !agreement
-            .granted_scopes()
-            .contains(&method.required_scope())
-        {
-            send_error(
-                &mut *stream,
-                Some(correlation_id),
-                "bridge.ipc.scope_denied",
-                IpcErrorCategory::Authorization,
-                false,
+                failure.code,
+                failure.category,
+                failure.retryable,
             )
             .await?;
             continue;
@@ -575,6 +577,41 @@ where
             }
         }
     }
+}
+
+fn authorize_method(
+    method: &IpcMethod,
+    agreement: &IpcHandshakeAgreement,
+) -> Result<(), BridgeIpcDispatchFailure> {
+    if agreement.caller() == IpcCallerKind::McpServer
+        && !matches!(
+            method,
+            IpcMethod::BridgeStatus
+                | IpcMethod::OpenHostSession(_)
+                | IpcMethod::CloseHostSession(_)
+                | IpcMethod::WithSession { .. }
+        )
+    {
+        return Err(BridgeIpcDispatchFailure::new(
+            "bridge.host_session.required",
+            IpcErrorCategory::Validation,
+            false,
+        ));
+    }
+    method.validate().map_err(|failure| {
+        BridgeIpcDispatchFailure::new(failure.code(), IpcErrorCategory::Validation, false)
+    })?;
+    if !agreement
+        .granted_scopes()
+        .contains(&method.required_scope())
+    {
+        return Err(BridgeIpcDispatchFailure::new(
+            "bridge.ipc.scope_denied",
+            IpcErrorCategory::Authorization,
+            false,
+        ));
+    }
+    Ok(())
 }
 
 fn random_challenge() -> BridgeIpcResult<IpcChallenge> {
@@ -855,7 +892,7 @@ mod tests {
         agent_runtime::{
             AgentHandoffDeliveryRuntime, AgentHandoffRuntime, AgentTargetedHandoffRuntime,
         },
-        handle_connection,
+        authorize_method, handle_connection,
     };
 
     struct 固定状态;
@@ -1347,6 +1384,7 @@ mod tests {
         let page = handler
             .dispatch(IpcMethod::ListPreviews(
                 agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    after_event_id: None,
                     room_id: None,
                     before_event_id: None,
                     limit: 20,
@@ -1364,6 +1402,40 @@ mod tests {
         let queries = previews.0.lock().expect("查询记录锁可用");
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].room_id(), &room_id);
+    }
+
+    struct 永久失败状态;
+
+    impl BridgeStatusReader for 永久失败状态 {
+        fn read_status(&self) -> BridgeStatusSnapshot {
+            BridgeStatusSnapshot {
+                state: agent_room_bridge_ipc::IpcBridgeState::Offline,
+                started_at_unix_ms: 1_000,
+            }
+        }
+        fn failure_code(&self) -> Option<&'static str> {
+            Some("bridge.agent_registration_rejected")
+        }
+    }
+
+    #[tokio::test]
+    async fn 永久失败保留原始错误并拒绝残留人物快照() {
+        let previews = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            Arc::new(永久失败状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                测试_agent_身份(),
+                "DEVICE-1",
+                MatrixRoomId::new("!lobby:matrix.test").unwrap(),
+                ["self.read"],
+            ))),
+            previews.clone(),
+            空正文服务(previews),
+            Arc::new(固定时钟),
+        );
+        let failure = handler.dispatch(IpcMethod::GetSelf).await.unwrap_err();
+        assert_eq!(failure.code(), "bridge.agent_registration_rejected");
+        assert!(!failure.retryable());
     }
 
     #[tokio::test]
@@ -1528,6 +1600,7 @@ mod tests {
 
         let response = handler
             .dispatch(IpcMethod::OpenContent(IpcOpenContentRequest {
+                room_id: None,
                 content_id: content_id.to_string(),
             }))
             .await
@@ -1588,6 +1661,8 @@ mod tests {
         );
         let submission_id = Uuid::now_v7().to_string();
         let request = IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
             submission_id: Some(submission_id.clone()),
             automation_grant_id: Some(测试自动授权标识().to_string()),
             room_id: room_id.as_str().to_owned(),
@@ -1755,7 +1830,7 @@ mod tests {
                 if handoff.handoff_id == handoff_id.to_string()
                     && handoff.body == "正文"
                     && handoff.source_event_id == "$message:matrix.test"
-                    && handoff.source_actor.agent.display_name == "Codex Agent"
+                    && matches!(&handoff.source_actor, agent_room_bridge_ipc::IpcActorSummary::Agent { agent, .. } if agent.display_name == "Codex Agent")
                     && handoff.purpose == "summarize"
                     && handoff.risk_flags == ["external_link"]
         ));
@@ -1934,7 +2009,7 @@ mod tests {
         source: &ProjectedMessagePreview,
         target_instance_id: AgentInstanceId,
     ) -> ContextHandoff {
-        let actor = source.actor.identity();
+        let actor = source.actor.agent_identity().expect("测试来源为 Agent");
         let mut handoff = ContextHandoff::propose(ContextHandoffFields {
             id: HandoffId::from_uuid(Uuid::now_v7()),
             requester_agent_id: 测试_agent_身份().agent_id(),
@@ -2041,7 +2116,7 @@ mod tests {
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DiagnosticCli,
-            [IpcProtocolVersion::V1_0],
+            [IpcProtocolVersion::V3_0],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试提议有效");
@@ -2050,7 +2125,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::DiagnosticCli,
-                supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
+                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
@@ -2058,7 +2133,7 @@ mod tests {
         .expect("客户端问候可发送");
         let (challenge_id, challenge) = read_challenge(&mut client).await;
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
                 .expect("测试协商器有效")
                 .negotiate(&offer)
                 .expect("测试提议可协商");
@@ -2118,6 +2193,67 @@ mod tests {
             .expect("客户端正常断开");
     }
 
+    #[test]
+    fn 已认证的_mcp_调用仍必须携带会话且不能借包装扩大权限() {
+        let offer = IpcHandshakeOffer::new(
+            IpcCallerKind::McpServer,
+            [IpcProtocolVersion::V3_0],
+            [IpcScope::SelfRead],
+        )
+        .unwrap();
+        let agreement =
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+                .unwrap();
+        assert_eq!(
+            authorize_method(&IpcMethod::GetSelf, &agreement)
+                .unwrap_err()
+                .code(),
+            "bridge.host_session.required"
+        );
+        let session_id = Uuid::now_v7().to_string();
+        assert!(
+            authorize_method(
+                &IpcMethod::WithSession {
+                    session_id: session_id.clone(),
+                    method: Box::new(IpcMethod::GetSelf)
+                },
+                &agreement
+            )
+            .is_ok()
+        );
+        let forbidden = IpcMethod::WithSession {
+            session_id,
+            method: Box::new(IpcMethod::OpenContent(IpcOpenContentRequest {
+                room_id: None,
+                content_id: Uuid::now_v7().to_string(),
+            })),
+        };
+        assert_eq!(
+            authorize_method(&forbidden, &agreement)
+                .unwrap_err()
+                .category,
+            IpcErrorCategory::Authorization
+        );
+    }
+
+    #[test]
+    fn 桌面读取默认人物的既有调用仍由桌面权限约束() {
+        let offer = IpcHandshakeOffer::new(
+            IpcCallerKind::DesktopShell,
+            [IpcProtocolVersion::V3_0],
+            [IpcScope::SelfRead],
+        )
+        .unwrap();
+        let agreement =
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+                .unwrap();
+        assert!(authorize_method(&IpcMethod::GetSelf, &agreement).is_ok());
+    }
+
     async fn assert_get_self_scope_denied<S>(client: &mut S)
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -2158,7 +2294,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::McpServer,
-                supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
+                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )

@@ -3,8 +3,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { graphicsSample, installGraphicsProbe } from './support/graphics-probe';
+import {
+  createSceneInteractionProbe,
+  type SceneInteractionSample,
+} from './support/scene-interaction-probe';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?agents=200';
 
 test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async ({ page }) => {
   const failures = collectPageFailures(page);
@@ -13,7 +18,7 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
 
   const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
   await expect(scene.locator('canvas')).toBeVisible();
-  await expect(page.locator('.room-beacon')).toContainText('200 agents');
+  await expect(page.locator('.workspace-header')).toContainText('200 agents');
   await expect(scene.getByRole('option')).toHaveCount(200);
 
   await scene.focus();
@@ -41,6 +46,7 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
 });
 
 test('200 节点场景交互保持在有界帧预算内', async ({ page }, testInfo) => {
+  await installGraphicsProbe(page);
   const developerTools = await page.context().newCDPSession(page);
   await developerTools.send('Performance.enable');
   await page.setViewportSize({ height: 900, width: 1_440 });
@@ -49,76 +55,30 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   await expect(canvas).toBeVisible();
 
   const sceneHost = page.locator('.lobby-scene__pixi');
-  const interactionSamples: {
-    readonly renderMilliseconds: number;
-    readonly scheduleMilliseconds: number;
-    readonly updateMilliseconds: number;
-  }[] = [];
+  const interactionSamples: SceneInteractionSample[] = [];
   await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
   await canvas.hover();
-  for (let index = 0; index < 72; index += 1) {
-    const previousSequence = await canvas.evaluate((element) => {
-      const host = element.closest<HTMLElement>('.lobby-scene__pixi');
-      if (host === null) {
-        throw new Error('大厅场景缺少性能遥测宿主。');
-      }
-      const sequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-      if (!Number.isFinite(sequence)) {
-        throw new Error('大厅渲染序列无效。');
-      }
-      delete host.dataset.agentRoomTestRenderCompletedAt;
-      delete host.dataset.agentRoomTestWheelStartedAt;
-      const observer = new MutationObserver(() => {
-        const nextSequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-        if (Number.isFinite(nextSequence) && nextSequence > sequence) {
-          host.dataset.agentRoomTestRenderCompletedAt = String(performance.now());
-          observer.disconnect();
-        }
+  const graphicsBefore = await graphicsSample(page);
+  const interactionProbe = await createSceneInteractionProbe(page);
+  try {
+    for (let index = 0; index < 72; index += 1) {
+      const [sample] = await Promise.all([
+        interactionProbe.evaluate((probe, wheelIndex) => probe.waitForSample(wheelIndex), index),
+        page.mouse.wheel(0, index % 12 < 6 ? -5 : 5),
+      ]);
+      expect(sample.wheelIndex).toBe(index);
+      interactionSamples.push(sample);
+    }
+  } finally {
+    try {
+      await interactionProbe.evaluate((probe) => {
+        probe.dispose();
       });
-      observer.observe(host, {
-        attributeFilter: ['data-agent-room-render-sequence'],
-        attributes: true,
-      });
-      element.addEventListener(
-        'wheel',
-        () => {
-          host.dataset.agentRoomTestWheelStartedAt = String(performance.now());
-        },
-        { capture: true, once: true },
-      );
-      return sequence;
-    });
-    await page.mouse.wheel(0, index % 12 < 6 ? -5 : 5);
-    await page.waitForFunction(
-      (sequence) => {
-        const host = document.querySelector<HTMLElement>('.lobby-scene__pixi');
-        return (
-          host?.dataset.agentRoomTestRenderCompletedAt !== undefined &&
-          Number(host.dataset.agentRoomRenderSequence ?? Number.NaN) > sequence
-        );
-      },
-      previousSequence,
-      { polling: 'raf', timeout: 1_000 },
-    );
-    interactionSamples.push(
-      await sceneHost.evaluate((host) => {
-        const completedAt = Number(host.dataset.agentRoomTestRenderCompletedAt ?? Number.NaN);
-        const startedAt = Number(host.dataset.agentRoomTestWheelStartedAt ?? Number.NaN);
-        const renderMilliseconds = Number(host.dataset.agentRoomRenderMilliseconds ?? Number.NaN);
-        const updateMilliseconds = Number(host.dataset.agentRoomUpdateMilliseconds ?? Number.NaN);
-        if (
-          ![completedAt, renderMilliseconds, startedAt, updateMilliseconds].every(Number.isFinite)
-        ) {
-          throw new Error('大厅交互没有产生完整的性能遥测。');
-        }
-        return {
-          renderMilliseconds,
-          scheduleMilliseconds: completedAt - startedAt,
-          updateMilliseconds,
-        };
-      }),
-    );
+    } finally {
+      await interactionProbe.dispose();
+    }
   }
+  expect(interactionSamples).toHaveLength(72);
   interactionSamples.splice(0, 6);
 
   const renderDurations = interactionSamples
@@ -137,6 +97,13 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   const updateMedian = percentile(updateDurations, 0.5);
   const updateP95 = percentile(updateDurations, 0.95);
   const runtimeBudget = await collectRuntimeBudget(page, developerTools);
+  const graphicsAfter = await graphicsSample(page);
+  const graphicsDrawCallsPerFrame =
+    (graphicsAfter.drawCalls - graphicsBefore.drawCalls) /
+    (graphicsAfter.frames - graphicsBefore.frames);
+  const graphicsTrianglesPerFrame =
+    (graphicsAfter.triangles - graphicsBefore.triangles) /
+    (graphicsAfter.frames - graphicsBefore.frames);
   await testInfo.attach('frame-budget.json', {
     body: Buffer.from(
       JSON.stringify({
@@ -146,6 +113,8 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
         scheduleP95Milliseconds: scheduleP95,
         updateMedianMilliseconds: updateMedian,
         updateP95Milliseconds: updateP95,
+        graphicsDrawCallsPerFrame,
+        graphicsTrianglesPerFrame,
         ...runtimeBudget,
       }),
     ),
@@ -157,6 +126,10 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   });
   expect(updateMedian).toBeLessThanOrEqual(22);
   expect(updateP95).toBeLessThanOrEqual(40);
+  expect(graphicsDrawCallsPerFrame).toBeGreaterThan(0);
+  expect(graphicsDrawCallsPerFrame).toBeLessThanOrEqual(128);
+  expect(graphicsTrianglesPerFrame).toBeGreaterThan(0);
+  expect(graphicsTrianglesPerFrame).toBeLessThanOrEqual(20_000);
   if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
     expect(scheduleMedian).toBeLessThanOrEqual(22);
     expect(scheduleP95).toBeLessThanOrEqual(40);
@@ -177,18 +150,26 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
     renderP95Milliseconds: renderP95,
     updateMedianMilliseconds: updateMedian,
     updateP95Milliseconds: updateP95,
+    graphicsDrawCallsPerFrame,
+    graphicsTrianglesPerFrame,
     ...runtimeBudget,
   });
 });
 
-test('手机默认使用完整列表且 reduced-motion 不保留持续动画', async ({ page }) => {
+test('手机保留游戏房间，减少动画可暂停角色并手动切换列表', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect(page.locator('.lobby-scene__pixi')).toHaveAttribute(
+    'data-agent-room-motion',
+    'paused',
+  );
+  await page.getByRole('button', { name: 'List view', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Agent roster' })).toBeVisible();
-  await expect(page.locator('.signal-dock')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Spatial view' })).toBeEnabled();
   await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect(page.locator('.ar-status-mark--pulse')).toHaveCount(0);
@@ -230,15 +211,61 @@ test('WebGL 不可用时自动降级为可交互 SVG 空间视图', async ({ pag
   expect(failures).toEqual([]);
 });
 
+test('首帧图形绘制失败时释放画布并降级为可交互 SVG', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.addInitScript(() => {
+    const state = { failures: 0 };
+    Object.defineProperty(window, '__agentRoomFirstFrameFailure', { value: state });
+    for (const context of [WebGLRenderingContext, WebGL2RenderingContext]) {
+      const draw: unknown = Reflect.get(context.prototype, 'drawElements');
+      if (typeof draw !== 'function') throw new Error('图形上下文缺少绘制方法。');
+      context.prototype.drawElements = function (
+        this: WebGLRenderingContext | WebGL2RenderingContext,
+        ...parameters: Parameters<WebGLRenderingContext['drawElements']>
+      ): void {
+        // 上下文已成功初始化并挂载后才注入，确保覆盖首帧而非 WebGL 不可用分支。
+        if (
+          this.canvas instanceof HTMLCanvasElement &&
+          this.canvas.classList.contains('lobby-scene__canvas')
+        ) {
+          state.failures += 1;
+          throw new Error('测试注入：首帧图形提交失败。');
+        }
+        Reflect.apply(draw, this, parameters);
+      };
+    }
+  });
+  await page.goto(fixturePath);
+  await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
+  await expect(page.locator('.lobby-scene__canvas')).toHaveCount(0);
+  const failureCount = await page.evaluate(() => {
+    const fixture = window as Window & {
+      readonly __agentRoomFirstFrameFailure?: { readonly failures: number };
+    };
+    return fixture.__agentRoomFirstFrameFailure?.failures ?? 0;
+  });
+  expect(failureCount).toBeGreaterThan(0);
+  const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
+  await expect(scene.getByRole('option')).toHaveCount(200);
+  await scene.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary')).toBeVisible();
+  await page.getByRole('button', { name: 'Close Agent details' }).click();
+  await expect(scene).toBeFocused();
+  expect(failures).toEqual([]);
+});
+
 test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
+  await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
   await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
   const conversation = page.locator('.direct-conversation');
   await expect(conversation).toBeVisible();
   await expect(conversation.getByRole('heading', { name: 'Build Agent 002' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
   await expect(
     conversation.locator('.message-signal__title').filter({ hasText: 'Protocol review ready' }),
   ).toBeVisible();
@@ -258,9 +285,9 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await page.getByRole('button', { name: 'Close message details' }).click();
 
   await conversation.getByRole('button', { name: 'Block' }).click();
-  await expect(conversation.getByText('You blocked this Agent')).toBeVisible();
+  await expect(conversation.locator('.workspace-direct-policy')).toBeVisible();
   await conversation.getByRole('button', { name: 'Unblock' }).click();
-  await expect(conversation.getByText('Delivery allowed')).toBeVisible();
+  await expect(conversation.locator('.workspace-direct-policy')).toHaveCount(0);
   await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
   await expect(conversation).toHaveCount(0);
 
@@ -271,9 +298,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await expect(
     page.locator('.direct-conversation').getByRole('heading', { name: 'Build Agent 001' }),
   ).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Open conversation with Build Agent 001' }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to the room', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 

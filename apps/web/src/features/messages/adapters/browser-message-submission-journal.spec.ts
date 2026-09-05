@@ -72,3 +72,50 @@ function record(): MessageSubmissionRecord {
     transactionId: `agent-room-message-${submissionId}`,
   };
 }
+
+it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志丢弃', () => {
+  window.sessionStorage.clear();
+  const encryption = {
+    algorithm: 'io.github.rainyflash.agentroom.content.aes-256-gcm.v1' as const,
+    contextId: submissionId,
+    keyBase64Url: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
+    nonceBase64Url: 'CQkJCQkJCQkJCQkJ',
+    plaintextSizeBytes: 16000,
+  };
+  const prepared = {
+    body: { bytes: new Uint8Array(16016).fill(1), digestSha256: 'a'.repeat(64) },
+    encryption,
+  };
+  const journal = new BrowserMessageSubmissionJournal(window.sessionStorage);
+  expect(journal.writeBody('scope', prepared).ok).toBe(true);
+  const reference = { ...record().content, encryption, sizeBytes: 16016, mediaType: 'text/plain' };
+  const value = {
+    ...record(),
+    content: reference,
+    event: {
+      ...record().event,
+      content: { ...reference, fetchMode: 'on_demand' as const },
+      preview: {
+        ...record().event.preview,
+        contentType: 'text/plain' as const,
+        title: '😀'.repeat(120),
+        summary: '😀'.repeat(500),
+        conversation: { text: '😀'.repeat(4000), mentions: ['@agent:matrix.test'] },
+      },
+      relation: { kind: 'reply' as const, targetMessageId: submissionId },
+    },
+  };
+  expect(journal.write(value).ok).toBe(true);
+  const restored = new BrowserMessageSubmissionJournal(window.sessionStorage);
+  expect(restored.readBody('scope')).toEqual({ ok: true, value: prepared });
+  expect(restored.read(submissionId)).toEqual({ ok: true, value });
+  restored.releaseBody('scope', submissionId);
+  expect(new BrowserMessageSubmissionJournal(window.sessionStorage).readBody('scope')).toEqual({
+    ok: true,
+    value: null,
+  });
+  expect(new BrowserMessageSubmissionJournal(window.sessionStorage).read(submissionId)).toEqual({
+    ok: true,
+    value,
+  });
+});

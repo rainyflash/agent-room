@@ -3,6 +3,8 @@ import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
+import { characterBodyArt } from '@/features/lobby/scene/character-art';
+import { SceneShapes } from '@/features/lobby/scene/svg/scene-shapes';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 
 const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
@@ -62,33 +64,44 @@ export function AgentInspector({
           <X aria-hidden="true" />
         </button>
       </header>
+      <div className="agent-inspector__portrait" aria-hidden="true">
+        <svg viewBox="-45 -78 90 90">
+          <ellipse cx="0" cy="2" rx="25" ry="8" fill="#c6d4b9" />
+          <rect x="-11" y="-17" width="9" height="20" rx="3" fill="#47564e" />
+          <rect x="2" y="-17" width="9" height="20" rx="3" fill="#47564e" />
+          <SceneShapes shapes={characterBodyArt(agent.agentId)} />
+        </svg>
+      </div>
       <div className="agent-inspector__status">
         <StatusMark label={t(`lobby.status.${agent.status}`)} tone={STATUS_TONE[agent.status]} />
         <strong>{t(`lobby.status.${agent.status}`)}</strong>
         <span>{t('lobby.inspector.until', { time: expiry })}</span>
       </div>
-      <dl className="agent-inspector__facts">
-        <div>
-          <dt>{t('lobby.inspector.matrixIdentity')}</dt>
-          <dd>{agent.matrixUserId}</dd>
-        </div>
-        <div>
-          <dt>{t('lobby.inspector.trust')}</dt>
-          <dd>{t(`lobby.trust.${agent.trust}`)}</dd>
-        </div>
-        <div>
-          <dt>{t('lobby.inspector.visibility')}</dt>
-          <dd>{t(`lobby.visibility.${agent.visibility}`)}</dd>
-        </div>
-        <div>
-          <dt>{t('lobby.inspector.instances')}</dt>
-          <dd>{agent.instanceIds.length}</dd>
-        </div>
-      </dl>
       <section className="agent-inspector__summary">
         <h3>{t('lobby.inspector.summary')}</h3>
         <p>{agent.summary ?? t('lobby.inspector.noSummary')}</p>
       </section>
+      <details className="agent-inspector__identity">
+        <summary>{t('roomGame.identityDetails')}</summary>
+        <dl className="agent-inspector__facts">
+          <div>
+            <dt>{t('lobby.inspector.matrixIdentity')}</dt>
+            <dd>{agent.matrixUserId}</dd>
+          </div>
+          <div>
+            <dt>{t('lobby.inspector.trust')}</dt>
+            <dd>{t(`lobby.trust.${agent.trust}`)}</dd>
+          </div>
+          <div>
+            <dt>{t('lobby.inspector.visibility')}</dt>
+            <dd>{t(`lobby.visibility.${agent.visibility}`)}</dd>
+          </div>
+          <div>
+            <dt>{t('lobby.inspector.instances')}</dt>
+            <dd>{agent.instanceIds.length}</dd>
+          </div>
+        </dl>
+      </details>
       {onMessage === undefined && onBlock === undefined ? null : (
         <div className="agent-inspector__actions">
           {onMessage === undefined ? null : (

@@ -1,3 +1,4 @@
+import { useOverlayContainer } from '@/shared/ui/overlay-container';
 import { Button } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -56,6 +57,7 @@ export function PrivateRoomHub({
   principal,
 }: PrivateRoomHubProps) {
   const { t } = useTranslation();
+  const overlayContainer = useOverlayContainer();
   const { privateRoomMatrix, privateRooms } = useAppServices();
   const queryClient = useQueryClient();
   const list = usePrivateRoomList(privateRooms);
@@ -247,7 +249,7 @@ export function PrivateRoomHub({
             </motion.div>
           ) : null}
         </AnimatePresence>,
-        document.body,
+        overlayContainer,
       )}
     </>
   );

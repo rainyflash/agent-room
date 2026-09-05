@@ -12,6 +12,7 @@ import type { MessageContentReference } from '@/features/messages/domain/message
 import { err, type Result } from '@/shared/result';
 
 export type ContentInspectionRequest = {
+  readonly roomId?: string;
   readonly matrixEventId: string;
   readonly messageId: string;
   readonly reference: MessageContentReference;
@@ -69,7 +70,11 @@ export function createContentInspectionMachine(dependencies: ContentInspectionDe
   >(async ({ input }) => {
     return input.request === null || input.downloaded === null
       ? err(unexpectedFailure)
-      : await dependencies.verifier.verify(input.downloaded, input.request.reference);
+      : await dependencies.verifier.verify(
+          input.downloaded,
+          input.request.reference,
+          input.request.roomId,
+        );
   });
 
   return setup({
