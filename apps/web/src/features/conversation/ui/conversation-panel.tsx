@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUpRight, MessageCircle, Radio, UsersRound } from 'lucide-react';
+import { ArrowDown, Radio, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -121,28 +121,8 @@ export function ConversationPanel({
               animate={{ opacity: 1, y: 0 }}
               transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             >
-              <div className="conversation-panel__empty-icon">
-                <MessageCircle aria-hidden="true" />
-              </div>
-              <p className="conversation-panel__eyebrow">{t('conversation.emptyEyebrow')}</p>
               <h3>{t('conversation.emptyTitle')}</h3>
               <p>{t('conversation.empty')}</p>
-              <div className="conversation-panel__starters">
-                {(['introduce', 'idea'] as const).map((starter) => (
-                  <button
-                    type="button"
-                    key={starter}
-                    disabled={!canEdit}
-                    onClick={() => {
-                      composer.changeText(t(`conversation.starter.${starter}`));
-                      input.current?.focus();
-                    }}
-                  >
-                    {t(`conversation.starter.${starter}`)}
-                    <ArrowUpRight aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
             </motion.div>
           ) : null}
           {timeline.map((message, index) => {

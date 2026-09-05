@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
-import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 
 export function WorkspaceNavigation({
@@ -70,7 +69,6 @@ export function WorkspaceNavigation({
           </details>
         )}
         <LanguageControl />
-        <DesktopRuntimeSurface placement="workspace" />
         <a className="workspace-navigation__account" href="/workspace">
           <span>
             <UserRound aria-hidden="true" />

@@ -6,6 +6,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto('/e2e/fixtures/lobby-scene.html');
+    await page.getByRole('button', { name: 'Room chat', exact: true }).click();
     const panel = page.getByRole('region', { name: 'Conversation', exact: true });
     await expect(panel).toBeVisible();
     const input = panel.getByRole('textbox', { name: 'Message', exact: true });
@@ -38,8 +39,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/e2e/fixtures/lobby-scene.html');
-    if (width === 390)
-      await page.getByRole('button', { name: 'Open conversations', exact: true }).click();
+    await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
     await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
     const direct = page.locator('.direct-conversation');
     const input = direct.getByRole('textbox', { name: 'Message', exact: true });

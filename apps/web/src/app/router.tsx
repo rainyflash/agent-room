@@ -18,6 +18,7 @@ import {
   lobbySearchWithDirectSession,
   lobbySearchWithMessage,
   lobbySearchWithView,
+  lobbySearchWithRoomPanel,
   normalizeConnectSearch,
   normalizeLobbySearch,
   normalizeWorkspaceSearch,
@@ -185,7 +186,10 @@ function LobbyInstanceBoundary() {
             search: (previous) => lobbySearchWithMessage(previous, messageId),
           });
         }}
-        view={search.view ?? 'conversation'}
+        view={search.view ?? 'space'}
+        onOpenRoomPanel={(view) => {
+          void navigate({ search: (previous) => lobbySearchWithRoomPanel(previous, view) });
+        }}
         onViewChange={(view) => {
           void navigate({ search: (previous) => lobbySearchWithView(previous, view) });
         }}

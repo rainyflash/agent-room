@@ -23,7 +23,7 @@ import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-confi
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 
 export type DesktopRuntimeSurfaceProps = {
-  readonly placement?: 'action-rail-safe' | 'viewport' | 'workspace';
+  readonly placement?: 'action-rail-safe' | 'viewport' | 'game';
 };
 
 export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntimeSurfaceProps) {

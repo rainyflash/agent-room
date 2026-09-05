@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html?view=space';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?agents=200';
 
 test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async ({ page }) => {
   const failures = collectPageFailures(page);
@@ -181,14 +181,20 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   });
 });
 
-test('手机空间视图使用完整列表且 reduced-motion 不保留持续动画', async ({ page }) => {
+test('手机保留游戏房间，减少动画可暂停角色并手动切换列表', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect(page.locator('.lobby-scene__pixi')).toHaveAttribute(
+    'data-agent-room-motion',
+    'paused',
+  );
+  await page.getByRole('button', { name: 'List view', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Agent roster' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Spatial view' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Spatial view' })).toBeEnabled();
   await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect(page.locator('.ar-status-mark--pulse')).toHaveCount(0);
@@ -235,6 +241,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
+  await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
   await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
   const conversation = page.locator('.direct-conversation');
   await expect(conversation).toBeVisible();
@@ -265,7 +272,6 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
   await expect(conversation).toHaveCount(0);
 
-  await page.getByRole('tab', { name: 'Space', exact: true }).click();
   await page.getByRole('button', { name: 'List view' }).click();
   await page.getByRole('button', { name: /Build Agent 001/u }).click();
   await page.getByRole('button', { name: 'Message Agent' }).click();
@@ -273,9 +279,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await expect(
     page.locator('.direct-conversation').getByRole('heading', { name: 'Build Agent 001' }),
   ).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Open conversation with Build Agent 001' }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to the room', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 

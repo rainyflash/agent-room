@@ -34,7 +34,7 @@ test('资料视图内可通过用户 Matrix 会话分享带摘要的资料', asy
   expect(failures).toEqual([]);
 });
 
-test('窄屏发送器占满可用宽度且保留底部安全区', async ({ page }) => {
+test('窄屏资料发送器填满浮层且保留房间与可操作入口', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
@@ -45,10 +45,17 @@ test('窄屏发送器占满可用宽度且保留底部安全区', async ({ page 
   await expect(composer).toBeVisible();
   await expect(page.locator('.message-dock')).toBeHidden();
   const composerBox = await composer.boundingBox();
-  expect(composerBox).not.toBeNull();
-  expect(composerBox?.x).toBe(0);
-  expect(composerBox?.width).toBe(390);
-  expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeLessThanOrEqual(844);
+  const panelBox = await page.locator('.room-panel__content').boundingBox();
+  if (composerBox === null || panelBox === null) throw new Error('资料面板未显示');
+  expect(composerBox.x).toBeCloseTo(panelBox.x);
+  expect(composerBox.width).toBeCloseTo(panelBox.width);
+  expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(844 - 76);
+  await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
+  await page.getByLabel('Preview title').fill('Room notes');
+  await page.getByLabel('Preview summary').fill('Notes shared from the room.');
+  await page.getByLabel('Full content').fill('These notes are available when you open them.');
+  await composer.getByRole('button', { name: 'Share resource', exact: true }).click();
+  await expect(composer).toContainText('Resource shared');
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });

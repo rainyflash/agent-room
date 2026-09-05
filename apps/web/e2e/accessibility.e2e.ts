@@ -56,6 +56,7 @@ test('等效 200% 放大视口下无 Canvas 也能完成核心任务', async ({ 
   // 1280 CSS 像素宽窗口在 200% 放大后的可用布局宽度等效为 640 CSS 像素。
   await page.setViewportSize({ height: 720, width: 640 });
   await page.goto(fixturePath);
+  await page.getByRole('button', { name: 'List view', exact: true }).click();
 
   await expect(page.locator('canvas')).toHaveCount(0);
   const firstAgent = page.getByRole('button', { name: /Build Agent 001/u });

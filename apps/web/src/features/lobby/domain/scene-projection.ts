@@ -1,3 +1,4 @@
+import { nearbyWalkableFloor, projectFloorPoint, type FloorPoint } from './room-floor';
 import type { LobbyAgent, LobbyAgentStatus, LobbyRoom } from './lobby';
 
 export const lobbyZoneIds = ['active', 'attention', 'available'] as const;
@@ -23,6 +24,7 @@ export type LobbyZoneProjection = LobbyBounds & {
 
 export type LobbyAgentNodeProjection = LobbyAgent & {
   readonly radius: number;
+  readonly floorPosition?: FloorPoint;
   readonly x: number;
   readonly y: number;
   readonly zoneId: LobbyZoneId;
@@ -46,9 +48,9 @@ export type LobbyViewport = LobbyBounds & {
 const WORLD: LobbyWorld = Object.freeze({ height: 1_500, width: 2_600 });
 
 const ZONES: Readonly<Record<LobbyZoneId, LobbyZoneProjection>> = Object.freeze({
-  active: Object.freeze({ height: 800, id: 'active', width: 1_500, x: 80, y: 120 }),
-  attention: Object.freeze({ height: 800, id: 'attention', width: 880, x: 1_640, y: 120 }),
-  available: Object.freeze({ height: 400, id: 'available', width: 1_720, x: 400, y: 980 }),
+  active: Object.freeze({ height: 520, id: 'active', width: 970, x: 100, y: 110 }),
+  attention: Object.freeze({ height: 640, id: 'attention', width: 460, x: 1130, y: 180 }),
+  available: Object.freeze({ height: 270, id: 'available', width: 970, x: 130, y: 670 }),
 });
 
 const ZONE_BY_STATUS: Readonly<Record<LobbyAgentStatus, LobbyZoneId>> = Object.freeze({
@@ -68,7 +70,11 @@ export function projectLobbyScene(
     const agents = room.agents
       .filter((agent) => ZONE_BY_STATUS[agent.status] === zoneId)
       .toSorted(compareAgents);
-    return layoutZone(agents, ZONES[zoneId]);
+    return layoutZone(
+      agents,
+      ZONES[zoneId],
+      clamp(40 - Math.sqrt(room.agents.length) * 1.25, 20, 34),
+    );
   });
   const selected = nodes.some((node) => node.agentId === selectedAgentId) ? selectedAgentId : null;
   return Object.freeze({
@@ -109,6 +115,7 @@ export function sceneDetailForZoom(zoom: number): LobbySceneDetail {
 function layoutZone(
   agents: readonly LobbyAgent[],
   zone: LobbyZoneProjection,
+  radius: number,
 ): LobbyAgentNodeProjection[] {
   if (agents.length === 0) {
     return [];
@@ -124,7 +131,6 @@ function layoutZone(
   const rows = Math.ceil(agents.length / columns);
   const cellWidth = contentBounds.width / columns;
   const cellHeight = contentBounds.height / rows;
-  const radius = clamp(Math.min(cellWidth, cellHeight) * 0.24, 18, 34);
   const jitterLimit = Math.min(cellWidth, cellHeight) * 0.08;
 
   return agents.map((agent, index) => {
@@ -133,11 +139,15 @@ function layoutZone(
     const seed = stableHash(agent.agentId);
     const jitterX = signedUnit(seed) * jitterLimit;
     const jitterY = signedUnit(mixHash(seed)) * jitterLimit;
+    const floorPosition = nearbyWalkableFloor({
+      x: contentBounds.x + (column + 0.5) * cellWidth + jitterX,
+      y: contentBounds.y + (row + 0.5) * cellHeight + jitterY,
+    });
     return Object.freeze({
       ...agent,
       radius,
-      x: contentBounds.x + (column + 0.5) * cellWidth + jitterX,
-      y: contentBounds.y + (row + 0.5) * cellHeight + jitterY,
+      floorPosition: Object.freeze(floorPosition),
+      ...projectFloorPoint(floorPosition),
       zoneId: zone.id,
     });
   });

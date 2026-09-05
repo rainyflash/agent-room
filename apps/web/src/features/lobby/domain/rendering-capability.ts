@@ -10,9 +10,6 @@ export type ListModeRequirement = 'compact' | 'constrained_device' | 'forced_col
 export function assessListModeRequirement(
   capability: LobbyRenderingCapability,
 ): ListModeRequirement {
-  if (capability.compactViewport) {
-    return 'compact';
-  }
   if (capability.forcedColors) {
     return 'forced_colors';
   }

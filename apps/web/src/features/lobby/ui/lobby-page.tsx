@@ -1,3 +1,4 @@
+import { Files, MessageCircle, UsersRound, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -11,7 +12,7 @@ import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
-import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
+import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
 import { LobbyRoomActions } from '@/features/lobby/ui/lobby-room-actions';
 import {
   LobbySpatialView,
@@ -25,6 +26,7 @@ import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
+import './lobby-game.css';
 
 export type LobbyPageProps = {
   readonly catalogId: string;
@@ -35,6 +37,7 @@ export type LobbyPageProps = {
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly onViewChange: (view: RoomWorkspaceView) => void;
+  readonly onOpenRoomPanel: (view: 'conversation' | 'resources') => void;
   readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
@@ -66,6 +69,7 @@ function ReadyLobby({
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
   onViewChange,
+  onOpenRoomPanel,
   principal,
   room,
   selectedAgentId,
@@ -76,7 +80,6 @@ function ReadyLobby({
   const { t } = useTranslation();
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
-  const members = useRef<ListModeRosterHandle>(null);
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
   const projection = useMemo(
@@ -86,6 +89,7 @@ function ReadyLobby({
   const selectedAgent =
     projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
   const activeView = selectedDirectSessionId !== null && view === 'space' ? 'conversation' : view;
+  const panelView = activeView === 'resources' ? 'resources' : 'conversation';
   useEffect(() => {
     if (selectedAgentId !== null && projection.selectedAgentId === null)
       onSelectedAgentChange(null);
@@ -104,7 +108,7 @@ function ReadyLobby({
       controller={directSessions}
       onActivateRoom={() => {
         closeDrawer();
-        onSelectedDirectSessionChange(null);
+        onViewChange('space');
       }}
       onActivateDirect={(id) => {
         closeDrawer();
@@ -126,86 +130,119 @@ function ReadyLobby({
       }
     />
   );
-  const roster = (attachRef: boolean) => (
+  const roster = (
     <div className="workspace-members">
       <ListModeRoster
         agents={room.agents}
         onSelectAgent={selectAgent}
         selectedAgentId={selectedAgentId}
         variant="compact"
-        ref={attachRef ? members : null}
       />
       <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
     </div>
   );
 
   return (
-    <main className="lobby-workspace" id="main-content" data-view={activeView}>
+    <main className="lobby-workspace lobby-game" id="main-content" data-view={activeView}>
       <p aria-atomic="true" aria-live="polite" className="sr-only">
         {t('lobby.liveSummary', { count: room.agents.length, room: room.name })}
       </p>
-      <div className="workspace-sidebar-slot">{navigation}</div>
-      <section className="workspace-body">
-        <RoomBeacon
-          agentCount={room.agents.length}
-          membersButtonRef={membersButton}
-          roomName={room.name}
-          onOpenNavigation={() => {
-            setDrawer('navigation');
+      <div className="room-scene">
+        <LobbySpatialView
+          room={room}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={selectAgent}
+          ref={spatial}
+        />
+      </div>
+      <RoomBeacon
+        agentCount={room.agents.length}
+        membersButtonRef={membersButton}
+        roomName={room.name}
+        onOpenNavigation={() => {
+          setDrawer('navigation');
+        }}
+        onOpenMembers={() => {
+          setDrawer('members');
+        }}
+        {...(room.topic === undefined ? {} : { topic: room.topic })}
+      />
+      <p className="room-scene-hint">{t('roomGame.hint')}</p>
+      <DesktopRuntimeSurface placement="game" />
+      <nav className="room-toolbelt" aria-label={t('roomGame.actions')}>
+        <button
+          type="button"
+          aria-pressed={activeView === 'conversation' && selectedDirectSessionId === null}
+          onClick={() => {
+            onOpenRoomPanel('conversation');
           }}
-          onOpenMembers={() => {
+        >
+          <MessageCircle aria-hidden="true" />
+          {t('roomGame.chat')}
+        </button>
+        <button
+          type="button"
+          aria-pressed={activeView === 'resources' && selectedDirectSessionId === null}
+          onClick={() => {
+            onOpenRoomPanel('resources');
+          }}
+        >
+          <Files aria-hidden="true" />
+          {t('roomGame.resources')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             setDrawer('members');
           }}
-          {...(room.topic === undefined ? {} : { topic: room.topic })}
-        />
-        <div className="workspace-body__layout">
-          <div className="workspace-main">
-            <WorkspaceViewTabs
-              value={activeView}
-              onChange={onViewChange}
-              allowSpace={selectedDirectSessionId === null}
+        >
+          <UsersRound aria-hidden="true" />
+          {t('roomGame.characters')}
+        </button>
+      </nav>
+      <section
+        className="room-panel"
+        hidden={activeView === 'space'}
+        aria-label={t('roomGame.panel')}
+      >
+        <header className="room-panel__header">
+          <WorkspaceViewTabs value={panelView} onChange={onViewChange} allowSpace={false} />
+          <button
+            type="button"
+            aria-label={t('roomGame.closePanel')}
+            onClick={() => {
+              onViewChange('space');
+              spatial.current?.focus();
+            }}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div
+          className="room-panel__content"
+          id="workspace-current-view"
+          role="tabpanel"
+          aria-labelledby={`workspace-tab-${panelView}`}
+        >
+          <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
+            <MessageLayer
+              participants={room.agents}
+              catalogId={catalogId}
+              onSelectedMessageChange={onSelectedMessageChange}
+              roomId={room.roomId}
+              roomName={room.name}
+              selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+              view={panelView}
             />
-            <div
-              className="workspace-main__panels"
-              id="workspace-current-view"
-              role="tabpanel"
-              aria-labelledby={`workspace-tab-${activeView}`}
-            >
-              <div
-                className="workspace-room-content"
-                hidden={selectedDirectSessionId !== null || activeView === 'space'}
-              >
-                <MessageLayer
-                  participants={room.agents}
-                  catalogId={catalogId}
-                  onSelectedMessageChange={onSelectedMessageChange}
-                  roomId={room.roomId}
-                  roomName={room.name}
-                  selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
-                  view={activeView === 'resources' ? 'resources' : 'conversation'}
-                />
-              </div>
-              {activeView === 'space' ? (
-                <LobbySpatialView
-                  room={room}
-                  selectedAgentId={selectedAgentId}
-                  onSelectAgent={selectAgent}
-                  ref={spatial}
-                />
-              ) : null}
-              <DirectConversationDock
-                activeCatalogId={selectedDirectSessionId}
-                controller={directSessions}
-                onActiveSessionChange={onSelectedDirectSessionChange}
-                onSelectedMessageChange={onSelectedMessageChange}
-                selectedMessageId={selectedMessageId}
-                view={activeView === 'resources' ? 'resources' : 'conversation'}
-              />
-            </div>
           </div>
-          {activeView === 'space' ? null : (
-            <div className="workspace-members-slot">{roster(true)}</div>
-          )}
+          <DirectConversationDock
+            activeCatalogId={selectedDirectSessionId}
+            controller={directSessions}
+            onActiveSessionChange={onSelectedDirectSessionChange}
+            onSelectedMessageChange={onSelectedMessageChange}
+            selectedMessageId={selectedMessageId}
+            view={panelView}
+          />
         </div>
       </section>
       {drawer === null ? null : (
@@ -214,7 +251,7 @@ function ReadyLobby({
           variant={drawer}
           onClose={closeDrawer}
         >
-          {drawer === 'navigation' ? navigation : roster(false)}
+          {drawer === 'navigation' ? navigation : roster}
         </WorkspaceDrawer>
       )}
       <AnimatePresence>
@@ -232,8 +269,7 @@ function ReadyLobby({
               });
             }}
             onClose={() => {
-              if (activeView === 'space') spatial.current?.focus();
-              else if (members.current?.focusSelected() !== true) membersButton.current?.focus();
+              spatial.current?.focus();
               onSelectedAgentChange(null);
             }}
             onMessage={(agentId) => {

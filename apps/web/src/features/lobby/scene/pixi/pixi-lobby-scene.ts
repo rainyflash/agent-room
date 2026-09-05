@@ -1,35 +1,31 @@
 import type { Application, Container, FederatedPointerEvent, FederatedWheelEvent } from 'pixi.js';
-
-import { createAgentNodeView } from './agent-node-view';
-import { createZoneLayer } from './zone-layer';
-import { sceneDetailForZoom, visibleLobbyNodes } from '@/features/lobby/domain/scene-projection';
-import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
+import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
+import { createRoomProps, createZoneLayer } from './zone-layer';
+import {
+  sceneDetailForZoom,
+  visibleLobbyNodes,
+  type LobbySceneDetail,
+  type LobbySceneProjection,
+} from '@/features/lobby/domain/scene-projection';
+import { characterPose } from '../character-motion';
 import type { LobbySceneHandle, LobbySceneMountOptions } from '@/features/lobby/scene/lobby-scene';
 import { ViewportController } from '@/features/lobby/scene/viewport-controller';
 
 type PixiModule = typeof import('pixi.js');
-
 type TextureAwareRenderer = {
-  readonly texture?: {
-    readonly managedTextures?: readonly unknown[];
-  };
+  readonly texture?: { readonly managedTextures?: readonly unknown[] };
 };
+type PointerPosition = { readonly x: number; readonly y: number };
 
 export async function mountPixiLobbyScene(
   options: LobbySceneMountOptions,
 ): Promise<LobbySceneHandle> {
-  if (!supportsWebGl()) {
+  const probe = document.createElement('canvas');
+  if (probe.getContext('webgl2') === null && probe.getContext('webgl') === null)
     throw new Error('当前浏览器没有可用的 WebGL 图形上下文。');
-  }
-  const pixi = await import('pixi.js');
-  const scene = new PixiLobbyScene(pixi, options);
+  const scene = new PixiLobbyScene(await import('pixi.js'), options);
   await scene.initialize();
   return scene;
-}
-
-function supportsWebGl(): boolean {
-  const probe = document.createElement('canvas');
-  return probe.getContext('webgl2') !== null || probe.getContext('webgl') !== null;
 }
 
 class PixiLobbyScene implements LobbySceneHandle {
@@ -38,11 +34,20 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #host: HTMLElement;
   readonly #labels: LobbySceneMountOptions['labels'];
   readonly #pixi: PixiModule;
+  readonly #views = new Map<
+    string,
+    { readonly view: AgentCharacterView; readonly signature: string }
+  >();
+  readonly #pointers = new Map<number, PointerPosition>();
+  readonly #motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   #app: Application | null = null;
   #destroyed = false;
-  #dragOrigin: { readonly pointerX: number; readonly pointerY: number } | null = null;
+  #gestureMoved = false;
   #frame: number | null = null;
-  #nodesLayer: Container | null = null;
+  #animationFrame: number | null = null;
+  #elapsedSeconds = 0;
+  #lastAnimationAt = 0;
+  #objectsLayer: Container | null = null;
   #projection: LobbySceneProjection;
   #resizeObserver: ResizeObserver | null = null;
   #worldLayer: Container | null = null;
@@ -53,7 +58,10 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#projection = options.projection;
     this.#labels = options.labels;
     this.#callbacks = options;
-    this.#camera = new ViewportController(options.projection.world);
+    this.#camera = new ViewportController(options.projection.world, {
+      padding: 22,
+      minimumScale: 0.22,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -74,7 +82,6 @@ class PixiLobbyScene implements LobbySceneHandle {
       app.destroy({ removeView: true }, { children: true, context: true });
       return;
     }
-
     this.#app = app;
     app.canvas.setAttribute('aria-hidden', 'true');
     app.canvas.className = 'lobby-scene__canvas';
@@ -82,50 +89,60 @@ class PixiLobbyScene implements LobbySceneHandle {
     app.stage.eventMode = 'static';
     app.stage.hitArea = app.screen;
     app.stage.on('pointerdown', this.#handlePointerDown);
-    app.stage.on('pointermove', this.#handlePointerMove);
+    app.stage.on('globalpointermove', this.#handlePointerMove);
     app.stage.on('pointerup', this.#handlePointerUp);
     app.stage.on('pointerupoutside', this.#handlePointerUp);
+    app.stage.on('pointercancel', this.#handlePointerUp);
     app.stage.on('pointertap', this.#handleBackgroundSelect);
     app.stage.on('wheel', this.#handlePixiWheel);
-
-    const worldLayer = new this.#pixi.Container();
-    const nodesLayer = new this.#pixi.Container();
-    worldLayer.addChild(createZoneLayer(this.#pixi, this.#projection, this.#labels.zones));
-    worldLayer.addChild(nodesLayer);
-    app.stage.addChild(worldLayer);
-    this.#worldLayer = worldLayer;
-    this.#nodesLayer = nodesLayer;
-
+    const world = new this.#pixi.Container();
+    const objects = new this.#pixi.Container();
+    objects.sortableChildren = true;
+    objects.addChild(...createRoomProps(this.#pixi));
+    world.addChild(createZoneLayer(this.#pixi, this.#projection, this.#labels.zones), objects);
+    app.stage.addChild(world);
+    this.#worldLayer = world;
+    this.#objectsLayer = objects;
     this.#camera.resize(app.screen.width, app.screen.height);
     this.#callbacks.onZoomChange(this.#camera.snapshot().scale);
     this.#resizeObserver = new ResizeObserver(() => {
-      const nextBounds = this.#host.getBoundingClientRect();
-      app.renderer.resize(Math.max(1, nextBounds.width), Math.max(1, nextBounds.height));
+      const next = this.#host.getBoundingClientRect();
+      app.renderer.resize(Math.max(1, next.width), Math.max(1, next.height));
       app.stage.hitArea = app.screen;
       this.#camera.resize(app.screen.width, app.screen.height);
       this.#scheduleRender();
     });
     this.#resizeObserver.observe(this.#host);
+    document.addEventListener('visibilitychange', this.#syncAnimation);
+    this.#motion.addEventListener('change', this.#syncAnimation);
     this.#renderNow();
+    this.#syncAnimation();
   }
 
   destroy(): void {
     this.#destroyed = true;
-    if (this.#frame !== null) {
-      window.cancelAnimationFrame(this.#frame);
-      this.#frame = null;
-    }
+    if (this.#frame !== null) window.cancelAnimationFrame(this.#frame);
+    if (this.#animationFrame !== null) window.cancelAnimationFrame(this.#animationFrame);
     this.#resizeObserver?.disconnect();
-    this.#resizeObserver = null;
+    document.removeEventListener('visibilitychange', this.#syncAnimation);
+    this.#motion.removeEventListener('change', this.#syncAnimation);
+    for (const { view } of this.#views.values()) view.destroy();
+    this.#views.clear();
+    this.#pointers.clear();
     const app = this.#app;
     this.#app = null;
     this.#worldLayer = null;
-    this.#nodesLayer = null;
-    delete this.#host.dataset.agentRoomRenderedNodes;
-    delete this.#host.dataset.agentRoomRenderMilliseconds;
-    delete this.#host.dataset.agentRoomRenderSequence;
-    delete this.#host.dataset.agentRoomUpdateMilliseconds;
-    delete this.#host.dataset.agentRoomTextureCount;
+    this.#objectsLayer = null;
+    for (const key of [
+      'agentRoomRenderedNodes',
+      'agentRoomRenderMilliseconds',
+      'agentRoomRenderSequence',
+      'agentRoomUpdateMilliseconds',
+      'agentRoomTextureCount',
+      'agentRoomAnimationFrame',
+      'agentRoomMotion',
+    ])
+      Reflect.deleteProperty(this.#host.dataset, key);
     app?.destroy({ removeView: true }, { children: true, context: true });
   }
 
@@ -133,90 +150,140 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#callbacks.onZoomChange(this.#camera.reset().scale);
     this.#scheduleRender();
   }
-
   update(projection: LobbySceneProjection): void {
     this.#projection = projection;
     this.#scheduleRender();
   }
-
   zoomBy(factor: number): void {
     this.#callbacks.onZoomChange(this.#camera.zoomBy(factor).scale);
     this.#scheduleRender();
   }
 
-  readonly #handleBackgroundSelect = (): void => {
-    this.#callbacks.onSelectAgent(null);
+  readonly #syncAnimation = (): void => {
+    if (this.#animationFrame !== null) window.cancelAnimationFrame(this.#animationFrame);
+    this.#animationFrame = null;
+    const active = !this.#destroyed && !document.hidden && !this.#motion.matches;
+    this.#host.dataset.agentRoomMotion = active ? 'active' : 'paused';
+    this.#lastAnimationAt = performance.now();
+    if (active) this.#animationFrame = window.requestAnimationFrame(this.#animate);
+    else if (!this.#destroyed) this.#scheduleRender();
   };
 
-  readonly #handlePixiWheel = (event: FederatedWheelEvent): void => {
-    event.preventDefault();
-    const factor = Math.exp(-event.deltaY * 0.0012);
-    const camera = this.#camera.zoomBy(factor, event.global.x, event.global.y);
-    this.#callbacks.onZoomChange(camera.scale);
-    this.#scheduleRender();
-  };
-
-  readonly #handlePointerDown = (event: FederatedPointerEvent): void => {
-    this.#dragOrigin = { pointerX: event.global.x, pointerY: event.global.y };
-  };
-
-  readonly #handlePointerMove = (event: FederatedPointerEvent): void => {
-    const origin = this.#dragOrigin;
-    if (origin === null) {
-      return;
-    }
-    this.#camera.panBy(event.global.x - origin.pointerX, event.global.y - origin.pointerY);
-    this.#dragOrigin = { pointerX: event.global.x, pointerY: event.global.y };
-    this.#scheduleRender();
-  };
-
-  readonly #handlePointerUp = (): void => {
-    this.#dragOrigin = null;
-  };
-
-  #renderNow(): void {
-    const app = this.#app;
-    const nodesLayer = this.#nodesLayer;
-    const worldLayer = this.#worldLayer;
-    if (app === null || nodesLayer === null || worldLayer === null) {
-      return;
-    }
-    const startedAt = performance.now();
-    const camera = this.#camera.snapshot();
-    worldLayer.position.set(camera.x, camera.y);
-    worldLayer.scale.set(camera.scale);
-    for (const child of nodesLayer.removeChildren()) {
-      child.destroy({ children: true });
-    }
-    const detail = sceneDetailForZoom(camera.scale);
-    const visibleNodes = visibleLobbyNodes(this.#projection, this.#camera.viewport());
-    for (const node of visibleNodes) {
-      nodesLayer.addChild(
-        createAgentNodeView(this.#pixi, {
-          detail,
-          node,
-          onSelect: this.#callbacks.onSelectAgent,
-          selected: node.agentId === this.#projection.selectedAgentId,
-        }),
+  readonly #animate = (now: number): void => {
+    this.#animationFrame = null;
+    if (this.#destroyed || document.hidden || this.#motion.matches) return;
+    const elapsed = now - this.#lastAnimationAt;
+    if (elapsed >= 1000 / 30) {
+      this.#elapsedSeconds += Math.min(elapsed, 100) / 1000;
+      this.#lastAnimationAt = now;
+      this.#renderNow(true);
+      this.#host.dataset.agentRoomAnimationFrame = String(
+        Number(this.#host.dataset.agentRoomAnimationFrame ?? '0') + 1,
       );
     }
-    this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - startedAt);
+    this.#animationFrame = window.requestAnimationFrame(this.#animate);
+  };
+
+  readonly #selectAgent = (id: string): void => {
+    if (!this.#gestureMoved) this.#callbacks.onSelectAgent(id);
+  };
+  readonly #handleBackgroundSelect = (): void => {
+    if (!this.#gestureMoved) this.#callbacks.onSelectAgent(null);
+  };
+  readonly #handlePixiWheel = (event: FederatedWheelEvent): void => {
+    event.preventDefault();
+    this.#callbacks.onZoomChange(
+      this.#camera.zoomBy(Math.exp(-event.deltaY * 0.0012), event.global.x, event.global.y).scale,
+    );
+    this.#scheduleRender();
+  };
+  readonly #handlePointerDown = (event: FederatedPointerEvent): void => {
+    if (this.#pointers.size === 0) this.#gestureMoved = false;
+    this.#pointers.set(event.pointerId, { x: event.global.x, y: event.global.y });
+  };
+  readonly #handlePointerMove = (event: FederatedPointerEvent): void => {
+    const previous = this.#pointers.get(event.pointerId);
+    if (previous === undefined) return;
+    const next = { x: event.global.x, y: event.global.y };
+    const other = [...this.#pointers.entries()].find(([id]) => id !== event.pointerId)?.[1];
+    this.#pointers.set(event.pointerId, next);
+    if (Math.abs(next.x - previous.x) + Math.abs(next.y - previous.y) < 2) return;
+    this.#gestureMoved = true;
+    if (other === undefined) this.#camera.panBy(next.x - previous.x, next.y - previous.y);
+    else {
+      const before = Math.hypot(previous.x - other.x, previous.y - other.y);
+      const after = Math.hypot(next.x - other.x, next.y - other.y);
+      if (before > 1)
+        this.#callbacks.onZoomChange(
+          this.#camera.zoomBy(after / before, (next.x + other.x) / 2, (next.y + other.y) / 2).scale,
+        );
+    }
+    this.#scheduleRender();
+  };
+  readonly #handlePointerUp = (event: FederatedPointerEvent): void => {
+    this.#pointers.delete(event.pointerId);
+  };
+
+  #renderNow(animation = false): void {
+    const app = this.#app;
+    const objects = this.#objectsLayer;
+    const world = this.#worldLayer;
+    if (app === null || objects === null || world === null) return;
+    const started = performance.now();
+    const camera = this.#camera.snapshot();
+    world.position.set(camera.x, camera.y);
+    world.scale.set(camera.scale);
+    const detail: LobbySceneDetail = sceneDetailForZoom(camera.scale);
+    const viewport = this.#camera.viewport();
+    const visible = visibleLobbyNodes(this.#projection, {
+      ...viewport,
+      x: viewport.x - 120,
+      y: viewport.y - 120,
+      width: viewport.width + 240,
+      height: viewport.height + 240,
+    });
+    const visibleIds = new Set(visible.map((node) => node.agentId));
+    for (const [id, stored] of this.#views) {
+      if (!visibleIds.has(id)) {
+        stored.view.destroy();
+        this.#views.delete(id);
+      }
+    }
+    for (const node of visible) {
+      const selected = node.agentId === this.#projection.selectedAgentId;
+      const signature = [node.displayName, node.status, node.radius, detail, selected].join(':');
+      let stored = this.#views.get(node.agentId);
+      if (stored?.signature !== signature) {
+        stored?.view.destroy();
+        const view = createAgentNodeView(this.#pixi, {
+          detail,
+          node,
+          onSelect: this.#selectAgent,
+          selected,
+        });
+        objects.addChild(view.container);
+        stored = { signature, view };
+        this.#views.set(node.agentId, stored);
+      }
+      stored.view.animate(characterPose(node, this.#elapsedSeconds, !this.#motion.matches));
+    }
+    if (!animation)
+      this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - started);
     app.render();
-    const renderer = app.renderer as TextureAwareRenderer;
-    this.#host.dataset.agentRoomRenderedNodes = String(visibleNodes.length);
-    this.#host.dataset.agentRoomTextureCount = String(
-      renderer.texture?.managedTextures?.length ?? 0,
-    );
-    this.#host.dataset.agentRoomRenderMilliseconds = String(performance.now() - startedAt);
-    this.#host.dataset.agentRoomRenderSequence = String(
-      Number(this.#host.dataset.agentRoomRenderSequence ?? '0') + 1,
-    );
+    if (!animation) {
+      this.#host.dataset.agentRoomRenderedNodes = String(visible.length);
+      this.#host.dataset.agentRoomTextureCount = String(
+        (app.renderer as TextureAwareRenderer).texture?.managedTextures?.length ?? 0,
+      );
+      this.#host.dataset.agentRoomRenderMilliseconds = String(performance.now() - started);
+      this.#host.dataset.agentRoomRenderSequence = String(
+        Number(this.#host.dataset.agentRoomRenderSequence ?? '0') + 1,
+      );
+    }
   }
 
   #scheduleRender(): void {
-    if (this.#frame !== null || this.#destroyed) {
-      return;
-    }
+    if (this.#frame !== null || this.#destroyed) return;
     this.#frame = window.requestAnimationFrame(() => {
       this.#frame = null;
       this.#renderNow();

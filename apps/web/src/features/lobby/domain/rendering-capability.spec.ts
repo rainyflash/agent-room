@@ -6,7 +6,7 @@ describe('大厅渲染能力策略', () => {
   it.each([
     [
       { compactViewport: true, deviceMemoryGiB: 8, forcedColors: false, hardwareConcurrency: 8 },
-      'compact',
+      null,
     ],
     [
       { compactViewport: false, deviceMemoryGiB: 8, forcedColors: true, hardwareConcurrency: 8 },

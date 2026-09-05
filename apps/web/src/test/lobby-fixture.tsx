@@ -38,6 +38,7 @@ import type {
   LobbyGateway,
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
+import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
@@ -67,7 +68,10 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 
-const room = testRoom(200);
+const fixtureAgentCount =
+  new URLSearchParams(window.location.search).get('agents') === '200' ? 200 : 24;
+const room = testRoom(fixtureAgentCount);
+Object.defineProperty(window, '__agentRoomFixtureScene', { value: projectLobbyScene(room, null) });
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const desktop = new TauriDesktopRuntimeGateway({
   available: () => false,
@@ -608,11 +612,18 @@ const services: AppServices = {
 function LobbyFixture() {
   const [view, setView] = useState<RoomWorkspaceView>(() => {
     const requested = new URLSearchParams(window.location.search).get('view');
-    return requested === 'space' || requested === 'resources' ? requested : 'conversation';
+    return requested === 'conversation' || requested === 'resources' ? requested : 'space';
   });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const updateView = (nextView: RoomWorkspaceView): void => {
+    const url = new URL(window.location.href);
+    if (nextView === 'space') url.searchParams.delete('view');
+    else url.searchParams.set('view', nextView);
+    window.history.replaceState(null, '', url);
+    setView(nextView);
+  };
   return (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
@@ -626,15 +637,31 @@ function LobbyFixture() {
                 onOpenSecurity={() => undefined}
                 view={view}
                 onViewChange={(nextView) => {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('view', nextView);
-                  window.history.replaceState(null, '', url);
-                  setView(nextView);
+                  if (nextView === 'space') {
+                    setSelectedDirectSessionId(null);
+                    setSelectedMessageId(null);
+                  }
+                  updateView(nextView);
                 }}
-                onSelectedAgentChange={setSelectedAgentId}
+                onOpenRoomPanel={(nextView) => {
+                  setSelectedDirectSessionId(null);
+                  setSelectedAgentId(null);
+                  setSelectedMessageId(null);
+                  updateView(nextView);
+                }}
+                onSelectedAgentChange={(id) => {
+                  setSelectedAgentId(id);
+                  if (id !== null) {
+                    setSelectedDirectSessionId(null);
+                    setSelectedMessageId(null);
+                    updateView('space');
+                  }
+                }}
                 onSelectedDirectSessionChange={(id) => {
                   setSelectedDirectSessionId(id);
-                  setView('conversation');
+                  setSelectedAgentId(null);
+                  setSelectedMessageId(null);
+                  updateView(id === null ? 'space' : 'conversation');
                 }}
                 onSelectedMessageChange={setSelectedMessageId}
                 principal={{
