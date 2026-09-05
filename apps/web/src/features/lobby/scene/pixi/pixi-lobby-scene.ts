@@ -2,6 +2,8 @@ import { sceneCharacters, type SceneFrame } from '../scene-character';
 import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
 import { CharacterTextureCache } from './character-texture-cache';
+import { SceneDepthOrder } from '../scene-depth-order';
+import { SceneFrameScheduler, type SceneRenderFrame } from '../scene-frame-scheduler';
 import { createRoomProps, createZoneLayer } from './zone-layer';
 import {
   sceneDetailForZoom,
@@ -44,6 +46,8 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #host: HTMLElement;
   readonly #labels: LobbySceneMountOptions['labels'];
   readonly #pixi: PixiModule;
+  readonly #depths = new SceneDepthOrder();
+  readonly #scheduler: SceneFrameScheduler;
   readonly #views = new Map<
     string,
     { readonly view: AgentCharacterView; readonly signature: string }
@@ -54,10 +58,6 @@ class PixiLobbyScene implements LobbySceneHandle {
   #characterTextures: CharacterTextureCache | null = null;
   #destroyed = false;
   #gestureMoved = false;
-  #frame: number | null = null;
-  #animationFrame: number | null = null;
-  #elapsedSeconds = 0;
-  #lastAnimationAt = 0;
   #objectsLayer: Container | null = null;
   #projection: LobbySceneProjection;
   #resizeObserver: ResizeObserver | null = null;
@@ -73,13 +73,24 @@ class PixiLobbyScene implements LobbySceneHandle {
       padding: 22,
       minimumScale: 0.22,
     });
+    this.#scheduler = new SceneFrameScheduler({
+      request: (callback) => window.requestAnimationFrame(callback),
+      cancel: (id) => {
+        window.cancelAnimationFrame(id);
+      },
+      now: () => performance.now(),
+      render: (frame) => {
+        this.#renderNow(frame);
+      },
+    });
   }
 
   async initialize(): Promise<void> {
     const bounds = this.#host.getBoundingClientRect();
     const app = new this.#pixi.Application();
     await app.init({
-      antialias: true,
+      // 部件纹理生成时已抗锯齿，无需每帧为整张画布重复执行多重采样。
+      antialias: false,
       autoDensity: true,
       autoStart: false,
       backgroundAlpha: 0,
@@ -110,7 +121,10 @@ class PixiLobbyScene implements LobbySceneHandle {
     const world = new this.#pixi.Container();
     const objects = new this.#pixi.Container();
     objects.sortableChildren = true;
-    objects.addChild(...createRoomProps(this.#pixi));
+    for (const prop of createRoomProps(this.#pixi)) {
+      objects.addChild(prop);
+      this.#depths.set(prop, prop.zIndex);
+    }
     world.addChild(createZoneLayer(this.#pixi, this.#projection, this.#labels.zones), objects);
     app.stage.addChild(world);
     this.#worldLayer = world;
@@ -127,19 +141,18 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#resizeObserver.observe(this.#host);
     document.addEventListener('visibilitychange', this.#syncAnimation);
     this.#motion.addEventListener('change', this.#syncAnimation);
-    this.#renderNow();
     this.#syncAnimation();
   }
 
   destroy(): void {
     this.#destroyed = true;
-    if (this.#frame !== null) window.cancelAnimationFrame(this.#frame);
-    if (this.#animationFrame !== null) window.cancelAnimationFrame(this.#animationFrame);
+    this.#scheduler.destroy();
     this.#resizeObserver?.disconnect();
     document.removeEventListener('visibilitychange', this.#syncAnimation);
     this.#motion.removeEventListener('change', this.#syncAnimation);
     for (const { view } of this.#views.values()) view.destroy();
     this.#views.clear();
+    this.#depths.clear();
     this.#pointers.clear();
     const app = this.#app;
     app?.canvas.removeEventListener('wheel', this.#handleWheel);
@@ -152,6 +165,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       'agentRoomRenderedNodes',
       'agentRoomRenderMilliseconds',
       'agentRoomRenderSequence',
+      'agentRoomDrawnFrames',
       'agentRoomUpdateMilliseconds',
       'agentRoomTextureCount',
       'agentRoomAnimationFrame',
@@ -182,28 +196,9 @@ class PixiLobbyScene implements LobbySceneHandle {
   }
 
   readonly #syncAnimation = (): void => {
-    if (this.#animationFrame !== null) window.cancelAnimationFrame(this.#animationFrame);
-    this.#animationFrame = null;
     const active = !this.#destroyed && !document.hidden && !this.#motion.matches;
     this.#host.dataset.agentRoomMotion = active ? 'active' : 'paused';
-    this.#lastAnimationAt = performance.now();
-    if (active) this.#animationFrame = window.requestAnimationFrame(this.#animate);
-    else if (!this.#destroyed) this.#scheduleRender();
-  };
-
-  readonly #animate = (now: number): void => {
-    this.#animationFrame = null;
-    if (this.#destroyed || document.hidden || this.#motion.matches) return;
-    const elapsed = now - this.#lastAnimationAt;
-    if (elapsed >= 1000 / 30) {
-      this.#elapsedSeconds += Math.min(elapsed, 100) / 1000;
-      this.#lastAnimationAt = now;
-      this.#renderNow(true);
-      this.#host.dataset.agentRoomAnimationFrame = String(
-        Number(this.#host.dataset.agentRoomAnimationFrame ?? '0') + 1,
-      );
-    }
-    this.#animationFrame = window.requestAnimationFrame(this.#animate);
+    this.#scheduler.setAnimating(active);
   };
 
   readonly #selectAgent = (id: string): void => {
@@ -254,7 +249,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#pointers.delete(event.pointerId);
   };
 
-  #renderNow(animation = false): void {
+  #renderNow(frame: SceneRenderFrame): void {
     const app = this.#app;
     const objects = this.#objectsLayer;
     const world = this.#worldLayer;
@@ -282,6 +277,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     const visibleIds = new Set(visible.map((node) => node.characterId));
     for (const [id, stored] of this.#views) {
       if (!visibleIds.has(id)) {
+        this.#depths.delete(stored.view.container);
         stored.view.destroy();
         this.#views.delete(id);
       }
@@ -298,11 +294,16 @@ class PixiLobbyScene implements LobbySceneHandle {
       ].join(':');
       let stored = this.#views.get(node.characterId);
       if (stored?.signature !== signature) {
+        if (stored !== undefined) this.#depths.delete(stored.view.container);
         stored?.view.destroy();
         const view = createAgentNodeView(this.#pixi, {
           body: characterTextures.createBody(node),
+          parts: characterTextures.createParts(node, selected),
           detail,
           node,
+          onInvalidate: () => {
+            this.#scheduleRender();
+          },
           onSelect: (id) => {
             if (node.kind === 'human') {
               if (!this.#gestureMoved) this.#callbacks.onSelectHuman?.(node.matrixUserId);
@@ -314,23 +315,33 @@ class PixiLobbyScene implements LobbySceneHandle {
         stored = { signature, view };
         this.#views.set(node.characterId, stored);
       }
-      const pose = characterPose(node, this.#elapsedSeconds, !this.#motion.matches && !selected);
+      const pose = characterPose(node, frame.elapsedSeconds, !this.#motion.matches && !selected);
       stored.view.animate(pose);
+      this.#depths.set(stored.view.container, stored.view.depth);
       frameCharacters.push({
         characterId: node.characterId,
         x: camera.x + pose.x * camera.scale,
         y: camera.y + (pose.y - 95 * Math.max(0.83, node.radius / 27)) * camera.scale,
       });
     }
-    if (!animation)
+    this.#depths.apply();
+    if (frame.invalidated)
       this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - started);
     app.render();
+    this.#host.dataset.agentRoomDrawnFrames = String(
+      Number(this.#host.dataset.agentRoomDrawnFrames ?? '0') + 1,
+    );
     this.#callbacks.onFrame?.({
       width: app.screen.width,
       height: app.screen.height,
       characters: frameCharacters,
     });
-    if (!animation) {
+    if (frame.animated) {
+      this.#host.dataset.agentRoomAnimationFrame = String(
+        Number(this.#host.dataset.agentRoomAnimationFrame ?? '0') + 1,
+      );
+    }
+    if (frame.invalidated) {
       this.#host.dataset.agentRoomRenderedNodes = String(visibleAgents.size);
       this.#host.dataset.agentRoomTextureCount = String(
         (app.renderer as TextureAwareRenderer).texture?.managedTextures?.length ?? 0,
@@ -343,10 +354,6 @@ class PixiLobbyScene implements LobbySceneHandle {
   }
 
   #scheduleRender(): void {
-    if (this.#frame !== null || this.#destroyed) return;
-    this.#frame = window.requestAnimationFrame(() => {
-      this.#frame = null;
-      this.#renderNow();
-    });
+    this.#scheduler.invalidate();
   }
 }

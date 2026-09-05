@@ -144,6 +144,9 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   const graphicsDrawCallsPerFrame =
     (graphicsAfter.drawCalls - graphicsBefore.drawCalls) /
     (graphicsAfter.frames - graphicsBefore.frames);
+  const graphicsTrianglesPerFrame =
+    (graphicsAfter.triangles - graphicsBefore.triangles) /
+    (graphicsAfter.frames - graphicsBefore.frames);
   await testInfo.attach('frame-budget.json', {
     body: Buffer.from(
       JSON.stringify({
@@ -154,6 +157,7 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
         updateMedianMilliseconds: updateMedian,
         updateP95Milliseconds: updateP95,
         graphicsDrawCallsPerFrame,
+        graphicsTrianglesPerFrame,
         ...runtimeBudget,
       }),
     ),
@@ -167,6 +171,8 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   expect(updateP95).toBeLessThanOrEqual(40);
   expect(graphicsDrawCallsPerFrame).toBeGreaterThan(0);
   expect(graphicsDrawCallsPerFrame).toBeLessThanOrEqual(128);
+  expect(graphicsTrianglesPerFrame).toBeGreaterThan(0);
+  expect(graphicsTrianglesPerFrame).toBeLessThanOrEqual(20_000);
   if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
     expect(scheduleMedian).toBeLessThanOrEqual(22);
     expect(scheduleP95).toBeLessThanOrEqual(40);
@@ -188,6 +194,7 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
     updateMedianMilliseconds: updateMedian,
     updateP95Milliseconds: updateP95,
     graphicsDrawCallsPerFrame,
+    graphicsTrianglesPerFrame,
     ...runtimeBudget,
   });
 });

@@ -14,7 +14,7 @@
 
 `cargo test --locked -p agent-room-bridge -p agent-room-mcp -p agent-room-bridge-ipc -p agent-room-bridge-core -p agent-room-application -p agent-room-control-plane --quiet`：459 项通过，0 项失败，3 项依赖外部环境的测试按声明忽略。
 
-上述六个包的 `cargo clippy --all-targets -- -D warnings` 与 Rust 格式检查通过。场景性能修复后重新运行 `corepack pnpm@10.28.0 check` 全部通过，包含格式、Lint、文案、类型、协议生成物检查及 113 个前端测试文件中的 469 项测试。
+上述六个包的 `cargo clippy --all-targets -- -D warnings` 与 Rust 格式检查通过。场景性能修复后重新运行 `corepack pnpm@10.28.0 check` 全部通过，包含格式、Lint、文案、类型、协议生成物检查及 115 个前端测试文件中的 481 项测试。
 
 Python 工具全量单测运行 253 项，其中 247 项通过、6 项按平台或外部环境条件跳过。Alpha 17 的 `cargo check --workspace --all-targets --all-features` 通过；插件静态契约、以实际 Release MCP 二进制执行的隔离协议冒烟及插件归档生成均通过。
 
@@ -36,15 +36,21 @@ Linux CI 首轮浏览器验收为 42 项通过、6 项超时。失败轨迹显�
 
 会话未提供 Browser 技能，本次沿用项目 Playwright，直接使用 Chromium 与 SwiftShader 软件图形后端，未使用 Computer Use。测试入口为 `http://127.0.0.1:14177/e2e/fixtures/lobby-scene.html`，视口为 1440×900 与 390×844，容量场景使用 200 个 Agent。
 
-九项定向浏览器回归全部通过，覆盖六个失败场景及人物点击、私聊、缩放拖动、SVG 降级、减少动画和手机交互；界面身份、非空首屏、无错误遮罩、控制台错误收集、截图与实际操作均验证。夹具仍有既有 RouterProvider 与减少动画提示。修订测试探针后，200 人容量测试再次通过。
+首轮缓存修复后，Linux CI 仍有三个长流程超时（45 项通过、3 项超时）。继续检查发现：人物四肢与状态点仍逐帧绘制矢量几何，交互和动画各有一条帧队列，浮点深度变化还会使整批绘制指令失效。
 
-软件渲染采样中，200 人平均每帧 4 次图形提交、95 张受管纹理；JavaScript 更新中位数 0.4 ms、P95 0.8 ms，渲染提交中位数 2.7 ms、P95 4.4 ms。原有时间、纹理和节点上限保持不变，并新增每帧最多 128 次真实图形提交的回归门槛。缓存复用、独立销毁、完整外观覆盖及失败清理另有单元测试。
+后续修复将所有人物部件改为共享抗锯齿纹理，避免逐帧全画布多重采样；动画与交互合并到一条帧队列，同帧保留两种遥测但仅绘制一次。角色按真实深度排序，仅相对顺序改变时更新渲染层级；减少动画时，悬停也能主动刷新。背景模糊的对照实验没有明显收益，已恢复原样。
 
-Linux CI 需对修复后的提交重新验收；本地软件渲染通过不能替代这一结果。
+Chromium + SwiftShader 的完整 48 项浏览器回归通过，覆盖桌面、手机、私聊、键盘、无障碍、SVG 降级与减少动画；截图确认外观和可操作入口正常。最后的调度调整另以四项真实浏览器流程复验通过。夹具仍有既有 RouterProvider 与减少动画提示。
+
+将测试进程及其子进程限制为两个逻辑核心后，三个原 CI 超时流程全部通过：桌面长流程 10.4 秒，72 次滚轮 10.2 秒，私聊资源流程 6.7 秒。未修改 30 秒测试超时或原有性能门槛。200 人场景平均每帧 7 次图形提交、2,680 个三角形、107 张受管纹理；JavaScript 更新中位数 0.8 ms、P95 2.3 ms，渲染提交中位数 2.8 ms、P95 8.7 ms。
+
+测试探针统计实际绘制帧，避免合并帧被重复计数；除原有时间、纹理和节点上限，另约束每帧最多 128 次图形提交及 20,000 个三角形。共享纹理、独立部件变换、资源释放、稳定遮挡、帧合并、暂停恢复、回调中的新交互和销毁另有单元测试。
+
+Linux CI 需对最终修复提交重新验收；本地软件渲染通过不能替代这一结果。
 
 ## 发布和真实验收
 
-场景性能修复后重新构建 Windows NSIS 成功，产物为 `target/release/bundle/nsis/Agent Room_0.1.0-alpha.17_x64-setup.exe`，SHA-256 为 `a7eabd0db4099c77b698d2df646f31aa785e4ca7641fd09a754f1c3cb67a4ef5`。这是本地打包验证，尚未执行受保护的签名发布流程和旧安装版升级。
+Windows NSIS 本地打包入口为 `corepack pnpm@10.28.0 build:desktop`，产物为 `target/release/bundle/nsis/Agent Room_0.1.0-alpha.17_x64-setup.exe`。最终安装包摘要随本地发布预检产物记录；该包尚未经过受保护的签名发布流程，也未覆盖旧安装版。
 
 本轮升级 IPC 至 3.0，新增 `PUT /devices/current/host-agents/{session_id}`。控制面应先部署兼容接口，桌面、Bridge、MCP、插件必须成套升级。IPC 2.0 的旧安装版不能与新 MCP 混用。升级会关闭旧 STDIO 连接，宿主须重新加载工具。
 

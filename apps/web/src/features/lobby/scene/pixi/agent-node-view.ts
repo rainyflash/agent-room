@@ -1,20 +1,23 @@
 import type { SceneCharacter } from '../scene-character';
 import type { Container, FederatedPointerEvent, Sprite } from 'pixi.js';
 import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
-import { characterStatusColor } from '../character-art';
 import type { CharacterPose } from '../character-motion';
+import type { CharacterParts } from './character-texture-cache';
 
 type PixiModule = typeof import('pixi.js');
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export type AgentNodeViewOptions = {
   readonly body: Sprite;
+  readonly parts: CharacterParts;
   readonly detail: LobbySceneDetail;
   readonly node: SceneCharacter;
+  readonly onInvalidate: () => void;
   readonly onSelect: (agentId: string) => void;
   readonly selected: boolean;
 };
 export type AgentCharacterView = {
   readonly container: Container;
+  readonly depth: number;
   animate(pose: CharacterPose): void;
   destroy(): void;
 };
@@ -23,7 +26,7 @@ export function createAgentNodeView(
   pixi: PixiModule,
   options: AgentNodeViewOptions,
 ): AgentCharacterView {
-  const { node, selected } = options;
+  const { node, selected, parts } = options;
   const container = new pixi.Container();
   const size = Math.max(0.83, node.radius / 27);
   const character = new pixi.Container();
@@ -32,45 +35,20 @@ export function createAgentNodeView(
   container.position.set(node.x, node.y);
   container.eventMode = 'static';
   let hovered = false;
+  let depth = selected ? 10000 : node.y;
   container.cursor = 'pointer';
   container.hitArea = new pixi.Rectangle(-28 * size, -82 * size, 56 * size, 98 * size);
   container.accessible = false;
-  const shadow = new pixi.Graphics().ellipse(0, 1, 21, 8).fill({ color: '#696c4f', alpha: 0.24 });
-  character.addChild(shadow);
-  if (selected)
-    character.addChild(
-      new pixi.Graphics()
-        .ellipse(0, 1, 28, 12)
-        .stroke({ color: '#fff8da', width: 4 })
-        .ellipse(0, 1, 31, 14)
-        .stroke({ color: '#769265', width: 2 }),
-    );
-  const leftLeg = new pixi.Graphics()
-    .roundRect(-11, -17, 9, 18, 3)
-    .fill('#47564e')
-    .roundRect(-13, -4, 12, 6, 2)
-    .fill('#eee9d7');
-  const rightLeg = new pixi.Graphics()
-    .roundRect(2, -17, 9, 18, 3)
-    .fill('#47564e')
-    .roundRect(2, -4, 12, 6, 2)
-    .fill('#eee9d7');
+  character.addChild(parts.shadow);
+  if (parts.selectionRing !== null) character.addChild(parts.selectionRing);
+  const { leftLeg, rightLeg, arms } = parts;
   character.addChild(leftLeg, rightLeg);
   const body = new pixi.Container();
-  const arms = new pixi.Graphics()
-    .roundRect(-20, -33, 7, 22, 3)
-    .fill('#dab493')
-    .roundRect(13, -33, 7, 22, 3)
-    .fill('#dab493');
   body.addChild(arms, options.body);
   character.addChild(body);
   if (node.status === 'offline') character.alpha = 0.56;
-  const marker = new pixi.Graphics()
-    .circle(19, -61, 6)
-    .fill(characterStatusColor[node.status])
-    .stroke({ color: '#fff7e2', width: 2 });
-  character.addChild(marker);
-  if (node.status === 'waiting_input' || node.status === 'blocked') {
+  character.addChild(parts.marker);
+  if (parts.bubble !== null) {
     const badge = new pixi.Text({
       text: node.status === 'blocked' ? '!' : '?',
       anchor: 0.5,
@@ -81,12 +59,8 @@ export function createAgentNodeView(
         fontWeight: '700',
       },
     });
-    const bubble = new pixi.Graphics()
-      .roundRect(-10, -92, 23, 23, 8)
-      .fill('#fff6d9')
-      .stroke({ color: '#ccbb95', width: 1.5 });
     badge.position.set(2, -80);
-    character.addChild(bubble, badge);
+    character.addChild(parts.bubble, badge);
   }
   const label = new pixi.Text({
     text: truncateLabel(node.displayName),
@@ -106,11 +80,13 @@ export function createAgentNodeView(
     hovered = true;
     label.visible = true;
     body.scale.set(1.07);
+    options.onInvalidate();
   });
   container.on('pointerout', () => {
     hovered = false;
     label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
     body.scale.set(1);
+    options.onInvalidate();
   });
   container.on('pointertap', (event: FederatedPointerEvent) => {
     event.stopPropagation();
@@ -118,9 +94,12 @@ export function createAgentNodeView(
   });
   return {
     container,
+    get depth() {
+      return depth;
+    },
     animate: (pose) => {
       container.position.set(pose.x, pose.y);
-      container.zIndex = selected || hovered ? 10000 : pose.y;
+      depth = selected || hovered ? 10000 : pose.y;
       body.position.y = -Math.abs(pose.stride) * 0.42;
       leftLeg.position.y = pose.stride;
       rightLeg.position.y = -pose.stride;

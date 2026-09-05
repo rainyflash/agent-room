@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { characterSeed } from '../../domain/room-floor';
 import type { SceneCharacter } from '../scene-character';
 import { CharacterTextureCache } from './character-texture-cache';
+import { createAgentNodeView } from './agent-node-view';
 
 function character(index: number, kind: SceneCharacter['kind'] = 'agent'): SceneCharacter {
   return {
@@ -129,5 +130,152 @@ describe('场景共享角色纹理', () => {
     expect(sprite.texture.destroyed).toBe(false);
     sprite.destroy();
     cache.destroy();
+  });
+
+  it('各类角色与状态的全部部件保持有界共享', () => {
+    const generation = renderer();
+    const cache = new CharacterTextureCache(pixi, generation);
+    const statuses = [
+      'idle',
+      'working',
+      'completed',
+      'waiting_input',
+      'blocked',
+      'offline',
+    ] as const;
+    const sprites: pixi.Sprite[] = [];
+    for (const kind of ['agent', 'human'] as const) {
+      for (let index = 0; index < 200; index += 1) {
+        const node: SceneCharacter = {
+          ...character(index, kind),
+          status: kind === 'human' ? 'present' : (statuses[index % statuses.length] ?? 'idle'),
+        };
+        sprites.push(cache.createBody(node));
+        const parts = cache.createParts(node, index % 2 === 0);
+        for (const sprite of Object.values(parts)) {
+          if (sprite !== null) sprites.push(sprite);
+        }
+      }
+    }
+
+    // 24 种身体、6 种固定部件、7 种状态点，不随角色人数增长。
+    expect(generation.generateTexture).toHaveBeenCalledTimes(37);
+    expect(new Set(sprites.map((sprite) => sprite.texture)).size).toBe(37);
+    const textures = [...new Set(sprites.map((sprite) => sprite.texture))];
+    const releases = textures.map((texture) => vi.spyOn(texture, 'destroy'));
+    const sources = textures.map((texture) => texture.source);
+    for (const sprite of sprites) sprite.destroy();
+    expect(releases.every((release) => release.mock.calls.length === 0)).toBe(true);
+    cache.destroy();
+    cache.destroy();
+    expect(sources.every((source) => source.destroyed)).toBe(true);
+    for (const release of releases) expect(release).toHaveBeenCalledExactlyOnceWith(true);
+    expect(() => cache.createParts(character(0), false)).toThrow('角色纹理缓存已销毁。');
+  });
+
+  it('等待与阻塞共享气泡几何，选中环按需生成且每个 Sprite 独立', () => {
+    const generation = renderer();
+    const cache = new CharacterTextureCache(pixi, generation);
+    const waiting = cache.createParts({ ...character(0), status: 'waiting_input' }, true);
+    const blocked = cache.createParts({ ...character(1), status: 'blocked' }, true);
+    const idle = cache.createParts(character(2), false);
+
+    expect(waiting.shadow).not.toBe(blocked.shadow);
+    expect(waiting.shadow.texture).toBe(blocked.shadow.texture);
+    expect(waiting.leftLeg.texture).toBe(blocked.leftLeg.texture);
+    expect(waiting.rightLeg.texture).toBe(blocked.rightLeg.texture);
+    expect(waiting.arms.texture).toBe(blocked.arms.texture);
+    expect(waiting.bubble?.texture).toBe(blocked.bubble?.texture);
+    expect(waiting.selectionRing?.texture).toBe(blocked.selectionRing?.texture);
+    expect(waiting.marker.texture).not.toBe(blocked.marker.texture);
+    expect(idle.bubble).toBeNull();
+    expect(idle.selectionRing).toBeNull();
+    for (const parts of [waiting, blocked, idle]) {
+      for (const sprite of Object.values(parts)) sprite?.destroy();
+    }
+    cache.destroy();
+  });
+
+  it('部件绕原始局部原点旋转，腿部位移不改变其他角色', () => {
+    const generation = renderer();
+    const cache = new CharacterTextureCache(pixi, generation);
+    const first = cache.createParts(character(0), false);
+    const second = cache.createParts(character(1), false);
+    first.leftLeg.position.y = 3.5;
+    first.arms.rotation = 0.2;
+    expect(first.leftLeg.toGlobal(first.leftLeg.pivot)).toMatchObject({ x: 0, y: 3.5 });
+    expect(second.leftLeg.toGlobal(second.leftLeg.pivot)).toMatchObject({ x: 0, y: 0 });
+    expect(first.arms.toGlobal(first.arms.pivot)).toMatchObject({ x: 0, y: 0 });
+    const armCorner = first.arms.toGlobal({
+      x: 13 + first.arms.pivot.x,
+      y: -33 + first.arms.pivot.y,
+    });
+    expect(armCorner.x).toBeCloseTo(13 * Math.cos(0.2) + 33 * Math.sin(0.2));
+    expect(armCorner.y).toBeCloseTo(13 * Math.sin(0.2) - 33 * Math.cos(0.2));
+    expect(second.arms.rotation).toBe(0);
+    for (const parts of [first, second]) {
+      for (const sprite of Object.values(parts)) sprite?.destroy();
+    }
+    cache.destroy();
+  });
+
+  it('人物视图保持肢体动画与悬停深度，不修改场景分配的排序值', () => {
+    const generation = renderer();
+    const cache = new CharacterTextureCache(pixi, generation);
+    const node = character(0);
+    const parts = cache.createParts(node, false);
+    const body = cache.createBody(node);
+    const invalidate = vi.fn();
+    const view = createAgentNodeView(pixi, {
+      node,
+      body,
+      parts,
+      selected: false,
+      detail: 'distant',
+      onInvalidate: invalidate,
+      onSelect: () => undefined,
+    });
+    const pose = { x: 12, y: 34, stride: 3.5, facing: -1, moving: true };
+    view.container.zIndex = 7;
+    view.animate(pose);
+    expect(view.depth).toBe(34);
+    expect(view.container.zIndex).toBe(7);
+    expect(parts.leftLeg.y).toBe(3.5);
+    expect(parts.rightLeg.y).toBe(-3.5);
+    expect(parts.arms.rotation).toBeCloseTo(0.0525);
+    const pointer = new pixi.FederatedPointerEvent(new pixi.EventBoundary());
+    view.container.emit('pointerover', pointer);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    view.animate(pose);
+    expect(view.depth).toBe(10000);
+    expect(view.container.zIndex).toBe(7);
+    view.container.emit('pointerout', pointer);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    view.animate(pose);
+    expect(view.depth).toBe(34);
+    const texture = parts.arms.texture;
+    view.destroy();
+    expect(parts.arms.destroyed).toBe(true);
+    expect(texture.destroyed).toBe(false);
+    cache.destroy();
+    expect(texture.destroyed).toBe(true);
+  });
+
+  it('部件生成中断时，临时图形和已缓存的纹理仍能完整释放', () => {
+    const generation = renderer();
+    generation.generateTexture
+      .mockImplementationOnce(() => pixi.RenderTexture.create({ width: 48, height: 20 }))
+      .mockImplementationOnce(() => {
+        throw new Error('部件纹理生成失败');
+      });
+    const cache = new CharacterTextureCache(pixi, generation);
+    expect(() => cache.createParts(character(0), true)).toThrow('部件纹理生成失败');
+    const created: unknown = generation.generateTexture.mock.results[0]?.value;
+    if (!(created instanceof pixi.Texture)) throw new Error('缺少已生成的部件纹理。');
+    for (const [input] of generation.generateTexture.mock.calls)
+      expect(textureRequest(input).target.destroyed).toBe(true);
+    expect(created.destroyed).toBe(false);
+    cache.destroy();
+    expect(created.destroyed).toBe(true);
   });
 });
