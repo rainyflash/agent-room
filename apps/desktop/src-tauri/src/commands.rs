@@ -19,6 +19,7 @@ use crate::{
     deep_link::{DeepLinkInbox, DeepLinkTarget},
     desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
     human_session::{DesktopAuthenticationIntent, HumanSessionFailure, HumanSessionRuntime},
+    matrix_credentials::{MatrixCredentialRuntime, StoredMatrixSession},
     matrix_session::{MatrixAuthenticationGrant, MatrixSessionFailure, MatrixSessionRuntime},
     release_updates::{
         ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
@@ -144,6 +145,31 @@ pub(crate) async fn desktop_begin_matrix_authentication(
     return_path: String,
 ) -> Result<MatrixAuthenticationGrant, DesktopCommandFailure> {
     Ok(sessions.begin_authentication(&app, &return_path).await?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_load_matrix_session(
+    credentials: State<'_, MatrixCredentialRuntime>,
+) -> Result<Option<StoredMatrixSession>, DesktopCommandFailure> {
+    Ok(credentials.load()?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_save_matrix_session(
+    credentials: State<'_, MatrixCredentialRuntime>,
+    session: StoredMatrixSession,
+) -> Result<(), DesktopCommandFailure> {
+    Ok(credentials.save(&session)?)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_clear_matrix_session(
+    credentials: State<'_, MatrixCredentialRuntime>,
+) -> Result<(), DesktopCommandFailure> {
+    Ok(credentials.clear()?)
 }
 
 #[tauri::command]

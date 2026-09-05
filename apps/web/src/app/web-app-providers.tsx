@@ -41,6 +41,7 @@ import { ControlPlaneClient } from '@/features/session/adapters/control-plane-cl
 import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
 import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
+import { TauriMatrixSessionVault } from '@/features/session/adapters/tauri-matrix-session-vault';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
@@ -96,6 +97,7 @@ export function createCloudRuntime(
       matrixClients.replace(client);
     },
     secretStorageKeys,
+    ...(localRuntime.isAvailable() ? { sessionVault: new TauriMatrixSessionVault() } : {}),
   });
   const matrix = localRuntime.isAvailable()
     ? new DesktopMatrixGateway({ matrix: matrixCore, runtime: localRuntime })

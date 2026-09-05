@@ -91,11 +91,17 @@ const stateCopy: Readonly<
 };
 
 const failureCopy: Readonly<Record<string, TranslationKey>> = {
+  'desktop.matrix_session.vault_unavailable': 'connection.state.failure.matrixVaultUnavailable',
+  'desktop.matrix_session.vault_corrupt': 'connection.state.failure.matrixVaultCorrupt',
+  'desktop.matrix_session.credentials_invalid': 'connection.state.failure.matrixLogin',
+  'desktop.matrix_session.vault_invalid_response': 'connection.state.failure.desktopVersion',
+  'desktop.command.permission_denied': 'connection.state.failure.desktopVersion',
   'matrix.crypto_initialization_failed': 'connection.state.failure.matrixCrypto',
   'matrix.identity_mismatch': 'connection.state.failure.identityMismatch',
   'matrix.initial_sync_failed': 'connection.state.failure.matrixSync',
   'matrix.initial_sync_timeout': 'connection.state.failure.matrixSync',
   'matrix.invalid_login_response': 'connection.state.failure.matrixLogin',
+  'matrix.invalid_session': 'connection.state.failure.matrixLogin',
   'matrix.invalid_sso_callback_path': 'connection.state.failure.matrixLogin',
   'matrix.login_exchange_failed': 'connection.state.failure.matrixLogin',
   'matrix.sso_start_failed': 'connection.state.failure.matrixLogin',

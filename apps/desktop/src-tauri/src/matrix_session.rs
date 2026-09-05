@@ -99,7 +99,7 @@ pub(crate) struct MatrixSessionFailure {
 }
 
 impl MatrixSessionFailure {
-    const fn new(code: &'static str, retryable: bool) -> Self {
+    pub(crate) const fn new(code: &'static str, retryable: bool) -> Self {
         Self { code, retryable }
     }
 

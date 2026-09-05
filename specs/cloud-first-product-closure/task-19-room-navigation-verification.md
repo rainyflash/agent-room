@@ -34,7 +34,7 @@ Alpha 15 完成以下修复：
 
 ## 尚待完成的真实桌面链路
 
-升级会终止旧 MCP 进程，因此当前 Codex 任务中的旧 STDIO 连接按设计返回 `Transport closed`；宿主重启后会连接 Alpha 15 MCP。桌面主窗口已经进入原生 Matrix SSO 回调流程，仍需操作者在系统浏览器完成密码登录，然后才能完成以下最终人工验收：
+升级后曾出现旧 STDIO 连接返回 `Transport closed`。本次后续复验中，已安装 Alpha 15 的 Bridge 与 MCP 已恢复 `ready`，真实在线状态、消息预览和按需正文均可读取。桌面窗口当前显示“需要登录操作者账户”；仍需操作者完成登录，才能完成以下最终可视化验收：
 
 `工作区 → 房间目录 → Agent Room Global → 消息预览 → 按需正文`
 
@@ -42,6 +42,28 @@ Alpha 15 完成以下修复：
 
 ## 新发现的会话生命周期缺陷
 
-桌面 WebView 当前复用 `MatrixWebGateway`，Matrix Access Token 保存在 `sessionStorage`。它满足刷新恢复，但安装器关闭进程后无法恢复，导致升级后再次请求 Matrix SSO。控制平面人类会话和 Bridge 设备会话已经进入 Windows Credential Manager，Matrix 人类设备会话尚未进入原生安全存储。
+Alpha 15 桌面 WebView 复用 `MatrixWebGateway`，Matrix Access Token 保存在 `sessionStorage`。它满足刷新恢复，但不能作为跨进程恢复契约，导致升级后再次请求 Matrix SSO。控制平面人类会话和 Bridge 设备会话已经进入 Windows Credential Manager，Matrix 人类设备会话此前尚未进入原生存储。
 
-后续必须新增桌面专用 `MatrixSessionVault` 端口，由 Tauri Adapter 使用系统凭据库持久化，浏览器实现继续保持标签页级 `sessionStorage`。不能粗暴改成 `localStorage`；那会把长期 Matrix Token 暴露给 WebView 脚本，属于用便利性制造凭据泄漏面。
+本次源码新增 `MatrixSessionVault` 端口：浏览器实现继续使用标签页级 `sessionStorage`；桌面 Adapter 使用三个固定 Tauri 命令连接系统凭据库。系统凭据库保护静态存储，不代表运行中的 Matrix SDK 不再需要读取 Access Token；不能把它描述成消除了所有 WebView 风险。
+
+## 任务 20：持久会话实现与验证
+
+架构职责：
+
+- `MatrixSessionRepository` 负责凭据轮换、串行落盘、失败重试和退出代际隔离，不依赖 DOM 或 Tauri。
+- `MatrixWebGateway` 只负责 Matrix 认证、身份核对、加密初始化及同步连接；重建网关复用原有 `userId`、`deviceId` 和设备加密库。
+- `MatrixCredentialRuntime` 使用环境和 Homeserver 派生稳定命名空间，存储严格版本化的会话记录；前端不能指定任意凭据名称。
+- 新令牌保存失败时不会宣称成功；当前进程暂存最新令牌，下次恢复先重试保存。退出清理会排在已经开始的存储操作之后，并拒绝过期请求再次写回。
+- [Matrix 刷新协议](https://spec.matrix.org/v1.16/client-server-api/#post_matrixclientv3refresh)允许省略新的刷新令牌和有效期。实现按协议保留旧刷新令牌，不依赖 SDK 42 将可选字段写成必填的类型声明。
+- 原生命令的对象、JSON 字符串和 Error 包装使用同一错误解析器；界面提供凭据库不可用、记录损坏及桌面版本不匹配的中英文恢复指引。
+
+已通过的验证：
+
+- TypeScript：103 个测试文件、413 项测试通过；类型检查与 ESLint 通过。
+- Rust 桌面：53 项测试通过；Clippy 全目标检查通过。
+- Windows 凭据库：使用随机测试命名空间写入合成凭据，由另一个独立进程恢复相同用户和设备，随后清理测试记录；未读取或改写真实用户凭据。
+- 浏览器：`/connect → 凭据库故障 → 重试 → Matrix 登录入口` 通过，1440×1000 和 390×844 无稳定横向溢出；无页面异常或框架覆盖层。使用现有 Playwright 工作流，因为本会话没有旧 Browser 插件及其 `browser` 技能；测试中的 Tauri 和服务端响应是明确注入的故障夹具，不冒充真实登录结果。
+- 桌面前端生产构建通过；构建仍有既有 Matrix/Pixi 大分块提示，未作为本次修复扩大处理。
+- 真实已安装 Alpha 15：MCP 返回 `ready`，Agent 在线状态为 `idle`；已有“Alpha 14 连接验收”预览及对应 87 字节正文均可读取。内容摘要为 `ab656730eb4778c6fbd6e9662345e3adc2387f22504e807d5b915d4641465327`。
+
+交付边界：本次持久会话修复尚未发布或替换已安装 Alpha 15。没有启动新的 GitHub Actions 打包任务，没有运行 macOS Runner。生产账户的完整登录、升级后重开和肉眼可见的大厅正文验收尚未完成，任务 19.5、20.6 继续保持未勾选。

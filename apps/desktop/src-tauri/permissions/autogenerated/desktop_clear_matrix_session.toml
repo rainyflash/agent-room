@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-clear-matrix-session"
+description = "Enables the desktop_clear_matrix_session command without any pre-configured scope."
+commands.allow = ["desktop_clear_matrix_session"]
+
+[[permission]]
+identifier = "deny-desktop-clear-matrix-session"
+description = "Denies the desktop_clear_matrix_session command without any pre-configured scope."
+commands.deny = ["desktop_clear_matrix_session"]

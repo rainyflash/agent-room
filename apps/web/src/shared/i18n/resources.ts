@@ -278,6 +278,12 @@ export const resources = {
       'connection.state.failure.matrixCrypto':
         'Matrix end-to-end encryption could not start. Private rooms remain closed; retry without clearing this device.',
       'connection.state.failure.matrixSync': 'Matrix did not reach a usable synchronized state.',
+      'connection.state.failure.matrixVaultUnavailable':
+        'The system credential store is unavailable. Retry to save or restore this Matrix session; it has not been marked as connected.',
+      'connection.state.failure.matrixVaultCorrupt':
+        'The saved Matrix session could not be read. Sign out to clear it, then sign in again.',
+      'connection.state.failure.desktopVersion':
+        'The desktop runtime and interface do not match. Update Agent Room and fully restart the application.',
       'connection.state.failure.control': 'The control plane could not validate this session.',
       'connection.state.failure.offline': 'The requested service is unreachable from this device.',
       'connection.stage.status.complete': 'Complete',
@@ -940,6 +946,12 @@ export const resources = {
       'connection.state.failure.matrixCrypto':
         'Matrix 端到端加密未能启动。私人房间保持关闭；请重试，且不要清除当前设备。',
       'connection.state.failure.matrixSync': 'Matrix 未能进入可用的同步状态。',
+      'connection.state.failure.matrixVaultUnavailable':
+        '系统凭据库暂时不可用。请重试保存或恢复 Matrix 会话；当前不会显示为已连接。',
+      'connection.state.failure.matrixVaultCorrupt':
+        '已保存的 Matrix 会话无法读取。请退出登录以清理它，再重新登录。',
+      'connection.state.failure.desktopVersion':
+        '桌面运行时与界面版本不匹配。请更新 Agent Room，并完全退出后重新打开应用。',
       'connection.state.failure.control': '控制平面无法验证当前会话。',
       'connection.state.failure.offline': '当前设备无法访问所需服务。',
       'connection.stage.status.complete': '完成',

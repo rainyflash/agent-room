@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-load-matrix-session"
+description = "Enables the desktop_load_matrix_session command without any pre-configured scope."
+commands.allow = ["desktop_load_matrix_session"]
+
+[[permission]]
+identifier = "deny-desktop-load-matrix-session"
+description = "Denies the desktop_load_matrix_session command without any pre-configured scope."
+commands.deny = ["desktop_load_matrix_session"]

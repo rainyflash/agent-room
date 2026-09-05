@@ -3,6 +3,16 @@ import type { DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js'
 import { z } from 'zod';
 
 import { failure } from '@/features/session/adapters/control-plane-client';
+import { BrowserMatrixSessionVault } from './browser-matrix-session-vault';
+import {
+  storedMatrixSessionSchema,
+  type MatrixSessionVault,
+  type StoredMatrixSession,
+} from '@/features/session/domain/matrix-session-vault';
+import {
+  MatrixSessionRepository,
+  supersededMatrixSession,
+} from '@/features/session/domain/matrix-session-repository';
 import type {
   AuthenticationStartOutcome,
   MatrixConnection,
@@ -14,22 +24,9 @@ import type {
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { err, ok, type Result } from '@/shared/result';
 
-const MATRIX_SESSION_KEY = 'agent-room.matrix-session.v1';
 const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
 const MAX_LOGIN_TOKEN_LENGTH = 4_096;
-
-const storedSessionSchema = z
-  .object({
-    accessToken: z.string().min(1),
-    deviceId: z.string().min(1).max(255),
-    refreshToken: z.string().min(1).optional(),
-    userId: z.string().regex(/^@[^:]+:.+$/u),
-    version: z.literal(1),
-  })
-  .strict();
-
-type StoredMatrixSession = z.output<typeof storedSessionSchema>;
 
 const loginResponseSchema = z.looseObject({
   access_token: z.string().min(1),
@@ -43,6 +40,13 @@ const whoAmISchema = z.looseObject({
   user_id: z.string().regex(/^@[^:]+:.+$/u),
 });
 
+// Matrix 规范允许省略刷新令牌和有效期，SDK 42 的返回类型却把它们标成必填。
+type MatrixRefreshResponse = {
+  readonly access_token: string;
+  readonly expires_in_ms?: number;
+  readonly refresh_token?: string;
+};
+
 export type MatrixWebGatewayOptions = {
   readonly baseUrl: string;
   readonly deviceDisplayName?: string;
@@ -55,6 +59,7 @@ export type MatrixWebGatewayOptions = {
   readonly replaceHistory?: (url: string) => void;
   readonly secretStorageKeys?: MatrixSecretStorageKeyCache;
   readonly sessionStorage?: Storage;
+  readonly sessionVault?: MatrixSessionVault;
   readonly syncTimeoutMs?: number;
   readonly url?: () => URL;
 };
@@ -71,6 +76,8 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #replaceHistory: (url: string) => void;
   readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
   readonly #sessionStorage: Storage;
+  readonly #sessions: MatrixSessionRepository;
+  #restoreAttempt = 0;
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
   #activeConnection: BrowserMatrixConnection | null = null;
@@ -92,6 +99,7 @@ export class MatrixWebGateway implements MatrixGateway {
     },
     secretStorageKeys = new MatrixSecretStorageKeyCache(),
     sessionStorage = window.sessionStorage,
+    sessionVault = new BrowserMatrixSessionVault(sessionStorage),
     syncTimeoutMs = 20_000,
     url = () => new URL(window.location.href),
   }: MatrixWebGatewayOptions) {
@@ -106,6 +114,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#replaceHistory = replaceHistory;
     this.#secretStorageKeys = secretStorageKeys;
     this.#sessionStorage = sessionStorage;
+    this.#sessions = new MatrixSessionRepository(sessionVault);
     this.#syncTimeoutMs = syncTimeoutMs;
     this.#url = url;
   }
@@ -151,6 +160,7 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
+    const attempt = ++this.#restoreAttempt;
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
     this.#secretStorageKeys.clear();
@@ -163,17 +173,19 @@ export class MatrixWebGateway implements MatrixGateway {
     const capturedToken = capturedTokenResult.value;
     const sessionResult =
       capturedToken === null
-        ? this.#readStoredSession()
+        ? await this.#sessions.load()
         : await this.#exchangeLoginToken(capturedToken);
     if (!sessionResult.ok) {
       return sessionResult;
     }
+    if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
     if (sessionResult.value === null) {
       return ok({ kind: 'authentication-required' });
     }
     if (sessionResult.value.userId !== expectedUserId) {
       await this.#revokeSession(sessionResult.value);
-      this.#clearStoredSession();
+      const cleared = await this.#sessions.clear();
+      if (!cleared.ok) return cleared;
       return err(failure('identity', 'matrix.identity_mismatch', false, false));
     }
     const returnPath =
@@ -192,6 +204,8 @@ export class MatrixWebGateway implements MatrixGateway {
             indexedDB: this.#indexedDB,
             ...(this.#localStorage === undefined ? {} : { localStorage: this.#localStorage }),
           });
+    const epoch = this.#sessions.epoch;
+    let candidate: MatrixClient | undefined;
     try {
       const session = sessionResult.value;
       const refreshClient = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
@@ -205,29 +219,52 @@ export class MatrixWebGateway implements MatrixGateway {
         store,
         timelineSupport: true,
         tokenRefreshFunction: async (refreshToken) => {
-          const refreshed = await refreshClient.refreshToken(refreshToken);
-          const updated: StoredMatrixSession = {
-            accessToken: refreshed.access_token,
-            deviceId: session.deviceId,
-            refreshToken: refreshed.refresh_token,
-            userId: session.userId,
-            version: 1,
-          };
-          this.#writeStoredSession(updated);
+          let expiry: Date | undefined;
+          const rotated = await this.#sessions.rotate(
+            epoch,
+            () => attempt === this.#restoreAttempt,
+            async () => {
+              const refreshed: MatrixRefreshResponse =
+                await refreshClient.refreshToken(refreshToken);
+              const lifetime = refreshed.expires_in_ms;
+              expiry =
+                typeof lifetime === 'number' && Number.isSafeInteger(lifetime) && lifetime >= 0
+                  ? new Date(Date.now() + lifetime)
+                  : undefined;
+              return {
+                accessToken: refreshed.access_token,
+                deviceId: session.deviceId,
+                refreshToken: refreshed.refresh_token ?? refreshToken,
+                userId: session.userId,
+                version: 1,
+              };
+            },
+          );
+          if (!rotated.ok) throw new MatrixPersistenceError(rotated.error);
           return {
-            accessToken: refreshed.access_token,
-            expiry: new Date(Date.now() + refreshed.expires_in_ms),
-            refreshToken: refreshed.refresh_token,
+            accessToken: rotated.value.accessToken,
+            expiry,
+            refreshToken: rotated.value.refreshToken,
           };
         },
         userId: session.userId,
         verificationMethods: [MATRIX_SAS_VERIFICATION_METHOD],
       });
+      candidate = client;
       await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());
-      if (!whoAmI.success || whoAmI.data.user_id !== expectedUserId) {
+      if (attempt !== this.#restoreAttempt) {
+        client.stopClient();
+        return err(supersededMatrixSession());
+      }
+      if (
+        !whoAmI.success ||
+        whoAmI.data.user_id !== expectedUserId ||
+        (whoAmI.data.device_id !== undefined && whoAmI.data.device_id !== session.deviceId)
+      ) {
         await discardMatrixClient(client);
-        this.#clearStoredSession();
+        const cleared = await this.#sessions.clear();
+        if (!cleared.ok) return cleared;
         return err(failure('identity', 'matrix.identity_mismatch', false, false));
       }
 
@@ -243,6 +280,10 @@ export class MatrixWebGateway implements MatrixGateway {
         return err(failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true));
       }
 
+      if (attempt !== this.#restoreAttempt) {
+        client.stopClient();
+        return err(supersededMatrixSession());
+      }
       const connection = new BrowserMatrixConnection(
         client,
         sdk.ClientEvent.Sync,
@@ -250,6 +291,7 @@ export class MatrixWebGateway implements MatrixGateway {
         this.#online,
         this.#syncTimeoutMs,
         this.#onClientActivity,
+        () => this.#sessions.failure,
       );
       this.#activeConnection = connection;
       this.#onClientChange(client);
@@ -259,8 +301,13 @@ export class MatrixWebGateway implements MatrixGateway {
         ...(returnPath === undefined ? {} : { returnPath }),
       });
     } catch (error) {
+      candidate?.stopClient();
+      if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
+      if (this.#sessions.failure !== null) return err(this.#sessions.failure);
+      if (error instanceof MatrixPersistenceError) return err(error.failure);
       if (isUnauthorized(error)) {
-        this.#clearStoredSession();
+        const cleared = await this.#sessions.clear();
+        if (!cleared.ok) return cleared;
         try {
           await store.deleteAllData();
         } catch {
@@ -273,15 +320,17 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
+    ++this.#restoreAttempt;
     const active = this.#activeConnection;
     this.#activeConnection = null;
     this.#secretStorageKeys.clear();
     this.#onClientChange(null);
-    this.#clearBrowserState();
-    if (active === null) {
-      return ok(undefined);
-    }
-    return await active.logout();
+    active?.disconnect();
+    const cleared = await this.#sessions.clear();
+    const returnPathCleared = this.#clearReturnPath();
+    const remote = active === null ? ok(undefined) : await active.logout();
+    if (!cleared.ok) return cleared;
+    return returnPathCleared.ok ? remote : returnPathCleared;
   }
 
   #consumeLoginToken(): Result<string | null, SessionFailure> {
@@ -316,6 +365,7 @@ export class MatrixWebGateway implements MatrixGateway {
   async #exchangeLoginToken(
     loginToken: string,
   ): Promise<Result<StoredMatrixSession, SessionFailure>> {
+    const epoch = this.#sessions.beginSession();
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
@@ -339,53 +389,22 @@ export class MatrixWebGateway implements MatrixGateway {
         userId: decoded.data.user_id,
         version: 1,
       };
-      const persisted = this.#writeStoredSession(session);
+      const parsed = storedMatrixSessionSchema.safeParse(session);
+      if (!parsed.success)
+        return err(failure('matrix', 'matrix.invalid_login_response', false, false));
+      const persisted = await this.#sessions.save(parsed.data, epoch);
       return persisted.ok ? ok(session) : persisted;
     } catch {
       return err(failure('matrix', 'matrix.login_exchange_failed', !this.#online(), true));
     }
   }
 
-  #readStoredSession(): Result<StoredMatrixSession | null, SessionFailure> {
-    try {
-      const serialized = this.#sessionStorage.getItem(MATRIX_SESSION_KEY);
-      if (serialized === null) {
-        return ok(null);
-      }
-      const parsed = storedSessionSchema.safeParse(JSON.parse(serialized));
-      if (!parsed.success) {
-        this.#sessionStorage.removeItem(MATRIX_SESSION_KEY);
-        return ok(null);
-      }
-      return ok(parsed.data);
-    } catch {
-      return err(failure('browser', 'browser.session_storage_unavailable', false, false));
-    }
-  }
-
-  #writeStoredSession(session: StoredMatrixSession): Result<void, SessionFailure> {
-    try {
-      this.#sessionStorage.setItem(MATRIX_SESSION_KEY, JSON.stringify(session));
-      return ok(undefined);
-    } catch {
-      return err(failure('browser', 'browser.session_storage_unavailable', false, false));
-    }
-  }
-
-  #clearStoredSession(): void {
-    try {
-      this.#sessionStorage.removeItem(MATRIX_SESSION_KEY);
-    } catch {
-      // 本地凭据已经不可访问；不再尝试任何可能暴露凭据的降级路径。
-    }
-  }
-
-  #clearBrowserState(): void {
-    this.#clearStoredSession();
+  #clearReturnPath(): Result<void, SessionFailure> {
     try {
       this.#sessionStorage.removeItem(MATRIX_RETURN_PATH_KEY);
+      return ok(undefined);
     } catch {
-      // 两个会话键位于同一不可访问存储中，凭据已经无法被当前页面读取。
+      return err(failure('browser', 'browser.session_storage_unavailable', false, true));
     }
   }
 
@@ -402,6 +421,12 @@ export class MatrixWebGateway implements MatrixGateway {
     } catch {
       // 即使远端撤销不可达，也必须清除身份不匹配的本地会话。
     }
+  }
+}
+
+class MatrixPersistenceError extends Error {
+  constructor(readonly failure: SessionFailure) {
+    super(failure.code);
   }
 }
 
@@ -446,6 +471,7 @@ class BrowserMatrixConnection implements MatrixConnection {
   readonly #syncEvent: ClientEvent.Sync;
   readonly #syncState: typeof SyncState;
   readonly #syncTimeoutMs: number;
+  readonly #persistenceFailure: () => SessionFailure | null;
   #observingActivity = true;
   #started = false;
 
@@ -456,6 +482,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     online: () => boolean,
     syncTimeoutMs: number,
     onClientActivity: (client: MatrixClient) => void,
+    persistenceFailure: () => SessionFailure | null,
   ) {
     this.#client = client;
     this.#syncEvent = syncEvent;
@@ -463,6 +490,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     this.#onClientActivity = onClientActivity;
     this.#online = online;
     this.#syncTimeoutMs = syncTimeoutMs;
+    this.#persistenceFailure = persistenceFailure;
     this.deviceId = client.getDeviceId() ?? 'unknown-device';
     this.userId = client.getUserId() ?? 'unknown-user';
     this.#client.on(this.#syncEvent, this.#handleClientActivity);
@@ -487,6 +515,8 @@ class BrowserMatrixConnection implements MatrixConnection {
   }
 
   async waitUntilPrepared(): Promise<Result<void, SessionFailure>> {
+    const persistenceFailure = this.#persistenceFailure();
+    if (persistenceFailure !== null) return err(persistenceFailure);
     const current = this.#client.getSyncState();
     if (current === this.#syncState.Prepared || current === this.#syncState.Syncing) {
       return ok(undefined);
@@ -506,7 +536,12 @@ class BrowserMatrixConnection implements MatrixConnection {
         if (state === this.#syncState.Prepared || state === this.#syncState.Syncing) {
           finish(ok(undefined));
         } else if (state === this.#syncState.Error || state === this.#syncState.Stopped) {
-          finish(err(failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true)));
+          finish(
+            err(
+              this.#persistenceFailure() ??
+                failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true),
+            ),
+          );
         }
       };
       const timeout = window.setTimeout(() => {
@@ -516,7 +551,12 @@ class BrowserMatrixConnection implements MatrixConnection {
       if (!this.#started) {
         this.#started = true;
         void this.#client.startClient({ initialSyncLimit: 20 }).catch(() => {
-          finish(err(failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true)));
+          finish(
+            err(
+              this.#persistenceFailure() ??
+                failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true),
+            ),
+          );
         });
       }
     });

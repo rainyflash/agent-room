@@ -1,6 +1,9 @@
 pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_begin_human_authentication",
     "desktop_begin_matrix_authentication",
+    "desktop_load_matrix_session",
+    "desktop_save_matrix_session",
+    "desktop_clear_matrix_session",
     "desktop_clear_human_session",
     "desktop_runtime_snapshot",
     "desktop_retry_bridge",

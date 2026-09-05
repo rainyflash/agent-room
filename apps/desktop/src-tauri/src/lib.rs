@@ -12,6 +12,7 @@ mod desktop_config;
 mod human_session;
 mod installer_acceptance;
 mod loopback_callback;
+mod matrix_credentials;
 mod matrix_session;
 mod release_update_config;
 mod release_update_state;
@@ -23,14 +24,16 @@ use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
     DesktopRuntime, desktop_apply_agent_host, desktop_begin_human_authentication,
     desktop_begin_matrix_authentication, desktop_bootstrap_default_agent, desktop_check_update,
-    desktop_clear_human_session, desktop_configure_agent_runtime, desktop_detect_agent_hosts,
-    desktop_install_update, desktop_lobby_snapshot, desktop_open_authorization,
-    desktop_plan_agent_host, desktop_remove_agent_host, desktop_retry_bridge,
-    desktop_runtime_snapshot, desktop_set_autostart,
+    desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
+    desktop_detect_agent_hosts, desktop_install_update, desktop_load_matrix_session,
+    desktop_lobby_snapshot, desktop_open_authorization, desktop_plan_agent_host,
+    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_save_matrix_session, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use human_session::HumanSessionRuntime;
+use matrix_credentials::MatrixCredentialRuntime;
 use matrix_session::MatrixSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
@@ -101,6 +104,9 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         .invoke_handler(tauri::generate_handler![
             desktop_begin_human_authentication,
             desktop_begin_matrix_authentication,
+            desktop_load_matrix_session,
+            desktop_save_matrix_session,
+            desktop_clear_matrix_session,
             desktop_clear_human_session,
             desktop_runtime_snapshot,
             desktop_retry_bridge,
@@ -120,12 +126,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             webview_migration::retire_legacy_service_worker(app)?;
             let mut config = DesktopBridgeConfig::from_environment()
                 .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
-            let human_sessions = HumanSessionRuntime::system(&config)
-                .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
-            let matrix_sessions = MatrixSessionRuntime::system(&config);
-            human_sessions
-                .restore(app.handle())
-                .map_err(|failure| format!("桌面人类会话恢复失败 [{}]", failure.code()))?;
+            setup_user_sessions(app, &config)?;
             let targets = Arc::new(
                 RuntimeTargetStore::open(&config.data_root())
                     .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,
@@ -149,8 +150,6 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 hosts,
                 targets,
             });
-            app.manage(human_sessions);
-            app.manage(matrix_sessions);
             setup_tray(app)?;
             setup_deep_links(app)?;
             Ok(())
@@ -173,6 +172,18 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         }
         _ => {}
     });
+}
+
+fn setup_user_sessions(app: &tauri::App, config: &DesktopBridgeConfig) -> Result<(), String> {
+    let human_sessions = HumanSessionRuntime::system(config)
+        .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
+    human_sessions
+        .restore(app.handle())
+        .map_err(|failure| format!("桌面人类会话恢复失败 [{}]", failure.code()))?;
+    app.manage(human_sessions);
+    app.manage(MatrixSessionRuntime::system(config));
+    app.manage(MatrixCredentialRuntime::system(config));
+    Ok(())
 }
 
 fn configure_updater(

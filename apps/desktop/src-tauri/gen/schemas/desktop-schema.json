@@ -591,6 +591,12 @@
           "markdownDescription": "Enables the desktop_clear_human_session command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_clear_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-clear-matrix-session",
+          "markdownDescription": "Enables the desktop_clear_matrix_session command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_configure_agent_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-configure-agent-runtime",
@@ -607,6 +613,12 @@
           "type": "string",
           "const": "allow-desktop-install-update",
           "markdownDescription": "Enables the desktop_install_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_load_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-load-matrix-session",
+          "markdownDescription": "Enables the desktop_load_matrix_session command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_lobby_snapshot command without any pre-configured scope.",
@@ -643,6 +655,12 @@
           "type": "string",
           "const": "allow-desktop-runtime-snapshot",
           "markdownDescription": "Enables the desktop_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_save_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-save-matrix-session",
+          "markdownDescription": "Enables the desktop_save_matrix_session command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_set_autostart command without any pre-configured scope.",
@@ -687,6 +705,12 @@
           "markdownDescription": "Denies the desktop_clear_human_session command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_clear_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-clear-matrix-session",
+          "markdownDescription": "Denies the desktop_clear_matrix_session command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_configure_agent_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-configure-agent-runtime",
@@ -703,6 +727,12 @@
           "type": "string",
           "const": "deny-desktop-install-update",
           "markdownDescription": "Denies the desktop_install_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_load_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-load-matrix-session",
+          "markdownDescription": "Denies the desktop_load_matrix_session command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_lobby_snapshot command without any pre-configured scope.",
@@ -739,6 +769,12 @@
           "type": "string",
           "const": "deny-desktop-runtime-snapshot",
           "markdownDescription": "Denies the desktop_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_save_matrix_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-save-matrix-session",
+          "markdownDescription": "Denies the desktop_save_matrix_session command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_set_autostart command without any pre-configured scope.",
