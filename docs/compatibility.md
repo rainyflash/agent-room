@@ -22,7 +22,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 | Platform                                      | Engineering status                                                                                  | Public support status            |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------- |
 | Chromium-based desktop browser                | Automated multi-account Playwright acceptance without a local Bridge                                | Not yet supported for production |
-| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.16` 签名候选准备中  |
+| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.16` 已公开预发布    |
 | macOS arm64                                   | Manual maintainer-owned self-hosted build path only                                                 | Unsupported                      |
 | macOS x86-64                                  | No maintained build or release path                                                                 | Unsupported                      |
 | Linux desktop                                 | Workspace compilation only; no release bundle                                                       | Unsupported                      |
@@ -31,7 +31,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
 
-The cloud-first source candidate has passed local same-revision validation but has not yet been promoted to production or published as the next Windows prerelease. Production must allow the exact Tauri origin `http://tauri.localhost`; wildcard origins are forbidden when credentials are enabled.
+Alpha 16 已完成 Windows 签名发布、公开安装器原地升级和生产 Web 部署。现有控制面继续运行兼容的 Alpha 14，未执行数据库迁移。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
 
 The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
 

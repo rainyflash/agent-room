@@ -23,4 +23,30 @@
 
 ## 发布状态
 
-签名候选构建、公开发布、渠道推进和本机原地升级尚待执行。完成后在此补充实际运行、签名和升级证据。
+2026-09-05 已完成签名候选、公开发布、testing 渠道推进、生产 Web 部署和本机原地升级。
+
+- [公开预发行版](https://github.com/rainyflash/agent-room/releases/tag/v0.1.0-alpha.16)，发布时间为 `2026-09-05T06:05:38Z`。
+- 发布源码固定为 `29625b2fd7b15e22d11a08f77b9ab8b393e91a8d`。
+- [签名候选工作流](https://github.com/rainyflash/agent-room/actions/runs/33946848455)通过，包括安装器的全部 18 项检查。
+- [最终发布工作流](https://github.com/rainyflash/agent-room/actions/runs/33948415684)通过，testing 序号从 `15` 推进到 `16`。
+- [完整 CI](https://github.com/rainyflash/agent-room/actions/runs/33947194356)通过。该 CI 提交 `615c1ed` 相比签名候选只修正了兼容矩阵的 Markdown 表格格式，运行时代码一致。
+- 公开 Windows 安装器为 `agent-room-installer-v0.1.0-alpha.16-windows-x86_64.exe`，共 `30,503,084` 字节。
+- 安装器 SHA-256 为 `833d1180d86648f16d8183df9047d41d5435fbe666f24a99dfa5fa453dbee709`。
+- 从公开 URL 重新下载后，Ed25519 根清单、Tauri 安装器签名、文件长度和摘要均通过独立复验。
+
+## 生产部署与恢复证据
+
+- 新备份 `20260905T052628315465Z-77b3aea8` 完整性验证通过；同一备份的隔离恢复演练通过，耗时 `7.040` 秒。
+- 与生产基线 `eb3f7dc` 比较，控制面、领域、PostgreSQL、身份适配器、迁移、生产 Compose 和运维工具没有变化；控制面继续运行 Alpha 14。
+- 公网健康检查全部 ready；公共大厅响应通过客户端严格 Schema 校验；Matrix、桌面与 Web 精确 CORS、非信任源站拒绝均通过。
+- 生产 Web 由发布提交构建并独立部署，镜像摘要为 `sha256:94b396b82ae110be4aeb892875aad93f0b0cb414a36160dffc4f2794fc69d197`。
+- 官网下载从 Alpha 14 切换到 Alpha 16；真实浏览器通过“重新加载更新”激活新版 PWA 后，下载链接正确指向已公开安装器。
+- 网页切换后生产健康与联邦检查通过；保留了旧网页镜像 `agent-room-gateway:pre-alpha16-20260905` 和原配置备份。
+
+## 本机升级验证
+
+- 使用公开、验签通过的安装器完成 `0.1.0-alpha.15 → 0.1.0-alpha.16` 静默原地升级。
+- 已安装版本查询和 Windows 安装注册信息均为 Alpha 16；Bridge、MCP 二进制摘要与签名清单一致。
+- Desktop 与 Bridge 正常运行；独立新建的 MCP STDIO 连接注册 9 个工具并返回 `ready`。
+- 升级前后的 Agent、实例、Matrix 设备和大厅标识保持不变。
+- 安装器关闭旧进程后，当前 Codex 任务已有的 MCP STDIO 连接返回 `Transport closed`。新连接已验证可用；当前任务需要重启 Codex 以重新建立宿主连接，现有工具没有运行中重连接口。
