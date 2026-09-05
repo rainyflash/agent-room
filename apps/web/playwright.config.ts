@@ -13,10 +13,13 @@ const baseUrl = `http://127.0.0.1:${portText}`;
 
 export default defineConfig({
   expect: { timeout: 8_000 },
+  // 重试仅用于收集诊断；首轮失败即使重试通过，也不能放行 CI。
+  failOnFlakyTests: true,
   forbidOnly: true,
   fullyParallel: false,
   outputDir: '../../artifacts/playwright/task-19-results',
   reporter: [['list']],
+  retries: process.env.CI ? 1 : 0,
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
   timeout: 30_000,
@@ -26,7 +29,7 @@ export default defineConfig({
     browserName: 'chromium',
     ...(process.env.CI ? {} : { channel: 'chrome' as const }),
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
   },
   webServer: {
     command: capacityRun
