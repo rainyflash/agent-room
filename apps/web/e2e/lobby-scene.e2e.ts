@@ -4,6 +4,10 @@ import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import { graphicsSample, installGraphicsProbe } from './support/graphics-probe';
+import {
+  createSceneInteractionProbe,
+  type SceneInteractionSample,
+} from './support/scene-interaction-probe';
 
 const fixturePath = '/e2e/fixtures/lobby-scene.html?agents=200';
 
@@ -51,77 +55,30 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   await expect(canvas).toBeVisible();
 
   const sceneHost = page.locator('.lobby-scene__pixi');
-  const interactionSamples: {
-    readonly renderMilliseconds: number;
-    readonly scheduleMilliseconds: number;
-    readonly updateMilliseconds: number;
-  }[] = [];
+  const interactionSamples: SceneInteractionSample[] = [];
   await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
   await canvas.hover();
   const graphicsBefore = await graphicsSample(page);
-  for (let index = 0; index < 72; index += 1) {
-    const previousSequence = await canvas.evaluate((element) => {
-      const host = element.closest<HTMLElement>('.lobby-scene__pixi');
-      if (host === null) {
-        throw new Error('大厅场景缺少性能遥测宿主。');
-      }
-      const sequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-      if (!Number.isFinite(sequence)) {
-        throw new Error('大厅渲染序列无效。');
-      }
-      delete host.dataset.agentRoomTestRenderCompletedAt;
-      delete host.dataset.agentRoomTestWheelStartedAt;
-      const observer = new MutationObserver(() => {
-        const nextSequence = Number(host.dataset.agentRoomRenderSequence ?? Number.NaN);
-        if (Number.isFinite(nextSequence) && nextSequence > sequence) {
-          host.dataset.agentRoomTestRenderCompletedAt = String(performance.now());
-          observer.disconnect();
-        }
+  const interactionProbe = await createSceneInteractionProbe(page);
+  try {
+    for (let index = 0; index < 72; index += 1) {
+      const [sample] = await Promise.all([
+        interactionProbe.evaluate((probe, wheelIndex) => probe.waitForSample(wheelIndex), index),
+        page.mouse.wheel(0, index % 12 < 6 ? -5 : 5),
+      ]);
+      expect(sample.wheelIndex).toBe(index);
+      interactionSamples.push(sample);
+    }
+  } finally {
+    try {
+      await interactionProbe.evaluate((probe) => {
+        probe.dispose();
       });
-      observer.observe(host, {
-        attributeFilter: ['data-agent-room-render-sequence'],
-        attributes: true,
-      });
-      element.addEventListener(
-        'wheel',
-        () => {
-          host.dataset.agentRoomTestWheelStartedAt = String(performance.now());
-        },
-        { capture: true, once: true },
-      );
-      return sequence;
-    });
-    await page.mouse.wheel(0, index % 12 < 6 ? -5 : 5);
-    await page.waitForFunction(
-      (sequence) => {
-        const host = document.querySelector<HTMLElement>('.lobby-scene__pixi');
-        return (
-          host?.dataset.agentRoomTestRenderCompletedAt !== undefined &&
-          Number(host.dataset.agentRoomRenderSequence ?? Number.NaN) > sequence
-        );
-      },
-      previousSequence,
-      { polling: 'raf', timeout: 1_000 },
-    );
-    interactionSamples.push(
-      await sceneHost.evaluate((host) => {
-        const completedAt = Number(host.dataset.agentRoomTestRenderCompletedAt ?? Number.NaN);
-        const startedAt = Number(host.dataset.agentRoomTestWheelStartedAt ?? Number.NaN);
-        const renderMilliseconds = Number(host.dataset.agentRoomRenderMilliseconds ?? Number.NaN);
-        const updateMilliseconds = Number(host.dataset.agentRoomUpdateMilliseconds ?? Number.NaN);
-        if (
-          ![completedAt, renderMilliseconds, startedAt, updateMilliseconds].every(Number.isFinite)
-        ) {
-          throw new Error('大厅交互没有产生完整的性能遥测。');
-        }
-        return {
-          renderMilliseconds,
-          scheduleMilliseconds: completedAt - startedAt,
-          updateMilliseconds,
-        };
-      }),
-    );
+    } finally {
+      await interactionProbe.dispose();
+    }
   }
+  expect(interactionSamples).toHaveLength(72);
   interactionSamples.splice(0, 6);
 
   const renderDurations = interactionSamples
