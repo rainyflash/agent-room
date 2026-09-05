@@ -254,6 +254,50 @@ test('WebGL 不可用时自动降级为可交互 SVG 空间视图', async ({ pag
   expect(failures).toEqual([]);
 });
 
+test('首帧图形绘制失败时释放画布并降级为可交互 SVG', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.addInitScript(() => {
+    const state = { failures: 0 };
+    Object.defineProperty(window, '__agentRoomFirstFrameFailure', { value: state });
+    for (const context of [WebGLRenderingContext, WebGL2RenderingContext]) {
+      const draw: unknown = Reflect.get(context.prototype, 'drawElements');
+      if (typeof draw !== 'function') throw new Error('图形上下文缺少绘制方法。');
+      context.prototype.drawElements = function (
+        this: WebGLRenderingContext | WebGL2RenderingContext,
+        ...parameters: Parameters<WebGLRenderingContext['drawElements']>
+      ): void {
+        // 上下文已成功初始化并挂载后才注入，确保覆盖首帧而非 WebGL 不可用分支。
+        if (
+          this.canvas instanceof HTMLCanvasElement &&
+          this.canvas.classList.contains('lobby-scene__canvas')
+        ) {
+          state.failures += 1;
+          throw new Error('测试注入：首帧图形提交失败。');
+        }
+        Reflect.apply(draw, this, parameters);
+      };
+    }
+  });
+  await page.goto(fixturePath);
+  await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
+  await expect(page.locator('.lobby-scene__canvas')).toHaveCount(0);
+  const failureCount = await page.evaluate(() => {
+    const fixture = window as Window & {
+      readonly __agentRoomFirstFrameFailure?: { readonly failures: number };
+    };
+    return fixture.__agentRoomFirstFrameFailure?.failures ?? 0;
+  });
+  expect(failureCount).toBeGreaterThan(0);
+  const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
+  await expect(scene.getByRole('option')).toHaveCount(200);
+  await scene.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary')).toBeVisible();
+  await page.getByRole('button', { name: 'Close Agent details' }).click();
+  await expect(scene).toBeFocused();
+  expect(failures).toEqual([]);
+});
+
 test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });

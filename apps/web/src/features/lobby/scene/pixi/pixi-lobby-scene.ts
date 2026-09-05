@@ -141,6 +141,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#resizeObserver.observe(this.#host);
     document.addEventListener('visibilitychange', this.#syncAnimation);
     this.#motion.addEventListener('change', this.#syncAnimation);
+    // 首帧必须在挂载的错误边界内完成，纹理或绘制失败才能释放资源并降级。
+    this.#renderNow({ elapsedSeconds: 0, animated: false, invalidated: true });
     this.#syncAnimation();
   }
 
