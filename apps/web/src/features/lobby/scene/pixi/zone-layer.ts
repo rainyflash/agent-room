@@ -28,6 +28,8 @@ export function createZoneLayer(
     label.position.set(plaque.x, plaque.y);
     layer.addChild(label);
   }
+  // 地面与标牌不随角色变化，按世界尺寸缓存，避免每帧重复提交复杂几何。
+  layer.cacheAsTexture({ resolution: 1, antialias: true });
   return layer;
 }
 
@@ -37,6 +39,7 @@ export function createRoomProps(pixi: PixiModule): readonly Container[] {
     container.eventMode = 'none';
     container.zIndex = prop.depth;
     container.addChild(shapeGraphics(pixi, prop.shapes));
+    container.cacheAsTexture({ resolution: 2, antialias: true });
     return container;
   });
 }

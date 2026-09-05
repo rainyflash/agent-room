@@ -1,13 +1,13 @@
 import type { SceneCharacter } from '../scene-character';
-import type { Container, FederatedPointerEvent } from 'pixi.js';
+import type { Container, FederatedPointerEvent, Sprite } from 'pixi.js';
 import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
-import { characterBodyArt, characterStatusColor } from '../character-art';
+import { characterStatusColor } from '../character-art';
 import type { CharacterPose } from '../character-motion';
-import { shapeGraphics } from './shape-graphics';
 
 type PixiModule = typeof import('pixi.js');
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export type AgentNodeViewOptions = {
+  readonly body: Sprite;
   readonly detail: LobbySceneDetail;
   readonly node: SceneCharacter;
   readonly onSelect: (agentId: string) => void;
@@ -62,7 +62,7 @@ export function createAgentNodeView(
     .fill('#dab493')
     .roundRect(13, -33, 7, 22, 3)
     .fill('#dab493');
-  body.addChild(arms, shapeGraphics(pixi, characterBodyArt(node.characterId, node.kind)));
+  body.addChild(arms, options.body);
   character.addChild(body);
   if (node.status === 'offline') character.alpha = 0.56;
   const marker = new pixi.Graphics()

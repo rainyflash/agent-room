@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { graphicsSample, installGraphicsProbe } from './support/graphics-probe';
 
 const fixturePath = '/e2e/fixtures/lobby-scene.html?agents=200';
 
@@ -41,6 +42,7 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
 });
 
 test('200 节点场景交互保持在有界帧预算内', async ({ page }, testInfo) => {
+  await installGraphicsProbe(page);
   const developerTools = await page.context().newCDPSession(page);
   await developerTools.send('Performance.enable');
   await page.setViewportSize({ height: 900, width: 1_440 });
@@ -56,6 +58,7 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   }[] = [];
   await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
   await canvas.hover();
+  const graphicsBefore = await graphicsSample(page);
   for (let index = 0; index < 72; index += 1) {
     const previousSequence = await canvas.evaluate((element) => {
       const host = element.closest<HTMLElement>('.lobby-scene__pixi');
@@ -137,6 +140,10 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   const updateMedian = percentile(updateDurations, 0.5);
   const updateP95 = percentile(updateDurations, 0.95);
   const runtimeBudget = await collectRuntimeBudget(page, developerTools);
+  const graphicsAfter = await graphicsSample(page);
+  const graphicsDrawCallsPerFrame =
+    (graphicsAfter.drawCalls - graphicsBefore.drawCalls) /
+    (graphicsAfter.frames - graphicsBefore.frames);
   await testInfo.attach('frame-budget.json', {
     body: Buffer.from(
       JSON.stringify({
@@ -146,6 +153,7 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
         scheduleP95Milliseconds: scheduleP95,
         updateMedianMilliseconds: updateMedian,
         updateP95Milliseconds: updateP95,
+        graphicsDrawCallsPerFrame,
         ...runtimeBudget,
       }),
     ),
@@ -157,6 +165,8 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
   });
   expect(updateMedian).toBeLessThanOrEqual(22);
   expect(updateP95).toBeLessThanOrEqual(40);
+  expect(graphicsDrawCallsPerFrame).toBeGreaterThan(0);
+  expect(graphicsDrawCallsPerFrame).toBeLessThanOrEqual(128);
   if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
     expect(scheduleMedian).toBeLessThanOrEqual(22);
     expect(scheduleP95).toBeLessThanOrEqual(40);
@@ -177,6 +187,7 @@ test('200 节点场景交互保持在有界帧预算内', async ({ page }, testI
     renderP95Milliseconds: renderP95,
     updateMedianMilliseconds: updateMedian,
     updateP95Milliseconds: updateP95,
+    graphicsDrawCallsPerFrame,
     ...runtimeBudget,
   });
 });

@@ -1,6 +1,7 @@
 import { sceneCharacters, type SceneFrame } from '../scene-character';
-import type { Application, Container, FederatedPointerEvent, FederatedWheelEvent } from 'pixi.js';
+import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
+import { CharacterTextureCache } from './character-texture-cache';
 import { createRoomProps, createZoneLayer } from './zone-layer';
 import {
   sceneDetailForZoom,
@@ -25,8 +26,13 @@ export async function mountPixiLobbyScene(
   if (probe.getContext('webgl2') === null && probe.getContext('webgl') === null)
     throw new Error('当前浏览器没有可用的 WebGL 图形上下文。');
   const scene = new PixiLobbyScene(await import('pixi.js'), options);
-  await scene.initialize();
-  return scene;
+  try {
+    await scene.initialize();
+    return scene;
+  } catch (error) {
+    scene.destroy();
+    throw error;
+  }
 }
 
 class PixiLobbyScene implements LobbySceneHandle {
@@ -45,6 +51,7 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #pointers = new Map<number, PointerPosition>();
   readonly #motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   #app: Application | null = null;
+  #characterTextures: CharacterTextureCache | null = null;
   #destroyed = false;
   #gestureMoved = false;
   #frame: number | null = null;
@@ -87,6 +94,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       return;
     }
     this.#app = app;
+    this.#characterTextures = new CharacterTextureCache(this.#pixi, app.renderer);
     app.canvas.setAttribute('aria-hidden', 'true');
     app.canvas.className = 'lobby-scene__canvas';
     this.#host.replaceChildren(app.canvas);
@@ -98,7 +106,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     app.stage.on('pointerupoutside', this.#handlePointerUp);
     app.stage.on('pointercancel', this.#handlePointerUp);
     app.stage.on('pointertap', this.#handleBackgroundSelect);
-    app.stage.on('wheel', this.#handlePixiWheel);
+    app.canvas.addEventListener('wheel', this.#handleWheel, { passive: false });
     const world = new this.#pixi.Container();
     const objects = new this.#pixi.Container();
     objects.sortableChildren = true;
@@ -134,6 +142,9 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#views.clear();
     this.#pointers.clear();
     const app = this.#app;
+    app?.canvas.removeEventListener('wheel', this.#handleWheel);
+    this.#characterTextures?.destroy();
+    this.#characterTextures = null;
     this.#app = null;
     this.#worldLayer = null;
     this.#objectsLayer = null;
@@ -201,10 +212,18 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #handleBackgroundSelect = (): void => {
     if (!this.#gestureMoved) this.#callbacks.onSelectAgent(null);
   };
-  readonly #handlePixiWheel = (event: FederatedWheelEvent): void => {
+  readonly #handleWheel = (event: WheelEvent): void => {
+    const app = this.#app;
+    if (app === null) return;
+    const bounds = app.canvas.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return;
     event.preventDefault();
     this.#callbacks.onZoomChange(
-      this.#camera.zoomBy(Math.exp(-event.deltaY * 0.0012), event.global.x, event.global.y).scale,
+      this.#camera.zoomBy(
+        Math.exp(-event.deltaY * 0.0012),
+        ((event.clientX - bounds.left) * app.screen.width) / bounds.width,
+        ((event.clientY - bounds.top) * app.screen.height) / bounds.height,
+      ).scale,
     );
     this.#scheduleRender();
   };
@@ -239,7 +258,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     const app = this.#app;
     const objects = this.#objectsLayer;
     const world = this.#worldLayer;
-    if (app === null || objects === null || world === null) return;
+    const characterTextures = this.#characterTextures;
+    if (app === null || objects === null || world === null || characterTextures === null) return;
     const started = performance.now();
     const camera = this.#camera.snapshot();
     world.position.set(camera.x, camera.y);
@@ -280,6 +300,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       if (stored?.signature !== signature) {
         stored?.view.destroy();
         const view = createAgentNodeView(this.#pixi, {
+          body: characterTextures.createBody(node),
           detail,
           node,
           onSelect: (id) => {
