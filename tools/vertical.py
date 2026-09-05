@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 import ctypes
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,7 +35,14 @@ if __package__:
         read_environment,
         required_value,
     )
-    from .mcp_client import McpClientFailure, McpStdioClient
+    from .mcp_client import (
+        AGENT_ROOM_TOOLS,
+        McpAgentSession,
+        McpClientFailure,
+        McpStdioClient,
+        require_session_id,
+        tool_failure_code,
+    )
 else:
     from local_runtime import (
         ControlPlaneNetworkScope,
@@ -43,7 +52,14 @@ else:
         read_environment,
         required_value,
     )
-    from mcp_client import McpClientFailure, McpStdioClient
+    from mcp_client import (
+        AGENT_ROOM_TOOLS,
+        McpAgentSession,
+        McpClientFailure,
+        McpStdioClient,
+        require_session_id,
+        tool_failure_code,
+    )
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
@@ -77,22 +93,12 @@ SECURE_STORAGE_ACCOUNTS: Final = (
     "agent-runtime-session-v1",
     "matrix-store-passphrase-v1",
     "handoff-storage-key-v1",
+    "message-projection-storage-key-v1",
+    "message-content-root-key-v1",
     "bridge-ipc-installation-id-v1",
     "bridge-ipc-shared-secret-v1",
 )
-EXPECTED_MCP_TOOLS: Final = frozenset(
-    {
-        "agent_room_get_self",
-        "agent_room_list_previews",
-        "agent_room_get_presence",
-        "agent_room_open_content",
-        "agent_room_publish_status",
-        "agent_room_send_message",
-        "agent_room_list_handoffs",
-        "agent_room_consume_handoff",
-        "agent_room_decline_handoff",
-    }
-)
+EXPECTED_MCP_TOOLS: Final = frozenset(AGENT_ROOM_TOOLS)
 SENSITIVE_NAME: Final = re.compile(r"(?:PASSWORD|SECRET|TOKEN|ACCESS_KEY)", re.IGNORECASE)
 JWT_VALUE: Final = re.compile(
     r"\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b"
@@ -252,7 +258,7 @@ class BridgeRuntimeObservation:
         raise VerticalFailure(f"{label} 未在 {timeout_seconds:.0f} 秒内出现。")
 
 
-@dataclass(frozen=True)
+@dataclass
 class AuthorizedBridgeRuntime:
     """纵向验收中已授权 Bridge 的唯一运行时句柄。"""
 
@@ -260,6 +266,9 @@ class AuthorizedBridgeRuntime:
     environment: Mapping[str, str]
     observation: BridgeRuntimeObservation
     device_code: str
+    session_key: str
+    display_name: str
+    session: dict[str, str] | None = None
 
 
 class ManagedProcess(AbstractContextManager["ManagedProcess"]):
@@ -508,21 +517,19 @@ class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
     """只清理纵向验收专属目录和凭据命名空间。"""
 
     def __enter__(self) -> "IsolatedBridgeState":
-        reset_bridge_data_roots()
         clear_vertical_secure_storage()
+        reset_bridge_data_roots()
         prepare_private_bridge_data_roots()
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         failures: list[str] = []
         try:
-            reset_bridge_data_roots()
-        except (OSError, VerticalFailure) as error:
-            failures.append(f"Bridge 测试目录清理失败：{error}")
-        try:
             clear_vertical_secure_storage()
+            # 子会话凭据的寻址依赖 host-agents 目录；清理凭据成功后才可删目录。
+            reset_bridge_data_roots()
         except (OSError, VerticalFailure, subprocess.SubprocessError) as error:
-            failures.append(f"Bridge 测试凭据清理失败：{error}")
+            failures.append(f"Bridge 测试状态清理失败：{error}")
         if not failures:
             return
         message = "；".join(failures)
@@ -627,13 +634,14 @@ def reset_bridge_data_roots() -> None:
 
 
 def clear_vertical_secure_storage() -> None:
+    services = vertical_secure_storage_services()
     if os.name == "nt":
-        for service in SECURE_STORAGE_SERVICES:
+        for service in services:
             for account in SECURE_STORAGE_ACCOUNTS:
                 delete_windows_credential(windows_credential_target(service, account))
         return
     if sys.platform == "darwin":
-        for service in SECURE_STORAGE_SERVICES:
+        for service in services:
             for account in SECURE_STORAGE_ACCOUNTS:
                 completed = subprocess.run(
                     [
@@ -654,7 +662,7 @@ def clear_vertical_secure_storage() -> None:
     secret_tool = shutil.which("secret-tool")
     if secret_tool is None:
         raise VerticalFailure("Linux 纵向验收需要 secret-tool 清理隔离凭据。")
-    for service in SECURE_STORAGE_SERVICES:
+    for service in services:
         for account in SECURE_STORAGE_ACCOUNTS:
             completed = subprocess.run(
                 [
@@ -674,6 +682,32 @@ def clear_vertical_secure_storage() -> None:
                     "无法清理 Linux 纵向验收凭据"
                     f"（secret-tool 退出码 {completed.returncode}）。"
                 )
+
+
+def vertical_secure_storage_services() -> tuple[str, ...]:
+    """只枚举测试根目录中的 Agent ID，不读取任何凭据值或其他安装目录。"""
+    services = list(SECURE_STORAGE_SERVICES)
+    for data_root, parent_service in zip(
+        BRIDGE_DATA_ROOTS, SECURE_STORAGE_SERVICES, strict=True
+    ):
+        if data_root.resolve().parent != VERTICAL_ROOT.resolve():
+            raise VerticalFailure("拒绝枚举测试目录之外的子会话凭据。")
+        children = data_root / "host-agents"
+        if not children.exists():
+            continue
+        if children.resolve().parent != data_root.resolve():
+            raise VerticalFailure("拒绝跟随子会话目录到其他位置。")
+        for child in children.iterdir():
+            if not child.is_dir() or child.resolve().parent != children.resolve():
+                raise VerticalFailure("子会话存储目录格式无效。")
+            try:
+                agent_id = require_session_id(child.name, "测试子会话 Agent ID")
+            except McpClientFailure as error:
+                raise VerticalFailure("子会话 Agent ID 无效，保留目录供清理。") from error
+            digest = hashlib.sha256(f"{parent_service}\0{agent_id}".encode()).digest()
+            encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+            services.append(f"dev.agent-room.host.{encoded}.v1")
+    return tuple(services)
 
 
 def linux_secret_clear_succeeded(
@@ -1236,12 +1270,78 @@ def start_authorized_bridge(
     device_code = observation.wait_for_device_code(bridge, timeout_seconds=90)
     approve_device_grant(environment, device_code)
     observation.wait_for_agent_online(bridge, timeout_seconds=180)
-    return AuthorizedBridgeRuntime(
+    runtime = AuthorizedBridgeRuntime(
         process=bridge,
         environment=bridge_environment,
         observation=observation,
         device_code=device_code,
+        session_key=new_uuid_v7(),
+        display_name=f"Vertical {runtime_name}",
     )
+    open_bridge_session(runtime, redactor)
+    return runtime
+
+
+def bridge_mcp_client(
+    runtime: AuthorizedBridgeRuntime, redactor: LogRedactor
+) -> McpStdioClient:
+    return McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=runtime.environment,
+        stderr_path=LOG_ROOT / f"{runtime.display_name.replace(' ', '-')}-session.log",
+        sanitize_line=redactor.redact,
+    )
+
+
+def require_bridge_session(runtime: AuthorizedBridgeRuntime) -> dict[str, str]:
+    if runtime.session is None:
+        raise VerticalFailure("Bridge 尚未通过 open_session 建立任务身份。")
+    return runtime.session
+
+
+def open_bridge_session(runtime: AuthorizedBridgeRuntime, redactor: LogRedactor) -> None:
+    """首次注册及进程恢复均复用任务 key/name；只接受真实新身份及原实例恢复。"""
+    with bridge_mcp_client(runtime, redactor) as client:
+        scoped = client.open_session(
+            session_key=runtime.session_key, display_name=runtime.display_name
+        )
+        identity = wait_for_session_identity(scoped, timeout_seconds=180)
+    if identity["agentId"] == runtime.environment.get("AGENT_ROOM_AGENT_ID"):
+        raise VerticalFailure("任务会话错误地回退到浏览器引导的默认 Agent。")
+    if runtime.session is not None:
+        for field in (
+            "agentId", "agentInstanceId", "matrixDeviceId", "agentMatrixUserId",
+            "matrixRoomId",
+        ):
+            if identity[field] != runtime.session[field]:
+                raise VerticalFailure(f"重开同一任务会话时 {field} 漂移。")
+    runtime.session = {**identity, "sessionId": scoped.session_id}
+
+
+def wait_for_session_identity(
+    client: McpAgentSession, *, timeout_seconds: float
+) -> dict[str, str]:
+    deadline = time.monotonic() + timeout_seconds
+    last_code: str | None = None
+    while time.monotonic() < deadline:
+        result = client.call_tool_result("agent_room_get_self", {})
+        if result.get("isError") is True:
+            structured = result.get("structuredContent")
+            last_code = tool_failure_code(result)
+            if not isinstance(structured, dict) or structured.get("retryable") is not True:
+                raise VerticalFailure(f"任务会话初始化失败（错误码 {last_code or '缺失'}）。")
+        else:
+            response = require_object(result.get("structuredContent"), "MCP 身份响应")
+            return verify_mcp_identity_response(response)
+        time.sleep(0.4)
+    raise VerticalFailure(f"任务会话未在期限内就绪（错误码 {last_code or '缺失'}）。")
+
+
+def close_bridge_session(runtime: AuthorizedBridgeRuntime, redactor: LogRedactor) -> None:
+    session = require_bridge_session(runtime)
+    with bridge_mcp_client(runtime, redactor) as client:
+        client.bind_session(session["sessionId"]).close()
 
 
 def verify_matrix_disconnect_and_recovery(
@@ -1259,6 +1359,7 @@ def verify_matrix_disconnect_and_recovery(
             bridge_environment=target.environment,
             bridge_process=target.process,
             redactor=redactor,
+            session_id=require_bridge_session(target)["sessionId"],
             timeout_seconds=45,
         )
     wait_for_http(
@@ -1276,6 +1377,17 @@ def verify_matrix_disconnect_and_recovery(
             runtimes, online_generations, strict=True
         )
     )
+    for runtime in runtimes:
+        with bridge_mcp_client(runtime, redactor) as client:
+            previous = require_bridge_session(runtime)
+            recovered = wait_for_session_identity(
+                client.bind_session(previous["sessionId"]), timeout_seconds=180,
+            )
+            previous_identity = {
+                name: value for name, value in previous.items() if name != "sessionId"
+            }
+            if recovered != previous_identity:
+                raise VerticalFailure("网络恢复后显式会话身份或房间漂移。")
     return recovered_generations[0]
 
 
@@ -1284,6 +1396,7 @@ def wait_for_mcp_runtime_unavailable(
     bridge_environment: Mapping[str, str],
     bridge_process: ManagedProcess,
     redactor: LogRedactor,
+    session_id: str,
     timeout_seconds: float,
 ) -> None:
     """通过真实插件边界观察断网态，禁止把日志字符串当作状态协议。"""
@@ -1295,12 +1408,18 @@ def wait_for_mcp_runtime_unavailable(
         stderr_path=LOG_ROOT / "codex-mcp-reconnect.log",
         sanitize_line=redactor.redact,
     ) as client:
+        session = client.bind_session(session_id)
         while time.monotonic() < deadline:
             bridge_process.ensure_running()
-            result = client.call_tool_result("agent_room_get_self", {})
+            result = session.call_tool_result("agent_room_get_self", {})
             structured = result.get("structuredContent")
-            if result.get("isError") is True and isinstance(structured, dict):
-                if structured.get("code") == "bridge.agent_runtime_unavailable":
+            if result.get("isError") is True:
+                code = tool_failure_code(result)
+                if not isinstance(structured, dict) or structured.get("retryable") is not True:
+                    raise VerticalFailure(f"断网验收遇到不可恢复错误（错误码 {code or '缺失'}）。")
+                if (
+                    code == "bridge.agent_runtime_unavailable"
+                ):
                     return
             time.sleep(0.4)
     raise VerticalFailure(
@@ -1333,30 +1452,39 @@ def approve_device_grant(environment: Mapping[str, str], device_code: str) -> No
 
 def verify_mcp_workflow(
     *,
-    target_bridge_environment: Mapping[str, str],
-    sender_bridge_environment: Mapping[str, str],
-    expected_agent_id: str,
+    target_bridge: AuthorizedBridgeRuntime,
+    sender_bridge: AuthorizedBridgeRuntime,
     principal_id: str,
     redactor: LogRedactor,
 ) -> dict[str, str]:
+    target_session = require_bridge_session(target_bridge)
+    sender_session = require_bridge_session(sender_bridge)
+    expected_agent_id = target_session["agentId"]
     room = active_room_for_agent(expected_agent_id)
+    if any(
+        session["matrixRoomId"] != room["matrixRoomId"]
+        for session in (sender_session, target_session)
+    ):
+        raise VerticalFailure("两个独立任务没有进入同一测试大厅分片。")
     with (
         McpStdioClient(
             command=[str(runtime_binary("agent-room-mcp"))],
             working_directory=ROOT,
-            environment=target_bridge_environment,
+            environment=target_bridge.environment,
             stderr_path=LOG_ROOT / "codex-mcp.log",
             sanitize_line=redactor.redact,
-        ) as client,
+        ) as target_transport,
         McpStdioClient(
             command=[str(runtime_binary("agent-room-mcp"))],
             working_directory=ROOT,
-            environment=sender_bridge_environment,
+            environment=sender_bridge.environment,
             stderr_path=LOG_ROOT / "codex-mcp-sender.log",
             sanitize_line=redactor.redact,
-        ) as sender_client,
+        ) as sender_transport,
     ):
-        tools = frozenset(client.list_tool_names())
+        client = target_transport.bind_session(target_session["sessionId"])
+        sender_client = sender_transport.bind_session(sender_session["sessionId"])
+        tools = frozenset(target_transport.list_tool_names())
         if tools != EXPECTED_MCP_TOOLS:
             missing = sorted(EXPECTED_MCP_TOOLS - tools)
             unexpected = sorted(tools - EXPECTED_MCP_TOOLS)
@@ -1366,10 +1494,11 @@ def verify_mcp_workflow(
         identity_response = client.call_tool("agent_room_get_self", {})
         identity = verify_mcp_identity_response(identity_response, expected_agent_id)
         sender_identity = verify_mcp_identity_response(
-            sender_client.call_tool("agent_room_get_self", {}), expected_agent_id
+            sender_client.call_tool("agent_room_get_self", {}), sender_session["agentId"]
         )
-        if sender_identity["agentInstanceId"] == identity["agentInstanceId"]:
-            raise VerticalFailure("交接发送端与 Codex 接收端错误地复用了同一实例。")
+        for field in ("agentId", "agentInstanceId", "agentMatrixUserId"):
+            if sender_identity[field] == identity[field]:
+                raise VerticalFailure(f"两个任务错误地共用了 {field}。")
         verify_mcp_status_publication(client, room["matrixRoomId"])
         wait_for_mcp_presence(
             client,
@@ -1387,7 +1516,8 @@ def verify_mcp_workflow(
         )
         verify_mcp_opened_content(client, room["matrixRoomId"], preview, message)
         handoff_id = approve_real_handoff(
-            bridge_environment=sender_bridge_environment,
+            bridge_environment=sender_bridge.environment,
+            session_id=sender_session["sessionId"],
             principal_id=principal_id,
             room_id=room["matrixRoomId"],
             source_content_id=require_text(
@@ -1426,6 +1556,9 @@ def verify_mcp_workflow(
         )
 
     return {
+        "agentId": identity["agentId"],
+        "agentMatrixUserId": identity["agentMatrixUserId"],
+        "senderAgentId": sender_identity["agentId"],
         "agentInstanceId": identity["agentInstanceId"],
         "handoffId": handoff_id,
         "matrixDeviceId": identity["matrixDeviceId"],
@@ -1463,6 +1596,7 @@ def verify_cloud_targeted_handoff_workflow(
     require_uuid_v7(principal_id, "云端交接发起主体")
 
     previous_generation = target_bridge.observation.agent_online_generation
+    close_bridge_session(target_bridge, redactor)
     target_bridge.process.stop()
     consumed_handoff_id = queue_targeted_handoff_in_browser(
         environment=environment,
@@ -1477,7 +1611,10 @@ def verify_cloud_targeted_handoff_workflow(
         stderr_path=LOG_ROOT / "cloud-handoff-sender-mcp.log",
         sanitize_line=redactor.redact,
     ) as sender_client:
-        assert_targeted_handoff_absent(sender_client, consumed_handoff_id)
+        assert_targeted_handoff_absent(
+            sender_client.bind_session(require_bridge_session(sender_bridge)["sessionId"]),
+            consumed_handoff_id,
+        )
 
     target_bridge.process.start()
     recovered_generation = target_bridge.observation.wait_for_agent_online(
@@ -1485,13 +1622,15 @@ def verify_cloud_targeted_handoff_workflow(
         after_generation=previous_generation,
         timeout_seconds=180,
     )
+    open_bridge_session(target_bridge, redactor)
     with McpStdioClient(
         command=[str(runtime_binary("agent-room-mcp"))],
         working_directory=ROOT,
         environment=target_bridge.environment,
         stderr_path=LOG_ROOT / "cloud-handoff-target-mcp.log",
         sanitize_line=redactor.redact,
-    ) as target_client:
+    ) as target_transport:
+        target_client = target_transport.bind_session(require_bridge_session(target_bridge)["sessionId"])
         wait_for_targeted_handoff(
             target_client,
             handoff_id=consumed_handoff_id,
@@ -1519,14 +1658,18 @@ def verify_cloud_targeted_handoff_workflow(
         stderr_path=LOG_ROOT / "cloud-handoff-isolation-mcp.log",
         sanitize_line=redactor.redact,
     ) as sender_client:
-        assert_targeted_handoff_absent(sender_client, declined_handoff_id)
+        assert_targeted_handoff_absent(
+            sender_client.bind_session(require_bridge_session(sender_bridge)["sessionId"]),
+            declined_handoff_id,
+        )
     with McpStdioClient(
         command=[str(runtime_binary("agent-room-mcp"))],
         working_directory=ROOT,
         environment=target_bridge.environment,
         stderr_path=LOG_ROOT / "cloud-handoff-decline-mcp.log",
         sanitize_line=redactor.redact,
-    ) as target_client:
+    ) as target_transport:
+        target_client = target_transport.bind_session(require_bridge_session(target_bridge)["sessionId"])
         wait_for_targeted_handoff(
             target_client,
             handoff_id=declined_handoff_id,
@@ -1555,6 +1698,8 @@ def verify_product_closure_workflow(
 ) -> dict[str, str]:
     """证明纯 Web 无 Bridge 可用，并由恢复后的目标设备消费跨账户交接。"""
     previous_generation = target_bridge.observation.agent_online_generation
+    close_bridge_session(sender_bridge, redactor)
+    close_bridge_session(target_bridge, redactor)
     sender_bridge.process.stop()
     target_bridge.process.stop()
     result = run_product_closure_browser(
@@ -1570,6 +1715,7 @@ def verify_product_closure_workflow(
         after_generation=previous_generation,
         timeout_seconds=180,
     )
+    open_bridge_session(target_bridge, redactor)
     principal_id = require_text(
         result.get("collaboratorPrincipalId"), "产品闭环第二账户主体"
     )
@@ -1589,7 +1735,8 @@ def verify_product_closure_workflow(
         environment=target_bridge.environment,
         stderr_path=LOG_ROOT / "product-closure-target-mcp.log",
         sanitize_line=redactor.redact,
-    ) as target_client:
+    ) as target_transport:
+        target_client = target_transport.bind_session(require_bridge_session(target_bridge)["sessionId"])
         wait_for_targeted_handoff(
             target_client,
             handoff_id=handoff_id,
@@ -1603,13 +1750,14 @@ def verify_product_closure_workflow(
             principal_id=principal_id,
         )
     assert_targeted_handoff_state(handoff_id, "consumed")
+    close_bridge_session(target_bridge, redactor)
     return {
         **result,
         "offlineRecoveryGeneration": str(recovered_generation),
     }
 
 
-def pending_targeted_handoffs(client: McpStdioClient) -> tuple[dict[str, object], ...]:
+def pending_targeted_handoffs(client: McpAgentSession) -> tuple[dict[str, object], ...]:
     response = client.call_tool("agent_room_list_handoffs", {"limit": 100})
     if response.get("type") != "pending_targeted_handoffs":
         raise VerticalFailure("MCP 云端交接列表返回了错误响应类型。")
@@ -1619,7 +1767,7 @@ def pending_targeted_handoffs(client: McpStdioClient) -> tuple[dict[str, object]
     return tuple(require_object(item, "MCP 云端交接元数据") for item in handoffs)
 
 
-def assert_targeted_handoff_absent(client: McpStdioClient, handoff_id: str) -> None:
+def assert_targeted_handoff_absent(client: McpAgentSession, handoff_id: str) -> None:
     if any(
         handoff.get("handoffId") == handoff_id
         for handoff in pending_targeted_handoffs(client)
@@ -1628,7 +1776,7 @@ def assert_targeted_handoff_absent(client: McpStdioClient, handoff_id: str) -> N
 
 
 def wait_for_targeted_handoff(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     handoff_id: str,
     principal_id: str,
@@ -1650,7 +1798,7 @@ def wait_for_targeted_handoff(
 
 
 def consume_targeted_handoff(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     handoff_id: str,
     source: Mapping[str, str],
@@ -1682,7 +1830,7 @@ def consume_targeted_handoff(
     verify_targeted_handoff_is_one_time(client, handoff_id)
 
 
-def decline_targeted_handoff(client: McpStdioClient, handoff_id: str) -> None:
+def decline_targeted_handoff(client: McpAgentSession, handoff_id: str) -> None:
     response = client.call_tool(
         "agent_room_decline_handoff", {"handoffId": handoff_id}
     )
@@ -1695,7 +1843,7 @@ def decline_targeted_handoff(client: McpStdioClient, handoff_id: str) -> None:
 
 
 def verify_targeted_handoff_is_one_time(
-    client: McpStdioClient, handoff_id: str
+    client: McpAgentSession, handoff_id: str
 ) -> None:
     replay = client.call_tool_result(
         "agent_room_consume_handoff", {"handoffId": handoff_id}
@@ -1731,17 +1879,27 @@ def assert_targeted_handoff_state(handoff_id: str, expected_state: str) -> None:
 
 
 def verify_mcp_identity_response(
-    response: Mapping[str, object], expected_agent_id: str
+    response: Mapping[str, object], expected_agent_id: str | None = None,
 ) -> dict[str, str]:
     if response.get("type") != "self_summary":
         raise VerticalFailure("MCP 当前身份返回了错误响应类型。")
     summary = require_object(response.get("summary"), "MCP 当前身份摘要")
     agent = require_object(summary.get("agent"), "MCP Agent 身份")
-    if agent.get("agentId") != expected_agent_id:
-        raise VerticalFailure("MCP Agent 身份与浏览器创建结果不一致。")
+    agent_id = require_session_id(agent.get("agentId"), "会话 AgentId")
+    if expected_agent_id is not None and agent_id != expected_agent_id:
+        raise VerticalFailure("MCP Agent 身份与显式会话绑定不一致。")
+    if summary.get("connectionState") != "ready":
+        raise VerticalFailure("MCP 会话尚未 ready。")
+    matrix_user_id = require_text(agent.get("matrixUserId"), "会话 Matrix 用户")
+    room_id = require_text(summary.get("roomId"), "会话默认房间")
+    if not matrix_user_id.startswith("@") or not room_id.startswith("!"):
+        raise VerticalFailure("MCP 会话 Matrix 身份或房间无效。")
     instance_id = require_text(summary.get("instanceId"), "MCP Agent 实例标识")
     require_uuid_v7(instance_id, "MCP Agent 实例标识")
     return {
+        "agentId": agent_id,
+        "agentMatrixUserId": matrix_user_id,
+        "matrixRoomId": room_id,
         "agentInstanceId": instance_id,
         "matrixDeviceId": require_text(
             summary.get("matrixDeviceId"), "MCP Matrix 设备标识"
@@ -1749,7 +1907,7 @@ def verify_mcp_identity_response(
     }
 
 
-def verify_mcp_status_publication(client: McpStdioClient, room_id: str) -> None:
+def verify_mcp_status_publication(client: McpAgentSession, room_id: str) -> None:
     response = client.call_tool(
         "agent_room_publish_status",
         {
@@ -1770,7 +1928,7 @@ def verify_mcp_status_publication(client: McpStdioClient, room_id: str) -> None:
 
 
 def wait_for_mcp_presence(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     room_id: str,
     expected_agent_id: str,
@@ -1816,7 +1974,7 @@ def wait_for_mcp_presence(
 
 
 def send_mcp_vertical_message(
-    client: McpStdioClient, room_id: str
+    client: McpAgentSession, room_id: str
 ) -> dict[str, str]:
     submission_id = new_uuid_v7()
     title = f"Task 24 reply {submission_id[-8:]}"
@@ -1856,7 +2014,7 @@ def send_mcp_vertical_message(
 
 
 def send_mcp_vertical_reply(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     room_id: str,
     reply_to_message_id: str,
@@ -1901,7 +2059,7 @@ def send_mcp_vertical_reply(
 
 
 def wait_for_mcp_preview(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     room_id: str,
     submission: Mapping[str, str],
@@ -1931,7 +2089,7 @@ def wait_for_mcp_preview(
 
 
 def verify_mcp_opened_content(
-    client: McpStdioClient,
+    client: McpAgentSession,
     room_id: str,
     preview: Mapping[str, object],
     submission: Mapping[str, str],
@@ -1957,6 +2115,7 @@ def verify_mcp_opened_content(
 def approve_real_handoff(
     *,
     bridge_environment: Mapping[str, str],
+    session_id: str,
     principal_id: str,
     room_id: str,
     source_content_id: str,
@@ -1965,9 +2124,11 @@ def approve_real_handoff(
 ) -> str:
     """通过桌面壳本机 IPC 适配器批准一次性交接，不给 MCP 越权批准能力。"""
     handoff_id = new_uuid_v7()
+    require_session_id(session_id, "桌面交接发送会话")
     environment = dict(bridge_environment)
     environment.update(
         {
+            "AGENT_ROOM_TEST_SESSION_ID": session_id,
             "AGENT_ROOM_TEST_HANDOFF_ID": handoff_id,
             "AGENT_ROOM_TEST_PRINCIPAL_ID": principal_id,
             "AGENT_ROOM_TEST_ROOM_ID": room_id,
@@ -1996,7 +2157,7 @@ def approve_real_handoff(
 
 
 def wait_for_mcp_handoff_consumption(
-    client: McpStdioClient,
+    client: McpAgentSession,
     *,
     handoff_id: str,
     room_id: str,
@@ -2036,7 +2197,7 @@ def wait_for_mcp_handoff_consumption(
     raise VerticalFailure(f"一次性交接未在 {timeout_seconds:.0f} 秒内到达 Codex。")
 
 
-def verify_handoff_is_one_time(client: McpStdioClient, handoff_id: str) -> None:
+def verify_handoff_is_one_time(client: McpAgentSession, handoff_id: str) -> None:
     second = client.call_tool_result(
         "agent_room_consume_handoff", {"handoffId": handoff_id}
     )
@@ -2206,9 +2367,8 @@ def bootstrap() -> None:
                 target_bridge, (sender_bridge,), redactor
             )
             runtime = verify_mcp_workflow(
-                target_bridge_environment=target_bridge.environment,
-                sender_bridge_environment=sender_bridge.environment,
-                expected_agent_id=agent["agentId"],
+                target_bridge=target_bridge,
+                sender_bridge=sender_bridge,
                 principal_id=agent["principalId"],
                 redactor=redactor,
             )
@@ -2223,7 +2383,7 @@ def bootstrap() -> None:
             )
             product_closure = verify_product_closure_workflow(
                 environment=environment,
-                agent_id=agent["agentId"],
+                agent_id=runtime["agentId"],
                 catalog_id=catalog_id,
                 target_bridge=target_bridge,
                 sender_bridge=sender_bridge,
@@ -2244,6 +2404,8 @@ def bootstrap() -> None:
                 LOG_ROOT / "cloud-handoff-isolation-mcp.log",
                 LOG_ROOT / "cloud-handoff-decline-mcp.log",
                 LOG_ROOT / "product-closure-target-mcp.log",
+                LOG_ROOT / "Vertical-bridge-sender-session.log",
+                LOG_ROOT / "Vertical-bridge-target-session.log",
             ),
             redactor,
             additional_secrets=(
@@ -2254,7 +2416,8 @@ def bootstrap() -> None:
     print(
         json.dumps(
             {
-                "agentId": agent["agentId"],
+                "agentId": runtime["agentId"],
+                "bootstrapAgentId": agent["agentId"],
                 "agentInstanceId": runtime["agentInstanceId"],
                 "catalogId": catalog_id,
                 "contentId": runtime["contentId"],
@@ -2289,6 +2452,7 @@ def bootstrap() -> None:
                 "roomInstanceId": runtime["roomInstanceId"],
                 "secureStorageService": TARGET_SECURE_STORAGE_SERVICE,
                 "senderAgentInstanceId": runtime["senderAgentInstanceId"],
+                "senderAgentId": runtime["senderAgentId"],
             },
             ensure_ascii=False,
             indent=2,

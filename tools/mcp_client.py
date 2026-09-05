@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from queue import Empty, Queue
@@ -18,6 +19,23 @@ JsonObject = dict[str, object]
 LineSanitizer = Callable[[str], str]
 PROTOCOL_VERSION: Final = "2025-11-25"
 STABLE_ERROR_CODE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+SESSION_ID: Final = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+SESSION_SCOPED_TOOLS: Final = (
+    "agent_room_get_self",
+    "agent_room_list_previews",
+    "agent_room_get_presence",
+    "agent_room_open_content",
+    "agent_room_publish_status",
+    "agent_room_send_message",
+    "agent_room_list_handoffs",
+    "agent_room_consume_handoff",
+    "agent_room_decline_handoff",
+)
+AGENT_ROOM_TOOLS: Final = (
+    "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS
+)
 
 
 class McpClientFailure(RuntimeError):
@@ -114,6 +132,7 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
         tools = result.get("tools")
         if not isinstance(tools, list):
             raise McpClientFailure("MCP tools/list 缺少工具数组。")
+        validate_session_tool_schemas(tools)
         names: list[str] = []
         for tool in tools:
             if not isinstance(tool, dict):
@@ -123,6 +142,27 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
                 raise McpClientFailure("MCP 工具定义缺少名称。")
             names.append(name)
         return tuple(names)
+
+    def open_session(self, *, session_key: str, display_name: str) -> "McpAgentSession":
+        require_session_id(session_key, "sessionKey")
+        if (
+            not 1 <= len(display_name) <= 128
+            or display_name.strip() != display_name
+            or any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in display_name)
+        ):
+            raise McpClientFailure("displayName 必须是 1–128 字符且不含边界空白或控制字符。")
+        response = self.call_tool(
+            "agent_room_open_session",
+            {"sessionKey": session_key, "displayName": display_name},
+        )
+        summary = host_session_summary(response)
+        if summary.get("state") not in {"starting", "ready"}:
+            raise McpClientFailure("建立任务会话未返回 starting 或 ready 状态。")
+        session_id = require_session_id(summary.get("sessionId"), "session.sessionId")
+        return self.bind_session(session_id)
+
+    def bind_session(self, session_id: str) -> "McpAgentSession":
+        return McpAgentSession(self, require_session_id(session_id, "sessionId"))
 
     def call_tool(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
         result = self.call_tool_result(name, arguments)
@@ -271,9 +311,95 @@ def tool_failure_code(result: Mapping[str, object]) -> str | None:
     if not isinstance(structured, dict):
         return None
     code = structured.get("code")
+    if structured.get("type") == "host_session":
+        session = structured.get("session")
+        code = session.get("errorCode") if isinstance(session, dict) else None
     if not isinstance(code, str) or STABLE_ERROR_CODE.fullmatch(code) is None:
         return None
     return code
+
+
+@dataclass(frozen=True)
+class McpAgentSession:
+    """显式、不可变的会话绑定；多个绑定可共用 transport，绝不切换全局身份。"""
+
+    transport: McpStdioClient
+    session_id: str
+
+    def __post_init__(self) -> None:
+        require_session_id(self.session_id, "sessionId")
+
+    def call_tool(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
+        return self.transport.call_tool(name, self._arguments(name, arguments))
+
+    def call_tool_result(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
+        return self.transport.call_tool_result(name, self._arguments(name, arguments))
+
+    def close(self) -> None:
+        response = self.transport.call_tool(
+            "agent_room_close_session", {"sessionId": self.session_id}
+        )
+        summary = host_session_summary(response)
+        if summary.get("sessionId") != self.session_id or summary.get("state") != "closed":
+            raise McpClientFailure("关闭任务会话没有确认原 sessionId 已 closed。")
+
+    def _arguments(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
+        if name not in SESSION_SCOPED_TOOLS or "sessionId" in arguments:
+            raise McpClientFailure("会话绑定只允许 Agent 工具，且不能覆盖 sessionId。")
+        return {**arguments, "sessionId": self.session_id}
+
+
+def require_session_id(value: object, label: str) -> str:
+    if not isinstance(value, str) or SESSION_ID.fullmatch(value) is None:
+        raise McpClientFailure(f"{label} 必须是规范小写 UUIDv7。")
+    return value
+
+
+def host_session_summary(response: Mapping[str, object]) -> JsonObject:
+    summary = response.get("session")
+    if response.get("type") != "host_session" or not isinstance(summary, dict):
+        raise McpClientFailure("MCP 会话生命周期响应必须为 host_session。")
+    return _string_keyed_object(summary, "MCP 任务会话摘要")
+
+
+def validate_session_tool_schemas(tools: Sequence[object]) -> None:
+    """发布门禁验证会话参数真实必填，不把声明了可选字段视为兼容。"""
+    names: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+            raise McpClientFailure("MCP 工具定义缺少名称。")
+        name = tool["name"]
+        names.append(name)
+        schema = tool.get("inputSchema")
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            raise McpClientFailure(f"MCP 工具 {name} 缺少对象输入 schema。")
+        properties, required = schema.get("properties"), schema.get("required")
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            raise McpClientFailure(f"MCP 工具 {name} 缺少必填会话参数。")
+        field = "sessionKey" if name == "agent_room_open_session" else "sessionId"
+        identifier = properties.get(field)
+        if (
+            field not in required
+            or not isinstance(identifier, dict)
+            or identifier.get("type") != "string"
+            or identifier.get("minLength") != 36
+            or identifier.get("maxLength") != 36
+            or schema.get("additionalProperties") is not False
+        ):
+            raise McpClientFailure(f"MCP 工具 {name} 必须要求长度 36 的 {field} 并拒绝额外字段。")
+        if name == "agent_room_open_session":
+            display_name = properties.get("displayName")
+            if (
+                "sessionId" in properties
+                or "displayName" not in required
+                or not isinstance(display_name, dict)
+                or display_name.get("type") != "string"
+                or display_name.get("minLength") != 1
+                or display_name.get("maxLength") != 128
+            ):
+                raise McpClientFailure("open_session 必须要求有界 displayName，不能接收 sessionId。")
+    if len(names) != len(set(names)) or set(names) != set(AGENT_ROOM_TOOLS):
+        raise McpClientFailure("MCP 工具集合必须包含两个会话工具和九个绑定会话的 Agent 工具。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

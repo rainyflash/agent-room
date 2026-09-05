@@ -16,6 +16,12 @@ import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
+import uuid
+
+if __package__:
+    from .mcp_client import tool_failure_code, validate_session_tool_schemas
+else:
+    from mcp_client import tool_failure_code, validate_session_tool_schemas
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +39,8 @@ AUTOMATIC_TOOLS = (
     "agent_room_get_presence",
 )
 EXPECTED_TOOL_ANNOTATIONS = {
+    "agent_room_open_session": (False, False, True, True),
+    "agent_room_close_session": (False, False, True, True),
     "agent_room_get_self": (True, False, True, False),
     "agent_room_list_previews": (True, False, True, True),
     "agent_room_get_presence": (True, False, True, True),
@@ -279,21 +287,44 @@ def smoke_test_mcp(binary: Path, working_directory: Path) -> None:
             "method": "tools/call",
             "params": {"name": "agent_room_get_self", "arguments": {}},
         },
+        {
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {
+                "name": "agent_room_get_self",
+                "arguments": {"sessionId": "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a60"},
+            },
+        },
+        {
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "agent_room_open_session", "arguments": {}},
+        },
+        {
+            "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+            "params": {"name": "agent_room_close_session", "arguments": {}},
+        },
     ]
     wire_input = "".join(
         f"{json.dumps(request, separators=(',', ':'))}\n" for request in requests
     )
     try:
-        completed = subprocess.run(
-            [str(binary)],
-            cwd=working_directory,
-            input=wire_input,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=20,
-            check=False,
-        )
+        # 打包不连接用户 Bridge，也不通过 open_session 注册远端 Agent。
+        with tempfile.TemporaryDirectory(prefix="agent-room-package-smoke-") as temporary:
+            environment = os.environ.copy()
+            environment.update({
+                "AGENT_ROOM_BRIDGE_DATA_DIR": temporary,
+                "AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE": f"dev.agent-room.smoke.{uuid.uuid4().hex}",
+            })
+            completed = subprocess.run(
+                [str(binary)],
+                cwd=working_directory,
+                env=environment,
+                input=wire_input,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=20,
+                check=False,
+            )
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("MCP 冒烟测试超时") from error
     if completed.returncode != 0:
@@ -327,10 +358,27 @@ def smoke_test_mcp(binary: Path, working_directory: Path) -> None:
             f"MCP 工具集合不一致：缺少 {expected_tools - actual_tools}，多出 {actual_tools - expected_tools}"
         )
     validate_tool_annotations(tools)
-
-    call_result = require_result(by_id, 3)
-    if not isinstance(call_result.get("content"), list):
-        raise RuntimeError("agent_room_get_self 未返回 MCP 内容数组")
+    validate_session_tool_schemas(tools)
+    for request_id, field in ((3, "sessionId"), (5, "sessionKey"), (6, "sessionId")):
+        result = require_result(by_id, request_id)
+        content = result.get("content")
+        if (
+            result.get("isError") is not True
+            or not isinstance(content, list)
+            or not any(isinstance(item, dict) and field in str(item.get("text", "")) for item in content)
+            or tool_failure_code(result) is not None
+        ):
+            raise RuntimeError(f"MCP 缺少 {field} 时必须在参数边界失败，不能进入默认 Bridge")
+    scoped_result = require_result(by_id, 4)
+    structured = scoped_result.get("structuredContent")
+    code = tool_failure_code(scoped_result)
+    if (
+        scoped_result.get("isError") is not True
+        or code is None or not code.startswith("bridge.")
+        or not isinstance(structured, dict)
+        or not isinstance(structured.get("retryable"), bool)
+    ):
+        raise RuntimeError("显式 sessionId 的隔离调用必须保留 Bridge 错误，不能伪装成功或参数错误")
 
 
 def validate_tool_annotations(tools: list[object]) -> None:
