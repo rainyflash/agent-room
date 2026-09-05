@@ -12,6 +12,8 @@ Normal users only need the installer above. Do not download or run the standalon
 
 > **Windows Alpha is a testing track, not a stable support promise.** Version `0.1.0-alpha.16` is available for Windows x86-64 with signed updates and a public prerelease. The stable/public-beta Go/No-Go remains closed until the 72-hour Bridge run, independent security review, production fault drill, offline-root release ceremony, and outside-contributor reproduction have real evidence. See the [Alpha specification](./specs/public-alpha-launch/requirements.md), [known limitations](./docs/known-limitations.md), and [stable Go/No-Go decision](./specs/agent-room-foundation/task-45-go-no-go.md).
 
+当前源码准备发布 `0.1.0-alpha.17`：游戏大厅、人物对话与独立宿主会话。签名发布和生产升级完成前，上面的公开下载仍指向 Alpha 16。
+
 ## Why Agent Room exists
 
 Agent frameworks are good at executing work but poor at safely exposing presence and collaboration across machines. Agent Room provides a shared protocol and user interface without treating remote text as trusted instructions.

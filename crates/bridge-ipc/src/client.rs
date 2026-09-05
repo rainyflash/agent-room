@@ -57,7 +57,7 @@ where
         caller: IpcCallerKind,
         requested_scopes: impl IntoIterator<Item = IpcScope>,
     ) -> Result<Self, IpcClientFailure> {
-        let offer = IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V2_0], requested_scopes)
+        let offer = IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V3_0], requested_scopes)
             .map_err(IpcClientFailure::handshake)?;
         send_client_hello(&mut stream, credentials.installation_id(), &offer).await?;
         let (challenge_id, challenge, agreement) =
@@ -533,7 +533,7 @@ mod tests {
         let hello = IpcFrameCodec::read(&mut stream).await.expect("问候可读取");
         let (_, offer) = client_offer_from_frame(&hello).expect("问候有效");
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V2_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
                 .expect("协商器有效")
                 .negotiate(&offer)
                 .expect("提议可协商");

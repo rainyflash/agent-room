@@ -26,6 +26,13 @@ pub(crate) struct BridgeRuntimePaths {
 }
 
 impl BridgeRuntimePaths {
+    pub(crate) fn for_host_agent(&self, agent_id: agent_room_domain::ids::AgentId) -> Self {
+        Self::new(
+            self.data_root
+                .join("host-agents")
+                .join(agent_id.to_string()),
+        )
+    }
     pub(crate) fn new(data_root: PathBuf) -> Self {
         let handoff_root = data_root.join("handoffs");
         let message_root = data_root.join("messages");

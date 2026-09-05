@@ -9,9 +9,11 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Control plane and database schema | Ordered, additive migrations first     | Startup/migration fails rather than silently skipping required schema         |
 | Web/desktop cloud client and API  | Overlapping capability window          | Older clients ignore additive endpoints; newer clients surface missing APIs   |
 | Desktop and bundled Bridge        | Same release artifact                  | Cloud UI remains usable; local runtime actions fail closed                    |
-| Generic MCP server and Bridge     | Same release; IPC `2.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Generic MCP server and Bridge     | Same release; IPC `3.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
 | Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
+
+当前源码 `0.1.0-alpha.17` 为候选版本，新增 `PUT /devices/current/host-agents/{session_id}` 与显式 MCP 会话。必须先部署兼容控制面，再成套升级桌面、Bridge、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 

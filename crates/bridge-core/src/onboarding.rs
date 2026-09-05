@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_application::ports::PortFuture;
 use agent_room_domain::{
-    ids::{AgentId, RoomCatalogId},
+    ids::{AgentCreationRequestId, AgentId, RoomCatalogId},
     rooms::RoomLanguage,
 };
 
@@ -55,6 +55,15 @@ impl ControlPlaneOnboardingFailure {
 }
 
 pub type ControlPlaneOnboardingResult<T> = Result<T, ControlPlaneOnboardingFailure>;
+
+/// 在已认证设备所属账户下幂等注册宿主人物，不复用默认 Agent。
+pub trait HostAgentRegistrationGateway: Send + Sync {
+    fn create_host_agent<'a>(
+        &'a self,
+        session_key: AgentCreationRequestId,
+        display_name: &'a str,
+    ) -> PortFuture<'a, ControlPlaneOnboardingResult<BridgeDefaultAgent>>;
+}
 
 pub trait ControlPlaneOnboardingGateway: Send + Sync {
     fn ensure_default_agent(

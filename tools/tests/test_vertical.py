@@ -1,12 +1,18 @@
+from contextlib import ExitStack, nullcontext
 import os
 from pathlib import Path
 import stat
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from tools import vertical
 from tools.local_runtime import ControlPlaneNetworkScope
+from tools.mcp_client import McpClientFailure
+from tools.tests.test_mcp_client import (
+    SESSION_A, SESSION_B, SESSION_KEY, session_tool_definitions, test_client,
+)
 from tools.vertical import (
     BridgeRuntimeObservation,
     IsolatedBridgeState,
@@ -29,6 +35,257 @@ from tools.vertical import (
 class RunningProcess:
     def ensure_running(self) -> None:
         return
+
+
+DEFAULT_AGENT = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a70"
+TASK_AGENT = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a71"
+TASK_INSTANCE = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a72"
+SENDER_AGENT = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a73"
+SENDER_INSTANCE = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a74"
+ROOM_ID = "!vertical:example.invalid"
+
+
+def identity_result(
+    agent_id: str = TASK_AGENT, instance_id: str = TASK_INSTANCE
+) -> dict[str, object]:
+    return {
+        "structuredContent": {
+            "type": "self_summary",
+            "summary": {
+                "agent": {
+                    "agentId": agent_id,
+                    "matrixUserId": f"@agent_{agent_id}:example.invalid",
+                },
+                "instanceId": instance_id,
+                "matrixDeviceId": f"AR_{instance_id}",
+                "connectionState": "ready",
+                "roomId": ROOM_ID,
+            },
+        },
+        "isError": False,
+    }
+
+
+def lifecycle_result(session_id: str, state: str) -> dict[str, object]:
+    return {"structuredContent": {
+        "type": "host_session",
+        "session": {"sessionId": session_id, "state": state},
+    }}
+
+
+def bridge_fixture() -> vertical.AuthorizedBridgeRuntime:
+    return vertical.AuthorizedBridgeRuntime(
+        process=MagicMock(spec=vertical.ManagedProcess),
+        environment={"AGENT_ROOM_AGENT_ID": DEFAULT_AGENT},
+        observation=BridgeRuntimeObservation(),
+        device_code="ABCD-EFGH",
+        session_key=SESSION_KEY,
+        display_name="Vertical bridge-target",
+    )
+
+
+class VerticalSessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch.object(vertical, "runtime_binary", return_value=Path("unused-binary")))
+
+    def test_初始化仅重试原会话且重开保留任务键和真实身份(self) -> None:
+        runtime = bridge_fixture()
+        transport = test_client()
+        retryable = {"isError": True, "structuredContent": {
+            "code": "bridge.host_session.starting", "retryable": True,
+        }}
+        responses = [
+            lifecycle_result(SESSION_A, "starting"), retryable, identity_result(),
+            lifecycle_result(SESSION_A, "closed"),
+            lifecycle_result(SESSION_B, "starting"), identity_result(),
+        ]
+        with (
+            patch.object(transport, "request", side_effect=responses) as request,
+            patch.object(vertical, "bridge_mcp_client", return_value=nullcontext(transport)),
+            patch.object(vertical.time, "sleep"),
+        ):
+            vertical.open_bridge_session(runtime, LogRedactor({}))
+            first = dict(vertical.require_bridge_session(runtime))
+            vertical.close_bridge_session(runtime, LogRedactor({}))
+            vertical.open_bridge_session(runtime, LogRedactor({}))
+        self.assertEqual(first["sessionId"], SESSION_A)
+        self.assertEqual(runtime.session, {**first, "sessionId": SESSION_B})
+        self.assertEqual(first["agentId"], TASK_AGENT)
+        calls = [call.args[1] for call in request.call_args_list]
+        self.assertEqual(calls[0], calls[4])
+        self.assertEqual(calls[0]["arguments"], {
+            "sessionKey": SESSION_KEY, "displayName": runtime.display_name,
+        })
+        self.assertEqual(
+            [call["arguments"]["sessionId"] for call in calls if "sessionId" in call["arguments"]],
+            [SESSION_A, SESSION_A, SESSION_A, SESSION_B],
+        )
+
+    def test_旧默认身份与恢复后的身份漂移不能冒充新会话(self) -> None:
+        cases = [
+            (DEFAULT_AGENT, TASK_INSTANCE, False),
+            (SENDER_AGENT, TASK_INSTANCE, True),
+            (TASK_AGENT, SENDER_INSTANCE, True),
+        ]
+        for agent_id, instance_id, restoring in cases:
+            with self.subTest(agent_id=agent_id, instance_id=instance_id):
+                runtime = bridge_fixture()
+                if restoring:
+                    runtime.session = {
+                        **vertical.verify_mcp_identity_response(identity_result()["structuredContent"]),
+                        "sessionId": SESSION_A,
+                    }
+                previous = runtime.session
+                transport = test_client()
+                with (
+                    patch.object(transport, "request", side_effect=[
+                        lifecycle_result(SESSION_B, "ready"),
+                        identity_result(agent_id, instance_id),
+                    ]),
+                    patch.object(vertical, "bridge_mcp_client", return_value=nullcontext(transport)),
+                    self.assertRaises(VerticalFailure),
+                ):
+                    vertical.open_bridge_session(runtime, LogRedactor({}))
+                self.assertIs(runtime.session, previous)
+
+    def test_初始化终态立即失败并保留错误码(self) -> None:
+        for retryable in (False, None):
+            with self.subTest(retryable=retryable):
+                transport = test_client()
+                result = {"isError": True, "structuredContent": {
+                    "code": "bridge.host_session.closed", "retryable": retryable,
+                    "details": "private diagnostic",
+                }}
+                with (
+                    patch.object(transport, "request", return_value=result) as request,
+                    patch.object(vertical.time, "sleep") as sleep,
+                    self.assertRaisesRegex(VerticalFailure, "bridge.host_session.closed") as failure,
+                ):
+                    vertical.wait_for_session_identity(
+                        transport.bind_session(SESSION_A), timeout_seconds=10,
+                    )
+                request.assert_called_once()
+                sleep.assert_not_called()
+                self.assertNotIn("private diagnostic", str(failure.exception))
+
+    def test_初始化超时保留最后错误且不换会话(self) -> None:
+        transport = test_client()
+        with (
+            patch.object(transport, "request", return_value={"isError": True, "structuredContent": {
+                "code": "bridge.host_session.starting", "retryable": True,
+            }}) as request,
+            patch.object(vertical.time, "monotonic", side_effect=[0, 0, 2]),
+            patch.object(vertical.time, "sleep"),
+            self.assertRaisesRegex(VerticalFailure, "bridge.host_session.starting"),
+        ):
+            vertical.wait_for_session_identity(transport.bind_session(SESSION_A), timeout_seconds=1)
+        request.assert_called_once_with("tools/call", {
+            "name": "agent_room_get_self", "arguments": {"sessionId": SESSION_A},
+        })
+
+    def test_断网验收使用原会话且拒绝把永久错误当成可恢复(self) -> None:
+        for retryable in (True, False):
+            with self.subTest(retryable=retryable):
+                transport = test_client()
+                with (
+                    patch.object(transport, "request", return_value={"isError": True, "structuredContent": {
+                        "code": "bridge.agent_runtime_unavailable", "retryable": retryable,
+                    }}) as request,
+                    patch.object(vertical, "McpStdioClient", return_value=nullcontext(transport)),
+                    nullcontext() if retryable else self.assertRaisesRegex(
+                        VerticalFailure, "bridge.agent_runtime_unavailable"
+                    ),
+                ):
+                    vertical.wait_for_mcp_runtime_unavailable(
+                        bridge_environment={}, bridge_process=RunningProcess(),
+                        redactor=LogRedactor({}), session_id=SESSION_A, timeout_seconds=1,
+                    )
+                request.assert_called_once_with("tools/call", {
+                    "name": "agent_room_get_self", "arguments": {"sessionId": SESSION_A},
+                })
+
+    def test_桌面交接通过环境传递真实会话而非默认人物(self) -> None:
+        parameters = {
+            "bridge_environment": {"AGENT_ROOM_AGENT_ID": DEFAULT_AGENT},
+            "principal_id": SESSION_KEY, "room_id": ROOM_ID,
+            "source_content_id": TASK_AGENT, "target_agent_id": TASK_AGENT,
+            "target_instance_id": TASK_INSTANCE,
+        }
+        with (
+            patch.object(vertical, "run_checked") as run,
+            patch.object(vertical, "executable", return_value="cargo"),
+        ):
+            handoff_id = vertical.approve_real_handoff(session_id=SESSION_A, **parameters)
+            environment = run.call_args.kwargs["environment"]
+            self.assertEqual(environment["AGENT_ROOM_TEST_SESSION_ID"], SESSION_A)
+            self.assertEqual(environment["AGENT_ROOM_TEST_TARGET_AGENT_ID"], TASK_AGENT)
+            self.assertEqual(environment["AGENT_ROOM_TEST_HANDOFF_ID"], handoff_id)
+            self.assertNotIn("AGENT_ROOM_TEST_SESSION_ID", parameters["bridge_environment"])
+            run.reset_mock()
+            with self.assertRaises(McpClientFailure):
+                vertical.approve_real_handoff(session_id="", **parameters)
+            run.assert_not_called()
+
+    def test_纵向消息与交接路由使用两个真实任务的绑定(self) -> None:
+        target, sender = bridge_fixture(), bridge_fixture()
+        target.session = {
+            **vertical.verify_mcp_identity_response(identity_result()["structuredContent"]),
+            "sessionId": SESSION_A,
+        }
+        sender.session = {
+            **vertical.verify_mcp_identity_response(
+                identity_result(SENDER_AGENT, SENDER_INSTANCE)["structuredContent"]
+            ),
+            "sessionId": SESSION_B,
+        }
+        transport = test_client()
+
+        def respond(method, parameters):
+            if method == "tools/list":
+                return {"tools": session_tool_definitions()}
+            self.assertEqual(parameters["name"], "agent_room_get_self")
+            if parameters["arguments"]["sessionId"] == SESSION_A:
+                return identity_result()
+            self.assertEqual(parameters["arguments"]["sessionId"], SESSION_B)
+            return identity_result(SENDER_AGENT, SENDER_INSTANCE)
+
+        helper_results = {
+            "active_room_for_agent": {"matrixRoomId": ROOM_ID, "roomInstanceId": SESSION_KEY},
+            "verify_mcp_status_publication": None,
+            "wait_for_mcp_presence": None,
+            "send_mcp_vertical_message": {"eventId": "$message", "body": "test"},
+            "wait_for_mcp_preview": {"messageId": TASK_AGENT, "content": {"contentId": TASK_AGENT}},
+            "verify_mcp_opened_content": None,
+            "approve_real_handoff": SESSION_KEY,
+            "wait_for_mcp_handoff_consumption": None,
+            "send_mcp_vertical_reply": {"eventId": "$reply", "body": "reply"},
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(transport, "request", side_effect=respond))
+            stack.enter_context(patch.object(vertical, "McpStdioClient", return_value=nullcontext(transport)))
+            helpers = {
+                name: stack.enter_context(patch.object(vertical, name, return_value=result))
+                for name, result in helper_results.items()
+            }
+            result = vertical.verify_mcp_workflow(
+                target_bridge=target, sender_bridge=sender,
+                principal_id=SESSION_KEY, redactor=LogRedactor({}),
+            )
+        helpers["active_room_for_agent"].assert_called_once_with(TASK_AGENT)
+        self.assertEqual(result["agentId"], TASK_AGENT)
+        self.assertEqual(result["senderAgentId"], SENDER_AGENT)
+        self.assertEqual(helpers["send_mcp_vertical_message"].call_args.args[0].session_id, SESSION_B)
+        for name in (
+            "verify_mcp_status_publication", "wait_for_mcp_presence",
+            "wait_for_mcp_preview", "verify_mcp_opened_content",
+            "wait_for_mcp_handoff_consumption", "send_mcp_vertical_reply",
+        ):
+            for call in helpers[name].call_args_list:
+                self.assertEqual(call.args[0].session_id, SESSION_A)
+        approval = helpers["approve_real_handoff"].call_args.kwargs
+        self.assertEqual(approval["session_id"], SESSION_B)
+        self.assertEqual(approval["target_agent_id"], TASK_AGENT)
+        self.assertEqual(approval["target_instance_id"], TASK_INSTANCE)
 
 
 class LogRedactorTests(unittest.TestCase):
@@ -164,6 +421,81 @@ class HttpReadinessTests(unittest.TestCase):
 
 
 class ComposeBoundaryTests(unittest.TestCase):
+    def test_子会话凭据按测试安装命名空间分别寻址(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_roots = (root / "bridge-sender", root / "bridge-target")
+            for data_root in data_roots:
+                (data_root / "host-agents" / TASK_AGENT).mkdir(parents=True)
+            with (
+                patch.object(vertical, "VERTICAL_ROOT", root),
+                patch.object(vertical, "BRIDGE_DATA_ROOTS", data_roots),
+            ):
+                services = vertical.vertical_secure_storage_services()
+        self.assertEqual(services[:2], vertical.SECURE_STORAGE_SERVICES)
+        self.assertEqual(len(set(services)), 4)
+        for service in services[2:]:
+            self.assertRegex(service, r"^dev\.agent-room\.host\.[A-Za-z0-9_-]{43}\.v1$")
+            self.assertNotIn(TASK_AGENT, service)
+
+    def test_清理凭据前保留新旧子会话目录供寻址(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_roots = (root / "bridge-sender", root / "bridge-target")
+            old_child = data_roots[0] / "host-agents" / TASK_AGENT
+            new_child = data_roots[1] / "host-agents" / SENDER_AGENT
+            old_child.mkdir(parents=True)
+            observed = []
+
+            def clear() -> None:
+                observed.append((old_child.exists(), new_child.exists()))
+
+            with (
+                patch.object(vertical, "VERTICAL_ROOT", root),
+                patch.object(vertical, "BRIDGE_DATA_ROOTS", data_roots),
+                patch.object(vertical, "clear_vertical_secure_storage", side_effect=clear),
+            ):
+                with IsolatedBridgeState():
+                    self.assertFalse(old_child.exists())
+                    new_child.mkdir(parents=True)
+            self.assertEqual(observed, [(True, False), (False, True)])
+            self.assertTrue(all(not data_root.exists() for data_root in data_roots))
+
+    def test_凭据清理失败时保留目录并传播错误(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "bridge-sender"
+            child = data_root / "host-agents" / TASK_AGENT
+            child.mkdir(parents=True)
+            with (
+                patch.object(vertical, "VERTICAL_ROOT", root),
+                patch.object(vertical, "BRIDGE_DATA_ROOTS", (data_root,)),
+                patch.object(vertical, "clear_vertical_secure_storage", side_effect=VerticalFailure("test failure")),
+                self.assertRaisesRegex(VerticalFailure, "test failure"),
+            ):
+                IsolatedBridgeState().__exit__(None, None, None)
+            self.assertTrue(child.is_dir())
+
+    def test_子会话清理拒绝测试根以外目录与非法人物标识(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "bridge-sender"
+            children = data_root / "host-agents"
+            invalid = children / "550e8400-e29b-41d4-a716-446655440000"
+            invalid.mkdir(parents=True)
+            with (
+                patch.object(vertical, "VERTICAL_ROOT", root),
+                patch.object(vertical, "BRIDGE_DATA_ROOTS", (data_root, root / "bridge-target")),
+                self.assertRaisesRegex(VerticalFailure, "Agent ID 无效"),
+            ):
+                vertical.vertical_secure_storage_services()
+            with (
+                patch.object(vertical, "VERTICAL_ROOT", root),
+                patch.object(vertical, "BRIDGE_DATA_ROOTS", (root.parent, root / "bridge-target")),
+                self.assertRaisesRegex(VerticalFailure, "测试目录之外"),
+            ):
+                vertical.vertical_secure_storage_services()
+
     def test_拒绝操作未登记的_compose_项目(self) -> None:
         with self.assertRaises(VerticalFailure):
             compose_command("agent-room-user-data")

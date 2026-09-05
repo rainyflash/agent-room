@@ -1,0 +1,39 @@
+# 独立宿主会话修复验收
+
+日期：2026-09-05。对应旧安装版实测发现的三个 Codex 任务共用一个 Agent 的问题。
+
+## 实现边界
+
+每个获准接入的任务使用稳定 UUIDv7 `sessionKey` 注册人物，控制面通过签名设备请求创建该设备所有者名下的独立 Agent。Bridge 为活动连接分配新的 `sessionId`，MCP 所有人物工具都携带该句柄。多个任务共用同一 MCP 连接时，调用也不会覆盖彼此身份。桌面既有默认 Agent 保持单独的调用路径。
+
+每个人物有独立 Matrix 存储锁、密钥命名空间、消息数据库、Presence 投影、运行状态和后台任务；共享设备会话的令牌刷新串行执行。原 key 重试保持创建幂等，临时注册失败退避恢复；永久错误保留原始错误码并明确停止重试。子会话诊断不写入桌面的全局监督通道。
+
+关闭会话先拒绝新请求，等待已接收的请求与认证完成，再等待后台任务退出，发布离线状态并释放资源。取消一次关闭请求不会丢失清理句柄；重复关闭幂等。最多 16 个活动或失败会话，15 分钟无调用自动回收。关闭删除活动连接，不删除可恢复的 Agent 资料。
+
+## 已执行的自动化验证
+
+`cargo test --locked -p agent-room-bridge -p agent-room-mcp -p agent-room-bridge-ipc -p agent-room-bridge-core -p agent-room-application -p agent-room-control-plane --quiet`：459 项通过，0 项失败，3 项依赖外部环境的测试按声明忽略。
+
+上述六个包的 `cargo clippy --all-targets -- -D warnings` 与 Rust 格式检查通过。`corepack pnpm@10.28.0 check` 全部通过，包含格式、Lint、文案、类型、协议生成物检查及 112 个前端测试文件中的 465 项测试。
+
+Python 工具全量单测运行 253 项，其中 247 项通过、6 项按平台或外部环境条件跳过。Alpha 17 的 `cargo check --workspace --all-targets --all-features` 通过；插件静态契约、以实际 Release MCP 二进制执行的隔离协议冒烟及插件归档生成均通过。
+
+覆盖范围：
+
+- 三个人物并发路由、同 key 并发打开、单独关闭、关闭后重开、容量与空闲回收。
+- 初始化期间关闭、取消关闭后重试、在途请求排空、后台交接请求完成后退出。
+- 临时注册错误恢复、永久错误传播、人物与桌面状态隔离。
+- 同一服务的并发刷新仅调用一次远端刷新；不确定结果保留失败关闭语义。
+- HTTP 注册的规范 UUIDv7、请求签名、原始正文、设备撤销、所有权、幂等与冲突。
+- 真实 rmcp 内存连接上的三个会话、必填句柄、工具 Schema、预览等待及交接路由。
+- 已认证 MCP 仍不得调用无会话的人物方法，包装不能扩大原工具权限。
+
+这些测试使用模拟控制面或内存传输，不证明三个生产人物已同时在线。
+
+## 发布和真实验收
+
+本地 Windows NSIS 构建成功，产物为 `target/release/bundle/nsis/Agent Room_0.1.0-alpha.17_x64-setup.exe`，SHA-256 为 `a1ab39ceef9c4452534baacec125b929f8bf5af2479308b8055cc46b7e734ce9`。这是本地打包验证，尚未执行受保护的签名发布流程和旧安装版升级。
+
+本轮升级 IPC 至 3.0，新增 `PUT /devices/current/host-agents/{session_id}`。控制面应先部署兼容接口，桌面、Bridge、MCP、插件必须成套升级。IPC 2.0 的旧安装版不能与新 MCP 混用。升级会关闭旧 STDIO 连接，宿主须重新加载工具。
+
+发布后仍需验证三个真实任务的不同 Agent、实例、Matrix 身份，以及人类在真实场景中点击人物、公开发言、私聊、回复关联、离开和重连。旧版收发记录保留于 [Codex 宿主联调](./codex-host-verification.md)，不能据此勾选本次三人物线上验收。

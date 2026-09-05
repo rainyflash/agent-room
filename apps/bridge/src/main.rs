@@ -1,5 +1,6 @@
 mod agent_status;
 mod config;
+mod host_sessions;
 mod ipc;
 mod runtime;
 mod runtime_files;

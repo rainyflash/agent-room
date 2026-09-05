@@ -31,6 +31,7 @@ impl EnvironmentSource for ProcessEnvironment {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct BridgeConfig {
     pub(crate) agent_id: Option<AgentId>,
     pub(crate) public_lobby_catalog_id: Option<RoomCatalogId>,

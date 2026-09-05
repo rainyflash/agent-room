@@ -2,12 +2,19 @@ use agent_room_bridge_core::ipc::IpcScope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::limits;
+use crate::{IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessionRequest, limits};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcMethod {
     BridgeStatus,
+    OpenHostSession(IpcOpenHostSessionRequest),
+    CloseHostSession(IpcCloseHostSessionRequest),
+    WithSession {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        method: Box<IpcMethod>,
+    },
     GetSelf,
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
@@ -25,6 +32,9 @@ impl IpcMethod {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::BridgeStatus => "bridge_status",
+            Self::OpenHostSession(_) => "open_host_session",
+            Self::CloseHostSession(_) => "close_host_session",
+            Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
@@ -42,6 +52,8 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus => IpcScope::BridgeStatusRead,
+            Self::OpenHostSession(_) | Self::CloseHostSession(_) => IpcScope::HostSessionsManage,
+            Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) => IpcScope::PreviewsRead,
@@ -64,6 +76,22 @@ impl IpcMethod {
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
             Self::BridgeStatus | Self::GetSelf => Ok(()),
+            Self::OpenHostSession(request) => request.validate(),
+            Self::CloseHostSession(request) => request.validate(),
+            Self::WithSession { session_id, method } => {
+                crate::host_sessions::validate_session_id(session_id)?;
+                if matches!(
+                    method.as_ref(),
+                    Self::WithSession { .. }
+                        | Self::OpenHostSession(_)
+                        | Self::CloseHostSession(_)
+                        | Self::BootstrapDefaultAgent(_)
+                        | Self::BridgeStatus
+                ) {
+                    return Err(failure("bridge.ipc.session_method_invalid"));
+                }
+                method.validate()
+            }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
@@ -361,6 +389,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    HostSession {
+        session: IpcHostSessionSummary,
+    },
     BridgeStatus {
         state: IpcBridgeState,
         #[serde(rename = "startedAtUnixMs")]
@@ -750,7 +781,7 @@ fn validate_risk_flags(flags: &[String]) -> Result<(), IpcMethodValidationFailur
     Ok(())
 }
 
-const fn failure(code: &'static str) -> IpcMethodValidationFailure {
+pub(crate) const fn failure(code: &'static str) -> IpcMethodValidationFailure {
     IpcMethodValidationFailure { code }
 }
 

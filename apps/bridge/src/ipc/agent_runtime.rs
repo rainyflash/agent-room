@@ -849,6 +849,25 @@ impl AgentRuntimeIpcFacade {
     }
 
     fn runtime_snapshot(&self) -> Result<BridgeAgentRuntimeSnapshot, BridgeIpcDispatchFailure> {
+        match self.status_reader.read_status().state {
+            agent_room_bridge_ipc::IpcBridgeState::Offline => {
+                return Err(BridgeIpcDispatchFailure::new(
+                    self.status_reader
+                        .failure_code()
+                        .unwrap_or("bridge.agent_runtime_failed"),
+                    IpcErrorCategory::DependencyUnavailable,
+                    false,
+                ));
+            }
+            agent_room_bridge_ipc::IpcBridgeState::ShuttingDown => {
+                return Err(BridgeIpcDispatchFailure::new(
+                    "bridge.agent_runtime_stopping",
+                    IpcErrorCategory::DependencyUnavailable,
+                    false,
+                ));
+            }
+            _ => {}
+        }
         self.runtime_reader
             .read_agent_runtime()
             .ok_or_else(agent_runtime_unavailable)

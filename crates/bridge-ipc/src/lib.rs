@@ -1,8 +1,13 @@
 mod authentication;
 mod client;
 mod codec;
+mod host_sessions;
 pub mod limits;
 mod tools;
+pub use host_sessions::{
+    IpcCloseHostSessionRequest, IpcHostSessionState, IpcHostSessionSummary,
+    IpcOpenHostSessionRequest,
+};
 mod wire;
 
 pub use authentication::{

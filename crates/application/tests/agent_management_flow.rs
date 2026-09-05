@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agents::{
         AgentManagementDependencies, AgentManagementFailureKind, AgentManagementService,
-        AgentManagementUseCases, CreateAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
-        ListAgents, RegisterAgentInstance, RotateAgentInstanceMatrixSession,
+        AgentManagementUseCases, CreateAgent, CreateHostAgentForDevice, EnsureDefaultAgent,
+        EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
+        RotateAgentInstanceMatrixSession,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -143,8 +144,9 @@ impl SecretFactory for TestSecrets {
     }
 }
 
+#[derive(Default)]
 struct FakeCreationWorkflow {
-    agent_id: AgentId,
+    agent_id: Option<AgentId>,
     claims: Mutex<Vec<AgentCreationClaim>>,
     completions: Mutex<Vec<AgentRegistration>>,
 }
@@ -155,13 +157,41 @@ impl AgentCreationWorkflow for FakeCreationWorkflow {
         claim: &'a AgentCreationClaim,
     ) -> PortFuture<'a, RepositoryResult<AgentCreationReservation>> {
         Box::pin(async move {
-            self.claims
+            let mut claims = self.claims.lock().expect("测试锁不得中毒");
+            let first = claims
+                .iter()
+                .find(|previous| previous.request_id == claim.request_id)
+                .cloned();
+            claims.push(claim.clone());
+            let reserved_id = if let Some(first) = first {
+                if first.owner_id != claim.owner_id {
+                    return Err(RepositoryError::new(
+                        "agent_creation.reserve",
+                        RepositoryErrorKind::Forbidden,
+                    ));
+                }
+                if first.request_fingerprint != claim.request_fingerprint {
+                    return Err(RepositoryError::new(
+                        "agent_creation.reserve",
+                        RepositoryErrorKind::Conflict,
+                    ));
+                }
+                first.proposed_agent_id
+            } else {
+                claim.proposed_agent_id
+            };
+            let agent_id = self.agent_id.unwrap_or(reserved_id);
+            let completed = self
+                .completions
                 .lock()
                 .expect("测试锁不得中毒")
-                .push(claim.clone());
-            Ok(AgentCreationReservation::Reserved {
-                agent_id: self.agent_id,
-            })
+                .iter()
+                .find(|registration| registration.agent.id() == agent_id)
+                .map(RegisteredAgent::from);
+            Ok(completed.map_or(
+                AgentCreationReservation::Reserved { agent_id },
+                AgentCreationReservation::Completed,
+            ))
         })
     }
 
@@ -371,7 +401,7 @@ impl MatrixAgentDeviceSessionRotator for FakeMatrixIdentities {
 async fn 创建_agent_先预留稳定标识再对账_matrix_身份() {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let creation = Arc::new(FakeCreationWorkflow {
-        agent_id,
+        agent_id: Some(agent_id),
         claims: Mutex::new(Vec::new()),
         completions: Mutex::new(Vec::new()),
     });
@@ -420,7 +450,7 @@ async fn 首次引导按_principal_幂等创建默认_agent() {
     let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
     let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
     let creation = Arc::new(FakeCreationWorkflow {
-        agent_id: default_agent_id,
+        agent_id: Some(default_agent_id),
         claims: Mutex::new(Vec::new()),
         completions: Mutex::new(Vec::new()),
     });
@@ -455,7 +485,7 @@ async fn 设备身份首次引导复用同一_principal_确定性_agent() {
     let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
     let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
     let creation = Arc::new(FakeCreationWorkflow {
-        agent_id: default_agent_id,
+        agent_id: Some(default_agent_id),
         claims: Mutex::new(Vec::new()),
         completions: Mutex::new(Vec::new()),
     });
@@ -519,6 +549,164 @@ async fn 已有_agent_时首次引导直接复用且不创建重复记录() {
     assert_eq!(listed, vec![existing.clone()]);
     assert_eq!(ensured, existing);
     assert!(creation.claims.lock().expect("测试锁不得中毒").is_empty());
+}
+
+#[tokio::test]
+async fn 宿主会话创建独立_agent_且重试复用同一身份() {
+    let creation = Arc::new(FakeCreationWorkflow::default());
+    let service = host_agent_service(creation.clone());
+    let request = host_agent_request("调试 Agent A");
+    let first = service
+        .create_host_agent_for_device(request.clone())
+        .await
+        .expect("已认证设备可创建宿主 Agent");
+    let replay = service
+        .create_host_agent_for_device(request.clone())
+        .await
+        .expect("相同会话和参数可安全重试");
+    let second = service
+        .create_host_agent_for_device(CreateHostAgentForDevice {
+            request_id: AgentCreationRequestId::from_uuid(Uuid::now_v7()),
+            ..request.clone()
+        })
+        .await
+        .expect("同一设备的另一个宿主会话可创建独立 Agent");
+
+    assert_eq!(replay, first);
+    assert_ne!(first.agent.id(), second.agent.id());
+    assert_ne!(first.matrix_user_id, second.matrix_user_id);
+    assert_ne!(first.slug, second.slug);
+    assert_ne!(first.agent.id().as_uuid(), request.request_id.as_uuid());
+    assert_ne!(
+        first.agent.id().as_uuid(),
+        request.actor.account.principal.id().as_uuid()
+    );
+    assert_eq!(first.display_name, request.display_name);
+    assert_eq!(first.visibility, AgentVisibility::Private);
+    assert!(first.description.is_empty());
+    assert!(first.avatar_content_id.is_none());
+    let claims = creation.claims.lock().expect("测试锁不得中毒");
+    assert_eq!(claims.len(), 3);
+    assert_eq!(claims[0].request_id, request.request_id);
+    assert_eq!(claims[0].owner_id, request.actor.account.principal.id());
+    assert_eq!(claims[0].proposed_agent_id, first.agent.id());
+    assert_eq!(claims[0].request_fingerprint, claims[1].request_fingerprint);
+    assert_ne!(claims[0].proposed_agent_id, claims[1].proposed_agent_id);
+    assert_eq!(
+        creation.completions.lock().expect("测试锁不得中毒").len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn 宿主会话拒绝改名冲突和跨所有者重用() {
+    let creation = Arc::new(FakeCreationWorkflow::default());
+    let service = host_agent_service(creation.clone());
+    let request = host_agent_request("调试 Agent A");
+    let first = service
+        .create_host_agent_for_device(request.clone())
+        .await
+        .expect("首次创建成功");
+    let conflict = service
+        .create_host_agent_for_device(CreateHostAgentForDevice {
+            display_name: "调试 Agent B".to_owned(),
+            ..request.clone()
+        })
+        .await
+        .expect_err("同一会话不得更改创建参数");
+    assert_eq!(conflict.kind(), AgentManagementFailureKind::Conflict);
+    let forbidden = service
+        .create_host_agent_for_device(CreateHostAgentForDevice {
+            actor: authenticated_device(PrincipalId::from_uuid(Uuid::now_v7())),
+            ..request.clone()
+        })
+        .await
+        .expect_err("其他所有者不得认领同一会话");
+    assert_eq!(forbidden.kind(), AgentManagementFailureKind::Forbidden);
+    let replay = service
+        .create_host_agent_for_device(request)
+        .await
+        .expect("拒绝冲突后原所有者仍可重试");
+    assert_eq!(replay, first);
+    assert_eq!(
+        creation.completions.lock().expect("测试锁不得中毒").len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn 宿主_agent_沿用显示名称规则且无效输入不预留身份() {
+    let creation = Arc::new(FakeCreationWorkflow::default());
+    let service = host_agent_service(creation.clone());
+    for name in [
+        String::new(),
+        "x".repeat(129),
+        "Agent\nA".to_owned(),
+        "测".repeat(43),
+    ] {
+        let failure = service
+            .create_host_agent_for_device(host_agent_request(&name))
+            .await
+            .expect_err("空名称、超长名称和控制字符必须失败");
+        assert_eq!(failure.kind(), AgentManagementFailureKind::InvalidRequest);
+    }
+    assert!(creation.claims.lock().expect("测试锁不得中毒").is_empty());
+    let maximum = "x".repeat(128);
+    let created = service
+        .create_host_agent_for_device(host_agent_request(&maximum))
+        .await
+        .expect("规则允许的最大长度应被接受");
+    assert_eq!(created.display_name, maximum);
+}
+
+#[tokio::test]
+async fn 过期设备认证或暂停主体不能创建或重放宿主_agent() {
+    let creation = Arc::new(FakeCreationWorkflow::default());
+    let service = host_agent_service(creation.clone());
+    let request = host_agent_request("调试 Agent A");
+    service
+        .create_host_agent_for_device(request.clone())
+        .await
+        .expect("原始有效认证可创建 Agent");
+    let mut expired = request.clone();
+    expired.actor.access_token_expires_at = time(NOW);
+    let mut suspended = request;
+    suspended
+        .actor
+        .account
+        .principal
+        .suspend()
+        .expect("主体可暂停");
+    for denied in [expired, suspended] {
+        let failure = service
+            .create_host_agent_for_device(denied)
+            .await
+            .expect_err("认证失效后不得重放已完成请求");
+        assert_eq!(failure.kind(), AgentManagementFailureKind::Forbidden);
+    }
+    assert_eq!(creation.claims.lock().expect("测试锁不得中毒").len(), 1);
+}
+
+fn host_agent_service(creation: Arc<FakeCreationWorkflow>) -> AgentManagementService {
+    service(
+        creation,
+        Some(registered_agent(AgentId::from_uuid(Uuid::now_v7()))),
+        None,
+        Arc::new(FakeInstances::default()),
+        Arc::new(FakeMatrixIdentities {
+            server_name: "matrix.test".to_owned(),
+            issued_sessions: Mutex::new(0),
+            corrupt_session_identity: false,
+        }),
+    )
+}
+
+fn host_agent_request(display_name: &str) -> CreateHostAgentForDevice {
+    CreateHostAgentForDevice {
+        request_id: AgentCreationRequestId::from_uuid(Uuid::now_v7()),
+        actor: authenticated_device(PrincipalId::from_uuid(Uuid::now_v7())),
+        display_name: display_name.to_owned(),
+    }
 }
 
 #[tokio::test]
@@ -643,7 +831,7 @@ fn service(
 
 fn unused_creation(agent_id: AgentId) -> Arc<FakeCreationWorkflow> {
     Arc::new(FakeCreationWorkflow {
-        agent_id,
+        agent_id: Some(agent_id),
         claims: Mutex::new(Vec::new()),
         completions: Mutex::new(Vec::new()),
     })

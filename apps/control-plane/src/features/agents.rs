@@ -5,9 +5,10 @@ use agent_room_application::{
         AgentInstanceVerificationUseCases, ResolveAgentInstanceVerification,
     },
     agents::{
-        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, EnsureDefaultAgent,
-        EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
-        RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
+        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, CreateHostAgentForDevice,
+        EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
+        RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
+        RotatedAgentInstanceMatrixSession,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
@@ -25,7 +26,7 @@ use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Extension, Path, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Extension, OriginalUri, Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -97,6 +98,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
             put(ensure_default_agent_for_device),
         )
         .route(
+            "/devices/current/host-agents/{session_id}",
+            put(create_host_agent_for_device),
+        )
+        .route(
             "/agents/{agent_id}/members/{principal_id}",
             put(grant_membership).delete(revoke_membership),
         )
@@ -123,6 +128,12 @@ struct CreateAgentBody {
     #[serde(default)]
     avatar_content_id: Option<String>,
     visibility: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateHostAgentBody {
+    display_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +338,63 @@ async fn ensure_default_agent_for_device(
     match state
         .agents
         .ensure_default_agent_for_device(EnsureDefaultAgentForDevice { actor })
+        .await
+    {
+        Ok(agent) => no_store(Json(AgentResponse::from(agent)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+async fn create_host_agent_for_device(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(session_id): Path<String>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Ok(request_id) = host_agent_request_id(&session_id) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_host_session_id", correlation_id)
+                .into_response(),
+        );
+    };
+    let Ok(body_text) = std::str::from_utf8(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_host_agent_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let request_target = uri
+        .path_and_query()
+        .map_or(uri.path(), |target| target.as_str());
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "PUT",
+        request_target,
+        body_text,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let Ok(body) = serde_json::from_slice::<CreateHostAgentBody>(&body) else {
+        return no_store(
+            ApiError::invalid_request("agent.invalid_host_agent_body", correlation_id)
+                .into_response(),
+        );
+    };
+    match state
+        .agents
+        .create_host_agent_for_device(CreateHostAgentForDevice {
+            request_id,
+            actor,
+            display_name: body.display_name,
+        })
         .await
     {
         Ok(agent) => no_store(Json(AgentResponse::from(agent)).into_response()),
@@ -646,6 +714,14 @@ fn creation_request_id(headers: &HeaderMap) -> Result<AgentCreationRequestId, ()
     idempotency_uuid(headers).map(AgentCreationRequestId::from_uuid)
 }
 
+fn host_agent_request_id(session_id: &str) -> Result<AgentCreationRequestId, ()> {
+    let id = parse_uuid_v7(session_id)?;
+    if id.to_string() != session_id || id.get_variant() != uuid::Variant::RFC4122 {
+        return Err(());
+    }
+    Ok(AgentCreationRequestId::from_uuid(id))
+}
+
 fn instance_request_id(headers: &HeaderMap) -> Result<AgentInstanceRegistrationRequestId, ()> {
     idempotency_uuid(headers).map(AgentInstanceRegistrationRequestId::from_uuid)
 }
@@ -785,8 +861,8 @@ mod tests {
         },
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
-            EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
-            RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
+            CreateHostAgentForDevice, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
+            RegisterAgentInstance, RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
             RotatedAgentInstanceMatrixSession,
         },
         authentication::{
@@ -841,6 +917,7 @@ mod tests {
     #[derive(Default)]
     struct FakeAgents {
         creation: Mutex<Option<CreateAgent>>,
+        host_creation: Mutex<Option<CreateHostAgentForDevice>>,
         default_agent_ensures: AtomicUsize,
         device_default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
@@ -888,6 +965,17 @@ mod tests {
         ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>> {
             *self.registration.lock().expect("Agent 实例记录锁可用") = Some(request);
             Box::pin(async { Ok(registered_instance()) })
+        }
+
+        fn create_host_agent_for_device(
+            &self,
+            request: CreateHostAgentForDevice,
+        ) -> PortFuture<'_, AgentManagementResult<RegisteredAgent>> {
+            *self
+                .host_creation
+                .lock()
+                .expect("宿主 Agent 创建记录锁可用") = Some(request);
+            Box::pin(async { Ok(registered_agent()) })
         }
 
         fn rotate_instance_matrix_session(
@@ -1220,6 +1308,171 @@ mod tests {
                 .expect("认证要求记录锁可用")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn 宿主_agent_创建使用设备签名绑定完整路径和原始正文() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let devices = Arc::new(FakeDevices::default());
+        let app = test_router(agents.clone(), authentication.clone(), devices.clone());
+        let body = "{\n  \"displayName\" : \"调试 Agent A\"\n}";
+        for suffix in ["", "?client=codex"] {
+            let mut request = host_agent_request(REQUEST_UUID, body);
+            let target = format!("/devices/current/host-agents/{REQUEST_UUID}{suffix}");
+            *request.uri_mut() = target.parse().expect("完整请求路径有效");
+            devices.expect_request("PUT", target, body.to_owned());
+            let response = app
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("宿主 Agent 路由可调用");
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers().get(header::CACHE_CONTROL),
+                Some(&header::HeaderValue::from_static("no-store"))
+            );
+            let payload = response_json(response).await;
+            assert_eq!(payload["agentId"], AGENT_UUID);
+            assert_eq!(payload["visibility"], "private");
+        }
+        let creation = agents
+            .host_creation
+            .lock()
+            .expect("宿主 Agent 创建记录锁可用")
+            .clone()
+            .expect("已调用宿主 Agent 用例");
+        assert_eq!(creation.request_id.to_string(), REQUEST_UUID);
+        assert_eq!(creation.actor.device_id, device_id());
+        assert_eq!(creation.actor.account.principal.id(), principal_id());
+        assert_eq!(creation.display_name, "调试 Agent A");
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 2);
+        assert!(
+            authentication
+                .requirements
+                .lock()
+                .expect("测试锁可用")
+                .is_empty()
+        );
+        assert!(agents.creation.lock().expect("测试锁可用").is_none());
+        assert_eq!(
+            agents.device_default_agent_ensures.load(Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn 宿主_agent_缺失设备凭据或证明时绝不回退网页会话() {
+        for missing in [
+            "authorization",
+            "x-agent-room-device-id",
+            "x-agent-room-proof-issued-at",
+            "x-agent-room-proof-nonce",
+            "x-agent-room-proof-signature",
+        ] {
+            let agents = Arc::new(FakeAgents::default());
+            let authentication = Arc::new(FakeAuthentication::default());
+            let devices = Arc::new(FakeDevices::default());
+            let app = test_router(agents.clone(), authentication.clone(), devices.clone());
+            let mut request = host_agent_request(REQUEST_UUID, r#"{"displayName":"Agent A"}"#);
+            request.headers_mut().remove(missing);
+            request.headers_mut().insert(
+                header::COOKIE,
+                header::HeaderValue::from_static(SESSION_COOKIE),
+            );
+            request.headers_mut().insert(
+                header::ORIGIN,
+                header::HeaderValue::from_static(FRONTEND_ORIGIN),
+            );
+            let response = app.oneshot(request).await.expect("请求可分派");
+            let expected = if missing == "authorization" {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            assert_eq!(response.status(), expected, "缺少 {missing}");
+            assert!(agents.host_creation.lock().expect("测试锁可用").is_none());
+            assert!(
+                authentication
+                    .requirements
+                    .lock()
+                    .expect("测试锁可用")
+                    .is_empty()
+            );
+            assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn 宿主_agent_拒绝非规范_uuidv7_会话标识() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+        for session_id in [
+            "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+            REQUEST_UUID.to_ascii_uppercase(),
+            REQUEST_UUID.replace('-', ""),
+            "0198b601-77a1-7bb8-03eb-a8fe68c97e45".to_owned(),
+            "not-a-session".to_owned(),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(host_agent_request(
+                    &session_id,
+                    r#"{"displayName":"Agent A"}"#,
+                ))
+                .await
+                .expect("无效会话请求可分派");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{session_id}");
+            assert_eq!(
+                response_json(response).await["code"],
+                "agent.invalid_host_session_id"
+            );
+        }
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
+        assert!(agents.host_creation.lock().expect("测试锁可用").is_none());
+    }
+
+    #[tokio::test]
+    async fn 宿主_agent_正文只接受显示名称且拒绝身份或可见性注入() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+        for body in [
+            "{}".to_owned(),
+            r#"{"displayName":42}"#.to_owned(),
+            r#"{"displayName":"A","displayName":"B"}"#.to_owned(),
+            format!(r#"{{"displayName":"A","ownerId":"{TARGET_PRINCIPAL_UUID}"}}"#),
+            format!(r#"{{"displayName":"A","agentId":"{AGENT_UUID}"}}"#),
+            r#"{"displayName":"A","visibility":"public"}"#.to_owned(),
+            r#"{"displayName":"A","slug":"shared"}"#.to_owned(),
+            "invalid-json".to_owned(),
+        ] {
+            devices.expect_request(
+                "PUT",
+                format!("/devices/current/host-agents/{REQUEST_UUID}"),
+                body.clone(),
+            );
+            let response = app
+                .clone()
+                .oneshot(host_agent_request(REQUEST_UUID, &body))
+                .await
+                .expect("无效正文请求可分派");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response_json(response).await["code"],
+                "agent.invalid_host_agent_body"
+            );
+        }
+        assert!(agents.host_creation.lock().expect("测试锁可用").is_none());
     }
 
     #[tokio::test]
@@ -1596,6 +1849,23 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    fn host_agent_request(session_id: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method("PUT")
+            .uri(format!("/devices/current/host-agents/{session_id}"))
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-agent-room-device-id", DEVICE_UUID)
+            .header("x-agent-room-proof-issued-at", "1700000000000")
+            .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+            .header(
+                "x-agent-room-proof-signature",
+                URL_SAFE_NO_PAD.encode([9_u8; 64]),
+            )
+            .body(Body::from(body.to_owned()))
+            .expect("宿主 Agent 创建请求有效")
     }
 
     fn instance_request(body: &str, include_proof: bool) -> Request<Body> {

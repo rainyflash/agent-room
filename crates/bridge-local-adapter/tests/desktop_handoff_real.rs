@@ -34,14 +34,21 @@ async fn 桌面壳可批准真实一次性交接() {
         purpose: IpcHandoffPurpose::ReplyDraft,
         expires_at_unix_ms,
     };
-    let expected_handoff_id = request.handoff_id.clone();
+    let method = IpcMethod::WithSession {
+        session_id: required("AGENT_ROOM_TEST_SESSION_ID"),
+        method: Box::new(IpcMethod::ApproveHandoff(request)),
+    };
+    method
+        .validate()
+        .expect("会话句柄必须是规范 UUIDv7，交接参数必须有效");
+    let expected_handoff_id = required("AGENT_ROOM_TEST_HANDOFF_ID");
     let secure_storage_service =
         secure_storage_service_from_environment().expect("安全存储命名空间必须有效");
     let response = LocalBridgeClient::desktop_shell_with_secure_storage_service(
         bridge_runtime_root(&data_root),
         secure_storage_service,
     )
-    .invoke(IpcMethod::ApproveHandoff(request))
+    .invoke(method)
     .await
     .unwrap_or_else(|failure| {
         panic!(

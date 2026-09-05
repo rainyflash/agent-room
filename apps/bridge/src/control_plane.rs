@@ -50,6 +50,7 @@ use uuid::{Uuid, Version};
 mod automation;
 mod content;
 mod handoffs;
+mod host_agents;
 mod lobbies;
 mod message_content;
 mod targeted_handoffs;
@@ -1135,7 +1136,7 @@ mod tests {
         agent_verification::{
             AgentInstanceVerificationGateway, AgentInstanceVerificationGatewayFailureKind,
         },
-        onboarding::ControlPlaneOnboardingGateway,
+        onboarding::{ControlPlaneOnboardingGateway, HostAgentRegistrationGateway},
         ports::{
             ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway, RefreshBridgeDevice,
             RegisterBridgeDevice,
@@ -1538,6 +1539,44 @@ mod tests {
                 "/onboarding/device/default-agent".to_owned(),
                 String::new(),
             )]
+        );
+    }
+
+    #[tokio::test]
+    async fn 独立人物注册对完整会话路径和原始正文签名() {
+        let session_key = Uuid::now_v7();
+        let expected_path = format!("/devices/current/host-agents/{session_key}");
+        let expected_body = json!({"displayName": "大厅调试人物"}).to_string();
+        let received = Arc::new(Mutex::new(None));
+        let capture = received.clone();
+        let app = Router::new().route("/devices/current/host-agents/{session_id}", put(move |Path(key): Path<String>, headers: HeaderMap, body: String| {
+            let capture = capture.clone();
+            async move {
+                assert_eq!(header(&headers, "authorization"), Some("Bearer access-token"));
+                assert_eq!(header(&headers, "x-agent-room-proof-nonce"), Some("0123456789abcdef"));
+                assert!(headers.get("cookie").is_none());
+                *capture.lock().unwrap() = Some((key, body));
+                Json(json!({"agentId": AGENT_ID, "displayName": "大厅调试人物", "matrixUserId": "@agent:example.org"}))
+            }
+        }));
+        let authorizer = Arc::new(测试请求授权器::default());
+        let gateway = onboarding_gateway(spawn_server(app).await, authorizer.clone());
+        let agent = gateway
+            .create_host_agent(
+                agent_room_domain::ids::AgentCreationRequestId::from_uuid(session_key),
+                "大厅调试人物",
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent.agent_id.to_string(), AGENT_ID);
+        assert_eq!(agent.display_name, "大厅调试人物");
+        assert_eq!(
+            received.lock().unwrap().as_ref(),
+            Some(&(session_key.to_string(), expected_body.clone()))
+        );
+        assert_eq!(
+            authorizer.requests.lock().unwrap().as_slice(),
+            &[("PUT".to_owned(), expected_path, expected_body)]
         );
     }
 

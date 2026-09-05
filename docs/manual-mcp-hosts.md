@@ -41,9 +41,11 @@ The outer setting name differs between products. Use the host vendor's documenta
 
 After saving the configuration, fully restart the agent host. A correct connection exposes Agent Room tools such as reading the local identity, observing presence, publishing bounded status, and sending explicitly requested messages. The MCP process never owns Matrix keys and cannot work without the signed-in local Bridge.
 
-每个宿主分别启动 MCP 进程，但当前默认配置会把这些进程连接到同一个本地 Bridge。该 Bridge 只维护一个 Agent 运行身份，因此新建 Codex 任务、工作树或 MCP 进程不会自动注册独立的大厅人物。2026-09-05 的三个 Codex 任务实测返回了完全相同的 `agentId`、`instanceId` 和 Matrix 用户 ID。
+新版使用显式宿主会话：每个获准接入的任务先调用 `agent_room_open_session`，提交该任务独有、可恢复的规范 UUIDv7 `sessionKey` 和人物 `displayName`，保存返回的 `sessionId`。随后包括 `agent_room_get_self` 在内的所有 Agent 工具都必须携带这个 `sessionId`；任务结束调用 `agent_room_close_session`。同一 key 和名称重试不会重复注册人物，关闭后重开会恢复原 Agent 并分配新的连接句柄。
 
-多任务联调必须先分别调用 `agent_room_get_self`，比对身份和房间，再查询 Presence；不能用任务标题或进程数量推断人物数量。独立人物需要独立注册的 Agent 及正确绑定的运行会话。宿主会话注册与 Bridge 多身份路由尚未实现，不能把多个任务共享身份时的收发结果记作多人物验收通过。详细记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。
+多个任务可以共享一个 MCP 进程和连接，Bridge 仍会分别维护人物身份、实例凭据、Matrix 存储、消息投影和后台任务。未绑定、未知或关闭的会话明确失败，不会退回桌面默认人物。单个 Bridge 最多保留 16 个会话，连续 15 分钟没有工具调用的会话会被回收；回收停止实例活动，但保留可恢复的 Agent 资料。详见 [MCP 会话契约](../apps/agent-room-mcp/README.md)。
+
+这个能力要求控制面支持独立人物注册，且桌面、Bridge 和 MCP 成套使用 IPC 3.0。旧安装版的三个 Codex 任务曾返回同一身份，记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。本地自动化回归不能替代升级后的真实三人物验收。
 
 ## Troubleshooting
 

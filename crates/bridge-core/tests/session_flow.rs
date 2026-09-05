@@ -1,8 +1,11 @@
 use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::task::{Context, Waker};
 
 use agent_room_application::{
     devices::{AuthenticatedDevice, DeviceCredentials},
@@ -16,8 +19,8 @@ use agent_room_bridge_core::{
         RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
     },
     session::{
-        BridgeSessionDependencies, BridgeSessionFailureKind, BridgeSessionPolicy,
-        BridgeSessionService,
+        ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailureKind,
+        BridgeSessionPolicy, BridgeSessionService,
     },
 };
 use agent_room_domain::{
@@ -27,6 +30,7 @@ use agent_room_domain::{
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_identity_adapter::SecureSecretFactory;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 struct 测试时钟(UtcMillis);
@@ -104,12 +108,14 @@ enum 刷新结果 {
     成功,
     依赖不可用,
     结果未知,
+    认证拒绝,
 }
 
 struct 测试控制平面 {
     outcomes: Mutex<VecDeque<刷新结果>>,
     requests: Mutex<Vec<RefreshBridgeDevice>>,
     calls: AtomicUsize,
+    refresh_gate: Option<Semaphore>,
 }
 
 impl 测试控制平面 {
@@ -122,7 +128,22 @@ impl 测试控制平面 {
             outcomes: Mutex::new(outcomes.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
+            refresh_gate: None,
         }
+    }
+
+    fn paused(outcome: 刷新结果) -> Self {
+        Self {
+            refresh_gate: Some(Semaphore::new(0)),
+            ..Self::new(outcome)
+        }
+    }
+
+    fn release_refresh(&self) {
+        self.refresh_gate
+            .as_ref()
+            .expect("暂停的刷新应有响应门闩")
+            .add_permits(1);
     }
 }
 
@@ -147,6 +168,9 @@ impl ControlPlaneDeviceGateway for 测试控制平面 {
             .pop_front()
             .expect("测试必须提供刷新结果");
         Box::pin(async move {
+            if let Some(gate) = &self.refresh_gate {
+                gate.acquire().await.expect("刷新响应门闩可用").forget();
+            }
             match outcome {
                 刷新结果::成功 => Ok(refreshed_credentials()),
                 刷新结果::依赖不可用 => Err(ControlPlaneDeviceFailure::new(
@@ -154,6 +178,9 @@ impl ControlPlaneDeviceGateway for 测试控制平面 {
                 )),
                 刷新结果::结果未知 => Err(ControlPlaneDeviceFailure::new(
                     ControlPlaneDeviceFailureKind::UnknownCommit,
+                )),
+                刷新结果::认证拒绝 => Err(ControlPlaneDeviceFailure::new(
+                    ControlPlaneDeviceFailureKind::AuthenticationRejected,
                 )),
             }
         })
@@ -271,6 +298,139 @@ async fn 临近过期时先持久化刷新中状态再原子替换新凭据() {
 }
 
 #[tokio::test]
+async fn 并发临期请求等待同一次刷新并使用同一新会话() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::paused(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut requests = std::array::from_fn::<_, 8, _>(|_| Box::pin(service.active_session()));
+
+    for request in &mut requests {
+        assert_pending(request.as_mut());
+    }
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+
+    control_plane.release_refresh();
+    let expected = ActiveBridgeSession {
+        device_id: device_id(),
+        access_token: SecretValue::new("new-access-token").expect("新访问令牌有效"),
+        access_token_expires_at: time(10_000),
+    };
+    for request in requests {
+        assert_eq!(request.await.expect("并发请求应等待并取得新会话"), expected);
+    }
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    let stored = vault.load().expect("凭据可读").expect("新凭据已保存");
+    assert_eq!(stored.state, BridgeCredentialState::Ready);
+    assert_eq!(stored.refresh_token.expose(), "new-refresh-token");
+}
+
+#[tokio::test]
+async fn 并发刷新结果未知时所有等待者失败且不重放旧令牌() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::paused(刷新结果::结果未知));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut requests = std::array::from_fn::<_, 4, _>(|_| Box::pin(service.active_session()));
+    for request in &mut requests {
+        assert_pending(request.as_mut());
+    }
+
+    control_plane.release_refresh();
+    for request in requests {
+        assert_eq!(
+            request.await.expect_err("结果未知时禁止返回会话").kind(),
+            BridgeSessionFailureKind::RefreshOutcomeUnknown
+        );
+    }
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        vault.load().expect("凭据可读").expect("保留待决凭据").state,
+        BridgeCredentialState::RefreshPending
+    );
+}
+
+#[tokio::test]
+async fn 刷新被拒绝后等待者不能再使用或重放旧凭据() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::paused(刷新结果::认证拒绝));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut requests = std::array::from_fn::<_, 4, _>(|_| Box::pin(service.active_session()));
+    for request in &mut requests {
+        assert_pending(request.as_mut());
+    }
+
+    control_plane.release_refresh();
+    for request in requests {
+        assert_eq!(
+            request.await.expect_err("已拒绝的设备不能取得会话").kind(),
+            BridgeSessionFailureKind::NotAuthorized
+        );
+    }
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    assert!(vault.load().expect("凭据可读").is_none());
+}
+
+#[tokio::test]
+async fn 刷新调用取消后释放等待者但保留待决状态() {
+    let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
+    let control_plane = Arc::new(测试控制平面::paused(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let mut refreshing = Box::pin(service.active_session());
+    let mut waiting = Box::pin(service.active_session());
+    assert_pending(refreshing.as_mut());
+    assert_pending(waiting.as_mut());
+
+    drop(refreshing);
+    assert_eq!(
+        waiting.await.expect_err("取消后刷新结果仍未知").kind(),
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+    );
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        vault.load().expect("凭据可读").expect("保留待决凭据").state,
+        BridgeCredentialState::RefreshPending
+    );
+}
+
+#[tokio::test]
+async fn 恢复已持久化的待决刷新时拒绝使用尚未过期的访问令牌() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = BridgeCredentialState::RefreshPending;
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let service = service(
+        vault,
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    assert_eq!(
+        service
+            .active_session()
+            .await
+            .expect_err("持久待决状态必须拒绝会话")
+            .kind(),
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+    );
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn 刷新结果未知会持久停在待决状态且绝不重放旧令牌() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
     let control_plane = Arc::new(测试控制平面::new(刷新结果::结果未知));
@@ -345,6 +505,16 @@ async fn 网络切换造成的确定失败会恢复旧状态并允许后续重�
     let recovered = service.active_session().await.expect("网络恢复后应可重连");
     assert_eq!(recovered.access_token.expose(), "new-access-token");
     assert_eq!(control_plane.calls.load(Ordering::SeqCst), 2);
+}
+
+fn assert_pending<F: Future>(future: Pin<&mut F>) {
+    // 逐个推进到刷新或等待点，确保断言不依赖线程调度或定时休眠。
+    assert!(
+        future
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "刷新完成前并发请求应保持等待"
+    );
 }
 
 fn service(
