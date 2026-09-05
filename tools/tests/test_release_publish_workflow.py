@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import unittest
+from urllib.parse import urlsplit
+
+from tools.prodops.render import BROWSER_CONTROL_PLANE_PATH_PREFIX
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +56,28 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertIn("default: client", candidate)
         self.assertEqual(candidate.count("if: ${{ inputs.profile == 'full' }}"), 2)
         self.assertIn('--profile "${{ inputs.profile }}"', candidate)
+
+    def test_浏览器候选使用同源代理并保留桌面独立会话域(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+        browser_urls = re.findall(
+            r"^\s+VITE_AGENT_ROOM_CONTROL_PLANE_URL=(\S+)\s*$", candidate, re.MULTILINE
+        )
+        desktop_urls = re.findall(
+            r"^\s+VITE_AGENT_ROOM_CONTROL_PLANE_URL: (\S+)\s*$", candidate, re.MULTILINE
+        )
+
+        self.assertEqual(len(browser_urls), 1)
+        self.assertEqual(len(desktop_urls), 1)
+        browser = urlsplit(browser_urls[0])
+        desktop = urlsplit(desktop_urls[0])
+        # 浏览器登录和回调必须在同一主机，才能携带 __Host 登录 Cookie。
+        self.assertEqual(browser.scheme, "https")
+        self.assertEqual(browser.netloc, "app.room.the-zeroth.com")
+        self.assertEqual(browser.path, BROWSER_CONTROL_PLANE_PATH_PREFIX)
+        self.assertEqual((browser.query, browser.fragment), ("", ""))
+        # 桌面兑换授权后使用 API 域 Cookie，不能跟着浏览器构建配置一起改域。
+        self.assertEqual(desktop_urls, ["https://api.room.the-zeroth.com"])
+        self.assertNotEqual(browser.netloc, desktop.netloc)
 
     def test客户端候选先做廉价静态契约再做真实协议门禁(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")

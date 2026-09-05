@@ -56,6 +56,8 @@ target/release/agent-room-release-tool keygen \
 
 GitHub runner 是短生命周期环境，但它仍是在线信任边界。Environment Secret、分支保护、固定 Action SHA 和审计日志缺一不可。
 
+Web OCI 镜像必须把 `VITE_AGENT_ROOM_CONTROL_PLANE_URL` 编译为 `https://app.room.the-zeroth.com/_agent-room/api`，与浏览器回调 `https://app.room.the-zeroth.com/connect/finalize` 共用主机。登录 Cookie 使用 `__Host` 前缀，跨主机回调会丢失它。Windows 原生候选仍使用 `https://api.room.the-zeroth.com`，匹配桌面授权兑换后的 API 域会话 Cookie。Vite 参数在镜像构建时写入静态文件，不能靠运行时容器环境变量修正。
+
 ## 4. 数据库与服务端晋级
 
 先用标准命令生成部署证据，禁止临时手写易漂移的 JSON。每个 `--check` 都必须来自刚执行完的真实探针、备份验证或恢复演练：
