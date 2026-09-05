@@ -46,7 +46,9 @@ describe('AutomationGrantHub', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Create grant' }));
 
-    await waitFor(() => expect(gateway.create).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(gateway.create).toHaveBeenCalledOnce();
+    });
     const input = gateway.create.mock.calls[0]?.[1];
     expect(input).toMatchObject({
       agentId: AGENT_ID,
@@ -77,8 +79,8 @@ describe('AutomationGrantHub', () => {
 
   it('控制平面返回不确定状态时显示失败且不伪造授权', async () => {
     const gateway = automationGateway([]);
-    gateway.value.list = vi.fn(async () =>
-      err({ code: 'automation.unreachable', retryable: true }),
+    gateway.value.list = vi.fn(() =>
+      Promise.resolve(err({ code: 'automation.unreachable', retryable: true })),
     );
     const user = userEvent.setup();
     renderHub(gateway.value, true);
@@ -116,7 +118,7 @@ function renderHub(
 
 function automationGateway(initial: readonly AutomationGrant[]) {
   let grants = [...initial];
-  const create = vi.fn(async (grantId: string, input: CreateAutomationGrantInput) => {
+  const create = vi.fn((grantId: string, input: CreateAutomationGrantInput) => {
     const created: AutomationGrant = {
       agentId: input.agentId,
       agentInstanceId: input.agentInstanceId ?? null,
@@ -135,41 +137,47 @@ function automationGateway(initial: readonly AutomationGrant[]) {
       totalMessages: 0,
     };
     grants = [created, ...grants];
-    return ok(created);
+    return Promise.resolve(ok(created));
   });
   const value: AutomationGrantGateway = {
     create,
-    list: vi.fn(async () => ok(grants)),
-    revoke: vi.fn(async () => err({ code: 'automation.test_not_available', retryable: false })),
+    list: vi.fn(() => Promise.resolve(ok(grants))),
+    revoke: vi.fn(() =>
+      Promise.resolve(err({ code: 'automation.test_not_available', retryable: false })),
+    ),
   };
   return { create, value };
 }
 
 const accessManagement: AccessManagementGateway = {
-  listAgentInstances: async () =>
-    ok([
-      {
-        adapterType: 'codex',
-        agentAvatarContentId: null,
-        agentDisplayName: 'Local Agent',
-        agentId: AGENT_ID,
-        agentInstanceId: INSTANCE_ID,
-        capabilityVersion: '1',
-        createdAtUnixMs: 1_700_000_000_000,
-        device: {
-          deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
-          label: 'Workstation',
-          platform: 'windows',
-          trustState: 'verified',
+  listAgentInstances: () =>
+    Promise.resolve(
+      ok([
+        {
+          adapterType: 'codex',
+          agentAvatarContentId: null,
+          agentDisplayName: 'Local Agent',
+          agentId: AGENT_ID,
+          agentInstanceId: INSTANCE_ID,
+          capabilityVersion: '1',
+          createdAtUnixMs: 1_700_000_000_000,
+          device: {
+            deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+            label: 'Workstation',
+            platform: 'windows',
+            trustState: 'verified',
+          },
+          lastSeenAtUnixMs: 1_700_000_100_000,
+          matrixDeviceId: 'MATRIX-DEVICE',
+          matrixDeviceRevokedAtUnixMs: null,
+          revokedAtUnixMs: null,
+          status: 'online',
         },
-        lastSeenAtUnixMs: 1_700_000_100_000,
-        matrixDeviceId: 'MATRIX-DEVICE',
-        matrixDeviceRevokedAtUnixMs: null,
-        revokedAtUnixMs: null,
-        status: 'online',
-      },
-    ]),
-  listProductDevices: async () => ok([]),
-  revokeAgentInstance: async () => err({ code: 'access.test_not_available', retryable: false }),
-  revokeProductDevice: async () => err({ code: 'access.test_not_available', retryable: false }),
+      ]),
+    ),
+  listProductDevices: () => Promise.resolve(ok([])),
+  revokeAgentInstance: () =>
+    Promise.resolve(err({ code: 'access.test_not_available', retryable: false })),
+  revokeProductDevice: () =>
+    Promise.resolve(err({ code: 'access.test_not_available', retryable: false })),
 };

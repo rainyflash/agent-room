@@ -23,7 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.ts'],
+    files: ['**/*.{ts,tsx}'],
     extends: [
       eslint.configs.recommended,
       ...tseslint.configs.strictTypeChecked,

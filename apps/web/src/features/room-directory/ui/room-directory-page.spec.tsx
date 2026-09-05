@@ -19,16 +19,9 @@ vi.mock('@tanstack/react-router', () => ({
 
 vi.mock('motion/react', () => ({
   motion: {
-    article: ({
-      animate: _animate,
-      initial: _initial,
-      transition: _transition,
-      ...props
-    }: ComponentProps<'article'> & {
-      readonly animate?: unknown;
-      readonly initial?: unknown;
-      readonly transition?: unknown;
-    }) => <article {...props} />,
+    article: ({ children, className }: ComponentProps<'article'>) => (
+      <article className={className}>{children}</article>
+    ),
   },
   useReducedMotion: () => true,
 }));

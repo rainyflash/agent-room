@@ -44,6 +44,7 @@ export function ConnectionPage() {
     }
     send({
       type: 'CONTROL_DEGRADED',
+      reachable: report.ok,
       failure: report.ok
         ? failure(
             'control-plane',

@@ -57,7 +57,9 @@ export function AgentFleetList({
             >
               <button
                 aria-pressed={selectedAgentId === entry.agent.agentId}
-                onClick={() => onSelectAgent(entry.agent.agentId)}
+                onClick={() => {
+                  onSelectAgent(entry.agent.agentId);
+                }}
                 type="button"
               >
                 <span className={`workspace-fleet__avatar is-${entry.status}`}>

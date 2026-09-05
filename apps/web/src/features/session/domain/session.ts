@@ -53,6 +53,7 @@ export type ControlPlaneGateway = {
 };
 
 export type MatrixGateway = {
+  disconnect(): void;
   beginAuthentication(
     returnPath: string,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>>;
@@ -70,4 +71,5 @@ export type SessionDependencies = {
   readonly browser: BrowserGateway;
   readonly controlPlane: ControlPlaneGateway;
   readonly matrix: MatrixGateway;
+  readonly privateState: { clear(): void };
 };

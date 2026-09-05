@@ -39,6 +39,7 @@ export function ConnectionWorkspace({
   const reduceMotion = useReducedMotion();
   const [copied, setCopied] = useState(false);
   const failure = context.failure;
+  const action = view.action;
 
   return (
     <main className="connection-workspace" id="main-content">
@@ -89,16 +90,16 @@ export function ConnectionWorkspace({
         )}
 
         <div className="connection-actions">
-          {view.action === null || view.actionKey === null ? (
+          {action === null || view.actionKey === null ? (
             <div aria-live="polite" className="operation-indicator">
               <span />
               {t('connection.operation.active')}
             </div>
           ) : (
             <Button
-              icon={actionIcons[view.action]}
+              icon={actionIcons[action]}
               onClick={() => {
-                onAction(view.action as ConnectionAction);
+                onAction(action);
               }}
               size="large"
               tone={view.action === 'logout' ? 'alert' : 'primary'}
@@ -106,6 +107,18 @@ export function ConnectionWorkspace({
               {t(view.actionKey)}
             </Button>
           )}
+          {context.controlStatus === 'ready' && action !== 'enter' ? (
+            <Button
+              icon={<ArrowRight aria-hidden="true" />}
+              onClick={() => {
+                onAction('enter');
+              }}
+              size="large"
+              tone="ghost"
+            >
+              {t('connection.action.openCloudWorkspace')}
+            </Button>
+          ) : null}
           {failure?.correlationId === undefined ? null : (
             <Button
               icon={<Clipboard aria-hidden="true" />}

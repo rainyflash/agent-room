@@ -1,3 +1,5 @@
+import { initials } from '@/shared/ui/display-name';
+
 import { Button, StatusMark } from '@agent-room/ui-system';
 import {
   EyeOff,
@@ -66,7 +68,9 @@ export function DirectConversationDock({
             <button
               aria-label={t('directSessions.action.close')}
               className="direct-conversation__close"
-              onClick={() => onActiveSessionChange(null)}
+              onClick={() => {
+                onActiveSessionChange(null);
+              }}
               type="button"
             >
               <X aria-hidden="true" />
@@ -105,7 +109,9 @@ export function DirectConversationDock({
           <Conversation
             controller={controller}
             key={activeSession.catalogId}
-            onClose={() => onActiveSessionChange(null)}
+            onClose={() => {
+              onActiveSessionChange(null);
+            }}
             onSelectedMessageChange={onSelectedMessageChange}
             reduceMotion={reduceMotion === true}
             selectedMessageId={selectedMessageId}
@@ -142,7 +148,9 @@ function SessionRail({
             className="direct-session-rail__session"
             data-lifecycle={session.lifecycle}
             key={session.catalogId}
-            onClick={() => onActivate(session.catalogId)}
+            onClick={() => {
+              onActivate(session.catalogId);
+            }}
             type="button"
           >
             <span aria-hidden="true">{initials(session.target.displayName)}</span>
@@ -304,8 +312,4 @@ function Conversation({
       )}
     </motion.aside>
   );
-}
-
-function initials(displayName: string): string {
-  return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
 }

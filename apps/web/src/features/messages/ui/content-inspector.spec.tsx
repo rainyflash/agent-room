@@ -83,15 +83,13 @@ describe('ContentInspector', () => {
     await screen.findByText('Queued for one instance');
 
     expect(runtime.approve).toHaveBeenCalledOnce();
-    expect(runtime.approve).toHaveBeenCalledWith(
-      expect.objectContaining({
-        permissions: ['read_text', 'include_metadata'],
-        purpose: 'summarize',
-        target: expect.objectContaining({
-          instanceId: '01990d9e-8400-7000-8000-000000000012',
-        }),
-      }),
-    );
+    expect(runtime.approve.mock.calls[0]?.[0]).toMatchObject({
+      permissions: ['read_text', 'include_metadata'],
+      purpose: 'summarize',
+      target: {
+        instanceId: '01990d9e-8400-7000-8000-000000000012',
+      },
+    });
   });
 
   it('远端提示注入只能显示为惰性文本且不能自动进入上下文或触发动作', async () => {
@@ -161,17 +159,17 @@ describe('ContentInspector', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Create report' }));
 
-    await waitFor(() => expect(runtime.report).toHaveBeenCalledOnce());
-    expect(runtime.report).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        evidence: expect.objectContaining({
-          endToEndEncrypted: true,
-          matrixEventId: '$message',
-          reporterSubmittedExcerpt: 'Waiting for content approval',
-        }),
-      }),
-    );
+    await waitFor(() => {
+      expect(runtime.report).toHaveBeenCalledOnce();
+    });
+    expect(runtime.report.mock.calls[0]?.[0]).toEqual(expect.any(String));
+    expect(runtime.report.mock.calls[0]?.[1]).toMatchObject({
+      evidence: {
+        endToEndEncrypted: true,
+        matrixEventId: '$message',
+        reporterSubmittedExcerpt: 'Waiting for content approval',
+      },
+    });
     expect(runtime.issueReadTicket).not.toHaveBeenCalled();
     expect(runtime.download).not.toHaveBeenCalled();
   });
@@ -248,11 +246,11 @@ function dependencies(text: string) {
       Promise.resolve().then(() => {
         throw new Error('not used');
       }),
-    inspectCapabilities: async () => ok({ canModerateRoom: false, canReadAudit: false }),
-    listActions: async () => ok([]),
-    listAudit: async () => ok([]),
-    listCases: async () => ok([]),
-    listRoomCases: async () => ok([]),
+    inspectCapabilities: () => Promise.resolve(ok({ canModerateRoom: false, canReadAudit: false })),
+    listActions: () => Promise.resolve(ok([])),
+    listAudit: () => Promise.resolve(ok([])),
+    listCases: () => Promise.resolve(ok([])),
+    listRoomCases: () => Promise.resolve(ok([])),
     report,
     reverseAction: async () =>
       Promise.resolve().then(() => {

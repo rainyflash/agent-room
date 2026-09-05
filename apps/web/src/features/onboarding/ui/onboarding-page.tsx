@@ -50,11 +50,11 @@ export function OnboardingPage() {
 }
 
 function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) {
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
   const { config, lobbyEntry, onboarding } = useAppServices();
-  const locale = principal.locale ?? i18n.resolvedLanguage ?? 'en';
+  const locale = principal.locale;
   const bootstrap = useQuery({
     networkMode: 'always',
     queryFn: async () => await onboarding.bootstrap(locale),
@@ -129,7 +129,13 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
           <ol aria-label={t('onboarding.title')} className="onboarding__progress">
             {(['account', 'agent', 'runtime'] as const).map((step, index) => (
               <li data-complete={progress[step] ? 'true' : 'false'} key={step}>
-                <span>{progress[step] ? <Check aria-hidden="true" /> : `0${index + 1}`}</span>
+                <span>
+                  {progress[step] ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    String(index + 1).padStart(2, '0')
+                  )}
+                </span>
                 {t(`onboarding.${step}`)}
               </li>
             ))}

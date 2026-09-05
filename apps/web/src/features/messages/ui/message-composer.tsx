@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useMemo, useState, type SubmitEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -95,7 +95,7 @@ export function MessageComposer({
     }
     setMinimized(true);
   };
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!runtime.writes.allowed || !publication.matches('ready') || draftIssues.length > 0) {
       return;

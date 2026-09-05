@@ -96,15 +96,15 @@ function controller(): DirectSessionController {
     clearFailure: vi.fn(),
     failure: null,
     loading: false,
-    markDisplayed: vi.fn(async () => undefined),
-    openAgent: vi.fn(async () =>
-      err({ code: 'direct_session.test_unavailable', retryable: false }),
+    markDisplayed: vi.fn(() => Promise.resolve(undefined)),
+    openAgent: vi.fn(() =>
+      Promise.resolve(err({ code: 'direct_session.test_unavailable', retryable: false })),
     ),
     opening: false,
-    retry: vi.fn(async () => undefined),
+    retry: vi.fn(() => Promise.resolve(undefined)),
     sessions: [session],
-    setBlocked: vi.fn(async () =>
-      err({ code: 'direct_session.test_unavailable', retryable: false }),
+    setBlocked: vi.fn(() =>
+      Promise.resolve(err({ code: 'direct_session.test_unavailable', retryable: false })),
     ),
   };
 }

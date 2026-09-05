@@ -1,7 +1,7 @@
 import { Button } from '@agent-room/ui-system';
 import { useMutation } from '@tanstack/react-query';
 import { Check, Copy, KeyRound, LoaderCircle, RotateCcw } from 'lucide-react';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type SubmitEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -117,7 +117,9 @@ export function SecurityRecoveryPanel({
           onCancel={cancel}
           onConfirmationChange={setConfirmation}
           onPassphraseChange={setPassphrase}
-          onSubmit={() => setup.mutate()}
+          onSubmit={() => {
+            setup.mutate();
+          }}
           passphrase={passphrase}
           pending={setup.isPending}
         />
@@ -139,14 +141,18 @@ export function SecurityRecoveryPanel({
         <div className="security-recovery__actions">
           <Button
             icon={<KeyRound aria-hidden="true" />}
-            onClick={() => switchMode('setup')}
+            onClick={() => {
+              switchMode('setup');
+            }}
             tone={snapshot.backup === 'missing' ? 'primary' : 'ghost'}
           >
             {t('security.recovery.setup')}
           </Button>
           <Button
             icon={<RotateCcw aria-hidden="true" />}
-            onClick={() => switchMode('recover')}
+            onClick={() => {
+              switchMode('recover');
+            }}
             tone={
               snapshot.backup === 'locked' || snapshot.backup === 'untrusted' ? 'primary' : 'quiet'
             }
@@ -185,7 +191,7 @@ function RecoverySetupForm({
   const confirmationId = useId();
   const valid = isValidRecoveryPassphrase(passphrase) && passphrase === confirmation;
   const mismatch = confirmation.length > 0 && passphrase !== confirmation;
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (valid) {
       onSubmit();
@@ -207,7 +213,9 @@ function RecoverySetupForm({
           id={passphraseId}
           maxLength={256}
           minLength={12}
-          onChange={(event) => onPassphraseChange(event.target.value)}
+          onChange={(event) => {
+            onPassphraseChange(event.target.value);
+          }}
           required
           type="password"
           value={passphrase}
@@ -224,7 +232,9 @@ function RecoverySetupForm({
           id={confirmationId}
           maxLength={256}
           minLength={12}
-          onChange={(event) => onConfirmationChange(event.target.value)}
+          onChange={(event) => {
+            onConfirmationChange(event.target.value);
+          }}
           required
           type="password"
           value={confirmation}
@@ -279,7 +289,7 @@ function RecoveryUnlockForm({
 }: RecoveryUnlockFormProps) {
   const { t } = useTranslation();
   const credentialId = useId();
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (credential.length > 0) {
       onSubmit();
@@ -300,7 +310,9 @@ function RecoveryUnlockForm({
           disabled={pending}
           id={credentialId}
           maxLength={1_024}
-          onChange={(event) => onCredentialChange(event.target.value)}
+          onChange={(event) => {
+            onCredentialChange(event.target.value);
+          }}
           required
           rows={3}
           value={credential}

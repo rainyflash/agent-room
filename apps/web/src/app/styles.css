@@ -571,6 +571,10 @@
   background: var(--color-paper);
 }
 
+.connection-progress-toggle {
+  display: none;
+}
+
 .connection-shell {
   display: grid;
   min-height: 100svh;
@@ -5279,6 +5283,31 @@ p.message-dock__headline {
 }
 
 @media (max-width: 899px) {
+  .connection-progress-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    margin-top: 0.75rem;
+    border: 0;
+    color: var(--color-paper);
+    background: transparent;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .connection-progress-toggle:focus-visible {
+    outline: 2px solid var(--color-network);
+    outline-offset: 3px;
+  }
+
+  .connection-rail:not([data-expanded='true']) .connection-steps {
+    display: none;
+  }
+
   .connection-shell {
     display: block;
     background: var(--color-paper);
@@ -5292,7 +5321,7 @@ p.message-dock__headline {
   }
 
   .connection-rail__intro {
-    margin-top: 2rem;
+    display: none;
   }
 
   .connection-steps {

@@ -93,7 +93,9 @@ export function DesktopRuntimeSurface({
       <button
         aria-expanded={open}
         className="desktop-runtime__trigger"
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => {
+          setExpanded((current) => !current);
+        }}
         type="button"
       >
         <span className="desktop-runtime__mark" data-phase={phase}>
@@ -288,7 +290,9 @@ export function DesktopRuntimeSurface({
                         aria-pressed={updateChannel === channel}
                         disabled={controller.busy !== null}
                         key={channel}
-                        onClick={() => setUpdateChannel(channel)}
+                        onClick={() => {
+                          setUpdateChannel(channel);
+                        }}
                         type="button"
                       >
                         {t(`desktop.update.channel.${channel}`)}

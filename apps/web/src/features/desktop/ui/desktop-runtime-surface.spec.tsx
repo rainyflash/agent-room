@@ -61,43 +61,47 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
 }
 
 function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
-  const openAuthorization = vi.fn(async () => ok(undefined));
-  const retryBridge = vi.fn(async () => ok(bridge));
-  const checkUpdate = vi.fn(async (channel: 'stable' | 'testing') =>
-    ok({
-      available: true,
-      channel,
-      currentVersion: '0.1.0',
-      rollback: false,
-      sequence: 8,
-      targetVersion: '0.2.0',
-    }),
-  );
-  const installUpdate = vi.fn(async () => ok(undefined));
-  const value: DesktopRuntimeGateway = {
-    beginHumanAuthentication: async () =>
-      err({ code: 'desktop.test.unavailable', retryable: false }),
-    beginMatrixAuthentication: async () =>
-      err({ code: 'desktop.test.unavailable', retryable: false }),
-    bootstrapDefaultAgent: async () =>
+  const openAuthorization = vi.fn(() => Promise.resolve(ok(undefined)));
+  const retryBridge = vi.fn(() => Promise.resolve(ok(bridge)));
+  const checkUpdate = vi.fn((channel: 'stable' | 'testing') =>
+    Promise.resolve(
       ok({
-        agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
-        lobbyLanguage: 'en',
-        publicLobbyCatalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
+        available: true,
+        channel,
+        currentVersion: '0.1.0',
+        rollback: false,
+        sequence: 8,
+        targetVersion: '0.2.0',
       }),
+    ),
+  );
+  const installUpdate = vi.fn(() => Promise.resolve(ok(undefined)));
+  const value: DesktopRuntimeGateway = {
+    beginHumanAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    beginMatrixAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    bootstrapDefaultAgent: () =>
+      Promise.resolve(
+        ok({
+          agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
+          lobbyLanguage: 'en',
+          publicLobbyCatalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
+        }),
+      ),
     checkUpdate,
-    clearHumanSession: async () => ok(undefined),
-    configureAgentRuntime: async (target) => ok(target),
+    clearHumanSession: () => Promise.resolve(ok(undefined)),
+    configureAgentRuntime: (target) => Promise.resolve(ok(target)),
     installUpdate,
     isAvailable: () => true,
     openAuthorization,
-    readLobby: async () => {
-      throw new Error('此测试不读取大厅。');
+    readLobby: () => {
+      return Promise.reject(new Error('此测试不读取大厅。'));
     },
     retryBridge,
-    setAutostart: async (enabled) => ok(enabled),
-    snapshot: async () => ok(snapshot(bridge, updatesConfigured)),
-    subscribe: async () => ok(() => undefined),
+    setAutostart: (enabled) => Promise.resolve(ok(enabled)),
+    snapshot: () => Promise.resolve(ok(snapshot(bridge, updatesConfigured))),
+    subscribe: () => Promise.resolve(ok(() => undefined)),
   };
   return { checkUpdate, installUpdate, openAuthorization, retryBridge, value };
 }
@@ -224,7 +228,7 @@ describe('桌面运行时界面', () => {
         phase: 'ready',
       },
     };
-    const writeText = vi.fn(async () => undefined);
+    const writeText = vi.fn(() => Promise.resolve(undefined));
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText },

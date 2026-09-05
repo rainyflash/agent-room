@@ -14,7 +14,9 @@ const sdk = vi.hoisted(() => ({
   refresh: vi.fn(),
   logout: vi.fn(),
   stop: vi.fn(),
-  initializeCrypto: vi.fn(),
+  clearStores: vi.fn(),
+  initializeCrypto:
+    vi.fn<(options: { cryptoDatabasePrefix: string; useIndexedDB: boolean }) => Promise<void>>(),
 }));
 
 vi.mock('matrix-js-sdk', () => ({
@@ -31,7 +33,7 @@ vi.mock('matrix-js-sdk', () => ({
       getUserId: () => options.userId,
       getSyncState: () => 'PREPARED',
       stopClient: sdk.stop,
-      clearStores: vi.fn(),
+      clearStores: sdk.clearStores,
       on: vi.fn(),
       removeListener: vi.fn(),
     };
@@ -84,6 +86,8 @@ describe('Matrix 网关持久会话生命周期', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sdk.options.length = 0;
+    sdk.logout.mockReset().mockResolvedValue(undefined);
+    sdk.clearStores.mockReset().mockResolvedValue(undefined);
     sessionStorage.clear();
     localStorage.clear();
     sdk.whoami.mockImplementation((options) =>
@@ -137,7 +141,6 @@ describe('Matrix 网关持久会话生命周期', () => {
     const options = sdk.options.at(-1);
     await expect(options?.tokenRefreshFunction?.('test-refresh')).resolves.toEqual({
       accessToken: 'new-access',
-      expiry: undefined,
       refreshToken: 'test-refresh',
     });
     await expect(vault.load()).resolves.toEqual(ok({ ...session, accessToken: 'new-access' }));
@@ -222,5 +225,74 @@ describe('Matrix 网关持久会话生命周期', () => {
       error: { code: 'desktop.matrix_session.vault_unavailable' },
     });
     expect(sdk.logout).toHaveBeenCalledOnce();
+  });
+
+  it('远端退出失败后保留撤销能力且禁止恢复旧会话', async () => {
+    const vault = storage();
+    const matrix = gateway(vault);
+    await matrix.restore(session.userId);
+    sdk.logout.mockRejectedValueOnce(new Error('网络中断'));
+
+    await expect(matrix.logout()).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.logout_failed' },
+    });
+    await expect(vault.load()).resolves.toEqual(ok(null));
+    await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.logout_incomplete' },
+    });
+    await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+    expect(sdk.logout).toHaveBeenCalledTimes(2);
+    await expect(matrix.restore(session.userId)).resolves.toEqual(
+      ok({ kind: 'authentication-required' }),
+    );
+  });
+
+  it('尚未建立连接的持久会话也会被撤销且网络失败后可以重试', async () => {
+    const vault = storage();
+    const matrix = gateway(vault);
+    sdk.logout.mockRejectedValueOnce(new Error('网络中断'));
+
+    await expect(matrix.logout()).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.logout_failed' },
+    });
+    await expect(vault.load()).resolves.toEqual(ok(null));
+    await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.logout_incomplete' },
+    });
+    await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+    expect(sdk.logout).toHaveBeenCalledTimes(2);
+    expect(sdk.options.map((options) => options.accessToken)).toEqual([
+      session.accessToken,
+      session.accessToken,
+    ]);
+  });
+
+  it('本地加密库清理失败后重试且不重复已成功的远端撤销', async () => {
+    const matrix = gateway(storage());
+    await matrix.restore(session.userId);
+    sdk.clearStores.mockRejectedValueOnce(new Error('存储暂时不可用'));
+
+    await expect(matrix.logout()).resolves.toMatchObject({ ok: false });
+    await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+    expect(sdk.logout).toHaveBeenCalledOnce();
+    expect(sdk.clearStores).toHaveBeenCalledTimes(2);
+    const initialized = sdk.initializeCrypto.mock.calls[0]?.[0];
+    if (initialized === undefined) throw new Error('测试必须先初始化当前设备的加密库');
+    expect(sdk.clearStores).toHaveBeenLastCalledWith({
+      cryptoDatabasePrefix: initialized.cryptoDatabasePrefix,
+    });
+  });
+
+  it('重试收到已撤销的 401 时继续清理本地存储', async () => {
+    const matrix = gateway(storage());
+    await matrix.restore(session.userId);
+    sdk.logout.mockRejectedValueOnce({ httpStatus: 401 });
+
+    await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+    expect(sdk.clearStores).toHaveBeenCalledOnce();
   });
 });

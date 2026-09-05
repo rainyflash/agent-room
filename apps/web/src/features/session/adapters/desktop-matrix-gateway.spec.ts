@@ -8,6 +8,7 @@ function matrixGateway(
   exchangeAuthenticationGrant: MatrixAuthenticationSessionGateway['exchangeAuthenticationGrant'],
 ): MatrixAuthenticationSessionGateway {
   return {
+    disconnect: vi.fn(),
     beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
     exchangeAuthenticationGrant,
     logout: () => Promise.resolve(ok(undefined)),

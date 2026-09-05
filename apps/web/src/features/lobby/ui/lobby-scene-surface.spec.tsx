@@ -19,7 +19,7 @@ class ResizeObserverStub implements ResizeObserver {
     this.#callback = callback;
   }
 
-  disconnect(): void {}
+  disconnect = vi.fn<() => void>();
 
   observe(target: Element): void {
     this.#callback(
@@ -36,7 +36,7 @@ class ResizeObserverStub implements ResizeObserver {
     );
   }
 
-  unobserve(): void {}
+  unobserve = vi.fn<() => void>();
 }
 
 beforeEach(() => {
@@ -97,14 +97,14 @@ describe('LobbySceneSurface', () => {
 
     const svg = await waitFor(() => {
       const element = view.container.querySelector<SVGSVGElement>('[data-renderer="svg"]');
-      expect(element).not.toBeNull();
-      return element as SVGSVGElement;
+      if (element === null) throw new Error('尚未渲染 SVG 场景');
+      return element;
     });
     expect(svg).toHaveTextContent('Local Agent');
 
     const agent = view.container.querySelector<SVGGElement>('.lobby-scene__svg-agent');
-    expect(agent).not.toBeNull();
-    fireEvent.click(agent as SVGGElement);
+    if (agent === null) throw new Error('场景缺少测试 Agent');
+    fireEvent.click(agent);
     expect(onSelectAgent).toHaveBeenCalledWith('agent-local');
   });
 });

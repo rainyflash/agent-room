@@ -81,6 +81,8 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
   #activeConnection: BrowserMatrixConnection | null = null;
+  #pendingLogout: BrowserMatrixConnection | null = null;
+  #pendingRevocation: StoredMatrixSession | null = null;
   #freshAuthenticationReturnPath: string | undefined;
 
   constructor({
@@ -160,6 +162,9 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
+    if (this.#pendingLogout !== null || this.#pendingRevocation !== null) {
+      return err(failure('matrix', 'matrix.logout_incomplete', false, true));
+    }
     const attempt = ++this.#restoreAttempt;
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
@@ -243,8 +248,10 @@ export class MatrixWebGateway implements MatrixGateway {
           if (!rotated.ok) throw new MatrixPersistenceError(rotated.error);
           return {
             accessToken: rotated.value.accessToken,
-            expiry,
-            refreshToken: rotated.value.refreshToken,
+            ...(expiry === undefined ? {} : { expiry }),
+            ...(rotated.value.refreshToken === undefined
+              ? {}
+              : { refreshToken: rotated.value.refreshToken }),
           };
         },
         userId: session.userId,
@@ -271,7 +278,7 @@ export class MatrixWebGateway implements MatrixGateway {
       try {
         const cryptoApi = await import('matrix-js-sdk/lib/crypto-api/index.js');
         await initializeMatrixCrypto(client, {
-          databasePrefix: `agent-room-crypto-${stableHash(`${session.userId}\u0000${session.deviceId}`)}`,
+          databasePrefix: matrixCryptoDatabasePrefix(session.userId, session.deviceId),
           isolationMode: new cryptoApi.OnlySignedDevicesIsolationMode(),
           persistent: this.#indexedDB !== undefined,
         });
@@ -319,16 +326,35 @@ export class MatrixWebGateway implements MatrixGateway {
     }
   }
 
-  async logout(): Promise<Result<void, SessionFailure>> {
+  disconnect(): void {
     ++this.#restoreAttempt;
-    const active = this.#activeConnection;
-    this.#activeConnection = null;
+    this.#activeConnection?.disconnect();
     this.#secretStorageKeys.clear();
     this.#onClientChange(null);
+  }
+
+  async logout(): Promise<Result<void, SessionFailure>> {
+    this.disconnect();
+    const active = this.#pendingLogout ?? this.#activeConnection;
+    this.#pendingLogout = active;
+    this.#activeConnection = null;
     active?.disconnect();
+    const stored = active === null ? await this.#sessions.load() : ok(null);
+    if (stored.ok) this.#pendingRevocation ??= stored.value;
     const cleared = await this.#sessions.clear();
     const returnPathCleared = this.#clearReturnPath();
-    const remote = active === null ? ok(undefined) : await active.logout();
+    const remote =
+      active !== null
+        ? await active.logout()
+        : this.#pendingRevocation !== null
+          ? await this.#revokeSession(this.#pendingRevocation)
+          : stored.ok
+            ? ok(undefined)
+            : stored;
+    if (remote.ok) {
+      this.#pendingLogout = null;
+      this.#pendingRevocation = null;
+    }
     if (!cleared.ok) return cleared;
     return returnPathCleared.ok ? remote : returnPathCleared;
   }
@@ -408,18 +434,22 @@ export class MatrixWebGateway implements MatrixGateway {
     }
   }
 
-  async #revokeSession(session: StoredMatrixSession): Promise<void> {
+  async #revokeSession(session: StoredMatrixSession): Promise<Result<void, SessionFailure>> {
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({
         accessToken: session.accessToken,
         baseUrl: this.#baseUrl,
         deviceId: session.deviceId,
+        localTimeoutMs: 8_000,
         userId: session.userId,
       });
       await client.logout(true);
-    } catch {
-      // 即使远端撤销不可达，也必须清除身份不匹配的本地会话。
+      return ok(undefined);
+    } catch (error) {
+      return isUnauthorized(error)
+        ? ok(undefined)
+        : err(failure('matrix', 'matrix.logout_failed', !this.#online(), true));
     }
   }
 }
@@ -474,6 +504,8 @@ class BrowserMatrixConnection implements MatrixConnection {
   readonly #persistenceFailure: () => SessionFailure | null;
   #observingActivity = true;
   #started = false;
+  #revoked = false;
+  #storesCleared = false;
 
   constructor(
     client: MatrixClient,
@@ -564,16 +596,25 @@ class BrowserMatrixConnection implements MatrixConnection {
 
   async logout(): Promise<Result<void, SessionFailure>> {
     let remoteResult: Result<void, SessionFailure> = ok(undefined);
-    try {
-      await this.#client.logout(true);
-    } catch {
-      remoteResult = err(failure('matrix', 'matrix.logout_failed', !this.#online(), true));
+    if (!this.#revoked) {
+      try {
+        await this.#client.logout(true);
+        this.#revoked = true;
+      } catch (error) {
+        if (isUnauthorized(error)) this.#revoked = true;
+        else remoteResult = err(failure('matrix', 'matrix.logout_failed', !this.#online(), true));
+      }
     }
 
     this.#stopObservingActivity();
     this.#client.stopClient();
     try {
-      await this.#client.clearStores();
+      if (!this.#storesCleared) {
+        await this.#client.clearStores({
+          cryptoDatabasePrefix: matrixCryptoDatabasePrefix(this.userId, this.deviceId),
+        });
+        this.#storesCleared = true;
+      }
     } catch {
       return remoteResult.ok
         ? err(failure('browser', 'browser.matrix_cache_clear_failed', false, true))
@@ -623,6 +664,10 @@ function isSafeReturnPath(path: string): boolean {
 
 function isValidLoginToken(token: string): boolean {
   return token.length > 0 && token.length <= MAX_LOGIN_TOKEN_LENGTH && !/\p{Cc}/u.test(token);
+}
+
+function matrixCryptoDatabasePrefix(userId: string, deviceId: string): string {
+  return `agent-room-crypto-${stableHash(`${userId}\u0000${deviceId}`)}`;
 }
 
 function stableHash(value: string): string {

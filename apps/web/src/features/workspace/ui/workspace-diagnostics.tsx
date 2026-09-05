@@ -29,7 +29,9 @@ export function WorkspaceDiagnostics({
   return (
     <details
       className="workspace-diagnostics"
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open);
+      }}
       open={expanded}
     >
       <summary>

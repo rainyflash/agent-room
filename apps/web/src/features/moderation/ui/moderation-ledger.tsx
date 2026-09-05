@@ -109,7 +109,9 @@ export function ModerationActionLedger({
                 <Button
                   disabled={!recentlyAuthenticated || pendingActionId !== null}
                   icon={<RotateCcw aria-hidden="true" />}
-                  onClick={() => onReverse(action.actionId)}
+                  onClick={() => {
+                    onReverse(action.actionId);
+                  }}
                   size="compact"
                   tone="quiet"
                 >

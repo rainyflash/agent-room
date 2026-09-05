@@ -115,7 +115,9 @@ describe('首次引导页面', () => {
   });
 
   it('从服务端事实展示账户、首个 Agent、真实大厅与 Windows Runtime 入口', async () => {
-    const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: false as const }));
+    const bootstrap = vi.fn(() =>
+      Promise.resolve(ok({ agent, lobby, reusedExistingAgent: false as const })),
+    );
     vi.mocked(useAppServices).mockReturnValue({
       config: {
         windowsDownloadUrl: 'https://download.agent-room.test/windows',
@@ -145,7 +147,9 @@ describe('首次引导页面', () => {
 
   it('Bridge 停机时仍进入云端目录边界并等待真实房间', async () => {
     const user = userEvent.setup();
-    const bootstrap = vi.fn(async () => ok({ agent, lobby, reusedExistingAgent: true as const }));
+    const bootstrap = vi.fn(() =>
+      Promise.resolve(ok({ agent, lobby, reusedExistingAgent: true as const })),
+    );
     const enter = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
       config: { windowsDownloadUrl: 'https://download.agent-room.test/windows' },

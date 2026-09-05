@@ -117,7 +117,9 @@ export function PrivateRoomGovernance({
                   permissions: invitePermissions,
                   principalId: targetPrincipalId,
                 }),
-              onSuccess: () => setInvitee(''),
+              onSuccess: () => {
+                setInvitee('');
+              },
             });
           }}
         >
@@ -131,7 +133,9 @@ export function PrivateRoomGovernance({
             <span>{t('privateRooms.governance.invite.principal')}</span>
             <input
               disabled={mutation.isPending}
-              onChange={(event) => setInvitee(event.target.value)}
+              onChange={(event) => {
+                setInvitee(event.target.value);
+              }}
               placeholder={t('privateRooms.governance.invite.principalPlaceholder')}
               value={invitee}
             />
@@ -170,12 +174,12 @@ export function PrivateRoomGovernance({
               isOwner={member.principalId === room.ownerPrincipalId}
               key={member.principalId}
               member={member}
-              onBan={() =>
+              onBan={() => {
                 run({
                   execute: async () => await rooms.ban(room.catalogId, member.principalId),
-                })
-              }
-              onPermissionsChange={(nextPermissions) =>
+                });
+              }}
+              onPermissionsChange={(nextPermissions) => {
                 run({
                   execute: async () =>
                     await rooms.updatePermissions(
@@ -183,26 +187,27 @@ export function PrivateRoomGovernance({
                       member.principalId,
                       nextPermissions,
                     ),
-                })
-              }
-              onRemove={() =>
+                });
+              }}
+              onRemove={() => {
                 run({
                   execute: async () => await rooms.remove(room.catalogId, member.principalId),
-                })
-              }
+                });
+              }}
               onTransfer={
                 owner &&
                 recentlyAuthenticated &&
                 member.status === 'joined' &&
                 member.principalId !== principalId
-                  ? () =>
+                  ? () => {
                       run({
                         execute: async () =>
                           await rooms.transferOwnership(room.catalogId, {
                             formerOwnerPermissions: permissions('view', 'speak'),
                             targetPrincipalId: member.principalId,
                           }),
-                      })
+                      });
+                    }
                   : undefined
               }
               self={member.principalId === principalId}
@@ -228,12 +233,12 @@ export function PrivateRoomGovernance({
           <Button
             disabled={mutation.isPending}
             icon={<LogOut aria-hidden="true" />}
-            onClick={() =>
+            onClick={() => {
               run({
                 execute: async () => await coordinator.leave(room),
                 onSuccess: onExitRoom,
-              })
-            }
+              });
+            }}
             size="compact"
             tone="ghost"
           >
@@ -243,12 +248,12 @@ export function PrivateRoomGovernance({
           <Button
             disabled={mutation.isPending || !recentlyAuthenticated}
             icon={<Archive aria-hidden="true" />}
-            onClick={() =>
+            onClick={() => {
               run({
                 execute: async () => await rooms.archive(room.catalogId),
                 onSuccess: onExitRoom,
-              })
-            }
+              });
+            }}
             size="compact"
             title={recentlyAuthenticated ? undefined : t('privateRooms.governance.reauthRequired')}
             tone="alert"

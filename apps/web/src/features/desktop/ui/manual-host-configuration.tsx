@@ -37,7 +37,9 @@ export function ManualHostConfiguration({
       <Button
         aria-expanded={open}
         icon={<Code2 aria-hidden="true" />}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen((current) => !current);
+        }}
         size="compact"
         tone="quiet"
       >

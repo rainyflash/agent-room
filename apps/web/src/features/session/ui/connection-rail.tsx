@@ -1,5 +1,7 @@
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
-import { RadioTower } from 'lucide-react';
+import { ChevronDown, RadioTower } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
+import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { ConnectionStage } from '@/features/session/ui/connection-model';
@@ -32,8 +34,11 @@ export function ConnectionRail({
   transportKey = 'connection.transport',
 }: ConnectionRailProps) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const progressId = useId();
+  const reduceMotion = useReducedMotion();
   return (
-    <aside className="connection-rail">
+    <aside className="connection-rail" data-expanded={expanded}>
       <header className="connection-rail__header">
         <a className="brand-lockup" href="/connect">
           <img alt="" src="/agent-room-mark.svg" />
@@ -47,7 +52,29 @@ export function ConnectionRail({
         <p>{t('app.environment')}</p>
       </div>
 
-      <ol aria-label={t('connection.progress')} className="connection-steps">
+      <button
+        aria-controls={progressId}
+        aria-expanded={expanded}
+        className="connection-progress-toggle"
+        onClick={() => {
+          setExpanded((previous) => !previous);
+        }}
+        type="button"
+      >
+        {t(expanded ? 'connection.progress.hide' : 'connection.progress.show')}
+        <motion.span
+          animate={{ rotate: expanded ? 180 : 0 }}
+          transition={
+            reduceMotion === true
+              ? { duration: 0 }
+              : { type: 'spring', stiffness: 280, damping: 26 }
+          }
+        >
+          <ChevronDown aria-hidden="true" size={16} />
+        </motion.span>
+      </button>
+
+      <ol aria-label={t('connection.progress')} className="connection-steps" id={progressId}>
         {stages.map((stage) => (
           <li className={`connection-step connection-step--${stage.status}`} key={stage.titleKey}>
             <div className="connection-step__index">

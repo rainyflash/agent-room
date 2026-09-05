@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -80,10 +80,11 @@ function gateway() {
   );
   const value: HandoffGateway = {
     approve,
-    listTargets: async () => ok([handoffTargetFixture, offlineTarget]),
-    reconcile: async (requestedHandoffId) =>
-      ok(handoffSnapshotFixture(requestedHandoffId, 'delivered')),
-    revoke: async (requestedHandoffId) => ok(handoffSnapshotFixture(requestedHandoffId, 'revoked')),
+    listTargets: () => Promise.resolve(ok([handoffTargetFixture, offlineTarget])),
+    reconcile: (requestedHandoffId) =>
+      Promise.resolve(ok(handoffSnapshotFixture(requestedHandoffId, 'delivered'))),
+    revoke: (requestedHandoffId) =>
+      Promise.resolve(ok(handoffSnapshotFixture(requestedHandoffId, 'revoked'))),
   };
   return { approve, value };
 }

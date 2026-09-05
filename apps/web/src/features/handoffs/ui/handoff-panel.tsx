@@ -1,3 +1,5 @@
+import { initials } from '@/shared/ui/display-name';
+
 import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { useMachine } from '@xstate/react';
 import {
@@ -16,7 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useMemo, useState, type SubmitEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { groupHandoffTargets } from '@/features/handoffs/application/group-handoff-targets';
@@ -93,7 +95,7 @@ export function HandoffPanel({
     ? [primaryPermission, 'include_metadata']
     : [primaryPermission];
 
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!delivery.matches('ready') || selectedTarget === null) {
       return;
@@ -580,10 +582,6 @@ function TimelineStep({
 
 function shortId(value: string): string {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
-}
-
-function initials(displayName: string): string {
-  return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
 }
 
 function formatTargetTime(value: number, language: string | undefined): string {

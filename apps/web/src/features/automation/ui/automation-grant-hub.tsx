@@ -91,7 +91,9 @@ export function AutomationGrantHub({
       }
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+    };
   }, [mutation.isPending, open]);
 
   const close = (): void => {
@@ -212,7 +214,9 @@ export function AutomationGrantHub({
                       <AutomationGrantForm
                         catalogId={catalogId}
                         instances={instances}
-                        onCreate={(input) => mutation.mutate({ input, kind: 'create' })}
+                        onCreate={(input) => {
+                          mutation.mutate({ input, kind: 'create' });
+                        }}
                         onReauthenticate={onReauthenticate}
                         pending={mutation.isPending}
                         recentlyAuthenticated={recentlyAuthenticated}
@@ -222,7 +226,9 @@ export function AutomationGrantHub({
                         grants={roomGrants}
                         instances={instances}
                         onReauthenticate={onReauthenticate}
-                        onRevoke={(grantId) => mutation.mutate({ grantId, kind: 'revoke' })}
+                        onRevoke={(grantId) => {
+                          mutation.mutate({ grantId, kind: 'revoke' });
+                        }}
                         pendingGrantId={pendingGrantId}
                         recentlyAuthenticated={recentlyAuthenticated}
                       />

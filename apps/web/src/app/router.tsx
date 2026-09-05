@@ -6,7 +6,6 @@ import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
-import { sessionStateName } from '@/features/session/ui/connection-model';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
@@ -200,7 +199,7 @@ function WorkspaceBoundary() {
   const search = workspaceRoute.useSearch();
   const navigate = workspaceRoute.useNavigate();
   const principal = snapshot.context.principal;
-  if (sessionStateName(snapshot.value) !== 'ready' || principal === null) {
+  if (snapshot.context.controlStatus !== 'ready' || principal === null) {
     return <ConnectionPage />;
   }
   return (
@@ -216,7 +215,7 @@ function WorkspaceBoundary() {
 
 function RoomDirectoryBoundary() {
   const { snapshot } = useSession();
-  if (sessionStateName(snapshot.value) !== 'ready' || snapshot.context.principal === null) {
+  if (snapshot.context.controlStatus !== 'ready' || snapshot.context.principal === null) {
     return <ConnectionPage />;
   }
   return <RoomDirectoryPage />;
@@ -253,6 +252,7 @@ function AdminBoundary() {
 }
 
 declare module '@tanstack/react-router' {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- 路由注册依赖接口声明合并，类型别名不能替代。
   interface Register {
     router: typeof router;
   }

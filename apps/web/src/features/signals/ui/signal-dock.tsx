@@ -1,3 +1,5 @@
+import { initials } from '@/shared/ui/display-name';
+
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import {
   AtSign,
@@ -290,8 +292,4 @@ function SignalRow({
       </button>
     </li>
   );
-}
-
-function initials(displayName: string): string {
-  return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
 }

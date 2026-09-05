@@ -7,13 +7,16 @@ import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type SessionStateName =
   | 'authenticating'
+  | 'awaitingBrowserNavigation'
   | 'booting'
   | 'degraded'
+  | 'invalidating'
   | 'offline'
   | 'ready'
   | 'reconnecting'
   | 'restoring'
   | 'signingOut'
+  | 'signOutFailed'
   | 'syncing'
   | 'unauthenticated';
 
@@ -43,13 +46,16 @@ export type ConnectionViewModel = {
 
 const states = new Set<SessionStateName>([
   'authenticating',
+  'awaitingBrowserNavigation',
   'booting',
   'degraded',
+  'invalidating',
   'offline',
   'ready',
   'reconnecting',
   'restoring',
   'signingOut',
+  'signOutFailed',
   'syncing',
   'unauthenticated',
 ]);
@@ -64,11 +70,14 @@ const stageDefinitions = [
 
 const stateStage: Readonly<Record<Exclude<SessionStateName, 'degraded' | 'offline'>, number>> = {
   authenticating: 1,
+  awaitingBrowserNavigation: 1,
   booting: 0,
+  invalidating: 1,
   ready: 4,
   reconnecting: 3,
   restoring: 2,
   signingOut: 1,
+  signOutFailed: 1,
   syncing: 3,
   unauthenticated: 1,
 };
@@ -81,12 +90,18 @@ const stateCopy: Readonly<
     'connection.state.authenticating.detail',
   ],
   booting: ['connection.state.booting.title', 'connection.state.booting.detail'],
+  awaitingBrowserNavigation: [
+    'connection.state.authenticating.title',
+    'connection.state.authenticating.detail',
+  ],
+  invalidating: ['connection.state.signingOut.title', 'connection.state.signingOut.detail'],
   degraded: ['connection.state.degraded.title', 'connection.state.degraded.detail'],
   offline: ['connection.state.offline.title', 'connection.state.offline.detail'],
   ready: ['connection.state.ready.title', 'connection.state.ready.detail'],
   reconnecting: ['connection.state.reconnecting.title', 'connection.state.reconnecting.detail'],
   restoring: ['connection.state.restoring.title', 'connection.state.restoring.detail'],
   signingOut: ['connection.state.signingOut.title', 'connection.state.signingOut.detail'],
+  signOutFailed: ['connection.state.signOutFailed.title', 'connection.state.signOutFailed.detail'],
   syncing: ['connection.state.syncing.title', 'connection.state.syncing.detail'],
 };
 
@@ -110,6 +125,8 @@ const failureCopy: Readonly<Record<string, TranslationKey>> = {
 
 const busyStates = new Set<SessionStateName>([
   'authenticating',
+  'awaitingBrowserNavigation',
+  'invalidating',
   'booting',
   'reconnecting',
   'restoring',
@@ -119,6 +136,8 @@ const busyStates = new Set<SessionStateName>([
 
 const statusByState: Readonly<Record<SessionStateName, readonly [TranslationKey, StatusTone]>> = {
   authenticating: ['connection.status.connecting', 'network'],
+  awaitingBrowserNavigation: ['connection.status.connecting', 'network'],
+  invalidating: ['connection.status.connecting', 'network'],
   booting: ['connection.status.connecting', 'network'],
   degraded: ['connection.status.degraded', 'alert'],
   offline: ['connection.status.offline', 'offline'],
@@ -126,6 +145,7 @@ const statusByState: Readonly<Record<SessionStateName, readonly [TranslationKey,
   reconnecting: ['connection.status.connecting', 'network'],
   restoring: ['connection.status.connecting', 'network'],
   signingOut: ['connection.status.connecting', 'network'],
+  signOutFailed: ['connection.status.actionRequired', 'alert'],
   syncing: ['connection.status.connecting', 'network'],
   unauthenticated: ['connection.status.actionRequired', 'network'],
 };
@@ -142,7 +162,7 @@ export function connectionViewModel(
 ): ConnectionViewModel {
   const [titleKey, detailKey] = copyForState(state, context.authenticationTarget);
   const currentStage = stageForState(state, context);
-  const blocked = state === 'degraded' || state === 'offline';
+  const blocked = state === 'degraded' || state === 'offline' || state === 'signOutFailed';
   const [action, actionKey] = actionForState(state, context);
   const [statusKey, tone] = statusByState[state];
 
@@ -212,6 +232,7 @@ function actionForState(
     Partial<Record<SessionStateName, readonly [ConnectionAction, TranslationKey]>>
   > = {
     offline: ['retry', 'connection.action.retry'],
+    signOutFailed: ['retry', 'connection.action.retryLogout'],
     ready: ['enter', 'connection.action.enter'],
     reconnecting: ['retry', 'connection.action.retry'],
     unauthenticated: [

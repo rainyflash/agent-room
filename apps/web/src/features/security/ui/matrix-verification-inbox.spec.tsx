@@ -26,7 +26,7 @@ describe('MatrixVerificationInboxView', () => {
   it('在任意页面显式接受入站请求后才打开 SAS 核对', async () => {
     const user = userEvent.setup();
     const session = verificationSession();
-    const acceptIncomingVerification = vi.fn(async () => ok(session));
+    const acceptIncomingVerification = vi.fn(() => Promise.resolve(ok(session)));
     const gateway = gatewayWithIncomingRequest({ acceptIncomingVerification });
 
     renderInbox(gateway);
@@ -37,7 +37,9 @@ describe('MatrixVerificationInboxView', () => {
 
     expect(acceptIncomingVerification).toHaveBeenCalledWith('incoming-verification');
     const dialog = await screen.findByRole('dialog', { name: 'Verify a Matrix device' });
-    await waitFor(() => expect(dialog).toBeVisible());
+    await waitFor(() => {
+      expect(dialog).toBeVisible();
+    });
     expect(screen.getByText('🐶')).toBeVisible();
   });
 });
@@ -64,16 +66,17 @@ function gatewayWithIncomingRequest(
     sourceUserId: '@alice:agent-room.test',
   });
   return {
-    acceptIncomingVerification: async () =>
-      err({ code: 'security.verification_unavailable', retryable: false }),
-    beginVerification: async () =>
-      err({ code: 'security.verification_unavailable', retryable: false }),
-    declineIncomingVerification: async () => ok(undefined),
-    establishIdentity: async () => ok(undefined),
+    acceptIncomingVerification: () =>
+      Promise.resolve(err({ code: 'security.verification_unavailable', retryable: false })),
+    beginVerification: () =>
+      Promise.resolve(err({ code: 'security.verification_unavailable', retryable: false })),
+    declineIncomingVerification: () => Promise.resolve(ok(undefined)),
+    establishIdentity: () => Promise.resolve(ok(undefined)),
     getIncomingVerification: () => incoming,
-    inspect: async () => err({ code: 'security.inspection_failed', retryable: true }),
-    recover: async () => err({ code: 'security.recovery_failed', retryable: true }),
-    setupRecovery: async () => err({ code: 'security.recovery_setup_failed', retryable: true }),
+    inspect: () => Promise.resolve(err({ code: 'security.inspection_failed', retryable: true })),
+    recover: () => Promise.resolve(err({ code: 'security.recovery_failed', retryable: true })),
+    setupRecovery: () =>
+      Promise.resolve(err({ code: 'security.recovery_setup_failed', retryable: true })),
     subscribe: () => () => undefined,
     ...overrides,
   };
@@ -89,8 +92,8 @@ function verificationSession(): MatrixVerificationSession {
   });
   return {
     activate: vi.fn(),
-    cancel: async () => ok(undefined),
-    confirm: async () => ok(undefined),
+    cancel: () => Promise.resolve(ok(undefined)),
+    confirm: () => Promise.resolve(ok(undefined)),
     deactivate: vi.fn(),
     getSnapshot: () => snapshot,
     mismatch: vi.fn(),

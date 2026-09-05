@@ -75,6 +75,61 @@ async fn 收件箱幂等落盘且按精确实例隔离并删除() {
 }
 
 #[tokio::test]
+async fn 到期回收覆盖准确时间边界且不删除其他实例记录() {
+    let fixture = Fixture::new();
+    let foreign = Fixture {
+        target_agent: fixture.target_agent,
+        ..Fixture::new()
+    };
+    let (_temporary, _path, inbox) = open_inbox().await;
+    inbox
+        .accept(&fixture.handoff([7; 32]))
+        .await
+        .expect("当前实例落盘");
+    inbox
+        .accept(&foreign.handoff([8; 32]))
+        .await
+        .expect("另一实例落盘");
+
+    assert_eq!(
+        inbox
+            .remove_expired(fixture.target(), time(4_999))
+            .await
+            .expect("到期前可扫描"),
+        0
+    );
+    assert_eq!(
+        inbox
+            .remove_expired(fixture.target(), time(5_000))
+            .await
+            .expect("到期边界可回收"),
+        1
+    );
+    assert_eq!(
+        inbox
+            .remove_expired(fixture.target(), time(5_001))
+            .await
+            .expect("重复回收幂等"),
+        0
+    );
+    assert!(
+        inbox
+            .list(fixture.target(), 10)
+            .await
+            .expect("当前实例可读")
+            .is_empty()
+    );
+    assert_eq!(
+        inbox
+            .list(foreign.target(), 10)
+            .await
+            .expect("其他实例保留")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn 相同标识的不同意图冲突且损坏记录不会被信任() {
     let fixture = Fixture::new();
     let (_temporary, path, inbox) = open_inbox().await;

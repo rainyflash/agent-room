@@ -114,7 +114,9 @@ export function AutomationGrantList({
                   recentlyAuthenticated ? (
                     <Button
                       disabled={pendingGrantId !== null}
-                      onClick={() => onRevoke(grant.grantId)}
+                      onClick={() => {
+                        onRevoke(grant.grantId);
+                      }}
                       size="compact"
                       tone="alert"
                     >

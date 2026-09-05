@@ -49,6 +49,10 @@ export class DesktopMatrixGateway implements MatrixGateway {
     return this.#matrix.logout();
   }
 
+  disconnect(): void {
+    this.#matrix.disconnect();
+  }
+
   restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
     return this.#matrix.restore(expectedUserId);
   }

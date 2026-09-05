@@ -47,7 +47,9 @@ describe('ModerationHub', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Apply action' }));
 
-    await waitFor(() => expect(gateway.applyAction).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(gateway.applyAction).toHaveBeenCalledOnce();
+    });
     expect(gateway.applyAction).toHaveBeenCalledWith(
       expect.any(String),
       ROOM_ID,
@@ -65,7 +67,9 @@ describe('ModerationHub', () => {
     const gateway = unauthorizedGateway();
     renderHub(gateway);
 
-    await waitFor(() => expect(gateway.inspectCapabilities).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(gateway.inspectCapabilities).toHaveBeenCalledOnce();
+    });
     expect(gateway.listRoomCases).not.toHaveBeenCalled();
     expect(gateway.listActions).not.toHaveBeenCalled();
     expect(gateway.listAudit).not.toHaveBeenCalled();
@@ -92,7 +96,7 @@ function renderHub(gateway: ModerationGateway) {
   );
 }
 
-function authorizedGateway(): ModerationGateway {
+function authorizedGateway() {
   const moderationCase = reportCase();
   const action = appliedAction();
   return {
@@ -106,10 +110,10 @@ function authorizedGateway(): ModerationGateway {
     listRoomCases: vi.fn(() => Promise.resolve(ok([moderationCase]))),
     report: vi.fn(() => Promise.resolve(ok(moderationCase))),
     reverseAction: vi.fn(() => Promise.resolve(ok(action))),
-  };
+  } satisfies ModerationGateway;
 }
 
-function unauthorizedGateway(): ModerationGateway {
+function unauthorizedGateway() {
   const forbidden = {
     code: 'moderation.forbidden',
     retryable: false,
@@ -125,7 +129,7 @@ function unauthorizedGateway(): ModerationGateway {
     listRoomCases: vi.fn(() => Promise.resolve(err(forbidden))),
     report: vi.fn(() => Promise.resolve(err(forbidden))),
     reverseAction: vi.fn(() => Promise.resolve(err(forbidden))),
-  };
+  } satisfies ModerationGateway;
 }
 
 function reportCase(): ModerationCase {

@@ -52,6 +52,74 @@ async fn 后台领取只保存元数据且不会提前打开正文() {
 }
 
 #[tokio::test]
+async fn 后台轮询清除到期待办并继续领取下一条有效交接() {
+    let fixture = Fixture::new();
+    let mut next_fields = fixture.handoff.fields().clone();
+    next_fields.id = HandoffId::from_uuid(Uuid::now_v7());
+    next_fields.expires_at = time(10_000);
+    let mut next = TargetedHandoff::queue(next_fields).expect("后续交接有效");
+    next.mark_delivered(time(5_000)).expect("后续交接可领取");
+    let queue = Arc::new(测试队列::with_claim(next.clone()));
+    let inbox = Arc::new(内存收件箱::with(fixture.handoff.clone()));
+    let content = Arc::new(测试正文::new(fixture.downloaded()));
+    let service = TargetedHandoffInboxService::new(TargetedHandoffInboxDependencies {
+        target: fixture.target,
+        queue: queue.clone(),
+        inbox: inbox.clone(),
+        content: content.clone(),
+        clock: Arc::new(固定时钟(time(5_000))),
+    });
+
+    let outcome = service.claim_once().await.expect("到期后继续领取");
+
+    assert!(matches!(outcome, TargetedHandoffClaimOutcome::Stored(_)));
+    assert_eq!(queue.claim_count(), 1);
+    assert_eq!(content.open_count(), 0);
+    assert_eq!(
+        service.list_pending(10).await.expect("待办可读"),
+        vec![next]
+    );
+    assert!(
+        inbox
+            .find(fixture.target, fixture.handoff.fields().id)
+            .await
+            .expect("旧记录可查")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn 到期回收失败时保留待办且不领取新的交接() {
+    let fixture = Fixture::new();
+    let queue = Arc::new(测试队列::with_claim(fixture.handoff.clone()));
+    let inbox = Arc::new(内存收件箱 {
+        cleanup_unavailable: true,
+        ..内存收件箱::with(fixture.handoff.clone())
+    });
+    let service = fixture.service(
+        queue.clone(),
+        inbox.clone(),
+        Arc::new(测试正文::new(fixture.downloaded())),
+    );
+
+    let failure = service.claim_once().await.expect_err("回收失败必须报告");
+
+    assert_eq!(
+        failure.kind(),
+        TargetedHandoffInboxServiceFailureKind::StorageUnavailable
+    );
+    assert_eq!(queue.claim_count(), 0);
+    assert_eq!(
+        inbox
+            .list(fixture.target, 10)
+            .await
+            .expect("待办仍在")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn 本地存在待处理交接时不会重复访问云端队列() {
     let fixture = Fixture::new();
     let queue = Arc::new(测试队列::with_claim(fixture.handoff.clone()));
@@ -324,17 +392,37 @@ impl TargetedHandoffQueueGateway for 测试队列 {
 #[derive(Default)]
 struct 内存收件箱 {
     entries: Mutex<BTreeMap<HandoffId, TargetedHandoff>>,
+    cleanup_unavailable: bool,
 }
 
 impl 内存收件箱 {
     fn with(handoff: TargetedHandoff) -> Self {
         Self {
             entries: Mutex::new(BTreeMap::from([(handoff.fields().id, handoff)])),
+            cleanup_unavailable: false,
         }
     }
 }
 
 impl TargetedHandoffInbox for 内存收件箱 {
+    fn remove_expired(
+        &self,
+        target: TargetedHandoffTarget,
+        observed_at: UtcMillis,
+    ) -> PortFuture<'_, Result<u64, TargetedHandoffInboxFailure>> {
+        Box::pin(async move {
+            if self.cleanup_unavailable {
+                return Err(inbox_failure(TargetedHandoffInboxFailureKind::Unavailable));
+            }
+            let mut entries = self.entries.lock().expect("收件箱锁可用");
+            let before = entries.len();
+            entries.retain(|_, handoff| {
+                !matches_target(handoff, target) || handoff.fields().expires_at > observed_at
+            });
+            Ok(u64::try_from(before - entries.len()).expect("记录数量可转换"))
+        })
+    }
+
     fn accept<'a>(
         &'a self,
         handoff: &'a TargetedHandoff,

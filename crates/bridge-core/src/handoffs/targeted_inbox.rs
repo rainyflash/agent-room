@@ -5,6 +5,7 @@ use agent_room_domain::{
     content::Sha256Digest,
     handoff::{HandoffFailureCode, HandoffPermission, TargetedHandoff, TargetedHandoffStatus},
     ids::HandoffId,
+    time::UtcMillis,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -75,6 +76,13 @@ pub trait TargetedHandoffInbox: Send + Sync {
         target: TargetedHandoffTarget,
         handoff_id: HandoffId,
     ) -> PortFuture<'_, Result<bool, TargetedHandoffInboxFailure>>;
+
+    /// 按实例清理到达有效期边界的元数据，不读取正文或改变其他实例的待办。
+    fn remove_expired(
+        &self,
+        target: TargetedHandoffTarget,
+        observed_at: UtcMillis,
+    ) -> PortFuture<'_, Result<u64, TargetedHandoffInboxFailure>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,16 +175,7 @@ impl TargetedHandoffInboxService {
     pub async fn claim_once(
         &self,
     ) -> Result<TargetedHandoffClaimOutcome, TargetedHandoffInboxServiceFailure> {
-        if let Some(pending) = self
-            .inbox
-            .list(self.target, 1)
-            .await
-            .map_err(|_| {
-                service_failure(TargetedHandoffInboxServiceFailureKind::StorageUnavailable)
-            })?
-            .into_iter()
-            .next()
-        {
+        if let Some(pending) = self.list_pending(1).await?.into_iter().next() {
             return Ok(TargetedHandoffClaimOutcome::Pending(Box::new(pending)));
         }
         let Some(handoff) = self.queue.claim_next(self.target).await.map_err(|_| {
@@ -225,6 +224,12 @@ impl TargetedHandoffInboxService {
                 TargetedHandoffInboxServiceFailureKind::InvalidRequest,
             ));
         }
+        self.inbox
+            .remove_expired(self.target, self.clock.now())
+            .await
+            .map_err(|_| {
+                service_failure(TargetedHandoffInboxServiceFailureKind::StorageUnavailable)
+            })?;
         self.inbox.list(self.target, limit).await.map_err(|_| {
             service_failure(TargetedHandoffInboxServiceFailureKind::StorageUnavailable)
         })

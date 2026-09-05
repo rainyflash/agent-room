@@ -33,7 +33,7 @@
     "secrets:check": "node tools/check-secrets.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "typecheck": "tsc --project tsconfig.json --noEmit && corepack pnpm@10.28.0 --recursive --if-present --filter=!@agent-room/desktop typecheck"
   },
   "devDependencies": {
     "@cyclonedx/cdxgen": "12.8.4",

@@ -69,26 +69,27 @@ const room = testRoom(200);
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const desktop = new TauriDesktopRuntimeGateway({
   available: () => false,
-  invoke: async () => {
-    throw new Error('桌面命令不应在浏览器测试夹具中运行');
+  invoke: () => {
+    return Promise.reject(new Error('桌面命令不应在浏览器测试夹具中运行'));
   },
-  listen: async () => () => undefined,
+  listen: () => Promise.resolve(() => undefined),
 });
 const roomDirectory = {
-  list: async () => err({ code: 'fixture.unavailable', retryable: false }),
+  list: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
 };
 const onboarding = new OnboardingCoordinator(
   {
-    ensureDefaultAgent: async () => err({ code: 'fixture.unavailable', retryable: false }),
-    listAgents: async () => err({ code: 'fixture.unavailable', retryable: false }),
+    ensureDefaultAgent: () =>
+      Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
+    listAgents: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
   },
   roomDirectory,
 );
 const localPreferencesGateway: AccountPreferencesGateway = {
-  read: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+  read: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
   scope: () => null,
   subscribe: () => noop,
-  write: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+  write: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
 };
 const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, {
   language: 'system',
@@ -101,10 +102,10 @@ const lobby: LobbyGateway = {
 };
 const lobbyEntry = new PublicLobbyEntryCoordinator(
   {
-    resolve: async () => err({ code: 'fixture.unavailable', retryable: false }),
+    resolve: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
   },
   {
-    join: async () => err({ code: 'fixture.unavailable', retryable: false }),
+    join: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
   },
 );
 const messages: MessageGateway = {
@@ -120,7 +121,7 @@ const messages: MessageGateway = {
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
 let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
 const moderation: ModerationGateway = {
-  applyAction: async (actionId, roomCatalogId, input) => {
+  applyAction: (actionId, roomCatalogId, input) => {
     const action: ModerationAction = Object.freeze({
       actionId,
       actorPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
@@ -137,20 +138,24 @@ const moderation: ModerationGateway = {
       targetReference: input.targetReference,
     });
     fixtureModerationActions = Object.freeze([action, ...fixtureModerationActions]);
-    return ok(action);
+    return Promise.resolve(ok(action));
   },
-  inspectCapabilities: async () => ok({ canModerateRoom: true, canReadAudit: false }),
-  listActions: async (roomCatalogId) =>
-    ok(fixtureModerationActions.filter((action) => action.roomCatalogId === roomCatalogId)),
-  listAudit: async () => err({ code: 'moderation.forbidden', retryable: false }),
-  listCases: async () => ok(fixtureModerationCases),
-  listRoomCases: async (roomCatalogId) =>
-    ok(
-      fixtureModerationCases.filter(
-        (moderationCase) => moderationCase.evidence.roomCatalogId === roomCatalogId,
+  inspectCapabilities: () => Promise.resolve(ok({ canModerateRoom: true, canReadAudit: false })),
+  listActions: (roomCatalogId) =>
+    Promise.resolve(
+      ok(fixtureModerationActions.filter((action) => action.roomCatalogId === roomCatalogId)),
+    ),
+  listAudit: () => Promise.resolve(err({ code: 'moderation.forbidden', retryable: false })),
+  listCases: () => Promise.resolve(ok(fixtureModerationCases)),
+  listRoomCases: (roomCatalogId) =>
+    Promise.resolve(
+      ok(
+        fixtureModerationCases.filter(
+          (moderationCase) => moderationCase.evidence.roomCatalogId === roomCatalogId,
+        ),
       ),
     ),
-  report: async (caseId, input) => {
+  report: (caseId, input) => {
     const moderationCase: ModerationCase = Object.freeze({
       caseId,
       createdAtUnixMs: Date.now(),
@@ -168,12 +173,12 @@ const moderation: ModerationGateway = {
       targetReference: input.targetReference,
     });
     fixtureModerationCases = Object.freeze([moderationCase, ...fixtureModerationCases]);
-    return ok(moderationCase);
+    return Promise.resolve(ok(moderationCase));
   },
-  reverseAction: async (actionId) => {
+  reverseAction: (actionId) => {
     const action = fixtureModerationActions.find((candidate) => candidate.actionId === actionId);
     if (action === undefined) {
-      return err({ code: 'moderation.action_not_found', retryable: false });
+      return Promise.resolve(err({ code: 'moderation.action_not_found', retryable: false }));
     }
     const reversed = Object.freeze({
       ...action,
@@ -185,11 +190,11 @@ const moderation: ModerationGateway = {
         candidate.actionId === actionId ? reversed : candidate,
       ),
     );
-    return ok(reversed);
+    return Promise.resolve(ok(reversed));
   },
 };
-const unavailablePrivateRoom = async () =>
-  err({ code: 'private_room.fixture_unavailable', retryable: false });
+const unavailablePrivateRoom = () =>
+  Promise.resolve(err({ code: 'private_room.fixture_unavailable', retryable: false }));
 const privateRooms: PrivateRoomGateway = {
   accept: unavailablePrivateRoom,
   archive: unavailablePrivateRoom,
@@ -199,7 +204,7 @@ const privateRooms: PrivateRoomGateway = {
   inspect: unavailablePrivateRoom,
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
-  list: async () => ok([]),
+  list: () => Promise.resolve(ok([])),
   remove: unavailablePrivateRoom,
   transferOwnership: unavailablePrivateRoom,
   updatePermissions: unavailablePrivateRoom,
@@ -209,36 +214,40 @@ const privateRoomMatrix: PrivateRoomMatrixGateway = {
   leave: unavailablePrivateRoom,
 };
 const accessManagement: AccessManagementGateway = {
-  listAgentInstances: async () =>
-    ok([
-      {
-        adapterType: 'codex',
-        agentAvatarContentId: null,
-        agentDisplayName: 'Fixture Codex Agent',
-        agentId: '01990d9e-8400-7000-8000-000000000001',
-        agentInstanceId: '01990d9e-8400-7000-8000-000000000201',
-        capabilityVersion: '1',
-        createdAtUnixMs: Date.now() - 60_000,
-        device: {
-          deviceId: '01990d9e-8400-7000-8000-000000000301',
-          label: 'Fixture workstation',
-          platform: 'windows',
-          trustState: 'verified',
+  listAgentInstances: () =>
+    Promise.resolve(
+      ok([
+        {
+          adapterType: 'codex',
+          agentAvatarContentId: null,
+          agentDisplayName: 'Fixture Codex Agent',
+          agentId: '01990d9e-8400-7000-8000-000000000001',
+          agentInstanceId: '01990d9e-8400-7000-8000-000000000201',
+          capabilityVersion: '1',
+          createdAtUnixMs: Date.now() - 60_000,
+          device: {
+            deviceId: '01990d9e-8400-7000-8000-000000000301',
+            label: 'Fixture workstation',
+            platform: 'windows',
+            trustState: 'verified',
+          },
+          lastSeenAtUnixMs: Date.now(),
+          matrixDeviceId: 'FIXTURE-MATRIX-DEVICE',
+          matrixDeviceRevokedAtUnixMs: null,
+          revokedAtUnixMs: null,
+          status: 'online',
         },
-        lastSeenAtUnixMs: Date.now(),
-        matrixDeviceId: 'FIXTURE-MATRIX-DEVICE',
-        matrixDeviceRevokedAtUnixMs: null,
-        revokedAtUnixMs: null,
-        status: 'online',
-      },
-    ]),
-  listProductDevices: async () => ok([]),
-  revokeAgentInstance: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
-  revokeProductDevice: async () => err({ code: 'access.fixture_unavailable', retryable: false }),
+      ]),
+    ),
+  listProductDevices: () => Promise.resolve(ok([])),
+  revokeAgentInstance: () =>
+    Promise.resolve(err({ code: 'access.fixture_unavailable', retryable: false })),
+  revokeProductDevice: () =>
+    Promise.resolve(err({ code: 'access.fixture_unavailable', retryable: false })),
 };
 let fixtureAutomationGrants: readonly AutomationGrant[] = Object.freeze([]);
 const automation: AutomationGrantGateway = {
-  create: async (grantId, input) => {
+  create: (grantId, input) => {
     const startsAtUnixMs = Date.now();
     const grant: AutomationGrant = Object.freeze({
       agentId: input.agentId,
@@ -258,13 +267,13 @@ const automation: AutomationGrantGateway = {
       totalMessages: 0,
     });
     fixtureAutomationGrants = Object.freeze([grant, ...fixtureAutomationGrants]);
-    return ok(grant);
+    return Promise.resolve(ok(grant));
   },
-  list: async () => ok(fixtureAutomationGrants),
-  revoke: async (grantId) => {
+  list: () => Promise.resolve(ok(fixtureAutomationGrants)),
+  revoke: (grantId) => {
     const grant = fixtureAutomationGrants.find((candidate) => candidate.grantId === grantId);
     if (grant === undefined) {
-      return err({ code: 'automation.fixture_not_found', retryable: false });
+      return Promise.resolve(err({ code: 'automation.fixture_not_found', retryable: false }));
     }
     const revoked = Object.freeze({
       ...grant,
@@ -276,50 +285,59 @@ const automation: AutomationGrantGateway = {
         candidate.grantId === grantId ? revoked : candidate,
       ),
     );
-    return ok(revoked);
+    return Promise.resolve(ok(revoked));
   },
 };
 const security: MatrixSecurityGateway = {
-  acceptIncomingVerification: async () =>
-    err({ code: 'security.matrix_unavailable', retryable: true }),
-  beginVerification: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
-  declineIncomingVerification: async () =>
-    err({ code: 'security.matrix_unavailable', retryable: true }),
-  establishIdentity: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
+  acceptIncomingVerification: () =>
+    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
+  beginVerification: () =>
+    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
+  declineIncomingVerification: () =>
+    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
+  establishIdentity: () =>
+    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
   getIncomingVerification: () => null,
-  inspect: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
-  recover: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
-  setupRecovery: async () => err({ code: 'security.matrix_unavailable', retryable: true }),
+  inspect: () => Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
+  recover: () => Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
+  setupRecovery: () =>
+    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
   subscribe: () => noop,
 };
 let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);
 const directSessions: DirectSessionGateway = {
-  inspect: async (catalogId) => {
+  inspect: (catalogId) => {
     const session = fixtureDirectSessions.find((candidate) => candidate.catalogId === catalogId);
-    return session === undefined
-      ? err({ code: 'direct_session.fixture_not_found', retryable: false })
-      : ok(session);
+    return Promise.resolve(
+      session === undefined
+        ? err({ code: 'direct_session.fixture_not_found', retryable: false })
+        : ok(session),
+    );
   },
-  list: async () => ok(fixtureDirectSessions),
-  open: async (targetAgentId) => {
+  list: () => Promise.resolve(ok(fixtureDirectSessions)),
+  open: (targetAgentId) => {
     const index = room.agents.findIndex((agent) => agent.agentId === targetAgentId);
     if (index < 0) {
-      return err({ code: 'direct_session.fixture_target_not_found', retryable: false });
+      return Promise.resolve(
+        err({ code: 'direct_session.fixture_target_not_found', retryable: false }),
+      );
     }
     const existing = fixtureDirectSessions.find(
       (session) => session.target.agentId === targetAgentId,
     );
     if (existing !== undefined) {
-      return ok(existing);
+      return Promise.resolve(ok(existing));
     }
     const opened = testDirectSession(index);
     fixtureDirectSessions = Object.freeze([opened, ...fixtureDirectSessions]);
-    return ok(opened);
+    return Promise.resolve(ok(opened));
   },
-  setBlocked: async (targetAgentId, blocked) => {
+  setBlocked: (targetAgentId, blocked) => {
     const lobbyAgent = room.agents.find((agent) => agent.agentId === targetAgentId);
     if (lobbyAgent === undefined) {
-      return err({ code: 'direct_session.fixture_target_not_found', retryable: false });
+      return Promise.resolve(
+        err({ code: 'direct_session.fixture_target_not_found', retryable: false }),
+      );
     }
     const contactPolicy = Object.freeze({
       agentBlocksPrincipal: false,
@@ -334,13 +352,13 @@ const directSessions: DirectSessionGateway = {
           : session,
       ),
     );
-    return ok({ contactPolicy, target: toFixtureDirectAgent(lobbyAgent) });
+    return Promise.resolve(ok({ contactPolicy, target: toFixtureDirectAgent(lobbyAgent) }));
   },
 };
 const directSessionMatrix: DirectSessionMatrixGateway = {
-  markDisplayed: async () => ok(undefined),
-  prepare: async () => ok(undefined),
-  setIgnored: async () => ok(undefined),
+  markDisplayed: () => Promise.resolve(ok(undefined)),
+  prepare: () => Promise.resolve(ok(undefined)),
+  setIgnored: () => Promise.resolve(ok(undefined)),
 };
 const locallyBlockedAgents = new Set<string>();
 const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix, {
@@ -492,7 +510,7 @@ const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent
 const services: AppServices = {
   accessManagement,
   agentDirectory: {
-    listOwnedAgents: async () => ok([]),
+    listOwnedAgents: () => Promise.resolve(ok([])),
   },
   automation,
   config: {
@@ -513,7 +531,7 @@ const services: AppServices = {
   messagePublisher: new FixtureMessagePublisher(),
   messages,
   messageTranslation: {
-    translate: async () => err({ code: 'unavailable' as const, retryable: false }),
+    translate: () => Promise.resolve(err({ code: 'unavailable' as const, retryable: false })),
   },
   moderation,
   onboarding,
@@ -522,6 +540,11 @@ const services: AppServices = {
   roomDirectory,
   security,
   session: {
+    privateState: {
+      clear: () => {
+        queryClient.clear();
+      },
+    },
     browser: {
       currentPath: () => '/lobby/fixture',
       isOnline: () => true,
@@ -529,13 +552,14 @@ const services: AppServices = {
     },
     controlPlane: fixtureControlPlane,
     matrix: {
-      beginAuthentication: async () => ok({ kind: 'browser-navigation' }),
-      logout: async () => ok(undefined),
-      restore: async () => ok({ kind: 'authentication-required' }),
+      disconnect: () => undefined,
+      beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
+      logout: () => Promise.resolve(ok(undefined)),
+      restore: () => Promise.resolve(ok({ kind: 'authentication-required' })),
     },
   },
   telemetry: {
-    record: async () => undefined,
+    record: () => Promise.resolve(undefined),
   },
 };
 

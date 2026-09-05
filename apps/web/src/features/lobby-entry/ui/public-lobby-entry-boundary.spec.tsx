@@ -31,8 +31,8 @@ afterEach(() => {
 
 describe('公开大厅入场边界', () => {
   it('云端并发供给时呈现可恢复准备态而不是依赖本机 Runtime', async () => {
-    const enter = vi.fn(async () =>
-      err({ code: 'lobby.entry_provisioning_busy', retryable: true }),
+    const enter = vi.fn(() =>
+      Promise.resolve(err({ code: 'lobby.entry_provisioning_busy', retryable: true })),
     );
     const onEntered = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({

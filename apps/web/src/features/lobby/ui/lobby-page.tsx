@@ -166,7 +166,7 @@ function ReadyLobby({
                 catalogId={catalogId}
                 gateway={moderation}
                 onReauthenticate={() => {
-                  controlPlane.beginAuthentication(
+                  void controlPlane.beginAuthentication(
                     `${window.location.pathname}${window.location.search}${window.location.hash}`,
                   );
                 }}
@@ -178,7 +178,7 @@ function ReadyLobby({
                 automation={automation}
                 catalogId={catalogId}
                 onReauthenticate={() => {
-                  controlPlane.beginAuthentication(
+                  void controlPlane.beginAuthentication(
                     `${window.location.pathname}${window.location.search}${window.location.hash}`,
                   );
                 }}

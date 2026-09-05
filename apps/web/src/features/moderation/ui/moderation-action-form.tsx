@@ -88,7 +88,9 @@ export function ModerationActionForm({
           <span>{t('moderation.governance.action.case')}</span>
           <select
             disabled={pending}
-            onChange={(event) => selectCase(event.currentTarget.value)}
+            onChange={(event) => {
+              selectCase(event.currentTarget.value);
+            }}
             value={caseId}
           >
             <option value="">—</option>
@@ -123,7 +125,9 @@ export function ModerationActionForm({
           <span>{t('moderation.governance.action.reason')}</span>
           <select
             disabled={pending}
-            onChange={(event) => setReason(parseReason(event.currentTarget.value))}
+            onChange={(event) => {
+              setReason(parseReason(event.currentTarget.value));
+            }}
             value={reason}
           >
             {moderationReasons.map((option) => (
@@ -139,7 +143,9 @@ export function ModerationActionForm({
         <input
           disabled={pending}
           maxLength={1_024}
-          onChange={(event) => setTargetReference(event.currentTarget.value)}
+          onChange={(event) => {
+            setTargetReference(event.currentTarget.value);
+          }}
           placeholder={t(
             kind === 'hide'
               ? 'moderation.governance.action.targetEvent'
@@ -153,7 +159,9 @@ export function ModerationActionForm({
           <span>{t('moderation.governance.action.duration')}</span>
           <select
             disabled={pending}
-            onChange={(event) => setDurationSeconds(Number(event.currentTarget.value))}
+            onChange={(event) => {
+              setDurationSeconds(Number(event.currentTarget.value));
+            }}
             value={durationSeconds}
           >
             <option value={0}>{t('moderation.governance.action.indefinite')}</option>
@@ -167,7 +175,9 @@ export function ModerationActionForm({
         <input
           checked={acknowledged}
           disabled={pending}
-          onChange={(event) => setAcknowledged(event.currentTarget.checked)}
+          onChange={(event) => {
+            setAcknowledged(event.currentTarget.checked);
+          }}
           type="checkbox"
         />
         <span>

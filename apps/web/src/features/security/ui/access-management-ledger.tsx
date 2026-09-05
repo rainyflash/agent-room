@@ -77,7 +77,7 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
     [instances.data],
   );
   const pending = revokeDevice.isPending || revokeInstance.isPending;
-  const failure = mutationFailure(revokeDevice.data) ?? mutationFailure(revokeInstance.data);
+  const failure = resultFailure(revokeDevice.data) ?? resultFailure(revokeInstance.data);
 
   const confirm = (): void => {
     if (intent?.kind === 'device') {
@@ -123,7 +123,9 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
             <div>
               <Button
                 disabled={pending}
-                onClick={() => setIntent(null)}
+                onClick={() => {
+                  setIntent(null);
+                }}
                 size="compact"
                 tone="quiet"
               >
@@ -151,9 +153,9 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
           failure={resultFailure(devices.data)}
           loading={devices.isPending}
           onRetry={() => void devices.refetch()}
-          onRevoke={(device) =>
-            setIntent({ id: device.deviceId, kind: 'device', label: device.label })
-          }
+          onRevoke={(device) => {
+            setIntent({ id: device.deviceId, kind: 'device', label: device.label });
+          }}
           pendingCleanup={pendingDeviceCleanup}
           pendingId={revokeDevice.isPending ? revokeDevice.variables : null}
         />
@@ -162,13 +164,13 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
           instances={resultValue(instances.data)}
           loading={instances.isPending}
           onRetry={() => void instances.refetch()}
-          onRevoke={(instance) =>
+          onRevoke={(instance) => {
             setIntent({
               id: instance.agentInstanceId,
               kind: 'instance',
               label: instance.agentDisplayName,
-            })
-          }
+            });
+          }}
           pendingId={revokeInstance.isPending ? revokeInstance.variables : null}
         />
       </div>
@@ -228,7 +230,9 @@ function ProductDevicePanel({
                   {device.trustState !== 'revoked' || retryCleanup ? (
                     <Button
                       disabled={pendingId !== null}
-                      onClick={() => onRevoke(device)}
+                      onClick={() => {
+                        onRevoke(device);
+                      }}
                       size="compact"
                       tone={retryCleanup ? 'ghost' : 'alert'}
                     >
@@ -304,7 +308,9 @@ function AgentInstancePanel({
                   {instance.status !== 'revoked' || retryCleanup ? (
                     <Button
                       disabled={pendingId !== null}
-                      onClick={() => onRevoke(instance)}
+                      onClick={() => {
+                        onRevoke(instance);
+                      }}
                       size="compact"
                       tone={retryCleanup ? 'ghost' : 'alert'}
                     >
@@ -430,22 +436,13 @@ function resultFailure(
   return result?.ok === false ? result.error : null;
 }
 
-function mutationFailure<T>(
-  result:
-    | { readonly error: AccessManagementFailure; readonly ok: false }
-    | { readonly ok: true; readonly value: T }
-    | undefined,
-): AccessManagementFailure | null {
-  return result?.ok === false ? result.error : null;
-}
-
-function pendingCleanupNotice<TDevice, TInstance>(
+function pendingCleanupNotice(
   device:
-    | { readonly ok: true; readonly value: TDevice & { readonly matrixCleanup: string } }
+    | { readonly ok: true; readonly value: { readonly matrixCleanup: string } }
     | { readonly ok: false }
     | undefined,
   instance:
-    | { readonly ok: true; readonly value: TInstance & { readonly matrixCleanup: string } }
+    | { readonly ok: true; readonly value: { readonly matrixCleanup: string } }
     | { readonly ok: false }
     | undefined,
 ): boolean {

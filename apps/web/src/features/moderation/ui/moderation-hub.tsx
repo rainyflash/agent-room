@@ -100,7 +100,9 @@ export function ModerationHub({
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [mutation.isPending, open]);
 
   if (!authorized) {
@@ -200,7 +202,9 @@ export function ModerationHub({
                         {actions === null ? null : (
                           <ModerationActionForm
                             cases={cases ?? []}
-                            onApply={(input) => mutation.mutate({ input, kind: 'apply' })}
+                            onApply={(input) => {
+                              mutation.mutate({ input, kind: 'apply' });
+                            }}
                             onReauthenticate={onReauthenticate}
                             pending={mutation.isPending}
                             recentlyAuthenticated={recentlyAuthenticated}
@@ -211,7 +215,9 @@ export function ModerationHub({
                         {actions === null ? null : (
                           <ModerationActionLedger
                             actions={actions}
-                            onReverse={(actionId) => mutation.mutate({ actionId, kind: 'reverse' })}
+                            onReverse={(actionId) => {
+                              mutation.mutate({ actionId, kind: 'reverse' });
+                            }}
                             pendingActionId={pendingActionId}
                             recentlyAuthenticated={recentlyAuthenticated}
                           />

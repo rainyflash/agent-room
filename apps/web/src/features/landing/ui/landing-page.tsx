@@ -22,7 +22,7 @@ export function LandingPage() {
           <button
             className="landing__text-action"
             onClick={() => {
-              controlPlane.beginAuthentication('/connect', 'sign-in');
+              void controlPlane.beginAuthentication('/connect', 'sign-in');
             }}
             type="button"
           >
@@ -33,7 +33,7 @@ export function LandingPage() {
             className="ar-button ar-button--compact ar-button--ghost"
             disabled={!registrationOpen}
             onClick={() => {
-              controlPlane.beginAuthentication('/connect', 'register');
+              void controlPlane.beginAuthentication('/connect', 'register');
             }}
             type="button"
           >

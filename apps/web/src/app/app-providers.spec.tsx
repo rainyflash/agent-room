@@ -126,21 +126,25 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
     updatesConfigured: false,
   };
   return {
-    beginHumanAuthentication: async () =>
-      err({ code: 'desktop.test.unavailable', retryable: false }),
-    beginMatrixAuthentication: async () =>
-      err({ code: 'desktop.test.unavailable', retryable: false }),
-    bootstrapDefaultAgent: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
-    checkUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
-    clearHumanSession: async () => ok(undefined),
-    configureAgentRuntime: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
-    installUpdate: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
+    beginHumanAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    beginMatrixAuthentication: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    bootstrapDefaultAgent: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    checkUpdate: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    clearHumanSession: () => Promise.resolve(ok(undefined)),
+    configureAgentRuntime: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    installUpdate: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     isAvailable: () => available,
-    openAuthorization: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
-    readLobby: async () => err({ code: 'desktop.test.unavailable', retryable: false }),
-    retryBridge: async () => ok(bridge),
-    setAutostart: async (enabled) => ok(enabled),
-    snapshot: async () => ok(snapshot),
-    subscribe: async () => ok(() => undefined),
+    openAuthorization: () =>
+      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    readLobby: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
+    retryBridge: () => Promise.resolve(ok(bridge)),
+    setAutostart: (enabled) => Promise.resolve(ok(enabled)),
+    snapshot: () => Promise.resolve(ok(snapshot)),
+    subscribe: () => Promise.resolve(ok(() => undefined)),
   };
 }

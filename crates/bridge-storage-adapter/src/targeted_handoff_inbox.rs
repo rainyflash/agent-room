@@ -203,6 +203,27 @@ impl TargetedHandoffInbox for SqliteTargetedHandoffInbox {
     ) -> PortFuture<'_, Result<bool, TargetedHandoffInboxFailure>> {
         Box::pin(self.remove_internal(target, handoff_id))
     }
+
+    fn remove_expired(
+        &self,
+        target: TargetedHandoffTarget,
+        observed_at: UtcMillis,
+    ) -> PortFuture<'_, Result<u64, TargetedHandoffInboxFailure>> {
+        Box::pin(async move {
+            sqlx::query(
+                "DELETE FROM targeted_handoff_inbox
+                  WHERE target_agent_id = ? AND target_instance_id = ?
+                    AND expires_at_unix_ms <= ?",
+            )
+            .bind(target.agent_id.to_string())
+            .bind(target.instance_id.to_string())
+            .bind(observed_at.value())
+            .execute(&self.pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| map_sqlx_error(&error))
+        })
+    }
 }
 
 const FIND_QUERY: &str =

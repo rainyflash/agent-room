@@ -25,17 +25,17 @@ export function DeviceVerificationDialog({
   targetName,
 }: DeviceVerificationDialogProps) {
   const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(
-    session.subscribe,
-    session.getSnapshot,
-    session.getSnapshot,
-  );
+  const subscribe = useCallback((listener: () => void) => session.subscribe(listener), [session]);
+  const getSnapshot = useCallback(() => session.getSnapshot(), [session]);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const verifiedReported = useRef(false);
   const terminal = isTerminal(snapshot);
 
   useEffect(() => {
     session.activate();
-    return () => session.deactivate();
+    return () => {
+      session.deactivate();
+    };
   }, [session]);
 
   useEffect(() => {
@@ -60,7 +60,9 @@ export function DeviceVerificationDialog({
       }
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+    };
   }, [close]);
 
   return createPortal(
@@ -157,7 +159,12 @@ function VerificationBody({ session, snapshot }: VerificationBodyProps) {
           </p>
         )}
         <div className="security-dialog__actions">
-          <Button onClick={() => session.mismatch()} tone="alert">
+          <Button
+            onClick={() => {
+              session.mismatch();
+            }}
+            tone="alert"
+          >
             {t('security.verification.mismatch')}
           </Button>
           <Button onClick={() => void session.confirm()} tone="primary">

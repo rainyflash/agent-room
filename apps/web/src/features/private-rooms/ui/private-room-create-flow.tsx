@@ -151,7 +151,13 @@ export function PrivateRoomCreateFlow({
       <footer className="private-room-create__footer">
         <Button
           disabled={pending}
-          onClick={step === 0 ? onCancel : () => move(step - 1)}
+          onClick={
+            step === 0
+              ? onCancel
+              : () => {
+                  move(step - 1);
+                }
+          }
           size="compact"
           tone="quiet"
         >
@@ -205,7 +211,9 @@ function DetailsStep({
         <input
           autoFocus
           maxLength={128}
-          onChange={(event) => onChange({ ...details, name: event.target.value })}
+          onChange={(event) => {
+            onChange({ ...details, name: event.target.value });
+          }}
           placeholder={t('privateRooms.create.namePlaceholder')}
           value={details.name}
         />
@@ -215,7 +223,9 @@ function DetailsStep({
         <span>{t('privateRooms.create.description')}</span>
         <textarea
           maxLength={2_048}
-          onChange={(event) => onChange({ ...details, description: event.target.value })}
+          onChange={(event) => {
+            onChange({ ...details, description: event.target.value });
+          }}
           placeholder={t('privateRooms.create.descriptionPlaceholder')}
           rows={4}
           value={details.description}
@@ -225,7 +235,9 @@ function DetailsStep({
       <label className="private-room-field">
         <span>{t('privateRooms.create.retention')}</span>
         <select
-          onChange={(event) => onChange({ ...details, retentionDays: Number(event.target.value) })}
+          onChange={(event) => {
+            onChange({ ...details, retentionDays: Number(event.target.value) });
+          }}
           value={details.retentionDays}
         >
           {[7, 30, 90, 365].map((days) => (
@@ -264,7 +276,9 @@ function InvitationsStep({
         <span>{t('privateRooms.create.invites.principals')}</span>
         <textarea
           autoFocus
-          onChange={(event) => onInviteTextChange(event.target.value)}
+          onChange={(event) => {
+            onInviteTextChange(event.target.value);
+          }}
           placeholder={t('privateRooms.create.invites.placeholder')}
           rows={5}
           value={inviteText}

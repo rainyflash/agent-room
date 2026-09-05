@@ -6,8 +6,8 @@ const readyReport = {
   checkedAtUnixMs: 1_700_000_000_000,
   correlationId: '018c251e-7b5a-7c7f-8a28-2de53f56a9a3',
   dependencies: [
-    { latencyMs: 12, name: 'database', status: 'available' },
-    { latencyMs: 18, name: 'matrix', status: 'available' },
+    { latencyMs: 12, name: 'database', status: 'ready' },
+    { latencyMs: 18, name: 'matrix', status: 'ready' },
   ],
   service: 'agent-room-control-plane',
   status: 'ready',
@@ -38,7 +38,7 @@ test.beforeEach(async ({ baseURL, page }) => {
   });
 });
 
-test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ page }) => {
+test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 1_000, width: 1_440 });
   await page.goto('/connect');
@@ -65,27 +65,40 @@ test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ 
   await page.screenshot({
     animations: 'disabled',
     fullPage: true,
-    path: '../../artifacts/browser/task-19/playwright-desktop.png',
+    path: testInfo.outputPath('connection-desktop.png'),
   });
 });
 
-test('390px 移动布局无横向溢出且主操作可见', async ({ page }) => {
+test('390px 移动布局首屏可操作且连接详情可用键盘展开收起', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto('/connect');
 
   await expect(page.getByLabel(/Language|语言/u)).toBeVisible();
   const primaryAction = page.getByRole('button', { name: /Sign in|登录 Agent Room/u });
-  await expect(primaryAction).toBeVisible();
+  await expect(primaryAction).toBeInViewport({ ratio: 1 });
   const actionBox = await primaryAction.boundingBox();
   expect(actionBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  const details = page.getByRole('button', { name: /Connection details|连接详情/iu });
+  await expect(details).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.connection-steps')).toBeHidden();
+  await details.focus();
+  await page.keyboard.press('Enter');
+  await expect(details).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.connection-steps')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.connection-steps')).toBeHidden();
+  await expect(primaryAction).toBeInViewport({ ratio: 1 });
+
+  await page.getByLabel(/Language|语言/u).selectOption('account:zh-CN');
+  await expect(page.getByRole('button', { name: '登录 Agent Room' })).toBeInViewport({ ratio: 1 });
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 
   await page.screenshot({
     animations: 'disabled',
     fullPage: true,
-    path: '../../artifacts/browser/task-19/playwright-mobile.png',
+    path: testInfo.outputPath('connection-mobile.png'),
   });
 });
 

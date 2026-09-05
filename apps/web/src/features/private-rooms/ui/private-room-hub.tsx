@@ -97,7 +97,9 @@ export function PrivateRoomHub({
       }
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+    };
   }, [mutation.isPending, open]);
 
   const enter = (room: PrivateRoom): void => {
@@ -169,7 +171,9 @@ export function PrivateRoomHub({
                     aria-label={t('privateRooms.action.close')}
                     className="private-room-close"
                     disabled={mutation.isPending}
-                    onClick={() => setOpen(false)}
+                    onClick={() => {
+                      setOpen(false);
+                    }}
                     type="button"
                   >
                     <X aria-hidden="true" />
@@ -183,13 +187,13 @@ export function PrivateRoomHub({
                       setFailure(null);
                       setView('rooms');
                     }}
-                    onCreate={(input: CreatePrivateRoomInput) =>
+                    onCreate={(input: CreatePrivateRoomInput) => {
                       run({
                         execute: async () =>
                           await coordinator.createAndJoin(identifiers.next(), input),
                         onSuccess: enter,
-                      })
-                    }
+                      });
+                    }}
                     pending={mutation.isPending}
                   />
                 ) : view === 'governance' && currentRoom !== null ? (
@@ -209,22 +213,31 @@ export function PrivateRoomHub({
                     currentCatalogId={currentCatalogId}
                     failure={failure ?? (list.data?.ok === false ? list.data.error : null)}
                     loading={list.isPending}
-                    onAccept={(room) =>
-                      run({ execute: async () => await coordinator.accept(room), onSuccess: enter })
-                    }
+                    onAccept={(room) => {
+                      run({
+                        execute: async () => await coordinator.accept(room),
+                        onSuccess: enter,
+                      });
+                    }}
                     onCreate={() => {
                       setFailure(null);
                       setView('create');
                     }}
-                    onDecline={(room) =>
+                    onDecline={(room) => {
                       run({
                         execute: async () => await coordinator.decline(room),
-                      })
+                      });
+                    }}
+                    onManage={
+                      currentRoom === null
+                        ? undefined
+                        : () => {
+                            setView('governance');
+                          }
                     }
-                    onManage={currentRoom === null ? undefined : () => setView('governance')}
-                    onOpen={(room) =>
-                      run({ execute: async () => await coordinator.open(room), onSuccess: enter })
-                    }
+                    onOpen={(room) => {
+                      run({ execute: async () => await coordinator.open(room), onSuccess: enter });
+                    }}
                     pending={mutation.isPending}
                     principalId={principal.principalId}
                     rooms={rooms}
@@ -332,7 +345,9 @@ function RoomDirectory({
                     <>
                       <Button
                         disabled={pending}
-                        onClick={() => onDecline(room)}
+                        onClick={() => {
+                          onDecline(room);
+                        }}
                         size="compact"
                         tone="quiet"
                       >
@@ -341,7 +356,9 @@ function RoomDirectory({
                       <Button
                         disabled={pending}
                         icon={<Check aria-hidden="true" />}
-                        onClick={() => onAccept(room)}
+                        onClick={() => {
+                          onAccept(room);
+                        }}
                         size="compact"
                         tone="primary"
                       >
@@ -362,7 +379,9 @@ function RoomDirectory({
                     <Button
                       disabled={pending}
                       icon={<ArrowRight aria-hidden="true" />}
-                      onClick={() => onOpen(room)}
+                      onClick={() => {
+                        onOpen(room);
+                      }}
                       size="compact"
                       tone="ghost"
                     >

@@ -57,7 +57,7 @@ describe('SecurityWorkspace', () => {
       },
       stage: 'comparing',
     });
-    const beginVerification = vi.fn(async () => ok(session.value));
+    const beginVerification = vi.fn(() => Promise.resolve(ok(session.value)));
     const gateway = securityGateway(
       {
         ...blockedSnapshot(),
@@ -68,10 +68,14 @@ describe('SecurityWorkspace', () => {
     );
 
     renderWorkspace(gateway);
-    await user.click((await screen.findAllByRole('button', { name: 'Verify' }))[0]!);
+    const [verifyButton] = await screen.findAllByRole('button', { name: 'Verify' });
+    if (verifyButton === undefined) throw new Error('缺少验证设备按钮');
+    await user.click(verifyButton);
 
     const dialog = await screen.findByRole('dialog', { name: 'Verify a Matrix device' });
-    await waitFor(() => expect(within(dialog).getByText('🐶')).toBeVisible());
+    await waitFor(() => {
+      expect(within(dialog).getByText('🐶')).toBeVisible();
+    });
     expect(within(dialog).getByText('🚀')).toBeVisible();
     expect(beginVerification).toHaveBeenCalledWith({ targetDeviceId: 'ALICE-WEB' });
 
@@ -81,7 +85,7 @@ describe('SecurityWorkspace', () => {
 
   it('全新账户先建立交叉签名身份，不把首次设备引向无解的 SAS 请求', async () => {
     const user = userEvent.setup();
-    const establishIdentity = vi.fn(async () => ok(undefined));
+    const establishIdentity = vi.fn(() => Promise.resolve(ok(undefined)));
     const gateway = securityGateway(
       {
         ...blockedSnapshot(),
@@ -102,7 +106,7 @@ describe('SecurityWorkspace', () => {
   it('恢复密钥只在当前界面显示一次且不会写入浏览器存储', async () => {
     const user = userEvent.setup();
     const recoveryKey = 'EsTc r7Cy 4abc one-time recovery key';
-    const setupRecovery = vi.fn(async () => ok({ recoveryKey }));
+    const setupRecovery = vi.fn(() => Promise.resolve(ok({ recoveryKey })));
     const gateway = securityGateway(missingRecoverySnapshot(), { setupRecovery });
 
     renderWorkspace(gateway);
@@ -116,17 +120,19 @@ describe('SecurityWorkspace', () => {
     expect(storageValues(window.localStorage)).not.toContain(recoveryKey);
 
     await user.click(screen.getByRole('button', { name: 'I saved the recovery key' }));
-    await waitFor(() => expect(screen.queryByText(recoveryKey)).not.toBeInTheDocument());
+    await waitFor(() => {
+      expect(screen.queryByText(recoveryKey)).not.toBeInTheDocument();
+    });
   });
 
   it('分开展示产品设备与 Agent 实例并二次确认级联撤销', async () => {
     const user = userEvent.setup();
-    const revokeProductDevice = vi.fn(async () =>
-      ok({ matrixCleanup: 'pending' as const, pendingAgentInstanceCount: 1 }),
+    const revokeProductDevice = vi.fn(() =>
+      Promise.resolve(ok({ matrixCleanup: 'pending' as const, pendingAgentInstanceCount: 1 })),
     );
     const accessManagement = accessManagementGateway({
-      listAgentInstances: async () => ok([agentInstance()]),
-      listProductDevices: async () => ok([productDevice()]),
+      listAgentInstances: () => Promise.resolve(ok([agentInstance()])),
+      listProductDevices: () => Promise.resolve(ok([productDevice()])),
       revokeProductDevice,
     });
 
@@ -137,10 +143,14 @@ describe('SecurityWorkspace', () => {
     expect(within(productDevices).getByText('Studio workstation')).toBeVisible();
     expect(within(agentInstances).getByText('Build agent')).toBeVisible();
     await user.click(within(productDevices).getByRole('button', { name: 'Revoke device' }));
-    await waitFor(() => expect(screen.getByText('Revoke this product device?')).toBeVisible());
+    await waitFor(() => {
+      expect(screen.getByText('Revoke this product device?')).toBeVisible();
+    });
     await user.click(screen.getByRole('button', { name: 'Confirm revocation' }));
 
-    await waitFor(() => expect(revokeProductDevice).toHaveBeenCalledWith(productDevice().deviceId));
+    await waitFor(() => {
+      expect(revokeProductDevice).toHaveBeenCalledWith(productDevice().deviceId);
+    });
     expect(
       await screen.findByText(/Local access is revoked\. Matrix device cleanup is pending/u),
     ).toBeVisible();
@@ -180,10 +190,12 @@ function accessManagementGateway(
   overrides: Partial<AccessManagementGateway> = {},
 ): AccessManagementGateway {
   const base: AccessManagementGateway = {
-    listAgentInstances: async () => ok([]),
-    listProductDevices: async () => ok([]),
-    revokeAgentInstance: async () => err({ code: 'access.not_configured', retryable: false }),
-    revokeProductDevice: async () => err({ code: 'access.not_configured', retryable: false }),
+    listAgentInstances: () => Promise.resolve(ok([])),
+    listProductDevices: () => Promise.resolve(ok([])),
+    revokeAgentInstance: () =>
+      Promise.resolve(err({ code: 'access.not_configured', retryable: false })),
+    revokeProductDevice: () =>
+      Promise.resolve(err({ code: 'access.not_configured', retryable: false })),
   };
   return { ...base, ...overrides };
 }
@@ -230,18 +242,19 @@ function securityGateway(
   overrides: Partial<MatrixSecurityGateway> = {},
 ): MatrixSecurityGateway {
   const base: MatrixSecurityGateway = {
-    acceptIncomingVerification: async () =>
-      err({ code: 'security.verification_unavailable', retryable: false }),
-    beginVerification: async () =>
-      err({ code: 'security.verification_unavailable', retryable: false }),
-    declineIncomingVerification: async () =>
-      err({ code: 'security.verification_unavailable', retryable: false }),
-    establishIdentity: async () =>
-      err({ code: 'security.identity_bootstrap_failed', retryable: true }),
+    acceptIncomingVerification: () =>
+      Promise.resolve(err({ code: 'security.verification_unavailable', retryable: false })),
+    beginVerification: () =>
+      Promise.resolve(err({ code: 'security.verification_unavailable', retryable: false })),
+    declineIncomingVerification: () =>
+      Promise.resolve(err({ code: 'security.verification_unavailable', retryable: false })),
+    establishIdentity: () =>
+      Promise.resolve(err({ code: 'security.identity_bootstrap_failed', retryable: true })),
     getIncomingVerification: () => null,
-    inspect: async () => ok(snapshot),
-    recover: async () => err({ code: 'security.recovery_failed', retryable: true }),
-    setupRecovery: async () => err({ code: 'security.recovery_setup_failed', retryable: true }),
+    inspect: () => Promise.resolve(ok(snapshot)),
+    recover: () => Promise.resolve(err({ code: 'security.recovery_failed', retryable: true })),
+    setupRecovery: () =>
+      Promise.resolve(err({ code: 'security.recovery_setup_failed', retryable: true })),
     subscribe: () => () => undefined,
   };
   return { ...base, ...overrides };
@@ -278,12 +291,7 @@ function blockedSnapshot(): MatrixSecuritySnapshot {
   return Object.freeze({
     ...readySnapshot(),
     blockers: ['current_device_unverified'] as const,
-    devices: [
-      {
-        ...readySnapshot().devices[0]!,
-        trust: 'unverified' as const,
-      },
-    ],
+    devices: readySnapshot().devices.map((device) => ({ ...device, trust: 'unverified' as const })),
     kind: 'blocked',
     sendAllowed: false,
   });
@@ -301,10 +309,10 @@ function missingRecoverySnapshot(): MatrixSecuritySnapshot {
 
 function verificationSession(snapshot: MatrixVerificationSnapshot) {
   const listeners = new Set<() => void>();
-  const confirm = vi.fn(async () => ok(undefined));
+  const confirm = vi.fn(() => Promise.resolve(ok(undefined)));
   const value: MatrixVerificationSession = {
     activate: vi.fn(),
-    cancel: async () => ok(undefined),
+    cancel: () => Promise.resolve(ok(undefined)),
     confirm,
     deactivate: vi.fn(),
     getSnapshot: () => snapshot,

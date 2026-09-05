@@ -8,19 +8,25 @@ import type {
   WebSession,
 } from './session';
 import { err, type Result } from '@/shared/result';
+import { cleanupSession } from './session-cleanup';
 
 export type AuthenticationTarget = 'control' | 'matrix';
 
 export type SessionContext = {
   readonly authenticationTarget: AuthenticationTarget;
   readonly connection: MatrixConnection | null;
+  readonly controlStatus: 'checking' | 'ready' | 'unavailable' | 'unauthenticated';
   readonly failure: SessionFailure | null;
   readonly principal: WebSession | null;
   readonly resumePath: string | null;
 };
 
 export type SessionEvent =
-  | { readonly type: 'CONTROL_DEGRADED'; readonly failure: SessionFailure }
+  | {
+      readonly type: 'CONTROL_DEGRADED';
+      readonly failure: SessionFailure;
+      readonly reachable: boolean;
+    }
   | { readonly type: 'CONTROL_HEALTHY' }
   | { readonly type: 'LOGIN' }
   | { readonly type: 'LOGOUT' }
@@ -81,11 +87,8 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     return connection === null ? err(unexpectedFailure) : await connection.waitUntilPrepared();
   });
 
-  const signOut = fromPromise(async (): Promise<Result<void, SessionFailure>> => {
-    const matrixResult = await dependencies.matrix.logout();
-    const controlResult = await dependencies.controlPlane.logout();
-    return !matrixResult.ok ? matrixResult : controlResult;
-  });
+  const signOut = fromPromise(() => cleanupSession(dependencies));
+  const invalidateSession = fromPromise(() => cleanupSession(dependencies, true));
 
   return setup({
     types: {
@@ -95,6 +98,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     actors: {
       authenticate,
       loadControlSession,
+      invalidateSession,
       restoreMatrix,
       signOut,
       synchronize,
@@ -105,16 +109,27 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       clearSession: assign({
         authenticationTarget: 'control',
         connection: null,
+        controlStatus: 'unauthenticated',
         failure: null,
         principal: null,
         resumePath: null,
       }),
+      invalidatePrivateState: () => {
+        dependencies.matrix.disconnect();
+        dependencies.privateState.clear();
+      },
+      setControlUnavailable: assign({ controlStatus: 'unavailable' }),
       resumeRequestedRoute: ({ context }) => {
         if (context.resumePath !== null && context.resumePath !== '/connect') {
           dependencies.browser.replacePath(context.resumePath);
         }
       },
       setControlFailure: assign({
+        // 依赖健康报告不能撤销已经验证的云端账户访问能力。
+        controlStatus: ({ context, event }) =>
+          event.type === 'CONTROL_DEGRADED' && event.reachable
+            ? context.controlStatus
+            : 'unavailable',
         failure: ({ event }) =>
           event.type === 'CONTROL_DEGRADED' ? event.failure : unexpectedFailure,
       }),
@@ -134,12 +149,15 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     context: {
       authenticationTarget: 'control',
       connection: null,
+      controlStatus: 'checking',
       failure: null,
       principal: null,
       resumePath: null,
     },
+    on: { LOGOUT: '.signingOut' },
     states: {
       booting: {
+        entry: assign({ controlStatus: 'checking' }),
         invoke: {
           id: 'load-control-session',
           src: 'loadControlSession',
@@ -147,27 +165,34 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             {
               guard: ({ event }) => event.output.kind === 'authenticated',
               target: 'restoring',
-              actions: assign({
-                failure: null,
-                principal: ({ event }) => {
-                  return event.output.kind === 'authenticated' ? event.output.session : null;
+              actions: [
+                ({ context, event }) => {
+                  if (
+                    event.output.kind === 'authenticated' &&
+                    context.principal?.principalId !== event.output.session.principalId
+                  ) {
+                    dependencies.matrix.disconnect();
+                    dependencies.privateState.clear();
+                  }
                 },
-              }),
+                assign({
+                  controlStatus: 'ready',
+                  failure: null,
+                  principal: ({ event }) => {
+                    return event.output.kind === 'authenticated' ? event.output.session : null;
+                  },
+                }),
+              ],
             },
             {
               guard: ({ event }) => event.output.kind === 'unauthenticated',
-              target: 'unauthenticated',
-              actions: assign({
-                authenticationTarget: () => {
-                  return 'control' as const;
-                },
-                failure: null,
-              }),
+              target: 'invalidating',
             },
             {
               guard: ({ event }) => event.output.kind === 'failure' && event.output.failure.offline,
               target: 'offline',
               actions: assign({
+                controlStatus: 'unavailable',
                 failure: ({ event }) =>
                   event.output.kind === 'failure' ? event.output.failure : unexpectedFailure,
               }),
@@ -175,6 +200,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             {
               target: 'degraded',
               actions: assign({
+                controlStatus: 'unavailable',
                 failure: ({ event }) =>
                   event.output.kind === 'failure' ? event.output.failure : unexpectedFailure,
               }),
@@ -182,7 +208,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           ],
           onError: {
             target: 'degraded',
-            actions: 'setUnexpectedFailure',
+            actions: ['setUnexpectedFailure', 'setControlUnavailable'],
           },
         },
         on: { OFFLINE: 'offline' },
@@ -248,6 +274,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         on: { OFFLINE: 'offline', RETRY: 'booting' },
       },
       restoring: {
+        entry: assign({ connection: null }),
         invoke: {
           id: 'restore-matrix-session',
           src: 'restoreMatrix',
@@ -334,7 +361,6 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         entry: ['clearFailure', 'resumeRequestedRoute', 'clearResumePath'],
         on: {
           CONTROL_DEGRADED: { target: 'degraded', actions: 'setControlFailure' },
-          LOGOUT: 'signingOut',
           MATRIX_INTERRUPTED: 'reconnecting',
           OFFLINE: 'offline',
           RETRY: 'restoring',
@@ -344,11 +370,6 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         on: {
           CONTROL_HEALTHY: [
             {
-              guard: ({ context }) =>
-                context.failure?.boundary === 'control-plane' && context.connection !== null,
-              target: 'ready',
-            },
-            {
               guard: ({ context }) => context.failure?.boundary === 'control-plane',
               target: 'booting',
             },
@@ -356,7 +377,6 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           LOGIN: {
             target: 'authenticating',
           },
-          LOGOUT: 'signingOut',
           MATRIX_INTERRUPTED: 'reconnecting',
           OFFLINE: 'offline',
           RETRY: 'booting',
@@ -371,19 +391,49 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         },
       },
       offline: {
+        entry: 'setControlUnavailable',
         on: {
-          LOGOUT: 'signingOut',
           ONLINE: 'booting',
           RETRY: 'booting',
         },
       },
       signingOut: {
+        entry: ['invalidatePrivateState', 'clearSession'],
+        on: { LOGOUT: {} },
         invoke: {
           id: 'sign-out',
           src: 'signOut',
-          onDone: { target: 'unauthenticated', actions: 'clearSession' },
-          onError: { target: 'unauthenticated', actions: 'clearSession' },
+          onDone: [
+            { guard: ({ event }) => event.output.ok, target: 'unauthenticated' },
+            {
+              target: 'signOutFailed',
+              actions: assign({
+                failure: ({ event }) => (event.output.ok ? null : event.output.error),
+              }),
+            },
+          ],
+          onError: { target: 'signOutFailed', actions: 'setUnexpectedFailure' },
         },
+      },
+      invalidating: {
+        entry: ['invalidatePrivateState', 'clearSession'],
+        on: { LOGOUT: {} },
+        invoke: {
+          src: 'invalidateSession',
+          onDone: [
+            { guard: ({ event }) => event.output.ok, target: 'unauthenticated' },
+            {
+              target: 'signOutFailed',
+              actions: assign({
+                failure: ({ event }) => (event.output.ok ? null : event.output.error),
+              }),
+            },
+          ],
+          onError: { target: 'signOutFailed', actions: 'setUnexpectedFailure' },
+        },
+      },
+      signOutFailed: {
+        on: { RETRY: 'signingOut' },
       },
     },
   });

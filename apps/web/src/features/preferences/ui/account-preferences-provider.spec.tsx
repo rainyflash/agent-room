@@ -15,10 +15,10 @@ import { i18n, initializeI18n, setLanguagePreference } from '@/shared/i18n/i18n'
 import { err } from '@/shared/result';
 
 const localGateway: AccountPreferencesGateway = {
-  read: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+  read: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
   scope: () => null,
   subscribe: () => () => undefined,
-  write: async () => err({ code: 'preferences.source_unavailable', retryable: true }),
+  write: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
 };
 
 beforeEach(async () => {

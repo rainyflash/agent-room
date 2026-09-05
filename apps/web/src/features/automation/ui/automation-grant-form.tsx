@@ -1,6 +1,6 @@
 import { Button } from '@agent-room/ui-system';
 import { Bot, ShieldCheck } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type SubmitEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -72,7 +72,7 @@ export function AutomationGrantForm({
     [audience, instance?.agentDisplayName, kindSummary, lifetimeLabel, rate, scope, t, total],
   );
 
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
     const candidate: unknown = {
       agentId: instance?.agentId,
@@ -128,7 +128,9 @@ export function AutomationGrantForm({
               <span>{t('automation.field.instance')}</span>
               <select
                 disabled={pending}
-                onChange={(event) => setInstanceId(event.target.value)}
+                onChange={(event) => {
+                  setInstanceId(event.target.value);
+                }}
                 value={instanceId}
               >
                 {instances.map((candidate) => (
@@ -149,7 +151,9 @@ export function AutomationGrantForm({
                       checked={scope === value}
                       disabled={pending}
                       name="automation-scope"
-                      onChange={() => setScope(value)}
+                      onChange={() => {
+                        setScope(value);
+                      }}
                       type="radio"
                     />
                     <span>{t(`automation.scope.${value}`)}</span>
@@ -166,7 +170,9 @@ export function AutomationGrantForm({
                     <input
                       checked={messageKinds.includes(kind)}
                       disabled={pending}
-                      onChange={() => toggleKind(kind)}
+                      onChange={() => {
+                        toggleKind(kind);
+                      }}
                       type="checkbox"
                     />
                     <span>{t(`automation.kind.${kind}`)}</span>
@@ -179,7 +185,9 @@ export function AutomationGrantForm({
               <span>{t('automation.field.audience')}</span>
               <select
                 disabled={pending}
-                onChange={(event) => setAudience(event.target.value as AutomationAudience)}
+                onChange={(event) => {
+                  setAudience(event.target.value as AutomationAudience);
+                }}
                 value={audience}
               >
                 <option value="known_room_members">
@@ -193,7 +201,9 @@ export function AutomationGrantForm({
               <span>{t('automation.field.lifetime')}</span>
               <select
                 disabled={pending}
-                onChange={(event) => setLifetimeSeconds(Number(event.target.value))}
+                onChange={(event) => {
+                  setLifetimeSeconds(Number(event.target.value));
+                }}
                 value={lifetimeSeconds}
               >
                 {lifetimeOptions.map((option) => (
@@ -211,7 +221,9 @@ export function AutomationGrantForm({
                 inputMode="numeric"
                 max={60}
                 min={1}
-                onChange={(event) => setRate(event.target.value)}
+                onChange={(event) => {
+                  setRate(event.target.value);
+                }}
                 type="number"
                 value={rate}
               />
@@ -225,7 +237,9 @@ export function AutomationGrantForm({
                 inputMode="numeric"
                 max={10_000}
                 min={1}
-                onChange={(event) => setTotal(event.target.value)}
+                onChange={(event) => {
+                  setTotal(event.target.value);
+                }}
                 type="number"
                 value={total}
               />
@@ -237,7 +251,9 @@ export function AutomationGrantForm({
             <input
               checked={requiresRiskScan}
               disabled={pending}
-              onChange={(event) => setRequiresRiskScan(event.target.checked)}
+              onChange={(event) => {
+                setRequiresRiskScan(event.target.checked);
+              }}
               type="checkbox"
             />
             <span aria-hidden="true" />
@@ -266,7 +282,9 @@ export function AutomationGrantForm({
             <input
               checked={impactAcknowledged}
               disabled={pending}
-              onChange={(event) => setImpactAcknowledged(event.target.checked)}
+              onChange={(event) => {
+                setImpactAcknowledged(event.target.checked);
+              }}
               type="checkbox"
             />
             <span>{t('automation.impact.acknowledge')}</span>

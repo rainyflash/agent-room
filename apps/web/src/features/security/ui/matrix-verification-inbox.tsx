@@ -57,7 +57,9 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
   if (active !== null) {
     return (
       <DeviceVerificationDialog
-        onClose={() => setActive(null)}
+        onClose={() => {
+          setActive(null);
+        }}
         onVerified={() => {
           void queryClient.invalidateQueries({ queryKey: matrixSecurityQueryKey });
         }}
@@ -94,7 +96,9 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
       <div className="security-verification-inbox__actions">
         <Button
           disabled={accept.isPending || decline.isPending}
-          onClick={() => decline.mutate(incoming)}
+          onClick={() => {
+            decline.mutate(incoming);
+          }}
           size="compact"
           tone="quiet"
         >
@@ -103,7 +107,9 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
         <Button
           disabled={accept.isPending || decline.isPending}
           icon={<ShieldCheck aria-hidden="true" />}
-          onClick={() => accept.mutate(incoming)}
+          onClick={() => {
+            accept.mutate(incoming);
+          }}
           size="compact"
           tone="primary"
         >

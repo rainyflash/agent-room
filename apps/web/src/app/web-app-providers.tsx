@@ -73,6 +73,9 @@ export function createCloudRuntime(
   config: RuntimeConfig,
   localRuntime: DesktopRuntimeGateway,
 ): CloudRuntimeComposition {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { refetchOnWindowFocus: true, retry: false } },
+  });
   const browserControlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
   const controlPlane = localRuntime.isAvailable()
     ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
@@ -152,15 +155,22 @@ export function createCloudRuntime(
     privateRooms: new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl }),
     roomDirectory,
     security: new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys),
-    session: { browser: new WindowBrowserGateway(), controlPlane, matrix },
+    session: {
+      browser: new WindowBrowserGateway(),
+      controlPlane,
+      matrix,
+      privateState: {
+        clear: () => {
+          queryClient.clear();
+        },
+      },
+    },
     telemetry,
   };
   return {
     accountPreferences,
     matrixClients,
-    queryClient: new QueryClient({
-      defaultOptions: { queries: { refetchOnWindowFocus: true, retry: false } },
-    }),
+    queryClient,
     services,
   };
 }

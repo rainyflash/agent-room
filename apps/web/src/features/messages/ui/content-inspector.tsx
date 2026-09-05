@@ -1,3 +1,5 @@
+import { initials } from '@/shared/ui/display-name';
+
 import { useMachine } from '@xstate/react';
 import { Button } from '@agent-room/ui-system';
 import {
@@ -328,10 +330,6 @@ export function ContentInspector({
       )}
     </motion.aside>
   );
-}
-
-function initials(displayName: string): string {
-  return [...displayName.trim()].slice(0, 2).join('').toUpperCase();
 }
 
 function downloadVerifiedContent(bytes: Uint8Array, mediaType: string, contentId: string): void {

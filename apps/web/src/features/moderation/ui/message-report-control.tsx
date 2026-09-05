@@ -75,7 +75,9 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [mutation.isPending, open]);
 
   const close = (): void => {
@@ -189,7 +191,9 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
                         disabled={mutation.isPending}
                         id={descriptionId}
                         maxLength={4_096}
-                        onChange={(event) => setDescription(event.currentTarget.value)}
+                        onChange={(event) => {
+                          setDescription(event.currentTarget.value);
+                        }}
                         placeholder={t('moderation.report.descriptionPlaceholder')}
                         rows={4}
                         value={description}
@@ -199,7 +203,9 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
                       <input
                         checked={includePreview}
                         disabled={mutation.isPending || message.preview === null}
-                        onChange={(event) => setIncludePreview(event.currentTarget.checked)}
+                        onChange={(event) => {
+                          setIncludePreview(event.currentTarget.checked);
+                        }}
                         type="checkbox"
                       />
                       <span>

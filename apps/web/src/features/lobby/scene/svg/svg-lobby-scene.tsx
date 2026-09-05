@@ -37,9 +37,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     const [camera, setCamera] = useState<CameraSnapshot>({ scale: 1, x: 0, y: 0 });
     const [viewport, setViewport] = useState({ height: 1, width: 1 });
 
-    if (controllerRef.current === null) {
-      controllerRef.current = new ViewportController(projection.world);
-    }
+    controllerRef.current ??= new ViewportController(projection.world);
 
     const commitCamera = useCallback(
       (next: CameraSnapshot): void => {
@@ -79,11 +77,15 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
       resize();
       if (typeof ResizeObserver === 'undefined') {
         window.addEventListener('resize', resize);
-        return () => window.removeEventListener('resize', resize);
+        return () => {
+          window.removeEventListener('resize', resize);
+        };
       }
       const observer = new ResizeObserver(resize);
       observer.observe(host);
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+      };
     }, [commitCamera]);
 
     const pointerPosition = (
@@ -134,9 +136,11 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
           commitCamera(controller.zoomBy(Math.exp(-event.deltaY * 0.0012), point.x, point.y));
         }}
         ref={hostRef}
-        viewBox={`0 0 ${viewport.width} ${viewport.height}`}
+        viewBox={`0 0 ${String(viewport.width)} ${String(viewport.height)}`}
       >
-        <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale})`}>
+        <g
+          transform={`translate(${String(camera.x)} ${String(camera.y)}) scale(${String(camera.scale)})`}
+        >
           {projection.zones.map((zone) => (
             <g className={`lobby-scene__svg-zone lobby-scene__svg-zone--${zone.id}`} key={zone.id}>
               <rect
@@ -162,7 +166,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
                 if (dragRef.current?.moved !== true) onSelectAgent(node.agentId);
                 dragRef.current = null;
               }}
-              transform={`translate(${node.x} ${node.y})`}
+              transform={`translate(${String(node.x)} ${String(node.y)})`}
             >
               <circle className="lobby-scene__svg-agent-ring" r={node.radius + 5} />
               <circle className="lobby-scene__svg-agent-body" r={node.radius} />

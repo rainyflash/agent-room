@@ -153,16 +153,22 @@ export function SecurityWorkspace({ accessManagement, gateway, onBack }: Securit
                 primaryAction={postureAction(
                   inspection.data.value,
                   establishIdentity.isPending,
-                  () => establishIdentity.mutate(),
+                  () => {
+                    establishIdentity.mutate();
+                  },
                   beginVerification.isPending,
-                  (device) => beginVerification.mutate(device),
+                  (device) => {
+                    beginVerification.mutate(device);
+                  },
                   reviewRecovery,
                 )}
                 snapshot={inspection.data.value}
               />
               <SecurityDeviceLedger
                 devices={inspection.data.value.devices}
-                onVerify={(device) => beginVerification.mutate(device)}
+                onVerify={(device) => {
+                  beginVerification.mutate(device);
+                }}
                 pendingDeviceId={
                   beginVerification.isPending ? beginVerification.variables.deviceId : null
                 }
@@ -195,7 +201,9 @@ export function SecurityWorkspace({ accessManagement, gateway, onBack }: Securit
         {verification === null ? null : (
           <DeviceVerificationDialog
             key="device-verification"
-            onClose={() => setVerification(null)}
+            onClose={() => {
+              setVerification(null);
+            }}
             onVerified={refresh}
             session={verification.session}
             targetName={verification.targetName}
@@ -265,7 +273,9 @@ function postureAction(
   if (snapshot.blockers.includes('current_device_unverified') && currentDevice !== undefined) {
     return {
       kind: 'verify_device',
-      onSelect: () => verify(currentDevice),
+      onSelect: () => {
+        verify(currentDevice);
+      },
       pending: verificationPending,
     };
   }

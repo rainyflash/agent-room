@@ -64,7 +64,9 @@ export function SecurityDeviceLedger({
                 {verifiable ? (
                   <Button
                     disabled={verificationOpen}
-                    onClick={() => onVerify(device)}
+                    onClick={() => {
+                      onVerify(device);
+                    }}
                     size="compact"
                     tone="ghost"
                   >
