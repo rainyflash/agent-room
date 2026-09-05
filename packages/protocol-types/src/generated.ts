@@ -68,6 +68,11 @@ export type ContentRef = {
   readonly sizeBytes: number;
 } & Readonly<Record<string, unknown>>;
 
+export type ConversationMessage = {
+  readonly mentions: ReadonlyArray<string>;
+  readonly text: string;
+};
+
 export type ErrorCategory = "validation" | "authentication" | "authorization" | "conflict" | "transient" | "unknown_commit" | "dependency_unavailable" | "incompatible_version";
 
 export type ErrorEnvelope = {
@@ -136,6 +141,7 @@ export type HumanActor = {
 
 export type MessagePreview = {
   readonly contentType: string;
+  readonly conversation?: ConversationMessage;
   readonly language?: string;
   readonly riskFlags: ReadonlyArray<string>;
   readonly sensitivity: MessageSensitivity;

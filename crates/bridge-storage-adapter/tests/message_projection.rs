@@ -675,3 +675,149 @@ async fn current_message(inspector: &SqlitePool, message_id: MessageId) -> sqlx:
     .await
     .expect("当前消息可查询")
 }
+
+#[tokio::test]
+async fn 人类聊天持久化且自报同一账号不能篡改他人消息() {
+    let (temporary, store, _) = open_store().await;
+    let principal_id = agent_room_domain::ids::PrincipalId::from_uuid(Uuid::now_v7());
+    let human = ProjectedMessageActor::Human {
+        principal_id,
+        display_name: "小雨".to_owned(),
+        matrix_user_id: agent_room_application::ports::MatrixUserId::new("@rainy:matrix.test")
+            .expect("用户有效"),
+        avatar_url: None,
+    };
+    let impostor = ProjectedMessageActor::Human {
+        principal_id,
+        display_name: "小雨".to_owned(),
+        matrix_user_id: agent_room_application::ports::MatrixUserId::new("@impostor:matrix.test")
+            .expect("用户有效"),
+        avatar_url: None,
+    };
+    let id = MessageId::from_uuid(Uuid::now_v7());
+    let mut mutation = preview_mutation(
+        "$human-chat",
+        id,
+        human.clone(),
+        1_000,
+        "原始问题",
+        1,
+        Some(1_000),
+    );
+    if let MessageProjectionMutation::Preview(message) = &mut mutation {
+        message.preview = message.preview.clone().with_conversation(
+            agent_room_domain::messages::ConversationMessage::new(
+                "原始问题".to_owned(),
+                vec!["@agent:matrix.test".to_owned()],
+            )
+            .expect("聊天有效"),
+        );
+    }
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("human-chat"),
+            vec![
+                mutation,
+                replacement_mutation("$forged-edit", id, impostor, "伪造替换", 2),
+            ],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("投影成功");
+    let query = MessagePreviewQuery::new(room_id(), None, 20).expect("查询有效");
+    let page = store.list_previews(&query).await.expect("读取成功");
+    assert_eq!(page.previews()[0].actor, human);
+    assert_eq!(
+        page.previews()[0]
+            .preview
+            .conversation()
+            .expect("聊天仍在")
+            .text(),
+        "原始问题"
+    );
+    assert_eq!(page.previews()[0].preview.summary().as_str(), "原始问题");
+    drop(store);
+    let reopened = SqliteMessageTimelineRepository::open(
+        &temporary.path().join("messages.sqlite3"),
+        &MessageProjectionStorageKey::from_bytes([29; 32]),
+    )
+    .await
+    .expect("数据库可重开");
+    let recovered = reopened
+        .list_previews(&query)
+        .await
+        .expect("重开后可读取人类聊天");
+    assert_eq!(recovered.previews()[0].actor, human);
+    assert_eq!(
+        recovered.previews()[0]
+            .preview
+            .conversation()
+            .expect("聊天已持久化")
+            .text(),
+        "原始问题"
+    );
+}
+
+#[tokio::test]
+async fn 增量分页不遗漏突发消息且拒绝跨房间游标() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let mutations = (0..6)
+        .map(|index| {
+            preview_mutation(
+                &format!("$chat-{index}"),
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                1000,
+                "连续消息",
+                index + 1,
+                Some(1000),
+            )
+        })
+        .collect();
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("incremental"),
+            mutations,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("写入成功");
+    let first = store
+        .list_previews(
+            &MessagePreviewQuery::after(room_id(), event_id("$chat-0"), 2).expect("游标有效"),
+        )
+        .await
+        .expect("分页成功");
+    assert_eq!(
+        first
+            .previews()
+            .iter()
+            .map(|message| message.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["$chat-1", "$chat-2"]
+    );
+    let next = store
+        .list_previews(
+            &MessagePreviewQuery::after(room_id(), event_id("$chat-2"), 2).expect("游标有效"),
+        )
+        .await
+        .expect("分页成功");
+    assert_eq!(
+        next.previews()
+            .iter()
+            .map(|message| message.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["$chat-3", "$chat-4"]
+    );
+    let foreign = MatrixRoomId::new("!elsewhere:matrix.test").expect("房间有效");
+    assert!(
+        store
+            .list_previews(
+                &MessagePreviewQuery::after(foreign, event_id("$chat-0"), 2).expect("格式有效")
+            )
+            .await
+            .is_err()
+    );
+}

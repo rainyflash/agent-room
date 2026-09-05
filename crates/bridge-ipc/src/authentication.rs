@@ -200,14 +200,14 @@ mod tests {
     fn offer(caller: IpcCallerKind) -> IpcHandshakeOffer {
         IpcHandshakeOffer::new(
             caller,
-            [IpcProtocolVersion::V1_0],
+            [IpcProtocolVersion::V2_0],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试握手有效")
     }
 
     fn agreement(offer: &IpcHandshakeOffer) -> agent_room_bridge_core::ipc::IpcHandshakeAgreement {
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V2_0], FoundationIpcScopePolicy)
             .expect("测试协商器有效")
             .negotiate(offer)
             .expect("测试握手可协商")

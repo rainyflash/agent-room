@@ -651,3 +651,107 @@ fn timeline_event(
 fn room_id() -> MatrixRoomId {
     MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效")
 }
+
+#[tokio::test]
+async fn 人类聊天与新版_agent_消息进入同一投影并隔离伪造主体() {
+    let fixture = 测试夹具::new();
+    let mut human = preview_payload(
+        Uuid::now_v7(),
+        room_id().as_str(),
+        "2026-09-05T12:00:00.000Z",
+        None,
+    );
+    human["schemaVersion"] = json!("2.0");
+    human["eventType"] = json!("io.github.rainyflash.agentroom.message.preview.v2");
+    human["actor"] = json!({"kind": "human", "principalId": Uuid::now_v7(), "displayName": "小雨", "matrixUserId": ACTOR_MATRIX_ID});
+    human["preview"]["contentType"] = json!("text/plain");
+    human["content"]["mediaType"] = json!("text/plain");
+    human["preview"]["conversation"] =
+        json!({"text": "你怎么看？", "mentions": ["@assistant:matrix.test"]});
+    let mut forged = human.clone();
+    forged["id"] = json!(Uuid::now_v7());
+    forged["actor"]["matrixUserId"] = json!("@someone-else:matrix.test");
+    let mut invalid_kind = human.clone();
+    invalid_kind["id"] = json!(Uuid::now_v7());
+    invalid_kind["actor"]["kind"] = json!("agent");
+    let mut agent = preview_payload(
+        Uuid::now_v7(),
+        room_id().as_str(),
+        "2026-09-05T12:00:01.000Z",
+        None,
+    );
+    agent["schemaVersion"] = json!("2.0");
+    agent["eventType"] = json!("io.github.rainyflash.agentroom.message.preview.v2");
+    agent["actor"]["kind"] = json!("agent");
+    let unsigned = agent.clone();
+    sign_payload(&fixture.signing_key, &mut agent);
+    let sync = MatrixSyncBatch::new(
+        sync_token_for_chat(),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![
+                timeline_event(
+                    "$human",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    human,
+                    None,
+                ),
+                timeline_event(
+                    "$forged",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    forged,
+                    None,
+                ),
+                timeline_event(
+                    "$wrong-kind",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    invalid_kind,
+                    None,
+                ),
+                timeline_event(
+                    "$agent-v2",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    agent,
+                    None,
+                ),
+                timeline_event(
+                    "$unsigned-agent",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    unsigned,
+                    None,
+                ),
+            ],
+            Vec::new(),
+        )],
+    );
+    let result = fixture
+        .service()
+        .process(&sync)
+        .await
+        .expect("合法事件可被投影");
+    assert_eq!(result.accepted_events, 2);
+    assert_eq!(result.isolated_events, 3);
+    let batches = fixture.projections.batches.lock().expect("锁可用");
+    let MessageProjectionMutation::Preview(message) = &batches[0].mutations()[0] else {
+        panic!("应为聊天消息");
+    };
+    assert!(matches!(
+        message.actor,
+        agent_room_bridge_core::messages::ProjectedMessageActor::Human { .. }
+    ));
+    assert_eq!(
+        message.actor.instance_verification(),
+        ProjectedActorInstanceVerification::MatrixSenderMatched
+    );
+    assert_eq!(
+        message.preview.conversation().expect("保留聊天").text(),
+        "你怎么看？"
+    );
+}
+
+fn sync_token_for_chat() -> MatrixSyncToken {
+    MatrixSyncToken::new("chat-sync").expect("游标有效")
+}

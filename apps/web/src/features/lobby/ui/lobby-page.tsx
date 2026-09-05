@@ -279,6 +279,7 @@ function ReadyLobby({
       </AnimatePresence>
       {selectedDirectSessionId === null ? (
         <MessageLayer
+          participants={room.agents}
           catalogId={catalogId}
           onSelectedMessageChange={onSelectedMessageChange}
           roomId={room.roomId}

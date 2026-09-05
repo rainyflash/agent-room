@@ -1,3 +1,4 @@
+import { decryptContent } from './browser-content-cipher';
 import type { MessageContentReference } from '@/features/messages/domain/message';
 import type {
   ContentFailure,
@@ -29,6 +30,7 @@ export class BrowserContentVerifier implements ContentVerifier {
   async verify(
     downloaded: DownloadedContent,
     expected: MessageContentReference,
+    roomId?: string,
   ): Promise<Result<VerifiedContent, ContentFailure>> {
     if (
       downloaded.bytes.byteLength !== expected.sizeBytes ||
@@ -55,10 +57,19 @@ export class BrowserContentVerifier implements ContentVerifier {
       return err(failure('content.digest_mismatch'));
     }
 
+    let bytes = downloaded.bytes;
+    if (expected.encryption !== undefined) {
+      if (roomId === undefined) return err(failure('content.invalid_response'));
+      try {
+        bytes = await decryptContent(bytes, expected.encryption, roomId, mediaType);
+      } catch {
+        return err(failure('content.digest_mismatch'));
+      }
+    }
     if (!textMediaTypes.has(mediaType)) {
       return ok(
         Object.freeze({
-          bytes: downloaded.bytes,
+          bytes,
           digestSha256: actualDigest,
           mediaType,
           mode: 'download',
@@ -66,10 +77,10 @@ export class BrowserContentVerifier implements ContentVerifier {
       );
     }
     try {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(downloaded.bytes);
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       return ok(
         Object.freeze({
-          bytes: downloaded.bytes,
+          bytes,
           digestSha256: actualDigest,
           mediaType,
           mode: 'text',

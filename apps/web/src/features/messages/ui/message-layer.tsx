@@ -1,3 +1,5 @@
+import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
+import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +14,7 @@ import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
 
 export type MessageLayerProps = {
+  readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -19,9 +22,11 @@ export type MessageLayerProps = {
   readonly roomName: string;
   readonly selectedMessageId: string | null;
   readonly variant?: 'direct' | 'room';
+  readonly writesAllowed?: boolean;
 };
 
 export function MessageLayer({
+  participants,
   catalogId,
   onLatestDisplayed,
   onSelectedMessageChange,
@@ -29,6 +34,7 @@ export function MessageLayer({
   roomName,
   selectedMessageId,
   variant = 'room',
+  writesAllowed = true,
 }: MessageLayerProps) {
   const {
     content,
@@ -45,7 +51,11 @@ export function MessageLayer({
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
   const projectedSignals = useMemo(
-    () => projectMessageSignals(projectedMessages, variant === 'direct' ? 'direct' : 'room'),
+    () =>
+      projectMessageSignals(
+        projectedMessages.filter((message) => message.preview?.conversation === undefined),
+        variant === 'direct' ? 'direct' : 'room',
+      ),
     [projectedMessages, variant],
   );
   const selectedMessage =
@@ -81,6 +91,16 @@ export function MessageLayer({
   return (
     <>
       <div className={`message-hub message-hub--${variant}`}>
+        <ConversationPanel
+          key={`chat:${roomId}`}
+          writesAllowed={writesAllowed}
+          publisher={messagePublisher}
+          roomId={roomId}
+          roomName={roomName}
+          messages={projectedMessages}
+          {...(participants === undefined ? {} : { participants })}
+          state={state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'}
+        />
         <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
         {state.kind === 'loading' ? null : (
           <SignalDock
@@ -92,12 +112,14 @@ export function MessageLayer({
             state={state.kind === 'ready' ? 'ready' : 'failed'}
           />
         )}
-        <MessageComposer
-          key={roomId}
-          publisher={messagePublisher}
-          roomId={roomId}
-          roomName={roomName}
-        />
+        {writesAllowed ? (
+          <MessageComposer
+            key={roomId}
+            publisher={messagePublisher}
+            roomId={roomId}
+            roomName={roomName}
+          />
+        ) : null}
       </div>
       <AnimatePresence>
         {selectedMessage === null ? null : (

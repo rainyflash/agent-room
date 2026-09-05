@@ -206,6 +206,7 @@ export function ContentInspector({
                       matrixEventId: message.matrixEventId,
                       messageId: message.messageId,
                       reference,
+                      roomId: message.roomId,
                     },
                     type: 'OPEN',
                   });
@@ -302,10 +303,16 @@ export function ContentInspector({
                 <Bot aria-hidden="true" />
                 <div>
                   <strong>{t('handoff.gate.title')}</strong>
-                  <p>{t('handoff.gate.detail')}</p>
+                  <p>
+                    {t(
+                      reference.encryption === undefined
+                        ? 'handoff.gate.detail'
+                        : 'handoff.gate.encrypted',
+                    )}
+                  </p>
                 </div>
                 <Button
-                  disabled={handoffOpen}
+                  disabled={handoffOpen || reference.encryption !== undefined}
                   onClick={() => {
                     setHandoffOpen(true);
                   }}
@@ -315,7 +322,7 @@ export function ContentInspector({
                   {t('handoff.gate.open')}
                 </Button>
               </section>
-              {handoffOpen ? (
+              {handoffOpen && reference.encryption === undefined ? (
                 <HandoffPanel
                   gateway={handoffGateway}
                   message={{ ...message, content: reference, preview }}

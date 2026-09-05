@@ -269,7 +269,8 @@
             "maxLength": 64,
             "pattern": "^[a-z][a-z0-9_]*$"
           }
-        }
+        },
+        "conversation": { "$ref": "#/$defs/ConversationMessage" }
       },
       "additionalProperties": true,
       "maxProperties": 16
@@ -869,6 +870,29 @@
       ],
       "additionalProperties": true,
       "maxProperties": 20
+    },
+    "ConversationMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "mentions"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "mentions": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 255,
+            "pattern": "^@[^\\s:]+:[^\\s]+$"
+          }
+        }
+      }
     }
   }
 }

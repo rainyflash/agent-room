@@ -405,7 +405,7 @@ where
     }
 
     let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V2_0], FoundationIpcScopePolicy)
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
@@ -1347,6 +1347,7 @@ mod tests {
         let page = handler
             .dispatch(IpcMethod::ListPreviews(
                 agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    after_event_id: None,
                     room_id: None,
                     before_event_id: None,
                     limit: 20,
@@ -1528,6 +1529,7 @@ mod tests {
 
         let response = handler
             .dispatch(IpcMethod::OpenContent(IpcOpenContentRequest {
+                room_id: None,
                 content_id: content_id.to_string(),
             }))
             .await
@@ -1588,6 +1590,8 @@ mod tests {
         );
         let submission_id = Uuid::now_v7().to_string();
         let request = IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
             submission_id: Some(submission_id.clone()),
             automation_grant_id: Some(测试自动授权标识().to_string()),
             room_id: room_id.as_str().to_owned(),
@@ -1755,7 +1759,7 @@ mod tests {
                 if handoff.handoff_id == handoff_id.to_string()
                     && handoff.body == "正文"
                     && handoff.source_event_id == "$message:matrix.test"
-                    && handoff.source_actor.agent.display_name == "Codex Agent"
+                    && matches!(&handoff.source_actor, agent_room_bridge_ipc::IpcActorSummary::Agent { agent, .. } if agent.display_name == "Codex Agent")
                     && handoff.purpose == "summarize"
                     && handoff.risk_flags == ["external_link"]
         ));
@@ -1934,7 +1938,7 @@ mod tests {
         source: &ProjectedMessagePreview,
         target_instance_id: AgentInstanceId,
     ) -> ContextHandoff {
-        let actor = source.actor.identity();
+        let actor = source.actor.agent_identity().expect("测试来源为 Agent");
         let mut handoff = ContextHandoff::propose(ContextHandoffFields {
             id: HandoffId::from_uuid(Uuid::now_v7()),
             requester_agent_id: 测试_agent_身份().agent_id(),
@@ -2041,7 +2045,7 @@ mod tests {
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DiagnosticCli,
-            [IpcProtocolVersion::V1_0],
+            [IpcProtocolVersion::V2_0],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试提议有效");
@@ -2050,7 +2054,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::DiagnosticCli,
-                supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
+                supported_versions: vec![IpcVersion { major: 2, minor: 0 }],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
@@ -2058,7 +2062,7 @@ mod tests {
         .expect("客户端问候可发送");
         let (challenge_id, challenge) = read_challenge(&mut client).await;
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V1_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V2_0], FoundationIpcScopePolicy)
                 .expect("测试协商器有效")
                 .negotiate(&offer)
                 .expect("测试提议可协商");
@@ -2158,7 +2162,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::McpServer,
-                supported_versions: vec![IpcVersion { major: 1, minor: 0 }],
+                supported_versions: vec![IpcVersion { major: 2, minor: 0 }],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )

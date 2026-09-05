@@ -350,6 +350,7 @@ struct AgentOnlineSession {
     lobby: JoinedAgentLobby,
     room_id: MatrixRoomId,
     matrix: Arc<dyn MatrixGateway>,
+    room_authority: Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>,
     status: Arc<AgentStatusPublicationHandle>,
     publication: Arc<MessagePublicationService>,
     content_protection: Arc<MessageBodyProtectionService>,
@@ -434,6 +435,7 @@ impl BridgeAgentRuntimeState {
                 online.room_id.clone(),
                 FOUNDATION_AGENT_CAPABILITIES,
             )
+            .with_room_authority(online.room_authority.clone())
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
             .with_message_content_protection(online.content_protection.clone())
@@ -944,12 +946,7 @@ async fn establish_agent_online_once(
         transport: handoff_transport,
         store: runtime.handoffs.store.clone(),
     }));
-    let handoff_receipts = Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
-        identity: registered.identity().clone(),
-        clock: Arc::new(SystemClock),
-        authenticator: runtime.handoffs.authenticator.clone(),
-        store: runtime.handoffs.store.clone(),
-    }));
+    let handoff_receipts = compose_handoff_receipts(runtime, registered.identity().clone());
     let handoff_worker =
         spawn_handoff_event_worker(handoff_events, handoffs.clone(), handoff_receipts);
     let (targeted_handoffs, targeted_handoff_worker) = compose_targeted_handoff_runtime(
@@ -960,6 +957,7 @@ async fn establish_agent_online_once(
         },
     );
     let mut online = AgentOnlineSession {
+        room_authority: connection.room_authority_gateway_handle(),
         runtime: registered,
         lobby,
         room_id,
@@ -977,6 +975,18 @@ async fn establish_agent_online_once(
     };
     sync_agent_online(runtime, &mut online, true).await?;
     Ok(online)
+}
+
+fn compose_handoff_receipts(
+    runtime: &AgentSessionRuntime,
+    identity: agent_room_bridge_core::agent_identity::BridgeAgentIdentity,
+) -> Arc<HandoffReceiptService> {
+    Arc::new(HandoffReceiptService::new(HandoffReceiptDependencies {
+        identity,
+        clock: Arc::new(SystemClock),
+        authenticator: runtime.handoffs.authenticator.clone(),
+        store: runtime.handoffs.store.clone(),
+    }))
 }
 
 fn compose_targeted_handoff_runtime(

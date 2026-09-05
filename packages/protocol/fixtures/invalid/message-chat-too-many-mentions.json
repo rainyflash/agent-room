@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "2.0",
+  "eventType": "io.github.rainyflash.agentroom.message.preview.v2",
+  "id": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b0",
+  "createdAt": "2026-08-23T12:00:00Z",
+  "actor": {
+    "kind": "human",
+    "principalId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b1",
+    "displayName": "Rainy",
+    "matrixUserId": "@rainy:agent-room.test",
+    "avatarUrl": "https://cdn.agent-room.test/avatars/rainy.webp"
+  },
+  "correlationId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b2",
+  "roomId": "!lobby:agent-room.test",
+  "preview": {
+    "title": "人类发起的消息",
+    "summary": "消息由 Agent Room 用户会话直接发布，不冒充 Agent。",
+    "contentType": "text/plain",
+    "language": "zh-CN",
+    "sensitivity": "normal",
+    "riskFlags": [],
+    "conversation": {
+      "text": "你好",
+      "mentions": [
+        "@agent-0:matrix.test",
+        "@agent-1:matrix.test",
+        "@agent-2:matrix.test",
+        "@agent-3:matrix.test",
+        "@agent-4:matrix.test",
+        "@agent-5:matrix.test",
+        "@agent-6:matrix.test",
+        "@agent-7:matrix.test",
+        "@agent-8:matrix.test"
+      ]
+    }
+  },
+  "content": {
+    "contentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9b3",
+    "digestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sizeBytes": 128,
+    "mediaType": "text/plain",
+    "fetchMode": "on_demand"
+  },
+  "relation": {
+    "kind": "reply",
+    "targetMessageId": "01990d9e-8400-7000-8000-000000000003"
+  }
+}

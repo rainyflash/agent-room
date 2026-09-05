@@ -76,7 +76,7 @@ export class ControlPlaneMessagePublicationContentGateway implements MessagePubl
       body: JSON.stringify({
         accessMode: 'room_member',
         byteLength: request.body.bytes.byteLength,
-        encryptionMode: 'server_side',
+        encryptionMode: request.encryptionMode ?? 'server_side',
         matrixRoomId: request.roomId,
         mediaType: request.mediaType,
         sha256: request.body.digestSha256,
@@ -97,6 +97,7 @@ export class ControlPlaneMessagePublicationContentGateway implements MessagePubl
       begun.value.matrixRoomId !== request.roomId ||
       begun.value.sha256 !== request.body.digestSha256 ||
       begun.value.byteLength !== request.body.bytes.byteLength ||
+      begun.value.encryptionMode !== (request.encryptionMode ?? 'server_side') ||
       begun.value.mediaType !== request.mediaType
     ) {
       return begun.ok ? err(invalidResponse(begin.value.correlationId)) : begun;
@@ -120,6 +121,7 @@ export class ControlPlaneMessagePublicationContentGateway implements MessagePubl
       completed.value.sha256 !== request.body.digestSha256 ||
       completed.value.byteLength !== request.body.bytes.byteLength ||
       completed.value.mediaType !== request.mediaType ||
+      completed.value.encryptionMode !== (request.encryptionMode ?? 'server_side') ||
       completed.value.lifecycleState !== 'active'
     ) {
       return completed.ok ? err(invalidResponse(complete.value.correlationId)) : completed;

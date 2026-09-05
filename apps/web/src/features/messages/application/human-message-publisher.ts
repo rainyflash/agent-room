@@ -109,9 +109,21 @@ export class HumanMessagePublisher implements MessagePublisher {
       return await this.#submitRecord(existing.value, true, onProgress);
     }
 
+    // 首次上传前持久化密文，网络重试和重新加载必须复用同一密钥、随机数与幂等键。
+    const scope = `${identity.value.matrixUserId}:${identity.value.principalId}:${fingerprint.value}`;
+    const cached = this.#journal.readBody(scope);
+    if (!cached.ok) return cached;
+    const protectedBody =
+      cached.value === null
+        ? await this.#matrix.protectBody(request, prepared.value)
+        : ok(cached.value);
+    if (!protectedBody.ok) return protectedBody;
+    const cachedWrite = this.#journal.writeBody(scope, protectedBody.value);
+    if (!cachedWrite.ok) return cachedWrite;
     onProgress('uploading');
     const uploaded = await this.#content.upload({
-      body: prepared.value,
+      body: protectedBody.value.body,
+      encryptionMode: protectedBody.value.encryption === undefined ? 'server_side' : 'client_e2ee',
       mediaType: request.mediaType,
       roomId: request.roomId,
       submissionId: request.submissionId,
@@ -122,7 +134,12 @@ export class HumanMessagePublisher implements MessagePublisher {
     const record = createRecord(
       request,
       identity.value,
-      uploaded.value,
+      {
+        ...uploaded.value,
+        ...(protectedBody.value.encryption === undefined
+          ? {}
+          : { encryption: protectedBody.value.encryption }),
+      },
       fingerprint.value,
       this.#clock(),
     );
@@ -130,6 +147,7 @@ export class HumanMessagePublisher implements MessagePublisher {
     if (!written.ok) {
       return written;
     }
+    this.#journal.releaseBody(scope, request.submissionId);
     return await this.#submitRecord(record, false, onProgress);
   }
 
@@ -150,6 +168,8 @@ export class HumanMessagePublisher implements MessagePublisher {
   ): Promise<Result<string, MessagePublicationFailure>> {
     const canonical = JSON.stringify({
       bodyDigestSha256: prepared.digestSha256,
+      conversation: request.conversation ?? null,
+      relation: request.relation ?? null,
       language: request.language ?? null,
       mediaType: request.mediaType,
       riskFlags: [...request.riskFlags],
@@ -168,6 +188,13 @@ export class HumanMessagePublisher implements MessagePublisher {
     reused: boolean,
     onProgress: (stage: PublicationProgressStage) => void,
   ): Promise<MessagePublicationResult> {
+    const identity = await this.resolveIdentity();
+    if (!identity.ok) return identity;
+    if (
+      record.event.actor.matrixUserId !== identity.value.matrixUserId ||
+      record.event.actor.principalId !== identity.value.principalId
+    )
+      return err(identityFailure(false));
     let matrixEventId = record.matrixEventId;
     matrixEventId ??=
       this.#matrix.findByTransaction(record.roomId, record.transactionId) ?? undefined;
@@ -238,6 +265,7 @@ function createRecord(
   });
   const eventContent = Object.freeze({ ...content, fetchMode: 'on_demand' as const });
   const preview = Object.freeze({
+    ...(request.conversation === undefined ? {} : { conversation: request.conversation }),
     contentType: request.mediaType,
     ...(request.language === undefined ? {} : { language: request.language }),
     riskFlags: Object.freeze([...request.riskFlags]),
@@ -253,6 +281,7 @@ function createRecord(
     eventType,
     id: request.submissionId,
     preview,
+    ...(request.relation === undefined ? {} : { relation: request.relation }),
     roomId: request.roomId,
     schemaVersion: '2.0',
   });

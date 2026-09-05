@@ -237,6 +237,9 @@ function Conversation({
         </div>
         <div className="direct-conversation__actions">
           <Button
+            aria-label={t(
+              principalBlocked ? 'directSessions.action.unblock' : 'directSessions.action.block',
+            )}
             disabled={controller.blocking}
             icon={
               controller.blocking ? (
@@ -288,6 +291,8 @@ function Conversation({
             <span>{t('directSessions.conversation.previewDetail')}</span>
           </div>
           <MessageLayer
+            writesAllowed={session.contactPolicy.deliveryAllowed}
+            participants={[session.target]}
             catalogId={session.catalogId}
             onLatestDisplayed={(matrixEventId) => {
               void controller.markDisplayed(matrixRoomId, matrixEventId);

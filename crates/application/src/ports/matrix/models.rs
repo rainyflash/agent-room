@@ -298,6 +298,7 @@ impl MatrixPowerLevel {
 /// 单次权威状态查询得到的内容读取授权证据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatrixRoomAuthority {
+    encryption: MatrixRoomEncryption,
     joined: bool,
     power_level: MatrixPowerLevel,
     message_send_power_level: MatrixPowerLevel,
@@ -306,6 +307,7 @@ pub struct MatrixRoomAuthority {
 impl MatrixRoomAuthority {
     pub const fn joined(power_level: MatrixPowerLevel) -> Self {
         Self {
+            encryption: MatrixRoomEncryption::Unencrypted,
             joined: true,
             power_level,
             message_send_power_level: MatrixPowerLevel::Finite(0),
@@ -317,6 +319,7 @@ impl MatrixRoomAuthority {
         message_send_power_level: MatrixPowerLevel,
     ) -> Self {
         Self {
+            encryption: MatrixRoomEncryption::Unencrypted,
             joined: true,
             power_level,
             message_send_power_level,
@@ -325,10 +328,21 @@ impl MatrixRoomAuthority {
 
     pub const fn not_joined() -> Self {
         Self {
+            encryption: MatrixRoomEncryption::Unencrypted,
             joined: false,
             power_level: MatrixPowerLevel::Finite(0),
             message_send_power_level: MatrixPowerLevel::Finite(0),
         }
+    }
+
+    #[must_use]
+    pub const fn with_encryption(mut self, encryption: MatrixRoomEncryption) -> Self {
+        self.encryption = encryption;
+        self
+    }
+
+    pub const fn encryption(self) -> MatrixRoomEncryption {
+        self.encryption
     }
 
     pub const fn is_joined(self) -> bool {

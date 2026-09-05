@@ -18,6 +18,13 @@ const DEFAULT_HANDOFF_LIMIT: u16 = 20;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListPreviewsInput {
+    /// 增量读取此事件之后的消息，按到达顺序返回；不能与 beforeEventId 并用。
+    #[schemars(length(max = EVENT_ID_BYTES))]
+    pub after_event_id: Option<String>,
+    /// 已开启对话时最多等待 25 秒；空房间首次等待可以省略 afterEventId。
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 25))]
+    pub wait_seconds: u8,
     /// 可选 Matrix 房间 ID；省略时读取当前大厅。
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: Option<String>,
@@ -33,6 +40,7 @@ pub struct ListPreviewsInput {
 impl From<ListPreviewsInput> for IpcListPreviewsRequest {
     fn from(input: ListPreviewsInput) -> Self {
         Self {
+            after_event_id: input.after_event_id,
             room_id: input.room_id,
             before_event_id: input.before_event_id,
             limit: input.limit,
@@ -87,6 +95,9 @@ impl From<GetPresenceInput> for IpcGetPresenceRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OpenContentInput {
+    /// 内容所属房间，省略时使用默认大厅。
+    #[schemars(length(max = ROOM_ID_BYTES))]
+    pub room_id: Option<String>,
     /// 消息预览给出的内容 UUID。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub content_id: String,
@@ -95,6 +106,7 @@ pub struct OpenContentInput {
 impl From<OpenContentInput> for IpcOpenContentRequest {
     fn from(input: OpenContentInput) -> Self {
         Self {
+            room_id: input.room_id,
             content_id: input.content_id,
         }
     }
@@ -190,6 +202,13 @@ impl From<MessageProvenanceInput> for IpcMessageProvenance {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SendMessageInput {
+    /// 普通聊天设为 true：只需正文，标题和摘要由接入层生成。
+    #[serde(default)]
+    pub chat: bool,
+    /// 提及的 Matrix 用户身份，最多 8 个；只有聊天可以携带。
+    #[serde(default)]
+    #[schemars(length(max = 8), inner(length(max = 255)))]
+    pub mentions: Vec<String>,
     /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub submission_id: Option<String>,
@@ -201,20 +220,24 @@ pub struct SendMessageInput {
     pub room_id: String,
     /// 预览标题，最多 120 个字符。
     #[schemars(length(max = TITLE_CHARACTERS))]
+    #[serde(default)]
     pub title: String,
     /// 预览摘要，最多 500 个字符。
     #[schemars(length(max = SUMMARY_CHARACTERS))]
+    #[serde(default)]
     pub summary: String,
     /// 完整正文，当前单次最多 48 KiB。
     #[schemars(length(max = INLINE_TEXT_BYTES))]
     pub body: String,
     /// 正文媒体类型，例如 text/markdown。
     #[schemars(length(max = MEDIA_TYPE_BYTES))]
+    #[serde(default = "default_chat_media_type")]
     pub media_type: String,
     /// 可选 BCP 47 语言标签。
     #[schemars(length(max = LANGUAGE_BYTES))]
     pub language: Option<String>,
     /// 内容敏感度。
+    #[serde(default = "default_chat_sensitivity")]
     pub sensitivity: MessageSensitivityInput,
     /// 小写蛇形风险标记。
     #[serde(default)]
@@ -229,12 +252,26 @@ pub struct SendMessageInput {
 
 impl From<SendMessageInput> for IpcSendMessageRequest {
     fn from(input: SendMessageInput) -> Self {
+        let summary: String = input
+            .body
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(500)
+            .collect();
         Self {
+            chat: input.chat,
+            mentions: input.mentions,
             submission_id: input.submission_id,
             automation_grant_id: input.automation_grant_id,
             room_id: input.room_id,
-            title: input.title,
-            summary: input.summary,
+            title: if input.chat {
+                summary.chars().take(120).collect()
+            } else {
+                input.title
+            },
+            summary: if input.chat { summary } else { input.summary },
             body: input.body,
             media_type: input.media_type,
             language: input.language,
@@ -312,5 +349,43 @@ mod tests {
         if let Ok(input) = serde_json::from_slice::<T>(bytes) {
             let _ = into_method(input).validate();
         }
+    }
+}
+
+fn default_chat_media_type() -> String {
+    "text/plain".to_owned()
+}
+const fn default_chat_sensitivity() -> MessageSensitivityInput {
+    MessageSensitivityInput::Normal
+}
+
+#[cfg(test)]
+mod conversation_tests {
+    use super::{ListPreviewsInput, SendMessageInput};
+    use agent_room_bridge_ipc::{IpcMethod, IpcSendMessageRequest};
+
+    #[test]
+    fn 普通聊天可省略标题摘要并保留稳定提及和回复() {
+        let input: SendMessageInput = serde_json::from_value(serde_json::json!({
+            "chat": true, "body": "你好\n一起讨论", "roomId": "!room:matrix.test", "mentions": ["@agent:matrix.test"],
+            "replyToMessageId": "01990d9e-8400-7000-8000-000000000003", "provenance": "human_confirmed_agent"
+        })).expect("聊天入参有效");
+        let request: IpcSendMessageRequest = input.into();
+        assert_eq!(request.title, "你好 一起讨论");
+        assert_eq!(request.media_type, "text/plain");
+        assert_eq!(request.mentions, ["@agent:matrix.test"]);
+        assert!(request.reply_to_message_id.is_some());
+        IpcMethod::SendMessage(request)
+            .validate()
+            .expect("聊天可发送");
+    }
+
+    #[test]
+    fn 双向游标不能同时使用() {
+        let input: ListPreviewsInput = serde_json::from_value(
+            serde_json::json!({ "afterEventId": "$a", "beforeEventId": "$b" }),
+        )
+        .expect("JSON 有效");
+        assert!(IpcMethod::ListPreviews(input.into()).validate().is_err());
     }
 }

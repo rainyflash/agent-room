@@ -184,6 +184,7 @@ function validSource(source: HandoffSource): boolean {
     matrixEventIdPattern.test(source.matrixEventId) &&
     uuidV7Pattern.test(source.messageId) &&
     validActor(source.actor) &&
+    source.content.encryption === undefined &&
     uuidV7Pattern.test(source.content.contentId) &&
     /^[0-9a-f]{64}$/u.test(source.content.digestSha256) &&
     Number.isSafeInteger(source.content.sizeBytes) &&

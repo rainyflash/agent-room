@@ -1,3 +1,11 @@
+import { encryptContent } from './browser-content-cipher';
+import type {
+  MessagePublicationRequest,
+  PreparedMessageBody,
+  MessagePublicationFailure,
+  ProtectedMessageBody,
+} from '../domain/publication';
+import type { Result } from '@/shared/result';
 import type { IContent } from 'matrix-js-sdk';
 
 import type {
@@ -13,6 +21,46 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
 
   constructor(clients: MatrixClientSource) {
     this.#clients = clients;
+  }
+
+  async #encrypted(roomId: string): Promise<boolean> {
+    const client = this.#clients.current();
+    if (client === null || client.getRoom(roomId)?.getMyMembership() !== 'join')
+      throw new Error('当前会话不可用');
+    try {
+      const state: unknown = await client.getStateEvent(roomId, 'm.room.encryption', '');
+      if (
+        typeof state !== 'object' ||
+        state === null ||
+        Reflect.get(state, 'algorithm') !== 'm.megolm.v1.aes-sha2'
+      )
+        throw new Error('不支持的房间加密算法');
+      return true;
+    } catch (error: unknown) {
+      if (
+        httpStatus(error) === 404 &&
+        typeof error === 'object' &&
+        error !== null &&
+        Reflect.get(error, 'errcode') === 'M_NOT_FOUND'
+      )
+        return false;
+      throw error;
+    }
+  }
+
+  async protectBody(
+    request: MessagePublicationRequest,
+    body: PreparedMessageBody,
+  ): Promise<Result<ProtectedMessageBody, MessagePublicationFailure>> {
+    try {
+      return ok(
+        (await this.#encrypted(request.roomId))
+          ? await encryptContent(body, request.submissionId, request.roomId, request.mediaType)
+          : { body },
+      );
+    } catch {
+      return err({ code: 'publication.matrix_rejected', retryable: true });
+    }
   }
 
   currentUserId(): string | null {
@@ -44,6 +92,12 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
       return err(unavailable());
     }
     try {
+      if (request.event.actor.matrixUserId !== client.getUserId()) return err(rejected(false));
+      const encrypted = await this.#encrypted(request.roomId);
+      if (encrypted !== (request.event.content.encryption !== undefined))
+        return err(rejected(false));
+      if (encrypted && !(await client.getCrypto()?.isEncryptionEnabledInRoom(request.roomId)))
+        return err(unavailable());
       const sendEvent: MatrixEventSender = client.sendEvent.bind(client);
       const response = await sendEvent(
         request.roomId,

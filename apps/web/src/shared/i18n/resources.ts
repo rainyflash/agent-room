@@ -1,3 +1,4 @@
+import { conversationResources } from '@/features/conversation/i18n/conversation-resources';
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
@@ -365,9 +366,9 @@ export const resources = {
       'directSessions.rail.title': 'Direct conversations',
       'directSessions.rail.open': 'Open conversation with {{name}}',
       'directSessions.conversation.eyebrow': 'DIRECT AGENT SESSION',
-      'directSessions.conversation.previewTitle': 'Preview first',
+      'directSessions.conversation.previewTitle': 'Talk here',
       'directSessions.conversation.previewDetail':
-        'Full content stays closed until you explicitly inspect a verified reference.',
+        'Chat directly here. Open shared documents only when you need their full content.',
       'directSessions.action.close': 'Close direct conversation',
       'directSessions.action.retry': 'Retry',
       'directSessions.action.block': 'Block',
@@ -510,6 +511,8 @@ export const resources = {
         'The browser could not prepare its local translation model. Try again later.',
       'messages.translation.failure.translation_failed':
         'Local translation failed. The verified original is still available.',
+      'handoff.gate.encrypted':
+        'Encrypted documents cannot be handed to another agent yet. Discuss them in this room.',
       'handoff.gate.title': 'Give verified content to an Agent',
       'handoff.gate.detail':
         'Viewing stops here. A separate cloud approval chooses one exact account instance, scope, purpose, and expiry.',
@@ -699,6 +702,7 @@ export const resources = {
       'pwa.writeBlocked.update_required':
         'A newer runtime is waiting. Apply it before sending with the current protocol.',
       ...automationResources.en,
+      ...conversationResources.en,
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
       ...onboardingResources.en,
@@ -1036,9 +1040,8 @@ export const resources = {
       'directSessions.rail.title': '直接会话',
       'directSessions.rail.open': '打开与 {{name}} 的会话',
       'directSessions.conversation.eyebrow': 'AGENT 直接会话',
-      'directSessions.conversation.previewTitle': '先看预览',
-      'directSessions.conversation.previewDetail':
-        '完整正文保持关闭，只有你明确检查已验证引用时才会读取。',
+      'directSessions.conversation.previewTitle': '直接交流',
+      'directSessions.conversation.previewDetail': '在这里直接聊天；分享的长文资料仍由你按需打开。',
       'directSessions.action.close': '关闭直接会话',
       'directSessions.action.retry': '重试',
       'directSessions.action.block': '屏蔽',
@@ -1166,6 +1169,7 @@ export const resources = {
       'messages.translation.failure.unavailable': '此桌面浏览器不提供该语言组合的本地翻译。',
       'messages.translation.failure.creation_failed': '浏览器无法准备本地翻译模型，请稍后重试。',
       'messages.translation.failure.translation_failed': '本地翻译失败，已验证原文仍然可用。',
+      'handoff.gate.encrypted': '加密资料暂不能转交其他 Agent，可在当前房间直接讨论。',
       'handoff.gate.title': '把已验证内容交给 Agent',
       'handoff.gate.detail':
         '查看正文到此为止。交付需要独立的云端授权，明确选择账号实例、范围、用途和期限。',
@@ -1330,6 +1334,7 @@ export const resources = {
       'pwa.writeBlocked.offline': '网络离线；本次请求不会进入不可控的盲目重放队列。',
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',
       ...automationResources['zh-CN'],
+      ...conversationResources['zh-CN'],
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
       ...onboardingResources['zh-CN'],

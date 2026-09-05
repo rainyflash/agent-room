@@ -108,15 +108,25 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
     join: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
   },
 );
+const conversationListeners = new Set<() => void>();
+const publishedConversations: RoomMessageSignal[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
-      messages: testMessages(requestedRoomId),
+      messages: [
+        ...testMessages(requestedRoomId),
+        ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
+      ],
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
     }),
-  subscribe: () => noop,
+  subscribe: (_roomId, listener) => {
+    conversationListeners.add(listener);
+    return () => {
+      conversationListeners.delete(listener);
+    };
+  },
 };
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
 let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
@@ -421,6 +431,36 @@ class FixtureMessagePublisher implements MessagePublisher {
   ) {
     securityActionCounts.messagePublishes += 1;
     onProgress('submitting');
+    if (request.conversation !== undefined) {
+      publishedConversations.push({
+        actor: {
+          kind: 'human',
+          provenance: 'human',
+          displayName: 'Build Agent',
+          matrixUserId: '@build-agent:agent-room.test',
+          principalId: '01990d9e-8400-7000-8000-000000000001',
+        },
+        content: null,
+        edited: false,
+        endToEndEncrypted: false,
+        lifecycle: 'active',
+        matrixEventId: `$fixture-${request.submissionId}`,
+        messageId: request.submissionId,
+        preview: {
+          conversation: request.conversation,
+          contentType: request.mediaType,
+          riskFlags: request.riskFlags,
+          sensitivity: request.sensitivity,
+          summary: request.summary,
+          title: request.title,
+        },
+        ...(request.relation === undefined ? {} : { relation: request.relation }),
+        roomId: request.roomId,
+        serverTimestamp: Date.now(),
+        signatureStatus: 'matrix_sender_matched',
+      });
+      for (const listener of conversationListeners) listener();
+    }
     return Promise.resolve(
       ok({
         kind: 'published' as const,

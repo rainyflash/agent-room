@@ -47,5 +47,6 @@ export type ContentVerifier = {
   verify(
     downloaded: DownloadedContent,
     expected: MessageContentReference,
+    roomId?: string,
   ): Promise<Result<VerifiedContent, ContentFailure>>;
 };

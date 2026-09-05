@@ -6283,3 +6283,88 @@ p.message-dock__headline {
     display: grid;
   }
 }
+
+/* 大厅聊天与资料、私聊入口共享可用空间。 */
+.message-hub:has(.conversation-panel) {
+  display: flex;
+  width: min(410px, calc(100% - 120px));
+  left: 100px;
+  flex-direction: column;
+  align-items: stretch;
+  max-height: calc(100dvh - 192px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.message-hub:has(.conversation-panel) > * {
+  flex: 0 0 auto;
+}
+.message-hub:has(.conversation-panel) .message-dock {
+  width: 100%;
+}
+.message-hub:has(.conversation-panel) .message-composer {
+  width: 100%;
+}
+.message-hub:has(.message-composer) > .conversation-panel,
+.message-hub:has(.message-composer) > .federation-read-only {
+  display: none;
+}
+.message-hub--direct:has(.conversation-panel) {
+  left: 0;
+  width: 100%;
+  max-height: none;
+}
+.message-hub--direct:has(.conversation-panel) .message-dock {
+  height: auto;
+  max-height: 240px;
+  flex-basis: auto;
+}
+@media (max-width: 720px) {
+  .message-hub--room:has(.conversation-panel) {
+    left: 12px;
+    right: 12px;
+    width: calc(100% - 24px);
+    bottom: 134px;
+    max-height: calc(100dvh - 208px);
+    gap: 7px;
+  }
+  .message-hub:has(.conversation-panel) .message-composer-launcher {
+    position: static;
+    width: auto;
+    min-height: 36px;
+    align-self: flex-end;
+    padding: 0 10px;
+  }
+  .message-hub:has(.conversation-panel) .message-composer-launcher > span {
+    display: inline;
+  }
+  .message-hub--room:has(.message-composer) {
+    left: 0;
+    right: 0;
+    width: 100%;
+    bottom: 56px;
+    max-height: calc(100svh - 120px);
+    z-index: 48;
+  }
+  .direct-session-dock:not(.direct-session-dock--open) {
+    grid-template-columns: minmax(0, 1fr);
+    width: max-content;
+    max-width: calc(100vw - 16px);
+  }
+  .direct-session-dock:not(.direct-session-dock--open) .direct-session-rail__sessions {
+    min-width: 0;
+  }
+  .direct-session-dock:not(.direct-session-dock--open) .direct-session-rail {
+    flex-direction: row;
+    width: auto;
+    max-width: calc(100vw - 16px);
+  }
+  .direct-session-dock:not(.direct-session-dock--open) .direct-session-rail__sessions {
+    display: flex;
+    overflow-x: auto;
+  }
+  .message-hub--direct:has(.conversation-panel) {
+    inset: 0;
+    width: 100%;
+    gap: 7px;
+  }
+}

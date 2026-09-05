@@ -24,6 +24,44 @@ describe('MatrixSdkHumanMessageGateway', () => {
     );
   });
 
+  it('私聊只上传密文，且无法读取加密状态时不降级', async () => {
+    const base = client(vi.fn());
+    const encrypted = new MatrixSdkHumanMessageGateway(
+      source({
+        getRoom: base.getRoom.bind(base),
+        getUserId: base.getUserId.bind(base),
+        sendEvent: base.sendEvent.bind(base),
+        getStateEvent: () => Promise.resolve({ algorithm: 'm.megolm.v1.aes-sha2' }),
+        getCrypto: () => ({ isEncryptionEnabledInRoom: () => Promise.resolve(true) }),
+      } as unknown as MatrixClient),
+    );
+    const intent = {
+      ...request().event.preview,
+      body: '你好',
+      roomId: request().roomId,
+      submissionId: request().event.id,
+      mediaType: 'text/plain' as const,
+      sensitivity: 'normal' as const,
+    };
+    const body = { bytes: new TextEncoder().encode(intent.body), digestSha256: 'a'.repeat(64) };
+    const protectedBody = await encrypted.protectBody(intent, body);
+    expect(protectedBody.ok).toBe(true);
+    if (protectedBody.ok) {
+      expect(protectedBody.value.encryption).toBeDefined();
+      expect(protectedBody.value.body.bytes).not.toEqual(body.bytes);
+    }
+    const unavailable = new MatrixSdkHumanMessageGateway(
+      source({
+        getRoom: base.getRoom.bind(base),
+        getUserId: base.getUserId.bind(base),
+        sendEvent: base.sendEvent.bind(base),
+        getStateEvent: () => Promise.reject(new Error('断网')),
+      } as unknown as MatrixClient),
+    );
+    expect((await unavailable.protectBody(intent, body)).ok).toBe(false);
+    expect((await encrypted.publish(request())).ok).toBe(false);
+  });
+
   it('按事务标识只恢复当前用户自己的 v2 事件', () => {
     const matching = event('$accepted', '@rainy:agent-room.test', transactionId);
     const foreign = event('$foreign', '@other:agent-room.test', transactionId);
@@ -63,9 +101,14 @@ function source(value: MatrixClient | null): MatrixClientSource {
 
 function client(sendEvent: ReturnType<typeof vi.fn>, events: readonly MatrixEvent[] = []) {
   const room = {
+    getMyMembership: () => 'join',
     getLiveTimeline: () => ({ getEvents: () => [...events] }),
   } as unknown as Room;
   return {
+    getStateEvent: () =>
+      Promise.reject(
+        Object.assign(new Error('无加密状态'), { httpStatus: 404, errcode: 'M_NOT_FOUND' }),
+      ),
     getRoom: () => room,
     getUserId: () => '@rainy:agent-room.test',
     sendEvent,

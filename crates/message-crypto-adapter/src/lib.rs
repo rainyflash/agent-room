@@ -437,3 +437,36 @@ mod tests {
         }
     }
 }
+
+#[test]
+fn 与浏览器共用固定正文加密向量() {
+    use agent_room_application::ports::MatrixRoomId;
+    use agent_room_domain::{content::ContentMediaType, ids::ContentEncryptionContextId};
+    let bytes = "c33824711b4d2edd2c23ac5d889e13f199b74796f6b1bc4c77a5f69755eb"
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            u8::from_str_radix(std::str::from_utf8(pair).expect("十六进制"), 16).expect("字节")
+        })
+        .collect::<Vec<_>>();
+    let encryption = ClientContentEncryption::new(
+        ClientContentEncryptionAlgorithm::Aes256GcmV1,
+        ContentEncryptionContextId::from_uuid(
+            uuid::Uuid::parse_str("01990d9e-8400-7000-8000-000000000003").expect("上下文"),
+        ),
+        [7; 32],
+        [9; 12],
+        14,
+    )
+    .expect("有效元数据");
+    let cipher = AesGcmMessageContentCipher::new(MessageContentRootKey::from_bytes([1; 32]));
+    let opened = cipher
+        .decrypt(&DecryptMessageContentRequest {
+            room_id: &MatrixRoomId::new("!private:matrix.test").expect("房间"),
+            media_type: &ContentMediaType::new("text/plain").expect("类型"),
+            ciphertext: &bytes,
+            encryption: &encryption,
+        })
+        .expect("协议向量可解密");
+    assert_eq!(opened.as_ref(), "你好，Agent".as_bytes());
+}

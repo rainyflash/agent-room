@@ -1,3 +1,5 @@
+import { contentEncryptionSchema } from './content-encryption-schema';
+import { conversationSchema } from '@/features/conversation/adapters/conversation-schema';
 import { z } from 'zod';
 
 import {
@@ -58,7 +60,11 @@ const legacyActorSchema = z
           .max(2_048)
           .regex(/^https:\/\//u)
           .optional(),
-        displayName: z.string().min(1).max(80),
+        displayName: z
+          .string()
+          .min(1)
+          .max(160)
+          .refine((value) => Array.from(value).length <= 80),
         matrixUserId: matrixUserIdSchema,
       })
       .superRefine(limitProperties(16)),
@@ -74,7 +80,11 @@ const agentReferenceSchema = z
       .max(2_048)
       .regex(/^https:\/\//u)
       .optional(),
-    displayName: z.string().min(1).max(80),
+    displayName: z
+      .string()
+      .min(1)
+      .max(160)
+      .refine((value) => Array.from(value).length <= 80),
     matrixUserId: matrixUserIdSchema,
   })
   .superRefine(limitProperties(16));
@@ -85,7 +95,11 @@ const humanActorSchema = z
       .max(2_048)
       .regex(/^https:\/\//u)
       .optional(),
-    displayName: z.string().min(1).max(80),
+    displayName: z
+      .string()
+      .min(1)
+      .max(160)
+      .refine((value) => Array.from(value).length <= 80),
     kind: z.literal('human'),
     matrixUserId: matrixUserIdSchema,
     principalId: uuidV7Schema,
@@ -102,6 +116,7 @@ const agentActorSchema = z
 const currentActorSchema = z.discriminatedUnion('kind', [humanActorSchema, agentActorSchema]);
 const contentSchema = z
   .looseObject({
+    encryption: contentEncryptionSchema.optional(),
     contentId: uuidV7Schema,
     digestSha256: z.string().regex(/^[0-9a-f]{64}$/u),
     fetchMode: z.literal('on_demand'),
@@ -115,6 +130,7 @@ const contentSchema = z
   .superRefine(limitProperties(16));
 const previewSchema = z
   .looseObject({
+    conversation: conversationSchema.optional(),
     contentType: mediaTypeSchema,
     language: z
       .string()
@@ -133,8 +149,16 @@ const previewSchema = z
       .max(16)
       .refine((flags) => new Set(flags).size === flags.length),
     sensitivity: z.enum(messageSensitivities),
-    summary: z.string().min(1).max(500),
-    title: z.string().min(1).max(120),
+    summary: z
+      .string()
+      .min(1)
+      .max(1000)
+      .refine((value) => Array.from(value).length <= 500),
+    title: z
+      .string()
+      .min(1)
+      .max(240)
+      .refine((value) => Array.from(value).length <= 120),
   })
   .superRefine(limitProperties(16));
 const relationSchema = z
@@ -466,7 +490,14 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
     !parsed.success ||
     parsed.data.roomId !== roomId ||
     actorMatrixUserId(parsed.data) !== event.sender ||
+    (parsed.data.content.encryption !== undefined &&
+      (!event.endToEndEncrypted ||
+        parsed.data.content.encryption.contextId !== parsed.data.id ||
+        parsed.data.content.sizeBytes !==
+          parsed.data.content.encryption.plaintextSizeBytes + 16)) ||
     parsed.data.preview.contentType !== parsed.data.content.mediaType ||
+    (parsed.data.preview.conversation !== undefined &&
+      parsed.data.preview.contentType !== 'text/plain') ||
     event.eventId === undefined ||
     !validServerTimestamp(event.serverTimestamp)
   ) {
@@ -493,7 +524,11 @@ function parseRevision(roomId: string, event: MatrixMessageTimelineEvent): Parse
   if (
     !parsed.success ||
     parsed.data.roomId !== roomId ||
-    actorMatrixUserId(parsed.data) !== event.sender
+    actorMatrixUserId(parsed.data) !== event.sender ||
+    (parsed.data.content?.encryption !== undefined &&
+      (!event.endToEndEncrypted ||
+        parsed.data.content.encryption.contextId !== parsed.data.id ||
+        parsed.data.content.sizeBytes !== parsed.data.content.encryption.plaintextSizeBytes + 16))
   ) {
     return null;
   }
@@ -575,6 +610,7 @@ function actorMatrixUserId(event: ParsedPreviewEvent | ParsedRevisionEvent): str
 
 function toContent(content: z.output<typeof contentSchema>): MessageContentReference {
   return Object.freeze({
+    ...(content.encryption === undefined ? {} : { encryption: content.encryption }),
     contentId: content.contentId,
     digestSha256: content.digestSha256,
     mediaType: content.mediaType,
@@ -584,6 +620,14 @@ function toContent(content: z.output<typeof contentSchema>): MessageContentRefer
 
 function toPreview(preview: z.output<typeof previewSchema>): MessagePreview {
   return Object.freeze({
+    ...(preview.conversation === undefined
+      ? {}
+      : {
+          conversation: Object.freeze({
+            text: preview.conversation.text,
+            mentions: Object.freeze([...preview.conversation.mentions]),
+          }),
+        }),
     contentType: preview.contentType,
     ...(preview.language === undefined ? {} : { language: preview.language }),
     riskFlags: Object.freeze([...preview.riskFlags]),

@@ -109,10 +109,11 @@ impl SqliteMessageTimelineRepository {
         &self,
         query: &MessagePreviewQuery,
     ) -> Result<MessagePreviewPage, MessageTimelineQueryFailure> {
-        let cursor_sequence = match query.before_event_id() {
+        let cursor_sequence = match query.after_event_id().or(query.before_event_id()) {
             Some(cursor) => Some(self.resolve_cursor(query.room_id(), cursor).await?),
             None => None,
         };
+        let forward = query.after_event_id().is_some();
         let fetch_limit = i64::from(query.limit()) + 1;
         let rows = sqlx::query(
             "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
@@ -120,13 +121,19 @@ impl SqliteMessageTimelineRepository {
                     relation_target_message_id
              FROM message_current_projection
              WHERE room_id = ? AND visibility = 'active'
-               AND (? IS NULL OR first_sequence < ?)
-             ORDER BY first_sequence DESC
+               AND (? IS NULL OR (? = 1 AND first_sequence > ?) OR (? = 0 AND first_sequence < ?))
+             ORDER BY CASE WHEN ? = 1 THEN first_sequence END ASC,
+                      CASE WHEN ? = 0 THEN first_sequence END DESC
              LIMIT ?",
         )
         .bind(query.room_id().as_str())
         .bind(cursor_sequence)
+        .bind(forward)
         .bind(cursor_sequence)
+        .bind(forward)
+        .bind(cursor_sequence)
+        .bind(forward)
+        .bind(forward)
         .bind(fetch_limit)
         .fetch_all(&self.pool)
         .await
@@ -189,8 +196,10 @@ impl SqliteMessageTimelineRepository {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredActor {
-    agent_id: String,
-    instance_id: String,
+    agent_id: Option<String>,
+    instance_id: Option<String>,
+    principal_id: Option<String>,
+    kind: Option<String>,
     display_name: String,
     matrix_user_id: String,
     avatar_url: Option<String>,
@@ -201,6 +210,7 @@ struct StoredActor {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredPreview {
+    conversation: Option<StoredConversation>,
     title: String,
     summary: String,
     content_type: String,
@@ -289,11 +299,30 @@ fn decode_preview_row(
 
 fn decode_actor(value: &str) -> Result<ProjectedMessageActor, MessageTimelineQueryFailure> {
     let stored = serde_json::from_str::<StoredActor>(value).map_err(|_| corrupt_query())?;
+    if stored.kind.as_deref() == Some("human") {
+        if stored.agent_id.is_some() || stored.instance_id.is_some() || stored.provenance != "human"
+        {
+            return Err(corrupt_query());
+        }
+        return Ok(ProjectedMessageActor::Human {
+            principal_id: agent_room_domain::ids::PrincipalId::from_uuid(parse_v7(
+                stored.principal_id.as_deref().ok_or_else(corrupt_query)?,
+            )?),
+            display_name: stored.display_name,
+            matrix_user_id: agent_room_application::ports::MatrixUserId::new(stored.matrix_user_id)
+                .map_err(|_| corrupt_query())?,
+            avatar_url: stored.avatar_url,
+        });
+    }
     let mut identity = BridgeAgentIdentity::new(
-        AgentId::from_uuid(parse_v7(&stored.agent_id)?),
+        AgentId::from_uuid(parse_v7(
+            stored.agent_id.as_deref().ok_or_else(corrupt_query)?,
+        )?),
         stored.display_name,
         stored.matrix_user_id,
-        AgentInstanceId::from_uuid(parse_v7(&stored.instance_id)?),
+        AgentInstanceId::from_uuid(parse_v7(
+            stored.instance_id.as_deref().ok_or_else(corrupt_query)?,
+        )?),
     )
     .map_err(|_| corrupt_query())?;
     if let Some(avatar_url) = stored.avatar_url {
@@ -325,14 +354,21 @@ fn decode_preview(value: &str) -> Result<MessagePreview, MessageTimelineQueryFai
         .collect::<Result<Vec<_>, _>>()
         .and_then(MessageRiskFlags::new)
         .map_err(|_| corrupt_query())?;
-    Ok(MessagePreview::new(
+    let mut result = MessagePreview::new(
         MessageTitle::new(stored.title).map_err(|_| corrupt_query())?,
         MessageSummary::new(stored.summary).map_err(|_| corrupt_query())?,
         ContentMediaType::new(stored.content_type).map_err(|_| corrupt_query())?,
         language,
         MessageSensitivity::try_from(stored.sensitivity.as_str()).map_err(|_| corrupt_query())?,
         risk_flags,
-    ))
+    );
+    if let Some(chat) = stored.conversation {
+        result = result.with_conversation(
+            agent_room_domain::messages::ConversationMessage::new(chat.text, chat.mentions)
+                .map_err(|_| corrupt_query())?,
+        );
+    }
+    Ok(result)
 }
 
 fn decode_content(
@@ -496,7 +532,7 @@ async fn insert_event(
         "INSERT INTO message_projection_event (
             event_id, room_id, sequence, event_kind, message_id, revision_id,
             revision_kind, created_at_unix_ms, origin_server_timestamp,
-            transaction_id, actor_agent_id, actor_json, preview_json,
+            transaction_id, actor_subject_key, actor_json, preview_json,
             content_json, relation_target_message_id, content_id
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING",
@@ -511,7 +547,7 @@ async fn insert_event(
     .bind(event.created_at_unix_ms)
     .bind(event.origin_server_timestamp)
     .bind(event.transaction_id.as_deref())
-    .bind(&event.actor_agent_id)
+    .bind(&event.actor_subject_key)
     .bind(&event.actor_json)
     .bind(event.preview_json.as_deref())
     .bind(event.content_json.as_deref())
@@ -543,7 +579,7 @@ async fn insert_current(
     sqlx::query(
         "INSERT INTO message_current_projection (
             message_id, room_id, base_event_id, first_sequence, last_sequence,
-            created_at_unix_ms, origin_server_timestamp, actor_agent_id,
+            created_at_unix_ms, origin_server_timestamp, actor_subject_key,
             actor_json, preview_json, content_json, relation_target_message_id,
             visibility, last_revision_event_id, content_id
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?)
@@ -556,7 +592,7 @@ async fn insert_current(
     .bind(sequence)
     .bind(event.created_at_unix_ms)
     .bind(event.origin_server_timestamp)
-    .bind(&event.actor_agent_id)
+    .bind(&event.actor_subject_key)
     .bind(&event.actor_json)
     .bind(preview_json)
     .bind(content_json)
@@ -574,7 +610,7 @@ async fn apply_pending_revisions(
     message_id: &str,
 ) -> Result<(), MessageProjectionStoreFailure> {
     let rows = sqlx::query(
-        "SELECT event_id, sequence, revision_kind, actor_agent_id,
+        "SELECT event_id, sequence, revision_kind, actor_subject_key,
                 preview_json, content_json, content_id
          FROM message_projection_event
          WHERE room_id = ? AND message_id = ? AND event_kind = 'revision'
@@ -601,8 +637,8 @@ async fn apply_pending_revisions(
                 revision_kind: row
                     .try_get("revision_kind")
                     .map_err(|_| corrupt_projection_failure())?,
-                actor_agent_id: row
-                    .try_get("actor_agent_id")
+                actor_subject_key: row
+                    .try_get("actor_subject_key")
                     .map_err(|_| corrupt_projection_failure())?,
                 preview_json: row
                     .try_get("preview_json")
@@ -634,7 +670,7 @@ async fn apply_revision(
             message_id: &event.message_id,
             sequence,
             revision_kind: revision_kind.to_owned(),
-            actor_agent_id: event.actor_agent_id.clone(),
+            actor_subject_key: event.actor_subject_key.clone(),
             preview_json: event.preview_json.clone(),
             content_json: event.content_json.clone(),
             content_id: event.content_id.clone(),
@@ -649,7 +685,7 @@ struct RevisionFields<'a> {
     message_id: &'a str,
     sequence: i64,
     revision_kind: String,
-    actor_agent_id: String,
+    actor_subject_key: String,
     preview_json: Option<String>,
     content_json: Option<String>,
     content_id: Option<String>,
@@ -687,7 +723,7 @@ async fn apply_replacement(
         "UPDATE message_current_projection
          SET preview_json = ?, content_json = ?, content_id = ?, last_revision_event_id = ?,
              last_sequence = MAX(last_sequence, ?)
-         WHERE room_id = ? AND message_id = ? AND actor_agent_id = ?
+         WHERE room_id = ? AND message_id = ? AND actor_subject_key = ?
            AND visibility = 'active'",
     )
     .bind(preview_json)
@@ -697,7 +733,7 @@ async fn apply_replacement(
     .bind(revision.sequence)
     .bind(revision.room_id)
     .bind(revision.message_id)
-    .bind(&revision.actor_agent_id)
+    .bind(&revision.actor_subject_key)
     .execute(&mut **transaction)
     .await
     .map(|_| ())
@@ -712,14 +748,14 @@ async fn apply_redaction(
         "UPDATE message_current_projection
          SET content_json = NULL, content_id = NULL, visibility = 'redacted',
              last_revision_event_id = ?, last_sequence = MAX(last_sequence, ?)
-         WHERE room_id = ? AND message_id = ? AND actor_agent_id = ?
+         WHERE room_id = ? AND message_id = ? AND actor_subject_key = ?
            AND visibility = 'active'",
     )
     .bind(&revision.event_id)
     .bind(revision.sequence)
     .bind(revision.room_id)
     .bind(revision.message_id)
-    .bind(&revision.actor_agent_id)
+    .bind(&revision.actor_subject_key)
     .execute(&mut **transaction)
     .await
     .map(|_| ())
@@ -802,7 +838,7 @@ struct EncodedMutation {
     created_at_unix_ms: i64,
     origin_server_timestamp: Option<i64>,
     transaction_id: Option<String>,
-    actor_agent_id: String,
+    actor_subject_key: String,
     actor_json: String,
     preview_json: Option<String>,
     content_json: Option<String>,
@@ -829,7 +865,7 @@ impl EncodedMutation {
                     .transaction_id
                     .as_ref()
                     .map(|value| value.as_str().to_owned()),
-                actor_agent_id: preview.actor.identity().agent_id().to_string(),
+                actor_subject_key: preview.actor.subject_key(),
                 actor_json: encode_actor(&preview.actor),
                 preview_json: Some(encode_preview(&preview.preview)),
                 content_json: Some(encode_content(
@@ -853,7 +889,7 @@ impl EncodedMutation {
                     .transaction_id
                     .as_ref()
                     .map(|value| value.as_str().to_owned()),
-                actor_agent_id: revision.actor.identity().agent_id().to_string(),
+                actor_subject_key: revision.actor.subject_key(),
                 actor_json: encode_actor(&revision.actor),
                 preview_json: revision.preview.as_ref().map(encode_preview),
                 content_json: revision
@@ -872,21 +908,24 @@ impl EncodedMutation {
 }
 
 fn encode_actor(actor: &ProjectedMessageActor) -> String {
-    let identity = actor.identity();
-    json!({
-        "agentId": identity.agent_id().to_string(),
-        "instanceId": identity.agent_instance_id().to_string(),
-        "displayName": identity.display_name(),
-        "matrixUserId": identity.matrix_user_id().as_str(),
-        "avatarUrl": identity.avatar_url(),
-        "provenance": actor.provenance().as_str(),
-        "instanceVerification": actor.instance_verification().as_str()
-    })
-    .to_string()
+    match actor {
+        ProjectedMessageActor::Human { principal_id, display_name, matrix_user_id, avatar_url } => json!({
+            "kind": "human", "principalId": principal_id.to_string(), "displayName": display_name,
+            "matrixUserId": matrix_user_id.as_str(), "avatarUrl": avatar_url,
+            "provenance": "human", "instanceVerification": "matrix_sender_matched",
+        }),
+        ProjectedMessageActor::Agent { identity, provenance, instance_verification } => json!({
+            "kind": "agent", "agentId": identity.agent_id().to_string(),
+            "instanceId": identity.agent_instance_id().to_string(), "displayName": identity.display_name(),
+            "matrixUserId": identity.matrix_user_id().as_str(), "avatarUrl": identity.avatar_url(),
+            "provenance": provenance.as_str(), "instanceVerification": instance_verification.as_str(),
+        }),
+    }.to_string()
 }
 
 fn encode_preview(preview: &MessagePreview) -> String {
     json!({
+        "conversation": preview.conversation().map(|chat| json!({"text": chat.text(), "mentions": chat.mentions()})),
         "title": preview.title().as_str(),
         "summary": preview.summary().as_str(),
         "contentType": preview.content_type().as_str(),
@@ -974,4 +1013,11 @@ const fn corrupt_projection_failure() -> MessageProjectionStoreFailure {
 
 const fn unavailable_projection_failure() -> MessageProjectionStoreFailure {
     MessageProjectionStoreFailure::new(MessageProjectionStoreFailureKind::Unavailable)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredConversation {
+    text: String,
+    mentions: Vec<String>,
 }

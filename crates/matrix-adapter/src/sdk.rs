@@ -653,7 +653,7 @@ impl MatrixRoomAuthorityGateway for MatrixSdkGateway {
                 return Ok(MatrixRoomAuthority::not_joined());
             }
 
-            let (power_levels, create_event) = tokio::try_join!(
+            let (power_levels, create_event, encryption) = tokio::try_join!(
                 get_state_content::<RoomPowerLevelsEventContent>(
                     &self.client,
                     room_id.clone(),
@@ -661,7 +661,14 @@ impl MatrixRoomAuthorityGateway for MatrixSdkGateway {
                     String::new(),
                     operation,
                 ),
-                get_room_create_event(&self.client, room_id, operation),
+                get_room_create_event(&self.client, room_id.clone(), operation),
+                get_state_content::<RoomEncryptionEventContent>(
+                    &self.client,
+                    room_id,
+                    StateEventType::RoomEncryption,
+                    String::new(),
+                    operation
+                ),
             )?;
             let create_event = create_event.ok_or_else(|| invalid_response_failure(operation))?;
             let power_level = effective_power_level(&user_id, power_levels.as_ref(), &create_event);
@@ -670,7 +677,12 @@ impl MatrixRoomAuthorityGateway for MatrixSdkGateway {
             Ok(MatrixRoomAuthority::joined_with_message_threshold(
                 power_level,
                 message_send_power_level,
-            ))
+            )
+            .with_encryption(if encryption.is_some() {
+                MatrixRoomEncryption::EndToEnd
+            } else {
+                MatrixRoomEncryption::Unencrypted
+            }))
         })
     }
 }

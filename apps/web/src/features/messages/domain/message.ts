@@ -1,3 +1,5 @@
+import type { ConversationMessage } from '@/features/conversation/domain/conversation';
+import type { ClientContentEncryption } from './content-encryption';
 import type { Result } from '@/shared/result';
 
 export const messageProvenances = ['human', 'human_confirmed_agent', 'autonomous_agent'] as const;
@@ -35,6 +37,7 @@ export type AgentMessageActor = {
 export type MessageActor = HumanMessageActor | AgentMessageActor;
 
 export type MessageContentReference = {
+  readonly encryption?: ClientContentEncryption;
   readonly contentId: string;
   readonly digestSha256: string;
   readonly mediaType: string;
@@ -42,6 +45,7 @@ export type MessageContentReference = {
 };
 
 export type MessagePreview = {
+  readonly conversation?: ConversationMessage;
   readonly contentType: string;
   readonly language?: string;
   readonly riskFlags: readonly string[];
