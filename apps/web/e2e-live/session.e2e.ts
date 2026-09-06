@@ -80,7 +80,9 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
       await second.evaluate(() => sessionStorage.getItem('agent-room.matrix-session.v1')),
     ).toBeNull();
     await second.screenshot({ path: join(tmpdir(), 'agent-room-live-login-restored.png') });
-    await second.getByRole('button', { name: /Sign out|退出登录/u }).click();
+    const signOut = second.getByRole('button', { name: /Sign out|退出登录/u });
+    await expect(signOut).toBeVisible();
+    await signOut.click();
     await expect(
       second.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u }),
     ).toBeVisible();

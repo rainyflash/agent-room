@@ -119,6 +119,18 @@ export function ConnectionWorkspace({
               {t('connection.action.openCloudWorkspace')}
             </Button>
           ) : null}
+          {context.principal !== null && !view.busy && action !== 'logout' ? (
+            <Button
+              icon={actionIcons.logout}
+              onClick={() => {
+                onAction('logout');
+              }}
+              size="large"
+              tone="ghost"
+            >
+              {t('connection.action.logout')}
+            </Button>
+          ) : null}
           {failure?.correlationId === undefined ? null : (
             <Button
               icon={<Clipboard aria-hidden="true" />}
