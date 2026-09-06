@@ -88,7 +88,6 @@ export function createSessionMachine(dependencies: SessionDependencies) {
   });
 
   const signOut = fromPromise(() => cleanupSession(dependencies));
-  const invalidateSession = fromPromise(() => cleanupSession(dependencies, true));
 
   return setup({
     types: {
@@ -98,13 +97,15 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     actors: {
       authenticate,
       loadControlSession,
-      invalidateSession,
       restoreMatrix,
       signOut,
       synchronize,
     },
     actions: {
       clearFailure: assign({ failure: null }),
+      clearPrivateState: () => {
+        dependencies.privateState.clear();
+      },
       clearResumePath: assign({ resumePath: null }),
       clearSession: assign({
         authenticationTarget: 'control',
@@ -398,7 +399,8 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         },
       },
       signingOut: {
-        entry: ['invalidatePrivateState', 'clearSession'],
+        // logout 自行停止连接并在清理完成前持有设备锁，避免其他窗口提前打开加密库。
+        entry: ['clearPrivateState', 'clearSession'],
         on: { LOGOUT: {} },
         invoke: {
           id: 'sign-out',
@@ -416,21 +418,10 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         },
       },
       invalidating: {
+        // 云端登录到期必须隔离界面，但不应注销独立的 Matrix 设备和加密历史。
+        // 再次登录后仍由 restore(expectedUserId) 校验账户；只有主动退出才撤销凭据。
         entry: ['invalidatePrivateState', 'clearSession'],
-        on: { LOGOUT: {} },
-        invoke: {
-          src: 'invalidateSession',
-          onDone: [
-            { guard: ({ event }) => event.output.ok, target: 'unauthenticated' },
-            {
-              target: 'signOutFailed',
-              actions: assign({
-                failure: ({ event }) => (event.output.ok ? null : event.output.error),
-              }),
-            },
-          ],
-          onError: { target: 'signOutFailed', actions: 'setUnexpectedFailure' },
-        },
+        always: 'unauthenticated',
       },
       signOutFailed: {
         on: { RETRY: 'signingOut' },

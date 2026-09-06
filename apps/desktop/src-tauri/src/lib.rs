@@ -28,8 +28,8 @@ use commands::{
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_detect_agent_hosts, desktop_install_update, desktop_load_matrix_session,
     desktop_lobby_snapshot, desktop_open_authorization, desktop_plan_agent_host,
-    desktop_remove_agent_host, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_save_matrix_session, desktop_set_autostart,
+    desktop_remove_agent_host, desktop_restore_human_session, desktop_retry_bridge,
+    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -109,6 +109,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_save_matrix_session,
             desktop_clear_matrix_session,
             desktop_clear_human_session,
+            desktop_restore_human_session,
             desktop_runtime_snapshot,
             desktop_retry_bridge,
             desktop_set_autostart,
@@ -180,9 +181,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
 fn setup_user_sessions(app: &tauri::App, config: &DesktopBridgeConfig) -> Result<(), String> {
     let human_sessions = HumanSessionRuntime::system(config)
         .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
-    human_sessions
-        .restore(app.handle())
-        .map_err(|failure| format!("桌面人类会话恢复失败 [{}]", failure.code()))?;
+    // 由前端启动时的 restore 命令恢复，保证请求顺序并把存储故障呈现为可恢复界面。
     app.manage(human_sessions);
     app.manage(MatrixSessionRuntime::system(config));
     app.manage(MatrixCredentialRuntime::system(config));

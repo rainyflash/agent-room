@@ -657,6 +657,12 @@
           "markdownDescription": "Enables the desktop_remove_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_restore_human_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-restore-human-session",
+          "markdownDescription": "Enables the desktop_restore_human_session command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_retry_bridge command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-retry-bridge",
@@ -781,6 +787,12 @@
           "type": "string",
           "const": "deny-desktop-remove-agent-host",
           "markdownDescription": "Denies the desktop_remove_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_restore_human_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-restore-human-session",
+          "markdownDescription": "Denies the desktop_restore_human_session command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_retry_bridge command without any pre-configured scope.",

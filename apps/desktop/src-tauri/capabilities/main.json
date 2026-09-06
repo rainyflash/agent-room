@@ -13,6 +13,7 @@
     "allow-desktop-save-matrix-session",
     "allow-desktop-clear-matrix-session",
     "allow-desktop-clear-human-session",
+    "allow-desktop-restore-human-session",
     "allow-desktop-runtime-snapshot",
     "allow-desktop-retry-bridge",
     "allow-desktop-set-autostart",

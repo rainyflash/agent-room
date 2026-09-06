@@ -18,6 +18,7 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
     bootstrapDefaultAgent: unused,
     checkUpdate: unused,
     clearHumanSession: () => Promise.resolve(ok(undefined)),
+    restoreHumanSession: () => Promise.resolve(ok(true)),
     configureAgentRuntime: unused,
     installUpdate: unused,
     isAvailable: () => true,
@@ -32,6 +33,48 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
 }
 
 describe('桌面 Control Plane 会话适配器', () => {
+  it('冷启动必须等系统凭据恢复完成，不能提前把缺少 Cookie 判断为未登录', async () => {
+    const restored =
+      Promise.withResolvers<Awaited<ReturnType<DesktopRuntimeGateway['restoreHumanSession']>>>();
+    const fetch = vi.fn(() => Promise.resolve(Response.json({}, { status: 401 })));
+    const restoreHumanSession = vi.fn(() => restored.promise);
+    const client = new DesktopControlPlaneClient({
+      controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test', fetch }),
+      runtime: runtime({ restoreHumanSession }),
+    });
+    const pending = client.readSession();
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(restoreHumanSession).toHaveBeenCalledOnce();
+    restored.resolve(ok(true));
+    await pending;
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('系统凭据暂时不可读时保留可重试错误，不误报未登录', async () => {
+    const fetch = vi.fn();
+    const client = new DesktopControlPlaneClient({
+      controlPlane: new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test', fetch }),
+      runtime: runtime({
+        restoreHumanSession: () =>
+          Promise.resolve(
+            err({
+              code: 'desktop.human_session.storage_unavailable',
+              retryable: true,
+            }),
+          ),
+      }),
+    });
+    await expect(client.readSession()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'desktop.human_session.storage_unavailable',
+        retryable: true,
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('系统浏览器回调完成后才导航，并把结果映射为已建立会话', async () => {
     const navigate = vi.fn();
     const beginHumanAuthentication = vi.fn(() =>

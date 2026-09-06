@@ -198,6 +198,43 @@ describe('Web 会话状态机', () => {
     actor.stop();
   });
 
+  it('账户登录到期只锁定界面，重新登录同一账户仍复用已保存的通信设备', async () => {
+    const logout = vi.fn<MatrixGateway['logout']>().mockResolvedValue(ok(undefined));
+    const restore = vi
+      .fn<MatrixGateway['restore']>()
+      .mockResolvedValue(ok({ kind: 'connected', connection: connection() }));
+    const readSession = vi
+      .fn<ControlPlaneGateway['readSession']>()
+      .mockResolvedValueOnce(
+        err({
+          boundary: 'control-plane',
+          code: 'authentication.session_required',
+          offline: false,
+          retryable: false,
+        }),
+      )
+      .mockResolvedValue(ok(session));
+    const runtime = dependencies({
+      controlPlane: {
+        readSession,
+        beginAuthentication: () => Promise.resolve(ok({ kind: 'session-established' })),
+      },
+      matrix: { logout, restore },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+    expect(actor.getSnapshot().context.principal).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
+    actor.send({ type: 'LOGIN' });
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+    expect(restore).toHaveBeenCalledWith(session.matrixUserId);
+    actor.send({ type: 'LOGOUT' });
+    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+    expect(logout).toHaveBeenCalledOnce();
+    actor.stop();
+  });
+
   it('Matrix 不可用时保留独立的云端账户能力', async () => {
     const runtime = dependencies({
       matrix: {

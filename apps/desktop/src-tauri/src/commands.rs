@@ -181,6 +181,16 @@ pub(crate) fn desktop_clear_human_session(
     Ok(sessions.clear(&app)?)
 }
 
+/// 只返回是否恢复成功，登录 Secret 始终留在系统凭据库和 `HttpOnly` Cookie 边界。
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_restore_human_session(
+    app: AppHandle,
+    sessions: State<'_, HumanSessionRuntime>,
+) -> Result<bool, DesktopCommandFailure> {
+    Ok(sessions.restore(&app)?)
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) async fn desktop_bootstrap_default_agent(

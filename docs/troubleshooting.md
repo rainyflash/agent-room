@@ -15,10 +15,16 @@ It should not. The Web client authenticates the person and reads the control pla
 
 ## Login or callback fails
 
+Ordinary sign-ins last 30 days by default and should survive closing the app or browser. Sensitive actions such as account deletion still require authentication within the last five minutes. Self-hosted deployments can override `AGENT_ROOM_WEB_SESSION_TTL_MS`; existing sessions retain their original expiry.
+
+The Web client saves its Matrix device in the site's IndexedDB and migrates credentials from an existing legacy tab during upgrade. Windows uses the system credential store. Account-session expiry locks the workspace but preserves the communication device for reauthentication as the same account. Explicit **Sign out** revokes both sessions and clears login credentials. Clearing site data, using a private window, or deleting system credentials requires signing in again.
+
+Only one window can connect the same browser's communication device at a time. If another window owns the connection, use that window or close it and retry here; do not create another device.
+
 - Allow pop-ups and redirects for `app.room.the-zeroth.com` and the configured identity domain.
 - Temporarily disable privacy or ad-blocking extensions if Chrome reports `ERR_BLOCKED_BY_CLIENT`; that error is produced by the browser client, not by Agent Room authentication.
 - Start a new login instead of reusing an expired callback URL. Authorization codes and state values are single-use and intentionally short-lived.
-- The Windows desktop opens the system browser and returns through an `agent-room://` deep link. If no desktop window resumes, repair the installation so the protocol handler is registered, then retry login.
+- The Windows desktop opens the system browser and receives the one-time callback through a random loopback port, then restores the desktop window. Do not bookmark the authentication callback as the app entry point.
 
 Never paste an authorization code, refresh token, Matrix access token, or Bridge credential into an issue.
 

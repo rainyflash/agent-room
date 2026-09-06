@@ -786,3 +786,75 @@ mod tests {
         assert!(validate_return_path("https://evil.example").is_err());
     }
 }
+
+#[cfg(all(test, target_os = "windows"))]
+mod credential_process_tests {
+    use super::{HumanSessionVault, KeyringHumanSessionVault, PersistedHumanSession, now_unix_ms};
+
+    const TEST_NAMESPACE: &str = "AGENT_ROOM_TEST_HUMAN_VAULT_NAMESPACE";
+    const TEST_PHASE: &str = "AGENT_ROOM_TEST_HUMAN_VAULT_PHASE";
+    const SYNTHETIC_SECRET: &str = "synthetic-session-for-process-persistence-test";
+
+    #[test]
+    fn windows_登录凭据跨进程保留且注销后不再恢复() {
+        let service = format!("dev.agent-room.test-human-session.{}", uuid::Uuid::now_v7());
+        let vault = KeyringHumanSessionVault::new(&service);
+        let executable = std::env::current_exe().expect("可获取测试进程路径");
+        for phase in ["save", "restore-and-clear", "check-cleared"] {
+            let result = std::process::Command::new(&executable)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "human_session::credential_process_tests::credential_process_probe",
+                ])
+                .env(TEST_NAMESPACE, &service)
+                .env(TEST_PHASE, phase)
+                .output()
+                .expect("可启动隔离凭据探针");
+            if !result.status.success() {
+                vault.delete_session().expect("失败后清理测试凭据");
+                panic!(
+                    "系统凭据跨进程验收失败，阶段 {phase}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+        assert!(vault.load_session().expect("可读取测试凭据库").is_none());
+    }
+
+    #[test]
+    #[ignore = "由父测试在不同原生进程中执行，使用唯一测试命名空间"]
+    fn credential_process_probe() {
+        let service = std::env::var(TEST_NAMESPACE).expect("必须显式指定测试命名空间");
+        assert!(service.starts_with("dev.agent-room.test-human-session."));
+        let vault = KeyringHumanSessionVault::new(service);
+        match std::env::var(TEST_PHASE)
+            .expect("必须指定验收阶段")
+            .as_str()
+        {
+            "save" => vault
+                .write_session(&PersistedHumanSession {
+                    session_secret: SYNTHETIC_SECRET.to_owned(),
+                    expires_at_unix_ms: now_unix_ms().expect("系统时间有效")
+                        + 30 * 24 * 60 * 60 * 1_000,
+                })
+                .expect("可写入真实 Windows 凭据库"),
+            "restore-and-clear" => {
+                let saved = vault
+                    .load_session()
+                    .expect("可读取真实 Windows 凭据库")
+                    .expect("上一进程的登录仍存在");
+                assert_eq!(saved.session_secret, SYNTHETIC_SECRET);
+                assert!(saved.expires_at_unix_ms > now_unix_ms().expect("系统时间有效"));
+                vault.delete_session().expect("可主动退出");
+            }
+            "check-cleared" => assert!(
+                vault
+                    .load_session()
+                    .expect("可读取真实 Windows 凭据库")
+                    .is_none()
+            ),
+            _ => panic!("未知验收阶段"),
+        }
+    }
+}

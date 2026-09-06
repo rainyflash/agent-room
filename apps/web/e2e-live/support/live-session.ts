@@ -115,17 +115,41 @@ export function collectUnhandledFailures(page: Page): string[] {
 }
 
 export async function readMatrixSession(page: Page): Promise<unknown> {
-  return await page.evaluate(() => {
-    const serialized = window.sessionStorage.getItem('agent-room.matrix-session.v1');
-    if (serialized === null) {
-      return null;
-    }
-    try {
-      return JSON.parse(serialized) as unknown;
-    } catch {
-      return null;
-    }
-  });
+  return await page.evaluate(
+    async (homeserver) =>
+      await new Promise<unknown>((resolve, reject) => {
+        const request = indexedDB.open('agent-room.sessions.v1', 1);
+        request.onerror = () => {
+          reject(new Error('Could not open session database', { cause: request.error }));
+        };
+        request.onsuccess = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains('matrix')) {
+            database.close();
+            resolve(null);
+            return;
+          }
+          const transaction = database.transaction('matrix', 'readonly');
+          transaction.oncomplete = () => {
+            database.close();
+          };
+          transaction.onabort = () => {
+            database.close();
+            reject(new Error('Session read aborted', { cause: transaction.error }));
+          };
+          const read = transaction.objectStore('matrix').get(homeserver);
+          read.onsuccess = () => {
+            const value: unknown = read.result;
+            resolve(
+              typeof value === 'object' && value !== null && 'session' in value
+                ? value.session
+                : null,
+            );
+          };
+        };
+      }),
+    matrixOrigin,
+  );
 }
 
 async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {

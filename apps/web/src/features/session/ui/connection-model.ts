@@ -106,11 +106,18 @@ const stateCopy: Readonly<
 };
 
 const failureCopy: Readonly<Record<string, TranslationKey>> = {
+  'browser.session_storage_unavailable': 'connection.state.failure.browserVaultUnavailable',
+  'browser.session_storage_corrupt': 'connection.state.failure.matrixVaultCorrupt',
+  'browser.session_lock_unavailable': 'connection.state.failure.browserVaultUnavailable',
+  'matrix.session_in_use': 'connection.state.failure.sessionInUse',
+  'matrix.session_superseded': 'connection.state.failure.sessionChanged',
   'desktop.matrix_session.vault_unavailable': 'connection.state.failure.matrixVaultUnavailable',
   'desktop.matrix_session.vault_corrupt': 'connection.state.failure.matrixVaultCorrupt',
   'desktop.matrix_session.credentials_invalid': 'connection.state.failure.matrixLogin',
   'desktop.matrix_session.vault_invalid_response': 'connection.state.failure.desktopVersion',
   'desktop.command.permission_denied': 'connection.state.failure.desktopVersion',
+  'desktop.human_session.vault_unavailable': 'connection.state.failure.humanVaultUnavailable',
+  'desktop.human_session.vault_corrupt': 'connection.state.failure.humanVaultCorrupt',
   'matrix.crypto_initialization_failed': 'connection.state.failure.matrixCrypto',
   'matrix.identity_mismatch': 'connection.state.failure.identityMismatch',
   'matrix.initial_sync_failed': 'connection.state.failure.matrixSync',
@@ -264,7 +271,7 @@ function failureMessage(context: SessionContext): TranslationKey | null {
   const boundaryCopy: Readonly<Record<typeof failure.boundary, TranslationKey>> = {
     browser: 'connection.state.failure.generic',
     'control-plane': 'connection.state.failure.control',
-    identity: 'connection.state.failure.identityMismatch',
+    identity: 'connection.state.failure.control',
     matrix: 'connection.state.failure.generic',
   };
   return failure.offline ? 'connection.state.failure.offline' : boundaryCopy[failure.boundary];

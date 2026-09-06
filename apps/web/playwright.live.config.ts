@@ -13,6 +13,7 @@ export default defineConfig({
   timeout: 120_000,
   workers: 1,
   use: {
+    actionTimeout: 20_000,
     baseURL: 'https://app.agent-room.localhost:18443',
     browserName: 'chromium',
     ...(process.env.CI ? {} : { channel: 'chrome' as const }),

@@ -98,6 +98,26 @@ describe('MatrixSessionRepository', () => {
     await expect(storage.load()).resolves.toEqual(ok(null));
   });
 
+  it('另一个窗口注销后丢弃过时刷新值，下次重试读取当前持久状态', async () => {
+    const storage = vault(null);
+    storage.save.mockResolvedValueOnce(
+      err({
+        boundary: 'browser',
+        code: 'matrix.session_superseded',
+        offline: false,
+        retryable: true,
+      }),
+    );
+    const repository = new MatrixSessionRepository(storage);
+    await expect(repository.save(rotated, repository.epoch)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_superseded' },
+    });
+    await expect(repository.load()).resolves.toEqual(ok(null));
+    expect(storage.save).toHaveBeenCalledOnce();
+    expect(storage.load).toHaveBeenCalledOnce();
+  });
+
   it('退出等待已开始的存储写入再执行清理', async () => {
     const storage = vault();
     const write = Promise.withResolvers<undefined>();

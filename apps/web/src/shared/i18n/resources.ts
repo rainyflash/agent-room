@@ -283,12 +283,22 @@ export const resources = {
       'connection.state.failure.generic': 'The dependency returned an unusable response.',
       'connection.state.failure.identityMismatch':
         'The Matrix identity does not match the authenticated Agent Room operator.',
+      'connection.state.failure.browserVaultUnavailable':
+        'This browser cannot access the saved sign-in. Allow site storage, then retry.',
+      'connection.state.failure.sessionInUse':
+        'Your room is connected in another window. Use that window, or close it and retry here.',
+      'connection.state.failure.sessionChanged':
+        'Your sign-in changed in another window. Retry to load the current session.',
       'connection.state.failure.matrixLogin': 'Matrix SSO could not establish a device session.',
       'connection.state.failure.matrixCrypto':
         'Matrix end-to-end encryption could not start. Private rooms remain closed; retry without clearing this device.',
       'connection.state.failure.matrixSync': 'Matrix did not reach a usable synchronized state.',
       'connection.state.failure.matrixVaultUnavailable':
         'The system credential store is unavailable. Retry to save or restore this Matrix session; it has not been marked as connected.',
+      'connection.state.failure.humanVaultUnavailable':
+        'Your saved sign-in is temporarily unavailable from the system credential store. Retry to restore it.',
+      'connection.state.failure.humanVaultCorrupt':
+        'The saved account sign-in is damaged. Sign in again to replace it.',
       'connection.state.failure.matrixVaultCorrupt':
         'The saved Matrix session could not be read. Sign out to clear it, then sign in again.',
       'connection.state.failure.desktopVersion':
@@ -966,6 +976,16 @@ export const resources = {
       'connection.state.signingOut.detail': '正在清理 Matrix 设备和控制平面会话。',
       'connection.state.failure.generic': '依赖返回了无法使用的响应。',
       'connection.state.failure.identityMismatch': 'Matrix 身份与已认证 Agent Room 操作者不一致。',
+      'connection.state.failure.humanVaultUnavailable':
+        '系统凭据库暂时无法读取已保存的登录，请重试恢复。',
+      'connection.state.failure.humanVaultCorrupt':
+        '本机保存的账户登录已损坏，请重新登录以替换它。',
+      'connection.state.failure.browserVaultUnavailable':
+        '浏览器暂时无法读取保存的登录状态，请允许站点存储后重试。',
+      'connection.state.failure.sessionInUse':
+        '大厅已在另一个窗口连接。请使用那个窗口，或关闭它后在这里重试。',
+      'connection.state.failure.sessionChanged':
+        '登录状态已在另一个窗口更新，请重试以读取当前会话。',
       'connection.state.failure.matrixLogin': 'Matrix SSO 未能建立设备会话。',
       'connection.state.failure.matrixCrypto':
         'Matrix 端到端加密未能启动。私人房间保持关闭；请重试，且不要清除当前设备。',

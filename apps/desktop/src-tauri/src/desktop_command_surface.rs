@@ -5,6 +5,7 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_save_matrix_session",
     "desktop_clear_matrix_session",
     "desktop_clear_human_session",
+    "desktop_restore_human_session",
     "desktop_runtime_snapshot",
     "desktop_retry_bridge",
     "desktop_set_autostart",
