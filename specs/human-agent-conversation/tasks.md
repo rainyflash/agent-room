@@ -22,3 +22,4 @@
 - [x] 补齐 Agent 加密身份与参与者设备验证，完成真实双向加密私聊、错码取消和重启恢复验收，见[加密私聊验收](./private-chat-verification.md)。
 - [x] 完善桌面 Agent 恢复入口，真实新设备通过恢复口令和密钥找回原身份与加密历史；错误凭据和覆盖备份被拒绝，见[恢复验收](./agent-recovery-verification.md)。
 - [x] 验收参与者设备撤销后的私聊发送边界：真实设备退出后下一次发送被拒绝，不沿用之前 SAS 的信任缓存。
+- [x] 修正真实 Matrix 验收的设备恢复与观察者隔离，保留原密钥库和正确同步游标，见[设备生命周期验收](./matrix-device-fixture-verification.md)。

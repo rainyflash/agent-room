@@ -24,6 +24,7 @@ use agent_room_domain::{
 };
 use agent_room_matrix_adapter::{
     MatrixRoomProvisioningAdapter, MatrixSdkClientFactory, MatrixSdkConfiguration,
+    MatrixSdkStoreConfiguration,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
@@ -72,8 +73,18 @@ async fn 真实_synapse_支持房间生命周期_幂等发送_回执和回填() 
     let agent_user = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_USER");
     let agent_password = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_PASSWORD");
     let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 3);
+    let developer_store = tempfile::tempdir().expect("独立设备 Store 目录");
+    let developer_factory = MatrixSdkClientFactory::with_encrypted_sqlite(
+        configuration(&base_url, TEST_REQUEST_TIMEOUT, 3),
+        MatrixSdkStoreConfiguration::encrypted_sqlite(
+            developer_store.path(),
+            SecretValue::new(unique_value("store-key")).expect("Store 口令"),
+        )
+        .expect("加密 Store 配置"),
+    );
     let scenario = prepare_room(
         &factory,
+        &developer_factory,
         &developer_user,
         &developer_password,
         &agent_user,
@@ -82,7 +93,12 @@ async fn 真实_synapse_支持房间生命周期_幂等发送_回执和回填() 
     .await;
     let message_flow = verify_message_flow(&scenario).await;
     verify_receipt_and_leave(&scenario, message_flow).await;
-    verify_space_alias(&factory, &scenario.developer).await;
+    verify_space_alias(
+        &factory,
+        &scenario.developer,
+        &login(&developer_user, &developer_password),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -770,12 +786,13 @@ struct MessageFlowResult {
 
 async fn prepare_room(
     factory: &MatrixSdkClientFactory,
+    developer_factory: &MatrixSdkClientFactory,
     developer_user: &str,
     developer_password: &str,
     agent_user: &str,
     agent_password: &str,
 ) -> RoomScenario {
-    let developer = factory
+    let developer = developer_factory
         .login(&login(developer_user, developer_password))
         .await
         .expect("开发者必须能通过标准登录接口认证");
@@ -783,11 +800,16 @@ async fn prepare_room(
         developer.session().metadata().user_id().as_str(),
         developer_user
     );
+    sync(developer.gateway(), None).await;
     let developer_session = developer.session().clone();
-    let developer = factory
+    // 恢复设备必须保留它的加密 Store，先退出旧客户端再模拟重新启动。
+    drop(developer);
+    let developer = developer_factory
         .restore(&developer_session)
         .await
         .expect("访问令牌必须能恢复同一 Matrix 设备会话");
+    assert_eq!(developer.session().metadata(), developer_session.metadata());
+    let restored_baseline = sync(developer.gateway(), None).await;
     let agent = factory
         .login(&login(agent_user, agent_password))
         .await
@@ -811,7 +833,11 @@ async fn prepare_room(
     assert_room_kind(&agent_joined, &room_id, MatrixRoomSyncKind::Joined);
     let agent_baseline = agent_joined.next_batch().clone();
 
-    let developer_joined = sync(developer.gateway(), None).await;
+    let developer_joined = sync(
+        developer.gateway(),
+        Some(restored_baseline.next_batch().clone()),
+    )
+    .await;
     assert_room_kind(&developer_joined, &room_id, MatrixRoomSyncKind::Joined);
     let developer_baseline = developer_joined.next_batch().clone();
 
@@ -824,7 +850,11 @@ async fn prepare_room(
     }
 }
 
-async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &MatrixConnection) {
+async fn verify_space_alias(
+    factory: &MatrixSdkClientFactory,
+    connection: &MatrixConnection,
+    observer_login: &MatrixLogin,
+) {
     let gateway = connection.gateway();
     let alias =
         MatrixRoomAliasLocalpart::new(format!("sdk-space-test-{}", Uuid::now_v7().simple()))
@@ -864,10 +894,19 @@ async fn verify_space_alias(factory: &MatrixSdkClientFactory, connection: &Matri
     let provisioning = MatrixRoomProvisioningAdapter::new(connection.gateway_handle());
     attach_with_retry(&provisioning, &room_id, &child_id).await;
 
+    // 初始同步观察者使用独立新设备，不能把已有设备令牌装进全新空 Store。
     let observer = factory
-        .restore(connection.session())
+        .login(observer_login)
         .await
-        .expect("独立验收会话必须能从头同步 Space 状态");
+        .expect("独立新设备必须能从头同步 Space 状态");
+    assert_eq!(
+        observer.session().metadata().user_id(),
+        connection.session().metadata().user_id()
+    );
+    assert_ne!(
+        observer.session().metadata().device_id(),
+        connection.session().metadata().device_id()
+    );
     let space = sync_until_room(observer.gateway(), &room_id, MatrixRoomSyncKind::Joined).await;
     let creation = space
         .state()
@@ -1069,11 +1108,18 @@ fn factory(
     request_timeout: Duration,
     timeline_limit: u16,
 ) -> MatrixSdkClientFactory {
-    let configuration = MatrixSdkConfiguration::new(base_url, request_timeout)
+    MatrixSdkClientFactory::new(configuration(base_url, request_timeout, timeline_limit))
+}
+
+fn configuration(
+    base_url: &str,
+    request_timeout: Duration,
+    timeline_limit: u16,
+) -> MatrixSdkConfiguration {
+    MatrixSdkConfiguration::new(base_url, request_timeout)
         .expect("测试 Homeserver 配置有效")
         .with_sync_timeline_limit(NonZeroU16::new(timeline_limit).expect("时间线上限非零"))
-        .expect("时间线上限有效");
-    MatrixSdkClientFactory::new(configuration)
+        .expect("时间线上限有效")
 }
 
 fn login(user: &str, password: &str) -> MatrixLogin {
