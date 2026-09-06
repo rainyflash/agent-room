@@ -113,6 +113,8 @@ impl LocalBridgeClient {
     {
         let deadline = if matches!(method, IpcMethod::CloseHostSession(_)) {
             CLOSE_SESSION_TIMEOUT
+        } else if method.name() == "matrix_recovery" {
+            Duration::from_secs(90)
         } else {
             self.operation_timeout
         };

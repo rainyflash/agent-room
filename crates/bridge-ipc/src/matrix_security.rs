@@ -152,6 +152,16 @@ pub enum IpcMatrixIdentityState {
     Ready,
 }
 
+impl From<MatrixIdentityState> for IpcMatrixIdentityState {
+    fn from(state: MatrixIdentityState) -> Self {
+        match state {
+            MatrixIdentityState::Missing => Self::Missing,
+            MatrixIdentityState::RecoveryRequired => Self::RecoveryRequired,
+            MatrixIdentityState::Ready => Self::Ready,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcMatrixVerificationStage {
@@ -182,13 +192,7 @@ impl From<MatrixSecurityResult> for IpcMatrixSecurityResult {
             } => Self::Identity {
                 user_id,
                 device_id,
-                state: match state {
-                    MatrixIdentityState::Missing => IpcMatrixIdentityState::Missing,
-                    MatrixIdentityState::RecoveryRequired => {
-                        IpcMatrixIdentityState::RecoveryRequired
-                    }
-                    MatrixIdentityState::Ready => IpcMatrixIdentityState::Ready,
-                },
+                state: state.into(),
             },
             MatrixSecurityResult::Devices(devices) => Self::Devices {
                 devices: devices

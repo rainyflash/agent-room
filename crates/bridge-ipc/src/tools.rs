@@ -17,6 +17,8 @@ pub enum IpcMethod {
     },
     GetSelf,
     MatrixSecurity(crate::IpcMatrixSecurityRequest),
+    ListRecoverySessions,
+    MatrixRecovery(crate::IpcMatrixRecoveryRequest),
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
@@ -38,6 +40,8 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::MatrixSecurity(_) => "matrix_security",
+            Self::ListRecoverySessions => "list_recovery_sessions",
+            Self::MatrixRecovery(_) => "matrix_recovery",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
             Self::GetPresence(_) => "get_presence",
@@ -58,6 +62,7 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
+            Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
@@ -78,7 +83,8 @@ impl IpcMethod {
     /// 任一标识、文本、集合或分页参数超出闭合协议边界时返回稳定错误。
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
-            Self::BridgeStatus | Self::GetSelf => Ok(()),
+            Self::BridgeStatus | Self::GetSelf | Self::ListRecoverySessions => Ok(()),
+            Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
@@ -91,6 +97,7 @@ impl IpcMethod {
                         | Self::CloseHostSession(_)
                         | Self::BootstrapDefaultAgent(_)
                         | Self::BridgeStatus
+                        | Self::ListRecoverySessions
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -393,6 +400,12 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    RecoverySessions {
+        sessions: Vec<crate::IpcAgentRecoverySession>,
+    },
+    MatrixRecovery {
+        recovery: crate::IpcMatrixRecoveryResult,
+    },
     MatrixSecurity {
         security: crate::IpcMatrixSecurityResult,
     },

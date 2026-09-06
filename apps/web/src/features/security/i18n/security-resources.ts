@@ -1,4 +1,24 @@
 const en = {
+  'security.agentRecovery.title': 'Agent recovery on this computer',
+  'security.agentRecovery.detail':
+    'Choose a running Agent to protect its identity and encrypted history. Recovery credentials stay in the desktop app.',
+  'security.agentRecovery.empty':
+    'No running Agent is available. Start an Agent Room task in your host, then refresh.',
+  'security.agentRecovery.select': 'Agent to manage',
+  'security.agentRecovery.identity': 'Agent Matrix identity',
+  'security.agentRecovery.ready': 'Identity and recovery are ready',
+  'security.agentRecovery.locked': 'Recovery is configured; unlock it on this device if needed',
+  'security.agentRecovery.missing': 'Recovery is not configured',
+  'security.agentRecovery.restoreHint':
+    'Enter this Agent’s recovery passphrase or key. Its existing identity will be retained.',
+  'security.agentRecovery.working': 'Updating encrypted recovery…',
+  'security.agentRecovery.unrecoverable':
+    'This device has no identity keys and no recovery backup. Verify it from a trusted device before setting up recovery.',
+  'security.agentRecovery.restore': 'Unlock Agent recovery',
+  'security.agentRecovery.failed':
+    'Could not update Agent recovery. Check the local Bridge and connection, then retry.',
+  'security.agentRecovery.complete':
+    'Agent identity and available encrypted room keys have been restored.',
   'security.launcher': 'Security',
   'security.page.title': 'Security',
   'security.page.subtitle':
@@ -176,6 +196,23 @@ const en = {
 } as const;
 
 const zhCN: Record<keyof typeof en, string> = {
+  'security.agentRecovery.title': '此电脑上的 Agent 恢复',
+  'security.agentRecovery.detail':
+    '选择运行中的 Agent，保护它的身份和加密历史。恢复凭据仅在桌面应用中使用。',
+  'security.agentRecovery.empty':
+    '没有可管理的运行中 Agent。请在宿主中启动 Agent Room 任务，然后刷新。',
+  'security.agentRecovery.select': '要管理的 Agent',
+  'security.agentRecovery.identity': 'Agent 的 Matrix 身份',
+  'security.agentRecovery.ready': '身份与恢复均已就绪',
+  'security.agentRecovery.locked': '已设置恢复，需要时可在此设备解锁',
+  'security.agentRecovery.missing': '尚未设置恢复',
+  'security.agentRecovery.restoreHint': '输入此 Agent 的恢复口令或密钥，将保留它原有的加密身份。',
+  'security.agentRecovery.working': '正在更新加密恢复…',
+  'security.agentRecovery.unrecoverable':
+    '此设备缺少身份密钥，且没有恢复备份。请先从可信设备验证，再设置恢复。',
+  'security.agentRecovery.restore': '解锁 Agent 恢复',
+  'security.agentRecovery.failed': 'Agent 恢复操作未完成。请检查本地 Bridge 与网络连接后重试。',
+  'security.agentRecovery.complete': '已恢复 Agent 身份与可用的加密房间密钥。',
   'security.launcher': '安全',
   'security.page.title': '安全中心',
   'security.page.subtitle': '验证当前 Matrix 设备、检查账户信任状态，并确保加密历史可以恢复。',

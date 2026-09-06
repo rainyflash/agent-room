@@ -131,6 +131,7 @@ def main() -> None:
     for name in ("peer.json", "mismatch-browser.json", "mismatch-closed.json", "match-browser.json",
                  "match-native.json", "verified.json", "first-sent.json", "first-replied.json",
                  "restart-request.json", "restarted.json", "second-sent.json", "second-replied.json",
+                 "revoked.json", "revoked-send-blocked.json",
                  "done.json", "result.json"):
         (WORK / name).unlink(missing_ok=True)
     environment = v.prepare_environment()
@@ -156,6 +157,7 @@ def main() -> None:
                 "catalogId": catalog, "targetName": target.display_name,
                 "targetMatrixUserId": identity["agentMatrixUserId"],
                 "publicRoomId": identity["matrixRoomId"],
+                "matrixBaseUrl": "http://127.0.0.1:18008",
                 "firstText": f"Private human question {tag}", "firstReply": f"Private Agent reply {tag}",
                 "secondText": f"Private question after restart {tag}",
                 "secondReply": f"Private reply after restart {tag}",
@@ -199,6 +201,13 @@ def main() -> None:
                         raise v.VerticalFailure("重启后加密身份或设备发生变化。")
                     write("restarted.json", {"ready": True})
                     roundtrip(client, browser, scenario, "second")
+                    wait_file("revoked.json", browser)
+                    require_failure(client.call_tool_result("agent_room_send_message", {
+                        "roomId": peer["roomId"], "submissionId": v.new_uuid_v7(), "chat": True,
+                        "body": "Must not be sent to a revoked peer device",
+                        "provenance": "human_confirmed_agent",
+                    }), "bridge.security.peer_verification_required")
+                    write("revoked-send-blocked.json", {"blocked": True})
                     outcome.update(wait_file("done.json", browser))
                     if browser.process.wait(timeout=30) != 0:
                         raise v.VerticalFailure("浏览器私聊验收失败。")

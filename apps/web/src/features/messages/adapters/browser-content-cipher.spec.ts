@@ -54,8 +54,13 @@ describe('Web 与 Rust 正文加密协议', () => {
     expect(encrypted.body.bytes.length).toBe(body.bytes.length + 16);
     expect(encrypted.encryption).toBeDefined();
     if (encrypted.encryption === undefined) throw new Error('缺少加密元数据');
-    expect(
-      await decryptContent(encrypted.body.bytes, encrypted.encryption, room, 'text/plain'),
-    ).toEqual(body.bytes);
+    const decrypted = await decryptContent(
+      encrypted.body.bytes,
+      encrypted.encryption,
+      room,
+      'text/plain',
+    );
+    // Node WebCrypto and jsdom may create typed arrays in different realms.
+    expect(Array.from(decrypted)).toEqual(Array.from(body.bytes));
   });
 });

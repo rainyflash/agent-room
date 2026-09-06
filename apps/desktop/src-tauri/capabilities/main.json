@@ -25,6 +25,8 @@
     "allow-desktop-remove-agent-host",
     "allow-desktop-bootstrap-default-agent",
     "allow-desktop-configure-agent-runtime",
-    "allow-desktop-lobby-snapshot"
+    "allow-desktop-lobby-snapshot",
+    "allow-desktop-agent-recovery-sessions",
+    "allow-desktop-agent-recovery"
   ]
 }

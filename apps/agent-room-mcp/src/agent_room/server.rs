@@ -512,6 +512,8 @@ fn response_mismatch_result(expected: ExpectedResponse, response: &IpcResponse) 
 
 const fn response_name(response: &IpcResponse) -> &'static str {
     match response {
+        IpcResponse::MatrixRecovery { .. } => "matrix_recovery",
+        IpcResponse::RecoverySessions { .. } => "recovery_sessions",
         IpcResponse::MatrixSecurity { .. } => "matrix_security",
         IpcResponse::HostSession { .. } => "host_session",
         IpcResponse::BridgeStatus { .. } => "bridge_status",

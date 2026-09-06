@@ -109,7 +109,7 @@ describe('SecurityWorkspace', () => {
     const setupRecovery = vi.fn(() => Promise.resolve(ok({ recoveryKey })));
     const gateway = securityGateway(missingRecoverySnapshot(), { setupRecovery });
 
-    renderWorkspace(gateway);
+    const { queryClient } = renderWorkspace(gateway);
     await user.click(await screen.findByRole('button', { name: 'Set up recovery' }));
     await user.type(screen.getByLabelText('Recovery passphrase'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Confirm passphrase'), 'correct horse battery staple');
@@ -118,6 +118,14 @@ describe('SecurityWorkspace', () => {
     expect(await screen.findByText(recoveryKey)).toBeVisible();
     expect(setupRecovery).toHaveBeenCalledWith({ passphrase: 'correct horse battery staple' });
     expect(storageValues(window.localStorage)).not.toContain(recoveryKey);
+    expect(
+      JSON.stringify(
+        queryClient
+          .getMutationCache()
+          .getAll()
+          .map((mutation) => mutation.state),
+      ),
+    ).not.toContain(recoveryKey);
 
     await user.click(screen.getByRole('button', { name: 'I saved the recovery key' }));
     await waitFor(() => {
@@ -173,7 +181,7 @@ function renderWorkspace(
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
         <SecurityWorkspace
@@ -184,6 +192,7 @@ function renderWorkspace(
       </QueryClientProvider>
     </I18nextProvider>,
   );
+  return { ...view, queryClient };
 }
 
 function accessManagementGateway(

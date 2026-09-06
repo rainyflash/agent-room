@@ -27,6 +27,7 @@ use matrix_sdk_base::crypto::SasState;
 use tokio::sync::Mutex;
 
 const MAX_VERIFICATIONS: usize = 16;
+mod recovery;
 const VERIFICATION_LIFETIME: Duration = Duration::from_mins(10);
 
 struct ActiveVerification {
@@ -373,6 +374,18 @@ impl MatrixSdkSecurityGateway {
 }
 
 impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
+    fn recover(
+        &self,
+        command: agent_room_bridge_core::matrix_recovery::MatrixRecoveryCommand,
+    ) -> PortFuture<
+        '_,
+        Result<
+            agent_room_bridge_core::matrix_recovery::MatrixRecoveryResult,
+            MatrixSecurityFailure,
+        >,
+    > {
+        Box::pin(self.execute_recovery(command))
+    }
     fn ensure_room_ready<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,

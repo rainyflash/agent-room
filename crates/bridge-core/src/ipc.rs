@@ -79,6 +79,7 @@ pub enum IpcCallerKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IpcScope {
     MatrixSecurityManage,
+    MatrixRecoveryManage,
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
@@ -234,6 +235,7 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                         | IpcScope::PreviewsRead
                         | IpcScope::PresenceRead
                         | IpcScope::HandoffApprove
+                        | IpcScope::MatrixRecoveryManage
                 )
             }
             IpcCallerKind::DiagnosticCli => scope == IpcScope::BridgeStatusRead,
@@ -479,6 +481,9 @@ mod tests {
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::MessageSend));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::AgentBootstrap));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::MatrixRecoveryManage));
+        assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::MatrixRecoveryManage));
+        assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::MatrixRecoveryManage));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
 

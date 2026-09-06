@@ -75,6 +75,21 @@ fn map_matrix_security_failure(
 ) -> BridgeIpcDispatchFailure {
     use agent_room_bridge_core::matrix_security::MatrixSecurityFailure;
     let (code, category, retryable) = match failure {
+        MatrixSecurityFailure::RecoveryAlreadyConfigured => (
+            "bridge.security.recovery_already_configured",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::RecoveryUnavailable => (
+            "bridge.security.recovery_unavailable",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::RecoveryRejected => (
+            "bridge.security.recovery_rejected",
+            IpcErrorCategory::Validation,
+            false,
+        ),
         MatrixSecurityFailure::Unavailable => (
             "bridge.security.unavailable",
             IpcErrorCategory::DependencyUnavailable,
@@ -482,6 +497,24 @@ impl AgentRuntimeIpcFacade {
             .map_err(map_matrix_security_failure)?;
         Ok(IpcResponse::MatrixSecurity {
             security: result.into(),
+        })
+    }
+
+    pub(super) async fn matrix_recovery(
+        &self,
+        request: agent_room_bridge_ipc::IpcMatrixRecoveryRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let command = request
+            .command()
+            .map_err(|_| invalid_request("bridge.security.invalid_request"))?;
+        let runtime = self.runtime_snapshot()?;
+        let security = runtime.security.ok_or_else(agent_runtime_unavailable)?;
+        let recovery = security
+            .recover(command)
+            .await
+            .map_err(map_matrix_security_failure)?;
+        Ok(IpcResponse::MatrixRecovery {
+            recovery: recovery.into(),
         })
     }
 

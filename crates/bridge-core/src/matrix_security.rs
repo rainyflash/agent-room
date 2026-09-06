@@ -100,6 +100,9 @@ pub enum MatrixSecurityResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixSecurityFailure {
+    RecoveryAlreadyConfigured,
+    RecoveryUnavailable,
+    RecoveryRejected,
     IdentityNotReady,
     PeerVerificationRequired,
     Unavailable,
@@ -112,6 +115,10 @@ pub enum MatrixSecurityFailure {
 }
 
 pub trait MatrixSecurityGateway: Send + Sync {
+    fn recover(
+        &self,
+        command: crate::matrix_recovery::MatrixRecoveryCommand,
+    ) -> PortFuture<'_, Result<crate::matrix_recovery::MatrixRecoveryResult, MatrixSecurityFailure>>;
     fn ensure_room_ready<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,

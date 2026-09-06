@@ -11,6 +11,7 @@ const scenarioSchema = z.object({
   targetName: z.string(),
   targetMatrixUserId: z.string(),
   publicRoomId: z.string(),
+  matrixBaseUrl: z.url(),
   firstText: z.string(),
   firstReply: z.string(),
   secondText: z.string(),
@@ -53,7 +54,9 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
   const storedSession: unknown = await page.evaluate((): unknown =>
     JSON.parse(sessionStorage.getItem('agent-room.matrix-session.v1') ?? 'null'),
   );
-  const { deviceId } = z.object({ deviceId: z.string() }).parse(storedSession);
+  const { deviceId, accessToken } = z
+    .object({ deviceId: z.string(), accessToken: z.string() })
+    .parse(storedSession);
   await page.goto(`/lobby/${scenario.catalogId}`);
   await expect(page).toHaveURL(/\/instance\//u);
   await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
@@ -163,6 +166,16 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
       (value) => !(value.startsWith('HTTP 404 ') && value.includes(publicEncryption)),
     ),
   ).toEqual([]);
+  // 关闭页面后撤销隔离账号的当前 Matrix 设备，避免预期 401 混入 UI 故障统计。
+  const request = page.request;
+  await page.close();
+  const revoked = await request.post(`${scenario.matrixBaseUrl}/_matrix/client/v3/logout`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: {},
+  });
+  expect(revoked.status()).toBe(200);
+  put('revoked.json', { deviceId });
+  await wait('revoked-send-blocked.json');
   put('done.json', {
     sasMismatchRejected: true,
     sasMatched: true,
@@ -174,5 +187,6 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
     browserReloadRestored: true,
     pixiRenderer: true,
     mobileVerification: true,
+    revokedPeerSendBlocked: true,
   });
 });

@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { TauriAgentRecoveryGateway } from '@/features/security/adapters/tauri-agent-recovery-gateway';
 import { listen, type Event, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 
@@ -34,6 +35,8 @@ import { err, ok, type Result } from '@/shared/result';
 import { commandFailureSchema, normalizeCommandFailure } from '@/shared/desktop/command-failure';
 
 const desktopCommands = {
+  agentRecovery: 'desktop_agent_recovery',
+  agentRecoverySessions: 'desktop_agent_recovery_sessions',
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
@@ -82,10 +85,13 @@ const nativeTransport: TauriDesktopTransport = {
 };
 
 export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
+  readonly agentRecovery: TauriAgentRecoveryGateway;
   private humanAuthenticationPending = false;
   private matrixAuthenticationPending = false;
 
-  constructor(private readonly transport: TauriDesktopTransport = nativeTransport) {}
+  constructor(private readonly transport: TauriDesktopTransport = nativeTransport) {
+    this.agentRecovery = new TauriAgentRecoveryGateway(transport);
+  }
 
   isAvailable(): boolean {
     return this.transport.available();

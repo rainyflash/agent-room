@@ -253,6 +253,20 @@ impl HostSessionRegistry {
         self.find(session_id).await?.execute(method).await
     }
 
+    async fn recovery_sessions(&self) -> IpcResponse {
+        let sessions: Vec<_> = self.sessions.lock().await.values().cloned().collect();
+        let mut entries = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            let summary = session.summary().await;
+            entries.push(agent_room_bridge_ipc::IpcAgentRecoverySession {
+                session_id: summary.session_id,
+                display_name: session.request.display_name.clone(),
+                state: summary.state,
+            });
+        }
+        IpcResponse::RecoverySessions { sessions: entries }
+    }
+
     async fn find(&self, session_id: &str) -> Result<Arc<HostSession>, BridgeIpcDispatchFailure> {
         self.sessions
             .lock()
@@ -393,6 +407,7 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::ListRecoverySessions => Ok(self.sessions.recovery_sessions().await),
                 IpcMethod::OpenHostSession(request) => self.sessions.open(request).await,
                 IpcMethod::CloseHostSession(request) => {
                     self.sessions.close(&request.session_id).await

@@ -161,6 +161,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
         Box::pin(async move {
             match method {
                 IpcMethod::OpenHostSession(_)
+                | IpcMethod::ListRecoverySessions
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
                     "bridge.host_session.unavailable",
@@ -177,6 +178,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
                 IpcMethod::MatrixSecurity(request) => {
                     self.agent_runtime()?.matrix_security(request).await
+                }
+                IpcMethod::MatrixRecovery(request) => {
+                    self.agent_runtime()?.matrix_recovery(request).await
                 }
                 IpcMethod::BootstrapDefaultAgent(request) => {
                     self.bootstrap_default_agent(request.preferred_language)

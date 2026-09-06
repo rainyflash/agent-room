@@ -28,6 +28,8 @@ import {
 } from '@/features/security/ui/security-posture';
 import { SecurityRecoveryPanel } from '@/features/security/ui/security-recovery-panel';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
+import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
+import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 
 import './security-page.css';
 
@@ -36,13 +38,21 @@ export type SecurityPageProps = {
 };
 
 export function SecurityPage({ onBack }: SecurityPageProps) {
-  const { accessManagement, security } = useAppServices();
+  const { accessManagement, security, localRuntime } = useAppServices();
   return (
-    <SecurityWorkspace accessManagement={accessManagement} gateway={security} onBack={onBack} />
+    <SecurityWorkspace
+      accessManagement={accessManagement}
+      gateway={security}
+      onBack={onBack}
+      {...(localRuntime.isAvailable() && localRuntime.agentRecovery
+        ? { agentRecovery: localRuntime.agentRecovery }
+        : {})}
+    />
   );
 }
 
 export type SecurityWorkspaceProps = {
+  readonly agentRecovery?: AgentRecoveryGateway;
   readonly accessManagement: AccessManagementGateway;
   readonly gateway: MatrixSecurityGateway;
   readonly onBack: () => void;
@@ -53,7 +63,12 @@ type ActiveVerification = {
   readonly targetName: string;
 };
 
-export function SecurityWorkspace({ accessManagement, gateway, onBack }: SecurityWorkspaceProps) {
+export function SecurityWorkspace({
+  accessManagement,
+  gateway,
+  onBack,
+  agentRecovery,
+}: SecurityWorkspaceProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const inspection = useMatrixSecurity(gateway);
@@ -194,6 +209,7 @@ export function SecurityWorkspace({ accessManagement, gateway, onBack }: Securit
             onRetry={() => void inspection.refetch()}
           />
         )}
+        {agentRecovery === undefined ? null : <AgentRecoveryPanel gateway={agentRecovery} />}
         <AccessManagementLedger gateway={accessManagement} />
       </div>
 

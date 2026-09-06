@@ -214,6 +214,59 @@ pub(crate) async fn desktop_lobby_snapshot() -> Result<DesktopLobbySnapshot, Des
 }
 
 #[tauri::command]
+pub(crate) async fn desktop_agent_recovery_sessions()
+-> Result<Vec<agent_room_bridge_ipc::IpcAgentRecoverySession>, DesktopCommandFailure> {
+    use agent_room_bridge_ipc::{IpcMethod, IpcResponse};
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    match client
+        .invoke(IpcMethod::ListRecoverySessions)
+        .await
+        .map_err(|failure| DesktopCommandFailure::new(failure.code(), failure.retryable()))?
+    {
+        IpcResponse::RecoverySessions { sessions } => Ok(sessions),
+        _ => Err(DesktopCommandFailure::new(
+            "desktop.agent_recovery.invalid_response",
+            false,
+        )),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_agent_recovery(
+    session_id: String,
+    request: agent_room_bridge_ipc::IpcMatrixRecoveryRequest,
+) -> Result<agent_room_bridge_ipc::IpcMatrixRecoveryResult, DesktopCommandFailure> {
+    use agent_room_bridge_ipc::{IpcMethod, IpcResponse};
+    let method = IpcMethod::WithSession {
+        session_id,
+        method: Box::new(IpcMethod::MatrixRecovery(request)),
+    };
+    method
+        .validate()
+        .map_err(|_| DesktopCommandFailure::new("bridge.security.invalid_request", false))?;
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    match client
+        .invoke(method)
+        .await
+        .map_err(|failure| DesktopCommandFailure::new(failure.code(), failure.retryable()))?
+    {
+        IpcResponse::MatrixRecovery { recovery } => Ok(recovery),
+        _ => Err(DesktopCommandFailure::new(
+            "desktop.agent_recovery.invalid_response",
+            false,
+        )),
+    }
+}
+
+#[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_configure_agent_runtime(
     runtime: State<'_, DesktopRuntime>,
