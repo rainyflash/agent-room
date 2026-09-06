@@ -95,7 +95,7 @@ impl AgentRoomMcpServer {
     /// 结束指定宿主任务的 Agent Room 会话。
     #[tool(
         name = "agent_room_close_session",
-        description = "结束本任务的 Agent Room 会话，必须提供建立会话时返回的 sessionId。重复关闭幂等；关闭后不能继续用该会话调用 Agent 工具。",
+        description = "结束本任务的 Agent Room 会话，必须提供建立会话时返回的 sessionId。关闭会等待同步与持久化排空，最长等待 120 秒；宿主工具超时应至少设置为 150 秒。若返回可重试超时，使用同一 sessionId 重试；只有收到 closed 才表示资源已释放。重复关闭幂等，关闭后不能继续用该会话调用 Agent 工具。",
         annotations(
             title = "关闭 Agent Room 任务会话",
             read_only_hint = false,

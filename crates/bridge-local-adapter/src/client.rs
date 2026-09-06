@@ -6,7 +6,10 @@ use agent_room_bridge_ipc::{
     IpcResponse,
 };
 use interprocess::local_socket::tokio::{Stream, prelude::*};
-use tokio::time::timeout;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    time::timeout,
+};
 
 use crate::{
     IpcCredentialFailure, IpcCredentialFailureKind, IpcCredentialSource, LocalIpcEndpoint,
@@ -15,6 +18,8 @@ use crate::{
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+// 关闭会话需排空长轮询、令牌刷新和持久化，再释放独立身份；普通请求的 15 秒不足以完成。
+const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_mins(2);
 
 pub struct LocalBridgeClient {
     runtime_root: PathBuf,
@@ -95,7 +100,23 @@ impl LocalBridgeClient {
         .await
         .map_err(|_| LocalBridgeClientFailure::timeout())?
         .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))?;
-        timeout(self.operation_timeout, client.request(method))
+        self.request(&mut client, method).await
+    }
+
+    async fn request<S>(
+        &self,
+        client: &mut IpcClientSession<S>,
+        method: IpcMethod,
+    ) -> Result<IpcResponse, LocalBridgeClientFailure>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let deadline = if matches!(method, IpcMethod::CloseHostSession(_)) {
+            CLOSE_SESSION_TIMEOUT
+        } else {
+            self.operation_timeout
+        };
+        timeout(deadline, client.request(method))
             .await
             .map_err(|_| LocalBridgeClientFailure::timeout())?
             .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))
@@ -237,22 +258,4 @@ impl LocalBridgeClientFailure {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        IpcCredentialFailure, IpcCredentialFailureKind, LocalBridgeClientFailure,
-        LocalBridgeClientFailureKind,
-    };
-
-    #[test]
-    fn 客户端给凭据故障保留可修复语义() {
-        let missing = LocalBridgeClientFailure::credential(IpcCredentialFailure::new(
-            IpcCredentialFailureKind::Missing,
-        ));
-        assert_eq!(
-            missing.kind(),
-            LocalBridgeClientFailureKind::CredentialsMissing
-        );
-        assert_eq!(missing.code(), "bridge.ipc.credentials_missing");
-        assert!(!missing.retryable());
-    }
-}
+mod tests;
