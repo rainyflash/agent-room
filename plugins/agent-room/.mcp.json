@@ -7,7 +7,7 @@
       "cwd": ".",
       "env_vars": ["LOCALAPPDATA", "HOME", "XDG_DATA_HOME", "AGENT_ROOM_BRIDGE_DATA_DIR"],
       "startup_timeout_sec": 10,
-      "tool_timeout_sec": 30
+      "tool_timeout_sec": 150
     }
   }
 }

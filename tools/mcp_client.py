@@ -54,8 +54,9 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
         stderr_path: Path,
         sanitize_line: LineSanitizer,
         request_timeout_seconds: float = 30,
+        close_timeout_seconds: float = 150,
     ) -> None:
-        if request_timeout_seconds <= 0:
+        if request_timeout_seconds <= 0 or close_timeout_seconds <= 0:
             raise ValueError("MCP 请求超时必须大于零。")
         self._command = tuple(command)
         self._working_directory = working_directory
@@ -63,6 +64,7 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
         self._stderr_path = stderr_path
         self._sanitize_line = sanitize_line
         self._request_timeout_seconds = request_timeout_seconds
+        self._close_timeout_seconds = close_timeout_seconds
         self._responses: Queue[str | None] = Queue()
         self._process: subprocess.Popen[str] | None = None
         self._stdout_reader: threading.Thread | None = None
@@ -195,7 +197,13 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
                 "params": dict(params),
             }
         )
-        deadline = time.monotonic() + self._request_timeout_seconds
+        # 关闭会话会排空后台长轮询；为 Bridge 的 120 秒关闭期限预留传输余量。
+        request_timeout = (
+            self._close_timeout_seconds
+            if method == "tools/call" and params.get("name") == "agent_room_close_session"
+            else self._request_timeout_seconds
+        )
+        deadline = time.monotonic() + request_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:

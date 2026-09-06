@@ -1,5 +1,7 @@
 import unittest
+import json
 from pathlib import Path
+from queue import Empty
 from unittest.mock import patch
 
 from tools.mcp_client import (
@@ -36,6 +38,37 @@ def session_tool_definitions() -> list[dict[str, object]]:
 
 
 class McpSessionTests(unittest.TestCase):
+    def test_关闭可等待超过普通请求期限的完成响应(self) -> None:
+        client = test_client()
+        elapsed = [0.0]
+
+        def delayed_reply(*, timeout: float) -> str:
+            if timeout < 35:
+                elapsed[0] += timeout
+                raise Empty
+            elapsed[0] += 35
+            return json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
+                "structuredContent": {"type": "host_session", "session": {
+                    "sessionId": SESSION_A, "state": "closed",
+                }},
+            }})
+
+        with patch.object(client, "_write"), patch.object(client._responses, "get", side_effect=delayed_reply), patch(
+            "tools.mcp_client.time.monotonic", side_effect=lambda: elapsed[0],
+        ):
+            client.bind_session(SESSION_A).close()
+        self.assertEqual(elapsed[0], 35)
+
+    def test_普通请求仍及时超时且关闭不能无限等待(self) -> None:
+        for name, expected_timeout in (("agent_room_get_self", 30), ("agent_room_close_session", 150)):
+            with self.subTest(name=name):
+                client = test_client()
+                with patch.object(client, "_write"), patch.object(client._responses, "get", side_effect=Empty) as receive, patch(
+                    "tools.mcp_client.time.monotonic", return_value=0,
+                ), self.assertRaisesRegex(McpClientFailure, "超时"):
+                    client.call_tool_result(name, {"sessionId": SESSION_A})
+                receive.assert_called_once_with(timeout=expected_timeout)
+
     def test_多个绑定共享传输时每个既有工具保留各自会话(self) -> None:
         client = test_client()
         first, second = client.bind_session(SESSION_A), client.bind_session(SESSION_B)

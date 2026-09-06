@@ -12,6 +12,10 @@ from tools.tests.test_mcp_client import session_tool_definitions
 
 
 class PluginContractTests(unittest.TestCase):
+    def test_插件给长轮询关闭和传输保留完整期限(self) -> None:
+        config = plugin.read_json_object(plugin.PLUGIN_SOURCE / ".mcp.json")
+        self.assertGreaterEqual(config["mcpServers"]["agent_room"]["tool_timeout_sec"], 150)
+
     def test_rust工具声明是发行工具集合的唯一来源(self) -> None:
         declared = plugin.declared_mcp_tools()
 
