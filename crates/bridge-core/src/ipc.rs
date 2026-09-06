@@ -78,6 +78,8 @@ pub enum IpcCallerKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IpcScope {
+    MatrixSecurityManage,
+    MatrixRecoveryManage,
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
@@ -213,6 +215,7 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                     IpcScope::BridgeStatusRead
                         | IpcScope::SelfRead
                         | IpcScope::HostSessionsManage
+                        | IpcScope::MatrixSecurityManage
                         | IpcScope::PreviewsRead
                         | IpcScope::PresenceRead
                         | IpcScope::ContentRead
@@ -232,6 +235,7 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                         | IpcScope::PreviewsRead
                         | IpcScope::PresenceRead
                         | IpcScope::HandoffApprove
+                        | IpcScope::MatrixRecoveryManage
                 )
             }
             IpcCallerKind::DiagnosticCli => scope == IpcScope::BridgeStatusRead,
@@ -445,6 +449,7 @@ mod tests {
     fn mcp_server_可逐项申请工具作用域而诊断客户端只能读取状态() {
         let policy = FoundationIpcScopePolicy;
         let tool_scopes = [
+            IpcScope::MatrixSecurityManage,
             IpcScope::SelfRead,
             IpcScope::PreviewsRead,
             IpcScope::PresenceRead,
@@ -476,6 +481,9 @@ mod tests {
         assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::MessageSend));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::HandoffApprove));
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::AgentBootstrap));
+        assert!(policy.allows(IpcCallerKind::DesktopShell, IpcScope::MatrixRecoveryManage));
+        assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::MatrixRecoveryManage));
+        assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::MatrixRecoveryManage));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
     }
 

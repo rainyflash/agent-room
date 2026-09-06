@@ -23,6 +23,7 @@ SESSION_ID: Final = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 SESSION_SCOPED_TOOLS: Final = (
+    "agent_room_matrix_security",
     "agent_room_get_self",
     "agent_room_list_previews",
     "agent_room_get_presence",
@@ -407,7 +408,7 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
             ):
                 raise McpClientFailure("open_session 必须要求有界 displayName，不能接收 sessionId。")
     if len(names) != len(set(names)) or set(names) != set(AGENT_ROOM_TOOLS):
-        raise McpClientFailure("MCP 工具集合必须包含两个会话工具和九个绑定会话的 Agent 工具。")
+        raise McpClientFailure("MCP 工具集合必须与当前会话工具契约一致。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

@@ -698,6 +698,24 @@
   margin-top: 2.5rem;
 }
 
+.security-agent-recovery-selection {
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+  color: var(--color-ink);
+}
+
+.security-agent-recovery-selection select {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 12px;
+  color: inherit;
+  background: color-mix(in srgb, white 26%, transparent);
+  border: 1px solid var(--ar-ink-18);
+  border-radius: 8px;
+  font: inherit;
+}
+
 .security-recovery-form,
 .security-recovery-key {
   display: grid;

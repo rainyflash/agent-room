@@ -1,4 +1,4 @@
-import type { EventType, MatrixClient, ReceiptType, Room } from 'matrix-js-sdk';
+import type { EventType, ReceiptType } from 'matrix-js-sdk';
 import { z } from 'zod';
 
 import type {
@@ -7,6 +7,7 @@ import type {
   DirectSessionMatrixGateway,
 } from '@/features/direct-sessions/domain/direct-session';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
+import { joinConfirmedMatrixRoom } from '@/shared/matrix/join-confirmed-matrix-room';
 import { err, ok, type Result } from '@/shared/result';
 
 const DIRECT_EVENT_TYPE = 'm.direct' as EventType.Direct;
@@ -40,8 +41,8 @@ export class MatrixSdkDirectSessionGateway implements DirectSessionMatrixGateway
       return err(failure('direct_session.matrix_unavailable'));
     }
     try {
-      const room = await ensureJoined(client, session.matrixRoomId);
-      if (room.getMyMembership() !== 'join') {
+      const joined = await joinConfirmedMatrixRoom(this.#clients, client, session.matrixRoomId);
+      if (!joined) {
         return err(failure('direct_session.join_failed'));
       }
       const direct = await client.getAccountDataFromServer(DIRECT_EVENT_TYPE);
@@ -105,11 +106,6 @@ export class MatrixSdkDirectSessionGateway implements DirectSessionMatrixGateway
       return err(failure('direct_session.receipt_failed'));
     }
   }
-}
-
-async function ensureJoined(client: MatrixClient, roomId: string): Promise<Room> {
-  const current = client.getRoom(roomId);
-  return current?.getMyMembership() === 'join' ? current : await client.joinRoom(roomId);
 }
 
 function failure(code: string): DirectSessionFailure {

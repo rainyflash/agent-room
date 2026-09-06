@@ -1,4 +1,24 @@
 const en = {
+  'security.agentRecovery.title': 'Agent recovery on this computer',
+  'security.agentRecovery.detail':
+    'Choose a running Agent to protect its identity and encrypted history. Recovery credentials stay in the desktop app.',
+  'security.agentRecovery.empty':
+    'No running Agent is available. Start an Agent Room task in your host, then refresh.',
+  'security.agentRecovery.select': 'Agent to manage',
+  'security.agentRecovery.identity': 'Agent Matrix identity',
+  'security.agentRecovery.ready': 'Identity and recovery are ready',
+  'security.agentRecovery.locked': 'Recovery is configured; unlock it on this device if needed',
+  'security.agentRecovery.missing': 'Recovery is not configured',
+  'security.agentRecovery.restoreHint':
+    'Enter this Agent’s recovery passphrase or key. Its existing identity will be retained.',
+  'security.agentRecovery.working': 'Updating encrypted recovery…',
+  'security.agentRecovery.unrecoverable':
+    'This device has no identity keys and no recovery backup. Verify it from a trusted device before setting up recovery.',
+  'security.agentRecovery.restore': 'Unlock Agent recovery',
+  'security.agentRecovery.failed':
+    'Could not update Agent recovery. Check the local Bridge and connection, then retry.',
+  'security.agentRecovery.complete':
+    'Agent identity and available encrypted room keys have been restored.',
   'security.launcher': 'Security',
   'security.page.title': 'Security',
   'security.page.subtitle':
@@ -126,13 +146,19 @@ const en = {
   'security.recovery.complete': 'Recovered {{imported}} of {{total}} encrypted room keys.',
   'security.recovery.cancel': 'Cancel',
   'security.verification.title': 'Verify a Matrix device',
+  'security.verification.peerTitle': 'Verify a room participant',
+  'security.verification.peerEyebrow': 'Participant verification request',
+  'security.verification.peerDetail':
+    '{{user}} ({{device}}) is requesting verification. Compare the codes in their trusted app or Agent host before confirming.',
+  'security.verification.peerWaiting':
+    'Accept the request in the participant’s app or Agent host, then compare the complete codes on both sides.',
   'security.verification.target': 'Target device: {{device}}',
   'security.verification.waiting': 'Waiting for the other trusted device',
   'security.verification.waitingDetail':
     'Accept the verification request on another device signed into the same Matrix account.',
   'security.verification.comparing': 'Compare these symbols on both devices',
   'security.verification.comparingDetail':
-    'Confirm only when every symbol appears in the same order on both screens.',
+    'Compare all three numbers, or every symbol in the same order, on both screens before confirming.',
   'security.verification.confirming': 'Waiting for both devices to confirm',
   'security.verification.confirmingDetail': 'Keep both verification screens open.',
   'security.verification.verified': 'Device verified',
@@ -170,6 +196,23 @@ const en = {
 } as const;
 
 const zhCN: Record<keyof typeof en, string> = {
+  'security.agentRecovery.title': '此电脑上的 Agent 恢复',
+  'security.agentRecovery.detail':
+    '选择运行中的 Agent，保护它的身份和加密历史。恢复凭据仅在桌面应用中使用。',
+  'security.agentRecovery.empty':
+    '没有可管理的运行中 Agent。请在宿主中启动 Agent Room 任务，然后刷新。',
+  'security.agentRecovery.select': '要管理的 Agent',
+  'security.agentRecovery.identity': 'Agent 的 Matrix 身份',
+  'security.agentRecovery.ready': '身份与恢复均已就绪',
+  'security.agentRecovery.locked': '已设置恢复，需要时可在此设备解锁',
+  'security.agentRecovery.missing': '尚未设置恢复',
+  'security.agentRecovery.restoreHint': '输入此 Agent 的恢复口令或密钥，将保留它原有的加密身份。',
+  'security.agentRecovery.working': '正在更新加密恢复…',
+  'security.agentRecovery.unrecoverable':
+    '此设备缺少身份密钥，且没有恢复备份。请先从可信设备验证，再设置恢复。',
+  'security.agentRecovery.restore': '解锁 Agent 恢复',
+  'security.agentRecovery.failed': 'Agent 恢复操作未完成。请检查本地 Bridge 与网络连接后重试。',
+  'security.agentRecovery.complete': '已恢复 Agent 身份与可用的加密房间密钥。',
   'security.launcher': '安全',
   'security.page.title': '安全中心',
   'security.page.subtitle': '验证当前 Matrix 设备、检查账户信任状态，并确保加密历史可以恢复。',
@@ -284,11 +327,18 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.recovery.complete': '已恢复 {{imported}} / {{total}} 个加密房间密钥。',
   'security.recovery.cancel': '取消',
   'security.verification.title': '验证 Matrix 设备',
+  'security.verification.peerTitle': '验证房间参与者',
+  'security.verification.peerEyebrow': '参与者验证请求',
+  'security.verification.peerDetail':
+    '{{user}}（{{device}}）正在请求验证。请在对方可信应用或 Agent 宿主中核对完整安全码后确认。',
+  'security.verification.peerWaiting':
+    '请在参与者的应用或 Agent 宿主中接受请求，然后核对双方显示的完整安全码。',
   'security.verification.target': '目标设备：{{device}}',
   'security.verification.waiting': '正在等待另一台可信设备',
   'security.verification.waitingDetail': '请在登录同一 Matrix 账户的另一台设备上接受验证请求。',
   'security.verification.comparing': '在两台设备上核对这些符号',
-  'security.verification.comparingDetail': '仅当每个符号及其顺序完全一致时才确认。',
+  'security.verification.comparingDetail':
+    '核对两个界面的全部三组数字，或全部符号及其顺序，完全一致后再确认。',
   'security.verification.confirming': '正在等待双方确认',
   'security.verification.confirmingDetail': '请保持两台设备的验证界面开启。',
   'security.verification.verified': '设备验证完成',

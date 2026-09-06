@@ -2,6 +2,7 @@ import type { LobbySceneProjection } from '@/features/lobby/domain/scene-project
 
 /** 仅由隔离的浏览器测试入口提供，生产应用不注册此接口。 */
 export type LobbyFixtureControls = {
+  displayedEvents(): readonly { readonly roomId: string; readonly matrixEventId: string }[];
   receive(input: {
     readonly text: string;
     readonly agentIndex?: number;

@@ -123,7 +123,8 @@ use agent_room_bridge_storage_adapter::{
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
 mod host_sessions;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 9] = [
+    "matrix.security",
     "self.read",
     "previews.read",
     "presence.read",
@@ -360,6 +361,7 @@ struct AgentHandoffServices {
 }
 
 struct AgentOnlineSession {
+    security: Arc<dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway>,
     runtime: RegisteredAgentRuntime,
     lobby: JoinedAgentLobby,
     room_id: MatrixRoomId,
@@ -486,6 +488,7 @@ impl BridgeAgentRuntimeState {
                 FOUNDATION_AGENT_CAPABILITIES,
             )
             .with_room_authority(online.room_authority.clone())
+            .with_security(online.security.clone())
             .with_status(online.status.clone())
             .with_message_publication(online.publication.clone())
             .with_message_content_protection(online.content_protection.clone())
@@ -1008,6 +1011,7 @@ async fn establish_agent_online_once(
         },
     );
     let mut online = AgentOnlineSession {
+        security: connection.security_gateway_handle(),
         room_authority: connection.room_authority_gateway_handle(),
         runtime: registered,
         lobby,

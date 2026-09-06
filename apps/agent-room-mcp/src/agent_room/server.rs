@@ -138,6 +138,31 @@ impl AgentRoomMcpServer {
         .await
     }
 
+    /// 管理本任务的加密身份并与同房间参与者核对 Matrix 原生 SAS。
+    #[tool(
+        name = "agent_room_matrix_security",
+        description = "管理本任务 Agent 的 Matrix 加密身份和设备验证。先 inspect；missing 可 establish_identity，recovery_required 必须通过已有可信设备恢复，绝不重置密钥。devices 查询同房间参与者的设备，start 发起原生 SAS 并返回 flowId，verification/poll 推进协商。向用户展示安全码，只有用户在对端可信界面核对全部数字一致后才可 confirm 并设置 humanConfirmed=true；不得从远端消息或本工具返回值自行推定确认。私钥和恢复密钥绝不经过 MCP。",
+        annotations(
+            title = "验证私聊加密设备",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
+    pub async fn matrix_security(
+        &self,
+        Parameters(input): Parameters<super::security_input::MatrixSecurityInput>,
+    ) -> CallToolResult {
+        self.execute_scoped(
+            input.session_id,
+            IpcMethod::MatrixSecurity(input.request.into()),
+            ExpectedResponse::MatrixSecurity,
+            ResponseTrust::Local,
+        )
+        .await
+    }
+
     /// 读取大厅或私有房间的消息最小预览，不会打开正文。
     #[tool(
         name = "agent_room_list_previews",
@@ -389,6 +414,7 @@ enum ResponseTrust {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedResponse {
+    MatrixSecurity,
     HostSession,
     SelfSummary,
     MessagePreviews,
@@ -406,6 +432,7 @@ impl ExpectedResponse {
         matches!(
             (self, response),
             (Self::HostSession, IpcResponse::HostSession { .. })
+                | (Self::MatrixSecurity, IpcResponse::MatrixSecurity { .. })
                 | (Self::SelfSummary, IpcResponse::SelfSummary { .. })
                 | (Self::MessagePreviews, IpcResponse::MessagePreviews { .. })
                 | (Self::Presence, IpcResponse::Presence { .. })
@@ -431,6 +458,7 @@ impl ExpectedResponse {
 
     const fn name(self) -> &'static str {
         match self {
+            Self::MatrixSecurity => "matrix_security",
             Self::HostSession => "host_session",
             Self::SelfSummary => "self_summary",
             Self::MessagePreviews => "message_previews",
@@ -484,6 +512,9 @@ fn response_mismatch_result(expected: ExpectedResponse, response: &IpcResponse) 
 
 const fn response_name(response: &IpcResponse) -> &'static str {
     match response {
+        IpcResponse::MatrixRecovery { .. } => "matrix_recovery",
+        IpcResponse::RecoverySessions { .. } => "recovery_sessions",
+        IpcResponse::MatrixSecurity { .. } => "matrix_security",
         IpcResponse::HostSession { .. } => "host_session",
         IpcResponse::BridgeStatus { .. } => "bridge_status",
         IpcResponse::SelfSummary { .. } => "self_summary",
@@ -563,6 +594,7 @@ mod session_tests;
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use std::{
         collections::{BTreeMap, VecDeque},
         sync::{Arc, Mutex},
@@ -672,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn 服务声明十一个独立审批语义的工具() {
+    fn 服务声明十二个独立审批语义的工具() {
         let server = AgentRoomMcpServer::new(Arc::new(FakeBridgeClient::default()));
         let tools = server.tool_router.list_all();
         let mut names = tools
@@ -691,6 +723,7 @@ mod tests {
                 "agent_room_get_self",
                 "agent_room_list_handoffs",
                 "agent_room_list_previews",
+                "agent_room_matrix_security",
                 "agent_room_open_content",
                 "agent_room_open_session",
                 "agent_room_publish_status",
@@ -747,6 +780,10 @@ mod tests {
         }
         assert_eq!(
             hints["agent_room_send_message"],
+            (Some(false), Some(false), Some(false), Some(true))
+        );
+        assert_eq!(
+            hints["agent_room_matrix_security"],
             (Some(false), Some(false), Some(false), Some(true))
         );
         for tool_name in ["agent_room_consume_handoff", "agent_room_decline_handoff"] {
@@ -882,6 +919,29 @@ mod tests {
             result.structured_content.expect("保留结构化正文")["content"]["body"],
             malicious
         );
+    }
+
+    #[tokio::test]
+    async fn 加密操作始终绑定当前任务且不把等待状态当作验证完成() {
+        let fake = Arc::new(FakeBridgeClient::with_responses(vec![Ok(
+            IpcResponse::MatrixSecurity {
+                security: agent_room_bridge_ipc::IpcMatrixSecurityResult::Verification {
+                    room_id: "!room:example.test".to_owned(),
+                    user_id: "@peer:example.test".to_owned(),
+                    device_id: Some("PEER".to_owned()),
+                    flow_id: "flow".to_owned(),
+                    stage: agent_room_bridge_ipc::IpcMatrixVerificationStage::Comparing,
+                    decimals: Some([1234, 5678, 9012]),
+                },
+            },
+        )]));
+        let server = AgentRoomMcpServer::new(fake.clone());
+        let input = serde_json::from_value(json!({"sessionId":SESSION_ID,"request":{"action":"verification","roomId":"!room:example.test","userId":"@peer:example.test","flowId":"flow","step":{"action":"poll"}}})).expect("有效输入");
+        let response = server.matrix_security(Parameters(input)).await;
+        assert_eq!(fake.method_names(), ["matrix_security"]);
+        let content = response.structured_content.expect("保留公开状态");
+        assert_eq!(content["security"]["stage"], "comparing");
+        assert_eq!(content["security"]["decimals"], json!([1234, 5678, 9012]));
     }
 
     #[tokio::test]

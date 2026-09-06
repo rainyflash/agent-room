@@ -7,6 +7,7 @@ mod mapping;
 mod membership;
 mod provisioning;
 mod sdk;
+mod security;
 mod store_recovery;
 
 pub use configuration::{

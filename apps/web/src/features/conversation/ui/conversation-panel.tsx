@@ -1,6 +1,6 @@
 import { ArrowDown, Radio, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   conversationMessages,
@@ -20,6 +20,7 @@ const emptyParticipants: readonly ConversationParticipant[] = [];
 export type ConversationPanelProps = {
   readonly active?: boolean;
   readonly focusMessageId?: string | null;
+  readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly messages: readonly RoomMessageSignal[];
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
@@ -34,6 +35,7 @@ export type ConversationPanelProps = {
 export function ConversationPanel({
   active = true,
   focusMessageId = null,
+  onLatestDisplayed,
   messages,
   participants = emptyParticipants,
   publisher,
@@ -55,12 +57,38 @@ export function ConversationPanel({
   const [unseen, setUnseen] = useState(false);
   const focusedMessage = useRef<HTMLDivElement>(null);
   const latestEvent = timeline.at(-1)?.matrixEventId;
+  const displayedEvent = useRef<string | null>(null);
+  const markLatestDisplayed = useCallback((): void => {
+    const element = timelineElement.current;
+    if (
+      !active ||
+      state !== 'ready' ||
+      document.visibilityState === 'hidden' ||
+      latestEvent === undefined ||
+      onLatestDisplayed === undefined ||
+      displayedEvent.current === latestEvent ||
+      element === null ||
+      element.clientHeight === 0 ||
+      element.scrollHeight - element.scrollTop - element.clientHeight >= 48
+    )
+      return;
+    displayedEvent.current = latestEvent;
+    onLatestDisplayed(latestEvent);
+  }, [active, latestEvent, onLatestDisplayed, state]);
   useEffect(() => {
     const element = timelineElement.current;
     if (!active) return;
-    if (following.current && element !== null) element.scrollTop = element.scrollHeight;
-    else if (latestEvent !== undefined) setUnseen(true);
-  }, [active, latestEvent]);
+    if (following.current && element !== null && focusMessageId === null) {
+      element.scrollTop = element.scrollHeight;
+    } else if (latestEvent !== undefined) setUnseen(true);
+  }, [active, latestEvent, focusMessageId]);
+  useEffect(() => {
+    markLatestDisplayed();
+    document.addEventListener('visibilitychange', markLatestDisplayed);
+    return () => {
+      document.removeEventListener('visibilitychange', markLatestDisplayed);
+    };
+  }, [markLatestDisplayed]);
   useEffect(() => {
     if (!active || focusMessageId === null || focusedMessage.current === null) return;
     focusedMessage.current.scrollIntoView({ block: 'center' });
@@ -112,6 +140,7 @@ export function ConversationPanel({
             following.current =
               element.scrollHeight - element.scrollTop - element.clientHeight < 48;
             if (following.current) setUnseen(false);
+            markLatestDisplayed();
           }}
           role="log"
           aria-label={t('conversation.title')}
@@ -185,6 +214,7 @@ export function ConversationPanel({
               if (element !== null) element.scrollTop = element.scrollHeight;
               following.current = true;
               setUnseen(false);
+              markLatestDisplayed();
             }}
           >
             <ArrowDown aria-hidden="true" />

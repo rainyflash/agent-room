@@ -159,13 +159,19 @@ function isExpectedHttpBoundary(status: number, rawUrl: string): boolean {
   const missingInitialPreferences =
     url.pathname.startsWith('/_matrix/client/v3/user/') &&
     url.pathname.endsWith('/account_data/io.github.rainyflash.agentroom.preferences.v1');
+  const missingInitialEncryptionState =
+    url.pathname.startsWith('/_matrix/client/v3/user/') &&
+    ['m.secret_storage.default_key', 'm.cross_signing.master'].some((type) =>
+      url.pathname.endsWith(`/account_data/${type}`),
+    );
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
     (status === 404 &&
       url.origin === matrixOrigin &&
       (url.pathname === '/_matrix/client/unstable/org.matrix.msc4143/rtc/transports' ||
         url.pathname === '/_matrix/client/v3/room_keys/version' ||
-        missingInitialPreferences))
+        missingInitialPreferences ||
+        missingInitialEncryptionState))
   );
 }
 

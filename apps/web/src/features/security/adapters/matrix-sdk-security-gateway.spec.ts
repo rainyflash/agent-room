@@ -208,6 +208,7 @@ describe('MatrixSdkSecurityGateway', () => {
     flow.receive();
 
     expect(gateway.getIncomingVerification()).toEqual({
+      selfVerification: true,
       requestId: 'incoming-verification',
       sourceDeviceId: 'ALICE-LAPTOP',
       sourceUserId: '@alice:agent-room.test',
@@ -252,6 +253,51 @@ describe('MatrixSdkSecurityGateway', () => {
     });
     expect(bootstrapInputs).toHaveLength(1);
     expect([...privateKey]).toEqual(Array.from({ length: 32 }, () => 0));
+  });
+
+  it('同房间参与者的验证必须显式接受并重新检查双方成员资格', async () => {
+    const flow = incomingVerificationFlow({ peer: true });
+    const gateway = gatewayFor(flow.client);
+    flow.receive();
+    expect(gateway.getIncomingVerification()).toMatchObject({
+      selfVerification: false,
+      sourceUserId: '@agent:agent-room.test',
+    });
+    expect(flow.accept).not.toHaveBeenCalled();
+    expect((await gateway.acceptIncomingVerification('incoming-verification')).ok).toBe(true);
+    expect(flow.getStateEvent.mock.calls.map((call) => call[2])).toEqual([
+      '@alice:agent-room.test',
+      '@agent:agent-room.test',
+    ]);
+    expect(flow.accept).toHaveBeenCalledOnce();
+  });
+
+  it('陌生用户不进入验证收件箱，离开房间后不能接受先前请求', async () => {
+    const stranger = incomingVerificationFlow({ peer: true, joined: false });
+    const gateway = gatewayFor(stranger.client);
+    stranger.receive();
+    expect(gateway.getIncomingVerification()).toBeNull();
+    const member = incomingVerificationFlow({ peer: true });
+    const joinedGateway = gatewayFor(member.client);
+    member.receive();
+    member.getStateEvent.mockResolvedValue({ membership: 'leave' });
+    expect(await joinedGateway.acceptIncomingVerification('incoming-verification')).toEqual({
+      ok: false,
+      error: { code: 'security.verification_unavailable', retryable: false },
+    });
+    expect(member.accept).not.toHaveBeenCalled();
+  });
+
+  it('成员证明查询失败不建立设备信任', async () => {
+    const flow = incomingVerificationFlow({ peer: true });
+    const gateway = gatewayFor(flow.client);
+    flow.receive();
+    flow.getStateEvent.mockRejectedValue(new Error('membership unavailable'));
+    expect(await gateway.acceptIncomingVerification('incoming-verification')).toEqual({
+      ok: false,
+      error: { code: 'security.verification_failed', retryable: true },
+    });
+    expect(flow.accept).not.toHaveBeenCalled();
   });
 
   it('用 Secret Storage 恢复交叉签名、签发当前设备并导入历史密钥', async () => {
@@ -356,14 +402,17 @@ function cryptoClient(crypto: CryptoApi, overrides: Partial<MatrixClient> = {}):
   return client as unknown as MatrixClient;
 }
 
-function incomingVerificationFlow() {
+function incomingVerificationFlow({
+  peer = false,
+  joined = true,
+}: { peer?: boolean; joined?: boolean } = {}) {
   const clientListeners = new Set<(request: VerificationRequest) => void>();
   const requestListeners = new Set<() => void>();
   const accept = vi.fn(() => Promise.resolve());
   const requestShape = {
     accept,
     cancel: () => Promise.resolve(),
-    isSelfVerification: true,
+    isSelfVerification: !peer,
     off: (_event: unknown, listener: unknown) => {
       requestListeners.delete(listener as () => void);
       return requestShape;
@@ -373,7 +422,7 @@ function incomingVerificationFlow() {
       return requestShape;
     },
     otherDeviceId: 'ALICE-LAPTOP',
-    otherUserId: '@alice:agent-room.test',
+    otherUserId: peer ? '@agent:agent-room.test' : '@alice:agent-room.test',
     pending: true,
     phase: VerificationPhase.Requested,
     startVerification: () => Promise.reject(new Error('响应端等待发起端选择 SAS。')),
@@ -381,7 +430,21 @@ function incomingVerificationFlow() {
     verifier: undefined,
   };
   const request = requestShape as unknown as VerificationRequest;
+  const getStateEvent = vi.fn<
+    (room: string, eventType: string, user: string) => Promise<{ membership: string }>
+  >(() => Promise.resolve({ membership: 'join' }));
   const clientShape = {
+    getRooms: () =>
+      joined
+        ? [
+            {
+              roomId: '!shared:agent-room.test',
+              getMyMembership: () => 'join',
+              getMember: () => ({ membership: 'join' }),
+            },
+          ]
+        : [],
+    getStateEvent,
     getCrypto: () => ({}),
     getDeviceId: () => 'ALICE-WEB',
     getUserId: () => '@alice:agent-room.test',
@@ -400,6 +463,7 @@ function incomingVerificationFlow() {
   };
 
   return {
+    getStateEvent,
     accept,
     client: clientShape as unknown as MatrixClient,
     receive: () => {

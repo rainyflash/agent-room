@@ -3,6 +3,7 @@ import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
+import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
@@ -53,23 +54,33 @@ export type LobbyPageProps = {
 };
 
 export function LobbyPage(props: LobbyPageProps) {
-  const { lobby, messages } = useAppServices();
+  const { lobby, messages, messagePublisher } = useAppServices();
   const store = useMemo(
     () => new LobbyExperienceStore(lobby, messages, props.roomId, props.principal),
     [lobby, messages, props.roomId, props.principal?.matrixUserId, props.principal?.displayName],
   );
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  if (state.kind !== 'ready')
-    return (
-      <>
-        <LobbyStateBoundary onRetry={store.retry} state={state} />
-        <DesktopRuntimeSurface />
-      </>
-    );
   return (
-    <RoomMessagesProvider store={store.messages}>
-      <ReadyLobby {...props} key={state.room.roomId} room={state.room} scene={state.projection} />
-    </RoomMessagesProvider>
+    <ConversationWorkspaceProvider
+      publisher={messagePublisher}
+      scope={props.principal?.matrixUserId ?? null}
+    >
+      {state.kind !== 'ready' ? (
+        <>
+          <LobbyStateBoundary onRetry={store.retry} state={state} />
+          <DesktopRuntimeSurface />
+        </>
+      ) : (
+        <RoomMessagesProvider store={store.messages}>
+          <ReadyLobby
+            {...props}
+            key={state.room.roomId}
+            room={state.room}
+            scene={state.projection}
+          />
+        </RoomMessagesProvider>
+      )}
+    </ConversationWorkspaceProvider>
   );
 }
 

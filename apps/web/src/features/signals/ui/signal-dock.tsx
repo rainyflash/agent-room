@@ -18,7 +18,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -51,6 +51,7 @@ export type SignalDockProps = {
   readonly embedded?: boolean;
   readonly defaultExpanded?: boolean;
   readonly onAction: (action: SignalAction) => void;
+  readonly onFeaturedDisplayed?: (signalId: string) => void;
   readonly onRetry: () => void;
   readonly selectedSignalId: string | null;
   readonly signals: readonly SignalProjection[];
@@ -61,6 +62,7 @@ export function SignalDock({
   embedded = false,
   defaultExpanded = false,
   onAction,
+  onFeaturedDisplayed,
   onRetry,
   selectedSignalId,
   signals,
@@ -180,6 +182,10 @@ export function SignalDock({
                 <SignalRow
                   language={language}
                   key={signal.signalId}
+                  {...(signal.signalId !== featuredSignal?.signalId ||
+                  onFeaturedDisplayed === undefined
+                    ? {}
+                    : { onDisplayed: onFeaturedDisplayed })}
                   onAction={onAction}
                   selected={selectedSignalId === signal.signalId}
                   signal={signal}
@@ -236,15 +242,44 @@ function DockHeadline({
 function SignalRow({
   language,
   onAction,
+  onDisplayed,
   selected,
   signal,
 }: {
   readonly language: string | undefined;
   readonly onAction: (action: SignalAction) => void;
+  readonly onDisplayed?: (signalId: string) => void;
   readonly selected: boolean;
   readonly signal: SignalProjection;
 }) {
   const { t } = useTranslation();
+  const row = useRef<HTMLButtonElement>(null);
+  const displayed = useRef<string | null>(null);
+  const signalId = signal.signalId;
+  useEffect(() => {
+    const element = row.current;
+    if (element === null || onDisplayed === undefined) return;
+    let visible = false;
+    const report = (): void => {
+      if (!visible || document.visibilityState === 'hidden' || displayed.current === signalId)
+        return;
+      displayed.current = signalId;
+      onDisplayed(signalId);
+    };
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        visible = entry?.isIntersecting === true && entry.intersectionRatio >= 0.9;
+        report();
+      },
+      { threshold: 0.9 },
+    );
+    observer.observe(element);
+    document.addEventListener('visibilitychange', report);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', report);
+    };
+  }, [onDisplayed, signalId]);
   const presentation = presentationByKind[signal.kind];
   const Icon = presentation.icon;
   const actorName = signal.actor?.displayName ?? t(`signals.kind.${signal.kind}`);
@@ -253,6 +288,7 @@ function SignalRow({
       <button
         aria-pressed={selected}
         className="message-signal"
+        ref={row}
         onClick={() => {
           onAction(signal.action);
         }}

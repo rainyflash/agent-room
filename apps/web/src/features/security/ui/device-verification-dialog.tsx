@@ -12,6 +12,7 @@ import type {
 import { failureMessageKey } from '@/features/security/ui/security-copy';
 
 export type DeviceVerificationDialogProps = {
+  readonly peer?: boolean;
   readonly onClose: () => void;
   readonly onVerified: () => void;
   readonly session: MatrixVerificationSession;
@@ -19,6 +20,7 @@ export type DeviceVerificationDialogProps = {
 };
 
 export function DeviceVerificationDialog({
+  peer = false,
   onClose,
   onVerified,
   session,
@@ -103,7 +105,7 @@ export function DeviceVerificationDialog({
         <p className="security-dialog__target">
           {t('security.verification.target', { device: targetName })}
         </p>
-        <VerificationBody session={session} snapshot={snapshot} />
+        <VerificationBody peer={peer} session={session} snapshot={snapshot} />
       </motion.aside>
     </motion.div>,
     document.body,
@@ -111,11 +113,12 @@ export function DeviceVerificationDialog({
 }
 
 type VerificationBodyProps = {
+  readonly peer: boolean;
   readonly session: MatrixVerificationSession;
   readonly snapshot: MatrixVerificationSnapshot;
 };
 
-function VerificationBody({ session, snapshot }: VerificationBodyProps) {
+function VerificationBody({ peer, session, snapshot }: VerificationBodyProps) {
   const { t } = useTranslation();
 
   if (snapshot.stage === 'waiting') {
@@ -123,7 +126,9 @@ function VerificationBody({ session, snapshot }: VerificationBodyProps) {
       <div aria-live="polite" className="security-dialog__state" role="status">
         <LoaderCircle aria-hidden="true" className="security-spin" />
         <h3>{t('security.verification.waiting')}</h3>
-        <p>{t('security.verification.waitingDetail')}</p>
+        <p>
+          {t(peer ? 'security.verification.peerWaiting' : 'security.verification.waitingDetail')}
+        </p>
         {snapshot.transactionId === undefined ? null : (
           <code>
             {t('security.verification.transaction', { transaction: snapshot.transactionId })}

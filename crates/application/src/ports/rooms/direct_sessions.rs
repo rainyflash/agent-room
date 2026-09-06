@@ -110,6 +110,16 @@ pub trait DirectSessionMatrixProvisioner: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<MatrixRoomId>>;
 }
 
+/// 通过已验证直接会话中的目标 Agent 查询当前成员状态，不引入第三个房间成员。
+pub trait DirectSessionMembershipGateway: Send + Sync {
+    fn is_joined<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        target_agent_id: AgentId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<bool>>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectSessionRecord {
     catalog: RoomCatalog,

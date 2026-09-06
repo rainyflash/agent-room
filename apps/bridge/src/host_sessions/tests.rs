@@ -104,6 +104,29 @@ async fn identity(registry: &HostSessionRegistry, id: &str) -> IpcSelfSummary {
 }
 
 #[tokio::test]
+async fn 桌面恢复清单只列活动会话且关闭后移除() {
+    let registry = HostSessionRegistry::new(Arc::new(TestFactory::default()));
+    let a = open(&registry, request("Builder")).await;
+    let b = open(&registry, request("Scout")).await;
+    identity(&registry, &a).await;
+    identity(&registry, &b).await;
+    let IpcResponse::RecoverySessions { sessions } = registry.recovery_sessions().await else {
+        panic!("必须返回恢复会话摘要");
+    };
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions.iter().any(|entry| entry.session_id == a
+        && entry.display_name == "Builder"
+        && entry.state == IpcHostSessionState::Ready));
+    registry.close(&a).await.expect("关闭 Builder");
+    let IpcResponse::RecoverySessions { sessions } = registry.recovery_sessions().await else {
+        panic!("必须返回恢复会话摘要");
+    };
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, b);
+    registry.shutdown().await;
+}
+
+#[tokio::test]
 async fn 三个人物并发路由到独立身份且关闭一个不影响其他人() {
     let factory = Arc::new(TestFactory::default());
     let registry = HostSessionRegistry::new(factory.clone());

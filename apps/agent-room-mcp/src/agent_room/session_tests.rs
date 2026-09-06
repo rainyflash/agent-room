@@ -293,6 +293,10 @@ async fn 未绑定参数在真实工具边界被拒绝且没有默认身份回�
         ),
         ("agent_room_list_handoffs", json!({})),
         (
+            "agent_room_matrix_security",
+            json!({"request":{"action":"inspect"}}),
+        ),
+        (
             "agent_room_consume_handoff",
             json!({"handoffId": SESSION_KEY}),
         ),

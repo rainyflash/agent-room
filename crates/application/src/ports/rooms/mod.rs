@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 pub use direct_sessions::{
     DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
-    DirectSessionMatrixProvisioner, DirectSessionRecord, DirectSessionStore,
+    DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,
+    DirectSessionStore,
 };
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,

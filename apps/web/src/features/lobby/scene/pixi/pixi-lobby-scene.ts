@@ -1,3 +1,5 @@
+// 使用静态着色器同步实现，确保发布环境禁止动态代码求值时也能保留 Pixi 场景。
+import 'pixi.js/unsafe-eval';
 import { sceneCharacters, type SceneFrame } from '../scene-character';
 import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';

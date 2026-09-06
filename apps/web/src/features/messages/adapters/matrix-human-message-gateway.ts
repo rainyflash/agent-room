@@ -1,4 +1,5 @@
 import { encryptContent } from './browser-content-cipher';
+import { encryptionReadiness } from './matrix-encryption-readiness';
 import type {
   MessagePublicationRequest,
   PreparedMessageBody,
@@ -6,7 +7,7 @@ import type {
   ProtectedMessageBody,
 } from '../domain/publication';
 import type { Result } from '@/shared/result';
-import type { IContent } from 'matrix-js-sdk';
+import { EventStatus, type IContent } from 'matrix-js-sdk';
 
 import type {
   HumanMatrixPublicationGateway,
@@ -53,10 +54,11 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
     body: PreparedMessageBody,
   ): Promise<Result<ProtectedMessageBody, MessagePublicationFailure>> {
     try {
+      if (!(await this.#encrypted(request.roomId))) return ok({ body });
+      const readiness = await encryptionReadiness(this.#clients.current(), request.roomId);
+      if (readiness !== 'ready') return err({ code: `publication.${readiness}`, retryable: true });
       return ok(
-        (await this.#encrypted(request.roomId))
-          ? await encryptContent(body, request.submissionId, request.roomId, request.mediaType)
-          : { body },
+        await encryptContent(body, request.submissionId, request.roomId, request.mediaType),
       );
     } catch {
       return err({ code: 'publication.matrix_rejected', retryable: true });
@@ -81,24 +83,35 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         (candidate) =>
           candidate.getTxnId() === transactionId &&
           candidate.getSender() === currentUserId &&
+          (candidate.status === null || candidate.status === EventStatus.SENT) &&
+          validMatrixEventId(candidate.getId() ?? '') &&
           candidate.getType() === 'io.github.rainyflash.agentroom.message.preview.v2',
       );
     return event?.getId() ?? null;
   }
 
-  async publish(request: MatrixPublicationRequest) {
+  async publish(
+    request: MatrixPublicationRequest,
+  ): ReturnType<HumanMatrixPublicationGateway['publish']> {
     const client = this.#clients.current();
     if (client?.getRoom(request.roomId) === null || client === null) {
       return err(unavailable());
     }
+    let encrypted = false;
+    let submissionStarted = false;
     try {
       if (request.event.actor.matrixUserId !== client.getUserId()) return err(rejected(false));
-      const encrypted = await this.#encrypted(request.roomId);
+      encrypted = await this.#encrypted(request.roomId);
       if (encrypted !== (request.event.content.encryption !== undefined))
         return err(rejected(false));
       if (encrypted && !(await client.getCrypto()?.isEncryptionEnabledInRoom(request.roomId)))
         return err(unavailable());
+      if (encrypted) {
+        const readiness = await encryptionReadiness(client, request.roomId);
+        if (readiness !== 'ready') return err({ kind: readiness, retryable: true });
+      }
       const sendEvent: MatrixEventSender = client.sendEvent.bind(client);
+      submissionStarted = true;
       const response = await sendEvent(
         request.roomId,
         request.event.eventType,
@@ -109,10 +122,24 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         ? ok(Object.freeze({ matrixEventId: response.event_id }))
         : err(rejected(false));
     } catch (error: unknown) {
+      const local = client
+        .getRoom(request.roomId)
+        ?.getLiveTimeline()
+        .getEvents()
+        .find(
+          (event) =>
+            event.getTxnId() === request.transactionId && event.getSender() === client.getUserId(),
+        );
+      // SDK 在加密成功后才发送 HTTP。未加密的失败本地回显不代表未知网络提交，
+      // 必须清除其待发送占位，避免后续重试被同一事务或失败队列阻塞。
+      if (encrypted && local?.status === EventStatus.NOT_SENT && !local.isEncrypted()) {
+        client.cancelPendingEvent(local);
+        return err({ kind: 'encryption_not_ready', retryable: true });
+      }
       const status = httpStatus(error);
       return status !== null && status >= 400 && status < 500
         ? err(rejected(status === 408 || status === 429))
-        : err(ambiguous());
+        : err(submissionStarted ? ambiguous() : unavailable());
     }
   }
 }

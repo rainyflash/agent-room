@@ -289,6 +289,7 @@ export type DesktopRuntimeEventHandlers = {
 };
 
 export type DesktopRuntimeGateway = {
+  readonly agentRecovery?: import('@/features/security/domain/agent-recovery').AgentRecoveryGateway;
   isAvailable(): boolean;
   beginHumanAuthentication(
     returnPath: string,

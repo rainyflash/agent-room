@@ -119,9 +119,12 @@ export type MatrixRecoveryResult = {
 
 export type MatrixVerificationRequest = {
   readonly targetDeviceId?: string;
+  readonly targetUserId?: string;
+  readonly roomId?: string;
 };
 
 export type MatrixIncomingVerification = {
+  readonly selfVerification?: boolean;
   readonly requestId: string;
   readonly sourceDeviceId?: string;
   readonly sourceUserId: string;

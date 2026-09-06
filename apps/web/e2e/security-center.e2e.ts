@@ -4,6 +4,25 @@ import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-
 
 const fixturePath = '/e2e/fixtures/security-center.html';
 
+test('390px 桌面 Agent 恢复设置可操作且密钥确认后消失', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto(`${fixturePath}?agentRecovery`);
+  const panel = page.getByRole('region', { name: 'Agent recovery on this computer' });
+  await panel.getByRole('button', { name: 'Set up recovery' }).click();
+  await panel.getByLabel('Recovery passphrase', { exact: true }).fill('long fixture passphrase');
+  await panel.getByLabel('Confirm passphrase', { exact: true }).fill('long fixture passphrase');
+  await panel.getByRole('button', { name: 'Create recovery' }).click();
+  await expect(panel.getByText('EsTc test-only recovery-key save-outside-this-app')).toBeVisible();
+  await expect(panel.getByRole('combobox')).toBeDisabled();
+  await expectNoHorizontalOverflow(page);
+  await panel.screenshot({ path: '../../artifacts/browser/agent-recovery-mobile.png' });
+  await panel.getByRole('button', { name: 'I saved the recovery key' }).click();
+  await expect(panel.getByText('EsTc test-only recovery-key save-outside-this-app')).toHaveCount(0);
+  await expect(panel.getByText('Identity and recovery are ready')).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 test('安全中心在桌面端展示真实状态并完成 SAS 确认', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 1_000, width: 1_440 });

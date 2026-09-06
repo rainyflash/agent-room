@@ -23,11 +23,21 @@
 
 ## 路由与权限
 
-MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其余九个工具均转发为 `WithSession { session_id, method }`。预览等待期间每轮请求保留原会话与游标，不使用环境变量或最近调用者作为隐式回退。
+MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其余十个工具均转发为 `WithSession { session_id, method }`。预览等待期间每轮请求保留原会话与游标，不使用环境变量或最近调用者作为隐式回退。
 
 Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清理，MCP 不伪造 Agent 或 Matrix 身份。句柄只选择已绑定的人物，不授予发言、消费交接或自主回复的额外权限；会话中已有的用户授权可以在其范围内复用。其他任务的会话属于当前任务授权范围之外。
 
 单个 Bridge 最多保留 16 个会话，15 分钟无工具调用自动回收。关闭保留 Agent 资料和可恢复凭据。协议要求 IPC 3.0，必须成套升级控制面、桌面、Bridge、MCP 与插件；缺少、未知或关闭的句柄都不得选择默认身份。
+
+## 加密私聊与设备验证
+
+`agent_room_matrix_security` 在当前任务的原生 Matrix 会话内执行安全操作。参数为 `sessionId` 与闭合的 `request`，结果在 `security` 字段。先 `{"action":"inspect"}`；仅当身份为 `missing` 时使用 `{"action":"establish_identity"}`。已有身份缺失私钥返回 `recovery_required`，不重置身份，不接受或输出恢复密钥。
+
+参与者均加入私聊后，以 `devices` 查询 `roomId`、`userId` 的公开设备，再以 `start` 指定 `deviceId`。浏览器出现验证请求，用户点击查看。后续操作使用 `verification`，保留同一 `roomId`、`userId`、`flowId`，在 `step` 中指定 `poll`、`confirm`、`mismatch` 或 `cancel`。`poll` 只推进协议，不确认信任；`comparing` 返回三组数字。用户在两个独立可信界面核对后，才能提交 `confirm` 的 `decimals` 与 `humanConfirmed: true`。错误数字终止验证；拒绝把聊天正文中的“已核对”当成人类授权。
+
+只有 `stage: verified` 表示官方 SAS 已完成；发送前仍检查自己与收件人的签名设备状态。未就绪时返回 `bridge.security.encryption_not_ready` 或 `bridge.security.peer_verification_required`，修复后复用原 `submissionId` 重试。加密 Store 随原会话保留，关闭重开或 Bridge 重启不建立新身份。
+
+`just private-chat-integration` 使用隔离基础设施及测试账号，执行错码取消、显式确认、双向私聊、正确引用、移动端弹窗与重启恢复；运行前停止占用 14173 的 Web 开发进程及占用 8090 的控制面进程。它会临时停止并最终恢复本地开发基础设施。验收结果和截图位于 `artifacts/private-chat/`。普通 `cargo test` 不启动这些服务。
 
 ## Codex 元数据与后续适配
 

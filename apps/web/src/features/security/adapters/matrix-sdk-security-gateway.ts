@@ -55,6 +55,16 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
       return err(failure('security.verification_unavailable', false));
     }
     try {
+      const client = this.#clients.current();
+      if (
+        client === null ||
+        (!pending.request.isSelfVerification &&
+          !(await peerIsJoined(client, pending.request.otherUserId)))
+      ) {
+        return err(failure('security.verification_unavailable', false));
+      }
+      if (client !== this.#clients.current())
+        return err(failure('security.matrix_unavailable', true));
       await pending.request.accept();
       this.#removeIncoming(requestId);
       const session = new MatrixSdkVerificationSession(
@@ -75,17 +85,29 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
       return active;
     }
     const targetDeviceId = request.targetDeviceId;
+    const targetUserId = request.targetUserId ?? active.value.userId;
     if (targetDeviceId !== undefined && !isValidDeviceId(targetDeviceId)) {
       return err(failure('security.verification_unavailable', false));
     }
 
     try {
+      if (
+        targetUserId !== active.value.userId &&
+        (targetDeviceId === undefined ||
+          request.roomId === undefined ||
+          !(await peerIsJoined(active.value.client, targetUserId, request.roomId)))
+      ) {
+        return err(failure('security.verification_unavailable', false));
+      }
+      if (active.value.client !== this.#clients.current())
+        return err(failure('security.matrix_unavailable', true));
       const verificationRequest =
-        targetDeviceId === undefined || targetDeviceId === active.value.deviceId
+        targetUserId === active.value.userId &&
+        (targetDeviceId === undefined || targetDeviceId === active.value.deviceId)
           ? await active.value.crypto.requestOwnUserVerification()
           : await active.value.crypto.requestDeviceVerification(
-              active.value.userId,
-              targetDeviceId,
+              targetUserId,
+              targetDeviceId ?? active.value.deviceId,
             );
       // to-device 验证由接受请求的一侧选择 SAS 方法；请求侧只等待 start 事件。
       const session = new MatrixSdkVerificationSession(verificationRequest, targetDeviceId, false);
@@ -296,17 +318,19 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
     if (
       userId === null ||
       userId === undefined ||
-      request.otherUserId !== userId ||
-      !request.isSelfVerification ||
+      (request.isSelfVerification
+        ? request.otherUserId !== userId
+        : !sharedJoinedRoom(this.#activeClient, request.otherUserId)) ||
       request.phase !== VerificationPhase.Requested
     ) {
       return;
     }
     const requestId = incomingRequestId(request);
-    if (this.#incoming.has(requestId)) {
+    if (this.#incoming.has(requestId) || this.#incoming.size >= 16) {
       return;
     }
     const notice = Object.freeze({
+      selfVerification: request.isSelfVerification,
       requestId,
       ...(request.otherDeviceId === undefined ? {} : { sourceDeviceId: request.otherDeviceId }),
       sourceUserId: request.otherUserId,
@@ -358,6 +382,43 @@ export class MatrixSdkSecurityGateway implements MatrixSecurityGateway {
       this.#notify();
     }
   }
+}
+
+function sharedJoinedRoom(
+  client: MatrixClient | null,
+  userId: string,
+  roomId?: string,
+): string | undefined {
+  return client
+    ?.getRooms()
+    .find(
+      (room) =>
+        (roomId === undefined || room.roomId === roomId) &&
+        room.getMyMembership() === 'join' &&
+        room.getMember(userId)?.membership === 'join',
+    )?.roomId;
+}
+
+async function peerIsJoined(
+  client: MatrixClient,
+  userId: string,
+  roomId?: string,
+): Promise<boolean> {
+  const sharedRoom = sharedJoinedRoom(client, userId, roomId);
+  const ownUserId = client.getUserId();
+  if (sharedRoom === undefined || ownUserId === null) return false;
+  const memberships: unknown[] = await Promise.all(
+    [ownUserId, userId].map(
+      async (id) => await client.getStateEvent(sharedRoom, 'm.room.member', id),
+    ),
+  );
+  return memberships.every(
+    (membership) =>
+      typeof membership === 'object' &&
+      membership !== null &&
+      'membership' in membership &&
+      membership.membership === 'join',
+  );
 }
 
 type PendingVerification = {

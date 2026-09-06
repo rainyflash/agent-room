@@ -7,11 +7,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
 import type {
   MessagePublicationRequest,
+  MessagePublicationResult,
   MessagePublisher,
 } from '@/features/messages/domain/publication';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
-import { ok } from '@/shared/result';
+import { err, ok } from '@/shared/result';
 
 const roomId = '!chat:agent-room.test';
 const submissionId = '01990d9e-8400-7000-8000-000000000003';
@@ -22,7 +23,7 @@ beforeAll(async () => {
 afterEach(cleanup);
 
 function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
-  const publish = vi.fn((request: MessagePublicationRequest) =>
+  const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
       ok(
         unknown
@@ -76,6 +77,34 @@ function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
 }
 
 describe('人与 Agent 直接聊天', () => {
+  it.each([
+    ['publication.encryption_not_ready', 'Encryption is not ready.'],
+    ['publication.peer_verification_required', 'Verify this conversation’s participant'],
+  ] as const)(
+    '加密未就绪 %s 时显示设备验证引导，保留草稿并允许修复后重试',
+    async (code, guidance) => {
+      const runtime = harness();
+      runtime.publish.mockResolvedValueOnce(err({ code, retryable: true }));
+      const user = userEvent.setup();
+      const input = screen.getByRole('textbox', { name: 'Message' });
+      await waitFor(() => {
+        expect(input).toBeEnabled();
+      });
+      await user.type(input, 'Keep this encrypted draft.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(guidance);
+      expect(input).toHaveValue('Keep this encrypted draft.');
+      expect(screen.queryByRole('button', { name: 'Check delivery' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Retry this message' }));
+      await waitFor(() => {
+        expect(input).toHaveValue('');
+      });
+      expect(runtime.publish).toHaveBeenCalledTimes(2);
+      expect(runtime.publish.mock.calls[0]?.[0].submissionId).toBe(
+        runtime.publish.mock.calls[1]?.[0].submissionId,
+      );
+    },
+  );
   it('一段输入与稳定身份提及直接发布，并清空已发送草稿', async () => {
     const runtime = harness();
     const user = userEvent.setup();

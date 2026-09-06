@@ -5,6 +5,8 @@ pub mod authorization;
 pub mod handoffs;
 pub mod ipc;
 pub mod lobby_session;
+pub mod matrix_recovery;
+pub mod matrix_security;
 pub mod messages;
 pub mod onboarding;
 pub mod ports;

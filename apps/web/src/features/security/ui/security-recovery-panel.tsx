@@ -13,6 +13,7 @@ import type {
 import { isValidRecoveryPassphrase } from '@/features/security/domain/matrix-security';
 import { recoveryMessageKey } from '@/features/security/ui/security-copy';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
+import { ok } from '@/shared/result';
 
 export type SecurityRecoveryPanelProps = {
   readonly gateway: MatrixSecurityGateway;
@@ -37,19 +38,25 @@ export function SecurityRecoveryPanel({
   const [copied, setCopied] = useState(false);
 
   const setup = useMutation({
-    mutationFn: async () => await gateway.setupRecovery({ passphrase }),
-    onSuccess: (result) => {
-      if (!result.ok) {
-        return;
-      }
-      setRecoveryKey(result.value.recoveryKey);
+    mutationFn: async () => {
+      const result = await gateway.setupRecovery({ passphrase });
       setPassphrase('');
       setConfirmation('');
+      if (!result.ok) {
+        return result;
+      }
+      setRecoveryKey(result.value.recoveryKey);
       onChanged();
+      // One-time recovery keys must not outlive the receipt in the mutation cache.
+      return ok(undefined);
     },
   });
   const recover = useMutation({
-    mutationFn: async () => await gateway.recover({ credential }, setProgress),
+    mutationFn: async () => {
+      const result = await gateway.recover({ credential }, setProgress);
+      setCredential('');
+      return result;
+    },
     onSuccess: (result) => {
       if (!result.ok) {
         return;
@@ -63,6 +70,9 @@ export function SecurityRecoveryPanel({
     setup.reset();
     recover.reset();
     setProgress(null);
+    setPassphrase('');
+    setConfirmation('');
+    setCredential('');
     setMode(next);
   };
   const cancel = (): void => {

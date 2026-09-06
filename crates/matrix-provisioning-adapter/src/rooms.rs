@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use agent_room_application::ports::{
     AgentRoomMembershipFactory, DirectMatrixRoomCreation, DirectSessionMatrixProvisioner,
+    DirectSessionMembershipGateway, MatrixAgentLocalpart, MatrixAgentUserRegistration,
     MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
     MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
@@ -9,7 +10,7 @@ use agent_room_application::ports::{
     PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, RoomMembershipGateway,
     RoomProvisioningGateway,
 };
-use agent_room_domain::rooms::MatrixRoomReference;
+use agent_room_domain::{ids::AgentId, rooms::MatrixRoomReference};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -194,42 +195,78 @@ impl DirectSessionMatrixProvisioner for MatrixApplicationServiceProvisioner {
     }
 }
 
+impl DirectSessionMembershipGateway for MatrixApplicationServiceProvisioner {
+    fn is_joined<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        target_agent_id: AgentId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        Box::pin(async move {
+            let registration = MatrixAgentUserRegistration::new(
+                MatrixAgentLocalpart::from_agent_id(target_agent_id),
+            );
+            let reader = self.expected_user_id(&registration)?;
+            let joined = Some(PrivateMatrixMembership::Joined);
+            if read_membership(self, room_id, &reader, Some(&reader)).await? != joined {
+                return Ok(false);
+            }
+            if user_id == &reader {
+                return Ok(true);
+            }
+            Ok(read_membership(self, room_id, user_id, Some(&reader)).await? == joined)
+        })
+    }
+}
+
+async fn read_membership(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    user_id: &MatrixUserId,
+    reader: Option<&MatrixUserId>,
+) -> MatrixResult<Option<PrivateMatrixMembership>> {
+    let operation = MatrixOperation::InspectMembership;
+    let mut endpoint = endpoint_with_segments(
+        &provisioner.homeserver_url,
+        &[
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id.as_str(),
+            "state",
+            "m.room.member",
+            user_id.as_str(),
+        ],
+        operation,
+    )?;
+    if let Some(reader) = reader {
+        endpoint
+            .query_pairs_mut()
+            .append_pair("user_id", reader.as_str());
+    }
+    let response = provisioner
+        .client
+        .get(endpoint)
+        .bearer_auth(provisioner.access_token.expose())
+        .send()
+        .await
+        .map_err(|error| map_transport_error(operation, &error))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body = expect_success_body(response, operation).await?;
+    let membership: MembershipResponse = decode_json(&body, operation)?;
+    decode_membership(&membership.membership, operation).map(Some)
+}
+
 impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
     fn membership<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<Option<PrivateMatrixMembership>>> {
-        Box::pin(async move {
-            let operation = MatrixOperation::InspectMembership;
-            let endpoint = endpoint_with_segments(
-                &self.homeserver_url,
-                &[
-                    "_matrix",
-                    "client",
-                    "v3",
-                    "rooms",
-                    room_id.as_str(),
-                    "state",
-                    "m.room.member",
-                    user_id.as_str(),
-                ],
-                operation,
-            )?;
-            let response = self
-                .client
-                .get(endpoint)
-                .bearer_auth(self.access_token.expose())
-                .send()
-                .await
-                .map_err(|error| map_transport_error(operation, &error))?;
-            if response.status() == reqwest::StatusCode::NOT_FOUND {
-                return Ok(None);
-            }
-            let body = expect_success_body(response, operation).await?;
-            let membership: MembershipResponse = decode_json(&body, operation)?;
-            decode_membership(&membership.membership, operation).map(Some)
-        })
+        Box::pin(read_membership(self, room_id, user_id, None))
     }
 
     fn invite<'a>(
@@ -838,13 +875,13 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        DirectMatrixRoomCreation, DirectSessionMatrixProvisioner, MatrixCreateRoom,
-        MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+        DirectMatrixRoomCreation, DirectSessionMatrixProvisioner, DirectSessionMembershipGateway,
+        MatrixCreateRoom, MatrixOperation, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
         PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
         RoomMembershipGateway, RoomProvisioningGateway, SecretValue,
     };
-    use agent_room_domain::rooms::MatrixRoomReference;
+    use agent_room_domain::{ids::AgentId, rooms::MatrixRoomReference};
     use axum::{
         Json, Router,
         extract::{Path, Query},
@@ -899,6 +936,44 @@ mod tests {
             .expect_err("必须拒绝普通用户");
 
         assert_eq!(failure.operation(), MatrixOperation::Join);
+    }
+
+    #[tokio::test]
+    async fn 私聊成员查询仅断言目标_agent_且不新增房间成员() {
+        let server = TestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let target = AgentId::from_uuid(
+            uuid::Uuid::parse_str("01945c1e-7b5a-7c7f-8a28-2de53f56a9a3").expect("有效 Agent"),
+        );
+        let member = MatrixUserId::new("@member:matrix.agent-room.localhost").expect("有效成员");
+        for (name, expected) in [("joined", true), ("invited", false), ("reader-left", false)] {
+            let room = MatrixRoomId::new(format!("!{name}:matrix.agent-room.localhost"))
+                .expect("有效房间");
+            assert_eq!(
+                provisioner
+                    .is_joined(&room, target, &member)
+                    .await
+                    .expect("成员查询可判定"),
+                expected
+            );
+        }
+        let forbidden =
+            MatrixRoomId::new("!forbidden:matrix.agent-room.localhost").expect("有效房间");
+        assert!(
+            provisioner
+                .is_joined(&forbidden, target, &member)
+                .await
+                .is_err()
+        );
+        assert_eq!(server.calls().await, vec!["membership"; 6]);
+        assert!(
+            server
+                .asserted_users()
+                .await
+                .iter()
+                .all(|user| user.as_str()
+                    == "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost")
+        );
     }
 
     #[test]
@@ -1195,6 +1270,10 @@ mod tests {
         async fn start() -> Self {
             let state = Arc::new(TestState::default());
             let app = Router::new()
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/state/m.room.member/{user}",
+                    get(direct_authority_membership),
+                )
                 .route("/_matrix/client/v3/createRoom", post(create_room))
                 .route(
                     "/_matrix/client/v3/directory/room/{alias}",
@@ -1513,6 +1592,32 @@ mod tests {
             .await
             .push(MatrixUserId::new(query.user_id).expect("断言用户有效"));
         Json(json!({}))
+    }
+
+    async fn direct_authority_membership(
+        axum::extract::State(state): axum::extract::State<Arc<TestState>>,
+        Path((room, user)): Path<(String, String)>,
+        Query(query): Query<UserQuery>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        state.calls.lock().await.push("membership");
+        let reader = MatrixUserId::new(query.user_id).expect("断言用户有效");
+        state.asserted_users.lock().await.push(reader.clone());
+        if room.starts_with("!forbidden:") {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "errcode": "M_FORBIDDEN" })),
+            );
+        }
+        let membership = if room.starts_with("!reader-left:") && user == reader.as_str() {
+            "leave"
+        } else if room.starts_with("!invited:") && user != reader.as_str() {
+            "invite"
+        } else {
+            "join"
+        };
+        (StatusCode::OK, Json(json!({ "membership": membership })))
     }
 
     async fn private_membership(

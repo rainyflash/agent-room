@@ -129,13 +129,14 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
 );
 const conversationListeners = new Set<() => void>();
 let publishedConversations: RoomMessageSignal[] = [];
+const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
       messages: [
         ...testMessages(requestedRoomId),
         ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
-      ],
+      ].toSorted((left, right) => right.serverTimestamp - left.serverTimestamp),
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
@@ -148,6 +149,7 @@ const messages: MessageGateway = {
   },
 };
 const fixtureControls: LobbyFixtureControls = {
+  displayedEvents: () => [...displayedEvents],
   receive: (input) => {
     const agent = room.agents[input.agentIndex ?? 0];
     if (agent === undefined) throw new Error('测试发言引用了不存在的 Agent');
@@ -472,7 +474,10 @@ const directSessions: DirectSessionGateway = {
   },
 };
 const directSessionMatrix: DirectSessionMatrixGateway = {
-  markDisplayed: () => Promise.resolve(ok(undefined)),
+  markDisplayed: (roomId, matrixEventId) => {
+    displayedEvents.push({ roomId, matrixEventId });
+    return Promise.resolve(ok(undefined));
+  },
   prepare: () => Promise.resolve(ok(undefined)),
   setIgnored: () => Promise.resolve(ok(undefined)),
 };

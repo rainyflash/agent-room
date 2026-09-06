@@ -8,8 +8,9 @@ use crate::{
         ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationFailure,
         ContentAuthorizationFailureKind, ContentAuthorizationIntent, ContentAuthorizationRequest,
         ContentAuthorizationResult, ContentMembershipAuthorizer, ContentPrincipalIdentityLookup,
-        DirectSessionRecord, DirectSessionStore, MatrixFailure, MatrixRoomAuthority,
-        MatrixRoomAuthorityGateway, PortFuture, PrivateRoomSnapshot, PrivateRoomStore,
+        DirectSessionMembershipGateway, DirectSessionRecord, DirectSessionStore, MatrixFailure,
+        MatrixRoomAuthority, MatrixRoomAuthorityGateway, PortFuture, PrivateRoomSnapshot,
+        PrivateRoomStore,
     },
 };
 
@@ -20,6 +21,7 @@ pub struct ContentMembershipAuthorizationDependencies {
     pub matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
     pub private_rooms: Arc<dyn PrivateRoomStore>,
     pub direct_sessions: Arc<dyn DirectSessionStore>,
+    pub direct_membership: Arc<dyn DirectSessionMembershipGateway>,
 }
 
 /// 把控制平面主体映射和 Matrix 当前状态组合成内容访问决策。
@@ -28,6 +30,7 @@ pub struct ContentMembershipAuthorizationService {
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
     private_rooms: Arc<dyn PrivateRoomStore>,
     direct_sessions: Arc<dyn DirectSessionStore>,
+    direct_membership: Arc<dyn DirectSessionMembershipGateway>,
 }
 
 impl ContentMembershipAuthorizationService {
@@ -37,6 +40,7 @@ impl ContentMembershipAuthorizationService {
             matrix_authority: dependencies.matrix_authority,
             private_rooms: dependencies.private_rooms,
             direct_sessions: dependencies.direct_sessions,
+            direct_membership: dependencies.direct_membership,
         }
     }
 
@@ -81,6 +85,22 @@ impl ContentMembershipAuthorizationService {
         let Some(user_id) = user_id else {
             return Ok(ContentAuthorizationDecision::Denied);
         };
+        if let Some(record) = direct_session.as_ref() {
+            let joined = self
+                .direct_membership
+                .is_joined(
+                    &request.matrix_room_id,
+                    record.session().target_agent_id(),
+                    &user_id,
+                )
+                .await
+                .map_err(map_matrix_failure)?;
+            return Ok(if joined {
+                ContentAuthorizationDecision::Allowed
+            } else {
+                ContentAuthorizationDecision::Denied
+            });
+        }
         let authority = self
             .matrix_authority
             .inspect_room_authority(&request.matrix_room_id, &user_id)
@@ -252,9 +272,10 @@ mod tests {
         ports::{
             ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationFailureKind,
             ContentAuthorizationIntent, ContentAuthorizationRequest, ContentMembershipAuthorizer,
-            ContentPrincipalIdentityLookup, DirectSessionRecord, DirectSessionStore,
-            MatrixPowerLevel, MatrixResult, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
-            MatrixRoomId, MatrixUserId, PortFuture, PrivateRoomSnapshot, PrivateRoomStore,
+            ContentPrincipalIdentityLookup, DirectSessionMembershipGateway, DirectSessionRecord,
+            DirectSessionStore, MatrixPowerLevel, MatrixResult, MatrixRoomAuthority,
+            MatrixRoomAuthorityGateway, MatrixRoomId, MatrixUserId, PortFuture,
+            PrivateRoomSnapshot, PrivateRoomStore,
         },
     };
 
@@ -294,6 +315,21 @@ mod tests {
             _room_id: &'a MatrixRoomId,
             _user_id: &'a MatrixUserId,
         ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
+            Box::pin(async move { self.result })
+        }
+    }
+
+    struct StubDirectMembership {
+        result: MatrixResult<bool>,
+    }
+
+    impl DirectSessionMembershipGateway for StubDirectMembership {
+        fn is_joined<'a>(
+            &'a self,
+            _room_id: &'a MatrixRoomId,
+            _target_agent_id: AgentId,
+            _user_id: &'a MatrixUserId,
+        ) -> PortFuture<'a, MatrixResult<bool>> {
             Box::pin(async move { self.result })
         }
     }
@@ -462,6 +498,7 @@ mod tests {
             MatrixUserId::new("@agent_owned:matrix.test").expect("Agent 用户 ID 有效");
         let service = ContentMembershipAuthorizationService::new(
             ContentMembershipAuthorizationDependencies {
+                direct_membership: Arc::new(StubDirectMembership { result: Ok(false) }),
                 identities: Arc::new(StubIdentity {
                     principal_result: Ok(None),
                     agent_result: Ok(Some(agent_user_id)),
@@ -631,6 +668,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 双人私聊不要求服务账号入房但仍核实双方身份与当前成员资格() {
+        let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+        let target_agent_id = AgentId::from_uuid(Uuid::now_v7());
+        let mut service = direct_service(
+            principal_id,
+            target_agent_id,
+            DirectContactPolicy::new(principal_id, target_agent_id),
+        );
+        for actor in [None, Some(target_agent_id)] {
+            assert_eq!(
+                service
+                    .authorize(&publish_request(principal_id, actor))
+                    .await
+                    .expect("双人参与者可发送"),
+                ContentAuthorizationDecision::Allowed,
+            );
+        }
+        service.direct_membership = Arc::new(StubDirectMembership { result: Ok(false) });
+        assert_eq!(
+            service
+                .authorize(&publish_request(principal_id, None))
+                .await
+                .expect("离开成员可判定"),
+            ContentAuthorizationDecision::Denied,
+        );
+        service.direct_membership = Arc::new(StubDirectMembership {
+            result: Err(crate::ports::MatrixFailure::new(
+                crate::ports::MatrixOperation::InspectMembership,
+                crate::ports::MatrixFailureKind::Forbidden,
+            )),
+        });
+        let outsider = PrincipalId::from_uuid(Uuid::now_v7());
+        assert_eq!(
+            service
+                .authorize(&publish_request(outsider, None))
+                .await
+                .expect("第三个人类应在 Matrix 查询前被拒绝"),
+            ContentAuthorizationDecision::Denied,
+        );
+        let failure = service
+            .authorize(&publish_request(principal_id, None))
+            .await
+            .expect_err("不可用的成员证明不能当作允许");
+        assert_eq!(failure.kind(), ContentAuthorizationFailureKind::Unavailable);
+    }
+
+    #[tokio::test]
     async fn 直接会话拒绝第三方_agent_和治理者权限() {
         let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
         let target_agent_id = AgentId::from_uuid(Uuid::now_v7());
@@ -666,6 +750,7 @@ mod tests {
         let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
         let denied = ContentMembershipAuthorizationService::new(
             ContentMembershipAuthorizationDependencies {
+                direct_membership: Arc::new(StubDirectMembership { result: Ok(false) }),
                 identities: Arc::new(StubIdentity {
                     principal_result: Ok(None),
                     agent_result: Ok(None),
@@ -691,6 +776,7 @@ mod tests {
 
         let failed = ContentMembershipAuthorizationService::new(
             ContentMembershipAuthorizationDependencies {
+                direct_membership: Arc::new(StubDirectMembership { result: Ok(false) }),
                 identities: Arc::new(StubIdentity {
                     principal_result: Err(RepositoryError::new(
                         "test.identity",
@@ -745,6 +831,7 @@ mod tests {
         let user_id = MatrixUserId::new(format!("@user_{}:matrix.test", Uuid::now_v7().simple()))
             .expect("用户 ID 有效");
         ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
+            direct_membership: Arc::new(StubDirectMembership { result: Ok(false) }),
             identities: Arc::new(StubIdentity {
                 principal_result: Ok(Some(user_id.clone())),
                 agent_result: Ok(Some(user_id)),
@@ -762,12 +849,16 @@ mod tests {
     ) -> ContentMembershipAuthorizationService {
         let user_id = MatrixUserId::new("@direct_member:matrix.test").expect("用户 ID 有效");
         ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
+            direct_membership: Arc::new(StubDirectMembership { result: Ok(true) }),
             identities: Arc::new(StubIdentity {
                 principal_result: Ok(Some(user_id.clone())),
                 agent_result: Ok(Some(user_id)),
             }),
             matrix_authority: Arc::new(StubAuthority {
-                result: Ok(joined_authority()),
+                result: Err(crate::ports::MatrixFailure::new(
+                    crate::ports::MatrixOperation::InspectRoomAuthority,
+                    crate::ports::MatrixFailureKind::Forbidden,
+                )),
             }),
             private_rooms: public_room_store(),
             direct_sessions: Arc::new(StubDirectSessions {

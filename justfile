@@ -135,6 +135,9 @@ vertical-bootstrap:
 security-vertical:
   python tools/vertical.py security
 
+private-chat-integration:
+  python tools/private_chat.py
+
 closed-test-matrix:
   python tools/closed_test.py matrix
 

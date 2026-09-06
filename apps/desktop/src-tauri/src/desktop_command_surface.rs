@@ -18,4 +18,6 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_bootstrap_default_agent",
     "desktop_configure_agent_runtime",
     "desktop_lobby_snapshot",
+    "desktop_agent_recovery_sessions",
+    "desktop_agent_recovery",
 ];

@@ -35,6 +35,9 @@ use uuid::Uuid;
 const TEST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TEST_SYNC_TIMEOUT_MILLIS: u64 = 100;
 
+#[path = "real_synapse/recovery.rs"]
+mod recovery;
+
 #[tokio::test]
 async fn 网络断线和超时被映射为不同的可恢复错误() {
     let closing = ClosingServer::start().await;

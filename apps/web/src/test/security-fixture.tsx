@@ -8,6 +8,10 @@ import '@/app/styles.css';
 
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type {
+  AgentRecoveryGateway,
+  AgentRecoveryResult,
+} from '@/features/security/domain/agent-recovery';
+import type {
   MatrixSecurityGateway,
   MatrixSecuritySnapshot,
   MatrixVerificationSession,
@@ -18,6 +22,36 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+let agentRecoveryState: AgentRecoveryResult['state'] = {
+  userId: '@builder:agent-room.test',
+  deviceId: 'BUILDER',
+  identity: 'ready',
+  recoveryAvailable: false,
+  backupEnabled: false,
+};
+const agentRecovery: AgentRecoveryGateway = {
+  sessions: () =>
+    Promise.resolve(
+      ok([
+        {
+          sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+          displayName: 'Builder test task',
+          state: 'ready',
+        },
+      ]),
+    ),
+  execute: (_sessionId, request) => {
+    if (request.action === 'enable')
+      agentRecoveryState = { ...agentRecoveryState, recoveryAvailable: true, backupEnabled: true };
+    return Promise.resolve(
+      ok({
+        state: agentRecoveryState,
+        recoveryKey:
+          request.action === 'enable' ? 'EsTc test-only recovery-key save-outside-this-app' : null,
+      }),
+    );
+  },
+};
 const accessManagement: AccessManagementGateway = {
   listAgentInstances: () =>
     Promise.resolve(
@@ -215,6 +249,9 @@ async function bootstrapFixture(): Promise<void> {
         <QueryClientProvider client={queryClient}>
           <SecurityWorkspace
             accessManagement={accessManagement}
+            {...(new URLSearchParams(window.location.search).has('agentRecovery')
+              ? { agentRecovery }
+              : {})}
             gateway={security}
             onBack={() => undefined}
           />

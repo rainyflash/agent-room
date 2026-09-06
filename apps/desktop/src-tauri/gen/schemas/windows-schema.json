@@ -555,6 +555,18 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the desktop_agent_recovery command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-agent-recovery",
+          "markdownDescription": "Enables the desktop_agent_recovery command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_agent_recovery_sessions command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-agent-recovery-sessions",
+          "markdownDescription": "Enables the desktop_agent_recovery_sessions command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_apply_agent_host command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-apply-agent-host",
@@ -667,6 +679,18 @@
           "type": "string",
           "const": "allow-desktop-set-autostart",
           "markdownDescription": "Enables the desktop_set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_agent_recovery command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-agent-recovery",
+          "markdownDescription": "Denies the desktop_agent_recovery command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_agent_recovery_sessions command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-agent-recovery-sessions",
+          "markdownDescription": "Denies the desktop_agent_recovery_sessions command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_apply_agent_host command without any pre-configured scope.",

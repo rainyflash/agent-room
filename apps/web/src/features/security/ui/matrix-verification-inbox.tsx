@@ -16,6 +16,7 @@ import { DeviceVerificationDialog } from '@/features/security/ui/device-verifica
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
 
 type ActiveVerification = {
+  readonly peer: boolean;
   readonly session: MatrixVerificationSession;
   readonly targetName: string;
 };
@@ -44,8 +45,12 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
         return;
       }
       setActive({
+        peer: request.selfVerification === false,
         session: result.value,
-        targetName: request.sourceDeviceId ?? request.sourceUserId,
+        targetName:
+          request.selfVerification === false
+            ? `${request.sourceUserId} / ${request.sourceDeviceId ?? ''}`
+            : (request.sourceDeviceId ?? request.sourceUserId),
       });
     },
   });
@@ -57,6 +62,7 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
   if (active !== null) {
     return (
       <DeviceVerificationDialog
+        peer={active.peer}
         onClose={() => {
           setActive(null);
         }}
@@ -85,12 +91,30 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
         <Fingerprint aria-hidden="true" />
       </div>
       <div className="security-verification-inbox__copy">
-        <span>{t('security.verification.incomingEyebrow')}</span>
-        <h2 id="matrix-verification-inbox-title">{t('security.verification.incomingTitle')}</h2>
+        <span>
+          {t(
+            incoming.selfVerification === false
+              ? 'security.verification.peerEyebrow'
+              : 'security.verification.incomingEyebrow',
+          )}
+        </span>
+        <h2 id="matrix-verification-inbox-title">
+          {t(
+            incoming.selfVerification === false
+              ? 'security.verification.peerTitle'
+              : 'security.verification.incomingTitle',
+          )}
+        </h2>
         <p>
-          {t('security.verification.incomingDetail', {
-            device: incoming.sourceDeviceId ?? incoming.sourceUserId,
-          })}
+          {t(
+            incoming.selfVerification === false
+              ? 'security.verification.peerDetail'
+              : 'security.verification.incomingDetail',
+            {
+              user: incoming.sourceUserId,
+              device: incoming.sourceDeviceId ?? incoming.sourceUserId,
+            },
+          )}
         </p>
       </div>
       <div className="security-verification-inbox__actions">

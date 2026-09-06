@@ -22,7 +22,8 @@ mod webview_migration;
 
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
-    DesktopRuntime, desktop_apply_agent_host, desktop_begin_human_authentication,
+    DesktopRuntime, desktop_agent_recovery, desktop_agent_recovery_sessions,
+    desktop_apply_agent_host, desktop_begin_human_authentication,
     desktop_begin_matrix_authentication, desktop_bootstrap_default_agent, desktop_check_update,
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_detect_agent_hosts, desktop_install_update, desktop_load_matrix_session,
@@ -121,6 +122,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_bootstrap_default_agent,
             desktop_configure_agent_runtime,
             desktop_lobby_snapshot,
+            desktop_agent_recovery_sessions,
+            desktop_agent_recovery,
         ])
         .setup(move |app| {
             webview_migration::retire_legacy_service_worker(app)?;
