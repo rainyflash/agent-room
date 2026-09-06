@@ -78,6 +78,7 @@ pub enum IpcCallerKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IpcScope {
+    MatrixSecurityManage,
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
@@ -213,6 +214,7 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                     IpcScope::BridgeStatusRead
                         | IpcScope::SelfRead
                         | IpcScope::HostSessionsManage
+                        | IpcScope::MatrixSecurityManage
                         | IpcScope::PreviewsRead
                         | IpcScope::PresenceRead
                         | IpcScope::ContentRead
@@ -445,6 +447,7 @@ mod tests {
     fn mcp_server_可逐项申请工具作用域而诊断客户端只能读取状态() {
         let policy = FoundationIpcScopePolicy;
         let tool_scopes = [
+            IpcScope::MatrixSecurityManage,
             IpcScope::SelfRead,
             IpcScope::PreviewsRead,
             IpcScope::PresenceRead,

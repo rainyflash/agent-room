@@ -175,6 +175,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     })
                 }
                 IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
+                IpcMethod::MatrixSecurity(request) => {
+                    self.agent_runtime()?.matrix_security(request).await
+                }
                 IpcMethod::BootstrapDefaultAgent(request) => {
                     self.bootstrap_default_agent(request.preferred_language)
                         .await

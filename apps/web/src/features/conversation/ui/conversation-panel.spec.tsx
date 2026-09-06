@@ -77,30 +77,34 @@ function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
 }
 
 describe('人与 Agent 直接聊天', () => {
-  it('加密未就绪时显示设备验证引导，保留草稿并允许修复后重试', async () => {
-    const runtime = harness();
-    runtime.publish.mockResolvedValueOnce(
-      err({ code: 'publication.encryption_not_ready', retryable: true }),
-    );
-    const user = userEvent.setup();
-    const input = screen.getByRole('textbox', { name: 'Message' });
-    await waitFor(() => {
-      expect(input).toBeEnabled();
-    });
-    await user.type(input, 'Keep this encrypted draft.');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Encryption is not ready.');
-    expect(input).toHaveValue('Keep this encrypted draft.');
-    expect(screen.queryByRole('button', { name: 'Check delivery' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Retry this message' }));
-    await waitFor(() => {
-      expect(input).toHaveValue('');
-    });
-    expect(runtime.publish).toHaveBeenCalledTimes(2);
-    expect(runtime.publish.mock.calls[0]?.[0].submissionId).toBe(
-      runtime.publish.mock.calls[1]?.[0].submissionId,
-    );
-  });
+  it.each([
+    ['publication.encryption_not_ready', 'Encryption is not ready.'],
+    ['publication.peer_verification_required', 'Verify this conversation’s participant'],
+  ] as const)(
+    '加密未就绪 %s 时显示设备验证引导，保留草稿并允许修复后重试',
+    async (code, guidance) => {
+      const runtime = harness();
+      runtime.publish.mockResolvedValueOnce(err({ code, retryable: true }));
+      const user = userEvent.setup();
+      const input = screen.getByRole('textbox', { name: 'Message' });
+      await waitFor(() => {
+        expect(input).toBeEnabled();
+      });
+      await user.type(input, 'Keep this encrypted draft.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(guidance);
+      expect(input).toHaveValue('Keep this encrypted draft.');
+      expect(screen.queryByRole('button', { name: 'Check delivery' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Retry this message' }));
+      await waitFor(() => {
+        expect(input).toHaveValue('');
+      });
+      expect(runtime.publish).toHaveBeenCalledTimes(2);
+      expect(runtime.publish.mock.calls[0]?.[0].submissionId).toBe(
+        runtime.publish.mock.calls[1]?.[0].submissionId,
+      );
+    },
+  );
   it('一段输入与稳定身份提及直接发布，并清空已发送草稿', async () => {
     const runtime = harness();
     const user = userEvent.setup();

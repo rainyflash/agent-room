@@ -148,6 +148,50 @@ describe('MatrixSdkHumanMessageGateway', () => {
     }
   });
 
+  it('参与者没有可信签发设备时在上传和重试发送前拒绝', async () => {
+    const sendEvent = vi.fn();
+    const base = client(sendEvent);
+    const gateway = new MatrixSdkHumanMessageGateway(
+      source({
+        getRoom: base.getRoom.bind(base),
+        getUserId: base.getUserId.bind(base),
+        sendEvent,
+        getDeviceId: () => 'WEB',
+        getStateEvent: () => Promise.resolve({ algorithm: 'm.megolm.v1.aes-sha2' }),
+        getCrypto: () => ({
+          ...readyCrypto(),
+          getDeviceVerificationStatus: (userId: string) =>
+            Promise.resolve({
+              crossSigningVerified: userId === '@rainy:agent-room.test',
+              signedByOwner: true,
+            }),
+        }),
+      } as unknown as MatrixClient),
+    );
+    const intent = {
+      ...request().event.preview,
+      body: 'Private draft',
+      roomId: request().roomId,
+      submissionId: request().event.id,
+      mediaType: 'text/plain' as const,
+      sensitivity: 'normal' as const,
+    };
+    await expect(
+      gateway.protectBody(intent, {
+        bytes: new TextEncoder().encode(intent.body),
+        digestSha256: 'a'.repeat(64),
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: 'publication.peer_verification_required', retryable: true },
+    });
+    await expect(gateway.publish(encryptedRequest())).resolves.toEqual({
+      ok: false,
+      error: { kind: 'peer_verification_required', retryable: true },
+    });
+    expect(sendEvent).not.toHaveBeenCalled();
+  });
+
   it('区分明确 4xx 拒绝、未知提交和本地不可用', async () => {
     const rejectedError = Object.assign(new Error('forbidden'), { httpStatus: 403 });
     const rejected = new MatrixSdkHumanMessageGateway(
@@ -179,6 +223,8 @@ function source(value: MatrixClient | null): MatrixClientSource {
 
 function client(sendEvent: ReturnType<typeof vi.fn>, events: readonly MatrixEvent[] = []) {
   const room = {
+    getEncryptionTargetMembers: () =>
+      Promise.resolve([{ membership: 'join', userId: '@peer:agent-room.test' }]),
     getMyMembership: () => 'join',
     getLiveTimeline: () => ({ getEvents: () => [...events] }),
   } as unknown as Room;
@@ -205,9 +251,14 @@ function event(eventId: string, sender: string, txnId: string): MatrixEvent {
 
 function readyCrypto() {
   return {
+    getUserDeviceInfo: () =>
+      Promise.resolve(
+        new Map([['@peer:agent-room.test', new Map([['PEER', { deviceId: 'PEER' }]])]]),
+      ),
     isEncryptionEnabledInRoom: () => Promise.resolve(true),
     isCrossSigningReady: () => Promise.resolve(true),
-    getDeviceVerificationStatus: () => Promise.resolve({ crossSigningVerified: true }),
+    getDeviceVerificationStatus: () =>
+      Promise.resolve({ crossSigningVerified: true, signedByOwner: true }),
   };
 }
 

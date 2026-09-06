@@ -126,13 +126,19 @@ const en = {
   'security.recovery.complete': 'Recovered {{imported}} of {{total}} encrypted room keys.',
   'security.recovery.cancel': 'Cancel',
   'security.verification.title': 'Verify a Matrix device',
+  'security.verification.peerTitle': 'Verify a room participant',
+  'security.verification.peerEyebrow': 'Participant verification request',
+  'security.verification.peerDetail':
+    '{{user}} ({{device}}) is requesting verification. Compare the codes in their trusted app or Agent host before confirming.',
+  'security.verification.peerWaiting':
+    'Accept the request in the participant’s app or Agent host, then compare the complete codes on both sides.',
   'security.verification.target': 'Target device: {{device}}',
   'security.verification.waiting': 'Waiting for the other trusted device',
   'security.verification.waitingDetail':
     'Accept the verification request on another device signed into the same Matrix account.',
   'security.verification.comparing': 'Compare these symbols on both devices',
   'security.verification.comparingDetail':
-    'Confirm only when every symbol appears in the same order on both screens.',
+    'Compare all three numbers, or every symbol in the same order, on both screens before confirming.',
   'security.verification.confirming': 'Waiting for both devices to confirm',
   'security.verification.confirmingDetail': 'Keep both verification screens open.',
   'security.verification.verified': 'Device verified',
@@ -284,11 +290,18 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.recovery.complete': '已恢复 {{imported}} / {{total}} 个加密房间密钥。',
   'security.recovery.cancel': '取消',
   'security.verification.title': '验证 Matrix 设备',
+  'security.verification.peerTitle': '验证房间参与者',
+  'security.verification.peerEyebrow': '参与者验证请求',
+  'security.verification.peerDetail':
+    '{{user}}（{{device}}）正在请求验证。请在对方可信应用或 Agent 宿主中核对完整安全码后确认。',
+  'security.verification.peerWaiting':
+    '请在参与者的应用或 Agent 宿主中接受请求，然后核对双方显示的完整安全码。',
   'security.verification.target': '目标设备：{{device}}',
   'security.verification.waiting': '正在等待另一台可信设备',
   'security.verification.waitingDetail': '请在登录同一 Matrix 账户的另一台设备上接受验证请求。',
   'security.verification.comparing': '在两台设备上核对这些符号',
-  'security.verification.comparingDetail': '仅当每个符号及其顺序完全一致时才确认。',
+  'security.verification.comparingDetail':
+    '核对两个界面的全部三组数字，或全部符号及其顺序，完全一致后再确认。',
   'security.verification.confirming': '正在等待双方确认',
   'security.verification.confirmingDetail': '请保持两台设备的验证界面开启。',
   'security.verification.verified': '设备验证完成',

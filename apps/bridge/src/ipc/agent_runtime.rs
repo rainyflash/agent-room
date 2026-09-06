@@ -70,8 +70,63 @@ use crate::agent_status::AgentStatusPublicationHandle;
 
 const MAXIMUM_HANDOFF_LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
 
+fn map_matrix_security_failure(
+    failure: agent_room_bridge_core::matrix_security::MatrixSecurityFailure,
+) -> BridgeIpcDispatchFailure {
+    use agent_room_bridge_core::matrix_security::MatrixSecurityFailure;
+    let (code, category, retryable) = match failure {
+        MatrixSecurityFailure::Unavailable => (
+            "bridge.security.unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        MatrixSecurityFailure::IdentityNotReady => (
+            "bridge.security.encryption_not_ready",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::PeerVerificationRequired => (
+            "bridge.security.peer_verification_required",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::InvalidRequest => (
+            "bridge.security.invalid_request",
+            IpcErrorCategory::Validation,
+            false,
+        ),
+        MatrixSecurityFailure::NotJoined => (
+            "bridge.security.not_joined",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        MatrixSecurityFailure::RecoveryRequired => (
+            "bridge.security.recovery_required",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::VerificationUnavailable => (
+            "bridge.security.verification_unavailable",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        MatrixSecurityFailure::ConfirmationRequired => (
+            "bridge.security.confirmation_required",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        MatrixSecurityFailure::SasMismatch => (
+            "bridge.security.sas_mismatch",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+    };
+    BridgeIpcDispatchFailure::new(code, category, retryable)
+}
+
 #[derive(Clone)]
 pub(crate) struct BridgeAgentRuntimeSnapshot {
+    security: Option<Arc<dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway>>,
     room_authority: Option<Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>>,
     identity: BridgeAgentIdentity,
     matrix_device_id: String,
@@ -95,6 +150,7 @@ impl BridgeAgentRuntimeSnapshot {
         granted_capabilities: impl IntoIterator<Item = &'static str>,
     ) -> Self {
         Self {
+            security: None,
             room_authority: None,
             identity,
             matrix_device_id: matrix_device_id.into(),
@@ -120,6 +176,38 @@ impl BridgeAgentRuntimeSnapshot {
     ) -> Self {
         self.room_authority = Some(authority);
         self
+    }
+
+    pub(crate) fn with_security(
+        mut self,
+        security: Arc<dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway>,
+    ) -> Self {
+        self.security = Some(security);
+        self
+    }
+
+    async fn ensure_send_access(
+        &self,
+        room_id: &MatrixRoomId,
+        encryption: MatrixRoomEncryption,
+        provenance: IpcMessageProvenance,
+    ) -> Result<(), BridgeIpcDispatchFailure> {
+        if room_id != &self.room_id && provenance == IpcMessageProvenance::AutonomousAgent {
+            return Err(BridgeIpcDispatchFailure::new(
+                "bridge.automation_room_mismatch",
+                IpcErrorCategory::Authorization,
+                false,
+            ));
+        }
+        if encryption == MatrixRoomEncryption::EndToEnd {
+            self.security
+                .as_ref()
+                .ok_or_else(agent_runtime_unavailable)?
+                .ensure_room_ready(room_id)
+                .await
+                .map_err(map_matrix_security_failure)?;
+        }
+        Ok(())
     }
 
     async fn message_room(
@@ -379,6 +467,24 @@ impl AgentRuntimeIpcFacade {
         })
     }
 
+    pub(super) async fn matrix_security(
+        &self,
+        request: agent_room_bridge_ipc::IpcMatrixSecurityRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        let runtime = self.runtime_snapshot()?;
+        let command = request
+            .command()
+            .map_err(|_| invalid_request("bridge.security.invalid_request"))?;
+        let security = runtime.security.ok_or_else(agent_runtime_unavailable)?;
+        let result = security
+            .execute(command)
+            .await
+            .map_err(map_matrix_security_failure)?;
+        Ok(IpcResponse::MatrixSecurity {
+            security: result.into(),
+        })
+    }
+
     pub(super) async fn list_previews(
         &self,
         request: IpcListPreviewsRequest,
@@ -510,15 +616,13 @@ impl AgentRuntimeIpcFacade {
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
         let (room_id, room_encryption) = runtime.message_room(Some(request.room_id)).await?;
-        if room_id != runtime.room_id && request.provenance == IpcMessageProvenance::AutonomousAgent
-        {
-            return Err(BridgeIpcDispatchFailure::new(
-                "bridge.automation_room_mismatch",
-                IpcErrorCategory::Authorization,
-                false,
-            ));
-        }
-        let publication = runtime.publication.ok_or_else(agent_runtime_unavailable)?;
+        runtime
+            .ensure_send_access(&room_id, room_encryption, request.provenance)
+            .await?;
+        let publication = runtime
+            .publication
+            .as_ref()
+            .ok_or_else(agent_runtime_unavailable)?;
         let submission_id = request
             .submission_id
             .as_deref()

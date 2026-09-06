@@ -144,6 +144,7 @@ const fn scope_tag(scope: IpcScope) -> u8 {
         IpcScope::AgentBootstrap => 11,
         IpcScope::HandoffList => 12,
         IpcScope::HostSessionsManage => 13,
+        IpcScope::MatrixSecurityManage => 14,
     }
 }
 

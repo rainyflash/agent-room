@@ -2,6 +2,11 @@ mod authentication;
 mod client;
 mod codec;
 mod host_sessions;
+mod matrix_security;
+pub use matrix_security::{
+    IpcMatrixIdentityState, IpcMatrixSecurityDevice, IpcMatrixSecurityRequest,
+    IpcMatrixSecurityResult, IpcMatrixVerificationStage, IpcMatrixVerificationStep,
+};
 pub mod limits;
 mod tools;
 pub use host_sessions::{

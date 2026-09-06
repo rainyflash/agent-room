@@ -81,6 +81,7 @@ pub struct IpcVersion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcScopeName {
+    MatrixSecurityManage,
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
@@ -169,6 +170,7 @@ impl From<IpcScopeName> for IpcScope {
         match value {
             IpcScopeName::BridgeStatusRead => Self::BridgeStatusRead,
             IpcScopeName::SelfRead => Self::SelfRead,
+            IpcScopeName::MatrixSecurityManage => Self::MatrixSecurityManage,
             IpcScopeName::AgentBootstrap => Self::AgentBootstrap,
             IpcScopeName::HostSessionsManage => Self::HostSessionsManage,
             IpcScopeName::PreviewsRead => Self::PreviewsRead,
@@ -189,6 +191,7 @@ impl From<IpcScope> for IpcScopeName {
         match value {
             IpcScope::BridgeStatusRead => Self::BridgeStatusRead,
             IpcScope::SelfRead => Self::SelfRead,
+            IpcScope::MatrixSecurityManage => Self::MatrixSecurityManage,
             IpcScope::AgentBootstrap => Self::AgentBootstrap,
             IpcScope::HostSessionsManage => Self::HostSessionsManage,
             IpcScope::PreviewsRead => Self::PreviewsRead,

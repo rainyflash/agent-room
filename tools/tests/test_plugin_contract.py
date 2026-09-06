@@ -45,6 +45,10 @@ class PluginContractTests(unittest.TestCase):
             self.assertNotIn(name, plugin.AUTOMATIC_TOOLS)
             self.assertEqual(plugin.EXPECTED_TOOL_ANNOTATIONS[name], (False, False, True, True))
 
+    def test_安全验证工具不自动批准且不声称只读或幂等(self) -> None:
+        self.assertNotIn("agent_room_matrix_security", plugin.AUTOMATIC_TOOLS)
+        self.assertEqual(plugin.EXPECTED_TOOL_ANNOTATIONS["agent_room_matrix_security"], (False, False, False, True))
+
     def test_打包冒烟区分缺参错误和隔离_bridge_错误(self) -> None:
         observed = {}
 

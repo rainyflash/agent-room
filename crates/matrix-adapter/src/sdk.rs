@@ -257,6 +257,7 @@ fn is_rebuildable_state_cache_error(error: &matrix_sdk::Error) -> bool {
 pub struct MatrixSdkHandoffConnection {
     matrix: MatrixConnection,
     handoff: Arc<MatrixSdkHandoffGateway>,
+    security: Arc<crate::security::MatrixSdkSecurityGateway>,
 }
 
 impl std::fmt::Debug for MatrixSdkHandoffConnection {
@@ -275,6 +276,12 @@ impl MatrixSdkHandoffConnection {
 
     pub fn matrix_gateway_handle(&self) -> Arc<dyn MatrixGateway> {
         self.matrix.gateway_handle()
+    }
+
+    pub fn security_gateway_handle(
+        &self,
+    ) -> Arc<dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway> {
+        self.security.clone()
     }
 
     pub fn room_authority_gateway_handle(&self) -> Arc<dyn MatrixRoomAuthorityGateway> {
@@ -714,11 +721,13 @@ fn handoff_connection_from_client(
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixSdkHandoffConnection> {
     let handoff = Arc::new(MatrixSdkHandoffGateway::attach(client.clone()));
+    let security = crate::security::MatrixSdkSecurityGateway::new(client.clone());
     let (session, sdk_gateway) =
         sdk_connection_parts(client, MatrixOperation::RestoreSession, sync_timeline_limit)?;
     Ok(MatrixSdkHandoffConnection {
         matrix: application_connection(session, sdk_gateway),
         handoff,
+        security,
     })
 }
 
@@ -764,7 +773,7 @@ struct RoomCreateEventContent {
     room_version: String,
 }
 
-async fn get_state_content<T>(
+pub(crate) async fn get_state_content<T>(
     client: &Client,
     room_id: matrix_sdk::ruma::OwnedRoomId,
     event_type: StateEventType,

@@ -16,6 +16,7 @@ pub enum IpcMethod {
         method: Box<IpcMethod>,
     },
     GetSelf,
+    MatrixSecurity(crate::IpcMatrixSecurityRequest),
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
@@ -36,6 +37,7 @@ impl IpcMethod {
             Self::CloseHostSession(_) => "close_host_session",
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
+            Self::MatrixSecurity(_) => "matrix_security",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
             Self::GetPresence(_) => "get_presence",
@@ -55,6 +57,7 @@ impl IpcMethod {
             Self::OpenHostSession(_) | Self::CloseHostSession(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
+            Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
@@ -76,6 +79,7 @@ impl IpcMethod {
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
             Self::BridgeStatus | Self::GetSelf => Ok(()),
+            Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
             Self::WithSession { session_id, method } => {
@@ -389,6 +393,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    MatrixSecurity {
+        security: crate::IpcMatrixSecurityResult,
+    },
     HostSession {
         session: IpcHostSessionSummary,
     },

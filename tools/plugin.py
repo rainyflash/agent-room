@@ -42,6 +42,7 @@ EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_open_session": (False, False, True, True),
     "agent_room_close_session": (False, False, True, True),
     "agent_room_get_self": (True, False, True, False),
+    "agent_room_matrix_security": (False, False, False, True),
     "agent_room_list_previews": (True, False, True, True),
     "agent_room_get_presence": (True, False, True, True),
     "agent_room_open_content": (True, False, True, True),

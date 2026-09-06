@@ -23,6 +23,7 @@ SESSION_ID: Final = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 SESSION_SCOPED_TOOLS: Final = (
+    "agent_room_matrix_security",
     "agent_room_get_self",
     "agent_room_list_previews",
     "agent_room_get_presence",

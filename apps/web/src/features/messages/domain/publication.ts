@@ -62,6 +62,7 @@ export type MessagePublicationFailureCode =
   | 'publication.content_rejected'
   | 'publication.matrix_rejected'
   | 'publication.encryption_not_ready'
+  | 'publication.peer_verification_required'
   | 'publication.persistence_failed'
   | 'publication.unexpected_failure';
 
@@ -145,7 +146,12 @@ export type MatrixPublicationRequest = {
 };
 
 export type MatrixPublicationFailure = {
-  readonly kind: 'ambiguous' | 'rejected' | 'unavailable' | 'encryption_not_ready';
+  readonly kind:
+    | 'ambiguous'
+    | 'rejected'
+    | 'unavailable'
+    | 'encryption_not_ready'
+    | 'peer_verification_required';
   readonly retryable: boolean;
 };
 

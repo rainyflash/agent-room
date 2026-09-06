@@ -140,8 +140,9 @@ export function ConversationComposer({
         <div role="alert">
           <p>
             {t(
-              publication.context.failure?.code === 'publication.encryption_not_ready'
-                ? 'messages.failure.publication.encryption_not_ready'
+              publication.context.failure?.code === 'publication.encryption_not_ready' ||
+                publication.context.failure?.code === 'publication.peer_verification_required'
+                ? `messages.failure.${publication.context.failure.code}`
                 : 'conversation.failed',
             )}
           </p>

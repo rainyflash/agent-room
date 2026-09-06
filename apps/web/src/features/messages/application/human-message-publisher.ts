@@ -212,8 +212,9 @@ export class HumanMessagePublisher implements MessagePublisher {
         return err(
           Object.freeze({
             code:
-              published.error.kind === 'encryption_not_ready'
-                ? 'publication.encryption_not_ready'
+              published.error.kind === 'encryption_not_ready' ||
+              published.error.kind === 'peer_verification_required'
+                ? `publication.${published.error.kind}`
                 : 'publication.matrix_rejected',
             retryable: published.error.retryable,
           }),

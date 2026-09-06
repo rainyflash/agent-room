@@ -1,4 +1,5 @@
 import { encryptContent } from './browser-content-cipher';
+import { encryptionReadiness } from './matrix-encryption-readiness';
 import type {
   MessagePublicationRequest,
   PreparedMessageBody,
@@ -6,7 +7,7 @@ import type {
   ProtectedMessageBody,
 } from '../domain/publication';
 import type { Result } from '@/shared/result';
-import { EventStatus, type IContent, type MatrixClient } from 'matrix-js-sdk';
+import { EventStatus, type IContent } from 'matrix-js-sdk';
 
 import type {
   HumanMatrixPublicationGateway,
@@ -54,8 +55,8 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
   ): Promise<Result<ProtectedMessageBody, MessagePublicationFailure>> {
     try {
       if (!(await this.#encrypted(request.roomId))) return ok({ body });
-      if (!(await encryptionIdentityReady(this.#clients.current())))
-        return err({ code: 'publication.encryption_not_ready', retryable: true });
+      const readiness = await encryptionReadiness(this.#clients.current(), request.roomId);
+      if (readiness !== 'ready') return err({ code: `publication.${readiness}`, retryable: true });
       return ok(
         await encryptContent(body, request.submissionId, request.roomId, request.mediaType),
       );
@@ -105,8 +106,10 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         return err(rejected(false));
       if (encrypted && !(await client.getCrypto()?.isEncryptionEnabledInRoom(request.roomId)))
         return err(unavailable());
-      if (encrypted && !(await encryptionIdentityReady(client)))
-        return err({ kind: 'encryption_not_ready', retryable: true });
+      if (encrypted) {
+        const readiness = await encryptionReadiness(client, request.roomId);
+        if (readiness !== 'ready') return err({ kind: readiness, retryable: true });
+      }
       const sendEvent: MatrixEventSender = client.sendEvent.bind(client);
       submissionStarted = true;
       const response = await sendEvent(
@@ -139,17 +142,6 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         : err(submissionStarted ? ambiguous() : unavailable());
     }
   }
-}
-
-async function encryptionIdentityReady(client: MatrixClient | null): Promise<boolean> {
-  const crypto = client?.getCrypto();
-  const userId = client?.getUserId();
-  const deviceId = client?.getDeviceId();
-  if (crypto === undefined || !userId || !deviceId || !(await crypto.isCrossSigningReady()))
-    return false;
-  return (
-    (await crypto.getDeviceVerificationStatus(userId, deviceId))?.crossSigningVerified === true
-  );
 }
 
 type MatrixEventSender = (
