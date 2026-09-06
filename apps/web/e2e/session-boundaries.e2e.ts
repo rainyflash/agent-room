@@ -97,3 +97,36 @@ test('云端会话过期后立刻撤下工作区的旧账户信息', async ({ pa
   await expect(page.getByText(principal.displayName, { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open account workspace' })).toHaveCount(0);
 });
+
+test('主动退出后停止需要登录的性能上报，重新打开保持退出', async ({ page }) => {
+  let authenticated = true;
+  let signingOut = false;
+  const lateTelemetry: string[] = [];
+  await mockCloud(page, () => authenticated);
+  await page.route('https://**/auth/logout', async (route) => {
+    authenticated = false;
+    await route.fulfill({
+      headers: {
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-origin': new URL(page.url()).origin,
+      },
+      status: 204,
+    });
+  });
+  await page.route('https://**/telemetry/frontend', async (route) => {
+    if (signingOut) lateTelemetry.push(route.request().method());
+    await route.fulfill({ status: 204 });
+  });
+  await page.goto('/connect');
+  const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
+  await expect(signOut).toBeVisible();
+  signingOut = true;
+  await signOut.click();
+  await expect(page.getByRole('button', { name: 'Sign in to Agent Room' })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.waitForLoadState('networkidle');
+  expect(lateTelemetry).toEqual([]);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Sign in to Agent Room' })).toBeVisible();
+  await expect(page.getByText(principal.displayName, { exact: true })).toHaveCount(0);
+});

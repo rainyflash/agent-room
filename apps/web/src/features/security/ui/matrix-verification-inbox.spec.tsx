@@ -31,7 +31,9 @@ describe('MatrixVerificationInboxView', () => {
 
     renderInbox(gateway);
 
-    expect(await screen.findByText('Verify another signed-in device')).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByText('Verify another signed-in device')).toBeVisible();
+    });
     expect(screen.getByText(/ALICE-LAPTOP/u)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Review codes' }));
 
