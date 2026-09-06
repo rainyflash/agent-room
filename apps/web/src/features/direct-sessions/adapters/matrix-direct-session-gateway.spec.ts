@@ -10,8 +10,32 @@ import { describe, expect, it, vi } from 'vitest';
 import { MatrixSdkDirectSessionGateway } from './matrix-direct-session-gateway';
 import type { DirectSession } from '@/features/direct-sessions/domain/direct-session';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
+import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 describe('MatrixSdkDirectSessionGateway', () => {
+  it('加入请求返回后等待成员同步，再写入私聊映射', async () => {
+    let visibleRoom = room('invite');
+    const setAccountData = vi.fn().mockResolvedValue({});
+    const client = {
+      getAccountDataFromServer: vi.fn().mockResolvedValue({}),
+      getRoom: () => visibleRoom,
+      joinRoom: vi.fn().mockResolvedValue(visibleRoom),
+      setAccountData,
+    } as unknown as MatrixClient;
+    const registry = new MatrixClientRegistry();
+    registry.replace(client);
+    const gateway = new MatrixSdkDirectSessionGateway(registry);
+    const prepared = gateway.prepare(session());
+    await Promise.resolve();
+    expect(setAccountData).not.toHaveBeenCalled();
+    visibleRoom = room('join');
+    registry.refresh(client);
+    await expect(prepared).resolves.toEqual({ ok: true, value: undefined });
+    expect(setAccountData).toHaveBeenCalledExactlyOnceWith(EventType.Direct, {
+      '@_agent_build:matrix.agent-room.test': ['!direct:matrix.agent-room.test'],
+    });
+  });
+
   it('加入邀请房间并保留已有的 m.direct 映射', async () => {
     const joinedRoom = room('join');
     const invitedRoom = room('invite');

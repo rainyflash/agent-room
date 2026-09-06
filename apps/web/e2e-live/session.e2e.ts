@@ -20,5 +20,13 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
     { timeout: 40_000 },
   );
   await expect(page.locator('.identity-summary dd').first()).toHaveText(firstIdentity);
+  await page.goto('/settings/security');
+  await expect(page.locator('.security-account-line')).toContainText(firstIdentity, {
+    timeout: 40_000,
+  });
+  await page.reload();
+  await expect(page.locator('.security-account-line')).toContainText(firstIdentity, {
+    timeout: 40_000,
+  });
   expect(failures).toEqual([]);
 });

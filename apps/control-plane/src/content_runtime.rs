@@ -116,13 +116,14 @@ pub(crate) async fn initialize(
         dependencies.config,
         dependencies.matrix_base_url,
         dependencies.matrix_request_timeout,
-        dependencies.matrix_identities,
+        dependencies.matrix_identities.clone(),
     )
     .await?;
     let repository: Arc<dyn ContentRepository> = dependencies.repositories.clone();
     let identities: Arc<dyn ContentPrincipalIdentityLookup> = dependencies.repositories.clone();
     let authorizer: Arc<dyn ContentMembershipAuthorizer> = Arc::new(
         ContentMembershipAuthorizationService::new(ContentMembershipAuthorizationDependencies {
+            direct_membership: dependencies.matrix_identities,
             identities,
             matrix_authority: authority.clone(),
             private_rooms: dependencies.repositories.clone(),

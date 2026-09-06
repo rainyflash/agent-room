@@ -61,6 +61,7 @@ export type MessagePublicationFailureCode =
   | 'publication.invalid_intent'
   | 'publication.content_rejected'
   | 'publication.matrix_rejected'
+  | 'publication.encryption_not_ready'
   | 'publication.persistence_failed'
   | 'publication.unexpected_failure';
 
@@ -144,7 +145,7 @@ export type MatrixPublicationRequest = {
 };
 
 export type MatrixPublicationFailure = {
-  readonly kind: 'ambiguous' | 'rejected' | 'unavailable';
+  readonly kind: 'ambiguous' | 'rejected' | 'unavailable' | 'encryption_not_ready';
   readonly retryable: boolean;
 };
 

@@ -691,6 +691,8 @@ export const resources = {
         'The content service rejected the upload or binding request.',
       'messages.failure.publication.matrix_rejected':
         'Matrix definitively rejected the submission.',
+      'messages.failure.publication.encryption_not_ready':
+        'Encryption is not ready. Open Security in room settings to verify this device, then retry. Your draft is preserved.',
       'messages.failure.publication.persistence_failed':
         'The browser could not recover the idempotent submission state.',
       'messages.failure.publication.unexpected_failure':
@@ -1324,6 +1326,8 @@ export const resources = {
       'messages.failure.publication.invalid_intent': '房间、UUIDv7 提交标识或受限预览字段无效。',
       'messages.failure.publication.content_rejected': '内容服务拒绝了上传或绑定请求。',
       'messages.failure.publication.matrix_rejected': 'Matrix 已明确拒绝本次提交。',
+      'messages.failure.publication.encryption_not_ready':
+        '加密尚未就绪。请在房间设置的安全中心验证当前设备，然后重试；草稿已保留。',
       'messages.failure.publication.persistence_failed': '浏览器无法恢复幂等提交状态。',
       'messages.failure.publication.unexpected_failure': '发布边界失败，且没有可信结果。',
       'pwa.update.title': '已验证的新版本可用',

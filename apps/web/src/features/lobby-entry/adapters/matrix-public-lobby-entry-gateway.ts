@@ -1,4 +1,4 @@
-import type { MatrixClient, Room } from 'matrix-js-sdk';
+import { joinConfirmedMatrixRoom } from '@/shared/matrix/join-confirmed-matrix-room';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { err, ok, type Result } from '@/shared/result';
@@ -35,14 +35,10 @@ export class MatrixSdkPublicLobbyEntryGateway implements PublicLobbyMatrixGatewa
       return err({ code: 'lobby_entry.matrix_unavailable', retryable: true });
     }
     try {
-      const current = client.getRoom(matrixRoomId);
-      if (current?.getMyMembership() === 'join') return ok(undefined);
-      const joined = await client.joinRoom(matrixRoomId);
-      const confirmed = await waitForJoinedMembership(
+      const confirmed = await joinConfirmedMatrixRoom(
         this.clients,
         client,
         matrixRoomId,
-        joined,
         this.#joinConfirmationTimeoutMilliseconds,
       );
       return confirmed
@@ -52,58 +48,4 @@ export class MatrixSdkPublicLobbyEntryGateway implements PublicLobbyMatrixGatewa
       return err({ code: 'lobby_entry.matrix_join_failed', retryable: true });
     }
   }
-}
-
-async function waitForJoinedMembership(
-  clients: MatrixClientSource,
-  client: MatrixClient,
-  matrixRoomId: string,
-  joinResponseRoom: Room,
-  timeoutMilliseconds: number,
-): Promise<boolean> {
-  if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) return true;
-  return await new Promise<boolean>((resolve) => {
-    let timeout: ReturnType<typeof globalThis.setTimeout> | null = null;
-    let unsubscribe: (() => void) | null = null;
-    let settled = false;
-    const finish = (joined: boolean): void => {
-      if (settled) return;
-      settled = true;
-      unsubscribe?.();
-      if (timeout !== null) globalThis.clearTimeout(timeout);
-      resolve(joined);
-    };
-    const inspectProjection = (): boolean => {
-      if (clients.current() !== client) {
-        finish(false);
-        return true;
-      }
-      if (hasJoinedMembership(client, matrixRoomId, joinResponseRoom)) {
-        finish(true);
-        return true;
-      }
-      return false;
-    };
-    unsubscribe = clients.subscribe(() => {
-      inspectProjection();
-    });
-    if (inspectProjection()) {
-      unsubscribe();
-      return;
-    }
-    timeout = globalThis.setTimeout(() => {
-      finish(false);
-    }, timeoutMilliseconds);
-  });
-}
-
-function hasJoinedMembership(
-  client: MatrixClient,
-  matrixRoomId: string,
-  joinResponseRoom: Room,
-): boolean {
-  return (
-    client.getRoom(matrixRoomId)?.getMyMembership() === 'join' ||
-    joinResponseRoom.getMyMembership() === 'join'
-  );
 }

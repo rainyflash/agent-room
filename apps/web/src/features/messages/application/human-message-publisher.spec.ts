@@ -17,6 +17,17 @@ const contentId = '01990d9e-8400-7000-8000-000000000004';
 const roomId = '!public:agent-room.test';
 
 describe('HumanMessagePublisher', () => {
+  it('加密前的明确拒绝保留可重试原因，不误报为待确认或已发送', async () => {
+    const runtime = dependencies({
+      matrixResults: [err({ kind: 'encryption_not_ready', retryable: true })],
+    });
+    const publisher = new HumanMessagePublisher(runtime.value);
+    await expect(publisher.publish(request(), vi.fn())).resolves.toEqual({
+      ok: false,
+      error: { code: 'publication.encryption_not_ready', retryable: true },
+    });
+    expect(runtime.content.bind).not.toHaveBeenCalled();
+  });
   it('直接使用 Agent Room 用户会话发布无实例签名的 Human v2 消息', async () => {
     const runtime = dependencies();
     const publisher = new HumanMessagePublisher(runtime.value);

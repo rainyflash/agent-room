@@ -138,7 +138,13 @@ export function ConversationComposer({
       ) : null}
       {failed ? (
         <div role="alert">
-          <p>{t('conversation.failed')}</p>
+          <p>
+            {t(
+              publication.context.failure?.code === 'publication.encryption_not_ready'
+                ? 'messages.failure.publication.encryption_not_ready'
+                : 'conversation.failed',
+            )}
+          </p>
           {publication.context.failure?.retryable ? (
             <Button onClick={composer.retry} size="compact">
               {t('conversation.retry')}

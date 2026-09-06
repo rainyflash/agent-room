@@ -231,11 +231,15 @@ function RoomDirectoryBoundary() {
 }
 
 function SettingsBoundary() {
+  const { snapshot } = useSession();
   const { section } = settingsRoute.useParams();
   const navigate = settingsRoute.useNavigate();
   const valid = routeIdentifierSchema.safeParse(section).success;
   if (!valid || section !== 'security') {
     return <RouteUnavailable invalid={!valid} routeLabel={`/settings/${section}`} />;
+  }
+  if (snapshot.context.controlStatus !== 'ready' || snapshot.context.connection === null) {
+    return <ConnectionPage />;
   }
   return (
     <SecurityPage

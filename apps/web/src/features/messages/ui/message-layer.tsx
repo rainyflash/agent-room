@@ -1,7 +1,7 @@
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { AnimatePresence } from 'motion/react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
@@ -54,6 +54,7 @@ export function MessageLayer({
   } = useAppServices();
   const { state, store } = useRoomMessages(roomId);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
+  const latestMessage = projectedMessages[0];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
   const projectedSignals = useMemo(
     () =>
@@ -66,7 +67,6 @@ export function MessageLayer({
   const selectedMessage =
     projectedMessages.find((message) => message.messageId === selectedMessageId) ?? null;
   const selectedSignalId = selectedMessageId === null ? null : `message:${selectedMessageId}`;
-  const displayedEventId = useRef<string | null>(null);
 
   const handleSignalAction = (action: SignalAction): void => {
     if (action.kind === 'open_message') {
@@ -80,26 +80,13 @@ export function MessageLayer({
     }
   }, [onSelectedMessageChange, selectedMessage, selectedMessageId, state.kind]);
 
-  useEffect(() => {
-    const latestEventId = projectedMessages[0]?.matrixEventId ?? null;
-    if (
-      !active ||
-      onLatestDisplayed === undefined ||
-      latestEventId === null ||
-      displayedEventId.current === latestEventId
-    ) {
-      return;
-    }
-    displayedEventId.current = latestEventId;
-    onLatestDisplayed(latestEventId);
-  }, [active, onLatestDisplayed, projectedMessages]);
-
   return (
     <>
       <div className={`message-workspace message-workspace--${variant}`} data-view={view}>
         <div className="message-workspace__conversation" hidden={view !== 'conversation'}>
           <ConversationPanel
             active={active && view === 'conversation'}
+            {...(onLatestDisplayed === undefined ? {} : { onLatestDisplayed })}
             focusMessageId={focusedConversationMessageId}
             variant={variant}
             key={`chat:${roomId}`}
@@ -131,6 +118,17 @@ export function MessageLayer({
               defaultExpanded
               embedded
               onAction={handleSignalAction}
+              {...(onLatestDisplayed === undefined || !active || view !== 'resources'
+                ? {}
+                : {
+                    onFeaturedDisplayed: (signalId: string): void => {
+                      if (
+                        latestMessage !== undefined &&
+                        signalId === `message:${latestMessage.messageId}`
+                      )
+                        onLatestDisplayed(latestMessage.matrixEventId);
+                    },
+                  })}
               onRetry={store.retry}
               selectedSignalId={selectedSignalId}
               signals={projectedSignals}
