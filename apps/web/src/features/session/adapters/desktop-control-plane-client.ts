@@ -59,7 +59,10 @@ export class DesktopControlPlaneClient implements ControlPlaneGateway, Readiness
     }
   }
 
-  readSession(): Promise<Result<WebSession, SessionFailure>> {
+  async readSession(): Promise<Result<WebSession, SessionFailure>> {
+    // WebView 加载和原生 setup 并行；由 IPC 确认系统凭据已注入后再检查账户。
+    const restored = await this.#runtime.restoreHumanSession();
+    if (!restored.ok) return err(runtimeFailure(restored.error));
     return this.#controlPlane.readSession();
   }
 

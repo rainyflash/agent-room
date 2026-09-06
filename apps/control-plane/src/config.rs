@@ -8,7 +8,8 @@ use uuid::{Uuid, Version};
 const DEFAULT_DEPENDENCY_TIMEOUT_MILLIS: u64 = 2_000;
 const DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS: u64 = 5_000;
 const DEFAULT_LOGIN_ATTEMPT_TTL_MILLIS: u64 = 10 * 60 * 1_000;
-const DEFAULT_WEB_SESSION_TTL_MILLIS: u64 = 8 * 60 * 60 * 1_000;
+// 普通登录跨应用重启保留；敏感操作仍独立要求近期重新认证。
+const DEFAULT_WEB_SESSION_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_RECENT_AUTHENTICATION_MILLIS: u64 = 5 * 60 * 1_000;
 const DEFAULT_CLOCK_SKEW_MILLIS: u64 = 60 * 1_000;
 const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
@@ -822,6 +823,33 @@ mod tests {
                 "01991aaa-0000-7000-8000-000000000001".to_owned(),
             ),
         ]))
+    }
+
+    #[test]
+    fn 普通登录默认保留三十天且敏感操作仍独立要求近期认证() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert_eq!(
+            config.authentication.web_session_ttl,
+            std::time::Duration::from_hours(30 * 24)
+        );
+        assert_eq!(
+            config.authentication.recent_authentication_window,
+            std::time::Duration::from_mins(5)
+        );
+
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_WEB_SESSION_TTL_MS", "3600000".to_owned());
+        let custom = ControlPlaneConfig::from_source(&environment).expect("显式有效期配置有效");
+        assert_eq!(
+            custom.authentication.web_session_ttl,
+            std::time::Duration::from_hours(1)
+        );
+        assert_eq!(
+            custom.authentication.recent_authentication_window,
+            config.authentication.recent_authentication_window
+        );
     }
 
     #[test]

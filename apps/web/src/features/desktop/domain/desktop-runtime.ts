@@ -299,6 +299,7 @@ export type DesktopRuntimeGateway = {
     returnPath: string,
   ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>>;
   clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>>;
+  restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>>;
   snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>>;
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;

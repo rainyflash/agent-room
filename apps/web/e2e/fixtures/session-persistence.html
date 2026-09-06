@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Agent Room session persistence</title>
+  </head>
+  <body>
+    <h1>Session persistence acceptance</h1>
+    <button id="save">Save test login</button>
+    <button id="legacy">Save legacy login</button>
+    <button id="read">Read saved login</button>
+    <button id="rotate">Refresh saved login</button>
+    <button id="logout">Sign out</button>
+    <button id="connect">Connect device</button>
+    <p role="status">Loading</p>
+    <script type="module">
+      import { IndexedDbMatrixSessionVault } from '/src/features/session/adapters/indexed-db-matrix-session-vault.ts';
+      import { acquireMatrixCryptoLease } from '/src/features/session/adapters/browser-matrix-lease.ts';
+      const baseUrl =
+        new URL(location.href).searchParams.get('homeserver') ?? 'https://persistence.matrix.test';
+      const vault = new IndexedDbMatrixSessionVault(baseUrl, indexedDB, sessionStorage);
+      const session = {
+        version: 1,
+        userId: '@persistence:matrix.test',
+        deviceId: 'PERSISTED_DEVICE',
+        accessToken: 'test-access',
+        refreshToken: 'test-refresh',
+      };
+      const output = document.querySelector('[role="status"]');
+      const show = (result, success) => {
+        output.textContent = result.ok ? success : result.error.code;
+      };
+      const read = async () => {
+        const result = await vault.load();
+        show(
+          result,
+          result.ok && result.value !== null
+            ? `Signed in: ${result.value.userId} / ${result.value.deviceId}`
+            : 'Signed out',
+        );
+      };
+      document.querySelector('#save').onclick = async () =>
+        show(await vault.save(session), 'Login saved');
+      document.querySelector('#legacy').onclick = () => {
+        sessionStorage.setItem('agent-room.matrix-session.v1', JSON.stringify(session));
+        output.textContent = 'Legacy login saved';
+      };
+      document.querySelector('#read').onclick = read;
+      document.querySelector('#rotate').onclick = async () =>
+        show(await vault.save({ ...session, accessToken: 'test-rotated' }), 'Login refreshed');
+      document.querySelector('#logout').onclick = async () =>
+        show(await vault.clear(), 'Signed out');
+      let lease;
+      document.querySelector('#connect').onclick = async () => {
+        lease?.release();
+        const result = await acquireMatrixCryptoLease(
+          `persistence-fixture:${baseUrl}`,
+          navigator.locks,
+        );
+        if (result.ok) lease = result.value;
+        show(result, 'Device connected');
+      };
+      await read();
+    </script>
+  </body>
+</html>

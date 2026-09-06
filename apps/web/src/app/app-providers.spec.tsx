@@ -134,6 +134,7 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     checkUpdate: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     clearHumanSession: () => Promise.resolve(ok(undefined)),
+    restoreHumanSession: () => Promise.resolve(ok(true)),
     configureAgentRuntime: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     installUpdate: () =>

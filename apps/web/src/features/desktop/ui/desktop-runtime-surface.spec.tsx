@@ -91,6 +91,7 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
       ),
     checkUpdate,
     clearHumanSession: () => Promise.resolve(ok(undefined)),
+    restoreHumanSession: () => Promise.resolve(ok(true)),
     configureAgentRuntime: (target) => Promise.resolve(ok(target)),
     installUpdate,
     isAvailable: () => true,

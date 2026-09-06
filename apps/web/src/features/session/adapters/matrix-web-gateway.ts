@@ -3,7 +3,8 @@ import type { DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js'
 import { z } from 'zod';
 
 import { failure } from '@/features/session/adapters/control-plane-client';
-import { BrowserMatrixSessionVault } from './browser-matrix-session-vault';
+import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
+import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
 import {
   storedMatrixSessionSchema,
   type MatrixSessionVault,
@@ -81,6 +82,7 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
   #activeConnection: BrowserMatrixConnection | null = null;
+  #cryptoLease: MatrixCryptoLease | null = null;
   #pendingLogout: BrowserMatrixConnection | null = null;
   #pendingRevocation: StoredMatrixSession | null = null;
   #freshAuthenticationReturnPath: string | undefined;
@@ -101,7 +103,7 @@ export class MatrixWebGateway implements MatrixGateway {
     },
     secretStorageKeys = new MatrixSecretStorageKeyCache(),
     sessionStorage = window.sessionStorage,
-    sessionVault = new BrowserMatrixSessionVault(sessionStorage),
+    sessionVault = new IndexedDbMatrixSessionVault(baseUrl, indexedDB, sessionStorage),
     syncTimeoutMs = 20_000,
     url = () => new URL(window.location.href),
   }: MatrixWebGatewayOptions) {
@@ -168,6 +170,8 @@ export class MatrixWebGateway implements MatrixGateway {
     const attempt = ++this.#restoreAttempt;
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
+    this.#cryptoLease?.release();
+    this.#cryptoLease = null;
     this.#secretStorageKeys.clear();
     this.#onClientChange(null);
 
@@ -211,8 +215,18 @@ export class MatrixWebGateway implements MatrixGateway {
           });
     const epoch = this.#sessions.epoch;
     let candidate: MatrixClient | undefined;
+    let lease: MatrixCryptoLease | null = null;
     try {
       const session = sessionResult.value;
+      if (this.#indexedDB !== undefined) {
+        const acquired = await acquireMatrixCryptoLease(
+          `agent-room.matrix:${JSON.stringify([this.#baseUrl, session.userId, session.deviceId])}`,
+          navigator.locks,
+        );
+        if (!acquired.ok) return acquired;
+        lease = acquired.value;
+        if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
+      }
       const refreshClient = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
       const client = sdk.createClient({
         accessToken: session.accessToken,
@@ -301,6 +315,7 @@ export class MatrixWebGateway implements MatrixGateway {
         () => this.#sessions.failure,
       );
       this.#activeConnection = connection;
+      this.#cryptoLease = lease;
       this.#onClientChange(client);
       return ok({
         connection,
@@ -323,19 +338,34 @@ export class MatrixWebGateway implements MatrixGateway {
         return ok({ kind: 'authentication-required' });
       }
       return err(failure('matrix', 'matrix.restore_failed', !this.#online(), true));
+    } finally {
+      if (lease !== this.#cryptoLease) lease?.release();
     }
   }
 
   disconnect(): void {
     ++this.#restoreAttempt;
     this.#activeConnection?.disconnect();
+    this.#activeConnection = null;
+    this.#cryptoLease?.release();
+    this.#cryptoLease = null;
     this.#secretStorageKeys.clear();
     this.#onClientChange(null);
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
-    this.disconnect();
+    const lease = this.#cryptoLease;
+    this.#cryptoLease = null;
+    try {
+      return await this.#logoutSession();
+    } finally {
+      lease?.release();
+    }
+  }
+
+  async #logoutSession(): Promise<Result<void, SessionFailure>> {
     const active = this.#pendingLogout ?? this.#activeConnection;
+    this.disconnect();
     this.#pendingLogout = active;
     this.#activeConnection = null;
     active?.disconnect();

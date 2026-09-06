@@ -45,6 +45,7 @@ const desktopCommands = {
   bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
   checkUpdate: 'desktop_check_update',
   clearHumanSession: 'desktop_clear_human_session',
+  restoreHumanSession: 'desktop_restore_human_session',
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   detectHosts: 'desktop_detect_agent_hosts',
   installUpdate: 'desktop_install_update',
@@ -142,6 +143,10 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
         .or(z.null())
         .transform(() => undefined),
     );
+  }
+
+  async restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.restoreHumanSession, {}, z.boolean());
   }
 
   async snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>> {

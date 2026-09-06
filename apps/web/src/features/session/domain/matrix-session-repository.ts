@@ -89,7 +89,7 @@ export class MatrixSessionRepository {
     const result = await this.vault.save(parsed.data);
     if (epoch !== this.#epoch) return err(supersededMatrixSession());
     this.#failure = result.ok ? null : result.error;
-    if (result.ok) this.#pending = null;
+    if (result.ok || result.error.code === 'matrix.session_superseded') this.#pending = null;
     return result;
   }
 

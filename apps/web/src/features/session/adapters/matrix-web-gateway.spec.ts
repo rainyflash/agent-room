@@ -6,12 +6,14 @@ import type { MatrixClient } from 'matrix-js-sdk';
 import type { CryptoApi, DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js';
 
 import { initializeMatrixCrypto, MatrixWebGateway } from './matrix-web-gateway';
+import { BrowserMatrixSessionVault } from './browser-matrix-session-vault';
 
 describe('MatrixWebGateway', () => {
-  it('没有当前标签页凭据时明确请求 SSO', async () => {
+  it('凭据库为空时明确请求 SSO', async () => {
     const gateway = new MatrixWebGateway({
       baseUrl: 'https://matrix.agent-room.test',
       sessionStorage: memoryStorage(),
+      sessionVault: new BrowserMatrixSessionVault(memoryStorage()),
       url: () => new URL('https://app.agent-room.test/connect'),
     });
 
@@ -68,6 +70,7 @@ describe('MatrixWebGateway', () => {
     const gateway = new MatrixWebGateway({
       baseUrl: 'https://matrix.agent-room.test',
       sessionStorage: storage,
+      sessionVault: new BrowserMatrixSessionVault(storage),
       url: () => new URL('https://app.agent-room.test/connect'),
     });
 
