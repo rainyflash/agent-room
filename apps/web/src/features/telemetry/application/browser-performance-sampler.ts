@@ -31,14 +31,16 @@ export class BrowserPerformanceSampler {
     window.addEventListener('pagehide', this.#flush);
     document.addEventListener('visibilitychange', this.#flushWhenHidden);
     return () => {
-      this.#flush();
+      // 身份清除会卸载采样器，此时不能再发送需要登录的请求。
+      // 正常关闭窗口仍由 pagehide / visibilitychange 提交最后一批指标。
+      this.#started = false;
       this.#observers.forEach((observer) => {
         observer.disconnect();
       });
       this.#observers.length = 0;
       window.removeEventListener('pagehide', this.#flush);
       document.removeEventListener('visibilitychange', this.#flushWhenHidden);
-      this.#started = false;
+      this.#accumulator.clear();
     };
   }
 
@@ -49,6 +51,7 @@ export class BrowserPerformanceSampler {
   };
 
   readonly #flush = (): void => {
+    if (!this.#started) return;
     for (const [metric, value] of this.#accumulator) {
       void this.#gateway.record({ metric, surface: this.#surface, value });
     }
@@ -94,6 +97,7 @@ export class BrowserPerformanceSampler {
     }
     try {
       const observer = new PerformanceObserver((list) => {
+        if (!this.#started) return;
         list.getEntries().forEach(consume);
       });
       observer.observe({ buffered: true, type });
