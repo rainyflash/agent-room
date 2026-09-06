@@ -142,6 +142,12 @@ async fn fresh_device(
 }
 
 async fn prepare_encrypted_history(base_url: &str, first: &MatrixConnection) -> MatrixRoomId {
+    // 新建但尚未发言的加密房间没有备份条目，也不能阻塞整个账户恢复。
+    create_room_with_retry(
+        first.gateway(),
+        &room_request().with_end_to_end_encryption(),
+    )
+    .await;
     let room = create_room_with_retry(
         first.gateway(),
         &room_request().with_end_to_end_encryption(),
