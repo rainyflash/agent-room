@@ -408,7 +408,7 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
             ):
                 raise McpClientFailure("open_session 必须要求有界 displayName，不能接收 sessionId。")
     if len(names) != len(set(names)) or set(names) != set(AGENT_ROOM_TOOLS):
-        raise McpClientFailure("MCP 工具集合必须包含两个会话工具和九个绑定会话的 Agent 工具。")
+        raise McpClientFailure("MCP 工具集合必须与当前会话工具契约一致。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:
