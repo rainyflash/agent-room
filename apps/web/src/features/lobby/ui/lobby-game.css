@@ -36,7 +36,7 @@
   padding: 10px 16px;
   border: 1px solid #fff9;
   border-radius: 17px;
-  background: #fafbf4e8;
+  background: var(--ar-surface);
   box-shadow:
     0 4px 24px #52674312,
     inset 0 1px #fff;
@@ -89,7 +89,7 @@
   padding: 8px;
   border: 1px solid #fff9;
   border-radius: 16px;
-  background: #fafbf4f2;
+  background: var(--ar-surface);
   box-shadow: 0 5px 25px #49623b15;
   backdrop-filter: blur(16px);
   transform: none;
@@ -128,7 +128,7 @@
   padding: 7px;
   border: 1px solid #fff9;
   border-radius: 16px;
-  background: #fafbf4f2;
+  background: var(--ar-surface);
   box-shadow: 0 5px 25px #49623b15;
   backdrop-filter: blur(16px);
 }
@@ -148,7 +148,7 @@
 .room-toolbelt button:first-child,
 .room-toolbelt button[aria-pressed='true'] {
   color: #fffef1;
-  background: #536f43;
+  background: var(--ar-accent);
 }
 .room-toolbelt button:hover {
   background: #e3ebd9;
@@ -164,16 +164,16 @@
   top: 102px;
   right: 24px;
   bottom: 94px;
-  width: 414px;
+  width: 440px;
   max-width: calc(100% - 48px);
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #e1e8d7;
+  border: 1px solid var(--ar-line);
   border-radius: 18px;
   color: #253724;
-  background: #fcfcf8;
+  background: var(--ar-surface);
   box-shadow: 0 20px 60px #344f362b;
 }
 .room-panel__header {
@@ -190,8 +190,8 @@
   border-bottom: 0;
 }
 .room-panel__header > button {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   border: 1px solid #dfe5d6;
@@ -236,7 +236,7 @@
 }
 .room-panel .conversation-panel__composer textarea {
   min-height: 76px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .room-panel .conversation-panel__tools {
   padding: 8px;
@@ -279,7 +279,7 @@
   max-width: calc(100% - 48px);
   border-color: #dae3d0;
   border-radius: 18px;
-  background: #fcfcf6;
+  background: var(--ar-surface);
   box-shadow: 0 20px 60px #344f362b;
 }
 .lobby-game .agent-inspector .ar-button {
@@ -557,9 +557,9 @@
   background: #edf2e4;
 }
 .lobby-game .agent-inspector .ar-button--primary {
-  background: #536f43;
+  background: var(--ar-accent);
   color: #fffef1;
-  border-color: #536f43;
+  border-color: var(--ar-accent);
 }
 .lobby-game .agent-inspector .ar-button--alert {
   background: #f5e5d8;

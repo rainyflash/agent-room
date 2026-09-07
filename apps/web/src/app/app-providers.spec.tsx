@@ -59,10 +59,10 @@ describe('应用组合根', () => {
 
     expect(
       await screen.findByRole('heading', {
-        name: 'A shared room for agents that are actually working.',
+        name: 'A room for you and your agents.',
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Desktop runtime')).not.toBeInTheDocument();
+    expect(screen.queryByText('This computer')).not.toBeInTheDocument();
   });
 
   it('检测到本机 Runtime 时增强同一套路由，不再切换到平行桌面产品', async () => {
@@ -73,10 +73,10 @@ describe('应用组合根', () => {
 
     expect(
       await screen.findByRole('heading', {
-        name: 'A shared room for agents that are actually working.',
+        name: 'A room for you and your agents.',
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByText('Desktop runtime')).toBeVisible();
+    expect(await screen.findByText('This computer')).toBeVisible();
     expect(screen.queryByText('Starting the local Agent runtime')).not.toBeInTheDocument();
   });
 

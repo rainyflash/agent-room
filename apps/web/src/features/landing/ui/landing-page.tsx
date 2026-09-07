@@ -1,65 +1,68 @@
-import { ArrowRight, Download, Eye, LogIn, Radio, UserPlus } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Link } from '@tanstack/react-router';
+import { ArrowRight, Download } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-
 import { useAppServices } from '@/app/app-services';
-
-const entryTransition = { damping: 28, stiffness: 260, type: 'spring' } as const;
+import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
+import { LanguageControl } from '@/features/preferences/ui/language-control';
+import './landing-page.css';
 
 export function LandingPage() {
   const { t } = useTranslation();
   const { config, controlPlane } = useAppServices();
+  const reduceMotion = useReducedMotion();
   const registrationOpen = config.registrationMode === 'open-email';
-
   return (
     <main className="landing" id="main-content">
       <header className="landing__topbar">
-        <a aria-label={t('app.name')} className="landing__brand" href="/">
+        <Link aria-label={t('app.name')} className="landing__brand" to="/">
           <img alt="" src="/agent-room-mark.svg" />
           <span>{t('app.name')}</span>
-        </a>
+        </Link>
         <div className="landing__account-actions">
+          <LanguageControl />
           <button
-            className="landing__text-action"
+            className="ar-button ar-button--default ar-button--ghost"
             onClick={() => {
               void controlPlane.beginAuthentication('/connect', 'sign-in');
             }}
             type="button"
           >
-            <LogIn aria-hidden="true" />
             {t('landing.login')}
           </button>
           <button
-            className="ar-button ar-button--compact ar-button--ghost"
+            className="ar-button ar-button--default ar-button--primary"
             disabled={!registrationOpen}
             onClick={() => {
               void controlPlane.beginAuthentication('/connect', 'register');
             }}
             type="button"
           >
-            <UserPlus aria-hidden="true" />
             {t(registrationOpen ? 'landing.register' : 'landing.registrationPending')}
           </button>
         </div>
       </header>
-
       <section className="landing__hero">
         <motion.div
-          animate={{ opacity: 1, y: 0 }}
           className="landing__copy"
-          initial={{ opacity: 0, y: 18 }}
-          transition={entryTransition}
+          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
         >
-          <p className="landing__eyebrow">
-            <Radio aria-hidden="true" />
-            {t('landing.eyebrow')}
-          </p>
           <h1>{t('landing.title')}</h1>
           <p className="landing__lede">{t('landing.description')}</p>
           <div className="landing__primary-actions">
+            <Link
+              className="ar-button ar-button--large ar-button--primary"
+              to="/connect"
+              search={{}}
+            >
+              {t('landing.preview')}
+              <ArrowRight aria-hidden="true" />
+            </Link>
             {config.windowsDownloadUrl === null ? (
               <button
-                className="ar-button ar-button--large ar-button--primary"
+                className="ar-button ar-button--large ar-button--ghost"
                 disabled
                 type="button"
               >
@@ -68,7 +71,7 @@ export function LandingPage() {
               </button>
             ) : (
               <a
-                className="ar-button ar-button--large ar-button--primary"
+                className="ar-button ar-button--large ar-button--ghost"
                 href={config.windowsDownloadUrl}
                 rel="noreferrer"
                 target="_blank"
@@ -77,46 +80,25 @@ export function LandingPage() {
                 {t('landing.download')}
               </a>
             )}
-            <a className="ar-button ar-button--large ar-button--ghost" href="/connect">
-              <Eye aria-hidden="true" />
-              {t('landing.preview')}
-            </a>
           </div>
           <p className="landing__alpha-note">{t('landing.alphaNote')}</p>
         </motion.div>
-
-        <motion.aside
-          animate={{ opacity: 1, scale: 1 }}
-          aria-label={t('landing.flowTitle')}
-          className="landing__flow"
-          initial={{ opacity: 0, scale: 0.98 }}
-          transition={{ ...entryTransition, delay: 0.08 }}
-        >
-          <div className="landing__flow-head">
-            <span>{t('landing.flowEyebrow')}</span>
-            <span className="landing__live">{t('landing.alphaBadge')}</span>
-          </div>
-          <h2>{t('landing.flowTitle')}</h2>
-          <ol>
-            {(['account', 'matrix', 'runtime', 'agent'] as const).map((step, index) => (
-              <li key={step}>
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <div>
-                  <strong>{t(`landing.flow.${step}.title`)}</strong>
-                  <p>{t(`landing.flow.${step}.detail`)}</p>
-                </div>
-                <ArrowRight aria-hidden="true" />
-              </li>
-            ))}
-          </ol>
-        </motion.aside>
+        <div className="landing__scene">
+          <RoomIllustration />
+        </div>
       </section>
-
-      <footer className="landing__footer">
-        <span>{t('landing.footer.identity')}</span>
-        <span>{t('landing.footer.protocol')}</span>
-        <span>{t('landing.footer.platform')}</span>
-      </footer>
+      <section className="landing__journey" aria-label={t('landing.flowTitle')}>
+        {(['meet', 'talk', 'bring'] as const).map((step, index) => (
+          <article key={step}>
+            <span className="landing__step-number">{String(index + 1).padStart(2, '0')}</span>
+            <AgentPortrait id={step} />
+            <div>
+              <h2>{t(`landing.flow.${step}.title`)}</h2>
+              <p>{t(`landing.flow.${step}.detail`)}</p>
+            </div>
+          </article>
+        ))}
+      </section>
     </main>
   );
 }

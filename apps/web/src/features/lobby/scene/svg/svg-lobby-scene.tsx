@@ -12,7 +12,7 @@ import {
 import type { LobbySceneLabels } from '../lobby-scene';
 import type { LobbySceneProjection } from '../../domain/scene-projection';
 import { ViewportController, type CameraSnapshot } from '../viewport-controller';
-import { characterBodyArt, characterStatusColor } from '../character-art';
+import { characterStillArt, characterStatusColor } from '../character-art';
 import { roomGroundArt, roomPlaques, roomPropsArt } from '../room-art';
 import { SceneShapes } from './scene-shapes';
 
@@ -247,13 +247,7 @@ function SvgCharacter({
         <ellipse cx="0" cy="1" rx="28" ry="12" fill="none" stroke="#fff8da" strokeWidth="4" />
       ) : null}
       <g opacity={node.status === 'offline' ? 0.56 : 1}>
-        <rect x="-11" y="-17" width="9" height="18" rx="3" fill="#47564e" />
-        <rect x="2" y="-17" width="9" height="18" rx="3" fill="#47564e" />
-        <rect x="-13" y="-4" width="12" height="6" rx="2" fill="#eee9d7" />
-        <rect x="2" y="-4" width="12" height="6" rx="2" fill="#eee9d7" />
-        <rect x="-20" y="-33" width="7" height="22" rx="3" fill="#dab493" />
-        <rect x="13" y="-33" width="7" height="22" rx="3" fill="#dab493" />
-        <SceneShapes shapes={characterBodyArt(node.characterId, node.kind)} />
+        <SceneShapes shapes={characterStillArt(node.characterId, node.kind)} />
         <circle
           cx="19"
           cy="-61"

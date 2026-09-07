@@ -88,7 +88,11 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
   };
 
   return (
-    <section aria-labelledby="security-access-title" className="security-access">
+    <section
+      aria-labelledby="security-access-title"
+      className="security-access"
+      id="security-access"
+    >
       <header className="security-section-heading security-access__heading">
         <div>
           <h2 id="security-access-title">{t('security.access.title')}</h2>

@@ -4,10 +4,30 @@ import type { BridgePhase } from '@/features/desktop/domain/desktop-runtime';
 import type { AgentFleet } from '@/features/workspace/domain/agent-fleet';
 import {
   bridgeWorkspaceStatus,
+  workspaceLayerNeedsAttention,
   projectWorkspaceConnectionHealth,
 } from '@/features/workspace/domain/connection-health';
 
 describe('工作区四层连接状态', () => {
+  it('浏览器未安装本机 Bridge 与连接中不计作故障，真实离线和故障仍提示', () => {
+    for (const status of ['unavailable', 'connecting', 'online'] as const) {
+      expect(
+        workspaceLayerNeedsAttention({ status, failureCode: null, observedAtUnixMs: null }),
+      ).toBe(false);
+    }
+    for (const status of ['offline', 'degraded', 'revoked'] as const) {
+      expect(
+        workspaceLayerNeedsAttention({ status, failureCode: null, observedAtUnixMs: null }),
+      ).toBe(true);
+    }
+    expect(
+      workspaceLayerNeedsAttention({
+        status: 'unavailable',
+        failureCode: 'bridge.unreachable',
+        observedAtUnixMs: null,
+      }),
+    ).toBe(true);
+  });
   it('不会把部分失败的 Control Plane 探针伪装成在线', () => {
     const health = projectWorkspaceConnectionHealth({
       agents: { failureCode: null, fleet: emptyFleet, loading: false },

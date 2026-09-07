@@ -1,6 +1,7 @@
 import { Cpu } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { formatWorkspaceTime } from '@/features/workspace/ui/workspace-format';
 
@@ -17,6 +18,7 @@ export function AgentInspector({ agent }: { readonly agent: FleetAgent | null })
   return (
     <aside className="workspace-agent-inspector">
       <header>
+        <AgentPortrait id={agent.agent.agentId} />
         <p className="eyebrow">{t('workspace.inspector.identity')}</p>
         <h2>{agent.agent.displayName}</h2>
         <code>{agent.agent.agentId}</code>

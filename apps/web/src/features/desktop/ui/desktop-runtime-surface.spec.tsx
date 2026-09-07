@@ -124,7 +124,7 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    fireEvent.click(await screen.findByRole('button', { name: /This computer/u }));
     await waitFor(() => {
       expect(screen.getByText('Authorize this desktop')).toBeVisible();
     });
@@ -158,7 +158,7 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    const trigger = await screen.findByRole('button', { name: /Desktop runtime/u });
+    const trigger = await screen.findByRole('button', { name: /This computer/u });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(trigger.closest('aside')).toHaveAttribute('data-attention', 'true');
     expect(screen.queryByText('Automatic restart was stopped')).not.toBeInTheDocument();
@@ -183,7 +183,7 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    const trigger = await screen.findByRole('button', { name: /Desktop runtime/u });
+    const trigger = await screen.findByRole('button', { name: /This computer/u });
     expect(trigger.closest('aside')).toHaveAttribute('data-placement', 'action-rail-safe');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
@@ -207,7 +207,7 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    fireEvent.click(await screen.findByRole('button', { name: /This computer/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => {
       expect(runtime.checkUpdate).toHaveBeenCalledWith('stable');
@@ -243,7 +243,7 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /Desktop runtime/u }));
+    fireEvent.click(await screen.findByRole('button', { name: /This computer/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Other MCP hosts' }));
     expect(screen.getByText('C:\\Agent Room\\agent-room-mcp.exe')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));

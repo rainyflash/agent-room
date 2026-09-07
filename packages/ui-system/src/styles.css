@@ -9,24 +9,34 @@
 @source './**/*.{ts,tsx}';
 
 @theme {
-  --color-ink: #111310;
-  --color-paper: #f2f0e9;
-  --color-signal: #9fe870;
-  --color-network: #66c9d8;
-  --color-alert: #ff6b3d;
+  --color-ink: #253324;
+  --color-paper: #fafbf5;
+  --color-signal: #d7e6c5;
+  --color-network: #91bcb2;
+  --color-alert: #a34132;
   --font-sans: 'Instrument Sans Variable', 'Noto Sans SC Variable', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
 }
 
 :root {
+  --ar-canvas: #edf1e6;
+  --ar-surface: #fafbf5;
+  --ar-surface-muted: #e7eddd;
+  --ar-accent: #30482d;
+  --ar-accent-hover: #405d36;
+  --ar-muted: #5f6c59;
+  --ar-line: #d8e0cd;
+  --ar-radius: 16px;
+  --ar-panel-shadow: 0 12px 40px #34472b0d;
+  --ar-page-width: 1240px;
   color: var(--color-ink);
-  background: var(--color-paper);
+  background: var(--ar-canvas);
   font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ar-ink-92: color-mix(in srgb, var(--color-ink) 92%, transparent);
   --ar-ink-72: color-mix(in srgb, var(--color-ink) 72%, transparent);
-  --ar-ink-48: color-mix(in srgb, var(--color-ink) 48%, transparent);
+  --ar-ink-48: var(--ar-muted);
   --ar-ink-18: color-mix(in srgb, var(--color-ink) 18%, transparent);
   --ar-ink-09: color-mix(in srgb, var(--color-ink) 9%, transparent);
   --ar-ink-04: color-mix(in srgb, var(--color-ink) 4%, transparent);
@@ -65,7 +75,7 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-signal);
+  outline: 2px solid var(--ar-accent);
   outline-offset: 3px;
 }
 
@@ -82,7 +92,7 @@ button {
   justify-content: center;
   gap: 0.625rem;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 10px;
   font-weight: 650;
   letter-spacing: -0.01em;
   transition:
@@ -120,13 +130,13 @@ button {
 }
 
 .ar-button--primary {
-  color: var(--color-ink);
-  background: var(--color-signal);
-  border-color: color-mix(in srgb, var(--color-signal) 76%, var(--color-ink));
+  color: var(--color-paper);
+  background: var(--ar-accent);
+  border-color: var(--ar-accent);
 }
 
 .ar-button--primary:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-signal) 90%, white);
+  background: var(--ar-accent-hover);
 }
 
 .ar-button--network {
@@ -144,7 +154,7 @@ button {
 .ar-button--ghost {
   color: inherit;
   background: transparent;
-  border-color: currentColor;
+  border-color: var(--ar-line);
 }
 
 .ar-button--ghost:not(:disabled):hover,
@@ -189,11 +199,11 @@ button {
 }
 
 .ar-status-mark--active {
-  color: var(--color-signal);
+  color: #456a38;
 }
 
 .ar-status-mark--network {
-  color: var(--color-network);
+  color: #397369;
 }
 
 .ar-status-mark--alert {

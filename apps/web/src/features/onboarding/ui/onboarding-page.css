@@ -1,88 +1,38 @@
 .onboarding {
   min-height: 100svh;
+  padding-top: 16px;
   color: var(--color-ink);
-  background:
-    linear-gradient(var(--ar-ink-09) 1px, transparent 1px) 0 0 / 100% 56px,
-    var(--color-paper);
+  background: var(--ar-canvas);
 }
-
-.onboarding__topbar,
-.onboarding__footer {
-  display: flex;
-  min-height: 76px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0 clamp(1.25rem, 4vw, 4rem);
-  border-bottom: 1px solid var(--ar-ink-18);
-  background: color-mix(in srgb, var(--color-paper) 92%, transparent);
-  backdrop-filter: blur(18px);
-}
-
-.onboarding__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: inherit;
-  font-weight: 720;
-  letter-spacing: -0.025em;
-  text-decoration: none;
-}
-
-.onboarding__brand img {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 8px;
-}
-
-.onboarding__operator {
-  display: grid;
-  justify-items: end;
-  gap: 0.12rem;
-}
-
-.onboarding__operator span,
-.onboarding__operator strong {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-}
-
-.onboarding__operator span {
-  color: var(--color-network);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .onboarding__layout {
-  width: min(1180px, calc(100% - 2.5rem));
-  padding: clamp(3rem, 7vw, 6rem) 0;
+  width: min(1060px, calc(100% - 80px));
+  padding: 48px 0 40px;
   margin: 0 auto;
 }
 
 .onboarding__intro {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
   gap: 0 3rem;
-  padding-bottom: clamp(2rem, 5vw, 4rem);
+  padding-bottom: 30px;
 }
 
-.onboarding__intro > .eyebrow,
 .onboarding__intro > h1,
 .onboarding__intro > p {
   grid-column: 1;
 }
 
 .onboarding__intro h1 {
-  max-width: 11ch;
+  max-width: 22ch;
   margin: 0.75rem 0 1rem;
-  font-size: clamp(3rem, 6vw, 6.4rem);
+  font-size: clamp(30px, 3vw, 42px);
   font-weight: 670;
   letter-spacing: -0.07em;
-  line-height: 0.9;
+  line-height: 1.2;
 }
 
-.onboarding__intro > p:not(.eyebrow) {
+.onboarding__intro > p {
   max-width: 58ch;
   margin: 0;
   color: var(--ar-ink-72);
@@ -93,7 +43,7 @@
 .onboarding__progress {
   display: grid;
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 2 / 4;
   align-content: end;
   gap: 0;
   padding: 0;
@@ -108,9 +58,9 @@
   gap: 0.75rem;
   min-height: 52px;
   border-top: 1px solid var(--ar-ink-18);
-  color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
 }
 
@@ -121,7 +71,7 @@
   color: var(--color-ink);
 }
 .onboarding__progress span {
-  color: var(--color-network);
+  color: var(--ar-accent);
 }
 .onboarding__progress svg {
   width: 15px;
@@ -131,8 +81,7 @@
 .onboarding__facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--ar-ink-18);
-  border-left: 1px solid var(--ar-ink-18);
+  gap: 16px;
 }
 
 .onboarding-fact {
@@ -141,8 +90,8 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 1rem;
   padding: clamp(1.25rem, 2.5vw, 2rem);
-  border-right: 1px solid var(--ar-ink-18);
-  border-bottom: 1px solid var(--ar-ink-18);
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-radius);
   background: color-mix(in srgb, var(--color-paper) 94%, transparent);
 }
 
@@ -189,8 +138,8 @@
 .onboarding-fact p {
   max-width: 54ch;
   margin: 0.55rem 0 1.5rem;
-  color: var(--ar-ink-48);
-  font-size: 0.77rem;
+  color: var(--ar-muted);
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
@@ -205,8 +154,8 @@
 }
 .onboarding-fact__value code {
   overflow-wrap: anywhere;
-  color: var(--ar-ink-48);
-  font-size: 0.68rem;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
 }
 .onboarding__actions {
   display: flex;
@@ -214,6 +163,8 @@
 }
 
 .onboarding__hosts {
+  border-radius: var(--ar-radius);
+  overflow: hidden;
   margin-top: 1.5rem;
   border: 1px solid var(--ar-ink-18);
   background: color-mix(in srgb, var(--color-paper) 94%, transparent);
@@ -234,7 +185,7 @@
 }
 .onboarding__hosts header > p {
   margin: 0;
-  color: var(--ar-ink-48);
+  color: var(--ar-muted);
   font-size: 0.78rem;
   line-height: 1.55;
 }
@@ -247,7 +198,7 @@
 .onboarding__empty {
   padding: 1.25rem 1.5rem;
   margin: 0;
-  color: var(--ar-ink-48);
+  color: var(--ar-muted);
   font-size: 0.78rem;
 }
 
@@ -275,20 +226,7 @@
 }
 .onboarding__failure code {
   color: var(--color-alert);
-  font-size: 0.68rem;
-}
-
-.onboarding__footer {
-  position: sticky;
-  bottom: 0;
-  border-top: 1px solid var(--ar-ink-18);
-  border-bottom: 0;
-}
-
-.onboarding__footer > a:first-child {
-  color: var(--ar-ink-48);
-  font-size: 0.76rem;
-  text-decoration: none;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 800px) {
@@ -320,11 +258,8 @@
     width: min(100% - 1.5rem, 1180px);
     padding-top: 2.5rem;
   }
-  .onboarding__operator span {
-    display: none;
-  }
   .onboarding__intro h1 {
-    font-size: 3.2rem;
+    font-size: 32px;
   }
   .onboarding-fact {
     min-height: 0;
@@ -337,5 +272,65 @@
   }
   .onboarding__footer .ar-button {
     width: 100%;
+  }
+}
+.onboarding__portrait {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.onboarding__portrait .agent-portrait {
+  width: 70px;
+  height: 90px;
+}
+.onboarding__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  min-height: 80px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px max(24px, calc((100% - 1060px) / 2));
+  border-top: 1px solid var(--ar-line);
+  background: var(--ar-surface);
+}
+.onboarding__footer > a {
+  color: var(--ar-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+@media (max-width: 760px) {
+  .onboarding {
+    padding-top: 8px;
+  }
+  .onboarding__layout {
+    width: calc(100% - 32px);
+    padding-top: 32px;
+  }
+  .onboarding__intro {
+    display: block;
+    padding-right: 0;
+  }
+  .onboarding__portrait {
+    position: absolute;
+    top: -8px;
+    right: 0;
+  }
+  .onboarding__intro h1 {
+    max-width: calc(100% - 60px);
+  }
+  .onboarding__progress {
+    margin-top: 24px;
+  }
+  .onboarding__footer {
+    min-height: 86px;
+    padding: 16px;
+  }
+  .onboarding__facts {
+    grid-template-columns: 1fr;
+  }
+  .onboarding-fact {
+    min-height: 180px;
   }
 }

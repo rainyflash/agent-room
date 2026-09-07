@@ -9,6 +9,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import type { SessionContext } from '../domain/session-machine';
 import { connectionViewModel } from './connection-model';
 import { ConnectionWorkspace } from './connection-workspace';
+import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
@@ -43,16 +44,18 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
   const onAction = vi.fn();
   render(
     <I18nextProvider i18n={i18n}>
-      <ConnectionWorkspace
-        context={context}
-        onAction={onAction}
-        view={connectionViewModel('ready', context)}
-      >
-        {null}
-      </ConnectionWorkspace>
+      <RouterTestProvider>
+        <ConnectionWorkspace
+          context={context}
+          onAction={onAction}
+          view={connectionViewModel('ready', context)}
+        >
+          {null}
+        </ConnectionWorkspace>
+      </RouterTestProvider>
     </I18nextProvider>,
   );
-  expect(screen.getByRole('button', { name: 'Open account workspace' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Explore rooms' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith('logout');
 });

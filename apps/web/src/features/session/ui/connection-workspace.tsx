@@ -1,13 +1,6 @@
+import { Link } from '@tanstack/react-router';
 import { Button, StatusMark } from '@agent-room/ui-system';
-import {
-  ArrowRight,
-  Clipboard,
-  LogIn,
-  LogOut,
-  RefreshCw,
-  ShieldCheck,
-  TerminalSquare,
-} from 'lucide-react';
+import { ArrowRight, Clipboard, LogIn, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -44,7 +37,9 @@ export function ConnectionWorkspace({
   return (
     <main className="connection-workspace" id="main-content">
       <header className="connection-workspace__topbar">
-        <p>{t('connection.eyebrow')}</p>
+        <Link className="connection-home" to="/">
+          {t('app.name')}
+        </Link>
         <div className={`live-badge live-badge--${view.tone}`}>
           <StatusMark label={t(view.statusKey)} pulse={view.busy} tone={view.tone} />
           <span>{t(view.statusKey)}</span>
@@ -59,10 +54,6 @@ export function ConnectionWorkspace({
         key={`${view.state}-${context.authenticationTarget}`}
         transition={{ bounce: 0.16, damping: 24, stiffness: 210, type: 'spring' }}
       >
-        <div className="stage-coordinate" aria-hidden="true">
-          {String(view.currentStage + 1).padStart(2, '0')}
-        </div>
-        <p className="eyebrow">{t('connection.current')}</p>
         <h1 id="connection-state-title">{t(view.titleKey)}</h1>
         <p className="connection-workspace__lede">{t(view.detailKey)}</p>
 
@@ -152,29 +143,33 @@ export function ConnectionWorkspace({
           )}
         </div>
 
-        <section className="identity-summary" aria-label={t('connection.identity')}>
-          <div className="identity-summary__icon">
-            {context.principal === null ? (
-              <TerminalSquare aria-hidden="true" />
-            ) : (
+        {context.principal === null ? null : (
+          <section className="identity-summary" aria-label={t('connection.identity')}>
+            <div className="identity-summary__icon">
               <ShieldCheck aria-hidden="true" />
-            )}
-          </div>
-          <div className="identity-summary__primary">
-            <span>{t('connection.identity')}</span>
-            <strong>{context.principal?.displayName ?? t('connection.identity.pending')}</strong>
-          </div>
-          <dl>
-            <div>
-              <dt>{t('connection.matrixIdentity')}</dt>
-              <dd>{context.principal?.matrixUserId ?? '—'}</dd>
             </div>
-            <div>
-              <dt>{t('connection.device')}</dt>
-              <dd>{context.connection?.deviceId ?? t('connection.device.pending')}</dd>
+            <div className="identity-summary__primary">
+              <span>{t('connection.identity')}</span>
+              <strong>{context.principal.displayName}</strong>
             </div>
-          </dl>
-        </section>
+            <dl>
+              <div>
+                <dt>{t('connection.matrixIdentity')}</dt>
+                <dd>{context.principal.matrixUserId}</dd>
+              </div>
+              <div>
+                <dt>{t('connection.device')}</dt>
+                <dd>{context.connection?.deviceId ?? t('connection.device.pending')}</dd>
+              </div>
+            </dl>
+          </section>
+        )}
+        {context.principal === null ? null : (
+          <Link className="connection-account-link" to="/workspace" search={{}}>
+            {t('connection.accountLink')}
+            <ArrowRight aria-hidden="true" />
+          </Link>
+        )}
 
         <p className="session-note">
           {view.state === 'offline'
@@ -184,7 +179,10 @@ export function ConnectionWorkspace({
               : t('connection.note.sso')}
         </p>
       </motion.section>
-      {children}
+      <details className="connection-service-details">
+        <summary>{t('connection.details')}</summary>
+        {children}
+      </details>
     </main>
   );
 }

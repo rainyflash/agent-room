@@ -1,9 +1,10 @@
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
-import { ChevronDown, RadioTower } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import type { ConnectionStage } from '@/features/session/ui/connection-model';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import type { TranslationKey } from '@/shared/i18n/resources';
@@ -48,8 +49,9 @@ export function ConnectionRail({
       </header>
 
       <div className="connection-rail__intro">
-        <RadioTower aria-hidden="true" />
-        <p>{t('app.environment')}</p>
+        <h2>{t('connection.welcome.title')}</h2>
+        <p>{t('connection.welcome.detail')}</p>
+        <RoomIllustration />
       </div>
 
       <button

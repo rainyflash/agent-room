@@ -1,6 +1,6 @@
 import { Button, StatusMark } from '@agent-room/ui-system';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowRight,
   Bot,
@@ -17,6 +17,8 @@ import { motion, useReducedMotion } from 'motion/react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { AppNavigation } from '@/shared/ui/app-navigation';
+import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import { useAppServices } from '@/app/app-services';
 import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
 import {
@@ -46,10 +48,10 @@ export function OnboardingPage() {
   if (sessionStateName(snapshot.value) !== 'ready' || principal === null) {
     return <ConnectionPage />;
   }
-  return <ReadyOnboardingPage principal={principal} />;
+  return <OnboardingWorkspace principal={principal} />;
 }
 
-function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) {
+export function OnboardingWorkspace({ principal }: { readonly principal: WebSession }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
@@ -105,26 +107,19 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
 
   return (
     <main className="onboarding" id="main-content">
-      <header className="onboarding__topbar">
-        <a aria-label={t('app.name')} className="onboarding__brand" href="/">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </a>
-        <div className="onboarding__operator">
-          <span>{t(`onboarding.phase.${phase}`)}</span>
-          <strong>{principal.displayName}</strong>
-        </div>
-      </header>
+      <AppNavigation active="agents" />
 
       <section className="onboarding__layout">
         <motion.header
           animate={{ opacity: 1, y: 0 }}
           className="onboarding__intro"
-          initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
+          initial={reduceMotion ? false : { opacity: 0, y: 14 }}
           transition={{ damping: 28, stiffness: 260, type: 'spring' }}
         >
-          <p className="eyebrow">{t('onboarding.eyebrow')}</p>
           <h1>{t('onboarding.title')}</h1>
+          <div className="onboarding__portrait">
+            <AgentPortrait id={resolved?.agent.agentId ?? principal.principalId} />
+          </div>
           <p>{t('onboarding.description')}</p>
           <ol aria-label={t('onboarding.title')} className="onboarding__progress">
             {(['account', 'agent', 'runtime'] as const).map((step, index) => (
@@ -256,7 +251,6 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
         <section className="onboarding__hosts">
           <header>
             <div>
-              <p className="eyebrow">{t('onboarding.hosts.eyebrow')}</p>
               <h2>{t('onboarding.hosts')}</h2>
             </div>
             <p>{t('onboarding.hosts.detail')}</p>
@@ -280,7 +274,8 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
           )}
         </section>
 
-        {bootstrap.data?.ok === false ||
+        {bootstrap.isError ||
+        bootstrap.data?.ok === false ||
         runtime.failure !== null ||
         entry.data?.ok === false ||
         entry.isError ? (
@@ -291,12 +286,14 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
               <code>
                 {bootstrap.data?.ok === false
                   ? bootstrap.data.error.code
-                  : (runtime.failure?.code ??
-                    (entry.data?.ok === false
-                      ? entry.data.error.code
-                      : entry.isError
-                        ? 'lobby_entry.unexpected_failure'
-                        : undefined))}
+                  : bootstrap.isError
+                    ? 'onboarding.unexpected_failure'
+                    : (runtime.failure?.code ??
+                      (entry.data?.ok === false
+                        ? entry.data.error.code
+                        : entry.isError
+                          ? 'lobby_entry.unexpected_failure'
+                          : undefined))}
               </code>
             </div>
             <Button
@@ -314,8 +311,12 @@ function ReadyOnboardingPage({ principal }: { readonly principal: WebSession }) 
       </section>
 
       <footer className="onboarding__footer">
-        <a href="/connect">{t('onboarding.signOut')}</a>
-        {resolved === null ? null : (
+        <Link to="/connect" search={{}}>
+          {t('onboarding.signOut')}
+        </Link>
+        {resolved === null ? (
+          <span role="status">{t(`onboarding.phase.${phase}`)}</span>
+        ) : (
           <Button
             disabled={entry.isPending}
             icon={<ArrowRight aria-hidden="true" />}
@@ -353,12 +354,13 @@ type FactCardProps = {
 };
 
 function FactCard({ children, detail, icon, status, title }: FactCardProps) {
+  const reduceMotion = useReducedMotion();
   return (
     <motion.article
       animate={{ opacity: 1, y: 0 }}
       className="onboarding-fact"
       data-status={status}
-      initial={{ opacity: 0, y: 10 }}
+      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
       transition={{ damping: 28, stiffness: 260, type: 'spring' }}
     >
       <div className="onboarding-fact__icon">{icon}</div>

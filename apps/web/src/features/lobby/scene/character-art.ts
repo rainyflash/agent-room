@@ -76,3 +76,17 @@ export function characterBodyArt(
       : []),
   ];
 }
+export function characterStillArt(
+  id: string,
+  kind: 'agent' | 'human' = 'agent',
+): readonly SceneShape[] {
+  return [
+    { kind: 'rect', x: -11, y: -17, width: 9, height: 18, radius: 3, fill: '#47564e' },
+    { kind: 'rect', x: 2, y: -17, width: 9, height: 18, radius: 3, fill: '#47564e' },
+    { kind: 'rect', x: -13, y: -4, width: 12, height: 6, radius: 2, fill: '#eee9d7' },
+    { kind: 'rect', x: 2, y: -4, width: 12, height: 6, radius: 2, fill: '#eee9d7' },
+    { kind: 'rect', x: -20, y: -33, width: 7, height: 22, radius: 3, fill: '#dab493' },
+    { kind: 'rect', x: 13, y: -33, width: 7, height: 22, radius: 3, fill: '#dab493' },
+    ...characterBodyArt(id, kind),
+  ];
+}

@@ -1,10 +1,10 @@
 import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { CircleAlert, LoaderCircle, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CircleAlert, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { LanguageControl } from '@/features/preferences/ui/language-control';
+import { AppNavigation } from '@/shared/ui/app-navigation';
 import type { AgentFleet, FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import type { WorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
@@ -39,30 +39,19 @@ export function AccountWorkspaceView({
 
   return (
     <main className="account-workspace" id="main-content">
-      <header className="account-workspace__topbar">
-        <a aria-label={t('app.name')} className="account-workspace__brand" href="/">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </a>
-        <div className="account-workspace__topbar-actions">
-          <Link to="/rooms">
-            <Radio aria-hidden="true" />
-            <span>{t('workspace.rooms')}</span>
-          </Link>
-          <LanguageControl />
-          <Link params={{ section: 'security' }} to="/settings/$section">
-            <ShieldCheck aria-hidden="true" />
-            <span>{t('workspace.security')}</span>
-          </Link>
-        </div>
-      </header>
+      <AppNavigation active="agents" />
 
       <section className="account-workspace__intro">
         <div>
-          <p className="eyebrow">{t('workspace.eyebrow')}</p>
           <h1>{t('workspace.title')}</h1>
           <p>{t('workspace.description')}</p>
         </div>
+        <Link className="ar-button ar-button--large ar-button--primary" to="/rooms">
+          {t('workspace.enterRooms')}
+          <ArrowRight aria-hidden="true" />
+        </Link>
+      </section>
+      <section className="account-workspace__summary" aria-label={t('workspace.account')}>
         <dl>
           <Metric label={t('workspace.account')} value={principalDisplayName} />
           <Metric label={t('workspace.agents')} value={String(fleet.agents.length)} />
@@ -70,9 +59,6 @@ export function AccountWorkspaceView({
           <Metric label={t('workspace.instances')} value={String(instanceCount(fleet))} />
         </dl>
       </section>
-
-      <ConnectionStatusStrip health={connectionHealth} />
-      <WorkspaceDiagnostics health={connectionHealth} orphanCount={fleet.orphanInstances.length} />
 
       {failureCode === null ? null : (
         <WorkspaceBoundary
@@ -111,6 +97,8 @@ export function AccountWorkspaceView({
           <AgentInspector agent={selected} />
         </section>
       ) : null}
+      <ConnectionStatusStrip health={connectionHealth} />
+      <WorkspaceDiagnostics health={connectionHealth} orphanCount={fleet.orphanInstances.length} />
     </main>
   );
 }

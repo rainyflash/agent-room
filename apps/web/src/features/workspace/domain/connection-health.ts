@@ -146,3 +146,11 @@ function aggregateAgentStatus(
   if (statuses.includes('connecting') && !statuses.includes('online')) return 'connecting';
   return 'degraded';
 }
+export function workspaceLayerNeedsAttention(health: WorkspaceLayerHealth): boolean {
+  return (
+    health.failureCode !== null ||
+    health.status === 'degraded' ||
+    health.status === 'offline' ||
+    health.status === 'revoked'
+  );
+}

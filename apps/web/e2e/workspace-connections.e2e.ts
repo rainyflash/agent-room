@@ -14,8 +14,8 @@ test('账号工作区明确展示四层独立连接事实和诊断', async ({ pa
   await expect(connections.getByText('Agent runtimes')).toBeVisible();
   await expect(connections.getByText('Not installed')).toBeVisible();
   await expect(page.getByText('Connection diagnostics')).toBeVisible();
-  await expect(page.getByText('2 service layers need attention.')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Rooms' })).toBeVisible();
+  await expect(page.getByText('1 service layer needs attention.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Rooms', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
@@ -26,6 +26,9 @@ test('窄屏状态与诊断布局没有横向溢出且可以折叠', async ({ pa
   await page.goto(fixturePath);
 
   const diagnostics = page.locator('.workspace-diagnostics');
+  await expect(diagnostics).not.toHaveAttribute('open', '');
+  await expect(page.getByRole('button', { name: /Release Conductor/u })).toBeInViewport();
+  await diagnostics.locator('summary').click();
   await expect(diagnostics).toHaveAttribute('open', '');
   await diagnostics.locator('summary').click();
   await expect(diagnostics).not.toHaveAttribute('open', '');

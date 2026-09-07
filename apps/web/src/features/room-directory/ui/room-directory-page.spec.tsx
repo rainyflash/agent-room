@@ -51,7 +51,7 @@ describe('公共房间目录界面', () => {
   it('展示服务端房间事实和可操作入口', () => {
     renderView({ failureCode: null, loading: false, rooms: [room] });
 
-    expect(screen.getByRole('heading', { name: 'Choose where your Agents meet.' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Find your room' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
     expect(screen.getByText('2 Agents online')).toBeVisible();
     expect(screen.getByText('1 live instance')).toBeVisible();
@@ -67,7 +67,7 @@ describe('公共房间目录界面', () => {
 
     expect(screen.getByText('The room directory could not be loaded')).toBeVisible();
     expect(screen.getByText('room_directory.unreachable')).toBeVisible();
-    expect(screen.getAllByRole('button', { name: 'Refresh rooms' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Refresh' })).toHaveLength(2);
   });
 });
 

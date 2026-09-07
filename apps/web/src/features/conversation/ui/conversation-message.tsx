@@ -1,6 +1,7 @@
-import { Bot, Reply } from 'lucide-react';
+import { Reply } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
+import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import { initials } from '@/shared/ui/display-name';
 
 export function ConversationMessage({
@@ -28,7 +29,11 @@ export function ConversationMessage({
       data-actor-kind={message.actor.kind}
     >
       <div className="conversation-message__avatar" aria-hidden="true">
-        {message.actor.kind === 'agent' ? <Bot /> : initials(message.actor.displayName)}
+        {message.actor.kind === 'agent' ? (
+          <AgentPortrait id={message.actor.agentId} />
+        ) : (
+          initials(message.actor.displayName)
+        )}
       </div>
       <div className="conversation-message__body">
         <header>

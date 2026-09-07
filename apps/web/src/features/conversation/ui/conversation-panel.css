@@ -119,8 +119,8 @@
   font-weight: 600;
 }
 .conversation-message__avatar > svg {
-  width: 19px;
-  height: 19px;
+  width: 27px;
+  height: 34px;
   stroke-width: 1.6;
 }
 .conversation-message[data-actor-kind='agent'] .conversation-message__avatar {
@@ -168,7 +168,7 @@
   margin: 0;
   color: #34402c;
   white-space: pre-wrap;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.8;
 }
 .conversation-message--own .conversation-message__text {
@@ -184,7 +184,7 @@
   margin: 0 0 8px;
   padding: 4px 10px;
   border-left: 2px solid #a3b58d;
-  color: #758067;
+  color: var(--ar-muted);
   font-size: 11px;
 }
 .conversation-message .conversation-message__reply {
@@ -271,7 +271,7 @@
   outline: none;
   color: #34432b;
   background: transparent;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
 }
 .conversation-panel__composer > textarea::placeholder {
@@ -317,13 +317,13 @@
   white-space: nowrap;
 }
 .conversation-panel__tools .ar-button {
-  min-height: 34px;
-  padding: 7px 12px;
-  border-color: #9fc081;
-  border-radius: 7px;
-  color: #2e4f1b;
-  background: #d0e7b7;
-  font-size: 11px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-color: var(--ar-accent);
+  border-radius: 9px;
+  color: var(--ar-surface);
+  background: var(--ar-accent);
+  font-size: 12px;
 }
 .conversation-panel__tools .ar-button:disabled {
   color: #6a7c57;
@@ -332,7 +332,7 @@
   opacity: 0.75;
 }
 .conversation-panel__tools .ar-button:not(:disabled):hover {
-  background: #c0dda1;
+  background: var(--ar-accent-hover);
 }
 .conversation-panel__mentions {
   display: flex;

@@ -41,11 +41,11 @@ test('账户语言与设备临时覆盖即时生效', async ({ page }) => {
 
   await language.selectOption('account:en');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/sign-in|offline/u);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Welcome|offline/u);
 
   await language.selectOption('device:zh-CN');
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/登录|离线/u);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/欢迎|离线/u);
 });
 
 test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({ page }) => {
@@ -54,7 +54,7 @@ test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({
   await page.getByRole('combobox', { name: /Language|语言/u }).selectOption('account:en');
 
   await installExpandedEnglishCatalog(page);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/sign-in|offline/u);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Welcome|offline/u);
   await expectNoHorizontalOverflow(page);
 
   await page.setViewportSize({ height: 844, width: 390 });

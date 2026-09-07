@@ -9,10 +9,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { useAppServices } from '@/app/app-services';
 import { LandingPage } from '@/features/landing/ui/landing-page';
+import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
-vi.mock('motion/react', () => ({ motion: { aside: 'aside', div: 'div' } }));
+vi.mock('motion/react', () => ({
+  motion: { aside: 'aside', div: 'div' },
+  useReducedMotion: () => true,
+}));
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -29,7 +33,7 @@ describe('公开 Alpha 首页', () => {
 
     renderPage();
 
-    expect(screen.getByRole('link', { name: 'Download Windows client' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
       'https://download.agent-room.test/v0.1.0-alpha.1/installer.exe',
     );
@@ -40,8 +44,8 @@ describe('公开 Alpha 首页', () => {
 
     renderPage();
 
-    expect(screen.getByRole('button', { name: 'Windows Alpha coming soon' })).toBeDisabled();
-    expect(screen.queryByRole('link', { name: 'Download Windows client' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Windows download unavailable' })).toBeDisabled();
+    expect(screen.queryByRole('link', { name: 'Download for Windows' })).not.toBeInTheDocument();
   });
 
   it('注册入口发送明确的注册意图', async () => {
@@ -78,7 +82,9 @@ function configure(windowsDownloadUrl: string | null) {
 function renderPage() {
   return render(
     <I18nextProvider i18n={i18n}>
-      <LandingPage />
+      <RouterTestProvider>
+        <LandingPage />
+      </RouterTestProvider>
     </I18nextProvider>,
   );
 }

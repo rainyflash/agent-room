@@ -1,10 +1,9 @@
 export const workspaceResources = {
   en: {
     'workspace.eyebrow': 'ACCOUNT / AGENT FLEET',
-    'workspace.title': 'Every Agent. Every device. One account truth.',
-    'workspace.description':
-      'Cloud state remains available without a local Bridge. Local runtime status is shown separately and never gates this workspace.',
-    'workspace.account': 'Operator',
+    'workspace.title': 'My agents',
+    'workspace.description': 'Meet your companions and see where they are connected.',
+    'workspace.account': 'Account',
     'workspace.agents': 'Agents',
     'workspace.devices': 'Devices',
     'workspace.instances': 'Instances',
@@ -23,8 +22,8 @@ export const workspaceResources = {
     'workspace.status.offline': 'Offline',
     'workspace.status.revoked': 'Revoked',
     'workspace.status.unavailable': 'Not installed',
-    'workspace.fleet.title': 'Agent fleet',
-    'workspace.fleet.detail': 'Stable identities grouped across every registered device.',
+    'workspace.fleet.title': 'Your companions',
+    'workspace.fleet.detail': 'Select an agent to see its activity and devices.',
     'workspace.fleet.empty.title': 'No Agent identity exists yet',
     'workspace.fleet.empty.detail':
       'Connect a supported host or use the generic MCP configuration to register the first Agent.',
@@ -50,7 +49,7 @@ export const workspaceResources = {
     'workspace.loading': 'Synchronizing the account fleet',
     'workspace.failed.title': 'The account fleet could not be loaded',
     'workspace.failed.detail':
-      'Cloud data remains authoritative. Retry the failed boundary instead of inferring local state.',
+      'We could not get the latest account data. Check your connection and try again.',
     'workspace.failed.retry': 'Retry',
     'workspace.diagnostic.title': 'Connection diagnostics',
     'workspace.diagnostic.healthySummary': 'All observed service layers are online.',
@@ -67,10 +66,9 @@ export const workspaceResources = {
   },
   'zh-CN': {
     'workspace.eyebrow': '账户 / AGENT 舰队',
-    'workspace.title': '所有 Agent、所有设备，共用一个账户事实。',
-    'workspace.description':
-      '没有本机 Bridge 也能读取云端状态。本机 Runtime 独立展示，永远不会门禁这个工作区。',
-    'workspace.account': '操作者',
+    'workspace.title': '我的 Agent',
+    'workspace.description': '认识你的伙伴，查看他们在各台设备上的连接情况。',
+    'workspace.account': '账户',
     'workspace.agents': 'Agent',
     'workspace.devices': '设备',
     'workspace.instances': '实例',
@@ -89,8 +87,8 @@ export const workspaceResources = {
     'workspace.status.offline': '离线',
     'workspace.status.revoked': '已撤销',
     'workspace.status.unavailable': '未安装',
-    'workspace.fleet.title': 'Agent 舰队',
-    'workspace.fleet.detail': '按稳定身份聚合所有已登记设备上的运行实例。',
+    'workspace.fleet.title': '你的伙伴',
+    'workspace.fleet.detail': '选择一个 Agent，查看活动和设备详情。',
     'workspace.fleet.empty.title': '尚未建立 Agent 身份',
     'workspace.fleet.empty.detail': '连接受支持的宿主，或使用通用 MCP 配置登记第一个 Agent。',
     'workspace.fleet.instances': '{{count}} 个实例',

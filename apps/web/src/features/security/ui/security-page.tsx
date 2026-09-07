@@ -27,7 +27,7 @@ import {
   type SecurityPostureAction,
 } from '@/features/security/ui/security-posture';
 import { SecurityRecoveryPanel } from '@/features/security/ui/security-recovery-panel';
-import { LanguageControl } from '@/features/preferences/ui/language-control';
+import { AppNavigation } from '@/shared/ui/app-navigation';
 import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 
@@ -101,20 +101,9 @@ export function SecurityWorkspace({
 
   return (
     <main className="security-page" id="main-content">
-      <header className="security-topbar">
-        <Button
-          icon={<ArrowLeft aria-hidden="true" />}
-          onClick={onBack}
-          size="compact"
-          tone="quiet"
-        >
-          {t('security.action.back')}
-        </Button>
-        <a aria-label={t('app.name')} className="security-topbar__brand" href="/connect">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </a>
-        <div className="security-topbar__actions">
+      <AppNavigation
+        active="security"
+        actions={
           <button
             aria-label={t('security.action.refresh')}
             className="security-icon-button"
@@ -127,11 +116,13 @@ export function SecurityWorkspace({
               className={inspection.isFetching ? 'security-spin' : undefined}
             />
           </button>
-          <LanguageControl />
-        </div>
-      </header>
+        }
+      />
 
       <div className="security-workspace">
+        <Button icon={<ArrowLeft aria-hidden="true" />} onClick={onBack} tone="quiet">
+          {t('security.action.back')}
+        </Button>
         <header className="security-page-heading">
           <div>
             <ShieldCheck aria-hidden="true" />
@@ -140,6 +131,13 @@ export function SecurityWorkspace({
           <p>{t('security.page.subtitle')}</p>
         </header>
 
+        {inspection.data?.ok === true ? (
+          <nav className="security-section-nav" aria-label={t('security.sections')}>
+            <a href="#security-identity">{t('security.section.devices')}</a>
+            <a href="#security-recovery">{t('security.section.recovery')}</a>
+            <a href="#security-access">{t('security.section.access')}</a>
+          </nav>
+        ) : null}
         {inspection.isPending ? (
           <SecurityLoading />
         ) : inspection.data?.ok === false ? (
@@ -151,6 +149,7 @@ export function SecurityWorkspace({
           <motion.div
             animate={{ opacity: 1 }}
             className="security-content"
+            id="security-identity"
             initial={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
           >

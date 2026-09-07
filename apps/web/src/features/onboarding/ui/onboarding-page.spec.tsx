@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,7 +26,12 @@ vi.mock('@/features/session/ui/connection-page', () => ({
   ConnectionPage: () => <main>SESSION_RECOVERY</main>,
 }));
 vi.mock('@/features/session/ui/session-provider', () => ({ useSession: vi.fn() }));
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigate,
+  Link: ({ children, to }: { readonly children: ReactNode; readonly to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
 vi.mock('motion/react', () => ({
   motion: { article: 'article', header: 'header' },
   useReducedMotion: () => true,
@@ -98,6 +104,17 @@ afterEach(() => {
 });
 
 describe('首次引导页面', () => {
+  it('接入检查异常时显示可重试错误，不留下没有说明的空白状态', async () => {
+    vi.mocked(useAppServices).mockReturnValue({
+      config: { windowsDownloadUrl: null },
+      lobbyEntry: { enter: vi.fn(), enterKnown: vi.fn() },
+      onboarding: { bootstrap: vi.fn().mockRejectedValue(new Error('fixture transport failure')) },
+    } as unknown as ReturnType<typeof useAppServices>);
+    renderPage();
+    expect(await screen.findByText('onboarding.unexpected_failure')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Enter lobby' })).not.toBeInTheDocument();
+  });
   it('控制面会话失效时回到登录边界而不是永久显示账户检查', () => {
     vi.mocked(useSession).mockReturnValue({
       send: vi.fn(),
@@ -135,10 +152,10 @@ describe('首次引导页面', () => {
       await screen.findByRole('heading', { name: 'Bring your first Agent online.' }),
     ).toBeVisible();
     expect(await screen.findByText('Build Agent')).toBeVisible();
-    expect(screen.getAllByText('Alice')).toHaveLength(2);
+    expect(screen.getByText('Alice')).toBeVisible();
     expect(screen.getByText('English lobby')).toBeVisible();
     expect(screen.getByText('7 agents online · 2 active rooms')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Download Windows client' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
       'https://download.agent-room.test/windows',
     );

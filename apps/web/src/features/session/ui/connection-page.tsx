@@ -59,7 +59,7 @@ export function ConnectionPage() {
 
   const handleAction = (action: ConnectionAction): void => {
     if (action === 'enter') {
-      void navigate({ to: '/workspace' });
+      void navigate({ to: '/rooms' });
       return;
     }
     send(eventByAction[action]);

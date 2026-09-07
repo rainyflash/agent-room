@@ -58,11 +58,14 @@ describe('账号工作区组件', () => {
     expect(bridgeWorkspaceStatus(true, 'stopped')).toBe('offline');
   });
 
-  it('在独立诊断面板显示观测时间和稳定故障码', () => {
+  it('在独立诊断面板显示观测时间和稳定故障码', async () => {
+    const user = userEvent.setup();
     renderWithI18n(<WorkspaceDiagnostics health={fixtureConnectionHealth()} orphanCount={0} />);
 
     expect(screen.getByText('Connection diagnostics')).toBeVisible();
-    expect(screen.getByText('3 service layers need attention.')).toBeVisible();
+    expect(screen.getByText('2 service layers need attention.')).toBeVisible();
+    expect(screen.getByText('control.devices_failed')).not.toBeVisible();
+    await user.click(screen.getByText('Connection diagnostics'));
     expect(screen.getByText('control.devices_failed')).toBeVisible();
     expect(screen.getAllByText('Not observed on this client')).toHaveLength(3);
   });

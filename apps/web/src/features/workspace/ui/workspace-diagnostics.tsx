@@ -3,9 +3,10 @@ import { Activity, ChevronDown, CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  WorkspaceConnectionHealth,
-  WorkspaceLayerId,
+import {
+  workspaceLayerNeedsAttention,
+  type WorkspaceConnectionHealth,
+  type WorkspaceLayerId,
 } from '@/features/workspace/domain/connection-health';
 import {
   WORKSPACE_LAYER_ORDER,
@@ -21,10 +22,8 @@ export function WorkspaceDiagnostics({
   readonly orphanCount: number;
 }) {
   const { i18n, t } = useTranslation();
-  const issueCount = WORKSPACE_LAYER_ORDER.filter(
-    (layerId) => health[layerId].status !== 'online',
-  ).length;
-  const [expanded, setExpanded] = useState(issueCount > 0 || orphanCount > 0);
+  const issueCount = Object.values(health).filter(workspaceLayerNeedsAttention).length;
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <details

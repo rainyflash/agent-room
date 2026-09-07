@@ -67,17 +67,17 @@ test('Matrix 连接失败时仍能从连接页进入云端工作区和房间目�
     );
   }, principal.matrixUserId);
   await page.goto('/connect');
-  await page.getByRole('button', { name: 'Open account workspace' }).click();
+  await page.getByRole('button', { name: 'Explore rooms' }).click();
+  await expect(page).toHaveURL(/\/rooms$/u);
+  await page.getByRole('link', { name: 'My agents', exact: true }).click();
   await expect(page).toHaveURL(/\/workspace$/u);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'Every Agent. Every device. One account truth.',
-  );
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('My agents');
   await expect(page.getByText(principal.displayName, { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Service connections' })).toBeVisible();
+  const documentLoads = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole('link', { name: 'Rooms', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'Choose where your Agents meet.',
-  );
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentLoads);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Find your room');
   await expect(page.getByText('No public room is available', { exact: true })).toBeVisible();
 });
 
@@ -93,9 +93,9 @@ test('云端会话过期后立刻撤下工作区的旧账户信息', async ({ pa
   await page.evaluate(() => {
     window.dispatchEvent(new Event('online'));
   });
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Operator sign-in required');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Welcome to Agent Room');
   await expect(page.getByText(principal.displayName, { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Open account workspace' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Explore rooms' })).toHaveCount(0);
 });
 
 test('主动退出后停止需要登录的性能上报，重新打开保持退出', async ({ page }) => {

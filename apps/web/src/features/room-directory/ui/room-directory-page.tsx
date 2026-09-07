@@ -5,19 +5,18 @@ import {
   Building2,
   CircleAlert,
   CloudOff,
-  LayoutGrid,
   LoaderCircle,
-  Radio,
   RefreshCw,
-  ShieldCheck,
   UsersRound,
+  Search,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import { LanguageControl } from '@/features/preferences/ui/language-control';
+import { AppNavigation } from '@/shared/ui/app-navigation';
+import { RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { usePublicRoomDirectory } from '@/features/room-directory/data/public-room-directory-query';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 
@@ -53,36 +52,40 @@ export function RoomDirectoryView({
 }: RoomDirectoryViewProps) {
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
+  const [search, setSearch] = useState('');
+  const term = search.trim().toLowerCase();
+  const visibleRooms = rooms.filter((room) =>
+    [room.name, room.description, room.language, room.slug].some((value) =>
+      value?.toLowerCase().includes(term),
+    ),
+  );
 
   return (
     <main className="room-directory" id="main-content">
-      <header className="room-directory__topbar">
-        <a aria-label={t('app.name')} className="room-directory__brand" href="/">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </a>
-        <nav aria-label={t('roomDirectory.title')} className="room-directory__nav">
-          <Link to="/workspace">
-            <LayoutGrid aria-hidden="true" />
-            <span>{t('roomDirectory.workspace')}</span>
-          </Link>
-          <Link params={{ section: 'security' }} to="/settings/$section">
-            <ShieldCheck aria-hidden="true" />
-            <span>{t('roomDirectory.security')}</span>
-          </Link>
-          <LanguageControl />
-        </nav>
-      </header>
+      <AppNavigation active="rooms" />
 
       <section className="room-directory__hero">
         <div>
-          <p className="eyebrow">{t('roomDirectory.eyebrow')}</p>
           <h1>{t('roomDirectory.title')}</h1>
           <p>{t('roomDirectory.description')}</p>
         </div>
-        <Button icon={<RefreshCw aria-hidden="true" />} onClick={onRefresh} tone="quiet">
-          {t('roomDirectory.refresh')}
-        </Button>
+        <div className="room-directory__tools">
+          <label className="room-directory__search">
+            <Search aria-hidden="true" />
+            <input
+              aria-label={t('roomDirectory.search')}
+              placeholder={t('roomDirectory.search')}
+              type="search"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+              }}
+            />
+          </label>
+          <Button icon={<RefreshCw aria-hidden="true" />} onClick={onRefresh} tone="ghost">
+            {t('roomDirectory.refresh')}
+          </Button>
+        </div>
       </section>
 
       {loading ? (
@@ -121,7 +124,7 @@ export function RoomDirectoryView({
 
       {!loading && failureCode === null && rooms.length > 0 ? (
         <section aria-label={t('roomDirectory.title')} className="room-directory__grid">
-          {rooms.map((room, index) => (
+          {visibleRooms.map((room, index) => (
             <motion.article
               animate={{ opacity: 1, y: 0 }}
               className="room-card"
@@ -129,41 +132,59 @@ export function RoomDirectoryView({
               key={room.catalogId}
               transition={{ damping: 26, delay: index * 0.045, stiffness: 260, type: 'spring' }}
             >
-              <header>
-                <span className="room-card__signal">
-                  <Radio aria-hidden="true" />
-                </span>
-                <div>
-                  <p>{room.slug ?? room.catalogId}</p>
+              <div className="room-card__scene">
+                <RoomIllustration />
+              </div>
+              <div className="room-card__body">
+                <header>
                   <h2>{room.name}</h2>
-                </div>
-              </header>
-              <p className="room-card__description">{room.description}</p>
-              <dl>
-                <RoomFact
-                  icon={<UsersRound aria-hidden="true" />}
-                  label={t('roomDirectory.onlineAgents', { count: room.onlineAgentCount })}
-                />
-                <RoomFact
-                  icon={<Building2 aria-hidden="true" />}
-                  label={t('roomDirectory.activeInstances', {
-                    count: room.activeInstanceCount,
-                  })}
-                />
-              </dl>
-              <footer>
-                <span>
-                  {t('roomDirectory.language')}: {room.language ?? t('roomDirectory.anyLanguage')}
-                </span>
-                <Link params={{ catalogId: room.catalogId }} search={{}} to="/lobby/$catalogId">
-                  <span>{t('roomDirectory.enter')}</span>
-                  <ArrowRight aria-hidden="true" />
-                </Link>
-              </footer>
+                </header>
+                <p className="room-card__description">{room.description}</p>
+                <dl>
+                  <RoomFact
+                    icon={<UsersRound aria-hidden="true" />}
+                    label={t('roomDirectory.onlineAgents', { count: room.onlineAgentCount })}
+                  />
+                  <RoomFact
+                    icon={<Building2 aria-hidden="true" />}
+                    label={t('roomDirectory.activeInstances', {
+                      count: room.activeInstanceCount,
+                    })}
+                  />
+                </dl>
+                <footer>
+                  <span>
+                    {t('roomDirectory.language')}: {room.language ?? t('roomDirectory.anyLanguage')}
+                  </span>
+                  <Link params={{ catalogId: room.catalogId }} search={{}} to="/lobby/$catalogId">
+                    <span>{t('roomDirectory.enter')}</span>
+                    <ArrowRight aria-hidden="true" />
+                  </Link>
+                </footer>
+              </div>
             </motion.article>
           ))}
+          {visibleRooms.length === 0 ? (
+            <DirectoryBoundary
+              title={t('roomDirectory.noMatches')}
+              detail={t('roomDirectory.noMatches.detail')}
+              icon={<Search aria-hidden="true" />}
+              role="status"
+              action={
+                <Button
+                  onClick={() => {
+                    setSearch('');
+                  }}
+                  tone="ghost"
+                >
+                  {t('roomDirectory.clear')}
+                </Button>
+              }
+            />
+          ) : null}
         </section>
       ) : null}
+      <p className="room-directory__note">{t('roomDirectory.note')}</p>
     </main>
   );
 }

@@ -1,5 +1,8 @@
 use std::{io, net::Ipv4Addr, time::Duration};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use sha2::{Digest as _, Sha256};
+
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
@@ -198,11 +201,13 @@ async fn write_response(stream: &mut TcpStream, response: CallbackResponse) -> i
             "认证回调无效或已过期。请返回 Agent Room 桌面应用重试。",
         ),
     };
+    let style = include_str!("ui/auth-return.css").replace("\r\n", "\n");
+    let style_hash = STANDARD.encode(Sha256::digest(style.as_bytes()));
     let body = format!(
-        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><body><main><h1>{title}</h1><p>{message}</p></main></body></html>"
+        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">AR</div><h1 lang="en">{title}</h1><p>{message}</p><div class="return-note">返回桌面应用，继续你的对话。</div></main></body></html>"#
     );
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         body.len()
     );
     timeout(SOCKET_IO_TIMEOUT, async {
@@ -255,12 +260,23 @@ mod tests {
             .expect("闭合回调可接收");
         assert_eq!(callback.callback_url().query_pairs().count(), 2);
         callback.respond(true).await.expect("成功响应可写入");
-        assert!(
-            client
-                .await
-                .expect("客户端任务完成")
-                .starts_with("HTTP/1.1 200 OK")
-        );
+        let response = client.await.expect("客户端任务完成");
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        let (headers, body) = response.split_once("\r\n\r\n").expect("包含响应体");
+        let style = body
+            .split_once("<style>")
+            .expect("包含界面样式")
+            .1
+            .split_once("</style>")
+            .expect("样式闭合")
+            .0;
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        let hash = base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(style));
+        assert!(headers.contains(&format!("style-src 'sha256-{hash}'")));
+        assert!(headers.contains("default-src 'none'"));
+        assert!(headers.contains("Cache-Control: no-store"));
+        assert!(!body.contains("one-time-code"));
     }
 
     #[tokio::test]

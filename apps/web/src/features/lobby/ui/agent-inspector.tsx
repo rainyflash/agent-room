@@ -3,8 +3,7 @@ import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
-import { characterBodyArt } from '@/features/lobby/scene/character-art';
-import { SceneShapes } from '@/features/lobby/scene/svg/scene-shapes';
+import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 
 const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
@@ -65,12 +64,7 @@ export function AgentInspector({
         </button>
       </header>
       <div className="agent-inspector__portrait" aria-hidden="true">
-        <svg viewBox="-45 -78 90 90">
-          <ellipse cx="0" cy="2" rx="25" ry="8" fill="#c6d4b9" />
-          <rect x="-11" y="-17" width="9" height="20" rx="3" fill="#47564e" />
-          <rect x="2" y="-17" width="9" height="20" rx="3" fill="#47564e" />
-          <SceneShapes shapes={characterBodyArt(agent.agentId)} />
-        </svg>
+        <AgentPortrait id={agent.agentId} />
       </div>
       <div className="agent-inspector__status">
         <StatusMark label={t(`lobby.status.${agent.status}`)} tone={STATUS_TONE[agent.status]} />

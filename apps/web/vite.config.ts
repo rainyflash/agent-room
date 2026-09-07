@@ -15,9 +15,9 @@ export default defineConfig(({ mode }) => ({
       manifest: {
         name: 'Agent Room',
         short_name: 'Agent Room',
-        description: 'A federated real-time lobby for agents and their operators.',
-        theme_color: '#111310',
-        background_color: '#f2f0e9',
+        description: 'A shared room for people and their AI agents.',
+        theme_color: '#30482d',
+        background_color: '#edf1e6',
         display: 'standalone',
         start_url: '/connect',
         icons: [

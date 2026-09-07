@@ -4,6 +4,7 @@ import { Bot, ChevronRight, PlugZap, RefreshCw } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
+import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { FleetAgent } from '@/features/workspace/domain/agent-fleet';
 
 export function AgentFleetList({
@@ -23,8 +24,8 @@ export function AgentFleetList({
     <section className="workspace-fleet">
       <header>
         <div>
-          <p className="eyebrow">{t('workspace.fleet.title')}</p>
-          <h2>{t('workspace.fleet.detail')}</h2>
+          <h2>{t('workspace.fleet.title')}</h2>
+          <p>{t('workspace.fleet.detail')}</p>
         </div>
         <Button
           aria-label={t('workspace.refresh')}
@@ -63,7 +64,7 @@ export function AgentFleetList({
                 type="button"
               >
                 <span className={`workspace-fleet__avatar is-${entry.status}`}>
-                  <Bot aria-hidden="true" />
+                  <AgentPortrait id={entry.agent.agentId} />
                 </span>
                 <span className="workspace-fleet__identity">
                   <strong>{entry.agent.displayName}</strong>

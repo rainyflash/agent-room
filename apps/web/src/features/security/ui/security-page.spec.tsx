@@ -16,6 +16,7 @@ import type {
   MatrixVerificationSnapshot,
 } from '@/features/security/domain/matrix-security';
 import { SecurityWorkspace } from '@/features/security/ui/security-page';
+import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -183,13 +184,15 @@ function renderWorkspace(
   });
   const view = render(
     <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={queryClient}>
-        <SecurityWorkspace
-          accessManagement={accessManagement}
-          gateway={gateway}
-          onBack={() => undefined}
-        />
-      </QueryClientProvider>
+      <RouterTestProvider>
+        <QueryClientProvider client={queryClient}>
+          <SecurityWorkspace
+            accessManagement={accessManagement}
+            gateway={gateway}
+            onBack={() => undefined}
+          />
+        </QueryClientProvider>
+      </RouterTestProvider>
     </I18nextProvider>,
   );
   return { ...view, queryClient };

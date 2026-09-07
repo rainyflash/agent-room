@@ -44,7 +44,7 @@ test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ 
   await page.goto('/connect');
 
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Operator sign-in required|需要登录操作者账户/u,
+    /Welcome to Agent Room|欢迎来到 Agent Room/u,
   );
   await expect(page.getByRole('button', { name: /Sign in|登录 Agent Room/u })).toBeEnabled();
   await expect(page.locator('.connection-step')).toHaveCount(5);
@@ -54,7 +54,7 @@ test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ 
       .map((value) => Number.parseFloat(value)),
   );
   expect(columns).toHaveLength(2);
-  expect((columns[0] ?? 0) / ((columns[0] ?? 0) + (columns[1] ?? 0))).toBeCloseTo(0.3, 2);
+  expect((columns[0] ?? 0) / ((columns[0] ?? 0) + (columns[1] ?? 0))).toBeCloseTo(0.5, 2);
   await expectNoHorizontalOverflow(page);
   await page.keyboard.press('Tab');
   await expect(page.locator('.skip-link')).toBeFocused();
