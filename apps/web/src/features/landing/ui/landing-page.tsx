@@ -45,8 +45,8 @@ export function LandingPage() {
       <section className="landing__hero">
         <motion.div
           className="landing__copy"
-          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={reduceMotion ? false : { y: 12 }}
+          animate={{ y: 0 }}
           transition={{ duration: 0.3 }}
         >
           <h1>{t('landing.title')}</h1>
