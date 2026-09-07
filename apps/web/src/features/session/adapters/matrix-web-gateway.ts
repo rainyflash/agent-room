@@ -85,6 +85,8 @@ export class MatrixWebGateway implements MatrixGateway {
   #cryptoLease: MatrixCryptoLease | null = null;
   #pendingLogout: BrowserMatrixConnection | null = null;
   #pendingRevocation: StoredMatrixSession | null = null;
+  readonly #pendingRestores = new Set<Promise<Result<MatrixRestoreOutcome, SessionFailure>>>();
+  #logoutInProgress = false;
   #freshAuthenticationReturnPath: string | undefined;
 
   constructor({
@@ -170,7 +172,23 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 
   async restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
-    if (this.#pendingLogout !== null || this.#pendingRevocation !== null) {
+    const restoring = this.#restoreSession(expectedUserId);
+    this.#pendingRestores.add(restoring);
+    try {
+      return await restoring;
+    } finally {
+      this.#pendingRestores.delete(restoring);
+    }
+  }
+
+  async #restoreSession(
+    expectedUserId: string,
+  ): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
+    if (
+      this.#logoutInProgress ||
+      this.#pendingLogout !== null ||
+      this.#pendingRevocation !== null
+    ) {
       return err(failure('matrix', 'matrix.logout_incomplete', false, true));
     }
     const attempt = ++this.#restoreAttempt;
@@ -221,6 +239,7 @@ export class MatrixWebGateway implements MatrixGateway {
           });
     const epoch = this.#sessions.epoch;
     let candidate: MatrixClient | undefined;
+    let connected = false;
     let lease: MatrixCryptoLease | null = null;
     try {
       const session = sessionResult.value;
@@ -281,7 +300,6 @@ export class MatrixWebGateway implements MatrixGateway {
       await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());
       if (attempt !== this.#restoreAttempt) {
-        client.stopClient();
         return err(supersededMatrixSession());
       }
       if (
@@ -303,33 +321,23 @@ export class MatrixWebGateway implements MatrixGateway {
           persistent: this.#indexedDB !== undefined,
         });
       } catch {
-        client.stopClient();
         return err(failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true));
       }
 
       if (attempt !== this.#restoreAttempt) {
-        client.stopClient();
         return err(supersededMatrixSession());
       }
-      const connection = new BrowserMatrixConnection(
-        client,
-        sdk.ClientEvent.Sync,
-        sdk.SyncState,
-        this.#online,
-        this.#syncTimeoutMs,
-        this.#onClientActivity,
-        () => this.#sessions.failure,
-      );
+      const connection = this.#createConnection(client, sdk.ClientEvent.Sync, sdk.SyncState);
       this.#activeConnection = connection;
       this.#cryptoLease = lease;
       this.#onClientChange(client);
+      connected = true;
       return ok({
         connection,
         kind: 'connected',
         ...(returnPath === undefined ? {} : { returnPath }),
       });
     } catch (error) {
-      candidate?.stopClient();
       if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
       if (this.#sessions.failure !== null) return err(this.#sessions.failure);
       if (error instanceof MatrixPersistenceError) return err(error.failure);
@@ -345,6 +353,10 @@ export class MatrixWebGateway implements MatrixGateway {
       }
       return err(failure('matrix', 'matrix.restore_failed', !this.#online(), true));
     } finally {
+      if (!connected && candidate !== undefined) {
+        stopMatrixClient(candidate);
+        this.#retainClientForLogout(candidate, sdk.ClientEvent.Sync, sdk.SyncState, lease);
+      }
       if (lease !== this.#cryptoLease) lease?.release();
     }
   }
@@ -360,20 +372,27 @@ export class MatrixWebGateway implements MatrixGateway {
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
+    this.#logoutInProgress = true;
     const lease = this.#cryptoLease;
     this.#cryptoLease = null;
     try {
       return await this.#logoutSession();
     } finally {
       lease?.release();
+      this.#releaseCryptoLease();
+      this.#logoutInProgress = false;
     }
   }
 
   async #logoutSession(): Promise<Result<void, SessionFailure>> {
-    const active = this.#pendingLogout ?? this.#activeConnection;
+    let active = this.#pendingLogout ?? this.#activeConnection;
     this.disconnect();
     this.#pendingLogout = active;
     this.#activeConnection = null;
+    active?.disconnect();
+    // SDK 加密初始化会启动后台请求；先等被取代的恢复完成并中止请求，再撤销令牌。
+    const restores = await Promise.allSettled(this.#pendingRestores);
+    active = this.#pendingLogout ?? active;
     active?.disconnect();
     const stored = active === null ? await this.#sessions.load() : ok(null);
     if (stored.ok) this.#pendingRevocation ??= stored.value;
@@ -392,7 +411,42 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#pendingRevocation = null;
     }
     if (!cleared.ok) return cleared;
+    if (remote.ok && restores.some((result) => result.status === 'rejected')) {
+      return err(failure('matrix', 'matrix.logout_failed', !this.#online(), true));
+    }
     return returnPathCleared.ok ? remote : returnPathCleared;
+  }
+
+  #createConnection(
+    client: MatrixClient,
+    syncEvent: ClientEvent.Sync,
+    syncState: typeof SyncState,
+  ): BrowserMatrixConnection {
+    return new BrowserMatrixConnection(
+      client,
+      syncEvent,
+      syncState,
+      this.#online,
+      this.#syncTimeoutMs,
+      this.#onClientActivity,
+      () => this.#sessions.failure,
+    );
+  }
+
+  #releaseCryptoLease(): void {
+    this.#cryptoLease?.release();
+    this.#cryptoLease = null;
+  }
+
+  #retainClientForLogout(
+    client: MatrixClient,
+    syncEvent: ClientEvent.Sync,
+    syncState: typeof SyncState,
+    lease: MatrixCryptoLease | null,
+  ): void {
+    if (!this.#logoutInProgress || this.#pendingLogout !== null) return;
+    this.#pendingLogout = this.#createConnection(client, syncEvent, syncState);
+    this.#cryptoLease = lease;
   }
 
   #consumeLoginToken(): Result<string | null, SessionFailure> {
@@ -566,7 +620,7 @@ class BrowserMatrixConnection implements MatrixConnection {
 
   disconnect(): void {
     this.#stopObservingActivity();
-    this.#client.stopClient();
+    stopMatrixClient(this.#client);
   }
 
   observe(listener: (status: MatrixConnectionStatus) => void): () => void {
@@ -719,6 +773,11 @@ function isUnauthorized(error: unknown): boolean {
   return (
     typeof error === 'object' && error !== null && 'httpStatus' in error && error.httpStatus === 401
   );
+}
+
+function stopMatrixClient(client: MatrixClient): void {
+  client.stopClient();
+  client.http.abort();
 }
 
 async function discardMatrixClient(client: MatrixClient): Promise<void> {

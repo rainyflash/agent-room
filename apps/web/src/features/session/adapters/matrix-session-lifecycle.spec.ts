@@ -16,6 +16,7 @@ const sdk = vi.hoisted(() => ({
   refresh: vi.fn(),
   logout: vi.fn(),
   stop: vi.fn(),
+  abort: vi.fn(),
   clearStores: vi.fn(),
   initializeCrypto:
     vi.fn<(options: { cryptoDatabasePrefix: string; useIndexedDB: boolean }) => Promise<void>>(),
@@ -37,6 +38,7 @@ vi.mock('matrix-js-sdk', () => ({
       getUserId: () => options.userId,
       getSyncState: () => 'PREPARED',
       stopClient: sdk.stop,
+      http: { abort: sdk.abort },
       clearStores: sdk.clearStores,
       on: vi.fn(),
       removeListener: vi.fn(),
@@ -93,6 +95,7 @@ describe('Matrix 网关持久会话生命周期', () => {
     sdk.options.length = 0;
     sdk.logout.mockReset().mockResolvedValue(undefined);
     sdk.clearStores.mockReset().mockResolvedValue(undefined);
+    sdk.initializeCrypto.mockReset().mockResolvedValue(undefined);
     sdk.loginFlows.mockReset().mockResolvedValue({ flows: [{ type: 'm.login.sso' }] });
     sessionStorage.clear();
     localStorage.clear();
@@ -245,13 +248,53 @@ describe('Matrix 网关持久会话生命周期', () => {
     const matrix = gateway(vault);
     const restoring = matrix.restore(session.userId);
     await started.promise;
-    await matrix.logout();
+    const loggingOut = matrix.logout();
+    expect(sdk.logout).not.toHaveBeenCalled();
     response.resolve({ user_id: session.userId, device_id: session.deviceId });
+    await expect(loggingOut).resolves.toEqual(ok(undefined));
     await expect(restoring).resolves.toMatchObject({
       ok: false,
       error: { code: 'matrix.session_superseded' },
     });
     expect(sdk.initializeCrypto).not.toHaveBeenCalled();
+    await expect(vault.load()).resolves.toEqual(ok(null));
+  });
+
+  it('退出等待加密初始化结束并取消后台请求后才撤销令牌和清理当前设备', async () => {
+    const initialization = Promise.withResolvers<undefined>();
+    sdk.initializeCrypto.mockReturnValueOnce(initialization.promise);
+    const vault = storage();
+    const onClientChange = vi.fn();
+    const matrix = new MatrixWebGateway({
+      baseUrl: 'https://matrix.test',
+      sessionVault: vault,
+      onClientChange,
+    });
+    const restoring = matrix.restore(session.userId);
+    await vi.waitFor(() => {
+      expect(sdk.initializeCrypto).toHaveBeenCalledOnce();
+    });
+    const loggingOut = matrix.logout();
+    await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.logout_incomplete' },
+    });
+    expect(sdk.logout).not.toHaveBeenCalled();
+    expect(sdk.clearStores).not.toHaveBeenCalled();
+    initialization.resolve(undefined);
+    await expect(restoring).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_superseded' },
+    });
+    await expect(loggingOut).resolves.toEqual(ok(undefined));
+    expect(onClientChange.mock.calls.every(([client]) => client === null)).toBe(true);
+    expect(sdk.abort).toHaveBeenCalled();
+    const revokedAt = sdk.logout.mock.invocationCallOrder[0];
+    if (revokedAt === undefined) throw new Error('退出必须撤销远端会话');
+    expect(sdk.abort.mock.invocationCallOrder[0]).toBeLessThan(revokedAt);
+    expect(sdk.clearStores).toHaveBeenCalledExactlyOnceWith({
+      cryptoDatabasePrefix: sdk.initializeCrypto.mock.calls[0]?.[0].cryptoDatabasePrefix,
+    });
     await expect(vault.load()).resolves.toEqual(ok(null));
   });
 
