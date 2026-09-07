@@ -1,6 +1,6 @@
 import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, CircleAlert, LoaderCircle, RefreshCw } from 'lucide-react';
+import { ArrowRight, CircleAlert, LoaderCircle, LogOut, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -20,6 +20,7 @@ export type AccountWorkspaceViewProps = {
   readonly loading: boolean;
   readonly onRefresh: () => void;
   readonly onSelectAgent: (agentId: string) => void;
+  readonly onSignOut?: () => void;
   readonly principalDisplayName: string;
   readonly selectedAgentId: string | null;
 };
@@ -31,6 +32,7 @@ export function AccountWorkspaceView({
   loading,
   onRefresh,
   onSelectAgent,
+  onSignOut,
   principalDisplayName,
   selectedAgentId,
 }: AccountWorkspaceViewProps) {
@@ -39,7 +41,21 @@ export function AccountWorkspaceView({
 
   return (
     <main className="account-workspace" id="main-content">
-      <AppNavigation active="agents" />
+      <AppNavigation
+        active="agents"
+        actions={
+          onSignOut === undefined ? undefined : (
+            <Button
+              icon={<LogOut aria-hidden="true" />}
+              onClick={onSignOut}
+              size="compact"
+              tone="quiet"
+            >
+              {t('connection.action.logout')}
+            </Button>
+          )
+        }
+      />
 
       <section className="account-workspace__intro">
         <div>

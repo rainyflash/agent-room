@@ -24,7 +24,7 @@ const eventByAction = {
 export function ConnectionPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { controlPlane } = useAppServices();
+  const { controlPlane, localRuntime } = useAppServices();
   const { send, snapshot } = useSession();
   const readiness = useReadiness(controlPlane);
   const state = sessionStateName(snapshot.value);
@@ -66,7 +66,10 @@ export function ConnectionPage() {
   };
 
   return (
-    <div className="connection-shell">
+    <div
+      className="connection-shell"
+      data-local-agents={localRuntime.isAvailable() ? 'true' : undefined}
+    >
       <p aria-atomic="true" aria-live="polite" className="sr-only">
         {t('connection.liveRegion', {
           detail: t(view.detailKey),

@@ -20,6 +20,7 @@ afterEach(cleanup);
 
 it('连接正常时可以主动退出，而不必先进入故障状态', () => {
   const context: SessionContext = {
+    authenticationMode: 'automatic',
     authenticationTarget: 'control',
     connection: {
       deviceId: 'TESTDEVICE',
@@ -56,6 +57,11 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
     </I18nextProvider>,
   );
   expect(screen.getByRole('button', { name: 'Explore rooms' })).toBeEnabled();
+  expect(screen.getByText('TESTDEVICE')).not.toBeVisible();
+  expect(screen.getByText('@operator:matrix.test')).not.toBeVisible();
+  fireEvent.click(screen.getByText('Connection and identity details'));
+  expect(screen.getByText('TESTDEVICE')).toBeVisible();
+  expect(screen.getByText('@operator:matrix.test')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith('logout');
 });

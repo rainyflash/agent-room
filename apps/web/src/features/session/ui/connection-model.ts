@@ -106,6 +106,7 @@ const stateCopy: Readonly<
 };
 
 const failureCopy: Readonly<Record<string, TranslationKey>> = {
+  'matrix.authentication_interrupted': 'connection.state.failure.connectionInterrupted',
   'browser.session_storage_unavailable': 'connection.state.failure.browserVaultUnavailable',
   'browser.session_storage_corrupt': 'connection.state.failure.matrixVaultCorrupt',
   'browser.session_lock_unavailable': 'connection.state.failure.browserVaultUnavailable',
@@ -204,6 +205,12 @@ function copyForState(
   state: SessionStateName,
   target: AuthenticationTarget,
 ): readonly [TranslationKey, TranslationKey] {
+  if (
+    target === 'matrix' &&
+    (state === 'authenticating' || state === 'awaitingBrowserNavigation')
+  ) {
+    return ['connection.state.connecting.title', 'connection.state.connecting.detail'];
+  }
   if (state !== 'unauthenticated') {
     return stateCopy[state];
   }
@@ -220,7 +227,11 @@ function copyForState(
 
 function stageForState(state: SessionStateName, context: SessionContext): number {
   if (state !== 'degraded' && state !== 'offline') {
-    if (state === 'authenticating' || state === 'unauthenticated') {
+    if (
+      state === 'authenticating' ||
+      state === 'awaitingBrowserNavigation' ||
+      state === 'unauthenticated'
+    ) {
       return context.authenticationTarget === 'control' ? 1 : 2;
     }
     return stateStage[state];
@@ -251,7 +262,10 @@ function actionForState(
   };
   if (state === 'degraded') {
     return context.failure?.retryable === true
-      ? ['retry', 'connection.action.retry']
+      ? [
+          'retry',
+          context.principal === null ? 'connection.action.retry' : 'connection.action.reconnect',
+        ]
       : context.principal === null
         ? ['login', 'connection.action.loginControl']
         : ['logout', 'connection.action.logout'];

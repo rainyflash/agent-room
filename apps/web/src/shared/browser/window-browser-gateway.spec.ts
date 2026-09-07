@@ -1,10 +1,27 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { safeInternalPath, WindowBrowserGateway } from './window-browser-gateway';
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('WindowBrowserGateway', () => {
+  it('连接后只导航到新地址，恢复当前房间时不重新加载页面', () => {
+    const location = { pathname: '/connect', search: '', hash: '', replace: vi.fn() };
+    vi.stubGlobal('window', { location });
+    const browser = new WindowBrowserGateway();
+    browser.replacePath('/rooms');
+    expect(location.replace).toHaveBeenCalledExactlyOnceWith('/rooms');
+    location.pathname = '/rooms';
+    browser.replacePath('/rooms');
+    expect(location.replace).toHaveBeenCalledOnce();
+    browser.replacePath('/rooms?directory=open');
+    expect(location.replace).toHaveBeenLastCalledWith('/rooms?directory=open');
+  });
+
   it.each([
     ['/lobby/public?directory=open', '/lobby/public?directory=open'],
     ['//evil.example/path', null],

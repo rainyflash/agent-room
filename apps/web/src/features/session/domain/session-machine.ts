@@ -1,6 +1,7 @@
 import { assign, fromPromise, setup } from 'xstate';
 
 import type {
+  AuthenticationMode,
   AuthenticationStartOutcome,
   MatrixConnection,
   SessionDependencies,
@@ -13,6 +14,7 @@ import { cleanupSession } from './session-cleanup';
 export type AuthenticationTarget = 'control' | 'matrix';
 
 export type SessionContext = {
+  readonly authenticationMode: AuthenticationMode;
   readonly authenticationTarget: AuthenticationTarget;
   readonly connection: MatrixConnection | null;
   readonly controlStatus: 'checking' | 'ready' | 'unavailable' | 'unauthenticated';
@@ -71,12 +73,16 @@ export function createSessionMachine(dependencies: SessionDependencies) {
 
   const authenticate = fromPromise<
     Result<AuthenticationStartOutcome, SessionFailure>,
-    { readonly returnPath: string; readonly target: AuthenticationTarget }
+    {
+      readonly mode: AuthenticationMode;
+      readonly returnPath: string;
+      readonly target: AuthenticationTarget;
+    }
   >(async ({ input }) => {
     if (input.target === 'control') {
       return await dependencies.controlPlane.beginAuthentication(input.returnPath);
     }
-    return await dependencies.matrix.beginAuthentication(input.returnPath);
+    return await dependencies.matrix.beginAuthentication(input.returnPath, input.mode);
   });
 
   const synchronize = fromPromise<
@@ -102,12 +108,15 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       synchronize,
     },
     actions: {
+      automaticAuthentication: assign({ authenticationMode: 'automatic' }),
+      interactiveAuthentication: assign({ authenticationMode: 'interactive' }),
       clearFailure: assign({ failure: null }),
       clearPrivateState: () => {
         dependencies.privateState.clear();
       },
       clearResumePath: assign({ resumePath: null }),
       clearSession: assign({
+        authenticationMode: 'automatic',
         authenticationTarget: 'control',
         connection: null,
         controlStatus: 'unauthenticated',
@@ -121,9 +130,9 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       },
       setControlUnavailable: assign({ controlStatus: 'unavailable' }),
       resumeRequestedRoute: ({ context }) => {
-        if (context.resumePath !== null && context.resumePath !== '/connect') {
-          dependencies.browser.replacePath(context.resumePath);
-        }
+        const requested = context.resumePath ?? dependencies.browser.currentPath();
+        const destination = /^\/connect(?:[?#]|$)/u.test(requested) ? '/rooms' : requested;
+        dependencies.browser.replacePath(destination);
       },
       setControlFailure: assign({
         // 依赖健康报告不能撤销已经验证的云端账户访问能力。
@@ -148,6 +157,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     id: 'web-session',
     initial: dependencies.browser.isOnline() ? 'booting' : 'offline',
     context: {
+      authenticationMode: 'automatic',
       authenticationTarget: 'control',
       connection: null,
       controlStatus: 'checking',
@@ -218,9 +228,10 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         on: {
           LOGIN: {
             target: 'authenticating',
+            actions: 'interactiveAuthentication',
           },
           OFFLINE: 'offline',
-          RETRY: 'booting',
+          RETRY: { target: 'booting', actions: 'interactiveAuthentication' },
         },
       },
       authenticating: {
@@ -228,6 +239,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           id: 'authenticate-session',
           src: 'authenticate',
           input: ({ context }) => ({
+            mode: context.authenticationMode,
             returnPath: dependencies.browser.currentPath(),
             target: context.authenticationTarget,
           }),
@@ -236,7 +248,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
               guard: ({ event }) =>
                 event.output.ok && event.output.value.kind === 'session-established',
               target: 'booting',
-              actions: 'clearFailure',
+              actions: ['clearFailure', 'automaticAuthentication'],
             },
             {
               guard: ({ event }) =>
@@ -301,7 +313,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             {
               guard: ({ event }) =>
                 event.output.ok && event.output.value.kind === 'authentication-required',
-              target: 'unauthenticated',
+              target: 'authenticating',
               actions: assign({
                 authenticationTarget: () => {
                   return 'matrix' as const;
@@ -359,12 +371,17 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         on: { OFFLINE: 'offline' },
       },
       ready: {
-        entry: ['clearFailure', 'resumeRequestedRoute', 'clearResumePath'],
+        entry: [
+          'clearFailure',
+          'resumeRequestedRoute',
+          'clearResumePath',
+          'automaticAuthentication',
+        ],
         on: {
           CONTROL_DEGRADED: { target: 'degraded', actions: 'setControlFailure' },
           MATRIX_INTERRUPTED: 'reconnecting',
           OFFLINE: 'offline',
-          RETRY: 'restoring',
+          RETRY: { target: 'restoring', actions: 'interactiveAuthentication' },
         },
       },
       degraded: {
@@ -377,10 +394,11 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           ],
           LOGIN: {
             target: 'authenticating',
+            actions: 'interactiveAuthentication',
           },
           MATRIX_INTERRUPTED: 'reconnecting',
           OFFLINE: 'offline',
-          RETRY: 'booting',
+          RETRY: { target: 'booting', actions: 'interactiveAuthentication' },
         },
       },
       reconnecting: {
@@ -388,14 +406,14 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         on: {
           MATRIX_RESTORED: 'ready',
           OFFLINE: 'offline',
-          RETRY: 'restoring',
+          RETRY: { target: 'restoring', actions: 'interactiveAuthentication' },
         },
       },
       offline: {
-        entry: 'setControlUnavailable',
+        entry: ['setControlUnavailable', 'automaticAuthentication'],
         on: {
           ONLINE: 'booting',
-          RETRY: 'booting',
+          RETRY: { target: 'booting', actions: 'interactiveAuthentication' },
         },
       },
       signingOut: {

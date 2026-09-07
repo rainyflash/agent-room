@@ -21,6 +21,7 @@ export type SessionFailure = {
 };
 
 export type AuthenticationIntent = 'register' | 'sign-in';
+export type AuthenticationMode = 'automatic' | 'interactive';
 
 export type AuthenticationStartOutcome =
   { readonly kind: 'browser-navigation' } | { readonly kind: 'session-established' };
@@ -56,6 +57,7 @@ export type MatrixGateway = {
   disconnect(): void;
   beginAuthentication(
     returnPath: string,
+    mode?: AuthenticationMode,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>>;
   logout(): Promise<Result<void, SessionFailure>>;
   restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>>;

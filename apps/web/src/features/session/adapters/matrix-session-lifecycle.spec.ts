@@ -11,6 +11,8 @@ const sdk = vi.hoisted(() => ({
   options: [] as ICreateClientOpts[],
   whoami: vi.fn<(options: ICreateClientOpts) => Promise<unknown>>(),
   login: vi.fn(),
+  loginFlows: vi.fn<() => Promise<{ flows: { type: string }[] }>>(),
+  ssoUrl: vi.fn(() => 'https://matrix.test/sso'),
   refresh: vi.fn(),
   logout: vi.fn(),
   stop: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock('matrix-js-sdk', () => ({
     sdk.options.push(options);
     return {
       loginRequest: sdk.login,
+      loginFlows: sdk.loginFlows,
+      getSsoLoginUrl: sdk.ssoUrl,
       refreshToken: sdk.refresh,
       logout: sdk.logout,
       whoami: () => sdk.whoami(options),
@@ -44,6 +48,7 @@ vi.mock('matrix-js-sdk', () => ({
   },
   ClientEvent: { Sync: 'sync' },
   SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING' },
+  SSOAction: { LOGIN: 'login' },
 }));
 vi.mock('matrix-js-sdk/lib/crypto-api/index.js', () => ({
   OnlySignedDevicesIsolationMode: class {
@@ -88,6 +93,7 @@ describe('Matrix 网关持久会话生命周期', () => {
     sdk.options.length = 0;
     sdk.logout.mockReset().mockResolvedValue(undefined);
     sdk.clearStores.mockReset().mockResolvedValue(undefined);
+    sdk.loginFlows.mockReset().mockResolvedValue({ flows: [{ type: 'm.login.sso' }] });
     sessionStorage.clear();
     localStorage.clear();
     sdk.whoami.mockImplementation((options) =>
@@ -104,6 +110,47 @@ describe('Matrix 网关持久会话生命周期', () => {
       refresh_token: 'rotated-refresh',
       expires_in_ms: 60_000,
     });
+  });
+
+  it('从连接页重新授权仍保留最初房间深链', async () => {
+    sessionStorage.setItem('agent-room.matrix-return-path.v1', '/lobby/public?directory=open');
+    const navigate = vi.fn();
+    const matrix = new MatrixWebGateway({
+      baseUrl: 'https://matrix.test',
+      sessionVault: storage(null),
+      navigate,
+      url: () => new URL('https://app.test/connect'),
+    });
+    await expect(matrix.beginAuthentication('/connect')).resolves.toEqual(
+      ok({ kind: 'browser-navigation' }),
+    );
+    expect(sessionStorage.getItem('agent-room.matrix-return-path.v1')).toBe(
+      '/lobby/public?directory=open',
+    );
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('https://matrix.test/sso');
+  });
+
+  it('退出后迟到的登录方式响应不能再次跳转授权', async () => {
+    const response = Promise.withResolvers<{ flows: { type: string }[] }>();
+    sdk.loginFlows.mockReturnValueOnce(response.promise);
+    const navigate = vi.fn();
+    const matrix = new MatrixWebGateway({
+      baseUrl: 'https://matrix.test',
+      sessionVault: storage(null),
+      navigate,
+    });
+    const authentication = matrix.beginAuthentication('/rooms');
+    await vi.waitFor(() => {
+      expect(sdk.loginFlows).toHaveBeenCalledOnce();
+    });
+    await matrix.logout();
+    response.resolve({ flows: [{ type: 'm.login.sso' }] });
+    await expect(authentication).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_superseded' },
+    });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem('agent-room.matrix-return-path.v1')).toBeNull();
   });
 
   it('首次认证持久化后新建网关无需再 SSO 且复用同一设备的加密库', async () => {

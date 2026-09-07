@@ -14,6 +14,7 @@ for (const boundary of ['human', 'matrix'] as const) {
     });
     await page.addInitScript((boundary) => {
       let loads = 0;
+      let authorizations = 0;
       Object.defineProperty(window, 'isTauri', { value: true });
       Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
         value: { unregisterListener: () => undefined },
@@ -25,6 +26,11 @@ for (const boundary of ['human', 'matrix'] as const) {
           invoke: (command: string) => {
             if (command === 'plugin:event|listen') return Promise.resolve(1);
             if (command === 'plugin:event|unlisten') return Promise.resolve();
+            if (command === 'desktop_begin_matrix_authentication') {
+              document.documentElement.dataset.matrixAuthorizations = String(++authorizations);
+              // Leave the external authorization open so the UI can expose its pending state.
+              return new Promise<never>(() => undefined);
+            }
             if (command === 'desktop_restore_human_session') {
               if (boundary === 'matrix' || loads++ > 0) return Promise.resolve(true);
               return Promise.reject(
@@ -93,9 +99,13 @@ for (const boundary of ['human', 'matrix'] as const) {
     await page.goto('/connect');
     await expect(page).toHaveTitle('Agent Room');
     await expect(page.getByRole('alert')).toContainText(/system credential store|系统凭据库/u);
-    await expect(page.getByRole('alert')).toContainText(
-      `desktop.${boundary}_session.vault_unavailable`,
-    );
+    const diagnostic = page.getByText(`desktop.${boundary}_session.vault_unavailable`, {
+      exact: true,
+    });
+    await expect(diagnostic).toBeHidden();
+    await page.locator('.connection-service-details summary').click();
+    await expect(diagnostic).toBeVisible();
+    await page.locator('.connection-service-details summary').click();
     await expect(page.locator('vite-error-overlay')).toHaveCount(0);
     await page.screenshot({
       path: join(tmpdir(), `agent-room-${boundary}-vault-desktop.png`),
@@ -105,14 +115,17 @@ for (const boundary of ['human', 'matrix'] as const) {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBeLessThanOrEqual(390);
-    const retry = page.getByRole('button', { name: /Retry now|立即重试/u });
+    const retry = page.getByRole('button', { name: /^(Retry now|Reconnect|立即重试|重新连接)$/u });
     await expect(retry).toBeEnabled();
     await page.screenshot({
       path: join(tmpdir(), `agent-room-${boundary}-vault-mobile.png`),
       fullPage: true,
     });
     await retry.click();
-    await expect(page.getByRole('button', { name: /Connect Matrix|连接 Matrix/u })).toBeEnabled();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      /Connecting your conversations|正在连接你的对话/u,
+    );
+    await expect(page.locator('html')).toHaveAttribute('data-matrix-authorizations', '1');
     await expect(page.locator('.failure-panel')).toHaveCount(0);
     expect(errors).toEqual([]);
   });

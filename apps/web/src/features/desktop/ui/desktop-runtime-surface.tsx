@@ -88,6 +88,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               reduceMotion ? { duration: 0 } : { bounce: 0.08, duration: 0.32, type: 'spring' }
             }
           >
+            <p className="desktop-runtime__description">{t('desktop.runtime.description')}</p>
             {authorization === null ? null : (
               <section className="desktop-runtime__authorization">
                 <KeyRound aria-hidden="true" />

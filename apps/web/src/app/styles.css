@@ -773,6 +773,15 @@
   padding: 0.82rem;
 }
 
+.desktop-runtime__description {
+  margin: 0;
+  padding: 0.82rem;
+  border-bottom: 1px solid var(--ar-line);
+  color: var(--color-ink);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
 .desktop-runtime__panel section + section {
   border-top: 1px solid var(--ar-surface-muted);
 }

@@ -37,6 +37,7 @@ function dependencies(
   overrides: {
     readonly controlPlane?: Partial<ControlPlaneGateway>;
     readonly matrix?: Partial<MatrixGateway>;
+    readonly browser?: Partial<BrowserGateway>;
   } = {},
 ) {
   const navigations: string[] = [];
@@ -46,6 +47,7 @@ function dependencies(
     replacePath: (path) => {
       navigations.push(path);
     },
+    ...overrides.browser,
   };
   const controlPlane: ControlPlaneGateway = {
     beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
@@ -77,6 +79,25 @@ function dependencies(
 }
 
 describe('Web 会话状态机', () => {
+  it.each(['/connect', '/connect?loginToken=consumed', '/connect#status'])(
+    '连接就绪后从 %s 自动进入房间',
+    async (path) => {
+      const beginAuthentication = vi.fn<MatrixGateway['beginAuthentication']>();
+      const runtime = dependencies({
+        browser: { currentPath: () => path },
+        matrix: {
+          beginAuthentication,
+          restore: () => Promise.resolve(ok({ kind: 'connected', connection: connection() })),
+        },
+      });
+      const actor = createActor(createSessionMachine(runtime.value)).start();
+      await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+      expect(runtime.navigations).toEqual(['/rooms']);
+      expect(beginAuthentication).not.toHaveBeenCalled();
+      actor.stop();
+    },
+  );
+
   it('依赖健康报告降级不会撤销已经验证的云端账户能力', async () => {
     const runtime = dependencies();
     const actor = createActor(createSessionMachine(runtime.value)).start();
@@ -97,14 +118,14 @@ describe('Web 会话状态机', () => {
     actor.stop();
   });
 
-  it('只有云端账户可用而 Matrix 尚未登录时也能退出', async () => {
+  it('自动连接消息期间仍能退出云端账户', async () => {
     const logout = vi.fn<ControlPlaneGateway['logout']>().mockResolvedValue(ok(undefined));
     const runtime = dependencies({
       controlPlane: { logout },
       matrix: { restore: () => Promise.resolve(ok({ kind: 'authentication-required' })) },
     });
     const actor = createActor(createSessionMachine(runtime.value)).start();
-    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+    await waitFor(actor, (snapshot) => snapshot.matches('awaitingBrowserNavigation'));
     expect(actor.getSnapshot().context.controlStatus).toBe('ready');
 
     actor.send({ type: 'LOGOUT' });
@@ -366,11 +387,14 @@ describe('Web 会话状态机', () => {
     actor.stop();
   });
 
-  it('桌面 Matrix 授权完成后直接恢复设备会话而不等待页面跳转', async () => {
+  it('账户就绪后自动连接桌面消息会话，无需第二次登录操作', async () => {
     let restores = 0;
+    const beginAuthentication = vi
+      .fn<MatrixGateway['beginAuthentication']>()
+      .mockResolvedValue(ok({ kind: 'session-established' }));
     const runtime = dependencies({
       matrix: {
-        beginAuthentication: () => Promise.resolve(ok({ kind: 'session-established' })),
+        beginAuthentication,
         restore: () => {
           restores += 1;
           return restores === 1
@@ -380,11 +404,12 @@ describe('Web 会话状态机', () => {
       },
     });
     const actor = createActor(createSessionMachine(runtime.value)).start();
-    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
-
-    actor.send({ type: 'LOGIN' });
     const ready = await waitFor(actor, (snapshot) => snapshot.matches('ready'));
 
+    expect(beginAuthentication).toHaveBeenCalledExactlyOnceWith(
+      '/lobby/public?directory=open',
+      'automatic',
+    );
     expect(restores).toBe(2);
     expect(ready.context.connection?.userId).toBe(session.matrixUserId);
     actor.stop();

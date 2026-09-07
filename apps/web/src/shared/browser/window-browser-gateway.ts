@@ -25,6 +25,8 @@ export class WindowBrowserGateway implements BrowserGateway {
   }
 
   replacePath(path: string): void {
-    window.location.replace(safeInternalPath(path) ?? '/connect');
+    const destination = safeInternalPath(path) ?? '/connect';
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (destination !== current) window.location.replace(destination);
   }
 }

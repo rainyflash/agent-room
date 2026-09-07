@@ -126,14 +126,20 @@ export class MatrixWebGateway implements MatrixGateway {
   async beginAuthentication(
     returnPath: string,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
+    const attempt = this.#restoreAttempt;
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
       const flows = await client.loginFlows();
+      if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
       if (!flows.flows.some((flow) => flow.type === 'm.login.sso')) {
         return err(failure('matrix', 'matrix.sso_unavailable', false, false));
       }
-      this.#sessionStorage.setItem(MATRIX_RETURN_PATH_KEY, safeReturnPath(returnPath));
+      const previousPath = this.#sessionStorage.getItem(MATRIX_RETURN_PATH_KEY);
+      this.#sessionStorage.setItem(
+        MATRIX_RETURN_PATH_KEY,
+        safeReturnPath(returnPath === '/connect' ? (previousPath ?? returnPath) : returnPath),
+      );
       const callback = new URL('/connect', this.#url().origin);
       const loginUrl = client.getSsoLoginUrl(
         callback.toString(),

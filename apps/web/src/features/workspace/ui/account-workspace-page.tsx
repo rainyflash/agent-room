@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { useMemo } from 'react';
 
 import { useAppServices } from '@/app/app-services';
@@ -11,6 +12,7 @@ import {
 } from '@/features/security/data/access-management-queries';
 import type { MatrixSecuritySnapshot } from '@/features/security/domain/matrix-security';
 import type { WebSession } from '@/features/session/domain/session';
+import { useSession } from '@/features/session/ui/session-provider';
 import {
   ownedAgentQueryKey,
   useOwnedAgents,
@@ -33,6 +35,8 @@ export function AccountWorkspacePage({
   selectedAgentId,
 }: AccountWorkspacePageProps) {
   const services = useAppServices();
+  const { send } = useSession();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const agents = useOwnedAgents(services.agentDirectory);
   const devices = useProductDevices(services.accessManagement);
@@ -123,6 +127,10 @@ export function AccountWorkspacePage({
       loading={loading}
       onRefresh={() => void refresh()}
       onSelectAgent={onSelectAgent}
+      onSignOut={() => {
+        send({ type: 'LOGOUT' });
+        void navigate({ to: '/connect' });
+      }}
       principalDisplayName={principal.displayName}
       selectedAgentId={selectedAgentId}
     />

@@ -47,10 +47,10 @@ export function ConnectionWorkspace({
       </header>
 
       <motion.section
-        animate={{ opacity: 1, y: 0 }}
+        animate={{ y: 0 }}
         aria-labelledby="connection-state-title"
         className="connection-workspace__stage"
-        initial={reduceMotion === true ? false : { opacity: 0, y: 14 }}
+        initial={reduceMotion === true ? false : { y: 14 }}
         key={`${view.state}-${context.authenticationTarget}`}
         transition={{ bounce: 0.16, damping: 24, stiffness: 210, type: 'spring' }}
       >
@@ -66,16 +66,6 @@ export function ConnectionWorkspace({
                   ? t('connection.state.failure.generic')
                   : t(view.failureKey)}
               </p>
-              <dl>
-                <div>
-                  <dt>{t('connection.failureBoundary')}</dt>
-                  <dd>{failure.boundary}</dd>
-                </div>
-                <div>
-                  <dt>{t('connection.errorCode')}</dt>
-                  <dd>{failure.code}</dd>
-                </div>
-              </dl>
             </div>
           </aside>
         )}
@@ -152,16 +142,6 @@ export function ConnectionWorkspace({
               <span>{t('connection.identity')}</span>
               <strong>{context.principal.displayName}</strong>
             </div>
-            <dl>
-              <div>
-                <dt>{t('connection.matrixIdentity')}</dt>
-                <dd>{context.principal.matrixUserId}</dd>
-              </div>
-              <div>
-                <dt>{t('connection.device')}</dt>
-                <dd>{context.connection?.deviceId ?? t('connection.device.pending')}</dd>
-              </div>
-            </dl>
           </section>
         )}
         {context.principal === null ? null : (
@@ -181,6 +161,32 @@ export function ConnectionWorkspace({
       </motion.section>
       <details className="connection-service-details">
         <summary>{t('connection.details')}</summary>
+        <dl className="connection-diagnostics">
+          {context.principal === null ? null : (
+            <>
+              <div>
+                <dt>{t('connection.matrixIdentity')}</dt>
+                <dd>{context.principal.matrixUserId}</dd>
+              </div>
+              <div>
+                <dt>{t('connection.device')}</dt>
+                <dd>{context.connection?.deviceId ?? t('connection.device.pending')}</dd>
+              </div>
+            </>
+          )}
+          {failure === null ? null : (
+            <>
+              <div>
+                <dt>{t('connection.failureBoundary')}</dt>
+                <dd>{failure.boundary}</dd>
+              </div>
+              <div>
+                <dt>{t('connection.errorCode')}</dt>
+                <dd>{failure.code}</dd>
+              </div>
+            </>
+          )}
+        </dl>
         {children}
       </details>
     </main>

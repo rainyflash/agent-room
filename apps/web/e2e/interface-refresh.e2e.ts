@@ -43,7 +43,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto('/e2e/fixtures/onboarding.html');
-    const trigger = page.getByRole('button', { name: /This computer/u });
+    const trigger = page.getByRole('button', { name: /Local agents/u });
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     const update = page.getByRole('button', { name: 'Check', exact: true });

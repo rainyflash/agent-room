@@ -15,6 +15,10 @@ It should not. The Web client authenticates the person and reads the control pla
 
 ## Login or callback fails
 
+Signing in to Agent Room automatically connects your conversations and opens the room directory or your original room. There is no separate **Connect Matrix device** step. If authorization is canceled or incomplete, automatic redirects stop; select **Reconnect** to continue. Use **Sign out** in the account workspace to leave this device. Error codes and communication device IDs are under **Connection and identity details** on the connection page.
+
+The desktop's **Local agents** panel connects tools such as Codex, Claude Code, and Cursor on this computer. It is separate from your own conversations; joining rooms and sending messages in the browser requires no local Agent setup.
+
 Ordinary sign-ins last 30 days by default and should survive closing the app or browser. Sensitive actions such as account deletion still require authentication within the last five minutes. Self-hosted deployments can override `AGENT_ROOM_WEB_SESSION_TTL_MS`; existing sessions retain their original expiry.
 
 The Web client saves its Matrix device in the site's IndexedDB and migrates credentials from an existing legacy tab during upgrade. Windows uses the system credential store. Account-session expiry locks the workspace but preserves the communication device for reauthentication as the same account. Explicit **Sign out** revokes both sessions and clears login credentials. Clearing site data, using a private window, or deleting system credentials requires signing in again.
@@ -32,7 +36,7 @@ Never paste an authorization code, refresh token, Matrix access token, or Bridge
 
 The cloud workspace should still load. Account data, devices, rooms, message previews, human-authored messages, and queued handoffs are cloud capabilities. Host detection, one-click MCP configuration, local Agent execution, and local diagnostics are device capabilities and remain disabled until the Bridge is healthy.
 
-Open **This device** to inspect the bounded Bridge diagnostic. Restart or repair the desktop runtime only when a local action is required; do not reconnect the Web client to localhost.
+Open **Local agents** to inspect the bounded Bridge diagnostic. Restart or repair the desktop runtime only when a local action is required; do not reconnect the Web client to localhost.
 
 ## A lobby remains empty or loading
 

@@ -22,12 +22,17 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
     username: username ?? '',
   });
 
+  const authenticationRequests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.includes('/login/sso/redirect'))
+      authenticationRequests.push(request.url());
+  });
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Connection established|连接已建立/u,
+    /Find your room|找到你的房间/u,
     { timeout: 40_000 },
   );
-  await expect(page.locator('.identity-summary dd').first()).toHaveText(firstIdentity);
+  expect(storedMatrixSessionSchema.parse(await readMatrixSession(page)).userId).toBe(firstIdentity);
   await page.goto('/settings/security');
   await expect(page.locator('.security-account-line')).toContainText(firstIdentity, {
     timeout: 40_000,
@@ -37,6 +42,7 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
     timeout: 40_000,
   });
   expect(failures).toEqual([]);
+  expect(authenticationRequests).toEqual([]);
 });
 
 test('真实账户关闭浏览器进程后自动恢复同一通信设备，退出后重启保持退出', async ({ baseURL }) => {
@@ -68,18 +74,16 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
 
     const second = await open();
     await second.goto('/connect');
-    await expect(second.getByRole('heading', { level: 1 })).toContainText(
-      /Connection established|连接已建立/u,
-      { timeout: 40_000 },
-    );
-    await expect(second.locator('.identity-summary dd').first()).toHaveText(identity);
+    await expect(second).toHaveURL(/\/rooms$/u, { timeout: 40_000 });
     const restored = storedMatrixSessionSchema.parse(await readMatrixSession(second));
     expect(restored.deviceId).toBe(original.deviceId);
     expect(restored.userId).toBe(original.userId);
+    expect(restored.userId).toBe(identity);
     expect(
       await second.evaluate(() => sessionStorage.getItem('agent-room.matrix-session.v1')),
     ).toBeNull();
     await second.screenshot({ path: join(tmpdir(), 'agent-room-live-login-restored.png') });
+    await second.goto('/workspace');
     const signOut = second.getByRole('button', { name: /Sign out|退出登录/u });
     await expect(signOut).toBeVisible();
     await signOut.click();

@@ -6,6 +6,7 @@ import type {
   SessionFailure,
 } from '@/features/session/domain/session';
 import { err, ok, type Result } from '@/shared/result';
+import { supersededMatrixSession } from '../domain/matrix-session-repository';
 
 export type DesktopMatrixGatewayOptions = {
   readonly matrix: MatrixAuthenticationSessionGateway;
@@ -25,6 +26,7 @@ export type MatrixAuthenticationSessionGateway = MatrixGateway & {
 export class DesktopMatrixGateway implements MatrixGateway {
   readonly #matrix: MatrixAuthenticationSessionGateway;
   readonly #runtime: Pick<DesktopRuntimeGateway, 'beginMatrixAuthentication'>;
+  #authenticationEpoch = 0;
 
   constructor({ matrix, runtime }: DesktopMatrixGatewayOptions) {
     this.#matrix = matrix;
@@ -34,7 +36,9 @@ export class DesktopMatrixGateway implements MatrixGateway {
   async beginAuthentication(
     returnPath: string,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
+    const epoch = this.#authenticationEpoch;
     const grant = await this.#runtime.beginMatrixAuthentication(returnPath);
+    if (epoch !== this.#authenticationEpoch) return err(supersededMatrixSession());
     if (!grant.ok) {
       return err(runtimeFailure(grant.error));
     }
@@ -46,10 +50,12 @@ export class DesktopMatrixGateway implements MatrixGateway {
   }
 
   logout(): ReturnType<MatrixGateway['logout']> {
+    this.#authenticationEpoch += 1;
     return this.#matrix.logout();
   }
 
   disconnect(): void {
+    this.#authenticationEpoch += 1;
     this.#matrix.disconnect();
   }
 

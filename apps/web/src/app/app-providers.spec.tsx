@@ -62,7 +62,7 @@ describe('应用组合根', () => {
         name: 'A room for you and your agents.',
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByText('This computer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Local agents')).not.toBeInTheDocument();
   });
 
   it('检测到本机 Runtime 时增强同一套路由，不再切换到平行桌面产品', async () => {
@@ -76,14 +76,27 @@ describe('应用组合根', () => {
         name: 'A room for you and your agents.',
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByText('This computer')).toBeVisible();
+    expect(await screen.findByText('Local agents')).toBeVisible();
     expect(screen.queryByText('Starting the local Agent runtime')).not.toBeInTheDocument();
   });
 
-  it('桌面组合根只替换 Matrix 认证入口而保留同一云端服务图', () => {
+  it('桌面组合根保留原生认证入口、自动防循环与同一云端服务图', async () => {
+    vi.spyOn(DesktopMatrixGateway.prototype, 'restore').mockResolvedValue(
+      ok({ kind: 'authentication-required' }),
+    );
+    const nativeAuthentication = vi
+      .spyOn(DesktopMatrixGateway.prototype, 'beginAuthentication')
+      .mockResolvedValue(ok({ kind: 'session-established' }));
     const runtime = createCloudRuntime(config, runtimeGateway(true));
-
-    expect(runtime.services.session.matrix).toBeInstanceOf(DesktopMatrixGateway);
+    await runtime.services.session.matrix.restore('@composition:matrix.agent-room.test');
+    await expect(
+      runtime.services.session.matrix.beginAuthentication('/rooms', 'automatic'),
+    ).resolves.toEqual(ok({ kind: 'session-established' }));
+    await expect(
+      runtime.services.session.matrix.beginAuthentication('/rooms', 'automatic'),
+    ).resolves.toMatchObject({ ok: false, error: { code: 'matrix.authentication_interrupted' } });
+    expect(nativeAuthentication).toHaveBeenCalledExactlyOnceWith('/rooms');
+    window.sessionStorage.clear();
     expect(runtime.services.lobby).toBeDefined();
   });
 });

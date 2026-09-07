@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { MatrixAuthenticationSessionGateway } from './desktop-matrix-gateway';
 import { DesktopMatrixGateway } from './desktop-matrix-gateway';
+import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { err, ok } from '@/shared/result';
 
 function matrixGateway(
@@ -17,6 +18,27 @@ function matrixGateway(
 }
 
 describe('DesktopMatrixGateway', () => {
+  it.each(['disconnect', 'logout'] as const)('在 %s 后忽略迟到的原生授权回调', async (action) => {
+    const grant =
+      Promise.withResolvers<
+        Awaited<ReturnType<DesktopRuntimeGateway['beginMatrixAuthentication']>>
+      >();
+    const exchange = vi.fn();
+    const gateway = new DesktopMatrixGateway({
+      matrix: matrixGateway(exchange),
+      runtime: { beginMatrixAuthentication: () => grant.promise },
+    });
+    const authentication = gateway.beginAuthentication('/lobby/public');
+    await gateway[action]();
+    grant.resolve(ok({ loginToken: 'late-token', returnPath: '/lobby/public' }));
+
+    await expect(authentication).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_superseded' },
+    });
+    expect(exchange).not.toHaveBeenCalled();
+  });
+
   it('把原生回环授权交换为已建立会话而不导航桌面 WebView', async () => {
     const exchange = vi.fn().mockResolvedValue(ok(undefined));
     const beginMatrixAuthentication = vi

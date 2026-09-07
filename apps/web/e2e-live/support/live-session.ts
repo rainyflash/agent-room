@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { storedMatrixSessionSchema } from '../../src/features/session/domain/matrix-session-vault';
 
 export const apiOrigin = 'https://api.agent-room.localhost:18443';
 export const matrixOrigin = 'https://matrix.agent-room.localhost:18443';
@@ -26,25 +27,20 @@ export async function connectLiveSession(
   await page.locator('input[name="password"]').fill(credentials.password);
   await page.locator('input[type="submit"], button[type="submit"]').click();
 
-  await expect(page).toHaveURL(/\/connect(?:\?|$)/u);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Connect your conversations|连接你的对话/u,
-  );
-  await expect(page.locator('.identity-summary')).toContainText(credentials.expectedDisplayName);
-
-  await page.getByRole('button', { name: /Connect Matrix device|连接 Matrix 设备/u }).click();
   await continueThroughMatrixConsentWhenRequired(page);
-  await expect(page).toHaveURL(/\/connect(?:\?|$)/u, { timeout: 40_000 });
+  await expect(page).toHaveURL(/\/rooms$/u, { timeout: 40_000 });
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Connection established|连接已建立/u,
+    /Find your room|找到你的房间/u,
     { timeout: 40_000 },
   );
 
-  const matrixUserId = await page.locator('.identity-summary dd').first().textContent();
+  const { userId: matrixUserId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
   expect(matrixUserId).toMatch(/^@user-[a-f0-9]{32}:matrix\.agent-room\.localhost$/u);
   await expect(page).not.toHaveURL(/loginToken=/u);
-  expect(await hasUsableMatrixSession(page)).toBe(true);
-  return matrixUserId ?? '';
+  await page.goto('/workspace');
+  await expect(page.getByText(credentials.expectedDisplayName, { exact: true })).toBeVisible();
+  await page.goto('/rooms');
+  return matrixUserId;
 }
 
 async function openConnectionPage(page: Page, login: Locator): Promise<void> {
@@ -154,17 +150,13 @@ export async function readMatrixSession(page: Page): Promise<unknown> {
 
 async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {
   const continueLink = page.getByRole('link', { name: /^Continue$/u });
-  const readyHeading = page.getByRole('heading', {
-    level: 1,
-    name: /Connection established|连接已建立/u,
-  });
   await expect
     .poll(
       async () => {
         if (await continueLink.isVisible()) {
           return 'consent';
         }
-        if (await readyHeading.isVisible()) {
+        if (new URL(page.url()).pathname === '/rooms') {
           return 'ready';
         }
         return 'pending';
@@ -196,21 +188,5 @@ function isExpectedHttpBoundary(status: number, rawUrl: string): boolean {
         url.pathname === '/_matrix/client/v3/room_keys/version' ||
         missingInitialPreferences ||
         missingInitialEncryptionState))
-  );
-}
-
-async function hasUsableMatrixSession(page: Page): Promise<boolean> {
-  const session = await readMatrixSession(page);
-  if (typeof session !== 'object' || session === null) {
-    return false;
-  }
-  const values = session as Record<string, unknown>;
-  return (
-    typeof values.accessToken === 'string' &&
-    values.accessToken.length > 0 &&
-    typeof values.deviceId === 'string' &&
-    values.deviceId.length > 0 &&
-    typeof values.userId === 'string' &&
-    values.userId.length > 0
   );
 }

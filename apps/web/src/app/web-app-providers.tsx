@@ -40,6 +40,7 @@ import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sd
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
 import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
+import { GuardedMatrixGateway } from '@/features/session/adapters/guarded-matrix-gateway';
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { TauriMatrixSessionVault } from '@/features/session/adapters/tauri-matrix-session-vault';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
@@ -102,9 +103,13 @@ export function createCloudRuntime(
     secretStorageKeys,
     ...(localRuntime.isAvailable() ? { sessionVault: new TauriMatrixSessionVault() } : {}),
   });
-  const matrix = localRuntime.isAvailable()
-    ? new DesktopMatrixGateway({ matrix: matrixCore, runtime: localRuntime })
-    : matrixCore;
+  const matrix = new GuardedMatrixGateway(
+    localRuntime.isAvailable()
+      ? new DesktopMatrixGateway({ matrix: matrixCore, runtime: localRuntime })
+      : matrixCore,
+    window.sessionStorage,
+    config.matrixHomeserverUrl,
+  );
   const accountPreferences = new AccountPreferencesStore(
     new MatrixAccountPreferencesGateway(matrixClients),
     { language: readLanguagePreference(window.localStorage), lobbyView: 'scene' },

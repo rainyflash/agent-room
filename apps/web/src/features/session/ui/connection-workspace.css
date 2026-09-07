@@ -134,6 +134,9 @@
   padding: 20px 32px;
   border-bottom: 1px solid var(--ar-line);
 }
+.connection-shell[data-local-agents='true'] .connection-workspace {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+}
 .connection-home {
   color: var(--ar-muted);
   font-size: 13px;
@@ -225,23 +228,19 @@
   font-size: 13px;
   line-height: 1.6;
 }
-.failure-panel dl,
-.identity-summary dl {
+.connection-diagnostics {
   display: grid;
   gap: 10px;
   margin: 0;
 }
-.failure-panel dl > div,
-.identity-summary dl > div {
+.connection-diagnostics > div {
   min-width: 0;
 }
-.failure-panel dt,
-.identity-summary dt {
+.connection-diagnostics dt {
   font-size: 11px;
   color: var(--ar-muted);
 }
-.failure-panel dd,
-.identity-summary dd {
+.connection-diagnostics dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
@@ -282,11 +281,9 @@
   font-size: 15px;
   overflow-wrap: anywhere;
 }
-.identity-summary dl {
-  grid-column: 1 / -1;
+.connection-diagnostics {
   grid-template-columns: 1fr 1fr;
-  padding-top: 12px;
-  border-top: 1px solid var(--ar-line);
+  padding: 0 0 18px;
 }
 .connection-account-link {
   display: flex;
@@ -437,7 +434,7 @@
   .connection-service-details {
     margin: 0 24px 16px;
   }
-  .identity-summary dl {
+  .connection-diagnostics {
     grid-template-columns: 1fr;
   }
 }
