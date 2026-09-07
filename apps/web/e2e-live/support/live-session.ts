@@ -28,7 +28,7 @@ export async function connectLiveSession(
 
   await expect(page).toHaveURL(/\/connect(?:\?|$)/u);
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Matrix device connection required|需要连接 Matrix 设备/u,
+    /Connect your conversations|连接你的对话/u,
   );
   await expect(page.locator('.identity-summary')).toContainText(credentials.expectedDisplayName);
 
