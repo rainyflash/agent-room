@@ -222,6 +222,8 @@ async fn write_response(stream: &mut TcpStream, response: CallbackResponse) -> i
 #[cfg(test)]
 mod tests {
     use super::LoopbackCallbackListener;
+    use base64::Engine as _;
+    use sha2::Digest as _;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     #[tokio::test]
@@ -270,8 +272,6 @@ mod tests {
             .split_once("</style>")
             .expect("样式闭合")
             .0;
-        use base64::Engine as _;
-        use sha2::Digest as _;
         let hash = base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(style));
         assert!(headers.contains(&format!("style-src 'sha256-{hash}'")));
         assert!(headers.contains("default-src 'none'"));
