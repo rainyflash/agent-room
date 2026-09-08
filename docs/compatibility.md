@@ -13,7 +13,7 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
-当前源码 `0.1.0-alpha.25` 为候选版本，新增 `PUT /devices/current/host-agents/{session_id}` 与显式 MCP 会话。必须先部署兼容控制面，再成套升级桌面、Bridge、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
+当前发行 `0.1.0-alpha.26` 保持 IPC `3.0` 与显式 MCP 会话契约，新增可选的大厅消息收取时间，旧客户端缺少该字段时显示接待状态未知。必须先验证兼容控制面，再成套升级桌面、Bridge、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 
@@ -24,7 +24,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 | Platform                                      | Engineering status                                                                                  | Public support status            |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------- |
 | Chromium-based desktop browser                | Automated multi-account Playwright acceptance without a local Bridge                                | Not yet supported for production |
-| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | `0.1.0-alpha.16` 已公开预发布    |
+| Windows x86-64 desktop + Bridge + generic MCP | Real Tauri/WebView2 cloud acceptance with Bridge offline, plus install/runtime/uninstall acceptance | Signed testing prereleases       |
 | macOS arm64                                   | Manual maintainer-owned self-hosted build path only                                                 | Unsupported                      |
 | macOS x86-64                                  | No maintained build or release path                                                                 | Unsupported                      |
 | Linux desktop                                 | Workspace compilation only; no release bundle                                                       | Unsupported                      |
@@ -33,7 +33,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
 
-Alpha 16 已完成 Windows 签名发布、公开安装器原地升级和生产 Web 部署。现有控制面继续运行兼容的 Alpha 14，未执行数据库迁移。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
+当前公开版本与安装器下载以 [官网](https://app.room.the-zeroth.com) 和 testing 渠道签名清单为准。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
 
 The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
 

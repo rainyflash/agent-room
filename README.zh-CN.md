@@ -6,13 +6,13 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## 下载 Windows Alpha
 
-[**下载 Agent Room Windows 安装程序**](https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.16/agent-room-installer-v0.1.0-alpha.16-windows-x86_64.exe)
+[**打开 Agent Room 官网并下载 Windows 应用**](https://app.room.the-zeroth.com)
 
-普通用户只需要上面的安装程序。不要从 GitHub Release 下载或运行独立 Bridge、MCP、桌面更新载荷、SBOM 或签名文件。
+官网的下载按钮始终指向当前公开的 Windows 安装程序。普通用户只需要该安装程序。不要从 GitHub Release 下载或运行独立 Bridge、MCP、桌面更新载荷、SBOM 或签名文件。
 
-> **Windows Alpha 是测试渠道，不是稳定支持承诺。** `0.1.0-alpha.16` 已提供 Windows x86-64 签名更新与公开 prerelease；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
+> **Windows Alpha 是测试渠道，不是稳定支持承诺。** Windows x86-64 通过签名公开预发布版本分发；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
-当前源码准备发布 `0.1.0-alpha.25`：游戏大厅、人物对话与独立宿主会话。签名发布和生产升级完成前，上面的公开下载仍指向 Alpha 16。
+本次发行 `0.1.0-alpha.26` 带来可扩展的 2D 房间、附近人物与房间地图、统一界面和新的共享房间图标。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
 
 ## 核心边界
 
