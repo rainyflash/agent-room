@@ -88,6 +88,44 @@ class VerticalSessionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch.object(vertical, "runtime_binary", return_value=Path("unused-binary")))
 
+    def test_IPC_尚未监听时只重试相同登记请求(self) -> None:
+        runtime = bridge_fixture()
+        transport = test_client()
+        unavailable = {"isError": True, "structuredContent": {
+            "code": "bridge.ipc.bridge_unavailable", "retryable": True,
+        }}
+        with (
+            patch.object(transport, "request", side_effect=[
+                unavailable, lifecycle_result(SESSION_A, "starting"),
+            ]) as request,
+            patch.object(vertical.time, "sleep"),
+        ):
+            session = vertical.wait_for_open_session(runtime, transport, timeout_seconds=90)
+        self.assertEqual(session.session_id, SESSION_A)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0], request.call_args_list[1])
+        self.assertEqual(request.call_args.args[1]["arguments"]["sessionKey"], SESSION_KEY)
+
+    def test_IPC_永久失败立即结束而临时失败不能无限重试(self) -> None:
+        for retryable in (False, True):
+            with self.subTest(retryable=retryable):
+                transport = test_client()
+                with (
+                    patch.object(transport, "request", return_value={
+                        "isError": True, "structuredContent": {
+                            "code": "bridge.ipc.bridge_unavailable", "retryable": retryable,
+                        },
+                    }) as request,
+                    patch.object(vertical.time, "monotonic", side_effect=[0, 0, 2]),
+                    patch.object(vertical.time, "sleep"),
+                    self.assertRaisesRegex(
+                        VerticalFailure if retryable else McpClientFailure,
+                        "bridge.ipc.bridge_unavailable",
+                    ),
+                ):
+                    vertical.wait_for_open_session(bridge_fixture(), transport, timeout_seconds=1)
+                self.assertEqual(request.call_count, 1)
+
     def test_初始化仅重试原会话且重开保留任务键和真实身份(self) -> None:
         runtime = bridge_fixture()
         transport = test_client()

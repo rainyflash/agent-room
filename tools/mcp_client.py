@@ -45,6 +45,21 @@ class McpClientFailure(RuntimeError):
     """表示 MCP 进程、协议或工具响应不符合验收契约。"""
 
 
+class McpToolFailure(McpClientFailure):
+    """保留经过校验的错误码与重试标记，不传播工具返回的敏感详情。"""
+
+    def __init__(self, name: str, result: Mapping[str, object]) -> None:
+        self.code = tool_failure_code(result)
+        structured = result.get("structuredContent")
+        self.retryable = (
+            self.code is not None
+            and isinstance(structured, dict)
+            and structured.get("retryable") is True
+        )
+        suffix = f"（错误码 {self.code}）" if self.code is not None else ""
+        super().__init__(f"MCP 工具 {name} 返回失败{suffix}。")
+
+
 class McpStdioClient(AbstractContextManager["McpStdioClient"]):
     """按请求串行化 MCP stdio 调用，并严格校验 JSON-RPC 响应。"""
 
@@ -172,9 +187,7 @@ class McpStdioClient(AbstractContextManager["McpStdioClient"]):
     def call_tool(self, name: str, arguments: Mapping[str, object]) -> JsonObject:
         result = self.call_tool_result(name, arguments)
         if result.get("isError") is True:
-            code = tool_failure_code(result)
-            suffix = f"（错误码 {code}）" if code is not None else ""
-            raise McpClientFailure(f"MCP 工具 {name} 返回失败{suffix}。")
+            raise McpToolFailure(name, result)
         structured = result.get("structuredContent")
         if not isinstance(structured, dict):
             raise McpClientFailure(f"MCP 工具 {name} 缺少结构化响应。")

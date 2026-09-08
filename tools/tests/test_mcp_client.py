@@ -5,7 +5,7 @@ from queue import Empty
 from unittest.mock import patch
 
 from tools.mcp_client import (
-    AGENT_ROOM_TOOLS, SESSION_SCOPED_TOOLS, McpClientFailure, McpStdioClient,
+    AGENT_ROOM_TOOLS, SESSION_SCOPED_TOOLS, McpClientFailure, McpStdioClient, McpToolFailure,
     parse_json_object, tool_failure_code, validate_session_tool_schemas,
 )
 
@@ -233,6 +233,24 @@ class McpResponseValidationTests(unittest.TestCase):
                 r"MCP 工具 agent_room_send_message 返回失败。$",
             ):
                 client.call_tool("agent_room_send_message", {})
+
+    def test_重试标记要求有效错误码和明确布尔值(self) -> None:
+        for code, retryable, expected in (
+            ("bridge.ipc.bridge_unavailable", True, True),
+            ("bridge.ipc.bridge_unavailable", False, False),
+            ("bridge.ipc.bridge_unavailable", "true", False),
+            ("bad code\nsecret", True, False),
+            (None, True, False),
+        ):
+            with self.subTest(code=code, retryable=retryable):
+                failure = McpToolFailure("agent_room_open_session", {
+                    "isError": True, "structuredContent": {
+                        "code": code, "retryable": retryable, "details": "private-value",
+                    },
+                })
+                self.assertEqual(failure.retryable, expected)
+                self.assertNotIn("private-value", str(failure))
+                self.assertNotIn("secret", str(failure))
 
 
 if __name__ == "__main__":
