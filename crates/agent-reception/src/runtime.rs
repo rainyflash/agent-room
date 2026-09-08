@@ -403,7 +403,12 @@ async fn wait_until_ready(
         }
     })
     .await
-    .map_err(|_| Failure::local("receiver.session_start_timeout"))?
+    // A prolonged outage must return to reconnect backoff, not stop an enabled receiver.
+    .map_err(|_| Failure {
+        category: agent_room_bridge_ipc::IpcErrorCategory::DependencyUnavailable,
+        retryable: true,
+        ..Failure::local("receiver.session_start_timeout")
+    })?
 }
 
 async fn initial_cursor(
