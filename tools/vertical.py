@@ -40,6 +40,7 @@ if __package__:
         McpAgentSession,
         McpClientFailure,
         McpStdioClient,
+        McpToolFailure,
         require_session_id,
         tool_failure_code,
     )
@@ -57,6 +58,7 @@ else:
         McpAgentSession,
         McpClientFailure,
         McpStdioClient,
+        McpToolFailure,
         require_session_id,
         tool_failure_code,
     )
@@ -1319,9 +1321,7 @@ def require_bridge_session(runtime: AuthorizedBridgeRuntime) -> dict[str, str]:
 def open_bridge_session(runtime: AuthorizedBridgeRuntime, redactor: LogRedactor) -> None:
     """首次注册及进程恢复均复用任务 key/name；只接受真实新身份及原实例恢复。"""
     with bridge_mcp_client(runtime, redactor) as client:
-        scoped = client.open_session(
-            session_key=runtime.session_key, display_name=runtime.display_name
-        )
+        scoped = wait_for_open_session(runtime, client, timeout_seconds=90)
         identity = wait_for_session_identity(scoped, timeout_seconds=180)
     if identity["agentId"] == runtime.environment.get("AGENT_ROOM_AGENT_ID"):
         raise VerticalFailure("任务会话错误地回退到浏览器引导的默认 Agent。")
@@ -1333,6 +1333,26 @@ def open_bridge_session(runtime: AuthorizedBridgeRuntime, redactor: LogRedactor)
             if identity[field] != runtime.session[field]:
                 raise VerticalFailure(f"重开同一任务会话时 {field} 漂移。")
     runtime.session = {**identity, "sessionId": scoped.session_id}
+
+
+def wait_for_open_session(
+    runtime: AuthorizedBridgeRuntime, client: McpStdioClient, *, timeout_seconds: float
+) -> McpAgentSession:
+    """上线日志早于 IPC 监听；只按协议的可重试错误等待，不新建任务键。"""
+    deadline = time.monotonic() + timeout_seconds
+    last_code: str | None = None
+    while time.monotonic() < deadline:
+        runtime.process.ensure_running()
+        try:
+            return client.open_session(
+                session_key=runtime.session_key, display_name=runtime.display_name
+            )
+        except McpToolFailure as error:
+            if not error.retryable:
+                raise
+            last_code = error.code
+        time.sleep(0.4)
+    raise VerticalFailure(f"Bridge IPC 未在期限内就绪（错误码 {last_code or '缺失'}）。")
 
 
 def wait_for_session_identity(
