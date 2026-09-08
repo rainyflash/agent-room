@@ -277,6 +277,28 @@ pub(crate) async fn desktop_agent_recovery(
 }
 
 #[tauri::command]
+pub(crate) async fn desktop_host_session_diagnostics()
+-> Result<Vec<agent_room_bridge_ipc::IpcHostSessionDiagnostics>, DesktopCommandFailure> {
+    use agent_room_bridge_ipc::{IpcMethod, IpcResponse};
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    match client
+        .invoke(IpcMethod::HostSessionDiagnostics)
+        .await
+        .map_err(|failure| DesktopCommandFailure::new(failure.code(), failure.retryable()))?
+    {
+        IpcResponse::HostSessionDiagnostics { sessions } => Ok(sessions),
+        _ => Err(DesktopCommandFailure::new(
+            "desktop.hosts.invalid_response",
+            false,
+        )),
+    }
+}
+
+#[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_configure_agent_runtime(
     runtime: State<'_, DesktopRuntime>,

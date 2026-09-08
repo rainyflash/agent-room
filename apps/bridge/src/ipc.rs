@@ -169,6 +169,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
         Box::pin(async move {
             match method {
                 IpcMethod::OpenHostSession(_)
+                | IpcMethod::HostSessionDiagnostics
                 | IpcMethod::ListRecoverySessions
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
@@ -598,6 +599,15 @@ fn authorize_method(
     method: &IpcMethod,
     agreement: &IpcHandshakeAgreement,
 ) -> Result<(), BridgeIpcDispatchFailure> {
+    if matches!(method, IpcMethod::HostSessionDiagnostics)
+        && agreement.caller() != IpcCallerKind::DesktopShell
+    {
+        return Err(BridgeIpcDispatchFailure::new(
+            "bridge.ipc.scope_denied",
+            IpcErrorCategory::Authorization,
+            false,
+        ));
+    }
     if agreement.caller() == IpcCallerKind::McpServer
         && !matches!(
             method,
@@ -2350,6 +2360,31 @@ mod tests {
                 .negotiate(&offer)
                 .unwrap();
         assert!(authorize_method(&IpcMethod::GetSelf, &agreement).is_ok());
+    }
+
+    #[test]
+    fn 全部任务诊断仅向桌面开放() {
+        for caller in [
+            IpcCallerKind::McpServer,
+            IpcCallerKind::DesktopShell,
+            IpcCallerKind::DiagnosticCli,
+        ] {
+            let offer = IpcHandshakeOffer::new(
+                caller,
+                [IpcProtocolVersion::V3_0],
+                [IpcScope::BridgeStatusRead],
+            )
+            .unwrap();
+            let agreement =
+                IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                    .unwrap()
+                    .negotiate(&offer)
+                    .unwrap();
+            assert_eq!(
+                authorize_method(&IpcMethod::HostSessionDiagnostics, &agreement).is_ok(),
+                caller == IpcCallerKind::DesktopShell
+            );
+        }
     }
 
     async fn assert_get_self_scope_denied<S>(client: &mut S)

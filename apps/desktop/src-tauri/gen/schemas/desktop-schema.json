@@ -621,6 +621,12 @@
           "markdownDescription": "Enables the desktop_detect_agent_hosts command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_host_session_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-host-session-diagnostics",
+          "markdownDescription": "Enables the desktop_host_session_diagnostics command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_install_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-install-update",
@@ -751,6 +757,12 @@
           "type": "string",
           "const": "deny-desktop-detect-agent-hosts",
           "markdownDescription": "Denies the desktop_detect_agent_hosts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_host_session_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-host-session-diagnostics",
+          "markdownDescription": "Denies the desktop_host_session_diagnostics command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_install_update command without any pre-configured scope.",

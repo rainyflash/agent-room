@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next';
 import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
 import { desktopPhaseMessage } from '@/features/desktop/domain/desktop-connection';
 import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
+import { HostSessionOnboarding } from '@/features/desktop/ui/host-session-onboarding';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 
 export type DesktopRuntimeSurfaceProps = {
@@ -238,6 +239,10 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   <ManualHostConfiguration
                     configuration={controller.snapshot.manualHostConfiguration}
                   />
+                  {controller.configuredHost === null ? null : (
+                    <p role="status">{t('desktop.hosts.configured')}</p>
+                  )}
+                  <HostSessionOnboarding readHostSessions={controller.readHostSessions} />
                 </div>
               </section>
             ) : null}

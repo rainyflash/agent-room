@@ -5,6 +5,8 @@ import { z } from 'zod';
 
 import {
   bridgeRuntimeSchema,
+  hostSessionDiagnosticsSchema,
+  type HostSessionDiagnostics,
   agentHostApplyReceiptSchema,
   agentHostDetectionSchema,
   agentHostPlanSchema,
@@ -53,6 +55,7 @@ const desktopCommands = {
   planHost: 'desktop_plan_agent_host',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
+  hostSessions: 'desktop_host_session_diagnostics',
 } as const;
 
 type DesktopCommand = (typeof desktopCommands)[keyof typeof desktopCommands];
@@ -151,6 +154,16 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.snapshot, {}, desktopRuntimeSnapshotSchema);
+  }
+
+  async readHostSessions(): Promise<
+    Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
+  > {
+    return this.invokeValidated(
+      desktopCommands.hostSessions,
+      {},
+      z.array(hostSessionDiagnosticsSchema).max(16),
+    );
   }
 
   async retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>> {

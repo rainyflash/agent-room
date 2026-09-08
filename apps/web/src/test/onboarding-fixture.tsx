@@ -97,6 +97,48 @@ const gateway: DesktopRuntimeGateway = {
   },
   openAuthorization: unavailable,
   readLobby: unavailable,
+  detectHosts: () =>
+    ready([
+      {
+        host: 'codex',
+        installed: true,
+        configurable: true,
+        mechanism: 'mcp-stdio',
+        diagnosticCode: 'fixture.host.detected',
+      },
+    ]),
+  planHost: () =>
+    ready({
+      host: 'codex',
+      action: 'create',
+      target: 'fixture-config',
+      originalDigest: '0'.repeat(64),
+      desiredDigest: '1'.repeat(64),
+      summaryCode: 'fixture.ready',
+    }),
+  applyHost: () => ready(undefined),
+  readHostSessions: () => {
+    const state = new URLSearchParams(location.search).get('host');
+    if (state === 'failed') return unavailable();
+    return ready(
+      state === 'ready'
+        ? [
+            {
+              displayName: 'Scout',
+              session: {
+                sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+                state: 'ready',
+                agentId: agent.agentId,
+                errorCode: null,
+              },
+              lastInboxReadAgoMs: 1_000,
+              lastMessageReceivedAgoMs: 2_000,
+              lastMessageSentAgoMs: null,
+            },
+          ]
+        : [],
+    );
+  },
   installUpdate: unavailable,
   checkUpdate: (channel) =>
     ready({

@@ -218,6 +218,24 @@ export const agentHostDetectionSchema = z
   .strict();
 export type AgentHostDetection = z.infer<typeof agentHostDetectionSchema>;
 
+export const hostSessionDiagnosticsSchema = z
+  .object({
+    displayName: z.string().min(1).max(128),
+    session: z
+      .object({
+        sessionId: z.uuid(),
+        state: z.enum(['starting', 'ready', 'failed', 'closed']),
+        agentId: z.uuid().nullable(),
+        errorCode: z.string().nullable(),
+      })
+      .strict(),
+    lastInboxReadAgoMs: z.number().int().nonnegative().nullable(),
+    lastMessageReceivedAgoMs: z.number().int().nonnegative().nullable(),
+    lastMessageSentAgoMs: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type HostSessionDiagnostics = z.infer<typeof hostSessionDiagnosticsSchema>;
+
 export const agentHostPlanSchema = z
   .object({
     host: agentHostKindSchema,
@@ -319,6 +337,7 @@ export type DesktopRuntimeGateway = {
   ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;
   readLobby(): Promise<Result<DesktopLobbySnapshot, DesktopRuntimeFailure>>;
   detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
+  readHostSessions?(): Promise<Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>>;
   planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
   applyHost?(
     host: AgentHostKind,

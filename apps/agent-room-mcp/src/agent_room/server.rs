@@ -517,6 +517,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::MatrixSecurity { .. } => "matrix_security",
         IpcResponse::HostSession { .. } => "host_session",
         IpcResponse::BridgeStatus { .. } => "bridge_status",
+        IpcResponse::HostSessionDiagnostics { .. } => "host_session_diagnostics",
         IpcResponse::SelfSummary { .. } => "self_summary",
         IpcResponse::MessagePreviews { .. } => "message_previews",
         IpcResponse::Presence { .. } => "presence",

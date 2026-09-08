@@ -255,6 +255,9 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
             </div>
             <p>{t('onboarding.hosts.detail')}</p>
           </header>
+          {runtime.configuredHost === null ? null : (
+            <p role="status">{t('desktop.hosts.configured')}</p>
+          )}
           {runtime.available && installedHosts.length > 0 ? (
             <div className="onboarding__host-list">
               {installedHosts.map((host) => (

@@ -20,5 +20,6 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_configure_agent_runtime",
     "desktop_lobby_snapshot",
     "desktop_agent_recovery_sessions",
+    "desktop_host_session_diagnostics",
     "desktop_agent_recovery",
 ];

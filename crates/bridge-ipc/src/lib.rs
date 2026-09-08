@@ -15,8 +15,8 @@ pub use matrix_security::{
 pub mod limits;
 mod tools;
 pub use host_sessions::{
-    IpcCloseHostSessionRequest, IpcHostSessionState, IpcHostSessionSummary,
-    IpcOpenHostSessionRequest,
+    IpcCloseHostSessionRequest, IpcHostSessionDiagnostics, IpcHostSessionState,
+    IpcHostSessionSummary, IpcOpenHostSessionRequest,
 };
 mod wire;
 
