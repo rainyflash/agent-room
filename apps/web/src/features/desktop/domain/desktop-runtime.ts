@@ -1,3 +1,4 @@
+import type { ConfigureReceiver, ReceiverAction, ReceiverView } from './reception';
 import { z } from 'zod';
 
 import type { Result } from '@/shared/result';
@@ -229,6 +230,17 @@ export const hostSessionDiagnosticsSchema = z
         errorCode: z.string().nullable(),
       })
       .strict(),
+    sessionKey: z.uuid().nullable().optional(),
+    receptionOffer: z
+      .object({
+        task: z.object({ taskId: z.uuid(), workspace: z.string().max(4096) }).strict(),
+        roomId: z.string(),
+        roomCatalogId: z.uuid().nullable(),
+        instanceId: z.uuid(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     lastInboxReadAgoMs: z.number().int().nonnegative().nullable(),
     lastMessageReceivedAgoMs: z.number().int().nonnegative().nullable(),
     lastMessageSentAgoMs: z.number().int().nonnegative().nullable(),
@@ -307,6 +319,12 @@ export type DesktopRuntimeEventHandlers = {
 };
 
 export type DesktopRuntimeGateway = {
+  listReceivers?(): Promise<Result<readonly ReceiverView[], DesktopRuntimeFailure>>;
+  configureReceiver?(request: ConfigureReceiver): Promise<Result<void, DesktopRuntimeFailure>>;
+  receiverAction?(
+    taskId: string,
+    request: ReceiverAction,
+  ): Promise<Result<void, DesktopRuntimeFailure>>;
   readonly agentRecovery?: import('@/features/security/domain/agent-recovery').AgentRecoveryGateway;
   isAvailable(): boolean;
   beginHumanAuthentication(

@@ -40,10 +40,12 @@ AUTOMATIC_TOOLS = (
 )
 EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_open_session": (False, False, True, True),
+    "agent_room_register_reception": (False, False, True, False),
     "agent_room_close_session": (False, False, True, True),
     "agent_room_get_self": (True, False, True, False),
     "agent_room_matrix_security": (False, False, False, True),
     "agent_room_list_previews": (True, False, True, True),
+    "agent_room_wait_for_messages": (True, False, True, True),
     "agent_room_get_presence": (True, False, True, True),
     "agent_room_open_content": (True, False, True, True),
     "agent_room_publish_status": (False, False, True, True),

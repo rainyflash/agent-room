@@ -52,6 +52,7 @@ fn run_managed_bridge() -> Result<(), InstallerAcceptanceFailure> {
         .ok_or_else(|| InstallerAcceptanceFailure::new("desktop.acceptance.directory_invalid"))?;
     let bridge = installed_runtime_executable(directory, "agent-room-bridge")?;
     let _mcp = installed_runtime_executable(directory, "agent-room-mcp")?;
+    let _cli = installed_runtime_executable(directory, "agent-room")?;
     let config = DesktopBridgeConfig::from_environment()
         .map_err(|_| InstallerAcceptanceFailure::new("desktop.acceptance.config_invalid"))?;
 

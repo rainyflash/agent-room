@@ -17,6 +17,7 @@ pub enum IpcMethod {
         method: Box<IpcMethod>,
     },
     GetSelf,
+    RegisterReception(crate::IpcRegisterReceptionRequest),
     MatrixSecurity(crate::IpcMatrixSecurityRequest),
     ListRecoverySessions,
     MatrixRecovery(crate::IpcMatrixRecoveryRequest),
@@ -42,6 +43,7 @@ impl IpcMethod {
             Self::CloseHostSession(_) => "close_host_session",
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
+            Self::RegisterReception(_) => "register_reception",
             Self::MatrixSecurity(_) => "matrix_security",
             Self::ListRecoverySessions => "list_recovery_sessions",
             Self::MatrixRecovery(_) => "matrix_recovery",
@@ -62,7 +64,9 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
-            Self::OpenHostSession(_) | Self::CloseHostSession(_) => IpcScope::HostSessionsManage,
+            Self::OpenHostSession(_) | Self::CloseHostSession(_) | Self::RegisterReception(_) => {
+                IpcScope::HostSessionsManage
+            }
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
@@ -95,6 +99,7 @@ impl IpcMethod {
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
+            Self::RegisterReception(request) => request.validate(),
             Self::WithSession { session_id, method } => {
                 crate::host_sessions::validate_session_id(session_id)?;
                 if matches!(
@@ -489,6 +494,8 @@ pub struct IpcDefaultAgentBootstrap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcSelfSummary {
+    #[serde(default)]
+    pub room_catalog_id: Option<String>,
     pub agent: IpcAgentSummary,
     pub instance_id: String,
     pub matrix_device_id: String,

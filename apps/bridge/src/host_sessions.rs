@@ -63,6 +63,7 @@ struct HostCallEvidence {
     inbox_read: Option<Instant>,
     message_received: Option<Instant>,
     message_sent: Option<Instant>,
+    reception_offer: Option<agent_room_bridge_ipc::IpcReceptionOffer>,
 }
 
 impl HostCallEvidence {
@@ -168,6 +169,38 @@ impl HostSession {
                 return Err(session_failure("bridge.host_session.closed", false));
             }
         };
+        if let IpcMethod::RegisterReception(request) = method {
+            let IpcResponse::SelfSummary { summary } = handler.dispatch(IpcMethod::GetSelf).await?
+            else {
+                return Err(session_failure(
+                    "bridge.host_session.response_invalid",
+                    false,
+                ));
+            };
+            let offer = agent_room_bridge_ipc::IpcReceptionOffer {
+                task: request,
+                room_id: summary.room_id,
+                room_catalog_id: summary.room_catalog_id,
+                instance_id: summary.instance_id,
+            };
+            {
+                let mut evidence = self.evidence.lock().await;
+                if evidence
+                    .reception_offer
+                    .as_ref()
+                    .is_some_and(|previous| previous != &offer)
+                {
+                    return Err(session_failure(
+                        "bridge.host_session.reception_already_bound",
+                        false,
+                    ));
+                }
+                evidence.reception_offer = Some(offer);
+            }
+            return Ok(IpcResponse::HostSession {
+                session: self.summary().await,
+            });
+        }
         let response = handler.dispatch(method).await?;
         self.evidence.lock().await.record(&response);
         Ok(response)
@@ -317,6 +350,8 @@ impl HostSessionRegistry {
             sessions.push(agent_room_bridge_ipc::IpcHostSessionDiagnostics {
                 session,
                 display_name: entry.request.display_name.clone(),
+                session_key: Some(entry.request.session_key.clone()),
+                reception_offer: evidence.reception_offer.clone(),
                 last_inbox_read_ago_ms: elapsed_millis(evidence.inbox_read),
                 last_message_received_ago_ms: elapsed_millis(evidence.message_received),
                 last_message_sent_ago_ms: elapsed_millis(evidence.message_sent),

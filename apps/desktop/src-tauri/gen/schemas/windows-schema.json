@@ -657,6 +657,24 @@
           "markdownDescription": "Enables the desktop_plan_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_receiver_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-receiver-action",
+          "markdownDescription": "Enables the desktop_receiver_action command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_receiver_configure command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-receiver-configure",
+          "markdownDescription": "Enables the desktop_receiver_configure command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_receiver_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-receiver-list",
+          "markdownDescription": "Enables the desktop_receiver_list command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_remove_agent_host command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-remove-agent-host",
@@ -793,6 +811,24 @@
           "type": "string",
           "const": "deny-desktop-plan-agent-host",
           "markdownDescription": "Denies the desktop_plan_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_receiver_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-receiver-action",
+          "markdownDescription": "Denies the desktop_receiver_action command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_receiver_configure command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-receiver-configure",
+          "markdownDescription": "Denies the desktop_receiver_configure command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_receiver_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-receiver-list",
+          "markdownDescription": "Denies the desktop_receiver_list command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_remove_agent_host command without any pre-configured scope.",

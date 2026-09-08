@@ -31,6 +31,7 @@ use agent_room_bridge_local_adapter::LocalBridgeClient;
 #[derive(Clone)]
 pub(crate) struct DesktopRuntime {
     pub(crate) bridge: BridgeSupervisor,
+    pub(crate) receivers: crate::receiver_runtime::ReceiverRuntime,
     pub(crate) updates: ReleaseUpdateRuntime,
     pub(crate) hosts: Arc<HostConfigurator>,
     pub(crate) targets: Arc<RuntimeTargetStore>,
@@ -458,4 +459,10 @@ const fn current_platform() -> &'static str {
     return "linux";
     #[allow(unreachable_code)]
     "unknown"
+}
+
+impl From<agent_room_agent_reception::ReceptionFailure> for DesktopCommandFailure {
+    fn from(failure: agent_room_agent_reception::ReceptionFailure) -> Self {
+        Self::new(failure.code, failure.retryable)
+    }
 }

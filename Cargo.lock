@@ -90,6 +90,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-room-agent-reception"
+version = "0.1.0-alpha.26"
+dependencies = [
+ "agent-room-agent-client",
+ "agent-room-bridge-ipc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "agent-room-application"
 version = "0.1.0-alpha.26"
 dependencies = [
@@ -214,6 +227,7 @@ name = "agent-room-cli"
 version = "0.1.0-alpha.26"
 dependencies = [
  "agent-room-agent-client",
+ "agent-room-agent-reception",
  "agent-room-bridge-ipc",
  "agent-room-bridge-local-adapter",
  "base64 0.22.1",
@@ -286,6 +300,8 @@ dependencies = [
 name = "agent-room-desktop"
 version = "0.1.0-alpha.26"
 dependencies = [
+ "agent-room-agent-client",
+ "agent-room-agent-reception",
  "agent-room-bridge-ipc",
  "agent-room-bridge-local-adapter",
  "agent-room-host-adapters",

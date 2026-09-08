@@ -1,3 +1,6 @@
+import { receptionFixture } from './reception-fixture';
+import { SessionProvider } from '@/features/session/ui/session-provider';
+import type { SessionDependencies, WebSession } from '@/features/session/domain/session';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
@@ -66,8 +69,25 @@ function ready<T>(value: T) {
   return Promise.resolve(ok(value));
 }
 const desktop = !new URLSearchParams(location.search).has('browser');
+const principal: WebSession = {
+  authenticatedAtUnixMs: 1,
+  expiresAtUnixMs: 1_900_000_000_000,
+  displayName: 'Fixture operator',
+  locale: 'en',
+  matrixUserId: '@operator:matrix.test',
+  principalId: '0198b601-77a3-74f1-b4f4-940f291951b9',
+  recentlyAuthenticated: true,
+};
+const reception = receptionFixture(
+  agent.agentId,
+  lobby.catalogId,
+  principal.principalId,
+  '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+);
+const receptionEnabled = new URLSearchParams(location.search).has('reception');
 let autostartEnabled = false;
 const gateway: DesktopRuntimeGateway = {
+  ...(receptionEnabled ? reception.gateway : {}),
   beginHumanAuthentication: unavailable,
   beginMatrixAuthentication: unavailable,
   clearHumanSession: unavailable,
@@ -125,6 +145,9 @@ const gateway: DesktopRuntimeGateway = {
         ? [
             {
               displayName: 'Scout',
+              ...(receptionEnabled
+                ? { sessionKey: reception.sessionKey, receptionOffer: reception.offer }
+                : {}),
               session: {
                 sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
                 state: 'ready',
@@ -165,10 +188,35 @@ async function bootstrapFixture() {
   );
   const services = {
     ...runtime.services,
+    automation: { ...runtime.services.automation, list: () => ready([reception.grant]) },
     onboarding: new OnboardingCoordinator(
       { listAgents: () => ready([agent]), ensureDefaultAgent: () => ready(agent) },
       { list: () => ready([lobby]) },
     ),
+  };
+  const sessionDependencies: SessionDependencies = {
+    ...runtime.services.session,
+    controlPlane: {
+      beginAuthentication: () => ready({ kind: 'session-established' }),
+      logout: () => ready(undefined),
+      readSession: () => ready(principal),
+    },
+    matrix: {
+      disconnect: () => undefined,
+      beginAuthentication: () => ready({ kind: 'session-established' }),
+      logout: () => ready(undefined),
+      restore: () =>
+        ready({
+          kind: 'connected',
+          connection: {
+            deviceId: 'FIXTURE',
+            userId: principal.matrixUserId,
+            disconnect: () => undefined,
+            observe: () => () => undefined,
+            waitUntilPrepared: () => ready(undefined),
+          },
+        }),
+    },
   };
   const element = document.getElementById('root');
   if (!element) throw new Error('Onboarding fixture root is missing.');
@@ -177,20 +225,22 @@ async function bootstrapFixture() {
       <RouterTestProvider>
         <QueryClientProvider client={runtime.queryClient}>
           <AppServicesProvider services={services}>
-            <DesktopRuntimeProvider gateway={gateway}>
-              <OnboardingWorkspace
-                principal={{
-                  authenticatedAtUnixMs: 1,
-                  expiresAtUnixMs: 1_900_000_000_000,
-                  displayName: 'Fixture operator',
-                  locale: 'en',
-                  matrixUserId: '@operator:matrix.test',
-                  principalId: '0198b601-77a3-74f1-b4f4-940f291951b9',
-                  recentlyAuthenticated: true,
-                }}
-              />
-              <DesktopRuntimeSurface />
-            </DesktopRuntimeProvider>
+            <SessionProvider dependencies={sessionDependencies}>
+              <DesktopRuntimeProvider gateway={gateway}>
+                <OnboardingWorkspace
+                  principal={{
+                    authenticatedAtUnixMs: 1,
+                    expiresAtUnixMs: 1_900_000_000_000,
+                    displayName: 'Fixture operator',
+                    locale: 'en',
+                    matrixUserId: '@operator:matrix.test',
+                    principalId: '0198b601-77a3-74f1-b4f4-940f291951b9',
+                    recentlyAuthenticated: true,
+                  }}
+                />
+                <DesktopRuntimeSurface />
+              </DesktopRuntimeProvider>
+            </SessionProvider>
           </AppServicesProvider>
         </QueryClientProvider>
       </RouterTestProvider>

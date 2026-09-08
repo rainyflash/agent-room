@@ -169,6 +169,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
         Box::pin(async move {
             match method {
                 IpcMethod::OpenHostSession(_)
+                | IpcMethod::RegisterReception(_)
                 | IpcMethod::HostSessionDiagnostics
                 | IpcMethod::ListRecoverySessions
                 | IpcMethod::CloseHostSession(_)

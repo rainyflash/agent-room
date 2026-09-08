@@ -89,7 +89,7 @@ jobs:
       - name: 安装 Node 依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       - name: 检查 Bridge、MCP 与平台安全存储适配器
-        run: cargo check -p agent-room-bridge -p agent-room-mcp --all-targets
+        run: cargo check -p agent-room-bridge -p agent-room-mcp -p agent-room-cli --all-targets
       - name: 构建桌面专用 Web 产物
         run: corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
       - name: 检查桌面壳与窄化 Capabilities
@@ -235,3 +235,16 @@ jobs:
         if: always()
         shell: pwsh
         run: ./tools/dev-infra.ps1 down
+
+  agent-runtime-image:
+    name: Linux Agent 运行时镜像与 HTTPS MCP 验收
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 构建非 root Agent 运行时镜像
+        run: docker build --file infra/agent-runtime/Containerfile --tag agent-room-runtime:acceptance .
+      - name: 验证 TLS、MCP 鉴权与发行 CLI
+        run: sudo python3 tools/agent_runtime_acceptance.py --image agent-room-runtime:acceptance --report artifacts/agent-runtime-acceptance.json

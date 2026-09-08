@@ -404,6 +404,7 @@ mod tests {
             responses: Mutex::new(VecDeque::from([
                 IpcResponse::SelfSummary {
                     summary: IpcSelfSummary {
+                        room_catalog_id: None,
                         agent: agent.clone(),
                         instance_id: "0198b601-77a4-7bb8-83eb-a8fe68c97e44".to_owned(),
                         matrix_device_id: "DEVICE".to_owned(),

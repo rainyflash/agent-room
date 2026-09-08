@@ -1,3 +1,4 @@
+import { ReceptionPanel } from './reception-panel';
 import { Button } from '@agent-room/ui-system';
 import {
   AlertTriangle,
@@ -243,6 +244,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                     <p role="status">{t('desktop.hosts.configured')}</p>
                   )}
                   <HostSessionOnboarding readHostSessions={controller.readHostSessions} />
+                  {controller.receptionAvailable ? <ReceptionPanel /> : null}
                 </div>
               </section>
             ) : null}

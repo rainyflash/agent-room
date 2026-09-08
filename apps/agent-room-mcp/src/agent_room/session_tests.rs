@@ -232,6 +232,7 @@ fn self_summary(session_id: &str) -> IpcResponse {
     };
     IpcResponse::SelfSummary {
         summary: IpcSelfSummary {
+            room_catalog_id: None,
             agent: IpcAgentSummary {
                 agent_id: agent_id.to_owned(),
                 display_name: "测试 Agent".to_owned(),

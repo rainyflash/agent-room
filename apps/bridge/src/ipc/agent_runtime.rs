@@ -477,6 +477,10 @@ impl AgentRuntimeIpcFacade {
         let runtime = self.runtime_snapshot()?;
         Ok(IpcResponse::SelfSummary {
             summary: IpcSelfSummary {
+                room_catalog_id: runtime
+                    .publication
+                    .as_ref()
+                    .map(|publication| publication.room_catalog_id().to_string()),
                 agent: ipc_agent(&runtime.identity),
                 instance_id: runtime.identity.agent_instance_id().to_string(),
                 matrix_device_id: runtime.matrix_device_id,

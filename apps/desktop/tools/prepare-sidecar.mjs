@@ -19,6 +19,7 @@ if (!/^[a-z0-9_.-]+$/u.test(targetTriple)) {
 }
 
 const sidecars = [
+  { packageName: 'agent-room-cli', executableName: 'agent-room' },
   { packageName: 'agent-room-bridge', executableName: 'agent-room-bridge' },
   { packageName: 'agent-room-mcp', executableName: 'agent-room-mcp' },
 ];

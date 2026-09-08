@@ -29,6 +29,7 @@ class ReleaseAssetTests(unittest.TestCase):
         bridge.write_bytes(b"bridge")
         mcp = self.root / platform / "agent-room-mcp.exe"
         mcp.write_bytes(b"mcp")
+        (mcp.parent / "agent-room.exe").write_bytes(b"cli")
         plugin = self.root / platform / "plugin.zip"
         plugin.write_bytes(b"plugin")
         return bundle, bridge, mcp, plugin
@@ -46,6 +47,8 @@ class ReleaseAssetTests(unittest.TestCase):
                 str(bridge),
                 "--mcp",
                 str(mcp),
+                "--cli",
+                str(mcp.parent / "agent-room.exe"),
                 "--plugin",
                 str(plugin),
                 "--output-root",
@@ -69,6 +72,9 @@ class ReleaseAssetTests(unittest.TestCase):
             "installer", "desktop", "bridge", "mcp-server", "codex-plugin"
         })
         self.assertTrue(all((output / item["path"]).is_file() for item in document["artifacts"]))
+        by_name = {item["name"]: item for item in document["artifacts"]}
+        self.assertEqual((output / by_name["agent-cli"]["path"]).read_bytes(), b"cli")
+        self.assertEqual(by_name["agent-cli"]["kind"], "bridge")
         by_kind = {item["kind"]: item for item in document["artifacts"]}
         self.assertEqual(
             (output / by_kind["desktop"]["path"]).read_bytes(),
@@ -90,6 +96,8 @@ class ReleaseAssetTests(unittest.TestCase):
                 str(bridge),
                 "--mcp",
                 str(mcp),
+                "--cli",
+                str(mcp.parent / "agent-room.exe"),
                 "--plugin",
                 str(plugin),
                 "--output-root",

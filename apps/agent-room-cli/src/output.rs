@@ -62,3 +62,14 @@ pub(crate) fn write_json(value: &impl Serialize) -> CliResult<()> {
 pub(crate) fn success(value: impl Serialize) -> CliResult<()> {
     write_json(&json!({"ok": true, "data": value}))
 }
+
+impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
+    fn from(error: agent_room_agent_reception::ReceptionFailure) -> Self {
+        Self {
+            code: error.code,
+            category: error.category,
+            retryable: error.retryable,
+            details: error.details,
+        }
+    }
+}

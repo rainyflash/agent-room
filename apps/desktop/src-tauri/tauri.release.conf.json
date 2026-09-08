@@ -1,7 +1,7 @@
 {
   "bundle": {
     "createUpdaterArtifacts": true,
-    "externalBin": ["binaries/agent-room-bridge", "binaries/agent-room-mcp"]
+    "externalBin": ["binaries/agent-room-bridge", "binaries/agent-room-mcp", "binaries/agent-room"]
   },
   "plugins": {
     "updater": {

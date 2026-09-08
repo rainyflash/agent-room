@@ -260,6 +260,8 @@ def asset_label(name: str, expected_installer: str) -> str:
         return "VERIFY / 验证文件：产物元数据（无需下载）"
     if name.endswith(".sig"):
         return "VERIFY / 验证文件：自动更新签名（无需下载）"
+    if name.startswith("agent-room-cli-"):
+        return "ADVANCED / 高级集成：Agent CLI 命令行工具"
     if name.startswith("agent-room-bridge-") and name.endswith(".exe"):
         return "INTERNAL / 内部组件：Bridge（不要单独运行）"
     if name.startswith("agent-room-mcp-") and name.endswith(".exe"):

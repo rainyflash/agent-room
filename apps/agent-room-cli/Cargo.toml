@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 agent-room-agent-client.workspace = true
+agent-room-agent-reception.workspace = true
 agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
 clap.workspace = true

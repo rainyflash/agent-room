@@ -32,6 +32,7 @@ type DesktopOperation =
 
 export type DesktopRuntimeController = {
   readonly available: boolean;
+  readonly receptionAvailable: boolean;
   readonly busy: DesktopOperation | null;
   readonly failure: DesktopRuntimeFailure | null;
   readonly snapshot: DesktopRuntimeSnapshot | null;
@@ -318,6 +319,7 @@ export function useDesktopRuntime(
 
   return {
     available,
+    receptionAvailable: gateway.listReceivers !== undefined,
     busy,
     failure,
     snapshot,
