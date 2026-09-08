@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "fcdd447c934ca3c335293143b80e1ddcea2827d3ab86df3dbb57c8c956881810",
+    "Cargo.lock": "305286aa791984f6ecb59b0636254e7bacb10d1e11314c06b1cdf55df55ba815",
     "pnpm-lock.yaml": "12647936b9961787fd09ef273037665793d75670dc7c1224229ade5650cf1681"
   },
   "dependencies": [
@@ -513,6 +513,13 @@
       "ecosystem": "cargo",
       "name": "base64",
       "version": "0.22.1",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/marshallpierce/rust-base64"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "base64",
+      "version": "0.23.1",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/marshallpierce/rust-base64"
     },
@@ -4603,6 +4610,13 @@
       "version": "0.9.0",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/launchbadge/sqlx"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "sse-stream",
+      "version": "0.2.6",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/4t145/sse-stream/"
     },
     {
       "ecosystem": "cargo",

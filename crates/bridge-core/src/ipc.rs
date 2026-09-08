@@ -74,6 +74,7 @@ pub enum IpcCallerKind {
     McpServer,
     DesktopShell,
     DiagnosticCli,
+    AgentCli,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -209,7 +210,7 @@ pub struct FoundationIpcScopePolicy;
 impl IpcScopePolicy for FoundationIpcScopePolicy {
     fn allows(&self, caller: IpcCallerKind, scope: IpcScope) -> bool {
         match caller {
-            IpcCallerKind::McpServer => {
+            IpcCallerKind::McpServer | IpcCallerKind::AgentCli => {
                 matches!(
                     scope,
                     IpcScope::BridgeStatusRead

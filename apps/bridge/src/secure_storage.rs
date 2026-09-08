@@ -20,7 +20,7 @@ use agent_room_bridge_core::{
 use agent_room_bridge_ipc::IpcSharedSecret;
 use agent_room_bridge_local_adapter::{
     IPC_INSTALLATION_ID_ACCOUNT as IPC_INSTALLATION_ID,
-    IPC_SHARED_SECRET_ACCOUNT as IPC_SHARED_SECRET,
+    IPC_SHARED_SECRET_ACCOUNT as IPC_SHARED_SECRET, LocalSecretStore, SecretStoreFailure,
 };
 use agent_room_bridge_storage_adapter::{HandoffStorageKey, MessageProjectionStorageKey};
 use agent_room_domain::{
@@ -34,7 +34,6 @@ use agent_room_domain::{
 use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey};
 use agent_room_message_crypto_adapter::MessageContentRootKey;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -55,42 +54,36 @@ trait SecretStoreBackend: Send + Sync {
     fn delete(&self, account: &str) -> BridgeCredentialResult<()>;
 }
 
-struct KeyringBackend {
-    service: String,
+struct ConfiguredSecretBackend {
+    store: LocalSecretStore,
 }
 
-impl KeyringBackend {
+impl ConfiguredSecretBackend {
     fn new(service: impl Into<String>) -> Self {
         Self {
-            service: service.into(),
+            store: LocalSecretStore::from_environment(service),
         }
-    }
-
-    fn entry(&self, account: &str) -> BridgeCredentialResult<Entry> {
-        Entry::new(&self.service, account).map_err(|_| unavailable())
     }
 }
 
-impl SecretStoreBackend for KeyringBackend {
+impl SecretStoreBackend for ConfiguredSecretBackend {
     fn read(&self, account: &str) -> BridgeCredentialResult<Option<String>> {
-        match self.entry(account)?.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(_) => Err(unavailable()),
-        }
+        self.store.read(account).map_err(map_secret_failure)
     }
 
     fn write(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
-        self.entry(account)?
-            .set_password(value)
-            .map_err(|_| unavailable())
+        self.store.write(account, value).map_err(map_secret_failure)
     }
 
     fn delete(&self, account: &str) -> BridgeCredentialResult<()> {
-        match self.entry(account)?.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(_) => Err(unavailable()),
-        }
+        self.store.delete(account).map_err(map_secret_failure)
+    }
+}
+
+const fn map_secret_failure(failure: SecretStoreFailure) -> BridgeCredentialFailure {
+    match failure {
+        SecretStoreFailure::Corrupt => corrupt(),
+        SecretStoreFailure::Configuration | SecretStoreFailure::Unavailable => unavailable(),
     }
 }
 
@@ -139,7 +132,7 @@ pub(crate) struct OsBridgeRuntimeSecretVault {
 impl OsBridgeRuntimeSecretVault {
     pub(crate) fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringBackend::new(service)),
+            backend: Arc::new(ConfiguredSecretBackend::new(service)),
         }
     }
 
@@ -217,7 +210,7 @@ pub(crate) struct OsDeviceSigningIdentityStore {
 impl OsDeviceSigningIdentityStore {
     pub(crate) fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringBackend::new(service)),
+            backend: Arc::new(ConfiguredSecretBackend::new(service)),
         }
     }
 
@@ -240,7 +233,7 @@ pub(crate) struct OsAgentInstanceSigningIdentityStore {
 impl OsAgentInstanceSigningIdentityStore {
     pub(crate) fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringBackend::new(service)),
+            backend: Arc::new(ConfiguredSecretBackend::new(service)),
         }
     }
 
@@ -298,7 +291,7 @@ pub(crate) struct OsDeviceCredentialVault {
 impl OsDeviceCredentialVault {
     pub(crate) fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringBackend::new(service)),
+            backend: Arc::new(ConfiguredSecretBackend::new(service)),
         }
     }
 
@@ -333,7 +326,7 @@ pub(crate) struct OsAgentRuntimeCredentialVault {
 impl OsAgentRuntimeCredentialVault {
     pub(crate) fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringBackend::new(service)),
+            backend: Arc::new(ConfiguredSecretBackend::new(service)),
         }
     }
 
@@ -662,9 +655,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        AGENT_INSTANCE_SIGNING_SEED, AGENT_RUNTIME_CREDENTIALS, DEVICE_CREDENTIALS,
-        DEVICE_SIGNING_SEED, HANDOFF_STORAGE_KEY, IPC_INSTALLATION_ID, IPC_SHARED_SECRET,
-        KeyringBackend, MATRIX_STORE_PASSPHRASE, MESSAGE_CONTENT_ROOT_KEY,
+        AGENT_INSTANCE_SIGNING_SEED, AGENT_RUNTIME_CREDENTIALS, ConfiguredSecretBackend,
+        DEVICE_CREDENTIALS, DEVICE_SIGNING_SEED, HANDOFF_STORAGE_KEY, IPC_INSTALLATION_ID,
+        IPC_SHARED_SECRET, MATRIX_STORE_PASSPHRASE, MESSAGE_CONTENT_ROOT_KEY,
         MESSAGE_PROJECTION_STORAGE_KEY, OsAgentInstanceSigningIdentityStore,
         OsAgentRuntimeCredentialVault, OsBridgeRuntimeSecretVault, OsDeviceCredentialVault,
         OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
@@ -888,7 +881,7 @@ mod tests {
     #[ignore = "显式运行以验证当前 OS 的真实安全存储"]
     fn 当前操作系统安全存储可写入读取和清理() {
         let service = format!("agent-room-test-{}", Uuid::now_v7());
-        let backend = Arc::new(KeyringBackend::new(service));
+        let backend = Arc::new(ConfiguredSecretBackend::new(service));
         let signing_store = OsDeviceSigningIdentityStore::new(backend.clone());
         let vault = OsDeviceCredentialVault::new(backend.clone());
 

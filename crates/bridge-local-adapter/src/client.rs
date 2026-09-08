@@ -30,6 +30,9 @@ pub struct LocalBridgeClient {
 }
 
 impl LocalBridgeClient {
+    pub fn agent_cli(runtime_root: PathBuf, service: SecureStorageService) -> Self {
+        Self::for_caller(runtime_root, IpcCallerKind::AgentCli, service)
+    }
     /// 创建只能以通用 MCP Server 身份协商工具作用域的本地客户端。
     pub fn system(runtime_root: PathBuf) -> Self {
         Self::system_with_secure_storage_service(runtime_root, SecureStorageService::default())

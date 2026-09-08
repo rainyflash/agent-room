@@ -93,6 +93,40 @@ const fn default_preview_limit() -> u16 {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WaitMessagesInput {
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    #[schemars(length(max = EVENT_ID_BYTES))]
+    pub after_event_id: Option<String>,
+    #[schemars(length(max = ROOM_ID_BYTES))]
+    pub room_id: Option<String>,
+    #[serde(default = "default_preview_limit")]
+    #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
+    pub limit: u16,
+    #[serde(default = "default_wait_seconds")]
+    #[schemars(range(min = 0, max = 25))]
+    pub wait_seconds: u8,
+}
+
+const fn default_wait_seconds() -> u8 {
+    25
+}
+
+impl From<WaitMessagesInput> for ListPreviewsInput {
+    fn from(input: WaitMessagesInput) -> Self {
+        Self {
+            session_id: input.session_id,
+            after_event_id: input.after_event_id,
+            room_id: input.room_id,
+            limit: input.limit,
+            wait_seconds: input.wait_seconds,
+            before_event_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListHandoffsInput {
     /// `agent_room_open_session` 返回的本任务 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]

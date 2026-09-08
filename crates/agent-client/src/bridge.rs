@@ -8,7 +8,7 @@ use agent_room_bridge_local_adapter::{
 pub type BridgeToolFuture<'a> =
     Pin<Box<dyn Future<Output = Result<IpcResponse, BridgeToolFailure>> + Send + 'a>>;
 
-/// MCP 用例依赖的唯一 Bridge 端口。
+/// Agent tools use the same Bridge port across MCP, CLI and receivers.
 ///
 /// 该端口刻意不暴露 Matrix、密钥或存储细节，避免插件进程成为第二个客户端。
 pub trait BridgeToolClient: Send + Sync + 'static {
@@ -20,6 +20,11 @@ pub struct LocalBridgeToolClient {
 }
 
 impl LocalBridgeToolClient {
+    pub fn agent_cli(runtime_root: PathBuf, service: SecureStorageService) -> Self {
+        Self {
+            client: LocalBridgeClient::agent_cli(runtime_root, service),
+        }
+    }
     pub fn system(runtime_root: PathBuf) -> Self {
         Self {
             client: LocalBridgeClient::system(runtime_root),
@@ -56,7 +61,7 @@ pub struct BridgeToolFailure {
 }
 
 impl BridgeToolFailure {
-    pub(crate) fn new(
+    pub fn new(
         code: impl Into<String>,
         category: IpcErrorCategory,
         retryable: bool,

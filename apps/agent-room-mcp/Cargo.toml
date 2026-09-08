@@ -7,15 +7,24 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agent-room-agent-client.workspace = true
 agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
-rmcp.workspace = true
+axum.workspace = true
+clap.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 tokio.workspace = true
+url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

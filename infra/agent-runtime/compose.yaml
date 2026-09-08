@@ -1,0 +1,53 @@
+name: ${AGENT_ROOM_RUNTIME_NAME:-agent-room-runtime}
+
+x-runtime: &runtime
+  image: ${AGENT_ROOM_RUNTIME_IMAGE:-agent-room-runtime:local}
+  build:
+    context: ../..
+    dockerfile: infra/agent-runtime/Containerfile
+  user: '10001:10001'
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
+  environment: &environment
+    AGENT_ROOM_BRIDGE_DATA_DIR: /state/data
+    AGENT_ROOM_BRIDGE_VAULT_DIR: /state/vault
+    AGENT_ROOM_BRIDGE_VAULT_KEY_FILE: /run/agent-secrets/vault.key
+    AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE: ${AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE:?Set the owner namespace}
+  volumes:
+    - ${AGENT_ROOM_RUNTIME_STATE:?Set an absolute private state directory}:/state
+    - ${AGENT_ROOM_RUNTIME_SECRETS:?Set an absolute private secrets directory}:/run/agent-secrets:ro
+  restart: unless-stopped
+  stop_signal: SIGINT
+  stop_grace_period: 170s
+
+services:
+  bridge:
+    <<: *runtime
+    command: [agent-room-bridge]
+    environment:
+      <<: *environment
+      AGENT_ROOM_CONTROL_PLANE_URL: ${AGENT_ROOM_CONTROL_PLANE_URL:?Set the API URL}
+      AGENT_ROOM_MATRIX_BASE_URL: ${AGENT_ROOM_MATRIX_BASE_URL:?Set the Matrix URL}
+      AGENT_ROOM_OIDC_ISSUER_URL: ${AGENT_ROOM_OIDC_ISSUER_URL:?Set the OIDC issuer}
+      AGENT_ROOM_OIDC_DEVICE_CLIENT_ID: ${AGENT_ROOM_OIDC_DEVICE_CLIENT_ID:?Set the registered device client ID}
+      AGENT_ROOM_BRIDGE_DEVICE_LABEL: ${AGENT_ROOM_BRIDGE_DEVICE_LABEL:-Cloud agent runtime}
+    healthcheck:
+      test: [CMD, agent-room, doctor]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+  mcp:
+    <<: *runtime
+    command:
+      - agent-room-mcp
+      - --http
+      - 0.0.0.0:8181
+      - --public-url
+      - ${AGENT_ROOM_MCP_PUBLIC_URL:?Set the HTTPS /mcp URL}
+      - --token-file
+      - /run/agent-secrets/mcp.token
+    depends_on: [bridge]
+    ports: ['127.0.0.1:${AGENT_ROOM_MCP_PORT:-8181}:8181']

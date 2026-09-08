@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::{LocalSecretStore, SecretStoreFailure};
 use agent_room_bridge_core::ipc::IpcInstallationId;
 use agent_room_bridge_ipc::{IpcClientCredentials, IpcSharedSecret};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use keyring::{Entry, Error as KeyringError};
 
 pub const IPC_INSTALLATION_ID_ACCOUNT: &str = "bridge-ipc-installation-id-v1";
 pub const IPC_SHARED_SECRET_ACCOUNT: &str = "bridge-ipc-shared-secret-v1";
@@ -22,26 +22,24 @@ trait CredentialBackend: Send + Sync {
     fn read(&self, account: &str) -> Result<Option<String>, IpcCredentialFailure>;
 }
 
-struct KeyringCredentialBackend {
-    service: String,
+struct ConfiguredCredentialBackend {
+    store: LocalSecretStore,
 }
 
-impl KeyringCredentialBackend {
+impl ConfiguredCredentialBackend {
     fn new(service: impl Into<String>) -> Self {
         Self {
-            service: service.into(),
+            store: LocalSecretStore::from_environment(service),
         }
     }
 }
 
-impl CredentialBackend for KeyringCredentialBackend {
+impl CredentialBackend for ConfiguredCredentialBackend {
     fn read(&self, account: &str) -> Result<Option<String>, IpcCredentialFailure> {
-        let entry = Entry::new(&self.service, account).map_err(|_| unavailable())?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(_) => Err(unavailable()),
-        }
+        self.store.read(account).map_err(|failure| match failure {
+            SecretStoreFailure::Corrupt => corrupt(),
+            SecretStoreFailure::Configuration | SecretStoreFailure::Unavailable => unavailable(),
+        })
     }
 }
 
@@ -52,7 +50,7 @@ pub struct OsIpcCredentialReader {
 impl OsIpcCredentialReader {
     pub fn system(service: impl Into<String>) -> Self {
         Self {
-            backend: Arc::new(KeyringCredentialBackend::new(service)),
+            backend: Arc::new(ConfiguredCredentialBackend::new(service)),
         }
     }
 
