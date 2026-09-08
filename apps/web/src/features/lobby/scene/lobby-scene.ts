@@ -1,9 +1,11 @@
 import type { SceneFrame } from './scene-character';
+import type { LobbyAgentStatus } from '../domain/lobby';
 import type { LobbySceneProjection, LobbyZoneId } from '@/features/lobby/domain/scene-projection';
 
 export type LobbySceneLabels = {
   readonly canvas: string;
   readonly self?: string;
+  readonly statuses?: Readonly<Record<LobbyAgentStatus | 'present', string>>;
   readonly zones: Readonly<Record<LobbyZoneId, string>>;
 };
 
@@ -24,6 +26,7 @@ export type LobbySceneHandle = {
   destroy(): void;
   resetViewport(): void;
   focusAgent?(agentId: string): void;
+  focusArea?(x: number, y: number): void;
   update(projection: LobbySceneProjection): void;
   zoomBy(factor: number): void;
 };

@@ -168,12 +168,13 @@ test('SVG 降级保留人类、气泡和成员增量位置', async ({ page }) =>
   const newAgent = await page.evaluate(() =>
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.joinAgent(),
   );
-  await expect(page.getByRole('option')).toHaveCount(25);
+  // Three offline members stay in the roster and do not occupy the floor.
+  await expect(page.getByRole('option')).toHaveCount(22);
   await expect(character).toHaveAttribute('transform', position);
   await page.evaluate((id) => {
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.leaveAgent(id);
   }, newAgent);
-  await expect(page.getByRole('option')).toHaveCount(24);
+  await expect(page.getByRole('option')).toHaveCount(21);
   await expect(character).toHaveAttribute('transform', position);
   await expect(page.locator('[data-character-id="human:@fixture:matrix.test"]')).toBeVisible();
   await page.evaluate(() =>

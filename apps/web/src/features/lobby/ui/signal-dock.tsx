@@ -28,6 +28,7 @@ export function SignalDock({
     <nav aria-label={t('lobby.dock.label')} className="signal-dock">
       <div className="signal-dock__modes">
         <Button
+          aria-label={t('lobby.dock.scene')}
           aria-pressed={mode === 'scene'}
           disabled={!sceneAvailable}
           icon={<Radar aria-hidden="true" />}
@@ -37,9 +38,10 @@ export function SignalDock({
           size="compact"
           tone={mode === 'scene' ? 'primary' : 'quiet'}
         >
-          {t('lobby.dock.scene')}
+          <span className="signal-dock__mode-label">{t('lobby.dock.scene')}</span>
         </Button>
         <Button
+          aria-label={t('lobby.dock.list')}
           aria-pressed={mode === 'list'}
           icon={<List aria-hidden="true" />}
           onClick={() => {
@@ -48,7 +50,7 @@ export function SignalDock({
           size="compact"
           tone={mode === 'list' ? 'network' : 'quiet'}
         >
-          {t('lobby.dock.list')}
+          <span className="signal-dock__mode-label">{t('lobby.dock.list')}</span>
         </Button>
       </div>
       {mode === 'scene' ? (

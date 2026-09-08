@@ -5,6 +5,23 @@ import type { LobbyGateway, LobbyReadResult } from '@/features/lobby/domain/lobb
 import { err, ok } from '@/shared/result';
 
 describe('LobbyRoomStore', () => {
+  it('安静房间仍推进过期时钟，取消订阅后停止定时读取', () => {
+    vi.useFakeTimers();
+    try {
+      const read = vi.fn(() => ok({ ...room(), observedAtUnixMs: Date.now() }));
+      const store = new LobbyRoomStore({ read, subscribe: () => () => undefined }, '!studio:test');
+      const detach = store.subscribe(() => undefined);
+      const first = store.getSnapshot();
+      vi.advanceTimersByTime(5_000);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(store.getSnapshot()).not.toEqual(first);
+      detach();
+      vi.advanceTimersByTime(30_000);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('首个订阅者建立单一源订阅，最后一个离开时释放', () => {
     const detach = vi.fn();
     const gateway = gatewayWith(ok(room()), detach);
@@ -40,7 +57,7 @@ describe('LobbyRoomStore', () => {
     };
     const store = new LobbyRoomStore(gateway, '!public:agent-room.test');
     const listener = vi.fn();
-    store.subscribe(listener);
+    const detach = store.subscribe(listener);
 
     expect(store.getSnapshot()).toEqual({
       code: 'lobby.matrix_unavailable',
@@ -54,6 +71,7 @@ describe('LobbyRoomStore', () => {
     expect(read).toHaveBeenCalledTimes(3);
     expect(listener).toHaveBeenCalledTimes(3);
     expect(store.getSnapshot()).toEqual({ kind: 'ready', room: room() });
+    detach();
   });
 });
 

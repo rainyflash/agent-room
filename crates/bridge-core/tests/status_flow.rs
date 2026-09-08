@@ -195,6 +195,73 @@ async fn 首次发布后重复调用不会制造续租风暴() {
 }
 
 #[tokio::test]
+async fn 实际收件才更新接待时间且后台续租不会伪造接待() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let room = target(AgentStatusVisibility::Coarse);
+    let intent = AgentStatusIntent::new(HostAgentState::Available, None);
+    service
+        .publish_if_due(&room, &intent, 0)
+        .await
+        .expect("连接状态发布成功");
+    fixture.clock.set(time(2_000));
+    let receiving = intent.with_last_polled_at(Some(time(2_000)));
+    service
+        .publish_if_due(&room, &receiving, 0)
+        .await
+        .expect("实际收件发布成功");
+    fixture.clock.set(time(3_000));
+    service
+        .publish_if_due(
+            &room,
+            &receiving.clone().with_last_polled_at(Some(time(3_000))),
+            0,
+        )
+        .await
+        .expect("频繁收件受节流保护");
+    fixture.clock.set(time(120_000));
+    service
+        .publish_if_due(&room, &receiving, 0)
+        .await
+        .expect("后台续租成功");
+    let events = fixture.publisher.events.lock().expect("事件记录锁可用");
+    assert_eq!(events.len(), 3);
+    assert!(events[0].1.content().get("lastPolledAt").is_none());
+    assert_eq!(
+        events[1].1.content()["lastPolledAt"],
+        "1970-01-01T00:00:02.000Z"
+    );
+    assert_eq!(
+        events[2].1.content()["lastPolledAt"],
+        events[1].1.content()["lastPolledAt"]
+    );
+    assert_protocol_event(events[2].1.content());
+}
+
+#[tokio::test]
+async fn 拒绝未来的接待证据() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let intent = AgentStatusIntent::new(HostAgentState::Available, None)
+        .with_last_polled_at(Some(time(2_000)));
+    let result = service
+        .publish_if_due(&target(AgentStatusVisibility::Coarse), &intent, 0)
+        .await;
+    assert_eq!(
+        result.expect_err("未来时间必须被拒绝").kind(),
+        StatusPublicationFailureKind::InvalidIntent
+    );
+    assert!(
+        fixture
+            .publisher
+            .events
+            .lock()
+            .expect("事件记录锁可用")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn 状态与可见性变化立即发布而详情变化等待续租() {
     let fixture = fixture();
     let mut service = fixture.service();

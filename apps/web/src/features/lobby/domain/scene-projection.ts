@@ -1,7 +1,13 @@
-import { allocateRoomLayout, roamingRadius, type RoomLayout } from './room-layout';
+import {
+  allocateRoomLayout,
+  floorForOccupants,
+  roamingRadius,
+  type RoomLayout,
+} from './room-layout';
 import type { RoomHuman } from './room-participants';
 import { projectFloorPoint, type FloorPoint } from './room-floor';
 import type { LobbyAgent, LobbyAgentStatus, LobbyRoom } from './lobby';
+import { agentAttendance } from './agent-attendance';
 
 export const lobbyZoneIds = ['active', 'attention', 'available'] as const;
 
@@ -58,17 +64,25 @@ export type LobbyViewport = LobbyBounds & {
   readonly zoom: number;
 };
 
-const WORLD: LobbyWorld = Object.freeze({ height: 1_500, width: 2_600 });
-
-const ZONES: Readonly<Record<LobbyZoneId, LobbyZoneProjection>> = Object.freeze({
-  active: Object.freeze({ height: 520, id: 'active', width: 970, x: 100, y: 110 }),
-  attention: Object.freeze({ height: 640, id: 'attention', width: 460, x: 1130, y: 180 }),
-  available: Object.freeze({ height: 270, id: 'available', width: 970, x: 130, y: 670 }),
-});
+function zonesForWorld(world: LobbyWorld): Readonly<Record<LobbyZoneId, LobbyZoneProjection>> {
+  const width = world.width - 380;
+  const height = world.height - 420;
+  return {
+    active: { id: 'active', x: 180, y: 240, width: width * 0.48, height: height * 0.48 },
+    attention: {
+      id: 'attention',
+      x: 180 + width * 0.52,
+      y: 240,
+      width: width * 0.48,
+      height: height * 0.48,
+    },
+    available: { id: 'available', x: 180, y: 260 + height * 0.52, width, height: height * 0.48 },
+  };
+}
 
 const ZONE_BY_STATUS: Readonly<Record<LobbyAgentStatus, LobbyZoneId>> = Object.freeze({
   blocked: 'attention',
-  completed: 'active',
+  completed: 'available',
   idle: 'available',
   offline: 'available',
   waiting_input: 'attention',
@@ -81,18 +95,24 @@ export function projectLobbyScene(
   options: { readonly previous?: RoomLayout; readonly humans?: readonly RoomHuman[] } = {},
 ): LobbySceneProjection & { readonly layout: RoomLayout } {
   const humans = options.humans ?? [];
+  const presentAgents = room.agents.filter(
+    (agent) => agentAttendance(agent, room.observedAtUnixMs) !== 'away',
+  );
+  const floorPlan = floorForOccupants(presentAgents.length + humans.length, options.previous);
+  const world = Object.freeze({ width: floorPlan.width, height: floorPlan.depth });
+  const zones = zonesForWorld(world);
   const requests = [
-    ...room.agents.map((agent) => ({
+    ...presentAgents.map((agent) => ({
       id: agent.agentId,
-      preferred: ZONES[ZONE_BY_STATUS[agent.status]],
+      preferred: zones[ZONE_BY_STATUS[agent.status]],
     })),
     ...humans.map((human) => ({
       id: `human:${human.matrixUserId}`,
-      preferred: { x: 1000, y: 830, width: 600, height: 100 },
+      preferred: { x: world.width / 2 - 100, y: world.height - 320, width: 200, height: 220 },
     })),
   ];
-  const layout = allocateRoomLayout(requests, options.previous);
-  const nodes = room.agents
+  const layout = allocateRoomLayout(requests, options.previous, floorPlan);
+  const nodes = presentAgents
     .toSorted((a, b) => a.agentId.localeCompare(b.agentId))
     .flatMap((agent): LobbyAgentNodeProjection[] => {
       const floor = layout.get(agent.agentId);
@@ -100,9 +120,14 @@ export function projectLobbyScene(
       return [
         Object.freeze({
           ...agent,
-          radius: 26,
+          reportedStatus: agent.reportedStatus ?? agent.status,
+          status:
+            agentAttendance(agent, room.observedAtUnixMs) === 'reconnecting'
+              ? 'offline'
+              : agent.status,
+          radius: presentAgents.length <= 24 ? 34 : 26,
           floorPosition: floor,
-          roamingRadius: roamingRadius(floor, layout),
+          roamingRadius: roamingRadius(),
           ...projectFloorPoint(floor),
           zoneId: ZONE_BY_STATUS[agent.status],
         }),
@@ -117,7 +142,7 @@ export function projectLobbyScene(
           Object.freeze({
             ...human,
             characterId,
-            radius: 28,
+            radius: presentAgents.length <= 24 ? 34 : 28,
             floorPosition: floor,
             ...projectFloorPoint(floor),
           }),
@@ -134,8 +159,8 @@ export function projectLobbyScene(
       ? selectedAgentId
       : null,
     ...(room.topic === undefined ? {} : { topic: room.topic }),
-    world: WORLD,
-    zones: Object.freeze(lobbyZoneIds.map((zoneId) => ZONES[zoneId])),
+    world,
+    zones: Object.freeze(lobbyZoneIds.map((zoneId) => Object.freeze(zones[zoneId]))),
   });
 }
 
@@ -156,7 +181,7 @@ export function visibleLobbyNodes(
 }
 
 export function sceneDetailForZoom(zoom: number): LobbySceneDetail {
-  if (!Number.isFinite(zoom) || zoom < 0.68) {
+  if (!Number.isFinite(zoom) || zoom < 0.4) {
     return 'distant';
   }
   return zoom < 1.18 ? 'medium' : 'near';

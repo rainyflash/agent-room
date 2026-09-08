@@ -45,116 +45,123 @@ test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async 
   });
 });
 
-test('200 节点场景交互保持在有界帧预算内', async ({ page }, testInfo) => {
-  await installGraphicsProbe(page);
-  const developerTools = await page.context().newCDPSession(page);
-  await developerTools.send('Performance.enable');
-  await page.setViewportSize({ height: 900, width: 1_440 });
-  await page.goto(fixturePath);
-  const canvas = page.locator('.lobby-scene__canvas');
-  await expect(canvas).toBeVisible();
+for (const agentCount of [200, 1000]) {
+  test(`${String(agentCount)} 节点场景交互保持在有界帧预算内`, async ({ page }, testInfo) => {
+    await installGraphicsProbe(page);
+    const developerTools = await page.context().newCDPSession(page);
+    await developerTools.send('Performance.enable');
+    await page.setViewportSize({ height: 900, width: 1_440 });
+    await page.goto(`/e2e/fixtures/lobby-scene.html?agents=${String(agentCount)}`);
+    const canvas = page.locator('.lobby-scene__canvas');
+    await expect(canvas).toBeVisible();
+    // Measure the individual-character view as well as testing the initial crowd overview.
+    await page.locator('.room-crowd-group').first().click();
+    await expect(page.locator('.room-crowd-group')).toHaveCount(0);
 
-  const sceneHost = page.locator('.lobby-scene__pixi');
-  const interactionSamples: SceneInteractionSample[] = [];
-  await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
-  await canvas.hover();
-  const graphicsBefore = await graphicsSample(page);
-  const interactionProbe = await createSceneInteractionProbe(page);
-  try {
-    for (let index = 0; index < 72; index += 1) {
-      const [sample] = await Promise.all([
-        interactionProbe.evaluate((probe, wheelIndex) => probe.waitForSample(wheelIndex), index),
-        page.mouse.wheel(0, index % 12 < 6 ? -5 : 5),
-      ]);
-      expect(sample.wheelIndex).toBe(index);
-      interactionSamples.push(sample);
-    }
-  } finally {
+    const sceneHost = page.locator('.lobby-scene__pixi');
+    const interactionSamples: SceneInteractionSample[] = [];
+    await expect(sceneHost).toHaveAttribute('data-agent-room-render-sequence', /^\d+$/u);
+    await canvas.hover();
+    const graphicsBefore = await graphicsSample(page);
+    const interactionProbe = await createSceneInteractionProbe(page);
     try {
-      await interactionProbe.evaluate((probe) => {
-        probe.dispose();
-      });
+      for (let index = 0; index < 72; index += 1) {
+        const [sample] = await Promise.all([
+          interactionProbe.evaluate((probe, wheelIndex) => probe.waitForSample(wheelIndex), index),
+          page.mouse.wheel(0, index % 12 < 6 ? -5 : 5),
+        ]);
+        expect(sample.wheelIndex).toBe(index);
+        interactionSamples.push(sample);
+      }
     } finally {
-      await interactionProbe.dispose();
+      try {
+        await interactionProbe.evaluate((probe) => {
+          probe.dispose();
+        });
+      } finally {
+        await interactionProbe.dispose();
+      }
     }
-  }
-  expect(interactionSamples).toHaveLength(72);
-  interactionSamples.splice(0, 6);
+    expect(interactionSamples).toHaveLength(72);
+    interactionSamples.splice(0, 6);
 
-  const renderDurations = interactionSamples
-    .map((sample) => sample.renderMilliseconds)
-    .toSorted((left, right) => left - right);
-  const scheduleDurations = interactionSamples
-    .map((sample) => sample.scheduleMilliseconds)
-    .toSorted((left, right) => left - right);
-  const updateDurations = interactionSamples
-    .map((sample) => sample.updateMilliseconds)
-    .toSorted((left, right) => left - right);
-  const renderMedian = percentile(renderDurations, 0.5);
-  const renderP95 = percentile(renderDurations, 0.95);
-  const scheduleMedian = percentile(scheduleDurations, 0.5);
-  const scheduleP95 = percentile(scheduleDurations, 0.95);
-  const updateMedian = percentile(updateDurations, 0.5);
-  const updateP95 = percentile(updateDurations, 0.95);
-  const runtimeBudget = await collectRuntimeBudget(page, developerTools);
-  const graphicsAfter = await graphicsSample(page);
-  const graphicsDrawCallsPerFrame =
-    (graphicsAfter.drawCalls - graphicsBefore.drawCalls) /
-    (graphicsAfter.frames - graphicsBefore.frames);
-  const graphicsTrianglesPerFrame =
-    (graphicsAfter.triangles - graphicsBefore.triangles) /
-    (graphicsAfter.frames - graphicsBefore.frames);
-  await testInfo.attach('frame-budget.json', {
-    body: Buffer.from(
-      JSON.stringify({
+    const renderDurations = interactionSamples
+      .map((sample) => sample.renderMilliseconds)
+      .toSorted((left, right) => left - right);
+    const scheduleDurations = interactionSamples
+      .map((sample) => sample.scheduleMilliseconds)
+      .toSorted((left, right) => left - right);
+    const updateDurations = interactionSamples
+      .map((sample) => sample.updateMilliseconds)
+      .toSorted((left, right) => left - right);
+    const renderMedian = percentile(renderDurations, 0.5);
+    const renderP95 = percentile(renderDurations, 0.95);
+    const scheduleMedian = percentile(scheduleDurations, 0.5);
+    const scheduleP95 = percentile(scheduleDurations, 0.95);
+    const updateMedian = percentile(updateDurations, 0.5);
+    const updateP95 = percentile(updateDurations, 0.95);
+    const runtimeBudget = await collectRuntimeBudget(page, developerTools);
+    const graphicsAfter = await graphicsSample(page);
+    const graphicsDrawCallsPerFrame =
+      (graphicsAfter.drawCalls - graphicsBefore.drawCalls) /
+      (graphicsAfter.frames - graphicsBefore.frames);
+    const graphicsTrianglesPerFrame =
+      (graphicsAfter.triangles - graphicsBefore.triangles) /
+      (graphicsAfter.frames - graphicsBefore.frames);
+    await testInfo.attach('frame-budget.json', {
+      body: Buffer.from(
+        JSON.stringify({
+          renderMedianMilliseconds: renderMedian,
+          renderP95Milliseconds: renderP95,
+          scheduleMedianMilliseconds: scheduleMedian,
+          scheduleP95Milliseconds: scheduleP95,
+          updateMedianMilliseconds: updateMedian,
+          updateP95Milliseconds: updateP95,
+          graphicsDrawCallsPerFrame,
+          graphicsTrianglesPerFrame,
+          ...runtimeBudget,
+        }),
+      ),
+      contentType: 'application/json',
+    });
+    testInfo.annotations.push({
+      description: `update median=${updateMedian.toFixed(2)}ms, update p95=${updateP95.toFixed(2)}ms, render median=${renderMedian.toFixed(2)}ms, render p95=${renderP95.toFixed(2)}ms, schedule median=${scheduleMedian.toFixed(2)}ms, schedule p95=${scheduleP95.toFixed(2)}ms`,
+      type: 'performance',
+    });
+    expect(updateMedian).toBeLessThanOrEqual(22);
+    expect(updateP95).toBeLessThanOrEqual(40);
+    expect(graphicsDrawCallsPerFrame).toBeGreaterThan(0);
+    expect(graphicsDrawCallsPerFrame).toBeLessThanOrEqual(128);
+    expect(graphicsTrianglesPerFrame).toBeGreaterThan(0);
+    expect(graphicsTrianglesPerFrame).toBeLessThanOrEqual(20_000);
+    if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
+      expect(scheduleMedian).toBeLessThanOrEqual(22);
+      expect(scheduleP95).toBeLessThanOrEqual(40);
+    }
+    expect(runtimeBudget.textureCount).toBeLessThanOrEqual(256);
+    expect(runtimeBudget.renderedNodes).toBeLessThanOrEqual(agentCount);
+    expect(runtimeBudget.renderedNodes).toBeGreaterThan(0);
+    expect(runtimeBudget.messageNodes).toBeLessThanOrEqual(200);
+    if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
+      expect(runtimeBudget.javascriptHeapBytes).toBeLessThanOrEqual(256 * 1_024 * 1_024);
+      expect(runtimeBudget.resourceCount).toBeLessThanOrEqual(80);
+      expect(runtimeBudget.decodedResourceBytes).toBeLessThanOrEqual(12 * 1_024 * 1_024);
+    }
+    expect(runtimeBudget.externalImageResources).toBe(0);
+    if (agentCount === 200)
+      await writeCapacityReport({
+        medianMilliseconds: scheduleMedian,
+        p95Milliseconds: scheduleP95,
         renderMedianMilliseconds: renderMedian,
         renderP95Milliseconds: renderP95,
-        scheduleMedianMilliseconds: scheduleMedian,
-        scheduleP95Milliseconds: scheduleP95,
         updateMedianMilliseconds: updateMedian,
         updateP95Milliseconds: updateP95,
         graphicsDrawCallsPerFrame,
         graphicsTrianglesPerFrame,
         ...runtimeBudget,
-      }),
-    ),
-    contentType: 'application/json',
+      });
   });
-  testInfo.annotations.push({
-    description: `update median=${updateMedian.toFixed(2)}ms, update p95=${updateP95.toFixed(2)}ms, render median=${renderMedian.toFixed(2)}ms, render p95=${renderP95.toFixed(2)}ms, schedule median=${scheduleMedian.toFixed(2)}ms, schedule p95=${scheduleP95.toFixed(2)}ms`,
-    type: 'performance',
-  });
-  expect(updateMedian).toBeLessThanOrEqual(22);
-  expect(updateP95).toBeLessThanOrEqual(40);
-  expect(graphicsDrawCallsPerFrame).toBeGreaterThan(0);
-  expect(graphicsDrawCallsPerFrame).toBeLessThanOrEqual(128);
-  expect(graphicsTrianglesPerFrame).toBeGreaterThan(0);
-  expect(graphicsTrianglesPerFrame).toBeLessThanOrEqual(20_000);
-  if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
-    expect(scheduleMedian).toBeLessThanOrEqual(22);
-    expect(scheduleP95).toBeLessThanOrEqual(40);
-  }
-  expect(runtimeBudget.textureCount).toBeLessThanOrEqual(256);
-  expect(runtimeBudget.renderedNodes).toBeLessThanOrEqual(200);
-  expect(runtimeBudget.messageNodes).toBeLessThanOrEqual(200);
-  if (process.env.AGENT_ROOM_CAPACITY_REPORT === '1') {
-    expect(runtimeBudget.javascriptHeapBytes).toBeLessThanOrEqual(256 * 1_024 * 1_024);
-    expect(runtimeBudget.resourceCount).toBeLessThanOrEqual(80);
-    expect(runtimeBudget.decodedResourceBytes).toBeLessThanOrEqual(12 * 1_024 * 1_024);
-  }
-  expect(runtimeBudget.externalImageResources).toBe(0);
-  await writeCapacityReport({
-    medianMilliseconds: scheduleMedian,
-    p95Milliseconds: scheduleP95,
-    renderMedianMilliseconds: renderMedian,
-    renderP95Milliseconds: renderP95,
-    updateMedianMilliseconds: updateMedian,
-    updateP95Milliseconds: updateP95,
-    graphicsDrawCallsPerFrame,
-    graphicsTrianglesPerFrame,
-    ...runtimeBudget,
-  });
-});
+}
 
 test('手机保留游戏房间，减少动画可暂停角色并手动切换列表', async ({ page }) => {
   const failures = collectPageFailures(page);

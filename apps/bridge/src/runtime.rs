@@ -174,6 +174,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     ));
     let request_handler: Arc<dyn BridgeIpcRequestHandler> = match agent_session.as_ref() {
         Some(runtime) => Arc::new(FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            crate::ipc::AgentRuntimeConsumer::Desktop,
             status.clone(),
             runtime.state.clone(),
             runtime.previews.clone(),

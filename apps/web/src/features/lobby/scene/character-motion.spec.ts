@@ -6,6 +6,7 @@ import {
   nearbyWalkableFloor,
   projectFloorPoint,
   roomFurnishings,
+  unprojectFloorPoint,
 } from '../domain/room-floor';
 import { projectLobbyScene } from '../domain/scene-projection';
 import { characterPose } from './character-motion';
@@ -25,6 +26,7 @@ const agents: readonly LobbyAgent[] = Array.from({ length: 200 }, (_, index) => 
   matrixUserId: `@agent-${String(index)}:test`,
   status: statuses[index % statuses.length] ?? 'idle',
   statusExpiresAtUnixMs: 300_000,
+  lastPolledAtUnixMs: 0,
   trust: 'unknown',
   visibility: 'coarse',
 }));
@@ -34,10 +36,17 @@ const scene = projectLobbyScene(
 );
 
 describe('角色活动与家具边界', () => {
+  it('未接待和已完成的人物不持续假装执行任务', () => {
+    for (const node of sceneCharacters(scene)) {
+      const unknown = { ...node, reception: 'unknown' as const };
+      expect(characterPose(unknown, 4, true).moving).toBe(false);
+      expect(characterPose({ ...node, status: 'completed' }, 4, true).moving).toBe(false);
+    }
+  });
   it('所有角色出生在可行走的地面，家具内部会寻找安全位置', () => {
     for (const node of sceneCharacters(scene)) {
       expect(node.floorPosition).toBeDefined();
-      expect(isWalkableFloor(node.floorPosition ?? { x: 0, y: 0 })).toBe(true);
+      expect(isWalkableFloor(node.floorPosition ?? { x: 0, y: 0 }, 18, node.floor)).toBe(true);
     }
     for (const furniture of roomFurnishings) {
       const center = { x: furniture.x + furniture.width / 2, y: furniture.y + furniture.depth / 2 };
@@ -49,12 +58,19 @@ describe('角色活动与家具边界', () => {
 
   it('走动覆盖完整循环且不会穿过家具或走出房间', () => {
     let walking = 0;
-    for (const node of sceneCharacters(scene)) {
+    const roomy = projectLobbyScene(
+      {
+        agents: agents.slice(0, 6).map((agent) => ({ ...agent, status: 'idle' })),
+        name: '工作室',
+        roomId: '!studio:test',
+        observedAtUnixMs: 0,
+      },
+      null,
+    );
+    for (const node of [...sceneCharacters(scene), ...sceneCharacters(roomy)]) {
       for (let time = 0; time < 36; time += 0.5) {
         const pose = characterPose(node, time, true);
-        const floorX = ((pose.x - 1100) / 0.82 + (pose.y - 200) / 0.38) / 2;
-        const floorY = ((pose.y - 200) / 0.38 - (pose.x - 1100) / 0.82) / 2;
-        expect(isWalkableFloor({ x: floorX, y: floorY }, 17.9)).toBe(true);
+        expect(isWalkableFloor(unprojectFloorPoint(pose), 17.9, node.floor)).toBe(true);
         if (pose.moving) walking += 1;
       }
     }

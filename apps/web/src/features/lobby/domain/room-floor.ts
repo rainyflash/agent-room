@@ -1,45 +1,45 @@
 export type FloorPoint = { readonly x: number; readonly y: number };
+export type RoomFloor = { readonly width: number; readonly depth: number };
 export type RoomFurnishing = FloorPoint & {
-  readonly kind: 'desk' | 'table' | 'sofa' | 'plant' | 'shelf' | 'server';
+  readonly kind: 'desk' | 'table' | 'sofa' | 'plant';
   readonly width: number;
   readonly depth: number;
 };
 
-export const roomFloor = Object.freeze({ width: 1700, depth: 1000 });
+export const roomFloor: RoomFloor = Object.freeze({ width: 1536, depth: 1024 });
 
 export function projectFloorPoint(point: FloorPoint, elevation = 0): FloorPoint {
-  return {
-    x: 1100 + (point.x - point.y) * 0.82,
-    y: 200 + (point.x + point.y) * 0.38 - elevation,
-  };
+  return { x: point.x, y: point.y - elevation };
 }
 
-export const roomFurnishings: readonly RoomFurnishing[] = Object.freeze([
-  ...[210, 540, 870].flatMap((x) =>
-    [180, 440].map((y) => ({ kind: 'desk' as const, x, y, width: 160, depth: 84 })),
-  ),
-  { kind: 'table', x: 1210, y: 360, width: 290, depth: 180 },
-  { kind: 'sofa', x: 360, y: 790, width: 250, depth: 84 },
-  { kind: 'table', x: 420, y: 680, width: 160, depth: 70 },
-  { kind: 'shelf', x: 70, y: 45, width: 280, depth: 50 },
-  { kind: 'server', x: 1210, y: 45, width: 100, depth: 70 },
-  { kind: 'server', x: 1330, y: 45, width: 100, depth: 70 },
-  ...[
-    [70, 870],
-    [1570, 80],
-    [1530, 760],
-    [1040, 690],
-    [70, 370],
-  ].map(([x = 0, y = 0]) => ({ kind: 'plant' as const, x, y, width: 60, depth: 60 })),
-]);
+export function unprojectFloorPoint(point: FloorPoint): FloorPoint {
+  return { ...point };
+}
 
-export function isWalkableFloor(point: FloorPoint, margin = 18): boolean {
+export function furnishingsForFloor(floor: RoomFloor): readonly RoomFurnishing[] {
+  return [
+    ...[0.23, 0.5, 0.77].map((portion): RoomFurnishing => ({
+      kind: 'desk',
+      x: floor.width * portion - 82,
+      y: 64,
+      width: 164,
+      depth: 90,
+    })),
+    { kind: 'table', x: floor.width - 156, y: floor.depth * 0.5 - 72, width: 112, depth: 144 },
+    { kind: 'sofa', x: 44, y: floor.depth * 0.5 - 72, width: 58, depth: 144 },
+    { kind: 'plant', x: floor.width - 100, y: 70, width: 42, depth: 42 },
+  ];
+}
+
+export const roomFurnishings = furnishingsForFloor(roomFloor);
+
+export function isWalkableFloor(point: FloorPoint, margin = 18, floor = roomFloor): boolean {
   return (
-    point.x >= 60 &&
-    point.x <= roomFloor.width - 60 &&
-    point.y >= 80 &&
-    point.y <= roomFloor.depth - 55 &&
-    !roomFurnishings.some(
+    point.x >= 140 &&
+    point.x <= floor.width - 180 &&
+    point.y >= 220 &&
+    point.y <= floor.depth - 100 &&
+    !furnishingsForFloor(floor).some(
       (item) =>
         point.x > item.x - margin &&
         point.x < item.x + item.width + margin &&
@@ -50,18 +50,10 @@ export function isWalkableFloor(point: FloorPoint, margin = 18): boolean {
 }
 
 export function nearbyWalkableFloor(point: FloorPoint): FloorPoint {
-  if (isWalkableFloor(point)) return point;
-  for (let distance = 24; distance <= 300; distance += 24) {
-    for (let direction = 0; direction < 8; direction += 1) {
-      const angle = (direction * Math.PI) / 4;
-      const candidate = {
-        x: point.x + Math.cos(angle) * distance,
-        y: point.y + Math.sin(angle) * distance,
-      };
-      if (isWalkableFloor(candidate)) return candidate;
-    }
-  }
-  return { x: 1080, y: 900 };
+  return {
+    x: Math.max(160, Math.min(roomFloor.width - 200, point.x)),
+    y: Math.max(240, Math.min(roomFloor.depth - 120, point.y)),
+  };
 }
 
 export function characterSeed(value: string): number {

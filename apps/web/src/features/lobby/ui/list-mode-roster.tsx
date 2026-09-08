@@ -5,10 +5,13 @@ import { useTranslation } from 'react-i18next';
 
 import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
+import { AgentPortrait } from './room-illustration';
+import { agentAttendance } from '../domain/agent-attendance';
 
 export type ListModeRosterProps = {
   readonly variant?: 'full' | 'compact';
   readonly agents: readonly LobbyAgent[];
+  readonly observedAtUnixMs: number;
   readonly onSelectAgent: (agentId: string) => void;
   readonly selectedAgentId: string | null;
   readonly selfAgentId?: string;
@@ -29,7 +32,7 @@ const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freez
 
 export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterProps>(
   function ListModeRoster(
-    { agents, onSelectAgent, selectedAgentId, selfAgentId, variant = 'full' },
+    { agents, observedAtUnixMs, onSelectAgent, selectedAgentId, selfAgentId, variant = 'full' },
     forwardedRef,
   ) {
     const { t } = useTranslation();
@@ -132,6 +135,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   type="button"
                 >
                   <span className={`roster-agent__signal roster-agent__signal--${agent.status}`}>
+                    <AgentPortrait id={agent.agentId} />
                     <StatusMark
                       label={t(`lobby.status.${agent.status}`)}
                       tone={STATUS_TONE[agent.status]}
@@ -144,7 +148,13 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                     </strong>
                     <span>
                       {variant === 'compact'
-                        ? t(`lobby.status.${agent.status}`)
+                        ? t(
+                            agentAttendance(agent, observedAtUnixMs) === 'away'
+                              ? 'studio.awayMember'
+                              : agentAttendance(agent, observedAtUnixMs) === 'reconnecting'
+                                ? 'studio.reception.reconnecting'
+                                : `lobby.status.${agent.status}`,
+                          )
                         : agent.matrixUserId}
                     </span>
                   </span>

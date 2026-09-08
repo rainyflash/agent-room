@@ -1,4 +1,5 @@
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
+import type { LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 
 /** 仅由隔离的浏览器测试入口提供，生产应用不注册此接口。 */
 export type LobbyFixtureControls = {
@@ -13,6 +14,8 @@ export type LobbyFixtureControls = {
   redact(messageId: string): void;
   joinAgent(): string;
   leaveAgent(agentId: string): void;
+  setAgentStatus(agentId: string, status: LobbyAgentStatus): void;
+  advancePresenceClock(elapsedMs: number): void;
 };
 export type LobbyFixtureWindow = Window &
   typeof globalThis & {

@@ -6,10 +6,16 @@ export function filterLobbyAgents(
   status: LobbyAgentStatus | 'all',
 ): readonly LobbyAgent[] {
   const normalized = query.trim().toLocaleLowerCase();
-  return agents.filter(
-    (agent) =>
-      (status === 'all' || agent.status === status) &&
-      (agent.displayName.toLocaleLowerCase().includes(normalized) ||
-        agent.matrixUserId.toLocaleLowerCase().includes(normalized)),
-  );
+  return agents
+    .filter(
+      (agent) =>
+        (status === 'all' || agent.status === status) &&
+        (agent.displayName.toLocaleLowerCase().includes(normalized) ||
+          agent.matrixUserId.toLocaleLowerCase().includes(normalized)),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(left.status === 'offline') - Number(right.status === 'offline') ||
+        left.displayName.localeCompare(right.displayName),
+    );
 }

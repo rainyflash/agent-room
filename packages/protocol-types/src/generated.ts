@@ -30,6 +30,7 @@ export type AgentStatusEvent = {
   readonly createdAt: string;
   readonly eventType: "io.github.rainyflash.agentroom.agent.status.v1";
   readonly id: string;
+  readonly lastPolledAt?: string;
   readonly leaseExpiresAt: string;
   readonly progress?: number;
   readonly schemaVersion: "1.0";

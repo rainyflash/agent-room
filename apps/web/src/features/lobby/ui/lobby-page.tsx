@@ -16,6 +16,7 @@ import {
 } from '@/features/messages/ui/room-messages-context';
 import { projectRoomSpeech } from '@/features/lobby/domain/room-speech';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
+import { attendanceCounts } from '@/features/lobby/domain/agent-attendance';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
@@ -110,14 +111,14 @@ function ReadyLobby({
   const projection = useMemo(
     () => ({
       ...scene,
-      selectedAgentId: room.agents.some((agent) => agent.agentId === selectedAgentId)
+      selectedAgentId: scene.nodes.some((agent) => agent.agentId === selectedAgentId)
         ? selectedAgentId
         : null,
     }),
-    [scene, room.agents, selectedAgentId],
+    [scene, selectedAgentId],
   );
-  const selectedAgent =
-    projection.nodes.find((agent) => agent.agentId === projection.selectedAgentId) ?? null;
+  const selectedAgent = room.agents.find((agent) => agent.agentId === selectedAgentId) ?? null;
+  const attendance = attendanceCounts(room.agents, room.observedAtUnixMs);
   const activeView = selectedDirectSessionId !== null && view === 'space' ? 'conversation' : view;
   const { store: messageStore } = useRoomMessages(room.roomId);
   const activityStore = useMemo(
@@ -151,9 +152,8 @@ function ReadyLobby({
   };
   const panelView = activeView === 'resources' ? 'resources' : 'conversation';
   useEffect(() => {
-    if (selectedAgentId !== null && projection.selectedAgentId === null)
-      onSelectedAgentChange(null);
-  }, [onSelectedAgentChange, projection.selectedAgentId, selectedAgentId]);
+    if (selectedAgentId !== null && selectedAgent === null) onSelectedAgentChange(null);
+  }, [onSelectedAgentChange, selectedAgent, selectedAgentId]);
 
   const closeDrawer = (): void => {
     setDrawer(null);
@@ -194,6 +194,7 @@ function ReadyLobby({
     <div className="workspace-members">
       <ListModeRoster
         agents={room.agents}
+        observedAtUnixMs={room.observedAtUnixMs}
         onSelectAgent={selectAgent}
         selectedAgentId={selectedAgentId}
         variant="compact"
@@ -205,7 +206,7 @@ function ReadyLobby({
   return (
     <main className="lobby-workspace lobby-game" id="main-content" data-view={activeView}>
       <p aria-atomic="true" aria-live="polite" className="sr-only">
-        {t('lobby.liveSummary', { count: room.agents.length, room: room.name })}
+        {t('lobby.liveSummary', { count: attendance.present, room: room.name })}
       </p>
       <div className="room-scene">
         <LobbySpatialView
@@ -222,7 +223,7 @@ function ReadyLobby({
         />
       </div>
       <RoomBeacon
-        agentCount={room.agents.length}
+        agentCount={attendance.present}
         membersButtonRef={membersButton}
         roomName={room.name}
         onOpenNavigation={() => {
@@ -234,6 +235,22 @@ function ReadyLobby({
         {...(room.topic === undefined ? {} : { topic: room.topic })}
       />
       <p className="room-scene-hint">{t('roomGame.hint')}</p>
+      {attendance.present === 0 ? (
+        <div className="room-empty-presence" role="status">
+          <strong>
+            {t(attendance.reconnecting > 0 ? 'studio.reconnectingRoom' : 'studio.emptyRoom')}
+          </strong>
+          <p>{t('studio.emptyHint')}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawer('members');
+            }}
+          >
+            {t('studio.findAway')}
+          </button>
+        </div>
+      ) : null}
       <div className="room-human-presence" role="group" aria-label={t('roomGame.people')}>
         {(projection.humans ?? []).slice(0, 3).map((human) => (
           <button
@@ -352,7 +369,8 @@ function ReadyLobby({
           <AgentInspector
             actionFailure={directSessions.failure?.code ?? null}
             agent={selectedAgent}
-            key={selectedAgent.agentId}
+            observedAtUnixMs={room.observedAtUnixMs}
+            key="agent-inspector"
             pendingAction={
               directSessions.opening ? 'message' : directSessions.blocking ? 'block' : null
             }

@@ -16,8 +16,8 @@ export default defineConfig(({ mode }) => ({
         name: 'Agent Room',
         short_name: 'Agent Room',
         description: 'A shared room for people and their AI agents.',
-        theme_color: '#30482d',
-        background_color: '#edf1e6',
+        theme_color: '#247a77',
+        background_color: '#ffffff',
         display: 'standalone',
         start_url: '/connect',
         icons: [
@@ -32,7 +32,8 @@ export default defineConfig(({ mode }) => ({
       registerType: 'prompt',
       workbox: {
         cleanupOutdatedCaches: true,
-        globPatterns: ['**/*.{html,js,css,svg}'],
+        globPatterns: ['**/*.{html,js,css,svg}', 'studio/*.png'],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [...navigationFallbackDenylist],
       },

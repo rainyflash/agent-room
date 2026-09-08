@@ -49,6 +49,15 @@ export function LobbySpatialView({
     () => ({
       canvas: t('lobby.scene.canvasLabel'),
       self: t('roomGame.self'),
+      statuses: {
+        idle: t('lobby.status.idle'),
+        working: t('lobby.status.working'),
+        waiting_input: t('lobby.status.waiting_input'),
+        blocked: t('lobby.status.blocked'),
+        completed: t('lobby.status.completed'),
+        offline: t('lobby.status.offline'),
+        present: t('roomGame.self'),
+      },
       zones: {
         active: t('lobby.zone.active'),
         attention: t('lobby.zone.attention'),
@@ -91,6 +100,7 @@ export function LobbySpatialView({
             </p>
             <ListModeRoster
               agents={room.agents}
+              observedAtUnixMs={room.observedAtUnixMs}
               onSelectAgent={onSelectAgent}
               selectedAgentId={selectedAgentId}
               ref={list}

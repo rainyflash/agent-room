@@ -1,4 +1,10 @@
-import { characterSeed, isWalkableFloor, projectFloorPoint, type FloorPoint } from './room-floor';
+import {
+  characterSeed,
+  isWalkableFloor,
+  roomFloor,
+  type FloorPoint,
+  type RoomFloor,
+} from './room-floor';
 
 export type RoomPlacement = FloorPoint & { readonly slot: string };
 export type RoomLayout = ReadonlyMap<string, RoomPlacement>;
@@ -12,91 +18,99 @@ export type PlacementRequest = {
   };
 };
 
-const slots = createSlots(48, 56);
-const overflowSlots = createSlots(24, 28).filter(
-  (slot) => !slots.some((coarse) => coarse.slot === slot.slot),
-);
+const stepX = 128;
+const stepY = 140;
+const firstX = 180;
+const firstY = 280;
 
-/** 保留房间中已有角色的位置，只为新加入的角色选择空位。 */
+/** Expand the room instead of reducing the space available to each character. */
+export function floorForOccupants(count: number, previous: RoomLayout = new Map()): RoomFloor {
+  let width = roomFloor.width;
+  let depth = roomFloor.depth;
+  for (const point of previous.values()) {
+    width = Math.max(width, Math.ceil((point.x + 200) / 256) * 256);
+    depth = Math.max(depth, Math.ceil((point.y + 140) / 256) * 256);
+  }
+  while (slotCount(width, depth) < count) {
+    if (width / depth < 1.5) width += 256;
+    else depth += 256;
+  }
+  return Object.freeze({ width, depth });
+}
+
+/** Retain existing positions; deterministic free slots keep newcomers apart in bounded time. */
 export function allocateRoomLayout(
   requests: readonly PlacementRequest[],
   previous: RoomLayout = new Map(),
+  floor: RoomFloor = floorForOccupants(requests.length, previous),
 ): RoomLayout {
   const assigned = new Map<string, RoomPlacement>();
   const occupied = new Set<string>();
   for (const request of requests) {
     const saved = previous.get(request.id);
-    if (saved !== undefined && isWalkableFloor(saved) && !occupied.has(saved.slot)) {
+    if (saved !== undefined && isWalkableFloor(saved, 18, floor) && !occupied.has(saved.slot)) {
       assigned.set(request.id, saved);
       occupied.add(saved.slot);
     }
   }
+  const slots = createSlots(floor).map((point) => ({ point, seed: characterSeed(point.slot) }));
   const additions = requests
     .filter((request) => !assigned.has(request.id))
-    .toSorted((a, b) => characterSeed(a.id) - characterSeed(b.id) || a.id.localeCompare(b.id));
-  for (const request of additions) {
-    const available = slots.some((slot) => !occupied.has(slot.slot)) ? slots : overflowSlots;
-    let slot: RoomPlacement | null = null;
+    .map((request) => ({ request, seed: characterSeed(request.id) }))
+    .toSorted((a, b) => a.seed - b.seed || a.request.id.localeCompare(b.request.id));
+  for (const { request, seed } of additions) {
+    let best: RoomPlacement | undefined;
     let bestScore = Number.NEGATIVE_INFINITY;
-    for (const candidate of available) {
-      if (occupied.has(candidate.slot)) continue;
-      const score = placementScore(candidate, request, assigned);
+    for (const candidate of slots) {
+      const point = candidate.point;
+      if (occupied.has(point.slot)) continue;
+      const area = request.preferred;
+      const preferred =
+        point.x >= area.x &&
+        point.x <= area.x + area.width &&
+        point.y >= area.y &&
+        point.y <= area.y + area.height;
+      let clearance = 0;
+      // Sparse rooms spread characters out; crowded rooms already have guaranteed grid spacing.
+      if (requests.length <= 24) {
+        clearance = 280;
+        for (const other of assigned.values())
+          clearance = Math.min(clearance, Math.hypot(other.x - point.x, other.y - point.y));
+      }
+      const score =
+        clearance +
+        (preferred ? 110 : 0) +
+        ((Math.imul(seed ^ candidate.seed, 1597334677) >>> 0) % 1000) / 25;
       if (score > bestScore) {
-        slot = candidate;
+        best = point;
         bestScore = score;
       }
     }
-    if (slot === null) continue;
-    assigned.set(request.id, slot);
-    occupied.add(slot.slot);
+    if (best === undefined)
+      throw new Error('The room plan does not have enough walkable positions.');
+    assigned.set(request.id, best);
+    occupied.add(best.slot);
   }
   return assigned;
 }
 
-export function roamingRadius(point: FloorPoint, layout: RoomLayout): number {
-  const screen = projectFloorPoint(point);
-  let distance = 130;
-  for (const other of layout.values()) {
-    if (other.x === point.x && other.y === point.y) continue;
-    const projected = projectFloorPoint(other);
-    distance = Math.min(distance, Math.hypot(projected.x - screen.x, projected.y - screen.y));
-  }
-  return Math.max(0, Math.min(30, (distance - 48) / 2));
+export function roamingRadius(): number {
+  // Two neighbors can roam towards each other while preserving a clear clickable silhouette.
+  return 18;
 }
 
-function placementScore(
-  point: RoomPlacement,
-  request: PlacementRequest,
-  assigned: RoomLayout,
-): number {
-  const screen = projectFloorPoint(point);
-  let clearance = 160;
-  for (const other of assigned.values()) {
-    const projected = projectFloorPoint(other);
-    clearance = Math.min(clearance, Math.hypot(projected.x - screen.x, projected.y - screen.y));
-  }
-  const area = request.preferred;
-  const preferred =
-    point.x >= area.x &&
-    point.x <= area.x + area.width &&
-    point.y >= area.y &&
-    point.y <= area.y + area.height;
+function slotCount(width: number, depth: number): number {
   return (
-    clearance + (preferred ? 65 : 0) + (characterSeed(`${request.id}:${point.slot}`) % 1000) / 40
+    (Math.floor((width - 200 - firstX) / stepX) + 1) *
+    (Math.floor((depth - 140 - firstY) / stepY) + 1)
   );
 }
 
-function createSlots(stepX: number, stepY: number): readonly RoomPlacement[] {
+function createSlots(floor: RoomFloor): readonly RoomPlacement[] {
   const result: RoomPlacement[] = [];
-  for (let screenY = 250; screenY <= 1200; screenY += stepY) {
-    for (let screenX = 300; screenX <= 2450; screenX += stepX) {
-      const point = {
-        x: ((screenX - 1100) / 0.82 + (screenY - 200) / 0.38) / 2,
-        y: ((screenY - 200) / 0.38 - (screenX - 1100) / 0.82) / 2,
-        slot: `${String(screenX)}:${String(screenY)}`,
-      };
-      if (isWalkableFloor(point, 22)) result.push(Object.freeze(point));
-    }
+  for (let y = firstY; y <= floor.depth - 140; y += stepY) {
+    for (let x = firstX; x <= floor.width - 200; x += stepX)
+      result.push(Object.freeze({ x, y, slot: `${String(x)}:${String(y)}` }));
   }
-  return Object.freeze(result);
+  return result;
 }

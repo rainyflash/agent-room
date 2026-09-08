@@ -70,8 +70,11 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 
+const requestedCount = Number(new URLSearchParams(window.location.search).get('agents') ?? 24);
 const fixtureAgentCount =
-  new URLSearchParams(window.location.search).get('agents') === '200' ? 200 : 24;
+  Number.isSafeInteger(requestedCount) && requestedCount >= 6 && requestedCount <= 1000
+    ? requestedCount
+    : 24;
 let room = testRoom(fixtureAgentCount);
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
 let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
@@ -204,7 +207,7 @@ const fixtureControls: LobbyFixtureControls = {
     for (const listener of conversationListeners) listener();
   },
   joinAgent: () => {
-    const agent = testAgent(250);
+    const agent = testAgent(Math.max(fixtureAgentCount, 250));
     room = {
       ...room,
       agents: [...room.agents, agent],
@@ -221,6 +224,28 @@ const fixtureControls: LobbyFixtureControls = {
       agents: room.agents.filter((entry) => entry.agentId !== agentId),
       joinedMemberIds: room.joinedMemberIds?.filter((id) => id !== agent?.matrixUserId) ?? [],
     };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  },
+  setAgentStatus: (agentId, status) => {
+    room = {
+      ...room,
+      agents: room.agents.map((agent) =>
+        agent.agentId === agentId
+          ? {
+              ...agent,
+              status,
+              reportedStatus: status,
+              statusExpiresAtUnixMs: room.observedAtUnixMs + 300_000,
+            }
+          : agent,
+      ),
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  },
+  advancePresenceClock: (elapsedMs) => {
+    room = { ...room, observedAtUnixMs: room.observedAtUnixMs + elapsedMs };
     updateFixtureScene();
     for (const listener of lobbyListeners) listener();
   },
@@ -805,7 +830,7 @@ async function bootstrapFixture(): Promise<void> {
 function testRoom(agentCount: number): LobbyRoom {
   return Object.freeze({
     agents: Object.freeze(Array.from({ length: agentCount }, (_, index) => testAgent(index))),
-    name: 'Builders Exchange',
+    name: agentCount === 6 ? '共享工作室' : 'Builders Exchange',
     joinedMemberIds: [
       '@fixture:matrix.test',
       '@guest:matrix.test',
@@ -817,18 +842,37 @@ function testRoom(agentCount: number): LobbyRoom {
   });
 }
 
-function testAgent(index: number): LobbyAgent {
+function testAgent(index: number, agentCount = fixtureAgentCount): LobbyAgent {
   const suffix = String(index + 1).padStart(3, '0');
-  const status = statusAt(index);
+  const studioStatuses = [
+    'working',
+    'idle',
+    'waiting_input',
+    'completed',
+    'offline',
+    'offline',
+  ] as const;
+  const requestedStatus = statusAt(index);
+  const status =
+    agentCount === 6
+      ? (studioStatuses[index] ?? 'offline')
+      : agentCount >= 200 && requestedStatus === 'offline'
+        ? 'idle'
+        : requestedStatus;
   const detailed = index % 3 !== 0;
   return Object.freeze({
-    agentId: `01990d9e-8400-7000-8000-000000000${suffix}`,
-    displayName: `Build Agent ${suffix}`,
+    agentId: `01990d9e-8400-7000-8000-${String(index + 1).padStart(12, '0')}`,
+    displayName:
+      agentCount === 6
+        ? (['Mira', 'Atlas', 'Nova', 'Sage', 'Echo', 'Finn'][index] ?? `Agent ${suffix}`)
+        : `Build Agent ${suffix}`,
     instanceIds: Object.freeze(
       index % 7 === 0 ? [`instance-${suffix}-a`, `instance-${suffix}-b`] : [`instance-${suffix}`],
     ),
     matrixUserId: `@build-agent-${suffix}:agent-room.test`,
     status,
+    lastActiveAtUnixMs: Date.now() - (status === 'offline' ? 600_000 : 0),
+    ...(status === 'idle' ? { lastPolledAtUnixMs: Date.now() } : {}),
     statusExpiresAtUnixMs: Date.now() + 300_000,
     ...(detailed ? { summary: `Validating workspace slice ${suffix}` } : {}),
     trust: index % 5 === 0 ? 'verified' : 'unknown',

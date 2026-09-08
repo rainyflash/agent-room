@@ -17,6 +17,7 @@ export class LobbyRoomStore {
   readonly #listeners = new Set<() => void>();
   readonly #roomId: string;
   #detachGateway: (() => void) | null = null;
+  #expiryTimer: ReturnType<typeof setInterval> | null = null;
   #state: LobbyRoomState = loadingState;
 
   constructor(gateway: LobbyGateway, roomId: string) {
@@ -37,12 +38,16 @@ export class LobbyRoomStore {
     if (this.#listeners.size === 1) {
       this.#detachGateway = this.#gateway.subscribe(this.#roomId, this.#refresh);
       this.#refresh();
+      // Expiration must also advance in a quiet room with no Matrix events.
+      this.#expiryTimer = setInterval(this.#refresh, 5_000);
     }
     return () => {
       this.#listeners.delete(listener);
       if (this.#listeners.size === 0) {
         this.#detachGateway?.();
         this.#detachGateway = null;
+        if (this.#expiryTimer !== null) clearInterval(this.#expiryTimer);
+        this.#expiryTimer = null;
       }
     };
   };

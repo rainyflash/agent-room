@@ -6,7 +6,7 @@ import { nextAgentInDirection } from './spatial-navigation';
 
 describe('大厅场景投影', () => {
   it('输入顺序变化时仍生成完全相同的确定性布局', () => {
-    const agents = Array.from({ length: 200 }, (_, index) => agent(index));
+    const agents = Array.from({ length: 200 }, (_, index) => agent(index, 'idle'));
     const first = projectLobbyScene(room(agents), null);
     const second = projectLobbyScene(room(agents.toReversed()), null);
 
@@ -34,10 +34,10 @@ describe('大厅场景投影', () => {
     expect(Object.fromEntries(projection.nodes.map((node) => [node.status, node.zoneId]))).toEqual({
       blocked: 'attention',
       idle: 'available',
-      offline: 'available',
       waiting_input: 'attention',
       working: 'active',
     });
+    expect(projection.nodes.some((node) => node.agentId === 'agent-005')).toBe(false);
   });
 
   it('按视口裁剪节点并按缩放只返回三个闭合层级', () => {
@@ -56,8 +56,8 @@ describe('大厅场景投影', () => {
     expect(visible.length).toBeGreaterThan(0);
     expect(visible.length).toBeLessThan(projection.nodes.length);
     expect(sceneDetailForZoom(Number.NaN)).toBe('distant');
-    expect(sceneDetailForZoom(0.67)).toBe('distant');
-    expect(sceneDetailForZoom(0.68)).toBe('medium');
+    expect(sceneDetailForZoom(0.39)).toBe('distant');
+    expect(sceneDetailForZoom(0.4)).toBe('medium');
     expect(sceneDetailForZoom(1.18)).toBe('near');
   });
 

@@ -114,4 +114,6 @@ See [ADRs](./adr/README.md), [Self-hosting](./self-hosting.md), the [cloud-first
 
 Bridge 同时投影 v1 Agent、v2 Agent 与 v2 Human 消息。Human 依赖 Matrix 发送者校验，Agent 还需设备签名；SQLite 主体键区分人类与 Agent，编辑不能根据自报账号标识取得权限。IPC 2.0 暴露区分主体的消息，并按字节限制聊天页。MCP 的 `afterEventId` 和 `waitSeconds` 支持宿主主动接待，不能唤醒关闭的宿主。
 
+房间把任务状态、连接租约与接待证据分开。可选的签名 `lastPolledAt` 只在独立宿主会话成功查询默认大厅消息时更新；桌面读取消息不会更新此证据，后台续租保留原时间，私聊查询不公开为大厅接待。Web 定时推进过期投影，离线角色退出场景但保留在名单中。发送成功不等于对方已读，接待未知或过期不会被呈现为正在回复。详见 [游戏大厅与接待设计](../specs/studio-reception/design.md)。
+
 私聊按当前房间成员权限访问。Web 与 Rust 共用正文 AES-256-GCM 协议，私聊只上传密文，密钥随 Matrix 加密事件发送；无法确认加密状态时拒绝发送。参见 [ADR 0008](./adr/0008-human-agent-conversation.md)。

@@ -10,8 +10,10 @@ export class ViewportController {
   readonly #maximumScale: number;
   readonly #minimumScale: number;
   readonly #padding: number;
-  readonly #world: LobbyWorld;
+  #world: LobbyWorld;
+  readonly #compactInitialScale: number | undefined;
   #initialized = false;
+  #focusedPoint: { readonly x: number; readonly y: number } | null = null;
   #scale = 1;
   #screenHeight = 1;
   #screenWidth = 1;
@@ -24,15 +26,18 @@ export class ViewportController {
       readonly maximumScale?: number;
       readonly minimumScale?: number;
       readonly padding?: number;
+      readonly compactInitialScale?: number;
     } = {},
   ) {
     this.#world = world;
     this.#maximumScale = options.maximumScale ?? 1.8;
     this.#minimumScale = options.minimumScale ?? 0.25;
     this.#padding = options.padding ?? 48;
+    this.#compactInitialScale = options.compactInitialScale;
   }
 
   panBy(deltaX: number, deltaY: number): CameraSnapshot {
+    this.#focusedPoint = null;
     this.#x += finiteOrZero(deltaX);
     this.#y += finiteOrZero(deltaY);
     this.#clampPosition();
@@ -40,18 +45,37 @@ export class ViewportController {
   }
 
   focusOn(worldX: number, worldY: number): CameraSnapshot {
-    this.#scale = Math.max(this.#scale, this.#screenWidth < 768 ? 0.55 : 0.72);
+    this.#focusedPoint = { x: finiteOrZero(worldX), y: finiteOrZero(worldY) };
+    this.#scale = Math.max(this.#scale, 0.85);
     this.#x =
       this.#screenWidth * (this.#screenWidth < 768 ? 0.5 : 0.35) -
       finiteOrZero(worldX) * this.#scale;
     this.#y =
-      this.#screenHeight * (this.#screenWidth < 768 ? 0.2 : 0.48) -
+      (this.#screenWidth < 768
+        ? Math.min(50, this.#screenHeight * 0.2)
+        : this.#screenHeight * 0.48) -
       finiteOrZero(worldY) * this.#scale;
+    // Allow space beyond room edges so edge characters remain above/beside the inspector.
+    return this.snapshot();
+  }
+
+  focusArea(worldX: number, worldY: number): CameraSnapshot {
+    this.#focusedPoint = null;
+    this.#scale = Math.max(this.#scale, 0.85);
+    this.#x = this.#screenWidth / 2 - finiteOrZero(worldX) * this.#scale;
+    this.#y = this.#screenHeight / 2 - finiteOrZero(worldY) * this.#scale;
     this.#clampPosition();
     return this.snapshot();
   }
 
+  updateWorld(world: LobbyWorld): void {
+    this.#world = world;
+    if (this.#focusedPoint !== null) this.focusOn(this.#focusedPoint.x, this.#focusedPoint.y);
+    else this.#clampPosition();
+  }
+
   reset(): CameraSnapshot {
+    this.#focusedPoint = null;
     const availableWidth = Math.max(1, this.#screenWidth - this.#padding * 2);
     const availableHeight = Math.max(1, this.#screenHeight - this.#padding * 2);
     this.#scale = clamp(
@@ -74,8 +98,13 @@ export class ViewportController {
       : null;
     this.#screenWidth = validExtent(width);
     this.#screenHeight = validExtent(height);
+    if (this.#focusedPoint !== null)
+      return this.focusOn(this.#focusedPoint.x, this.#focusedPoint.y);
     if (center === null) {
-      return this.reset();
+      const fitted = this.reset();
+      return this.#screenWidth < 768 && this.#compactInitialScale !== undefined
+        ? this.zoomBy(Math.max(1, this.#compactInitialScale / fitted.scale))
+        : fitted;
     }
     this.#x = this.#screenWidth / 2 - center.x * this.#scale;
     this.#y = this.#screenHeight / 2 - center.y * this.#scale;
@@ -98,6 +127,7 @@ export class ViewportController {
   }
 
   zoomBy(factor: number, screenX = this.#screenWidth / 2, screenY = this.#screenHeight / 2) {
+    this.#focusedPoint = null;
     const nextScale = clamp(
       this.#scale * (Number.isFinite(factor) && factor > 0 ? factor : 1),
       this.#minimumScale,

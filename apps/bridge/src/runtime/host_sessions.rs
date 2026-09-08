@@ -133,6 +133,7 @@ impl HostAgentRuntimeFactory {
         status.finish_starting();
         let state = runtime.state.clone();
         let handler = Arc::new(FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            crate::ipc::AgentRuntimeConsumer::HostSession,
             status.clone(),
             state.clone(),
             runtime.previews.clone(),

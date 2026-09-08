@@ -65,7 +65,9 @@ use agent_room_domain::{
 };
 use uuid::{Uuid, Version};
 
-use super::{BridgeIpcDispatchFailure, BridgeStatusReader, agent_runtime_unavailable};
+use super::{
+    AgentRuntimeConsumer, BridgeIpcDispatchFailure, BridgeStatusReader, agent_runtime_unavailable,
+};
 use crate::agent_status::AgentStatusPublicationHandle;
 
 const MAXIMUM_HANDOFF_LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
@@ -444,6 +446,7 @@ pub(crate) trait BridgeAgentRuntimeReader: Send + Sync {
 }
 
 pub(super) struct AgentRuntimeIpcFacade {
+    consumer: AgentRuntimeConsumer,
     status_reader: Arc<dyn BridgeStatusReader>,
     runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
     previews: Arc<dyn MessageTimelineQueryRepository>,
@@ -453,6 +456,7 @@ pub(super) struct AgentRuntimeIpcFacade {
 
 impl AgentRuntimeIpcFacade {
     pub(super) fn new(
+        consumer: AgentRuntimeConsumer,
         status_reader: Arc<dyn BridgeStatusReader>,
         runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
         previews: Arc<dyn MessageTimelineQueryRepository>,
@@ -460,6 +464,7 @@ impl AgentRuntimeIpcFacade {
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
+            consumer,
             status_reader,
             runtime_reader,
             previews,
@@ -535,8 +540,8 @@ impl AgentRuntimeIpcFacade {
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
         let query = match after {
-            Some(after) => MessagePreviewQuery::after(room_id, after, request.limit),
-            None => MessagePreviewQuery::new(room_id, cursor, request.limit),
+            Some(after) => MessagePreviewQuery::after(room_id.clone(), after, request.limit),
+            None => MessagePreviewQuery::new(room_id.clone(), cursor, request.limit),
         }
         .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;
         let page = self
@@ -544,10 +549,19 @@ impl AgentRuntimeIpcFacade {
             .list_previews(&query)
             .await
             .map_err(map_preview_query_failure)?;
-        bounded_preview_response(
+        let response = bounded_preview_response(
             page.previews().iter().map(ipc_preview),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
-        )
+        )?;
+        // The desktop reads the same projection, but only the host can attest to receiving it.
+        if self.consumer == AgentRuntimeConsumer::HostSession
+            && let Some(status) = runtime.status
+        {
+            if let Err(failure) = status.note_inbox_read(&room_id, self.clock.now()).await {
+                tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
+            }
+        }
+        Ok(response)
     }
 
     pub(super) async fn get_presence(

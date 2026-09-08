@@ -92,7 +92,7 @@ function renderRoster(
 ) {
   return render(
     <I18nextProvider i18n={i18n}>
-      <ListModeRoster {...options} ref={ref} />
+      <ListModeRoster {...options} observedAtUnixMs={1_700_000_000_000} ref={ref} />
     </I18nextProvider>,
   );
 }

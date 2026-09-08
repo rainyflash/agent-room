@@ -61,6 +61,12 @@ pub(crate) trait BridgeIpcRequestHandler: Send + Sync {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_>;
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentRuntimeConsumer {
+    Desktop,
+    HostSession,
+}
+
 pub(crate) struct FoundationBridgeIpcRequestHandler {
     status_reader: Arc<dyn BridgeStatusReader>,
     onboarding: Option<Arc<BridgeOnboardingService>>,
@@ -89,6 +95,7 @@ impl FoundationBridgeIpcRequestHandler {
     }
 
     pub(crate) fn with_agent_runtime(
+        consumer: AgentRuntimeConsumer,
         status_reader: Arc<dyn BridgeStatusReader>,
         agent_runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
         previews: Arc<dyn MessageTimelineQueryRepository>,
@@ -99,6 +106,7 @@ impl FoundationBridgeIpcRequestHandler {
             status_reader: status_reader.clone(),
             onboarding: None,
             agent_runtime: Some(AgentRuntimeIpcFacade::new(
+                consumer,
                 status_reader,
                 agent_runtime_reader,
                 previews,
@@ -1365,6 +1373,7 @@ mod tests {
         let identity = 测试_agent_身份();
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
                 identity,
@@ -1429,6 +1438,7 @@ mod tests {
     async fn 永久失败保留原始错误并拒绝残留人物快照() {
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(永久失败状态),
             Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
                 测试_agent_身份(),
@@ -1463,6 +1473,7 @@ mod tests {
         });
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1502,17 +1513,17 @@ mod tests {
         assert!(queries[0].agent_ids().contains(&identity.agent_id()));
     }
 
-    #[tokio::test]
-    async fn 公共大厅状态发布只暴露粗粒度状态并返回真实租约() {
-        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
-        let identity = 测试_agent_身份();
-        let publisher = Arc::new(记录状态发布器::default());
-        let status = Arc::new(AgentStatusPublicationHandle::new(
+    fn 测试状态发布句柄(
+        identity: BridgeAgentIdentity,
+        room_id: MatrixRoomId,
+        publisher: Arc<记录状态发布器>,
+    ) -> Arc<AgentStatusPublicationHandle> {
+        Arc::new(AgentStatusPublicationHandle::new(
             AgentStatusPublicationService::new(
                 AgentStatusPublicationDependencies {
-                    identity: identity.clone(),
+                    identity,
                     signer: Arc::new(测试签名身份),
-                    publisher: publisher.clone(),
+                    publisher,
                     identifiers: Arc::new(版本七状态标识),
                     clock: Arc::new(固定时钟),
                 },
@@ -1523,11 +1534,85 @@ mod tests {
                 )
                 .expect("租约策略有效"),
             ),
-            AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
+            AgentStatusRoomTarget::new(room_id, AgentStatusVisibility::Coarse),
             HostAgentState::Available,
+        ))
+    }
+
+    #[tokio::test]
+    async fn 只有宿主成功收取大厅消息才能发布接待证据() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录状态发布器::default());
+        let status = 测试状态发布句柄(identity.clone(), room_id.clone(), publisher.clone());
+        let previews = Arc::new(记录预览查询::default());
+        let runtime = Arc::new(固定Agent运行时(
+            BridgeAgentRuntimeSnapshot::new(identity, "DEVICE-1", room_id, ["previews.read"])
+                .with_status(status.clone()),
         ));
+
+        // Reading a private conversation is not evidence of receiving public lobby messages.
+        status
+            .note_inbox_read(
+                &MatrixRoomId::new("!private:matrix.test").expect("私聊标识有效"),
+                固定时钟.now(),
+            )
+            .await
+            .expect("私聊读取不发布状态");
+        assert!(publisher.0.lock().expect("状态事件锁可用").is_empty());
+
+        for (consumer, expected_publications) in [
+            (super::AgentRuntimeConsumer::Desktop, 0),
+            (super::AgentRuntimeConsumer::HostSession, 1),
+        ] {
+            let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+                consumer,
+                Arc::new(固定状态),
+                runtime.clone(),
+                previews.clone(),
+                空正文服务(previews.clone()),
+                Arc::new(固定时钟),
+            );
+            let request = agent_room_bridge_ipc::IpcListPreviewsRequest {
+                after_event_id: None,
+                room_id: None,
+                before_event_id: None,
+                limit: 20,
+            };
+            let mut invalid_request = request.clone();
+            invalid_request.limit = 0;
+            assert!(
+                handler
+                    .dispatch(IpcMethod::ListPreviews(invalid_request))
+                    .await
+                    .is_err()
+            );
+            assert!(publisher.0.lock().expect("状态事件锁可用").is_empty());
+            handler
+                .dispatch(IpcMethod::ListPreviews(request))
+                .await
+                .expect("大厅预览可读");
+            assert_eq!(
+                publisher.0.lock().expect("状态事件锁可用").len(),
+                expected_publications
+            );
+        }
+        let events = publisher.0.lock().expect("状态事件锁可用");
+        assert_eq!(
+            events[0].content()["lastPolledAt"],
+            "1970-01-01T00:00:01.000Z"
+        );
+    }
+
+    #[tokio::test]
+    async fn 公共大厅状态发布只暴露粗粒度状态并返回真实租约() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录状态发布器::default());
+        let status = 测试状态发布句柄(identity.clone(), room_id.clone(), publisher.clone());
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1593,6 +1678,7 @@ mod tests {
             },
         ));
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
                 测试_agent_身份(),
@@ -1651,6 +1737,7 @@ mod tests {
         ));
         let previews = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1731,6 +1818,7 @@ mod tests {
         let handoff_id = "01945c1e-7b5a-7c7f-8a28-2de53f56a9a8";
         let principal_id = "01945c1e-7b5a-7c7f-8a28-2de53f56a9a7";
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1810,6 +1898,7 @@ mod tests {
         let handoffs = Arc::new(固定交接运行时 { pending, body });
         let projections = Arc::new(固定正文投影(source));
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1867,6 +1956,7 @@ mod tests {
         let targeted = Arc::new(固定定向交接运行时::new(pending, body));
         let projections = Arc::new(记录预览查询::default());
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(
@@ -1923,6 +2013,7 @@ mod tests {
         ));
         let projections = Arc::new(记录预览查询::default());
         let decline_handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
             Arc::new(固定Agent运行时(
                 BridgeAgentRuntimeSnapshot::new(

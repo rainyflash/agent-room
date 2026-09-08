@@ -95,12 +95,12 @@ describe('LobbySceneSurface', () => {
       />,
     );
 
-    const svg = await waitFor(() => {
+    await waitFor(() => {
       const element = view.container.querySelector<SVGSVGElement>('[data-renderer="svg"]');
       if (element === null) throw new Error('尚未渲染 SVG 场景');
-      return element;
+      // Visible characters are projected after the viewport measurement effect.
+      expect(element).toHaveTextContent('Local Agent');
     });
-    expect(svg).toHaveTextContent('Local Agent');
 
     const agent = view.container.querySelector<SVGGElement>('.lobby-scene__svg-agent');
     if (agent === null) throw new Error('场景缺少测试 Agent');

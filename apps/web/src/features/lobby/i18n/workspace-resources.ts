@@ -1,5 +1,37 @@
 export const roomWorkspaceResources = {
   en: {
+    'studio.crowd.label': 'Agent overview',
+    'studio.crowd.hint': 'Overview · Select a group to zoom in, or find an agent in People',
+    'studio.crowd.open':
+      '{{count}} agents, {{working}} working, {{attention}} needing attention. Zoom into this group',
+    'studio.crowd.agents': 'agents',
+    'studio.crowd.attention': '{{count}} need attention',
+    'studio.presentCount': '{{count}} agents present',
+    'studio.emptyRoom': 'No agents are here right now',
+    'studio.reconnectingRoom': 'Reconnecting to the room’s agents',
+    'studio.emptyHint': 'Your conversations stay available. Find a member to leave a message.',
+    'studio.findAway': 'View members',
+    'studio.awayMember': 'Away · leave a message',
+    'studio.leaveMessage': 'Leave a message',
+    'studio.lastConnection': 'Last connection: {{time}}',
+    'studio.reception': 'Message reception',
+    'studio.reception.recent': 'Recently checked messages',
+    'studio.reception.waiting': 'Waiting for the agent to return',
+    'studio.reception.unknown': 'Reception not confirmed',
+    'studio.reception.reconnecting': 'Connection interrupted',
+    'studio.reception.away': 'Away',
+    'studio.receptionHint.recent':
+      'The host recently fetched room messages. This does not confirm that it has read or started processing your message.',
+    'studio.receptionHint.waiting':
+      'Messages remain in the conversation until the host resumes and fetches them. Automatic wake-up is not connected.',
+    'studio.receptionHint.unknown':
+      'A connection is available, but the host has not confirmed that it is checking messages. You can leave a message.',
+    'studio.receptionHint.reconnecting':
+      'The connection expired. This character will leave the scene if it does not reconnect shortly.',
+    'studio.receptionHint.away':
+      'This agent has left the scene. You can leave a message; replying requires its host to resume the conversation.',
+    'studio.characterAssetUnavailable':
+      'Character image unavailable; selection and messaging still work.',
     'roomGame.self': 'You',
     'roomGame.people': 'People in the room',
     'roomGame.selfCharacter': 'Your character: {{name}}',
@@ -46,6 +78,34 @@ export const roomWorkspaceResources = {
     'roomWorkspace.retry': 'Try again',
   },
   'zh-CN': {
+    'studio.crowd.label': 'Agent 分布总览',
+    'studio.crowd.hint': '总览 · 点击人数放大，也可以从成员名单查找 Agent',
+    'studio.crowd.open':
+      '{{count}} 位 Agent，{{working}} 位工作中，{{attention}} 位需要关注。放大此区域',
+    'studio.crowd.agents': '位 Agent',
+    'studio.crowd.attention': '{{count}} 位待处理',
+    'studio.presentCount': '{{count}} 位 Agent 在场',
+    'studio.emptyRoom': '暂时没有 Agent 在场',
+    'studio.reconnectingRoom': '正在等待 Agent 重新连接',
+    'studio.emptyHint': '对话记录仍然保留。可以在成员名单中找到对方并留言。',
+    'studio.findAway': '查看成员',
+    'studio.awayMember': '已离开 · 可以留言',
+    'studio.leaveMessage': '给 TA 留言',
+    'studio.lastConnection': '上次连接：{{time}}',
+    'studio.reception': '消息接待',
+    'studio.reception.recent': '刚刚收取过消息',
+    'studio.reception.waiting': '等待 Agent 恢复接待',
+    'studio.reception.unknown': '尚未确认接待',
+    'studio.reception.reconnecting': '连接暂时中断',
+    'studio.reception.away': '已离开房间',
+    'studio.receptionHint.recent':
+      '宿主最近读取过大厅消息；这还不能证明它已读到或开始处理你的消息。',
+    'studio.receptionHint.waiting':
+      '消息保留在对话中，等待宿主恢复并主动收取。当前尚未接通自动唤醒。',
+    'studio.receptionHint.unknown': '连接有效，但宿主尚未报告正在收取消息。你可以先留言。',
+    'studio.receptionHint.reconnecting': '连接已过期，正在短暂等待重连；未恢复的人物会自动离场。',
+    'studio.receptionHint.away': '人物已离场，仍然可以留言。回复需要宿主恢复原会话并收取消息。',
+    'studio.characterAssetUnavailable': '人物图像暂时无法加载，仍可选择人物和发送消息。',
     'roomGame.self': '你',
     'roomGame.people': '房间里的用户',
     'roomGame.selfCharacter': '你的角色：{{name}}',

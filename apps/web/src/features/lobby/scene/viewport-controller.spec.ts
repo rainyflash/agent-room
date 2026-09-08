@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { ViewportController } from './viewport-controller';
 
 describe('ViewportController', () => {
+  it('手机初始人物可辨认，适应房间按钮仍能恢复全景', () => {
+    const controller = new ViewportController(
+      { width: 1536, height: 1024 },
+      { padding: 22, minimumScale: 0.22, compactInitialScale: 0.48 },
+    );
+    expect(controller.resize(390, 602).scale).toBeCloseTo(0.48, 8);
+    const fitted = controller.reset();
+    expect(fitted.scale).toBeLessThan(0.48);
+    expect(1536 * fitted.scale).toBeLessThanOrEqual(390);
+  });
   it('首次尺寸确定时完整容纳世界并保持居中', () => {
     const controller = new ViewportController({ height: 1_000, width: 2_000 }, { padding: 50 });
 
@@ -38,8 +48,26 @@ describe('ViewportController', () => {
     expect(camera.scale).toBeGreaterThanOrEqual(0.55);
     expect(x).toBeGreaterThan(20);
     expect(x).toBeLessThan(width - 20);
-    expect(y).toBeGreaterThan(120);
-    expect(y).toBeLessThan(600);
+    if (width < 768) expect(y).toBe(50);
+    else {
+      expect(y).toBeGreaterThan(120);
+      expect(y).toBeLessThan(600);
+    }
+  });
+
+  it('靠近房间边缘的人物也保留详情展示空间，窗口或世界变化后仍保持定位', () => {
+    const controller = new ViewportController(
+      { height: 4608, width: 6144 },
+      { minimumScale: 0.04 },
+    );
+    controller.resize(390, 602);
+    controller.focusOn(5900, 4400);
+    controller.updateWorld({ height: 4864, width: 6400 });
+    const camera = controller.resize(360, 500);
+    expect(camera.x + 5900 * camera.scale).toBe(180);
+    expect(camera.y + 4400 * camera.scale).toBe(50);
+    controller.panBy(0, 50);
+    expect(controller.resize(390, 500).y + 4400 * camera.scale).not.toBe(50);
   });
 
   it('窗口变化保持原世界中心并拒绝非有限输入', () => {

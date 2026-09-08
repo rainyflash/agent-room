@@ -1,19 +1,21 @@
 // 使用静态着色器同步实现，确保发布环境禁止动态代码求值时也能保留 Pixi 场景。
 import 'pixi.js/unsafe-eval';
 import { sceneCharacters, type SceneFrame } from '../scene-character';
-import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
+import type { Application, Container, Graphics, FederatedPointerEvent } from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
 import { CharacterTextureCache } from './character-texture-cache';
 import { SceneDepthOrder } from '../scene-depth-order';
 import { SceneFrameScheduler, type SceneRenderFrame } from '../scene-frame-scheduler';
-import { createRoomProps, createZoneLayer } from './zone-layer';
+import { loadStudioCharacters } from '../studio-assets';
+import { drawRoomPlan } from './room-plan-view';
+import { roomCrowdGroups, usesCrowdOverview } from '../../domain/room-crowd';
 import {
   sceneDetailForZoom,
   visibleLobbyNodes,
   type LobbySceneDetail,
   type LobbySceneProjection,
 } from '@/features/lobby/domain/scene-projection';
-import { characterPose } from '../character-motion';
+import { characterCanRoam, characterPose } from '../character-motion';
 import type { LobbySceneHandle, LobbySceneMountOptions } from '@/features/lobby/scene/lobby-scene';
 import { ViewportController } from '@/features/lobby/scene/viewport-controller';
 
@@ -57,6 +59,7 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #pointers = new Map<number, PointerPosition>();
   readonly #motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   #app: Application | null = null;
+  #background: Graphics | null = null;
   #characterTextures: CharacterTextureCache | null = null;
   #destroyed = false;
   #gestureMoved = false;
@@ -73,7 +76,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#callbacks = options;
     this.#camera = new ViewportController(options.projection.world, {
       padding: 22,
-      minimumScale: 0.22,
+      minimumScale: 0.04,
+      ...(options.projection.nodes.length <= 48 ? { compactInitialScale: 0.48 } : {}),
     });
     this.#scheduler = new SceneFrameScheduler({
       request: (callback) => window.requestAnimationFrame(callback),
@@ -107,7 +111,13 @@ class PixiLobbyScene implements LobbySceneHandle {
       return;
     }
     this.#app = app;
-    this.#characterTextures = new CharacterTextureCache(this.#pixi, app.renderer);
+    const characters = await loadStudioCharacters();
+    if (this.#initializationCancelled()) return;
+    this.#characterTextures = new CharacterTextureCache(
+      this.#pixi,
+      app.renderer,
+      new this.#pixi.Texture({ source: new this.#pixi.CanvasSource({ resource: characters }) }),
+    );
     app.canvas.setAttribute('aria-hidden', 'true');
     app.canvas.className = 'lobby-scene__canvas';
     this.#host.replaceChildren(app.canvas);
@@ -123,11 +133,11 @@ class PixiLobbyScene implements LobbySceneHandle {
     const world = new this.#pixi.Container();
     const objects = new this.#pixi.Container();
     objects.sortableChildren = true;
-    for (const prop of createRoomProps(this.#pixi)) {
-      objects.addChild(prop);
-      this.#depths.set(prop, prop.zIndex);
-    }
-    world.addChild(createZoneLayer(this.#pixi, this.#projection, this.#labels.zones), objects);
+    const background = new this.#pixi.Graphics();
+    drawRoomPlan(background, this.#projection.world);
+    this.#background = background;
+    background.eventMode = 'none';
+    world.addChild(background, objects);
     app.stage.addChild(world);
     this.#worldLayer = world;
     this.#objectsLayer = objects;
@@ -148,6 +158,11 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#syncAnimation();
   }
 
+  #initializationCancelled(): boolean {
+    // The owner can dispose this scene while its images are still loading.
+    return this.#destroyed;
+  }
+
   destroy(): void {
     this.#destroyed = true;
     this.#scheduler.destroy();
@@ -165,6 +180,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#app = null;
     this.#worldLayer = null;
     this.#objectsLayer = null;
+    this.#background = null;
     for (const key of [
       'agentRoomRenderedNodes',
       'agentRoomRenderMilliseconds',
@@ -174,6 +190,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       'agentRoomTextureCount',
       'agentRoomAnimationFrame',
       'agentRoomMotion',
+      'agentRoomOverview',
     ])
       Reflect.deleteProperty(this.#host.dataset, key);
     app?.destroy({ removeView: true }, { children: true, context: true });
@@ -186,13 +203,25 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#scheduleRender();
   }
 
+  focusArea(x: number, y: number): void {
+    this.#callbacks.onZoomChange(this.#camera.focusArea(x, y).scale);
+    this.#scheduleRender();
+  }
+
   resetViewport(): void {
     this.#callbacks.onZoomChange(this.#camera.reset().scale);
     this.#scheduleRender();
   }
   update(projection: LobbySceneProjection): void {
+    if (
+      this.#background !== null &&
+      (projection.world.width !== this.#projection.world.width ||
+        projection.world.height !== this.#projection.world.height)
+    )
+      drawRoomPlan(this.#background, projection.world);
     this.#projection = projection;
-    this.#scheduleRender();
+    this.#camera.updateWorld(projection.world);
+    this.#syncAnimation();
   }
   zoomBy(factor: number): void {
     this.#callbacks.onZoomChange(this.#camera.zoomBy(factor).scale);
@@ -200,7 +229,21 @@ class PixiLobbyScene implements LobbySceneHandle {
   }
 
   readonly #syncAnimation = (): void => {
-    const active = !this.#destroyed && !document.hidden && !this.#motion.matches;
+    const viewport = this.#camera.viewport();
+    const active =
+      !this.#destroyed &&
+      !document.hidden &&
+      !this.#motion.matches &&
+      !usesCrowdOverview(this.#projection.nodes.length, viewport.zoom) &&
+      sceneCharacters(this.#projection).some(
+        (node) =>
+          node.characterId !== this.#projection.selectedAgentId &&
+          characterCanRoam(node) &&
+          node.x >= viewport.x &&
+          node.x <= viewport.x + viewport.width &&
+          node.y >= viewport.y &&
+          node.y <= viewport.y + viewport.height,
+      );
     this.#host.dataset.agentRoomMotion = active ? 'active' : 'paused';
     this.#scheduler.setAnimating(active);
   };
@@ -263,16 +306,22 @@ class PixiLobbyScene implements LobbySceneHandle {
     const camera = this.#camera.snapshot();
     world.position.set(camera.x, camera.y);
     world.scale.set(camera.scale);
-    const detail: LobbySceneDetail = sceneDetailForZoom(camera.scale);
+    const detail: LobbySceneDetail =
+      this.#projection.nodes.length <= 24 ? 'near' : sceneDetailForZoom(camera.scale);
     const viewport = this.#camera.viewport();
+    const overview = usesCrowdOverview(this.#projection.nodes.length, camera.scale);
+    this.#host.dataset.agentRoomOverview = String(overview);
     const visibleAgents = new Set(
-      visibleLobbyNodes(this.#projection, {
-        ...viewport,
-        x: viewport.x - 120,
-        y: viewport.y - 120,
-        width: viewport.width + 240,
-        height: viewport.height + 240,
-      }).map((node) => node.agentId),
+      (overview
+        ? []
+        : visibleLobbyNodes(this.#projection, {
+            ...viewport,
+            x: viewport.x - 120,
+            y: viewport.y - 120,
+            width: viewport.width + 240,
+            height: viewport.height + 240,
+          })
+      ).map((node) => node.agentId),
     );
     const visible = sceneCharacters(this.#projection, this.#labels.self).filter(
       (node) => node.kind === 'human' || visibleAgents.has(node.characterId),
@@ -302,8 +351,10 @@ class PixiLobbyScene implements LobbySceneHandle {
         stored?.view.destroy();
         const view = createAgentNodeView(this.#pixi, {
           body: characterTextures.createBody(node),
+          walkingBody: characterTextures.createBody(node, true),
           parts: characterTextures.createParts(node, selected),
           detail,
+          statusLabel: this.#labels.statuses?.[node.status],
           node,
           onInvalidate: () => {
             this.#scheduleRender();
@@ -325,7 +376,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       frameCharacters.push({
         characterId: node.characterId,
         x: camera.x + pose.x * camera.scale,
-        y: camera.y + (pose.y - 95 * Math.max(0.83, node.radius / 27)) * camera.scale,
+        y: camera.y + (pose.y - 100 * Math.max(0.83, node.radius / 27)) * camera.scale,
       });
     }
     this.#depths.apply();
@@ -338,7 +389,13 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#callbacks.onFrame?.({
       width: app.screen.width,
       height: app.screen.height,
-      characters: frameCharacters,
+      characters: overview ? [] : frameCharacters,
+      overview,
+      groups: roomCrowdGroups(this.#projection, viewport).map((group) => ({
+        ...group,
+        screenX: camera.x + group.x * camera.scale,
+        screenY: camera.y + group.y * camera.scale,
+      })),
     });
     if (frame.animated) {
       this.#host.dataset.agentRoomAnimationFrame = String(
@@ -358,6 +415,6 @@ class PixiLobbyScene implements LobbySceneHandle {
   }
 
   #scheduleRender(): void {
-    this.#scheduler.invalidate();
+    this.#syncAnimation();
   }
 }

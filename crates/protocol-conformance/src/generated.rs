@@ -60,6 +60,8 @@ pub struct AgentStatusEvent {
     pub created_at: String,
     pub event_type: String,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_polled_at: Option<String>,
     pub lease_expires_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<f64>,

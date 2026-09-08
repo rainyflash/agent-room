@@ -44,7 +44,8 @@ describe('房间人物位置与身份', () => {
     expect(projection.humans).toHaveLength(2);
     expect(places).toHaveLength(202);
     expect(new Set(places.map((place) => place.slot)).size).toBe(202);
-    expect(places.every((place) => isWalkableFloor(place, 22))).toBe(true);
+    const floor = { width: projection.world.width, depth: projection.world.height };
+    expect(places.every((place) => isWalkableFloor(place, 22, floor))).toBe(true);
   });
 
   it('只有已加入房间的已知人类与当前身份生成人物，私聊和 Agent 不混入', () => {

@@ -21,6 +21,9 @@ export type LobbyAgent = {
   readonly matrixUserId: string;
   readonly status: LobbyAgentStatus;
   readonly statusExpiresAtUnixMs: number;
+  readonly reportedStatus?: LobbyAgentStatus;
+  readonly lastActiveAtUnixMs?: number;
+  readonly lastPolledAtUnixMs?: number;
   readonly summary?: string;
   readonly trust: LobbyAgentTrust;
   readonly visibility: LobbyAgentVisibility;

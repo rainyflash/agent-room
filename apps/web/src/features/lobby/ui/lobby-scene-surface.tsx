@@ -1,4 +1,5 @@
 import { SceneSpeechLayer, type SceneSpeechLayerHandle } from './scene-speech-layer';
+import { RoomCrowdLayer, type RoomCrowdLayerHandle } from './room-crowd-layer';
 import type { RoomSpeech } from '../domain/room-speech';
 import type { SceneFrame } from '../scene/scene-character';
 import {
@@ -59,10 +60,12 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
     forwardedRef,
   ) {
     const bubbleLayer = useRef<SceneSpeechLayerHandle>(null);
+    const crowdLayer = useRef<RoomCrowdLayerHandle>(null);
     const humanSelection = useRef(onSelectHuman);
     humanSelection.current = onSelectHuman;
     const onFrame = useCallback((frame: SceneFrame): void => {
       bubbleLayer.current?.position(frame);
+      crowdLayer.current?.position(frame);
     }, []);
     const [keyboardFocus, setKeyboardFocus] = useState(false);
     const externalSelection = useRef(projection.selectedAgentId);
@@ -183,7 +186,12 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
       if (direction === null) {
         return false;
       }
-      setActiveAgentId(nextAgentInDirection(projection.nodes, normalizedActiveAgentId, direction));
+      const next = nextAgentInDirection(projection.nodes, normalizedActiveAgentId, direction);
+      setActiveAgentId(next);
+      if (next !== null) {
+        if (renderer === 'pixi') handleRef.current?.focusAgent?.(next);
+        else svgHandleRef.current?.focusAgent(next);
+      }
       return true;
     };
 
@@ -243,6 +251,13 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             optionId={optionId}
           />
         </div>
+        <RoomCrowdLayer
+          ref={crowdLayer}
+          onFocus={(x, y) => {
+            if (renderer === 'pixi') handleRef.current?.focusArea?.(x, y);
+            else svgHandleRef.current?.focusArea(x, y);
+          }}
+        />
         <SceneSpeechLayer
           speech={speech}
           onOpen={(id) => {

@@ -686,7 +686,8 @@
         "taskSummary": { "type": "string", "minLength": 1, "maxLength": 160 },
         "startedAt": { "type": "string", "format": "date-time" },
         "progress": { "type": "number", "minimum": 0, "maximum": 1 },
-        "leaseExpiresAt": { "type": "string", "format": "date-time" }
+        "leaseExpiresAt": { "type": "string", "format": "date-time" },
+        "lastPolledAt": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": true,
       "maxProperties": 24,

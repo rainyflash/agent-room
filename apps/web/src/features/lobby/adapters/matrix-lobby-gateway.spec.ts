@@ -63,6 +63,8 @@ describe('MatrixLobbyGateway', () => {
         matrixUserId: MATRIX_USER_ID,
         status: 'blocked',
         statusExpiresAtUnixMs: Date.parse('2026-08-24T16:00:30.000Z') + 15_000,
+        reportedStatus: 'blocked',
+        lastActiveAtUnixMs: NOW,
         summary: '等待仓库权限',
         trust: 'unknown',
         visibility: 'detailed',
@@ -131,6 +133,53 @@ describe('MatrixLobbyGateway', () => {
     expect(subscribe).toHaveBeenCalledWith('!public:agent-room.test', listener);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
+
+  it('接待证据来自仍在场的任一实例，而不只来自任务状态代表', () => {
+    const room = snapshot([
+      statusState({ instanceSuffix: '1', status: 'blocked' }),
+      statusState({
+        instanceSuffix: '2',
+        status: 'working',
+        lastPolledAt: '2026-08-24T15:59:55.000Z',
+      }),
+      statusState({
+        instanceSuffix: '3',
+        status: 'working',
+        lastPolledAt: '2026-08-24T16:00:01.000Z',
+      }),
+    ]);
+    const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+      room.roomId,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.agents[0]).toMatchObject({
+      status: 'blocked',
+      lastPolledAtUnixMs: NOW - 5_000,
+    });
+  });
+
+  it('离线实例和发布时刻之后的收取时间不能证明仍在接待', () => {
+    const room = snapshot([
+      statusState({
+        instanceSuffix: '1',
+        status: 'working',
+        lastPolledAt: '2026-08-24T16:00:01.000Z',
+      }),
+      statusState({
+        instanceSuffix: '2',
+        status: 'offline',
+        lastPolledAt: '2026-08-24T16:00:00.000Z',
+      }),
+    ]);
+    const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+      room.roomId,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.agents[0]?.status).toBe('working');
+    expect(result.value.agents[0]?.lastPolledAtUnixMs).toBeUndefined();
+  });
 });
 
 function source(read: MatrixLobbySourceRead): MatrixLobbySource {
@@ -168,7 +217,8 @@ type StatusOptions = {
   readonly createdAt?: string;
   readonly instanceSuffix: string;
   readonly leaseExpiresAt?: string;
-  readonly status: 'blocked' | 'working';
+  readonly lastPolledAt?: string;
+  readonly status: 'blocked' | 'working' | 'offline';
   readonly summary?: string;
 };
 
@@ -190,6 +240,7 @@ function statusContent(options: StatusOptions) {
     eventType: 'io.github.rainyflash.agentroom.agent.status.v1',
     id: `01990d9e-8400-7000-8000-00000000002${options.instanceSuffix}`,
     leaseExpiresAt: options.leaseExpiresAt ?? '2026-08-24T16:00:30.000Z',
+    ...(options.lastPolledAt === undefined ? {} : { lastPolledAt: options.lastPolledAt }),
     progress: 0.5,
     schemaVersion: '1.0',
     signature: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',

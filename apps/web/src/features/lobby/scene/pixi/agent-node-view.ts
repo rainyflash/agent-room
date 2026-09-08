@@ -8,12 +8,14 @@ type PixiModule = typeof import('pixi.js');
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export type AgentNodeViewOptions = {
   readonly body: Sprite;
+  readonly walkingBody?: Sprite;
   readonly parts: CharacterParts;
   readonly detail: LobbySceneDetail;
   readonly node: SceneCharacter;
   readonly onInvalidate: () => void;
   readonly onSelect: (agentId: string) => void;
   readonly selected: boolean;
+  readonly statusLabel?: string | undefined;
 };
 export type AgentCharacterView = {
   readonly container: Container;
@@ -37,54 +39,57 @@ export function createAgentNodeView(
   let hovered = false;
   let depth = selected ? 10000 : node.y;
   container.cursor = 'pointer';
-  container.hitArea = new pixi.Rectangle(-28 * size, -82 * size, 56 * size, 98 * size);
+  container.hitArea = new pixi.Rectangle(-38 * size, -92 * size, 76 * size, 132 * size);
   container.accessible = false;
   character.addChild(parts.shadow);
   if (parts.selectionRing !== null) character.addChild(parts.selectionRing);
-  const { leftLeg, rightLeg, arms } = parts;
-  character.addChild(leftLeg, rightLeg);
   const body = new pixi.Container();
-  body.addChild(arms, options.body);
+  body.addChild(options.body);
+  if (options.walkingBody !== undefined) {
+    options.walkingBody.visible = false;
+    body.addChild(options.walkingBody);
+  }
   character.addChild(body);
   if (node.status === 'offline') character.alpha = 0.56;
   character.addChild(parts.marker);
-  if (parts.bubble !== null) {
-    const badge = new pixi.Text({
-      text: node.status === 'blocked' ? '!' : '?',
-      anchor: 0.5,
-      style: {
-        fill: '#74502e',
-        fontFamily: 'Instrument Sans, sans-serif',
-        fontSize: 19,
-        fontWeight: '700',
-      },
-    });
-    badge.position.set(2, -80);
-    character.addChild(parts.bubble, badge);
-  }
+  if (parts.bubble !== null) character.addChild(parts.bubble);
   const label = new pixi.Text({
     text: truncateLabel(node.displayName),
     anchor: { x: 0.5, y: 0 },
     style: {
-      fill: '#354b3e',
-      fontFamily: 'Instrument Sans, Noto Sans SC, sans-serif',
-      fontSize: 18,
+      fill: '#233039',
+      fontFamily: 'Instrument Sans Variable, Noto Sans SC Variable, sans-serif',
+      fontSize: 19,
       fontWeight: '600',
-      stroke: { color: '#f7f3df', width: 3 },
+      stroke: { color: '#fff', width: 4 },
     },
   });
   label.position.set(0, 14);
-  label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
+  label.visible = selected || node.kind === 'human' || options.detail === 'near';
   character.addChild(label);
+  if (options.detail === 'near' && options.statusLabel !== undefined && node.kind === 'agent') {
+    const status = new pixi.Text({
+      text: options.statusLabel,
+      anchor: { x: 0.5, y: 0 },
+      style: {
+        fill: '#526667',
+        fontFamily: 'Instrument Sans Variable, Noto Sans SC Variable, sans-serif',
+        fontSize: 13,
+        stroke: { color: '#fff', width: 3 },
+      },
+    });
+    status.position.set(0, 38);
+    character.addChild(status);
+  }
   container.on('pointerover', () => {
     hovered = true;
     label.visible = true;
-    body.scale.set(1.07);
+    body.scale.set(1.025);
     options.onInvalidate();
   });
   container.on('pointerout', () => {
     hovered = false;
-    label.visible = selected || node.kind === 'human' || options.detail !== 'distant';
+    label.visible = selected || node.kind === 'human' || options.detail === 'near';
     body.scale.set(1);
     options.onInvalidate();
   });
@@ -101,10 +106,12 @@ export function createAgentNodeView(
       container.position.set(pose.x, pose.y);
       depth = selected || hovered ? 10000 : pose.y;
       body.position.y = -Math.abs(pose.stride) * 0.42;
-      leftLeg.position.y = pose.stride;
-      rightLeg.position.y = -pose.stride;
-      arms.rotation = pose.stride * 0.015;
-      body.skew.x = pose.facing * (pose.moving ? 0.045 : 0);
+      if (options.walkingBody !== undefined) {
+        options.walkingBody.visible = pose.moving;
+        options.body.visible = !pose.moving;
+      }
+      body.scale.x = (hovered ? 1.025 : 1) * (pose.moving && pose.facing < 0 ? -1 : 1);
+      body.skew.x = pose.facing * (pose.moving ? 0.01 : 0);
     },
     destroy: () => {
       container.destroy({ children: true });

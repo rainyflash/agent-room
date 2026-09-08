@@ -47,6 +47,7 @@ const statusEventSchema = z
     eventType: z.literal('io.github.rainyflash.agentroom.agent.status.v1'),
     id: uuidV7Schema,
     leaseExpiresAt: z.iso.datetime({ offset: true }),
+    lastPolledAt: z.iso.datetime({ offset: true }).optional(),
     progress: z.number().min(0).max(1).optional(),
     schemaVersion: z.literal('1.0'),
     signature: z
@@ -191,6 +192,11 @@ function aggregateAgent(
     return [];
   }
   const event = representative.event;
+  const polledTimes = candidates.flatMap((candidate) => {
+    if (candidate.status === 'offline' || candidate.event.lastPolledAt === undefined) return [];
+    const polled = Date.parse(candidate.event.lastPolledAt);
+    return polled <= candidate.createdAtUnixMs ? [polled] : [];
+  });
   return [
     Object.freeze({
       agentId,
@@ -203,6 +209,9 @@ function aggregateAgent(
       ),
       matrixUserId: event.actor.agent.matrixUserId,
       status: representative.status,
+      reportedStatus: event.status,
+      lastActiveAtUnixMs: Math.max(...candidates.map((candidate) => candidate.createdAtUnixMs)),
+      ...(polledTimes.length === 0 ? {} : { lastPolledAtUnixMs: Math.max(...polledTimes) }),
       statusExpiresAtUnixMs: representative.expiresAtUnixMs,
       ...(event.visibility === 'detailed' && event.taskSummary !== undefined
         ? { summary: event.taskSummary }

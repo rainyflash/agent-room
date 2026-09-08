@@ -53,6 +53,7 @@ impl HostAgentState {
 pub struct AgentStatusIntent {
     host_state: HostAgentState,
     details: Option<AgentStatusDetails>,
+    last_polled_at: Option<UtcMillis>,
 }
 
 impl AgentStatusIntent {
@@ -60,7 +61,18 @@ impl AgentStatusIntent {
         Self {
             host_state,
             details,
+            last_polled_at: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_last_polled_at(mut self, value: Option<UtcMillis>) -> Self {
+        self.last_polled_at = value;
+        self
+    }
+
+    pub const fn last_polled_at(&self) -> Option<UtcMillis> {
+        self.last_polled_at
     }
 
     fn snapshot(
@@ -218,6 +230,7 @@ struct PublishedRoomStatus {
     snapshot: AgentStatusSnapshot,
     renew_at: UtcMillis,
     lease_expires_at: UtcMillis,
+    last_polled_at: Option<UtcMillis>,
 }
 
 pub struct AgentStatusPublicationService {
@@ -266,6 +279,11 @@ impl AgentStatusPublicationService {
         entropy: u64,
     ) -> StatusPublicationResult<StatusPublicationOutcome> {
         let now = self.clock.now();
+        if intent.last_polled_at.is_some_and(|polled| polled > now) {
+            return Err(StatusPublicationFailure::new(
+                StatusPublicationFailureKind::InvalidIntent,
+            ));
+        }
         let snapshot = intent.snapshot(target.visibility()).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent)
         })?;
@@ -274,7 +292,13 @@ impl AgentStatusPublicationService {
                 StatusPublicationReason::StatusChanged
             } else if previous.snapshot.visibility() != snapshot.visibility() {
                 StatusPublicationReason::VisibilityChanged
-            } else if now >= previous.renew_at {
+            } else if now >= previous.renew_at
+                || intent.last_polled_at.is_some_and(|polled| {
+                    previous
+                        .last_polled_at
+                        .is_none_or(|old| polled.value() - old.value() >= 10_000)
+                })
+            {
                 StatusPublicationReason::Renewal
             } else {
                 return Ok(StatusPublicationOutcome::NotDue {
@@ -292,7 +316,7 @@ impl AgentStatusPublicationService {
             self.policy.lifetime,
         )
         .map_err(|_| StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent))?;
-        let event = self.state_event(&lease)?;
+        let event = self.state_event(&lease, intent.last_polled_at)?;
         let event_id = self
             .publisher
             .publish(target.room_id(), &event)
@@ -309,6 +333,7 @@ impl AgentStatusPublicationService {
                 snapshot,
                 renew_at,
                 lease_expires_at: lease.expires_at(),
+                last_polled_at: intent.last_polled_at,
             },
         );
         Ok(StatusPublicationOutcome::Published {
@@ -319,7 +344,11 @@ impl AgentStatusPublicationService {
         })
     }
 
-    fn state_event(&self, lease: &AgentStatusLease) -> StatusPublicationResult<MatrixStateEvent> {
+    fn state_event(
+        &self,
+        lease: &AgentStatusLease,
+        last_polled_at: Option<UtcMillis>,
+    ) -> StatusPublicationResult<MatrixStateEvent> {
         let event_id = self.identifiers.event_id();
         let correlation_id = self.identifiers.correlation_id();
         if event_id.get_version() != Some(Version::SortRand)
@@ -329,7 +358,9 @@ impl AgentStatusPublicationService {
                 StatusPublicationFailureKind::InvalidIdentifier,
             ));
         }
-        let unsigned = UnsignedStatusEvent::new(&self.identity, lease, event_id, correlation_id)?;
+        let mut unsigned =
+            UnsignedStatusEvent::new(&self.identity, lease, event_id, correlation_id)?;
+        unsigned.last_polled_at = last_polled_at.map(rfc3339).transpose()?;
         let mut content = serde_json::to_value(unsigned).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization)
         })?;
@@ -383,6 +414,8 @@ impl AgentStatusStatePublisher for MatrixStatusStatePublisher {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UnsignedStatusEvent<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_polled_at: Option<String>,
     schema_version: &'static str,
     event_type: &'static str,
     id: Uuid,
@@ -409,6 +442,7 @@ impl<'a> UnsignedStatusEvent<'a> {
     ) -> StatusPublicationResult<Self> {
         let details = lease.snapshot().details();
         Ok(Self {
+            last_polled_at: None,
             schema_version: "1.0",
             event_type: STATUS_EVENT_TYPE,
             id: event_id,

@@ -3,6 +3,7 @@ import {
   characterSeed,
   isWalkableFloor,
   projectFloorPoint,
+  type FloorPoint,
 } from '@/features/lobby/domain/room-floor';
 
 export type CharacterPose = {
@@ -13,24 +14,21 @@ export type CharacterPose = {
   readonly moving: boolean;
 };
 
+export function characterCanRoam(
+  node: SceneCharacter,
+): node is SceneCharacter & { readonly floorPosition: FloorPoint } {
+  return node.floorPosition !== undefined && node.status === 'idle' && node.reception === 'recent';
+}
+
 export function characterPose(
   node: SceneCharacter,
   elapsedSeconds: number,
   movingAllowed: boolean,
 ): CharacterPose {
   const still = { x: node.x, y: node.y, stride: 0, facing: 1, moving: false };
-  if (
-    !movingAllowed ||
-    node.floorPosition === undefined ||
-    node.status === 'offline' ||
-    node.status === 'present'
-  )
-    return still;
+  if (!movingAllowed || !characterCanRoam(node)) return still;
   const seed = characterSeed(node.characterId);
   const time = elapsedSeconds + (seed % 1300) / 100;
-  if (node.status !== 'idle' && node.status !== 'completed') {
-    return { ...still, stride: Math.sin(time * 2) * 0.7 };
-  }
   const angle = (seed % 628) / 100;
   const distance = Math.min(34 + (seed % 36), node.roamingRadius ?? 69);
   if (distance < 3) return { ...still, stride: Math.sin(time * 2) * 0.5 };
@@ -40,10 +38,14 @@ export function characterPose(
   };
   for (let step = 1; step <= 8; step += 1) {
     if (
-      !isWalkableFloor({
-        x: node.floorPosition.x + ((target.x - node.floorPosition.x) * step) / 8,
-        y: node.floorPosition.y + ((target.y - node.floorPosition.y) * step) / 8,
-      })
+      !isWalkableFloor(
+        {
+          x: node.floorPosition.x + ((target.x - node.floorPosition.x) * step) / 8,
+          y: node.floorPosition.y + ((target.y - node.floorPosition.y) * step) / 8,
+        },
+        18,
+        node.floor,
+      )
     )
       return { ...still, stride: Math.sin(time * 2) * 0.7 };
   }
