@@ -54,6 +54,17 @@ pub struct IpcHostSessionSummary {
     pub error_code: Option<String>,
 }
 
+/// Read-only evidence from successful host calls; observing this never renews a session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcHostSessionDiagnostics {
+    pub session: IpcHostSessionSummary,
+    pub display_name: String,
+    pub last_inbox_read_ago_ms: Option<u64>,
+    pub last_message_received_ago_ms: Option<u64>,
+    pub last_message_sent_ago_ms: Option<u64>,
+}
+
 pub(crate) fn validate_session_id(value: &str) -> Result<(), IpcMethodValidationFailure> {
     let parsed = Uuid::parse_str(value).map_err(|_| failure("bridge.ipc.session_id_invalid"))?;
     if parsed.get_version() != Some(Version::SortRand)

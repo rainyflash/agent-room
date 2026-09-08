@@ -85,6 +85,8 @@ beforeEach(() => {
     checkUpdate: vi.fn(),
     configureAgentRuntime: vi.fn(),
     configureHost: vi.fn(),
+    configuredHost: null,
+    readHostSessions: vi.fn(() => Promise.resolve(ok([]))),
     dismissFailure: vi.fn(),
     failure: null,
     hosts: [],

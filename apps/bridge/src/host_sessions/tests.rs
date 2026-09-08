@@ -24,6 +24,15 @@ struct TestHandler {
 impl BridgeIpcRequestHandler for TestHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
+            if let IpcMethod::ListPreviews(request) = &method {
+                if request.room_id.as_deref() == Some("!denied:test.invalid") {
+                    return Err(session_failure("bridge.test.forbidden", false));
+                }
+                return Ok(IpcResponse::MessagePreviews {
+                    previews: vec![],
+                    next_cursor: None,
+                });
+            }
             if matches!(method, IpcMethod::OpenContent(_)) {
                 self.entered.notify_one();
                 self.release.notified().await;
@@ -32,6 +41,75 @@ impl BridgeIpcRequestHandler for TestHandler {
                 summary: self.summary.clone(),
             })
         })
+    }
+}
+
+#[tokio::test]
+async fn 诊断不伪造取信证据也不延长空闲寿命() {
+    let registry = HostSessionRegistry::new(Arc::new(TestFactory::default()));
+    let id = open(&registry, request("Receiver")).await;
+    identity(&registry, &id).await;
+    let entry = registry.find(&id).await.expect("会话存在");
+    let activity = *entry.activity.lock().await;
+    for _ in 0..2 {
+        let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+            panic!("诊断响应");
+        };
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].last_inbox_read_ago_ms, None);
+    }
+    assert_eq!(*entry.activity.lock().await, activity);
+    let inbox = |room| {
+        IpcMethod::ListPreviews(agent_room_bridge_ipc::IpcListPreviewsRequest {
+            room_id: room,
+            after_event_id: None,
+            before_event_id: None,
+            limit: 20,
+        })
+    };
+    assert!(
+        registry
+            .execute(&id, inbox(Some("!denied:test.invalid".into())))
+            .await
+            .is_err()
+    );
+    assert!(entry.evidence.lock().await.inbox_read.is_none());
+    registry
+        .execute(&id, inbox(None))
+        .await
+        .expect("成功空收件箱");
+    let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+        panic!("诊断响应");
+    };
+    assert!(sessions[0].last_inbox_read_ago_ms.is_some());
+    assert!(sessions[0].last_message_received_ago_ms.is_none());
+    registry.close(&id).await.expect("关闭");
+    let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+        panic!("诊断响应");
+    };
+    assert!(sessions.is_empty());
+}
+
+#[test]
+fn 未确认的提交不能被诊断为发信成功() {
+    use agent_room_bridge_ipc::{IpcSentMessage, IpcSubmissionState};
+    let mut evidence = HostCallEvidence::default();
+    for state in [
+        IpcSubmissionState::UnknownCommit,
+        IpcSubmissionState::BindingPending,
+        IpcSubmissionState::Submitted,
+    ] {
+        evidence.record(&IpcResponse::SentMessage {
+            message: IpcSentMessage {
+                submission_id: Uuid::now_v7().to_string(),
+                state,
+                event_id: None,
+            },
+        });
+        assert_eq!(
+            evidence.message_sent.is_some(),
+            state == IpcSubmissionState::Submitted
+        );
     }
 }
 

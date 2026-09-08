@@ -1,0 +1,45 @@
+.host-onboarding {
+  width: 100%;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle, #dee5e4);
+}
+.host-onboarding h3 {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.host-onboarding p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.host-onboarding ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: grid;
+  gap: 8px;
+}
+.host-onboarding li {
+  padding: 10px;
+  border: 1px solid var(--border-subtle, #dee5e4);
+  border-radius: 10px;
+}
+.host-onboarding li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.host-onboarding strong {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.host-onboarding span {
+  flex-shrink: 0;
+}
+.host-onboarding code {
+  overflow-wrap: anywhere;
+}
+.host-onboarding__note {
+  font-size: 11px;
+}

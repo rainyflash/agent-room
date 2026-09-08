@@ -1,4 +1,5 @@
 @import '../shared/ui/app-navigation.css';
+@import '../features/desktop/ui/host-session-onboarding.css';
 @import '../features/session/ui/connection-workspace.css';
 
 .sr-only {

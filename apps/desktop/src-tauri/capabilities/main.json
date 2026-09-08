@@ -28,6 +28,7 @@
     "allow-desktop-configure-agent-runtime",
     "allow-desktop-lobby-snapshot",
     "allow-desktop-agent-recovery-sessions",
+    "allow-desktop-host-session-diagnostics",
     "allow-desktop-agent-recovery"
   ]
 }

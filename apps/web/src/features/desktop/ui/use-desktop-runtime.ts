@@ -2,6 +2,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
 
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
+import { err, ok, type Result } from '@/shared/result';
 import {
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
@@ -12,6 +13,7 @@ import {
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
+  type HostSessionDiagnostics,
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
 } from '@/features/desktop/domain/desktop-runtime';
@@ -35,6 +37,10 @@ export type DesktopRuntimeController = {
   readonly snapshot: DesktopRuntimeSnapshot | null;
   readonly update: ReleaseUpdateCheck | null;
   readonly hosts: readonly AgentHostDetection[];
+  readonly configuredHost: AgentHostKind | null;
+  readonly readHostSessions: () => Promise<
+    Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
+  >;
   readonly checkUpdate: (channel: ReleaseUpdateChannel) => Promise<void>;
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
@@ -57,6 +63,13 @@ export function useDesktopRuntime(
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
   const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
+  const [configuredHost, setConfiguredHost] = useState<AgentHostKind | null>(null);
+  const readHostSessions = useCallback(
+    () =>
+      gateway.readHostSessions?.() ??
+      Promise.resolve(err({ code: 'desktop.hosts.diagnostics_unavailable', retryable: false })),
+    [gateway],
+  );
 
   const applyDeepLink = useCallback(
     (target: DesktopDeepLink): void => {
@@ -156,8 +169,9 @@ export function useDesktopRuntime(
       });
       if (gateway.detectHosts !== undefined) {
         void gateway.detectHosts().then((hostsResult) => {
-          if (!disposed && hostsResult.ok) {
-            setHosts(hostsResult.value);
+          if (!disposed) {
+            if (hostsResult.ok) setHosts(hostsResult.value);
+            else setFailure(hostsResult.error);
           }
         });
       }
@@ -241,9 +255,11 @@ export function useDesktopRuntime(
   const configureHost = useCallback(
     async (host: AgentHostKind): Promise<void> => {
       if (gateway.planHost === undefined || gateway.applyHost === undefined) {
+        setFailure({ code: 'desktop.hosts.configuration_unavailable', retryable: false });
         return;
       }
       setBusy('host-configure');
+      setConfiguredHost(null);
       const plan = await gateway.planHost(host);
       if (!plan.ok) {
         setFailure(plan.error);
@@ -252,12 +268,14 @@ export function useDesktopRuntime(
       }
       const result =
         plan.value.action === 'unchanged'
-          ? { ok: true as const, value: undefined }
+          ? ok(undefined)
           : await gateway.applyHost(host, plan.value.originalDigest);
       setFailure(result.ok ? null : result.error);
+      if (result.ok) setConfiguredHost(host);
       if (result.ok && gateway.detectHosts !== undefined) {
         const detected = await gateway.detectHosts();
         if (detected.ok) setHosts(detected.value);
+        else setFailure(detected.error);
       }
       setBusy(null);
     },
@@ -305,6 +323,8 @@ export function useDesktopRuntime(
     snapshot,
     update,
     hosts,
+    configuredHost,
+    readHostSessions,
     checkUpdate,
     bootstrapDefaultAgent,
     configureAgentRuntime,

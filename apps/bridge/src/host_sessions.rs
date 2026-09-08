@@ -51,10 +51,42 @@ struct HostSession {
     phase: RwLock<SessionPhase>,
     closing: AtomicBool,
     activity: Mutex<Instant>,
+    evidence: Mutex<HostCallEvidence>,
     /// 读锁覆盖完整业务调用；关闭拿写锁后才能释放身份与存储。
     calls: RwLock<()>,
     shutdown: watch::Sender<bool>,
     worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+#[derive(Default)]
+struct HostCallEvidence {
+    inbox_read: Option<Instant>,
+    message_received: Option<Instant>,
+    message_sent: Option<Instant>,
+}
+
+impl HostCallEvidence {
+    fn record(&mut self, response: &IpcResponse) {
+        let now = Instant::now();
+        match response {
+            IpcResponse::MessagePreviews { previews, .. } => {
+                self.inbox_read = Some(now);
+                if !previews.is_empty() {
+                    self.message_received = Some(now);
+                }
+            }
+            IpcResponse::SentMessage { message }
+                if message.state == agent_room_bridge_ipc::IpcSubmissionState::Submitted =>
+            {
+                self.message_sent = Some(now);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn elapsed_millis(instant: Option<Instant>) -> Option<u64> {
+    instant.map(|value| u64::try_from(value.elapsed().as_millis()).unwrap_or(u64::MAX))
 }
 
 impl HostSession {
@@ -136,7 +168,9 @@ impl HostSession {
                 return Err(session_failure("bridge.host_session.closed", false));
             }
         };
-        handler.dispatch(method).await
+        let response = handler.dispatch(method).await?;
+        self.evidence.lock().await.record(&response);
+        Ok(response)
     }
 
     async fn stop(&self) -> Result<(), BridgeIpcDispatchFailure> {
@@ -217,6 +251,7 @@ impl HostSessionRegistry {
             phase: RwLock::new(SessionPhase::Starting),
             closing: AtomicBool::new(false),
             activity: Mutex::new(Instant::now()),
+            evidence: Mutex::new(HostCallEvidence::default()),
             calls: RwLock::new(()),
             shutdown,
             worker: Mutex::new(None),
@@ -265,6 +300,29 @@ impl HostSessionRegistry {
             });
         }
         IpcResponse::RecoverySessions { sessions: entries }
+    }
+
+    async fn diagnostics(&self) -> IpcResponse {
+        let entries = self
+            .sessions
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut sessions = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let session = entry.summary().await;
+            let evidence = entry.evidence.lock().await;
+            sessions.push(agent_room_bridge_ipc::IpcHostSessionDiagnostics {
+                session,
+                display_name: entry.request.display_name.clone(),
+                last_inbox_read_ago_ms: elapsed_millis(evidence.inbox_read),
+                last_message_received_ago_ms: elapsed_millis(evidence.message_received),
+                last_message_sent_ago_ms: elapsed_millis(evidence.message_sent),
+            });
+        }
+        IpcResponse::HostSessionDiagnostics { sessions }
     }
 
     async fn find(&self, session_id: &str) -> Result<Arc<HostSession>, BridgeIpcDispatchFailure> {
@@ -407,6 +465,7 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::HostSessionDiagnostics => Ok(self.sessions.diagnostics().await),
                 IpcMethod::ListRecoverySessions => Ok(self.sessions.recovery_sessions().await),
                 IpcMethod::OpenHostSession(request) => self.sessions.open(request).await,
                 IpcMethod::CloseHostSession(request) => {

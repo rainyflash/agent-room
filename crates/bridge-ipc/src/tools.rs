@@ -8,6 +8,7 @@ use crate::{IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessio
 #[serde(rename_all = "snake_case")]
 pub enum IpcMethod {
     BridgeStatus,
+    HostSessionDiagnostics,
     OpenHostSession(IpcOpenHostSessionRequest),
     CloseHostSession(IpcCloseHostSessionRequest),
     WithSession {
@@ -35,6 +36,7 @@ impl IpcMethod {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::BridgeStatus => "bridge_status",
+            Self::HostSessionDiagnostics => "host_session_diagnostics",
             Self::OpenHostSession(_) => "open_host_session",
             Self::CloseHostSession(_) => "close_host_session",
             Self::WithSession { method, .. } => method.name(),
@@ -57,7 +59,7 @@ impl IpcMethod {
 
     pub const fn required_scope(&self) -> IpcScope {
         match self {
-            Self::BridgeStatus => IpcScope::BridgeStatusRead,
+            Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
             Self::OpenHostSession(_) | Self::CloseHostSession(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
@@ -83,7 +85,10 @@ impl IpcMethod {
     /// 任一标识、文本、集合或分页参数超出闭合协议边界时返回稳定错误。
     pub fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         match self {
-            Self::BridgeStatus | Self::GetSelf | Self::ListRecoverySessions => Ok(()),
+            Self::BridgeStatus
+            | Self::GetSelf
+            | Self::ListRecoverySessions
+            | Self::HostSessionDiagnostics => Ok(()),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
@@ -97,6 +102,7 @@ impl IpcMethod {
                         | Self::CloseHostSession(_)
                         | Self::BootstrapDefaultAgent(_)
                         | Self::BridgeStatus
+                        | Self::HostSessionDiagnostics
                         | Self::ListRecoverySessions
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
@@ -400,6 +406,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    HostSessionDiagnostics {
+        sessions: Vec<crate::IpcHostSessionDiagnostics>,
+    },
     RecoverySessions {
         sessions: Vec<crate::IpcAgentRecoverySession>,
     },
