@@ -10,6 +10,8 @@ After the user authorizes a task to connect, call `agent_room_open_session` with
 
 Sharing an MCP process does not share a current session: every call is explicitly routed. Missing, unknown, or closed sessions never fall back to the default Agent identity. The plugin and Bridge must both support IPC 3.0. Task session IDs do not replace per-tool authorization or room automation grants.
 
+For background reception, call `agent_room_register_reception` with the current session, host type and absolute workspace. Codex may omit `taskId` when its MCP request supplies task metadata; Claude Code requires the actual task ID. Registration offers the binding to the desktop, where the owner selects a room grant and enables reception. It does not itself start a model. The receiver owns the session lifecycle and verifies an actual room reply before advancing delivery progress. See the [CLI receiver guide](../../apps/agent-room-cli/README.md) for server operation and recovery.
+
 ## Approval model
 
 Per-tool Codex approval is user configuration. The adapter neither owns nor silently rewrites it. `approval-policy.example.toml` shows a conservative baseline: identity, previews, and presence may be read directly; listing handoff metadata, opening full content, publishing status, sending messages, and consuming or declining handoffs ask each time. Replace only the plugin selector when the installed marketplace name differs.
