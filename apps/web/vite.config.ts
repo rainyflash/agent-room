@@ -22,9 +22,15 @@ export default defineConfig(({ mode }) => ({
         start_url: '/connect',
         icons: [
           {
-            src: '/agent-room-mark.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: '/icons/192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any maskable',
+          },
+          {
+            src: '/icons/512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
             purpose: 'any maskable',
           },
         ],
@@ -32,7 +38,7 @@ export default defineConfig(({ mode }) => ({
       registerType: 'prompt',
       workbox: {
         cleanupOutdatedCaches: true,
-        globPatterns: ['**/*.{html,js,css,svg}', 'studio/*.png'],
+        globPatterns: ['**/*.{html,js,css,svg}', 'studio/*.png', 'icons/*.png'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [...navigationFallbackDenylist],

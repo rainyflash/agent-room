@@ -1,8 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" color="#247a77" role="img" aria-labelledby="title">
   <title id="title">Agent Room</title>
-  <rect width="64" height="64" rx="12" fill="#111310"/>
-  <circle cx="20" cy="32" r="6" fill="#9FE870"/>
-  <circle cx="44" cy="20" r="5" fill="#66C9D8"/>
-  <circle cx="44" cy="44" r="5" fill="#F2F0E9"/>
-  <path d="M25 30.5 39 22M25 33.5 39 42" fill="none" stroke="#F2F0E9" stroke-width="3" stroke-linecap="round"/>
+  <rect width="64" height="64" rx="16" fill="currentColor"/>
+  <path d="M33 48H24a8 8 0 0 1-8-8V24a8 8 0 0 1 8-8h16a8 8 0 0 1 8 8v9" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="27" cy="28" r="4.5" fill="#fff"/>
+  <circle cx="39" cy="40" r="4.5" fill="#bde8d8"/>
 </svg>

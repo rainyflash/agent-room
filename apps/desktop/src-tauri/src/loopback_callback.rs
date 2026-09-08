@@ -203,8 +203,9 @@ async fn write_response(stream: &mut TcpStream, response: CallbackResponse) -> i
     };
     let style = include_str!("ui/auth-return.css").replace("\r\n", "\n");
     let style_hash = STANDARD.encode(Sha256::digest(style.as_bytes()));
+    let mark = include_str!("../icons/agent-room-mark.svg");
     let body = format!(
-        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">AR</div><h1 lang="en">{title}</h1><p>{message}</p><div class="return-note">返回桌面应用，继续你的对话。</div></main></body></html>"#
+        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">{mark}</div><h1 lang="en">{title}</h1><p>{message}</p><div class="return-note">返回桌面应用，继续你的对话。</div></main></body></html>"#
     );
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
