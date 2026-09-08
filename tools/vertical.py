@@ -1015,12 +1015,11 @@ def start_web(
     web_environment.update(environment_overrides or {})
     run_checked(
         [
-            executable("node"),
-            "apps/web/node_modules/vite/bin/vite.js",
-            "build",
-            "apps/web",
-            "--mode",
-            "vertical",
+            executable("corepack"),
+            "pnpm@10.28.0",
+            "--filter",
+            "@agent-room/web",
+            "build:session",
         ],
         environment=web_environment,
     )
