@@ -1,5 +1,5 @@
 import { receptionFixture } from './reception-fixture';
-import { SessionProvider } from '@/features/session/ui/session-provider';
+import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
 import type { SessionDependencies, WebSession } from '@/features/session/domain/session';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createRoot } from 'react-dom/client';
@@ -175,6 +175,14 @@ const gateway: DesktopRuntimeGateway = {
   subscribe: () => ready(() => undefined),
 };
 
+function AuthenticatedOnboardingFixture() {
+  const { snapshot } = useSession();
+  const currentPrincipal = snapshot.context.principal;
+  // Match production mounting: account restoration clears private queries before the workspace loads.
+  if (!snapshot.matches('ready') || currentPrincipal === null) return null;
+  return <OnboardingWorkspace principal={currentPrincipal} />;
+}
+
 async function bootstrapFixture() {
   await initializeI18n(window.localStorage, ['en']);
   const runtime = createCloudRuntime(
@@ -227,17 +235,7 @@ async function bootstrapFixture() {
           <AppServicesProvider services={services}>
             <SessionProvider dependencies={sessionDependencies}>
               <DesktopRuntimeProvider gateway={gateway}>
-                <OnboardingWorkspace
-                  principal={{
-                    authenticatedAtUnixMs: 1,
-                    expiresAtUnixMs: 1_900_000_000_000,
-                    displayName: 'Fixture operator',
-                    locale: 'en',
-                    matrixUserId: '@operator:matrix.test',
-                    principalId: '0198b601-77a3-74f1-b4f4-940f291951b9',
-                    recentlyAuthenticated: true,
-                  }}
-                />
+                <AuthenticatedOnboardingFixture />
                 <DesktopRuntimeSurface />
               </DesktopRuntimeProvider>
             </SessionProvider>
