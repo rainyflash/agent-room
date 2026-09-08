@@ -497,7 +497,7 @@ pub struct RegisterReceptionInput {
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
-    pub task_id: String,
+    pub task_id: Option<String>,
     #[schemars(length(min = 1, max = 4096))]
     pub workspace: String,
 }

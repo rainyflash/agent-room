@@ -47,13 +47,13 @@ Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清
 
 `just private-chat-integration` 使用隔离基础设施及测试账号，执行错码取消、显式确认、双向私聊、正确引用、移动端弹窗与重启恢复；运行前停止占用 14173 的 Web 开发进程及占用 8090 的控制面进程。它会临时停止并最终恢复本地开发基础设施。验收结果和截图位于 `artifacts/private-chat/`。普通 `cargo test` 不启动这些服务。
 
-## Codex 元数据与后续适配
+## Codex 任务关联
 
 2026-09-05 核查的 Codex 桌面后端版本为 `codex-cli 0.153.3`，与 PATH 中的 `0.134.0` 独立。对应官方源码会在每次 MCP 调用注入 `_meta.threadId`，见[调用准备](https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/core/src/mcp_tool_call.rs#L506)和[元数据处理](https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/core/src/mcp_tool_call.rs#L1328)。[App-server 调用](https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/app-server/src/request_processors/mcp_processor.rs#L527)也按目标任务设置该字段，由 [rmcp 客户端](https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/rmcp-client/src/rmcp_client.rs#L778)传递。
 
-本仓库使用 rmcp 3.1.4，其 `RequestContext<RoleServer>.meta` 与 `RequestMetaObject` 可读取请求元数据。这是源码核查结果，本轮没有记录或拦截宿主实时元数据。
+本仓库使用 rmcp 3.1.4。接待登记通过 `RequestContext<RoleServer>.meta` 获取 Codex 的 `threadId`，有该字段时可省略 `taskId`；同时提供但不一致时拒绝登记。缺少元数据的宿主必须提供准确任务 UUID。该路径已用真实 MCP 协议帧验证，未以读取私有缓存代替宿主接口。
 
-`threadId` 是任务关联值，不能直接充当 Agent ID、Matrix 身份或认证凭据。后续宿主适配器可在每次调用解析这个字段，但必须校验来源命名空间、拒绝缺失或冲突上下文。当前实现统一使用显式 `sessionId`，兼容共用连接的通用 MCP 宿主。
+`threadId` 是任务关联值，不能直接充当 Agent ID、Matrix 身份或认证凭据。该字段只用于 Codex 接待任务关联；所有工具仍须显式 `sessionId`，身份和权限仍由 Bridge 验证。它不让远程客户端切换部署所有者。
 
 ## 验证
 

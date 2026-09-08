@@ -29,6 +29,54 @@ const SESSION_B: &str = "01990d9e-8400-7000-8000-000000000011";
 const SESSION_C: &str = "01990d9e-8400-7000-8000-000000000012";
 
 #[tokio::test]
+async fn 接待登记使用宿主任务元数据并拒绝错绑或猜测() {
+    let bridge = Arc::new(ScriptedBridge::new(vec![ExpectedCall {
+        method: IpcMethod::WithSession {
+            session_id: SESSION_A.into(),
+            method: Box::new(IpcMethod::RegisterReception(
+                agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+                    host_type: agent_room_bridge_ipc::IpcReceptionHost::Codex,
+                    task_id: SESSION_B.into(),
+                    workspace: "/project".into(),
+                },
+            )),
+        },
+        response: Ok(IpcResponse::HostSession {
+            session: IpcHostSessionSummary {
+                session_id: SESSION_A.into(),
+                state: IpcHostSessionState::Ready,
+                agent_id: None,
+                error_code: None,
+            },
+        }),
+    }]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    harness.send(json!({"jsonrpc":"2.0","id":100,"method":"tools/call","params":{
+        "name":"agent_room_register_reception","arguments":{"sessionId":SESSION_A,"workspace":"/project"},"_meta":{"threadId":SESSION_B}
+    }})).await;
+    assert_ne!(harness.receive().await["result"]["isError"], true);
+    harness.send(json!({"jsonrpc":"2.0","id":101,"method":"tools/call","params":{
+        "name":"agent_room_register_reception","arguments":{"sessionId":SESSION_A,"taskId":SESSION_C,"workspace":"/project"},"_meta":{"threadId":SESSION_B}
+    }})).await;
+    assert_eq!(
+        harness.receive().await["result"]["structuredContent"]["code"],
+        "receiver.host_task_mismatch"
+    );
+    let missing = harness
+        .call(
+            "agent_room_register_reception",
+            json!({"sessionId":SESSION_A,"workspace":"/project"}),
+        )
+        .await;
+    assert_eq!(
+        missing["structuredContent"]["code"],
+        "receiver.host_task_required"
+    );
+    bridge.assert_finished();
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝历史参数() {
     let bridge = Arc::new(ScriptedBridge::new(vec![ExpectedCall {
         method: IpcMethod::WithSession {
