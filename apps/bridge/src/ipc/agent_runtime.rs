@@ -556,10 +556,9 @@ impl AgentRuntimeIpcFacade {
         // The desktop reads the same projection, but only the host can attest to receiving it.
         if self.consumer == AgentRuntimeConsumer::HostSession
             && let Some(status) = runtime.status
+            && let Err(failure) = status.note_inbox_read(&room_id, self.clock.now()).await
         {
-            if let Err(failure) = status.note_inbox_read(&room_id, self.clock.now()).await {
-                tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
-            }
+            tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
         Ok(response)
     }
