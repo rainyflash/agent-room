@@ -1,12 +1,8 @@
 .lobby-game {
-  --ar-accent: #247a77;
-  --ar-surface: #fff;
-  --ar-surface-muted: #f0f4f4;
-  --ar-line: #d1d8db;
   display: block;
   position: relative;
   isolation: isolate;
-  background: #fff;
+  background: var(--ar-canvas);
 }
 .lobby-game .room-scene {
   position: absolute;
@@ -36,39 +32,40 @@
 }
 .lobby-game .workspace-header {
   position: absolute;
-  top: 16px;
-  left: 28px;
-  right: 28px;
-  height: 56px;
   min-height: 0;
-  padding: 0;
   gap: 16px;
   border: 0;
   border-radius: 0;
-  background: transparent;
   box-shadow: none;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 76px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--ar-line);
+  background: var(--ar-surface);
 }
 .lobby-game .workspace-header__menu {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
-  border: 1px solid #d5d2ca;
+  border: 1px solid var(--ar-line);
   border-radius: 11px;
-  background: #f5f7f7;
-  color: #41483a;
+  background: var(--ar-surface-muted);
+  color: var(--color-ink);
 }
 .lobby-game .workspace-header__identity > span {
-  letter-spacing: 0.15em;
+  letter-spacing: 0;
 }
 .lobby-game .workspace-header__identity h1 {
   font-size: 18px;
 }
 .lobby-game .workspace-header__members {
-  background: #f5f7f7;
-  border-color: #d5d2ca;
+  background: var(--ar-surface-muted);
+  border-color: var(--ar-line);
   border-radius: 10px;
-  color: #46503a;
+  color: var(--color-ink);
 }
 .room-scene-hint {
   position: absolute;
@@ -78,10 +75,10 @@
   margin: 0;
   padding: 8px 18px;
   border-radius: 30px;
-  font-size: 11px;
-  letter-spacing: 0.03em;
-  color: #606457;
-  background: #fffffff0;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--ar-muted);
+  background: var(--ar-surface);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -93,37 +90,37 @@
   height: 54px;
   width: auto;
   padding: 8px;
-  border: 1px solid #fff9;
   border-radius: 10px;
   background: var(--ar-surface);
-  box-shadow: 0 5px 25px #403c2810;
-  backdrop-filter: blur(16px);
   transform: none;
   z-index: 15;
+  border: 1px solid var(--ar-line);
+  box-shadow: var(--ar-panel-shadow);
+  backdrop-filter: none;
 }
 .lobby-game .signal-dock__legend {
   display: none;
 }
 .lobby-game .signal-dock__zoom {
-  border-color: #d5d2ca;
+  border-color: var(--ar-line);
 }
 .lobby-game .signal-dock__zoom output {
-  color: #5c6255;
+  color: var(--ar-muted);
 }
 .lobby-game .signal-dock .ar-button {
-  color: #606457;
+  color: var(--ar-muted);
   background: transparent;
   border-color: transparent;
   min-height: 34px;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: 12px;
   padding: 6px 8px;
   min-width: 32px;
 }
 .lobby-game .signal-dock .ar-button--primary,
 .lobby-game .signal-dock .ar-button--network {
-  color: #3e5d36;
-  background: #e9ebdf;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
 }
 .room-toolbelt {
   position: absolute;
@@ -135,11 +132,11 @@
   gap: 6px;
   height: 54px;
   padding: 7px;
-  border: 1px solid #fff9;
   border-radius: 10px;
   background: var(--ar-surface);
-  box-shadow: 0 5px 25px #403c2810;
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--ar-line);
+  box-shadow: var(--ar-panel-shadow);
+  backdrop-filter: none;
 }
 .room-toolbelt button {
   display: flex;
@@ -149,7 +146,7 @@
   padding: 0 16px;
   border: 0;
   border-radius: 10px;
-  color: #53594d;
+  color: var(--color-ink);
   background: transparent;
   font-size: 12px;
   font-weight: 550;
@@ -159,8 +156,8 @@
   background: var(--ar-accent);
 }
 .room-toolbelt button:hover {
-  background: #e8e9df;
-  color: #354f2d;
+  background: var(--ar-surface-muted);
+  color: var(--color-ink);
 }
 .room-toolbelt svg {
   width: 17px;
@@ -180,16 +177,16 @@
   overflow: hidden;
   border: 1px solid var(--ar-line);
   border-radius: 12px;
-  color: #292d26;
   background: var(--ar-surface);
-  box-shadow: 0 20px 60px #403c281a;
+  box-shadow: var(--ar-overlay-shadow);
+  color: var(--color-ink);
 }
 .room-panel__header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #dedbd3;
+  border-bottom: 1px solid var(--ar-line);
   padding-right: 12px;
 }
 .room-panel__header .workspace-view-tabs {
@@ -202,10 +199,10 @@
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid #d5d2ca;
   border-radius: 10px;
-  color: #62675a;
-  background: #f3f1eb;
+  background: var(--ar-surface);
+  border: 1px solid var(--ar-line);
+  color: var(--ar-muted);
 }
 .room-panel__header > button > svg {
   width: 16px;
@@ -233,7 +230,7 @@
 }
 .room-panel .conversation-panel__context {
   padding: 13px 16px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .room-panel .conversation-panel__room,
 .room-panel .conversation-panel__keyboard {
@@ -288,10 +285,10 @@
   bottom: 94px;
   width: 300px;
   max-width: calc(100% - 48px);
-  border-color: #d5d2ca;
+  border-color: var(--ar-line);
   border-radius: 12px;
   background: var(--ar-surface);
-  box-shadow: 0 20px 60px #403c281a;
+  box-shadow: 0 20px 60px #23303918;
 }
 .lobby-game .agent-inspector__header,
 .lobby-game .agent-inspector__actions,
@@ -306,7 +303,7 @@
 }
 .lobby-game .agent-inspector__actions {
   padding: 16px 0 0;
-  border-top: 1px solid #d5d2ca;
+  border-top: 1px solid var(--ar-line);
 }
 .lobby-game .agent-inspector .ar-button {
   font-size: 12px;
@@ -323,7 +320,7 @@
   padding: 20px;
   margin: 0 auto;
   border-radius: 10px;
-  background: #faf9f6;
+  background: var(--ar-surface-muted);
 }
 .lobby-game .workspace-space__notice {
   display: none;
@@ -354,12 +351,12 @@
   }
   .lobby-game .workspace-header__members {
     padding: 6px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .room-scene-hint {
     top: 87px;
     max-width: calc(100% - 26px);
-    font-size: 9px;
+    font-size: 12px;
     padding: 7px 10px;
   }
   .lobby-game .signal-dock {
@@ -374,7 +371,7 @@
   .lobby-game .signal-dock .ar-button {
     padding: 5px 7px;
     gap: 4px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .lobby-game .signal-dock__zoom {
     gap: 1px;
@@ -389,7 +386,7 @@
   .room-toolbelt button {
     flex: 1;
     padding: 0 6px;
-    font-size: 11px;
+    font-size: 12px;
     gap: 6px;
   }
   .room-panel,
@@ -453,18 +450,18 @@
   place-items: center;
   height: 125px;
   margin: 18px 0;
-  border-radius: 14px;
-  background: #e9e7de;
+  border-radius: var(--ar-radius);
+  background: var(--ar-surface-muted);
 }
 .lobby-game .agent-inspector__portrait svg {
   width: 105px;
   height: 105px;
 }
 .lobby-game .agent-inspector__identity {
-  border-block: 1px solid #d5d2ca;
+  border-block: 1px solid var(--ar-line);
   margin-block: 18px;
   padding-block: 14px;
-  color: #62675a;
+  color: var(--ar-muted);
 }
 .lobby-game .agent-inspector__identity summary {
   font-size: 12px;
@@ -476,7 +473,7 @@
 @media (max-width: 767px) {
   .lobby-game .signal-dock__zoom output {
     min-width: 32px;
-    font-size: 9px;
+    font-size: 12px;
   }
   .lobby-game .signal-dock__zoom .ar-button {
     min-width: 26px;
@@ -506,23 +503,23 @@
   width: 208px;
   max-width: calc(100% - 24px);
   padding: 10px 13px;
-  border: 1px solid #d5d2ca;
+  border: 1px solid var(--ar-line);
   border-radius: 14px 14px 14px 3px;
-  background: #fffdf9f5;
-  color: #34382e;
-  box-shadow: 0 5px 20px #51664124;
+  background: var(--ar-surface);
+  color: var(--color-ink);
+  box-shadow: 0 5px 20px #23303918;
   pointer-events: auto;
   text-align: left;
 }
 .scene-speech:hover {
   background: #fff;
-  border-color: #728c60;
+  border-color: var(--ar-line);
 }
 .scene-speech strong {
   display: block;
   margin-bottom: 4px;
-  font-size: 10px;
-  color: #62675a;
+  font-size: 12px;
+  color: var(--ar-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -539,10 +536,10 @@
   min-width: 19px;
   height: 19px;
   padding: 0 5px;
-  border-radius: 20px;
+  border-radius: var(--ar-radius);
   color: #fff;
-  background: #92513b;
-  font-size: 10px;
+  background: var(--color-alert);
+  font-size: 12px;
   font-weight: 700;
 }
 .room-human-presence {
@@ -560,12 +557,12 @@
   align-items: center;
   gap: 6px;
   max-width: 130px;
-  border: 1px solid #d5d2ca;
-  border-radius: 20px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-radius);
   padding: 6px 10px;
-  color: #42593b;
-  background: #f8f7f2ec;
-  font-size: 11px;
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  font-size: 12px;
 }
 .room-human-presence svg {
   width: 13px;
@@ -577,10 +574,10 @@
   white-space: nowrap;
 }
 .conversation-panel__timeline [data-focused='true'] {
-  outline: 2px solid #8b9c6e;
+  outline: 2px solid var(--ar-accent);
   outline-offset: -2px;
   border-radius: 9px;
-  background: #edf2e4;
+  background: var(--ar-surface-muted);
 }
 .lobby-game .agent-inspector .ar-button--primary {
   background: var(--ar-accent);
@@ -588,9 +585,9 @@
   border-color: var(--ar-accent);
 }
 .lobby-game .agent-inspector .ar-button--alert {
-  background: #f5e5d8;
-  color: #8a4233;
-  border-color: #e5c7b7;
+  background: var(--ar-danger-soft);
+  color: var(--color-alert);
+  border-color: var(--ar-line);
 }
 .lobby-game .desktop-runtime[data-placement='game'] {
   top: 150px;
@@ -601,7 +598,7 @@
     padding: 8px 10px;
   }
   .scene-speech > span {
-    font-size: 11px;
+    font-size: 12px;
   }
   .room-human-presence {
     top: 126px;
@@ -609,33 +606,33 @@
     max-width: calc(100% - 24px);
   }
   .room-human-presence button {
-    font-size: 10px;
+    font-size: 12px;
   }
   .room-unread {
     min-width: 16px;
     height: 16px;
-    font-size: 9px;
+    font-size: 12px;
     padding: 0 4px;
   }
 }
 
 .agent-reception {
   padding: 14px 0;
-  border-bottom: 1px solid #d5d2ca;
+  border-bottom: 1px solid var(--ar-line);
   font-size: 13px;
 }
 .agent-reception strong {
-  color: #48513b;
+  color: var(--color-ink);
   font-weight: 600;
 }
 .agent-reception p {
-  color: #62675a;
+  color: var(--ar-muted);
   line-height: 1.8;
   margin: 6px 0 0;
 }
 .agent-reception[data-state='away'] strong,
 .agent-reception[data-state='reconnecting'] strong {
-  color: #82573c;
+  color: var(--color-alert);
 }
 .room-empty-presence {
   position: absolute;
@@ -644,24 +641,24 @@
   transform: translateX(-50%);
   width: min(390px, calc(100% - 32px));
   padding: 22px 26px;
-  border: 1px solid #d5d2ca;
+  border: 1px solid var(--ar-line);
   border-radius: 12px;
-  background: #faf9f6ee;
+  background: var(--ar-surface);
   text-align: center;
-  color: #30342b;
-  box-shadow: 0 8px 32px #403c2814;
+  color: var(--color-ink);
+  box-shadow: 0 8px 32px #23303918;
 }
 .room-empty-presence p {
   font-size: 13px;
-  color: #62675a;
+  color: var(--ar-muted);
   line-height: 1.8;
 }
 .room-empty-presence button {
   min-height: 42px;
   padding: 8px 20px;
-  border: 1px solid #48513b;
+  border: 1px solid var(--ar-line);
   border-radius: 8px;
-  background: #48513b;
+  background: var(--ar-surface-muted);
   color: white;
   font-size: 13px;
 }
@@ -669,7 +666,7 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #e9e7de;
+  background: var(--ar-surface-muted);
 }
 .roster-agent__signal {
   position: relative;
@@ -700,7 +697,7 @@
   display: block;
   width: 100%;
   font-size: 12px;
-  color: #6a6d64;
+  color: var(--ar-muted);
 }
 
 .room-minimap {
@@ -708,11 +705,11 @@
   right: 24px;
   bottom: 16px;
   width: 224px;
-  border: 1px solid #d1d8db;
+  border: 1px solid var(--ar-line);
   border-radius: 12px;
   background: #fff;
-  color: #526667;
-  box-shadow: 0 3px 14px #1735440a;
+  color: var(--ar-muted);
+  box-shadow: 0 3px 14px #23303918;
   overflow: hidden;
   z-index: 2;
 }
@@ -746,7 +743,7 @@
   padding: 0;
   border: 0;
   border-radius: 3px;
-  background: #f8fafb;
+  background: var(--ar-surface-muted);
   overflow: hidden;
   touch-action: manipulation;
 }
@@ -761,7 +758,7 @@
   justify-content: space-between;
   padding: 5px 10px 6px 12px;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .room-minimap footer button {
   display: grid;
@@ -770,7 +767,7 @@
   height: 28px;
   border: 0;
   border-radius: 5px;
-  background: #f0f4f4;
+  background: var(--ar-surface-muted);
 }
 .room-minimap button:focus-visible,
 .room-minimap summary:focus-visible {
@@ -823,7 +820,7 @@
     bottom: 6px;
   }
   .room-minimap footer span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .lobby-game:has(.agent-inspector) .room-scene-hint {
     visibility: hidden;

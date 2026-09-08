@@ -19,8 +19,8 @@ export function LandingPage() {
           <img alt="" src="/agent-room-mark.svg" />
           <span>{t('app.name')}</span>
         </Link>
+        <LanguageControl />
         <div className="landing__account-actions">
-          <LanguageControl />
           <button
             className="ar-button ar-button--default ar-button--ghost"
             onClick={() => {
@@ -84,14 +84,14 @@ export function LandingPage() {
           <p className="landing__alpha-note">{t('landing.alphaNote')}</p>
         </motion.div>
         <div className="landing__scene">
-          <RoomIllustration />
+          <RoomIllustration populated />
         </div>
       </section>
       <section className="landing__journey" aria-label={t('landing.flowTitle')}>
         {(['meet', 'talk', 'bring'] as const).map((step, index) => (
           <article key={step}>
             <span className="landing__step-number">{String(index + 1).padStart(2, '0')}</span>
-            <AgentPortrait id={step} />
+            <AgentPortrait id={`welcome-${String(index)}`} />
             <div>
               <h2>{t(`landing.flow.${step}.title`)}</h2>
               <p>{t(`landing.flow.${step}.detail`)}</p>

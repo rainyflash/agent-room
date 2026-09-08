@@ -53,8 +53,11 @@ test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({
   await page.goto('/connect');
   await page.getByRole('combobox', { name: /Language|语言/u }).selectOption('account:en');
 
+  const originalTitle = await page.getByRole('heading', { level: 1 }).innerText();
   await installExpandedEnglishCatalog(page);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Welcome|offline/u);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    `${originalTitle} — ${originalTitle}`,
+  );
   await expectNoHorizontalOverflow(page);
 
   await page.setViewportSize({ height: 844, width: 390 });
@@ -68,8 +71,8 @@ test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({
 });
 
 async function installExpandedEnglishCatalog(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const modulePath = '/src/shared/i18n/i18n.ts';
+  const modulePath = await activeI18nModuleUrl(page);
+  await page.evaluate(async (modulePath) => {
     const loaded: unknown = await import(modulePath);
     const module = loaded as {
       readonly i18n: {
@@ -94,28 +97,42 @@ async function installExpandedEnglishCatalog(page: Page): Promise<void> {
     module.i18n.addResourceBundle('en', 'translation', expanded, true, true);
     await module.i18n.changeLanguage('zh-CN');
     await module.i18n.changeLanguage('en');
-  });
+  }, modulePath);
 }
 
 async function removeChineseMessageAndUseFallback(page: Page, key: string): Promise<string> {
-  return page.evaluate(async (messageKey) => {
-    const modulePath = '/src/shared/i18n/i18n.ts';
-    const loaded: unknown = await import(modulePath);
-    const module = loaded as {
-      readonly i18n: {
-        getResourceBundle(language: string, namespace: string): unknown;
-        t(key: string): string;
+  const modulePath = await activeI18nModuleUrl(page);
+  return page.evaluate(
+    async ({ messageKey, modulePath }) => {
+      const loaded: unknown = await import(modulePath);
+      const module = loaded as {
+        readonly i18n: {
+          getResourceBundle(language: string, namespace: string): unknown;
+          t(key: string): string;
+        };
+        setDeviceLanguageOverride(override: 'zh-CN', account: 'en'): Promise<void>;
       };
-      setDeviceLanguageOverride(override: 'zh-CN', account: 'en'): Promise<void>;
-    };
-    const catalog = module.i18n.getResourceBundle('zh-CN', 'translation') as Record<
-      string,
-      unknown
-    >;
-    Reflect.deleteProperty(catalog, messageKey);
-    await module.setDeviceLanguageOverride('zh-CN', 'en');
-    return module.i18n.t(messageKey);
-  }, key);
+      const catalog = module.i18n.getResourceBundle('zh-CN', 'translation') as Record<
+        string,
+        unknown
+      >;
+      Reflect.deleteProperty(catalog, messageKey);
+      await module.setDeviceLanguageOverride('zh-CN', 'en');
+      return module.i18n.t(messageKey);
+    },
+    { messageKey: key, modulePath },
+  );
+}
+
+async function activeI18nModuleUrl(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    // Vite may append an HMR version. Importing the bare URL creates a second, uninitialized instance.
+    const entry = performance
+      .getEntriesByType('resource')
+      .findLast((resource) => new URL(resource.name).pathname === '/src/shared/i18n/i18n.ts');
+    if (entry === undefined) throw new Error('当前页面未加载语言模块');
+    return entry.name;
+  });
 }
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {

@@ -51,7 +51,7 @@ export function ConnectionRail({
       <div className="connection-rail__intro">
         <h2>{t('connection.welcome.title')}</h2>
         <p>{t('connection.welcome.detail')}</p>
-        <RoomIllustration />
+        <RoomIllustration populated />
       </div>
 
       <button

@@ -1,11 +1,11 @@
 .security-page {
   position: relative;
   min-height: 100svh;
-  padding-top: 16px;
   overflow-x: hidden;
   color: var(--color-ink);
   background: var(--ar-canvas);
   isolation: isolate;
+  padding-top: 0;
 }
 
 .security-icon-button {
@@ -40,14 +40,15 @@
 .security-workspace {
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 0 auto;
-  padding: 28px 0 6rem;
+  padding: 48px 0 6rem;
 }
 
 .security-page-heading {
   display: grid;
-  max-width: 780px;
-  gap: 1rem;
-  margin: 24px 0 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 24px;
+  margin: 0 0 28px;
 }
 
 .security-page-heading > div {
@@ -57,18 +58,18 @@
 }
 
 .security-page-heading svg {
-  width: clamp(30px, 4vw, 46px);
-  height: clamp(30px, 4vw, 46px);
   color: var(--ar-accent);
   stroke-width: 1.45;
+  width: 28px;
+  height: 28px;
 }
 
 .security-page-heading h1 {
   margin: 0;
-  font-size: clamp(30px, 3vw, 42px);
-  font-weight: 620;
-  letter-spacing: -0.065em;
   line-height: 1.2;
+  font-size: var(--ar-page-title);
+  letter-spacing: -0.04em;
+  font-weight: 650;
 }
 
 .security-page-heading p {
@@ -77,6 +78,7 @@
   color: var(--ar-ink-72);
   font-size: 16px;
   line-height: 1.55;
+  grid-column: 1 / -1;
 }
 
 .security-content {
@@ -89,8 +91,11 @@
   align-items: end;
   justify-content: space-between;
   gap: 2rem;
-  padding: 0 0 1rem;
   border-bottom: 1px solid var(--ar-ink-18);
+  border-radius: var(--ar-control-radius);
+  border: 0;
+  background: var(--ar-surface-muted);
+  padding: 14px 20px;
 }
 
 .security-account-line > div {
@@ -105,8 +110,7 @@
   color: var(--ar-muted);
   font-family: var(--font-sans);
   font-size: 0.75rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .security-account-line strong {
@@ -117,32 +121,42 @@
 .security-account-line code {
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.68rem;
+  font-size: 12px;
 }
 
 .security-primary-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 0.82fr) minmax(520px, 1.38fr);
   border-bottom: 1px solid var(--ar-ink-18);
+  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.35fr);
+  gap: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin-top: 20px;
 }
 
 .security-posture {
   display: flex;
-  min-height: 590px;
   flex-direction: column;
   align-items: flex-start;
-  padding: clamp(2rem, 4vw, 4rem) clamp(2rem, 4vw, 4.5rem) clamp(2rem, 4vw, 4rem) 0;
   border-right: 1px solid var(--ar-ink-18);
+  min-height: 0;
+  padding: 24px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  background: var(--ar-surface);
 }
 
 .security-posture__signal {
   display: grid;
-  width: clamp(78px, 9vw, 116px);
-  height: clamp(78px, 9vw, 116px);
   place-items: center;
-  margin-bottom: clamp(2.4rem, 4vw, 4.5rem);
-  border: 1px solid var(--ar-ink-18);
   border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 20px;
+  background: var(--ar-accent-soft);
+  border: 0;
 }
 
 .security-posture__signal > svg {
@@ -153,7 +167,7 @@
 
 .security-posture--ready .security-posture__signal,
 .security-posture--ready .security-posture__facts .is-allowed {
-  color: #456a38;
+  color: var(--ar-success);
   border-color: color-mix(in srgb, var(--color-signal) 55%, var(--ar-ink-18));
 }
 
@@ -171,10 +185,10 @@
 .security-posture__copy h2 {
   max-width: 520px;
   margin: 0;
-  font-size: clamp(2rem, 3.3vw, 3.6rem);
   font-weight: 580;
-  letter-spacing: -0.055em;
-  line-height: 1;
+  font-size: 24px;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
 }
 
 .security-posture__copy p {
@@ -188,10 +202,10 @@
 .security-posture__facts {
   display: grid;
   gap: 0.45rem;
-  margin-top: 2rem;
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.68rem;
+  margin-top: 20px;
+  font-size: 13px;
 }
 
 .security-posture__facts .is-allowed,
@@ -203,10 +217,10 @@
   display: grid;
   gap: 0.6rem;
   padding: 0;
-  margin: 2rem 0;
   color: var(--ar-ink-72);
   font-size: 0.78rem;
   list-style: none;
+  margin: 16px 0 0;
 }
 
 .security-posture__blockers li {
@@ -225,12 +239,15 @@
 }
 
 .security-posture > .ar-button {
-  margin-top: auto;
+  margin-top: 24px;
 }
 
 .security-devices {
   min-width: 0;
-  padding: clamp(2rem, 4vw, 4rem) 0 clamp(2rem, 4vw, 4rem) clamp(2rem, 4vw, 4.5rem);
+  padding: 24px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  background: var(--ar-surface);
 }
 
 .security-section-heading {
@@ -242,9 +259,9 @@
 
 .security-section-heading h2 {
   margin: 0;
-  font-size: clamp(1.35rem, 2vw, 1.8rem);
   font-weight: 620;
   letter-spacing: -0.035em;
+  font-size: 20px;
 }
 
 .security-section-heading p {
@@ -262,18 +279,18 @@
 
 .security-devices__list {
   padding: 0;
-  margin: 2rem 0 0;
   list-style: none;
+  margin: 20px 0 0;
 }
 
 .security-devices__list > li {
   display: grid;
   min-width: 0;
-  grid-template-columns: 40px minmax(150px, 1.25fr) minmax(150px, 1fr) auto auto;
   align-items: center;
-  gap: 1rem;
   padding: 1.1rem 0;
   border-top: 1px solid var(--ar-ink-09);
+  grid-template-columns: 32px minmax(100px, 1fr) minmax(80px, 0.7fr) auto auto;
+  gap: 10px;
 }
 
 .security-devices__list > li:last-child {
@@ -281,11 +298,7 @@
 }
 
 .security-devices__list > li.is-current {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-signal) 8%, transparent),
-    transparent 82%
-  );
+  background: var(--ar-surface-muted);
 }
 
 .security-device__icon {
@@ -322,7 +335,7 @@
   overflow: hidden;
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -350,7 +363,7 @@
   align-items: center;
   gap: 0.4rem;
   font-family: var(--font-sans);
-  font-size: 0.63rem;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -361,7 +374,7 @@
 
 .security-device__trust--verified,
 .security-device__trust--signed {
-  color: #456a38;
+  color: var(--ar-success);
 }
 
 .security-device__trust--unverified {
@@ -418,7 +431,7 @@
 .security-access__confirmation p {
   margin: 0.3rem 0 0;
   color: var(--ar-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -500,14 +513,14 @@
   max-width: 420px;
   margin: 0.35rem 0 0;
   color: var(--ar-muted);
-  font-size: 0.7rem;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .security-access-panel__heading > span {
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.72rem;
+  font-size: 12px;
 }
 
 .security-access-list {
@@ -555,12 +568,12 @@
 .security-access-list__metadata time {
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 12px;
 }
 
 .security-access-list__metadata span {
   color: var(--ar-ink-72);
-  font-size: 0.7rem;
+  font-size: 12px;
 }
 
 .security-access-status {
@@ -569,7 +582,7 @@
   gap: 0.35rem;
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -583,13 +596,13 @@
 
 .security-access-status.is-verified,
 .security-access-status.is-online {
-  color: #456a38;
+  color: var(--ar-success);
 }
 
 .security-access-status.is-pending,
 .security-access-status.is-connecting,
 .security-access-status.is-degraded {
-  color: #397369;
+  color: var(--ar-muted);
 }
 
 .security-access-status.is-revoked {
@@ -605,7 +618,7 @@
   gap: 0.6rem;
   margin: 1.5rem 0 0;
   color: var(--ar-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -738,7 +751,7 @@
 
 .security-recovery-form input:focus,
 .security-recovery-form textarea:focus {
-  border-color: #397369;
+  border-color: var(--ar-line);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-network) 14%, transparent);
 }
 
@@ -886,7 +899,7 @@
   margin: 1.2rem 0 0;
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.66rem;
+  font-size: 12px;
 }
 
 .security-dialog__state,
@@ -907,7 +920,7 @@
 }
 
 .security-dialog__state--success > svg {
-  color: #456a38;
+  color: var(--color-ink);
 }
 
 .security-dialog__state--failure > svg {
@@ -932,7 +945,7 @@
   margin: 0.5rem 0 1rem;
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.62rem;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -965,7 +978,7 @@
   overflow: hidden;
   max-width: 100%;
   color: var(--ar-muted);
-  font-size: 0.7rem;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -973,7 +986,7 @@
 .security-dialog__comparison .security-sas-decimals {
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1019,7 +1032,7 @@
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--color-network) 35%, var(--ar-ink-18));
   border-radius: 7px;
-  color: #397369;
+  color: var(--ar-muted);
   background: color-mix(in srgb, var(--color-network) 8%, transparent);
 }
 
@@ -1032,10 +1045,9 @@
 .security-verification-inbox__copy > span {
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.62rem;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .security-verification-inbox__copy h2 {
@@ -1070,17 +1082,10 @@
 
   .security-posture {
     min-height: auto;
-    padding-right: 0;
-    border-right: 0;
-    border-bottom: 1px solid var(--ar-ink-18);
   }
 
   .security-posture > .ar-button {
     margin-top: 2rem;
-  }
-
-  .security-devices {
-    padding-left: 0;
   }
 
   .security-access__grid {
@@ -1233,22 +1238,23 @@
 .security-section-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px;
-  margin: 0 0 28px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
   background: var(--ar-surface);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ar-line);
+  border-radius: 0;
+  gap: 12px;
+  margin: 0 0 20px;
 }
 .security-section-nav a {
   display: flex;
   align-items: center;
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 8px;
   text-decoration: none;
   font-size: 14px;
-  color: var(--ar-accent);
+  color: var(--ar-muted);
+  border-radius: 0;
+  min-height: 48px;
+  padding: 0 12px;
 }
 .security-section-nav a:hover {
   background: var(--ar-surface-muted);
@@ -1259,33 +1265,36 @@
   scroll-margin-top: 110px;
 }
 .security-account-line {
-  padding: 20px 24px;
-  border: 1px solid var(--ar-line);
-  border-radius: 14px 14px 0 0;
-  background: var(--ar-surface);
+  border-radius: var(--ar-control-radius);
+  border: 0;
+  background: var(--ar-surface-muted);
+  padding: 14px 20px;
 }
 .security-primary-grid {
-  padding: 24px;
-  border: 1px solid var(--ar-line);
   border-top: 0;
-  border-radius: 0 0 14px 14px;
-  background: var(--ar-surface);
+  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.35fr);
+  gap: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin-top: 20px;
 }
 .security-recovery,
 .security-access,
 .agent-recovery {
   padding: 24px;
   border: 1px solid var(--ar-line);
-  border-radius: 14px;
   background: var(--ar-surface);
   margin-top: 24px;
+  border-radius: var(--ar-radius);
 }
 .security-workspace code {
   font-family: var(--font-mono);
 }
 @media (max-width: 760px) {
   .security-page {
-    padding-top: 8px;
+    padding-top: 0;
   }
   .security-workspace {
     width: calc(100% - 32px);
@@ -1310,5 +1319,15 @@
   .security-recovery,
   .security-access {
     scroll-margin-top: 160px;
+  }
+}
+@media (max-width: 760px) {
+  .security-page-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .security-page-heading > .ar-button {
+    grid-row: 3;
+    justify-self: start;
   }
 }

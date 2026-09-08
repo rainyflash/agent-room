@@ -5,6 +5,7 @@ import {
   Building2,
   CircleAlert,
   CloudOff,
+  Globe2,
   LoaderCircle,
   RefreshCw,
   UsersRound,
@@ -151,17 +152,21 @@ export function RoomDirectoryView({
                       count: room.activeInstanceCount,
                     })}
                   />
+                  <RoomFact
+                    icon={<Globe2 aria-hidden="true" />}
+                    label={`${t('roomDirectory.language')}: ${room.language ?? t('roomDirectory.anyLanguage')}`}
+                  />
                 </dl>
-                <footer>
-                  <span>
-                    {t('roomDirectory.language')}: {room.language ?? t('roomDirectory.anyLanguage')}
-                  </span>
-                  <Link params={{ catalogId: room.catalogId }} search={{}} to="/lobby/$catalogId">
-                    <span>{t('roomDirectory.enter')}</span>
-                    <ArrowRight aria-hidden="true" />
-                  </Link>
-                </footer>
               </div>
+              <Link
+                className="room-card__enter ar-button ar-button--default ar-button--primary"
+                params={{ catalogId: room.catalogId }}
+                search={{}}
+                to="/lobby/$catalogId"
+              >
+                <span>{t('roomDirectory.enter')}</span>
+                <ArrowRight aria-hidden="true" />
+              </Link>
             </motion.article>
           ))}
           {visibleRooms.length === 0 ? (

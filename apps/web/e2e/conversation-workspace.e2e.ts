@@ -78,19 +78,26 @@ test('点击真实人物打开私聊，场景继续活动并支持缩放拖动',
   const canvas = page.locator('.lobby-scene__canvas');
   const host = page.locator('.lobby-scene__pixi');
   await expect(canvas).toBeVisible();
+  await expect
+    .poll(async () => Number(await host.getAttribute('data-agent-room-rendered-nodes')))
+    .toBeGreaterThan(0);
   const target = await page.evaluate(() => {
     const fixture = window as Window & { readonly __agentRoomFixtureScene?: LobbySceneProjection };
-    const node = fixture.__agentRoomFixtureScene?.nodes.find(
-      (entry) => entry.displayName === 'Build Agent 003',
-    );
+    const scene = fixture.__agentRoomFixtureScene;
+    const node = scene?.nodes.find((entry) => entry.displayName === 'Build Agent 003');
     const bounds = document.querySelector('.lobby-scene__canvas')?.getBoundingClientRect();
-    if (node === undefined || bounds === undefined) throw new Error('测试房间没有目标角色');
-    const scale = Math.max(0.22, Math.min((bounds.width - 44) / 2600, (bounds.height - 44) / 1500));
+    if (node === undefined || bounds === undefined || scene === undefined)
+      throw new Error('测试房间没有目标角色');
+    // Read the displayed zoom and the actual room bounds; room capacity changes its geometry.
+    const scale =
+      Number.parseFloat(document.querySelector('.signal-dock__zoom output')?.textContent ?? '') /
+      100;
+    if (!Number.isFinite(scale) || scale <= 0) throw new Error('测试房间缩放尚未就绪');
     return {
-      x: bounds.x + (bounds.width - 2600 * scale) / 2 + node.x * scale,
+      x: bounds.x + (bounds.width - scene.world.width * scale) / 2 + node.x * scale,
       y:
         bounds.y +
-        (bounds.height - 1500 * scale) / 2 +
+        (bounds.height - scene.world.height * scale) / 2 +
         (node.y - 42 * Math.max(0.83, node.radius / 27)) * scale,
     };
   });

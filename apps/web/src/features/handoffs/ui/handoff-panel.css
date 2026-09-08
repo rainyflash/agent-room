@@ -64,10 +64,9 @@
   border: 1px solid color-mix(in srgb, var(--color-network) 44%, var(--ar-ink-18));
   border-radius: 999px;
   color: color-mix(in srgb, var(--color-network) 64%, var(--color-ink));
-  font-family: var(--font-mono);
-  font-size: 0.55rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .handoff-panel__source {
@@ -99,12 +98,12 @@
 .handoff-panel__source code {
   color: var(--ar-ink-48);
   font-family: var(--font-mono);
-  font-size: 0.56rem;
+  font-size: 12px;
 }
 
 .handoff-panel__source strong {
   overflow: hidden;
-  font-size: 0.72rem;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -154,8 +153,8 @@
 .handoff-targets__header span,
 .handoff-targets__header p {
   color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 0.55rem;
+  font-family: var(--font-sans);
+  font-size: 12px;
 }
 
 .handoff-targets__header p {
@@ -190,8 +189,8 @@
   border-radius: 9px;
   color: var(--color-paper);
   background: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 0.57rem;
+  font-family: var(--font-sans);
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -203,7 +202,7 @@
 
 .handoff-agent-group > header strong {
   overflow: hidden;
-  font-size: 0.72rem;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -212,7 +211,7 @@
 .handoff-target__identity code {
   color: var(--ar-ink-48);
   font-family: var(--font-mono);
-  font-size: 0.52rem;
+  font-size: 12px;
 }
 
 .handoff-device-group {
@@ -235,12 +234,11 @@
 
 .handoff-device-group > header strong,
 .handoff-device-group > header span {
-  font-size: 0.55rem;
+  font-size: 12px;
 }
 
 .handoff-device-group > header span {
-  font-family: var(--font-mono);
-  text-transform: uppercase;
+  font-family: var(--font-sans);
 }
 
 .handoff-target {
@@ -317,7 +315,7 @@
 .handoff-target__identity strong,
 .handoff-target__state strong {
   overflow: hidden;
-  font-size: 0.62rem;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -337,8 +335,8 @@
 
 .handoff-target__state small {
   color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 0.46rem;
+  font-family: var(--font-sans);
+  font-size: 12px;
 }
 
 .handoff-panel__authorization {
@@ -357,11 +355,10 @@
 .handoff-panel__review dt,
 .handoff-status-facts dt {
   color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 0.54rem;
+  font-family: var(--font-sans);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.065em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .handoff-panel__authorization > header > strong {
@@ -371,7 +368,7 @@
 .handoff-panel__authorization > header > p {
   margin: 0;
   color: var(--ar-ink-48);
-  font-size: 0.61rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -399,7 +396,7 @@
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--ar-ink-09);
   border-radius: 7px;
-  font-size: 0.65rem;
+  font-size: 12px;
 }
 
 .handoff-fieldset label:has(input:checked) {
@@ -452,7 +449,7 @@
 
 .handoff-panel__warning p {
   margin: 0;
-  font-size: 0.61rem;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -475,7 +472,7 @@
 .handoff-status-facts dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 0.62rem;
+  font-size: 12px;
   text-align: right;
 }
 
@@ -490,7 +487,7 @@
 .handoff-panel__footer > span {
   max-width: 30ch;
   color: var(--ar-ink-48);
-  font-size: 0.58rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -533,7 +530,7 @@
 .handoff-panel__status p {
   margin: 0.22rem 0 0;
   color: var(--ar-ink-48);
-  font-size: 0.66rem;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -609,8 +606,8 @@
 }
 
 .handoff-status-timeline strong {
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-family: var(--font-sans);
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -622,7 +619,7 @@
 .handoff-status-facts code {
   color: var(--ar-ink-48);
   font-family: var(--font-mono);
-  font-size: 0.54rem;
+  font-size: 12px;
 }
 
 .handoff-panel__status-actions {

@@ -1,6 +1,6 @@
 :root {
-  color: #253324;
-  background: #edf1e6;
+  color: #233039;
+  background: #ffffff;
   font-family: system-ui, sans-serif;
 }
 * {
@@ -12,12 +12,11 @@ body {
   min-height: 100vh;
 }
 header {
-  margin: 20px;
-  padding: 22px 28px;
-  border: 1px solid white;
-  border-radius: 16px;
-  background: #fafbf5;
-  color: #30482d;
+  min-height: 72px;
+  padding: 20px 40px;
+  border-bottom: 1px solid #dbe3e6;
+  background: #ffffff;
+  color: #233039;
   font-size: 22px;
   font-weight: 650;
 }
@@ -25,40 +24,40 @@ main {
   width: min(540px, calc(100% - 40px));
   margin: 12vh auto 40px;
   padding: 44px;
-  border: 1px solid #d8e0cd;
-  border-radius: 20px;
-  background: #fafbf5;
-  box-shadow: 0 16px 48px #34472b0d;
+  border: 1px solid #dbe3e6;
+  border-radius: 12px;
+  background: #ffffff;
 }
 .room-mark {
   display: grid;
   place-items: center;
   width: 56px;
   height: 64px;
-  border: 2px solid #30482d;
-  border-radius: 20px 20px 4px 4px;
-  background: #e7eddd;
+  border: 1px solid #247a77;
+  border-radius: 10px;
+  background: #eaf5f2;
+  color: #247a77;
   font-size: 18px;
   font-weight: 600;
 }
 h1 {
   margin: 24px 0 18px;
-  color: #30482d;
-  font-size: 30px;
+  color: #233039;
+  font-size: 32px;
   font-weight: 600;
   line-height: 1.25;
   letter-spacing: -0.03em;
 }
 p {
-  color: #5f6c59;
+  color: #5f6e76;
   font-size: 16px;
   line-height: 1.8;
 }
 .return-note {
   margin-top: 28px;
   padding-top: 22px;
-  border-top: 1px solid #d8e0cd;
-  color: #5f6c59;
+  border-top: 1px solid #dbe3e6;
+  color: #5f6e76;
   font-size: 13px;
   line-height: 1.6;
 }

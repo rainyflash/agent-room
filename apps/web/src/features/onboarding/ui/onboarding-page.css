@@ -1,13 +1,13 @@
 .onboarding {
   min-height: 100svh;
-  padding-top: 16px;
   color: var(--color-ink);
   background: var(--ar-canvas);
+  padding-top: 0;
 }
 .onboarding__layout {
-  width: min(1060px, calc(100% - 80px));
   padding: 48px 0 40px;
   margin: 0 auto;
+  width: min(var(--ar-page-width), calc(100% - 80px));
 }
 
 .onboarding__intro {
@@ -25,19 +25,19 @@
 
 .onboarding__intro h1 {
   max-width: 22ch;
-  margin: 0.75rem 0 1rem;
-  font-size: clamp(30px, 3vw, 42px);
   font-weight: 670;
-  letter-spacing: -0.07em;
   line-height: 1.2;
+  font-size: var(--ar-page-title);
+  letter-spacing: -0.04em;
+  margin: 0 0 16px;
 }
 
 .onboarding__intro > p {
   max-width: 58ch;
   margin: 0;
-  color: var(--ar-ink-72);
-  font-size: clamp(0.95rem, 1.4vw, 1.15rem);
   line-height: 1.55;
+  font-size: 16px;
+  color: var(--ar-muted);
 }
 
 .onboarding__progress {
@@ -61,7 +61,7 @@
   color: var(--ar-muted);
   font-family: var(--font-sans);
   font-size: 0.75rem;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .onboarding__progress li:last-child {
@@ -86,20 +86,21 @@
 
 .onboarding-fact {
   display: grid;
-  min-height: 210px;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 1rem;
-  padding: clamp(1.25rem, 2.5vw, 2rem);
   border: 1px solid var(--ar-line);
   border-radius: var(--ar-radius);
-  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  min-height: 180px;
+  padding: 24px;
+  background: var(--ar-surface);
 }
 
 .onboarding-fact[data-status='active'] {
-  box-shadow: inset 3px 0 var(--color-network);
+  box-shadow: none;
+  border-color: var(--ar-accent);
 }
 .onboarding-fact[data-status='complete'] {
-  box-shadow: inset 3px 0 var(--color-signal);
+  box-shadow: none;
 }
 
 .onboarding-fact__icon {
@@ -172,16 +173,16 @@
 
 .onboarding__hosts > header {
   display: grid;
-  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
   gap: 2rem;
   padding: 1.35rem 1.5rem;
   border-bottom: 1px solid var(--ar-ink-18);
+  grid-template-columns: minmax(220px, 0.65fr) minmax(0, 1.35fr);
 }
 
 .onboarding__hosts h2 {
   margin: 0.35rem 0 0;
-  font-size: 1.35rem;
   letter-spacing: -0.04em;
+  font-size: 20px;
 }
 .onboarding__hosts header > p {
   margin: 0;
@@ -231,10 +232,18 @@
 
 @media (max-width: 800px) {
   .onboarding__intro {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 70px;
+    gap: 0 16px;
+  }
+  .onboarding__intro h1 {
+    max-width: none;
+    min-width: 0;
+  }
+  .onboarding__intro > p {
+    grid-column: 1 / -1;
   }
   .onboarding__progress {
-    grid-column: 1;
+    grid-column: 1 / -1;
     grid-row: auto;
     margin-top: 2rem;
   }
@@ -291,9 +300,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 16px max(24px, calc((100% - 1060px) / 2));
   border-top: 1px solid var(--ar-line);
   background: var(--ar-surface);
+  padding: 16px max(40px, calc((100% - var(--ar-page-width)) / 2));
 }
 .onboarding__footer > a {
   color: var(--ar-muted);
@@ -302,23 +311,14 @@
 }
 @media (max-width: 760px) {
   .onboarding {
-    padding-top: 8px;
+    padding-top: 0;
   }
   .onboarding__layout {
     width: calc(100% - 32px);
     padding-top: 32px;
   }
   .onboarding__intro {
-    display: block;
     padding-right: 0;
-  }
-  .onboarding__portrait {
-    position: absolute;
-    top: -8px;
-    right: 0;
-  }
-  .onboarding__intro h1 {
-    max-width: calc(100% - 60px);
   }
   .onboarding__progress {
     margin-top: 24px;

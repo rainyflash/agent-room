@@ -58,7 +58,7 @@ export function StudioSprite({
       height={portrait ? 96 : characterSize.height}
       viewBox={
         portrait
-          ? `${String(foot.x - 110)} 214 220 220`
+          ? `${String(foot.x - 144)} 150 288 320`
           : `0 0 ${String(spriteCell.width)} ${String(spriteCell.height)}`
       }
       overflow="hidden"

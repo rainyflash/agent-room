@@ -120,14 +120,14 @@ export function SecurityWorkspace({
       />
 
       <div className="security-workspace">
-        <Button icon={<ArrowLeft aria-hidden="true" />} onClick={onBack} tone="quiet">
-          {t('security.action.back')}
-        </Button>
         <header className="security-page-heading">
           <div>
             <ShieldCheck aria-hidden="true" />
             <h1>{t('security.page.title')}</h1>
           </div>
+          <Button icon={<ArrowLeft aria-hidden="true" />} onClick={onBack} tone="ghost">
+            {t('security.action.back')}
+          </Button>
           <p>{t('security.page.subtitle')}</p>
         </header>
 

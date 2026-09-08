@@ -9,35 +9,45 @@
 @source './**/*.{ts,tsx}';
 
 @theme {
-  --color-ink: #253324;
-  --color-paper: #fafbf5;
-  --color-signal: #d7e6c5;
-  --color-network: #91bcb2;
-  --color-alert: #a34132;
+  --color-ink: #233039;
+  --color-paper: #ffffff;
+  --color-signal: #d5eee4;
+  --color-network: #247a77;
+  --color-alert: #b23e3a;
   --font-sans: 'Instrument Sans Variable', 'Noto Sans SC Variable', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
 }
 
 :root {
-  --ar-canvas: #edf1e6;
-  --ar-surface: #fafbf5;
-  --ar-surface-muted: #e7eddd;
-  --ar-accent: #30482d;
-  --ar-accent-hover: #405d36;
-  --ar-muted: #5f6c59;
-  --ar-line: #d8e0cd;
-  --ar-radius: 16px;
-  --ar-panel-shadow: 0 12px 40px #34472b0d;
+  --ar-canvas: #ffffff;
+  --ar-surface: #ffffff;
+  --ar-surface-muted: #f5f8f9;
+  --ar-accent: #247a77;
+  --ar-accent-hover: #1c6562;
+  --ar-accent-soft: #eaf5f2;
+  --ar-muted: #5f6e76;
+  --ar-line: #dbe3e6;
+  --ar-success: #287253;
+  --ar-warning: #895919;
+  --ar-warning-soft: #fff6e7;
+  --ar-danger-soft: #fff0ee;
+  --ar-radius: 12px;
+  --ar-control-radius: 10px;
+  --ar-panel-shadow: 0 12px 40px #23303912;
+  --ar-overlay-shadow: 0 16px 56px #23303924;
   --ar-page-width: 1240px;
+  --ar-page-title: clamp(28px, 3vw, 36px);
   color: var(--color-ink);
   background: var(--ar-canvas);
   font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ar-ink-92: color-mix(in srgb, var(--color-ink) 92%, transparent);
   --ar-ink-72: color-mix(in srgb, var(--color-ink) 72%, transparent);
   --ar-ink-48: var(--ar-muted);
-  --ar-ink-18: color-mix(in srgb, var(--color-ink) 18%, transparent);
+  --ar-ink-18: var(--ar-line);
   --ar-ink-09: color-mix(in srgb, var(--color-ink) 9%, transparent);
   --ar-ink-04: color-mix(in srgb, var(--color-ink) 4%, transparent);
   --ar-paper-72: color-mix(in srgb, var(--color-paper) 72%, transparent);
@@ -74,6 +84,23 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+input,
+select,
+textarea {
+  accent-color: var(--ar-accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ar-muted);
+  opacity: 1;
+}
+
+button:not(:disabled),
+summary {
+  cursor: pointer;
+}
+
 :focus-visible {
   outline: 2px solid var(--ar-accent);
   outline-offset: 3px;
@@ -92,7 +119,7 @@ button {
   justify-content: center;
   gap: 0.625rem;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--ar-control-radius);
   font-weight: 650;
   letter-spacing: -0.01em;
   transition:
@@ -140,7 +167,7 @@ button {
 }
 
 .ar-button--network {
-  color: var(--color-ink);
+  color: var(--color-paper);
   background: var(--color-network);
   border-color: color-mix(in srgb, var(--color-network) 70%, var(--color-ink));
 }
@@ -151,6 +178,14 @@ button {
   border-color: color-mix(in srgb, var(--color-alert) 72%, var(--color-ink));
 }
 
+.ar-button--network:not(:disabled):hover {
+  background: var(--ar-accent-hover);
+}
+
+.ar-button--alert:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-alert) 86%, var(--color-ink));
+}
+
 .ar-button--ghost {
   color: inherit;
   background: transparent;
@@ -159,7 +194,7 @@ button {
 
 .ar-button--ghost:not(:disabled):hover,
 .ar-button--quiet:not(:disabled):hover {
-  background: var(--ar-ink-09);
+  background: var(--ar-surface-muted);
 }
 
 .ar-button--quiet {
@@ -199,11 +234,11 @@ button {
 }
 
 .ar-status-mark--active {
-  color: #456a38;
+  color: var(--ar-success);
 }
 
 .ar-status-mark--network {
-  color: #397369;
+  color: var(--ar-accent);
 }
 
 .ar-status-mark--alert {
@@ -211,7 +246,7 @@ button {
 }
 
 .ar-status-mark--idle {
-  color: var(--ar-paper-72);
+  color: var(--ar-muted);
 }
 
 .ar-status-mark--offline {
