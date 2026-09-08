@@ -22,4 +22,7 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_agent_recovery_sessions",
     "desktop_host_session_diagnostics",
     "desktop_agent_recovery",
+    "desktop_receiver_list",
+    "desktop_receiver_configure",
+    "desktop_receiver_action",
 ];

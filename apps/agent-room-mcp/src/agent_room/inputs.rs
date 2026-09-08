@@ -487,3 +487,15 @@ mod conversation_tests {
         assert!(IpcMethod::ListPreviews(input.into()).validate().is_err());
     }
 }
+
+/// Offering a task never enables automatic execution; the desktop owner must bind it.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegisterReceptionInput {
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub task_id: String,
+    #[schemars(length(min = 1, max = 4096))]
+    pub workspace: String,
+}

@@ -13,7 +13,8 @@ use super::{
     BridgeToolClient, BridgeToolFailure,
     inputs::{
         GetPresenceInput, HandoffInput, ListHandoffsInput, ListPreviewsInput, OpenContentInput,
-        OpenSessionInput, PublishStatusInput, SendMessageInput, SessionInput, WaitMessagesInput,
+        OpenSessionInput, PublishStatusInput, RegisterReceptionInput, SendMessageInput,
+        SessionInput, WaitMessagesInput,
     },
 };
 
@@ -110,6 +111,33 @@ impl AgentRoomMcpServer {
     ) -> CallToolResult {
         self.execute(
             IpcMethod::OpenHostSession(input.into()),
+            ExpectedResponse::HostSession,
+            ResponseTrust::Local,
+        )
+        .await
+    }
+
+    /// Offer this Codex task for desktop reception; this grants no execution permission.
+    #[tool(
+        name = "agent_room_register_reception",
+        description = "用户要求后台接待时，登记本 Codex 任务的准确 taskId 和绝对工作目录 workspace。只支持明确的当前任务 ID，禁止猜测或选最新任务。登记后人类须在桌面接待面板选择授权并启用；此工具本身不会唤醒任务或授予权限。",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn register_reception(
+        &self,
+        Parameters(input): Parameters<RegisterReceptionInput>,
+    ) -> CallToolResult {
+        self.execute_scoped(
+            input.session_id,
+            IpcMethod::RegisterReception(agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+                task_id: input.task_id,
+                workspace: input.workspace,
+            }),
             ExpectedResponse::HostSession,
             ResponseTrust::Local,
         )
@@ -718,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn 服务声明十三个独立审批语义的工具() {
+    fn 服务声明十四个独立审批语义的工具() {
         let server = AgentRoomMcpServer::new(Arc::new(FakeBridgeClient::default()));
         let tools = server.tool_router.list_all();
         let mut names = tools
@@ -741,6 +769,7 @@ mod tests {
                 "agent_room_open_content",
                 "agent_room_open_session",
                 "agent_room_publish_status",
+                "agent_room_register_reception",
                 "agent_room_send_message",
                 "agent_room_wait_for_messages",
             ]
@@ -987,6 +1016,7 @@ mod tests {
         vec![
             Ok(IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
+                    room_catalog_id: None,
                     agent: agent(),
                     instance_id: "instance-1".to_owned(),
                     matrix_device_id: "DEVICE".to_owned(),

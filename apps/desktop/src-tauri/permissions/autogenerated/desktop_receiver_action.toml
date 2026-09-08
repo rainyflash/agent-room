@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-receiver-action"
+description = "Enables the desktop_receiver_action command without any pre-configured scope."
+commands.allow = ["desktop_receiver_action"]
+
+[[permission]]
+identifier = "deny-desktop-receiver-action"
+description = "Denies the desktop_receiver_action command without any pre-configured scope."
+commands.deny = ["desktop_receiver_action"]

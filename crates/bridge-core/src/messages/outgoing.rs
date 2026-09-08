@@ -158,6 +158,9 @@ pub struct MessagePublicationService {
 }
 
 impl MessagePublicationService {
+    pub const fn room_catalog_id(&self) -> RoomCatalogId {
+        self.room_catalog_id
+    }
     pub fn new(dependencies: MessagePublicationDependencies) -> Self {
         Self {
             identity: dependencies.identity,

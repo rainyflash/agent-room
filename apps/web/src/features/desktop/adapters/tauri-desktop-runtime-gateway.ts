@@ -1,3 +1,9 @@
+import {
+  receiverViewSchema,
+  type ConfigureReceiver,
+  type ReceiverAction,
+  type ReceiverView,
+} from '../domain/reception';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { TauriAgentRecoveryGateway } from '@/features/security/adapters/tauri-agent-recovery-gateway';
 import { listen, type Event, type UnlistenFn } from '@tauri-apps/api/event';
@@ -56,6 +62,9 @@ const desktopCommands = {
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
   hostSessions: 'desktop_host_session_diagnostics',
+  receivers: 'desktop_receiver_list',
+  configureReceiver: 'desktop_receiver_configure',
+  receiverAction: 'desktop_receiver_action',
 } as const;
 
 type DesktopCommand = (typeof desktopCommands)[keyof typeof desktopCommands];
@@ -163,6 +172,33 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
       desktopCommands.hostSessions,
       {},
       z.array(hostSessionDiagnosticsSchema).max(16),
+    );
+  }
+
+  async listReceivers(): Promise<Result<readonly ReceiverView[], DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.receivers,
+      {},
+      z.array(receiverViewSchema).max(128),
+    );
+  }
+  async configureReceiver(
+    request: ConfigureReceiver,
+  ): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.configureReceiver,
+      { request },
+      z.null().transform(() => undefined),
+    );
+  }
+  async receiverAction(
+    taskId: string,
+    request: ReceiverAction,
+  ): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.receiverAction,
+      { taskId, request },
+      z.null().transform(() => undefined),
     );
   }
 

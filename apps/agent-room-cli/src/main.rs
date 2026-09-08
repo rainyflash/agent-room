@@ -1,5 +1,4 @@
 mod cli;
-mod codex;
 mod output;
 mod receiver;
 

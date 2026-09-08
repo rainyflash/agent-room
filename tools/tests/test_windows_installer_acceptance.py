@@ -66,6 +66,7 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
                 "agent-room-desktop.exe",
                 "agent-room-bridge.exe",
                 "agent-room-mcp.exe",
+                "agent-room.exe",
                 "uninstall.exe",
             ):
                 root.joinpath(filename).write_bytes(b"binary")
@@ -74,6 +75,7 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
 
             self.assertEqual(layout.root, root.resolve())
             self.assertEqual(layout.mcp.name, "agent-room-mcp.exe")
+            self.assertEqual(layout.cli.name, "agent-room.exe")
 
     def test_layout_rejects_duplicate_runtime_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -82,6 +84,7 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
                 "agent-room-desktop.exe",
                 "agent-room-bridge.exe",
                 "agent-room-mcp.exe",
+                "agent-room.exe",
                 "uninstall.exe",
             ):
                 root.joinpath(filename).write_bytes(b"binary")

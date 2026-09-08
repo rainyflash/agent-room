@@ -14,10 +14,14 @@ mod installer_acceptance;
 mod loopback_callback;
 mod matrix_credentials;
 mod matrix_session;
+mod receiver_runtime;
 mod release_update_config;
 mod release_update_state;
 mod release_updates;
 mod runtime_target;
+use receiver_runtime::{
+    ReceiverRuntime, desktop_receiver_action, desktop_receiver_configure, desktop_receiver_list,
+};
 mod webview_migration;
 
 use agent_room_host_adapters::{HostConfigurator, HostContext};
@@ -127,39 +131,11 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_agent_recovery_sessions,
             desktop_host_session_diagnostics,
             desktop_agent_recovery,
+            desktop_receiver_list,
+            desktop_receiver_configure,
+            desktop_receiver_action,
         ])
-        .setup(move |app| {
-            webview_migration::retire_legacy_service_worker(app)?;
-            let mut config = DesktopBridgeConfig::from_environment()
-                .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
-            setup_user_sessions(app, &config)?;
-            let targets = Arc::new(
-                RuntimeTargetStore::open(&config.data_root())
-                    .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,
-            );
-            if let Some(target) = targets
-                .current()
-                .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?
-            {
-                config = config.with_agent_target(&target);
-            }
-            let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config);
-            let updates = ReleaseUpdateRuntime::new(app.handle().clone(), update_config.clone())
-                .map_err(|failure| format!("桌面更新状态初始化失败 [{}]", failure.code()))?;
-            let mcp_executable = installed_mcp_executable()?;
-            let host_context = HostContext::from_environment(mcp_executable)
-                .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
-            let hosts = Arc::new(HostConfigurator::system(host_context));
-            app.manage(DesktopRuntime {
-                bridge,
-                updates,
-                hosts,
-                targets,
-            });
-            setup_tray(app)?;
-            setup_deep_links(app)?;
-            Ok(())
-        })
+        .setup(move |app| setup_runtime(app, update_config.clone()))
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
@@ -173,11 +149,67 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
 
     app.run(|app, event| match event {
         RunEvent::Resumed => app.state::<DesktopRuntime>().bridge.resume(),
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-            app.state::<DesktopRuntime>().bridge.shutdown_now();
+        RunEvent::ExitRequested { api, .. } => {
+            let runtime = app.state::<DesktopRuntime>().inner().clone();
+            if runtime.receivers.begin_shutdown() {
+                api.prevent_exit();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = runtime.receivers.shutdown().await {
+                        eprintln!("receiver shutdown failed [{}]", error.code);
+                    }
+                    runtime.bridge.shutdown_now();
+                    app.exit(0);
+                });
+            }
         }
+        RunEvent::Exit => app.state::<DesktopRuntime>().bridge.shutdown_now(),
         _ => {}
     });
+}
+
+fn setup_runtime(
+    app: &mut tauri::App,
+    update_config: Option<ReleaseUpdateConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    webview_migration::retire_legacy_service_worker(app)?;
+    let mut config = DesktopBridgeConfig::from_environment()
+        .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
+    setup_user_sessions(app, &config)?;
+    let targets = Arc::new(
+        RuntimeTargetStore::open(&config.data_root())
+            .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,
+    );
+    if let Some(target) = targets
+        .current()
+        .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?
+    {
+        config = config.with_agent_target(&target);
+    }
+    let bridge = bridge_supervisor::BridgeSupervisor::start(app.handle().clone(), config.clone());
+    let updates = ReleaseUpdateRuntime::new(app.handle().clone(), update_config)
+        .map_err(|failure| format!("桌面更新状态初始化失败 [{}]", failure.code()))?;
+    let mcp_executable = installed_mcp_executable()?;
+    let receivers = ReceiverRuntime::new(config, mcp_executable.clone());
+    let restored_receivers = receivers.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = restored_receivers.restore().await {
+            eprintln!("receiver restore failed [{}]", error.code);
+        }
+    });
+    let host_context = HostContext::from_environment(mcp_executable)
+        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
+    let hosts = Arc::new(HostConfigurator::system(host_context));
+    app.manage(DesktopRuntime {
+        bridge,
+        receivers,
+        updates,
+        hosts,
+        targets,
+    });
+    setup_tray(app)?;
+    setup_deep_links(app)?;
+    Ok(())
 }
 
 fn setup_user_sessions(app: &tauri::App, config: &DesktopBridgeConfig) -> Result<(), String> {

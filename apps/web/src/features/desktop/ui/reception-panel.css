@@ -1,0 +1,70 @@
+.reception-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle, #d7dedb);
+}
+.reception-panel h3,
+.reception-panel p {
+  margin: 0;
+}
+.reception-panel p,
+.reception-panel code {
+  overflow-wrap: anywhere;
+}
+.reception-panel label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.reception-panel input,
+.reception-panel select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border-subtle, #c9d3cf);
+  border-radius: 6px;
+  background: var(--surface-raised, #fff);
+  color: inherit;
+  font: inherit;
+}
+.reception-panel input:focus-visible,
+.reception-panel select:focus-visible {
+  outline: 2px solid var(--accent, #28765c);
+  outline-offset: 2px;
+}
+.reception-panel details {
+  display: grid;
+  min-width: 0;
+}
+.reception-panel details[open] > * + * {
+  margin-top: 12px;
+}
+.reception-panel summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.reception-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reception-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle, #d7dedb);
+  border-radius: 8px;
+}
+.reception-card > span {
+  font-size: 12px;
+}
+.reception-card[data-status='needs_review'] {
+  border-color: #b87930;
+}
+.reception-copy {
+  user-select: text;
+  font-size: 12px;
+}

@@ -1,3 +1,4 @@
+import { receptionResources } from '@/features/desktop/i18n/reception-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
 import { conversationResources } from '@/features/conversation/i18n/conversation-resources';
 import { automationResources } from '@/features/automation/i18n/automation-resources';
@@ -752,6 +753,7 @@ export const resources = {
       'pwa.writeBlocked.update_required':
         'A newer runtime is waiting. Apply it before sending with the current protocol.',
       ...automationResources.en,
+      ...receptionResources.en,
       ...conversationResources.en,
       ...roomWorkspaceResources.en,
       ...moderationResources.en,
@@ -1428,6 +1430,7 @@ export const resources = {
       'pwa.writeBlocked.offline': '网络离线；本次请求不会进入不可控的盲目重放队列。',
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',
       ...automationResources['zh-CN'],
+      ...receptionResources['zh-CN'],
       ...conversationResources['zh-CN'],
       ...roomWorkspaceResources['zh-CN'],
       ...moderationResources['zh-CN'],

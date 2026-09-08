@@ -125,6 +125,11 @@ pub(crate) struct StatusArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ReceiverCommand {
+    List,
+    Update {
+        #[arg(long)]
+        binding: PathBuf,
+    },
     Inspect {
         #[arg(long)]
         binding: PathBuf,

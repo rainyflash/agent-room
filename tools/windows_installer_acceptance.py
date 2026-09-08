@@ -24,6 +24,7 @@ SCHEMA_VERSION: Final = 1
 DESKTOP_EXECUTABLE: Final = "agent-room-desktop.exe"
 BRIDGE_EXECUTABLE: Final = "agent-room-bridge.exe"
 MCP_EXECUTABLE: Final = "agent-room-mcp.exe"
+CLI_EXECUTABLE: Final = "agent-room.exe"
 SEMVER_PATTERN: Final = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
@@ -50,6 +51,7 @@ class InstalledLayout:
     desktop: Path
     bridge: Path
     mcp: Path
+    cli: Path
     uninstaller: Path
 
 
@@ -83,6 +85,7 @@ def locate_installed_layout(root: Path) -> InstalledLayout:
     desktop = unique_file(root, DESKTOP_EXECUTABLE)
     bridge = unique_file(root, BRIDGE_EXECUTABLE)
     mcp = unique_file(root, MCP_EXECUTABLE)
+    cli = unique_file(root, CLI_EXECUTABLE)
     uninstallers = tuple(
         path
         for path in root.rglob("*.exe")
@@ -93,10 +96,10 @@ def locate_installed_layout(root: Path) -> InstalledLayout:
             f"安装目录中的卸载器数量异常：{len(uninstallers)}。"
         )
     executable_parent = desktop.parent.resolve()
-    for path in (bridge, mcp, uninstallers[0]):
+    for path in (bridge, mcp, cli, uninstallers[0]):
         if path.parent.resolve() != executable_parent:
             raise WindowsInstallerAcceptanceFailure("桌面端、Bridge、MCP 与卸载器必须位于同一目录。")
-    return InstalledLayout(executable_parent, desktop, bridge, mcp, uninstallers[0])
+    return InstalledLayout(executable_parent, desktop, bridge, mcp, cli, uninstallers[0])
 
 
 def run_checked(command: Sequence[str], label: str, *, timeout_seconds: int) -> None:
@@ -158,6 +161,13 @@ def installed_desktop_version(desktop: Path, *, timeout_seconds: int = 30) -> st
             f"无法读取已安装桌面端版本：{detail or '无有效输出'}"
         )
     return version
+
+
+def verify_cli_version(cli: Path, expected_version: str) -> None:
+    completed = subprocess.run((str(cli), "--version"), check=False, capture_output=True,
+                               text=True, encoding="utf-8", timeout=30)
+    if completed.returncode != 0 or completed.stdout.strip() != f"agent-room {expected_version}":
+        raise WindowsInstallerAcceptanceFailure("已安装 CLI 无法启动或版本与桌面不一致。")
 
 
 def process_ids(image_name: str) -> frozenset[int]:
@@ -328,6 +338,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 timeout_seconds=300,
             )
             layout = locate_installed_layout(install_root)
+            verify_cli_version(layout.cli, expected_version)
             actual_version = installed_desktop_version(layout.desktop)
             if actual_version != expected_version:
                 raise WindowsInstallerAcceptanceFailure(
@@ -366,6 +377,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
             mcp = None
 
             layout = locate_installed_layout(install_root)
+            verify_cli_version(layout.cli, expected_version)
             upgraded_version = installed_desktop_version(layout.desktop)
             if upgraded_version != expected_version:
                 raise WindowsInstallerAcceptanceFailure(

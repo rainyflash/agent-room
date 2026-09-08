@@ -123,6 +123,7 @@ impl HostSessionFactory for TestFactory {
             self.starts.fetch_add(1, Ordering::AcqRel);
             let handler = TestHandler {
                 summary: IpcSelfSummary {
+                    room_catalog_id: None,
                     agent: IpcAgentSummary {
                         agent_id: request.session_key.clone(),
                         display_name: request.display_name,
@@ -464,5 +465,50 @@ async fn 注册暂时失败会按原会话绑定重试并恢复同一连接() {
     );
     assert_eq!(factory.attempts.load(Ordering::Acquire), 2);
     assert_eq!(factory.delegate.starts.load(Ordering::Acquire), 1);
+    registry.shutdown().await;
+}
+
+#[tokio::test]
+async fn 登记仅保存本任务资料且不会改变身份或自动发送() {
+    let factory = Arc::new(TestFactory::default());
+    let registry = HostSessionRegistry::new(factory.clone());
+    let original = request("Receiver");
+    let id = open(&registry, original.clone()).await;
+    let summary = identity(&registry, &id).await;
+    let offer = agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+        task_id: Uuid::now_v7().to_string(),
+        workspace: "C:/work".into(),
+    };
+    for _ in 0..2 {
+        registry
+            .execute(&id, IpcMethod::RegisterReception(offer.clone()))
+            .await
+            .unwrap();
+    }
+    let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+        panic!("diagnostics");
+    };
+    assert_eq!(
+        sessions[0].session_key.as_deref(),
+        Some(original.session_key.as_str())
+    );
+    assert_eq!(sessions[0].reception_offer.as_ref().unwrap().task, offer);
+    assert_eq!(
+        sessions[0].reception_offer.as_ref().unwrap().room_id,
+        summary.room_id
+    );
+    assert!(sessions[0].last_message_sent_ago_ms.is_none());
+    assert_eq!(factory.starts.load(Ordering::Acquire), 1);
+    let mut different = offer;
+    different.task_id = Uuid::now_v7().to_string();
+    assert_eq!(
+        registry
+            .execute(&id, IpcMethod::RegisterReception(different))
+            .await
+            .unwrap_err()
+            .code(),
+        "bridge.host_session.reception_already_bound"
+    );
+    assert_eq!(identity(&registry, &id).await, summary);
     registry.shutdown().await;
 }

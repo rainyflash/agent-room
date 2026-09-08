@@ -60,9 +60,44 @@ pub struct IpcHostSessionSummary {
 pub struct IpcHostSessionDiagnostics {
     pub session: IpcHostSessionSummary,
     pub display_name: String,
+    #[serde(default)]
+    pub session_key: Option<String>,
+    #[serde(default)]
+    pub reception_offer: Option<IpcReceptionOffer>,
     pub last_inbox_read_ago_ms: Option<u64>,
     pub last_message_received_ago_ms: Option<u64>,
     pub last_message_sent_ago_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcRegisterReceptionRequest {
+    pub task_id: String,
+    pub workspace: String,
+}
+impl IpcRegisterReceptionRequest {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        let id =
+            Uuid::parse_str(&self.task_id).map_err(|_| failure("bridge.ipc.host_task_invalid"))?;
+        if id.is_nil() || id.to_string() != self.task_id {
+            return Err(failure("bridge.ipc.host_task_invalid"));
+        }
+        if self.workspace.is_empty()
+            || self.workspace.len() > 4096
+            || self.workspace.chars().any(char::is_control)
+        {
+            return Err(failure("bridge.ipc.workspace_invalid"));
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcReceptionOffer {
+    pub room_catalog_id: Option<String>,
+    pub instance_id: String,
+    pub task: IpcRegisterReceptionRequest,
+    pub room_id: String,
 }
 
 pub(crate) fn validate_session_id(value: &str) -> Result<(), IpcMethodValidationFailure> {

@@ -8,6 +8,7 @@ members = [
   "apps/release-tool",
   "crates/a2a-adapter",
   "crates/agent-client",
+  "crates/agent-reception",
   "crates/application",
   "crates/bridge-core",
   "crates/bridge-ipc",
@@ -35,6 +36,7 @@ repository = "https://github.com/rainyflash/agent-room"
 
 [workspace.dependencies]
 agent-room-a2a-adapter = { version = "0.1.0-alpha.26", path = "crates/a2a-adapter" }
+agent-room-agent-reception = { version = "0.1.0-alpha.26", path = "crates/agent-reception" }
 agent-room-agent-client = { version = "0.1.0-alpha.26", path = "crates/agent-client" }
 agent-room-application = { version = "0.1.0-alpha.26", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0-alpha.26", path = "crates/bridge-core" }
