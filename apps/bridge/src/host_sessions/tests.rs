@@ -476,6 +476,7 @@ async fn 登记仅保存本任务资料且不会改变身份或自动发送() {
     let id = open(&registry, original.clone()).await;
     let summary = identity(&registry, &id).await;
     let offer = agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+        host_type: agent_room_bridge_ipc::IpcReceptionHost::Codex,
         task_id: Uuid::now_v7().to_string(),
         workspace: "C:/work".into(),
     };

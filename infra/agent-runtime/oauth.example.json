@@ -1,0 +1,6 @@
+{
+  "issuer": "https://id.example.com/realms/agent-room",
+  "ownerSubject": "replace-with-this-bridge-owners-oidc-subject",
+  "allowedClientIds": ["agent-room-remote-host"],
+  "scope": "agent-room"
+}

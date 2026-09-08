@@ -75,6 +75,7 @@ impl BridgeToolClient for Bridge {
 #[derive(Clone, Copy)]
 enum Reply {
     Valid,
+    ValidButHostFails,
     Missing,
     WrongRelation,
     WrongAgent,
@@ -124,6 +125,9 @@ impl HostRunner for Host {
                     provenance: IpcMessageProvenance::AutonomousAgent,
                 };
                 self.bridge.replies.lock().unwrap().push(message);
+            }
+            if matches!(self.outcome, Reply::ValidButHostFails) {
+                return Err(ReceptionFailure::local("receiver.host_failed"));
             }
             Ok(()) // A host can complete successfully without ever sending a valid reply.
         })
@@ -197,6 +201,7 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
         Reply::WrongRelation,
         Reply::WrongAgent,
         Reply::Valid,
+        Reply::ValidButHostFails,
     ] {
         let (root, binding, bridge) = setup();
         let host = Host {
@@ -209,7 +214,7 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
             .unwrap()
             .unwrap();
         assert_eq!(host.calls.load(Ordering::Relaxed), 1);
-        if matches!(outcome, Reply::Valid) {
+        if matches!(outcome, Reply::Valid | Reply::ValidButHostFails) {
             result.unwrap();
             assert_eq!(saved.checkpoint.cursor(), Some("$input"));
             assert_eq!(
@@ -228,6 +233,120 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
             );
         }
     }
+}
+
+struct InterruptedBridge {
+    inner: Bridge,
+    failures: AtomicUsize,
+}
+impl BridgeToolClient for InterruptedBridge {
+    fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        let verifying = matches!(&method, IpcMethod::WithSession { method, .. }
+            if matches!(method.as_ref(), IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$input")));
+        if verifying && self.failures.fetch_add(1, Ordering::Relaxed) == 0 {
+            return Box::pin(async {
+                Err(agent_room_agent_client::BridgeToolFailure::new(
+                    "test.network_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    true,
+                    Default::default(),
+                ))
+            });
+        }
+        self.inner.invoke(method)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_failure_after_sending_only_reconciles_without_a_second_host_turn() {
+    let (root, binding, bridge) = setup();
+    let host = Host {
+        bridge: bridge.clone(),
+        outcome: Reply::Valid,
+        calls: AtomicUsize::new(0),
+    };
+    let backend = InterruptedBridge {
+        inner: bridge,
+        failures: AtomicUsize::new(0),
+    };
+    let (stop, mut stopped) = tokio::sync::watch::channel(false);
+    let reconnects = AtomicUsize::new(0);
+    let emit = |event| {
+        match event {
+            ReceiverEvent::Reconnecting { .. } => {
+                reconnects.fetch_add(1, Ordering::Relaxed);
+            }
+            ReceiverEvent::Delivery { record } if record.stage == DeliveryStage::Replied => {
+                stop.send_replace(true);
+            }
+            _ => {}
+        }
+        Ok(())
+    };
+    run(
+        ReceiverContext {
+            mode: ReceiverMode::Listen,
+            host: &host,
+            backend: &backend,
+            data_root: root.path(),
+            service: "test.receiver",
+            emit: &emit,
+        },
+        &binding.host.task_id,
+        async {
+            let _ = stopped.wait_for(|stop| *stop).await;
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(reconnects.load(Ordering::Relaxed), 1);
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        ReceiverStore::inspect(root.path(), &binding.host.task_id)
+            .unwrap()
+            .unwrap()
+            .last_delivery
+            .unwrap()
+            .stage,
+        DeliveryStage::Replied
+    );
+}
+
+struct WaitingHost(tokio::sync::Notify);
+impl HostRunner for WaitingHost {
+    fn resume<'a>(&'a self, _: HostDelivery<'a>) -> HostFuture<'a> {
+        Box::pin(async move {
+            self.0.notify_one();
+            std::future::pending().await
+        })
+    }
+}
+#[tokio::test]
+async fn pause_during_host_execution_keeps_pending_and_releases_the_receiver_lock() {
+    let (root, binding, bridge) = setup();
+    let host = WaitingHost(tokio::sync::Notify::new());
+    let emit = |_| Ok(());
+    run(
+        ReceiverContext {
+            mode: ReceiverMode::Listen,
+            host: &host,
+            backend: &bridge,
+            data_root: root.path(),
+            service: "test.receiver",
+            emit: &emit,
+        },
+        &binding.host.task_id,
+        host.0.notified(),
+    )
+    .await
+    .unwrap();
+    let store = ReceiverStore::open(root.path(), &binding.host.task_id).unwrap();
+    let saved = store.load().unwrap().unwrap();
+    assert!(matches!(
+        saved.checkpoint,
+        ReceptionCheckpoint::Pending { .. }
+    ));
+    assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::Running);
 }
 
 #[tokio::test(start_paused = true)]
@@ -345,6 +464,12 @@ async fn recovered_receipt_never_starts_another_host_turn() {
         })
         .await
         .unwrap();
+    // Receipt recovery must work even after the host executable was removed or upgraded.
+    let store = ReceiverStore::open(root.path(), &binding.host.task_id).unwrap();
+    let mut state = store.load().unwrap().unwrap();
+    state.binding.host.executable = root.path().join("uninstalled-host.exe");
+    store.save(&state).unwrap();
+    drop(store);
     receive(
         root.path(),
         &binding,

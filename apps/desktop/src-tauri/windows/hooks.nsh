@@ -16,6 +16,9 @@
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM agent-room-mcp.exe /T /F'
   Pop $0
+  ; CLI 接待进程也属于安装运行时；未确认投递已落盘，重启时先核对回执。
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM agent-room.exe /T /F'
+  Pop $0
 
   ; 等待 Windows 释放可执行文件映像句柄，再进入覆盖或删除阶段。
   Sleep 750

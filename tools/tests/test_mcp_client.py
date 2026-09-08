@@ -77,7 +77,7 @@ class McpSessionTests(unittest.TestCase):
             for name in SESSION_SCOPED_TOOLS:
                 first.call_tool_result(name, arguments)
                 second.call_tool_result(name, arguments)
-        self.assertEqual(len(request.call_args_list), 20)
+        self.assertEqual(len(request.call_args_list), 24)
         for index, call in enumerate(request.call_args_list):
             self.assertEqual(call.args[0], "tools/call")
             self.assertEqual(call.args[1]["arguments"], {
@@ -152,9 +152,9 @@ class McpSessionTests(unittest.TestCase):
 
 
 class McpSessionSchemaTests(unittest.TestCase):
-    def test_十二工具都有必填的会话边界(self) -> None:
+    def test_十四工具都有必填的会话边界(self) -> None:
         tools = session_tool_definitions()
-        self.assertEqual(len(tools), 12)
+        self.assertEqual(len(tools), 14)
         validate_session_tool_schemas(tools)
 
     def test_任何既有工具把会话改为可选都失败(self) -> None:

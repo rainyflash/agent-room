@@ -1,12 +1,14 @@
 //! Durable, ordered reception shared by the desktop and CLI.
+mod claude;
 mod codex;
 mod error;
+mod host;
 mod model;
 mod receipt;
 mod runtime;
 mod store;
-pub use codex::CodexBinding;
 pub use error::{ReceptionFailure, ReceptionResult};
+pub use host::HostBinding;
 pub use model::*;
 pub use runtime::{ReceiverContext, ReceiverMode, run};
 pub use store::{ReceiverStore, load_binding};
@@ -32,7 +34,7 @@ pub trait HostRunner: Send + Sync {
     fn resume<'a>(&'a self, delivery: HostDelivery<'a>) -> HostFuture<'a>;
 }
 pub struct HostDelivery<'a> {
-    pub binding: &'a CodexBinding,
+    pub binding: &'a HostBinding,
     pub data_root: &'a std::path::Path,
     pub service: &'a str,
     pub session_id: &'a str,
@@ -40,17 +42,9 @@ pub struct HostDelivery<'a> {
     pub submission_id: &'a str,
     pub message: &'a agent_room_bridge_ipc::IpcMessagePreviewSummary,
 }
-pub struct CodexHost;
-impl HostRunner for CodexHost {
+pub struct NativeHost;
+impl HostRunner for NativeHost {
     fn resume<'a>(&'a self, delivery: HostDelivery<'a>) -> HostFuture<'a> {
-        Box::pin(codex::resume(
-            delivery.binding,
-            delivery.data_root,
-            delivery.service,
-            delivery.session_id,
-            delivery.automation_grant_id,
-            delivery.submission_id,
-            delivery.message,
-        ))
+        Box::pin(host::resume(delivery))
     }
 }

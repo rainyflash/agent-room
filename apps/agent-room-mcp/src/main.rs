@@ -15,12 +15,19 @@ use rmcp::{ServiceExt, transport::stdio};
     about = "Agent Room MCP: local stdio or private Streamable HTTP"
 )]
 struct Options {
-    #[arg(long, requires_all = ["public_url", "token_file"])]
+    #[arg(long, requires_all = ["public_url", "authentication"])]
     http: Option<SocketAddr>,
     #[arg(long, requires = "http")]
     public_url: Option<String>,
-    #[arg(long, requires = "http")]
+    #[arg(
+        long,
+        requires = "http",
+        group = "authentication",
+        conflicts_with = "oauth_config"
+    )]
     token_file: Option<PathBuf>,
+    #[arg(long, requires = "http", group = "authentication")]
+    oauth_config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -44,17 +51,22 @@ async fn run() -> Result<(), String> {
         secure_storage_service,
     ));
     if let Some(bind) = options.http {
-        let config = HttpConfig::load(
-            bind,
-            options
-                .public_url
-                .as_deref()
-                .ok_or("public URL is required")?,
-            options
-                .token_file
-                .as_deref()
-                .ok_or("token file is required")?,
-        )
+        let public_url = options
+            .public_url
+            .as_deref()
+            .ok_or("public URL is required")?;
+        let config = if let Some(path) = options.oauth_config.as_deref() {
+            HttpConfig::oauth(bind, public_url, path).await
+        } else {
+            HttpConfig::load(
+                bind,
+                public_url,
+                options
+                    .token_file
+                    .as_deref()
+                    .ok_or("authentication is required")?,
+            )
+        }
         .map_err(str::to_owned)?;
         let listener = tokio::net::TcpListener::bind(bind)
             .await

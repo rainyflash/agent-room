@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from tools.windows_installer_acceptance import (
     acceptance_environment,
     ensure_clean_install_registration,
     installed_desktop_version,
+    verify_cli_version,
     locate_installed_layout,
     wait_for_install_files_removed,
     write_new_report,
@@ -21,6 +23,19 @@ INSTALLER_HOOKS = ROOT / "apps" / "desktop" / "src-tauri" / "windows" / "hooks.n
 
 
 class WindowsInstallerAcceptanceTests(unittest.TestCase):
+    def test_cli_must_start_and_match_the_desktop_version(self) -> None:
+        command = ("agent-room.exe", "--version")
+        for output, code in (("agent-room 0.1.0-alpha.27\n", 0), ("agent-room 0.1.0-alpha.26\n", 0), ("", 1)):
+            with self.subTest(output=output, code=code), patch(
+                "tools.windows_installer_acceptance.subprocess.run",
+                return_value=subprocess.CompletedProcess(command, code, output, ""),
+            ):
+                if code == 0 and "alpha.27" in output:
+                    verify_cli_version(Path("agent-room.exe"), "0.1.0-alpha.27")
+                else:
+                    with self.assertRaises(WindowsInstallerAcceptanceFailure):
+                        verify_cli_version(Path("agent-room.exe"), "0.1.0-alpha.27")
+
     def test_installer_hooks_stop_every_owned_runtime_before_write_and_delete(self) -> None:
         source = INSTALLER_HOOKS.read_text(encoding="utf-8")
 
@@ -30,6 +45,7 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
         self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-desktop.exe', source)
         self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-bridge.exe', source)
         self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room-mcp.exe', source)
+        self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room.exe', source)
         self.assertIn("Push $0", source)
         self.assertGreaterEqual(source.count("Pop $0"), 5)
 

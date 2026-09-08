@@ -4,9 +4,9 @@
 use std::{fs::File, io::Read as _, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{Request, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse as _, Response},
 };
@@ -20,11 +20,17 @@ use url::{Host, Position, Url};
 use zeroize::Zeroizing;
 
 use crate::agent_room::{AgentRoomMcpServer, BridgeToolClient};
+use crate::oauth::{OAuth, Rejection};
+
+enum Authentication {
+    Token([u8; 32]),
+    OAuth(Box<OAuth>),
+}
 
 pub struct HttpConfig {
     host: String,
     origin: String,
-    token_hash: [u8; 32],
+    authentication: Authentication,
 }
 
 impl HttpConfig {
@@ -37,33 +43,57 @@ impl HttpConfig {
         public_url: &str,
         token_file: &Path,
     ) -> Result<Self, &'static str> {
-        let url = Url::parse(public_url).map_err(|_| "public URL is invalid")?;
-        let loopback = match url.host() {
-            Some(Host::Domain("localhost")) => true,
-            Some(Host::Ipv4(address)) => address.is_loopback(),
-            Some(Host::Ipv6(address)) => address.is_loopback(),
-            _ => false,
-        };
-        if (url.scheme() != "https"
-            && !(url.scheme() == "http" && loopback && bind.ip().is_loopback()))
-            || url.path() != "/mcp"
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.host().is_none()
-        {
-            return Err(
-                "public URL must be HTTPS with path /mcp (HTTP is allowed only on loopback)",
-            );
-        }
+        let url = public_endpoint(bind, public_url)?;
         let token = read_token(token_file)?;
         Ok(Self {
             host: url[Position::BeforeHost..Position::AfterPort].to_owned(),
             origin: url.origin().ascii_serialization(),
-            token_hash: Sha256::digest(token.as_bytes()).into(),
+            authentication: Authentication::Token(Sha256::digest(token.as_bytes()).into()),
         })
     }
+
+    /// Load an explicitly configured, single-owner OAuth resource server.
+    /// # Errors
+    /// Invalid configuration, unavailable discovery or unsafe endpoints fail startup.
+    pub async fn oauth(
+        bind: SocketAddr,
+        public_url: &str,
+        config_file: &Path,
+    ) -> Result<Self, &'static str> {
+        let url = public_endpoint(bind, public_url)?;
+        let authentication = OAuth::load(
+            config_file,
+            &url,
+            bind.ip().is_loopback() && url.scheme() == "http",
+        )
+        .await?;
+        Ok(Self {
+            host: url[Position::BeforeHost..Position::AfterPort].to_owned(),
+            origin: url.origin().ascii_serialization(),
+            authentication: Authentication::OAuth(Box::new(authentication)),
+        })
+    }
+}
+
+fn public_endpoint(bind: SocketAddr, public_url: &str) -> Result<Url, &'static str> {
+    let url = Url::parse(public_url).map_err(|_| "public URL is invalid")?;
+    let loopback = match url.host() {
+        Some(Host::Domain("localhost")) => true,
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        _ => false,
+    };
+    if (url.scheme() != "https" && !(url.scheme() == "http" && loopback && bind.ip().is_loopback()))
+        || url.path() != "/mcp"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.host().is_none()
+    {
+        return Err("public URL must be HTTPS with path /mcp (HTTP is allowed only on loopback)");
+    }
+    Ok(url)
 }
 
 fn read_token(path: &Path) -> Result<Zeroizing<String>, &'static str> {
@@ -112,15 +142,21 @@ pub fn router(backend: Arc<dyn BridgeToolClient>, config: HttpConfig) -> Router 
         Arc::new(NeverSessionManager::default()),
         transport_config,
     );
-    Router::new()
-        .route_service("/mcp", service)
-        .layer(middleware::from_fn_with_state(
-            Arc::new(HttpBoundary {
-                config,
-                permits: Semaphore::new(32),
-            }),
-            protect,
-        ))
+    let mut app = Router::new().route_service("/mcp", service);
+    if let Authentication::OAuth(oauth) = &config.authentication {
+        let metadata = oauth.metadata();
+        app = app.route(
+            "/.well-known/oauth-protected-resource/mcp",
+            axum::routing::get(move || async { Json(metadata) }),
+        );
+    }
+    app.layer(middleware::from_fn_with_state(
+        Arc::new(HttpBoundary {
+            config,
+            permits: Semaphore::new(32),
+        }),
+        protect,
+    ))
 }
 
 async fn protect(
@@ -129,17 +165,6 @@ async fn protect(
     next: Next,
 ) -> Response {
     let headers = request.headers();
-    if !authorized(headers, &boundary.config.token_hash) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [
-                (header::WWW_AUTHENTICATE, "Bearer realm=\"agent-room\""),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            "Authentication required",
-        )
-            .into_response();
-    }
     if single_header(headers, header::HOST) != Some(boundary.config.host.as_str())
         || (headers.contains_key(header::ORIGIN)
             && single_header(headers, header::ORIGIN) != Some(boundary.config.origin.as_str()))
@@ -154,6 +179,26 @@ async fn protect(
         )
             .into_response();
     };
+    let metadata = request.uri().path() == "/.well-known/oauth-protected-resource/mcp"
+        && matches!(*request.method(), Method::GET | Method::HEAD);
+    if !metadata {
+        let authorization = match &boundary.config.authentication {
+            Authentication::Token(expected) => {
+                if authorized(headers, expected) {
+                    Ok(())
+                } else {
+                    Err(Rejection::Invalid)
+                }
+            }
+            Authentication::OAuth(oauth) => match bearer(headers) {
+                Some(token) => oauth.verify(token).await,
+                None => Err(Rejection::Invalid),
+            },
+        };
+        if let Err(error) = authorization {
+            return rejected(&boundary.config, error);
+        }
+    }
     let mut response = tokio::time::timeout(Duration::from_secs(155), next.run(request))
         .await
         .unwrap_or_else(|_| (StatusCode::GATEWAY_TIMEOUT, "Request timed out").into_response());
@@ -161,6 +206,40 @@ async fn protect(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+fn rejected(config: &HttpConfig, rejection: Rejection) -> Response {
+    if rejection == Rejection::Unavailable {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [
+                (header::RETRY_AFTER, "30"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            "Authentication provider unavailable",
+        )
+            .into_response();
+    }
+    let (status, code) = if rejection == Rejection::Scope {
+        (StatusCode::FORBIDDEN, "insufficient_scope")
+    } else {
+        (StatusCode::UNAUTHORIZED, "invalid_token")
+    };
+    let challenge = match &config.authentication {
+        Authentication::Token(_) => "Bearer realm=\"agent-room\"".into(),
+        Authentication::OAuth(oauth) => {
+            format!("{}, error=\"{code}\"", oauth.challenge(&config.origin))
+        }
+    };
+    (
+        status,
+        [
+            (header::WWW_AUTHENTICATE, challenge),
+            (header::CACHE_CONTROL, "no-store".into()),
+        ],
+        "Authentication required",
+    )
+        .into_response()
 }
 
 fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
@@ -173,15 +252,19 @@ fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> 
 }
 
 fn authorized(headers: &HeaderMap, expected: &[u8; 32]) -> bool {
-    let Some(value) = single_header(headers, header::AUTHORIZATION) else {
+    let Some(token) = bearer(headers) else {
         return false;
     };
-    let Some((scheme, token)) = value.split_once(' ') else {
-        return false;
-    };
-    if !scheme.eq_ignore_ascii_case("Bearer") || !(43..=128).contains(&token.len()) {
+    if !(43..=128).contains(&token.len()) {
         return false;
     }
     let actual: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     bool::from(actual.ct_eq(expected))
+}
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let (scheme, token) = single_header(headers, header::AUTHORIZATION)?.split_once(' ')?;
+    (scheme.eq_ignore_ascii_case("Bearer")
+        && !token.is_empty()
+        && !token.bytes().any(|b| b.is_ascii_whitespace()))
+    .then_some(token)
 }

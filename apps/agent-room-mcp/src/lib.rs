@@ -2,3 +2,4 @@
 
 pub mod agent_room;
 pub mod http;
+mod oauth;

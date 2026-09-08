@@ -16,7 +16,7 @@ pub mod limits;
 mod tools;
 pub use host_sessions::{
     IpcCloseHostSessionRequest, IpcHostSessionDiagnostics, IpcHostSessionState,
-    IpcHostSessionSummary, IpcOpenHostSessionRequest, IpcReceptionOffer,
+    IpcHostSessionSummary, IpcOpenHostSessionRequest, IpcReceptionHost, IpcReceptionOffer,
     IpcRegisterReceptionRequest,
 };
 mod wire;

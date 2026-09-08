@@ -42,11 +42,34 @@ location = /mcp {
 }
 ```
 
-支持 Streamable HTTP 和自定义认证头的宿主，配置 `https://agents.example.com/mcp`，通过其秘密设置发送 `Authorization: Bearer <mcp.token 内容>`。本版本是专用所有者访问令牌，不实现 OAuth 自动发现；仅接受 OAuth 的托管连接器还不能直接使用。具体配置字段遵循宿主文档，不能直接复制本地 stdio 的 command 配置。
+支持 Streamable HTTP 和自定义认证头的宿主，配置 `https://agents.example.com/mcp`，通过其秘密设置发送 `Authorization: Bearer <mcp.token 内容>`。默认使用专用所有者访问令牌；仅接受 OAuth 的宿主使用下节的 OAuth 配置。具体配置字段遵循宿主文档，不能直接复制本地 stdio 的 command 配置。
 
 任何持有此令牌的调用方都属于此部署所有者的可信范围，可调用 Agent 工具与创建任务；令牌不是单个任务的隔离凭据。每个任务仍需自己的稳定 UUIDv7 `sessionKey`、名称和返回的 `sessionId`，禁止互用。发送和自主授权仍由 Bridge 验证。仅将令牌授予所有者认可的宿主，其他用户必须有独立部署。
 
 服务检查每次请求的令牌、Host 和可选 Origin，限制 64 KiB 请求和 32 个并发请求，返回数据禁止缓存。协议使用 rmcp 的 Streamable HTTP 实现；兼容旧版初始化的无状态模式，没有第二套传输会话身份。参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)。
+
+## OAuth 远程宿主
+
+OAuth 模式仍然是一位所有者对应一套 Bridge。复制 `oauth.example.json` 为秘密挂载目录内的 `oauth.json`，配置现有 OIDC 签发者、与此 Bridge 所有者对应的 OIDC `sub`、允许的客户端 ID 和 `agent-room` scope。OIDC `sub` 与应用内 principalId 不是同一种标识，不能混用。启动：
+
+```sh
+docker compose --env-file .env -f compose.yaml -f compose.oauth.yaml up -d
+# 直接运行二进制的等价入口：
+agent-room-mcp --http 127.0.0.1:8181 --public-url https://agents.example.com/mcp --oauth-config /absolute/private/oauth.json
+```
+
+认证服务需要提供 OIDC discovery、PKCE S256 和 RS256 JWKS。在该服务中为宿主预登记准确回调地址，启用授权码 + PKCE，分配 `agent-room` scope，并把访问令牌 audience 绑定到完整资源地址 `https://agents.example.com/mcp`。客户端应在授权及兑换时发送相同 `resource`。仅增加普通网页登录客户端或把 ID token 交给 MCP 不会通过验证。这里复用已有认证服务，不自建第二套密码登录或开放动态客户端注册。
+
+反向代理还需要转发公开的 `/.well-known/oauth-protected-resource/mcp`，与 `/mcp` 使用相同 Host；不能把它也放到额外的网页登录墙后。客户端首次访问 `/mcp` 收到 401 及 `WWW-Authenticate` 中的发现地址，随后按现有 OIDC 服务完成登录。服务器每次校验签名、issuer、resource audience、有效期、所有者 subject、允许的 `azp`/`client_id` 和 scope。接受 RFC 9068 `at+jwt` 或 Keycloak 的 `typ=Bearer` 访问令牌，拒绝 ID token。JWKS 最长缓存五分钟，未知 key 的刷新至少间隔 30 秒；提供者异常返回可重试的 503，不跳过校验。
+
+```nginx
+location = /.well-known/oauth-protected-resource/mcp {
+    proxy_pass http://127.0.0.1:8181;
+    proxy_set_header Host $http_host;
+}
+```
+
+目前支持预登记的 OAuth 客户端。具体托管平台是否允许自定义 client ID、回调及资源参数，需要按平台实际接口验证；不能把协议实现等同于所有云端连接器均已上线。配置中的所有者是部署信任边界，不提供多租户身份路由。标准依据：[MCP Authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)、[Protected Resource Metadata](https://www.rfc-editor.org/rfc/rfc9728.html)。
 
 ## 验证和升级
 
@@ -60,10 +83,12 @@ docker compose exec bridge agent-room session open --name 'Cloud agent'
 升级时先备份状态，在同一目录 `docker compose build`、`docker compose up -d`；Bridge、MCP、CLI 必须同版，重连复用 session key。回退镜像前核对该版本的数据迁移兼容性。本地验证命令：
 
 ```sh
-cargo test -p agent-room-mcp --test http_transport
+cargo test -p agent-room-mcp --test http_transport --test oauth_transport
 cargo test -p agent-room-bridge-local-adapter --test encrypted_vault
 cargo test -p agent-room-cli
 docker compose --env-file .env config --quiet
 ```
 
 HTTP 测试使用真实套接字与模拟 Bridge，覆盖协议协商、工具、会话路由和拒绝越界请求；vault 测试覆盖重开、损坏、密钥和命名空间。它们不替代部署到目标 Linux 主机后的人类登录、真实 Matrix 收发及 TLS 代理验收。接收器的 Codex 登录和可恢复任务属于宿主环境，基础镜像不捆绑 Codex，也不假定云端模型会因新消息自动启动。
+
+Linux CI 另外运行 `tools/agent_runtime_acceptance.py`（真实镜像、受信任 TLS 代理和令牌边界），以及 `tools/headless_acceptance.py`（隔离 Keycloak / Matrix、vault 保存登录、重启保留身份、断网恢复和真实消息回复）。各自生成独立报告，明确记录是否包含 Matrix 和模型调用。后者只适用于一次性 Linux 验收环境，会管理仓库已有的专用纵向测试数据和 Docker 项目；不要在生产服务器执行它。

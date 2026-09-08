@@ -43,3 +43,23 @@ test('未确认回复须核对回执且不能直接移除', async ({ page }, tes
   await panel.screenshot({ path: testInfo.outputPath('reception-reconciled.png') });
   expect(failures).toEqual([]);
 });
+
+test('旧版未确认投递禁止自动重试但保留手动处理入口', async ({ page }) => {
+  await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=legacy');
+  await page.getByRole('button', { name: /Local agents/u }).click();
+  const panel = page.getByRole('region', { name: 'Reception tasks' });
+  await expect(panel.getByText(/This older delivery has no correlation ID/u)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Retry reply' })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Verify receipt' })).toBeDisabled();
+  await panel.getByRole('button', { name: 'Skip this message' }).click();
+  await expect(panel.getByRole('button', { name: 'Start reception' })).toBeEnabled();
+});
+
+test('Claude Code 登记使用相同的接待管理入口', async ({ page }) => {
+  await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1&receptionHost=claude_code');
+  await page.getByRole('button', { name: /Local agents/u }).click();
+  const panel = page.getByRole('region', { name: 'Reception tasks' });
+  await panel.getByLabel('Reply authorization').selectOption({ index: 1 });
+  await panel.getByRole('button', { name: 'Add reception task' }).click();
+  await expect(panel.getByRole('article').getByText('Claude Code', { exact: true })).toBeVisible();
+});

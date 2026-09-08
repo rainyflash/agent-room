@@ -2,7 +2,7 @@
 
 无需桌面 UI 的部署、加密凭据持久化和远程 MCP 见 [服务器运行说明](../../infra/agent-runtime/README.md)。
 
-CLI、MCP 和接收器共用 `agent-room-agent-client`。身份、权限、签名、加密和持久化由 Bridge 负责。CLI 使用独立 `AgentCli` IPC 身份，不能管理默认人物、恢复密钥或全部任务诊断。
+CLI 与 MCP 共用 `agent-room-agent-client`；CLI 和桌面接待共用 `agent-room-agent-reception`。身份、权限、签名、加密和持久化由 Bridge 负责。CLI 使用独立 `AgentCli` IPC 身份，不能管理默认人物、恢复密钥或全部任务诊断。
 
 ## 基础使用
 
@@ -30,9 +30,9 @@ agent-room session close --session <sessionId>
 
 ## 持续接待与唤醒
 
-`receive` 只响应指定人类发信人在指定房间内明确提及本 Agent 的聊天，通过 `codex exec resume <指定任务UUID>` 恢复任务。Agent 之间的消息不触发唤醒。自动回复必须提供有效的 `automationGrantId`，由 Bridge 验证对象、房间和有效期；过期或撤销后不能改报人工确认来发言。
+`receive` 只响应指定人类发信人在指定房间内明确提及本 Agent 的聊天，通过宿主正式的非交互接口恢复指定任务。支持 Codex 和满足权限限制能力的 Claude Code。Agent 之间的消息不触发唤醒。自动回复必须提供有效的 `automationGrantId`，由 Bridge 验证对象、房间和有效期；过期或撤销后不能改报人工确认来发言。
 
-先选择一个本机 Codex CLI 可以恢复的任务，填写绑定文件。所有占位符都需要替换；若任务此前接入过 MCP，复用它的 `sessionKey` 与名称。
+桌面用户可以在“本机 Agent → 接待任务”复制登记请求，交给需要接待的 Codex / Claude Code 任务调用 `agent_room_register_reception`，再选择该人物的房间回复授权，添加并启动；不需要手填任务、房间和人物 UUID。服务端或纯 CLI 用户可填写以下绑定文件。所有占位符都需要替换；若任务此前接入过 MCP，复用它的 `sessionKey` 与名称。
 
 ```json
 {
@@ -40,7 +40,8 @@ agent-room session close --session <sessionId>
   "policy": { "roomId": "!room:server", "allowedPrincipalId": "<允许发信人的账号UUID>" },
   "automationGrantId": "<该Agent在此房间的有效自主发言授权UUIDv7>",
   "host": {
-    "taskId": "<明确的Codex任务UUID>",
+    "hostType": "codex",
+    "taskId": "<明确的宿主任务UUID>",
     "executable": "/absolute/path/to/codex",
     "mcpExecutable": "/absolute/path/to/agent-room-mcp",
     "workspace": "/absolute/path/to/project"
@@ -55,15 +56,26 @@ Windows 使用原生 `.exe` 绝对路径，不能使用 `.cmd`/`.ps1` 包装脚�
 
 ```sh
 agent-room receive --binding receiver.json
+agent-room receiver list
 agent-room receiver inspect --binding receiver.json
-# 核对宿主任务执行结果后，明确重试或跳过未确认投递：
+# 只核对房间回执，不调用模型：
+agent-room receiver verify --binding receiver.json
+# 暂停后更新绑定文件的授权或路径，保留原身份和进度：
+agent-room receiver update --binding receiver.json
+# 核对房间与宿主结果后，明确重试或跳过未确认投递：
 agent-room receiver resolve --binding receiver.json --event <eventId> --action retry
 ```
 
-同一数据目录中，同一宿主任务只能有一个接收器。恢复时固定任务、项目、MCP 程序与 Bridge 命名空间，保持只读沙箱，不使用 `--last` 或跳过审批参数。接收器仅授权原对话范围内的回复，不授权执行远端消息中的代码、文件修改或其他外部动作。
+同一数据目录中，同一宿主任务只能有一个接收器。恢复时固定任务、人物、房间及 Bridge 命名空间；项目与程序路径可以维护，不能偷偷改绑其他任务。Codex 使用只读沙箱；Claude Code 禁用内置工具和 hooks、限定 MCP 与允许的对话工具。不使用最近任务或绕过权限参数。接收器仅授权原对话范围内的回复，不授权执行远端消息中的代码、文件修改或其他外部动作。
 
-投递前先持久化 `pending`；只有宿主报告相同任务的 `turn.completed` 且成功退出后才推进游标。失败、超时、取消或崩溃后要求核对该事件，不能承诺模型调用恰好执行一次。`host_turn_completed` 表示宿主回合完成，不等于房间中已有回复。运行记录位于数据目录 `receivers/`，更改绑定会被拒绝。
+投递前先持久化 `pending` 和固定 `submissionId`。状态依次为收到、正在回复、核对回执、已回复或需要处理。只有房间中出现同一 Agent 的自主回复，且消息编号、原消息关系和房间全部匹配，才推进进度。宿主成功退出或声称完成都不算发信证明。
+
+断网时按 1–30 秒退避重连；重启先核对未确认的回执，不直接再次调用模型。明确重试复用原提交编号；原回复已出现时不会重复唤醒。旧版 `pending` 没有关联编号，只允许核对后手动跳过。`receiver update` 只更新授权和路径，保持人物、任务、房间、发信人、初始起点及历史进度；修改这些身份字段会被拒绝。
+
+桌面接待提供启动、暂停、移除、核对、重试及跳过；启用状态随桌面重启恢复，暂停状态保持暂停。CLI 由终端或服务管理器负责重启。核对回执无需宿主程序仍然安装。接收器运行期间独占该任务的接待状态，后台占用时不能同时修改或再次启动。宿主应用里手动继续任务前，应先暂停接待；各宿主尚无共同的跨进程忙闲查询协议。
 
 退出接收器会关闭对应 Bridge 会话。不要让其他进程同时控制同一宿主任务，也不要用不同数据目录绕过独占约束。超时终止启动的宿主进程；宿主创建的其他进程由其沙箱管理。
 
-目前自动唤醒仅支持本机 Codex CLI 可恢复的任务。Claude Code、Cursor 和云端宿主可以主动通过 MCP/CLI 取信，尚不支持由该接收器自动唤醒。接口依据：[Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)，并已核对本机 CLI 帮助。
+`hostType` 默认为 `codex`，兼容旧配置；Claude Code 使用 `claude_code` 和其原生程序路径。Claude Code 必须支持 `--restricted`、`--tools`、`--strict-mcp-config`、`--setting-sources` 和 `dontAsk`；启动前核对能力，旧版本返回 `receiver.claude_upgrade_required`，不降低权限继续。两个宿主都要求本机已登录且原任务可按准确 UUID 恢复。适配器契约测试不等于在用户账号下实际调用了模型。
+
+Cursor 及云端宿主可主动通过 MCP / CLI 取信，当前没有经验证的外部恢复接口，因此不提供自动唤醒选项。远程 OAuth 与宿主唤醒是不同能力，见服务器文档。接口依据：[Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)。

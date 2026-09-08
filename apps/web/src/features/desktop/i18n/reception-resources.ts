@@ -2,11 +2,11 @@ export const receptionResources = {
   en: {
     'reception.title': 'Reception tasks',
     'reception.description':
-      'Keep a bound Codex task available for direct mentions from you. Your computer and Agent Room must stay running.',
+      'Keep a bound Codex or Claude Code task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
     'reception.empty':
-      'No reception tasks yet. Ask your Codex task to register for reception, then choose a room grant below.',
+      'No reception tasks yet. Ask your Codex or Claude Code task to register for reception, then choose a room grant below.',
     'reception.prompt':
-      'Register this exact Codex task for Agent Room reception with agent_room_register_reception. Use this task’s actual ID, its absolute workspace, and its own Agent Room sessionId. If the task ID is unavailable, say so instead of guessing. Registration alone must not enable reception.',
+      'Register this exact task for Agent Room reception with agent_room_register_reception. Use this task’s actual ID, its hostType (codex or claude_code), absolute workspace, and its own Agent Room sessionId. If the task ID is unavailable, say so instead of guessing. Registration alone must not enable reception.',
     'reception.copy': 'Copy registration request',
     'reception.copied': 'Copied',
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
@@ -25,7 +25,7 @@ export const receptionResources = {
     'reception.remove': 'Remove',
     'reception.update': 'Save authorization and paths',
     'reception.settings': 'Authorization and paths',
-    'reception.executable': 'Codex executable (detected automatically when empty)',
+    'reception.executable': 'Host executable (detected automatically when empty)',
     'reception.workspace': 'Workspace',
     'reception.received': 'Message received',
     'reception.running': 'Replying',
@@ -40,16 +40,18 @@ export const receptionResources = {
     'reception.verify': 'Verify receipt',
     'reception.retry': 'Retry reply',
     'reception.skip': 'Skip this message',
-    'reception.saved': 'Saved. Start reception when ready.',
+    'reception.legacyPending':
+      'This older delivery has no correlation ID. Review the room and host task before skipping; automatic retry could duplicate a reply.',
     'reception.login': 'Sign in to choose your reply authorization.',
   },
   'zh-CN': {
     'reception.title': '接待任务',
     'reception.description':
-      '让绑定的 Codex 任务接收你在房间里的直接提及。电脑和 Agent Room 需要保持运行。',
-    'reception.empty': '还没有接待任务。先让 Codex 任务登记接待，再在这里选择房间授权。',
+      '让绑定的 Codex 或 Claude Code 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
+    'reception.empty':
+      '还没有接待任务。先让 Codex 或 Claude Code 任务登记接待，再在这里选择房间授权。',
     'reception.prompt':
-      '请使用 agent_room_register_reception 登记当前这个 Codex 任务的 Agent Room 接待信息。使用本任务真实的任务 ID、绝对工作目录和独立的 Agent Room sessionId。如果无法获取准确任务 ID，请说明原因，不要猜测。登记本身不得启用接待。',
+      '请使用 agent_room_register_reception 登记当前任务的 Agent Room 接待信息。使用本任务真实的任务 ID、hostType（codex 或 claude_code）、绝对工作目录和独立的 Agent Room sessionId。如果无法获取准确任务 ID，请说明原因，不要猜测。登记本身不得启用接待。',
     'reception.copy': '复制登记请求',
     'reception.copied': '已复制',
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',
@@ -67,7 +69,7 @@ export const receptionResources = {
     'reception.remove': '移除',
     'reception.update': '保存授权与路径',
     'reception.settings': '授权与路径',
-    'reception.executable': 'Codex 程序路径（留空自动识别）',
+    'reception.executable': '宿主程序路径（留空自动识别）',
     'reception.workspace': '工作目录',
     'reception.received': '已收到消息',
     'reception.running': '正在回复',
@@ -82,7 +84,8 @@ export const receptionResources = {
     'reception.verify': '核对回执',
     'reception.retry': '重试回复',
     'reception.skip': '跳过这条消息',
-    'reception.saved': '已保存，可开始接待。',
+    'reception.legacyPending':
+      '这条旧版投递没有回执关联编号。请先核对房间与宿主任务，再决定跳过；自动重试可能产生重复回复。',
     'reception.login': '请先登录，再选择你的回复授权。',
   },
 } as const;
