@@ -117,10 +117,10 @@ impl AgentRoomMcpServer {
         .await
     }
 
-    /// Offer this Codex task for desktop reception; this grants no execution permission.
+    /// Offer this exact host task for desktop reception; this grants no execution permission.
     #[tool(
         name = "agent_room_register_reception",
-        description = "用户要求后台接待时，登记本 Codex 任务的准确 taskId 和绝对工作目录 workspace。只支持明确的当前任务 ID，禁止猜测或选最新任务。登记后人类须在桌面接待面板选择授权并启用；此工具本身不会唤醒任务或授予权限。",
+        description = "用户要求后台接待时，登记当前 Codex 或 Claude Code 任务的准确 taskId、hostType（codex 或 claude_code）及绝对工作目录 workspace。只支持明确的当前任务 ID，禁止猜测或选最新任务。登记后人类须在桌面接待面板选择授权并启用；此工具本身不会唤醒任务或授予权限。",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -135,6 +135,7 @@ impl AgentRoomMcpServer {
         self.execute_scoped(
             input.session_id,
             IpcMethod::RegisterReception(agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+                host_type: input.host_type.into(),
                 task_id: input.task_id,
                 workspace: input.workspace,
             }),

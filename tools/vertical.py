@@ -516,8 +516,12 @@ class IsolatedServiceInterruption(
 class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
     """只清理纵向验收专属目录和凭据命名空间。"""
 
+    def __init__(self, *, vault: bool = False) -> None:
+        self._vault = vault
+
     def __enter__(self) -> "IsolatedBridgeState":
-        clear_vertical_secure_storage()
+        if not self._vault:
+            clear_vertical_secure_storage()
         reset_bridge_data_roots()
         prepare_private_bridge_data_roots()
         return self
@@ -525,7 +529,8 @@ class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         failures: list[str] = []
         try:
-            clear_vertical_secure_storage()
+            if not self._vault:
+                clear_vertical_secure_storage()
             # 子会话凭据的寻址依赖 host-agents 目录；清理凭据成功后才可删目录。
             reset_bridge_data_roots()
         except (OSError, VerticalFailure, subprocess.SubprocessError) as error:
@@ -1243,6 +1248,7 @@ def start_authorized_bridge(
     data_root: Path,
     secure_storage_service: str,
     redactor: LogRedactor,
+    vault: bool = False,
 ) -> AuthorizedBridgeRuntime:
     if runtime_name not in {"bridge-sender", "bridge-target"}:
         raise VerticalFailure(f"拒绝启动未经审计的 Bridge 角色：{runtime_name}。")
@@ -1256,6 +1262,17 @@ def start_authorized_bridge(
         public_lobby_catalog_id=catalog_id,
         secure_storage_service=secure_storage_service,
     )
+    if vault:
+        if os.name != "posix":
+            raise VerticalFailure("Vault 服务器验收需要 Linux runner。")
+        key_file = data_root.resolve() / "vault.key"
+        descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as key:
+            key.write(os.urandom(32))
+        bridge_environment.update({
+            "AGENT_ROOM_BRIDGE_VAULT_DIR": str(data_root.resolve() / "secure-vault"),
+            "AGENT_ROOM_BRIDGE_VAULT_KEY_FILE": str(key_file),
+        })
     observation = BridgeRuntimeObservation()
     bridge = processes.start(
         ManagedProcess(

@@ -68,6 +68,7 @@ export const receiverViewSchema = z
             automationGrantId: z.uuid(),
             host: z
               .object({
+                hostType: z.enum(['codex', 'claude_code']).optional(),
                 taskId: z.uuid(),
                 executable: z.string(),
                 mcpExecutable: z.string(),

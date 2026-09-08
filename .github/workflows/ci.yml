@@ -248,3 +248,48 @@ jobs:
         run: docker build --file infra/agent-runtime/Containerfile --tag agent-room-runtime:acceptance .
       - name: 验证 TLS、MCP 鉴权与发行 CLI
         run: sudo python3 tools/agent_runtime_acceptance.py --image agent-room-runtime:acceptance --report artifacts/agent-runtime-acceptance.json
+      - name: 上传 Agent 运行时验收证据
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: agent-runtime-acceptance
+          path: artifacts/agent-runtime-acceptance.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  agent-runtime-live:
+    name: Linux 无桌面凭据恢复与 Matrix 真实收发
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 恢复 Linux 编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: linux-quality
+          add-job-id-key: false
+          save-if: false
+      - name: 安装 Linux 编译依赖
+        run: bash tools/install-linux-desktop-deps.sh
+      - name: 安装工具与 Chromium
+        run: |
+          node tools/bootstrap.mjs
+          corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 验收 Vault 重启、独立身份及 Matrix 收发
+        run: python tools/headless_acceptance.py
+      - name: 上传服务器验收证据
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: agent-runtime-live
+          path: artifacts/agent-runtime-live.json
+          if-no-files-found: warn
+          retention-days: 7

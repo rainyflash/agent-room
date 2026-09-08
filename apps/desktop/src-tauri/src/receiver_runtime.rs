@@ -5,7 +5,7 @@ use crate::{
 use agent_room_agent_client::LocalBridgeToolClient;
 use agent_room_agent_client::reception::ReceptionPolicy;
 use agent_room_agent_reception::{
-    CodexBinding, ReceiverBinding, ReceiverContext, ReceiverEvent, ReceiverMode, ReceiverStart,
+    HostBinding, ReceiverBinding, ReceiverContext, ReceiverEvent, ReceiverMode, ReceiverStart,
     ReceiverState, ReceiverStore, ReceptionFailure, Resolution,
 };
 use agent_room_bridge_ipc::{IpcMethod, IpcOpenHostSessionRequest, IpcResponse};
@@ -139,7 +139,9 @@ impl ReceiverRuntime {
         let mut state = store
             .load()?
             .ok_or_else(|| ReceptionFailure::local("receiver.state_missing"))?;
-        state.binding.host.validate()?;
+        if mode == ReceiverMode::Listen {
+            state.binding.host.validate()?;
+        }
         if mode == ReceiverMode::Listen {
             state.enabled = true;
         }
@@ -165,7 +167,7 @@ impl ReceiverRuntime {
             let service = config.secure_storage_service();
             let operation = agent_room_agent_reception::run(
                 ReceiverContext {
-                    host: &agent_room_agent_reception::CodexHost,
+                    host: &agent_room_agent_reception::NativeHost,
                     mode,
                     backend: &backend,
                     data_root: &data_root,
@@ -209,6 +211,12 @@ impl ReceiverRuntime {
                     }
                     Err(_) => {
                         task.abort();
+                        // Await cancellation so the durable receiver lock is released before editing state.
+                        if let Err(error) = task.await
+                            && !error.is_cancelled()
+                        {
+                            return Err(ReceptionFailure::local("receiver.worker_failed"));
+                        }
                         worker.failure = Some(ReceptionFailure::local("receiver.stop_timeout"));
                     }
                 }
@@ -255,7 +263,7 @@ impl ReceiverRuntime {
             .ok_or_else(|| ReceptionFailure::validation("receiver.task_not_registered"))?;
         let executable = request
             .executable
-            .or_else(discover_codex)
+            .or_else(|| discover_host(offer.task.host_type))
             .ok_or_else(|| ReceptionFailure::local("receiver.host_not_installed"))?;
         let binding = ReceiverBinding {
             session: IpcOpenHostSessionRequest {
@@ -269,7 +277,8 @@ impl ReceiverRuntime {
                 allowed_principal_id: request.principal_id,
             },
             automation_grant_id: request.automation_grant_id,
-            host: CodexBinding {
+            host: HostBinding {
+                host_type: offer.task.host_type,
                 task_id: offer.task.task_id,
                 executable,
                 mcp_executable: self.inner.mcp_executable.clone(),
@@ -287,9 +296,14 @@ impl ReceiverRuntime {
     }
 }
 
-fn discover_codex() -> Option<PathBuf> {
+fn discover_host(host: agent_room_bridge_ipc::IpcReceptionHost) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
-    let filename = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let filename = match (host, cfg!(windows)) {
+        (agent_room_bridge_ipc::IpcReceptionHost::Codex, true) => "codex.exe",
+        (agent_room_bridge_ipc::IpcReceptionHost::Codex, false) => "codex",
+        (agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode, true) => "claude.exe",
+        (agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode, false) => "claude",
+    };
     std::env::split_paths(&paths)
         .map(|directory| directory.join(filename))
         .find(|path| path.is_absolute() && path.is_file())

@@ -2,7 +2,7 @@ use agent_room_agent_client::reception::{ReceptionCheckpoint, ReceptionPolicy};
 use agent_room_bridge_ipc::{IpcListPreviewsRequest, IpcMethod, IpcOpenHostSessionRequest};
 use serde::{Deserialize, Serialize};
 
-use crate::{CodexBinding, ReceptionFailure, ReceptionResult};
+use crate::{HostBinding, ReceptionFailure, ReceptionResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -10,7 +10,7 @@ pub struct ReceiverBinding {
     pub session: IpcOpenHostSessionRequest,
     pub policy: ReceptionPolicy,
     pub automation_grant_id: String,
-    pub host: CodexBinding,
+    pub host: HostBinding,
     pub start: ReceiverStart,
 }
 
@@ -54,7 +54,9 @@ impl ReceiverBinding {
 
     pub(crate) fn same_identity(&self, other: &Self) -> bool {
         self.session.session_key == other.session.session_key
+            && self.session.display_name == other.session.display_name
             && self.host.task_id == other.host.task_id
+            && self.host.host_type == other.host.host_type
             && self.policy == other.policy
             && self.start == other.start
     }

@@ -44,7 +44,9 @@ pub async fn run(
     if state.bridge_service != context.service {
         return Err(Failure::validation("receiver.bridge_service_changed"));
     }
-    state.binding.host.validate()?;
+    if context.mode == ReceiverMode::Listen {
+        state.binding.host.validate()?;
+    }
     let mut session_id = None;
     let result = tokio::select! {
         biased;
@@ -132,8 +134,8 @@ async fn receive_connected(
             after_event_id: initial_cursor(context.backend, &binding, &session.session_id).await?,
         };
         state.agent_id = Some(summary.agent.agent_id.clone());
-        store.save(state)?;
     }
+    store.save(state)?;
     if matches!(state.checkpoint, ReceptionCheckpoint::Pending { .. }) {
         reconcile(
             context,

@@ -26,6 +26,8 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_matrix_security",
     "agent_room_get_self",
     "agent_room_list_previews",
+    "agent_room_wait_for_messages",
+    "agent_room_register_reception",
     "agent_room_get_presence",
     "agent_room_open_content",
     "agent_room_publish_status",

@@ -95,7 +95,7 @@ export function ReceptionPanel() {
       {receivers.isError || sessions.isError || grantsQuery.isError || command.isError ? (
         <p role="alert">{t('reception.failed')}</p>
       ) : null}
-        {!principal ? <p>{t('reception.login')}</p> : null}
+      {!principal ? <p>{t('reception.login')}</p> : null}
       {views.length === 0 && offers.length === 0 && !receivers.isPending ? (
         <p>{t('reception.empty')}</p>
       ) : null}
@@ -257,6 +257,7 @@ export function ReceptionCard({
   return (
     <article className="reception-card" data-status={status}>
       <strong>{binding.session.displayName}</strong>
+      <span>{binding.host.hostType === 'claude_code' ? 'Claude Code' : 'Codex'}</span>
       <span role="status">{t(`reception.${status}`)}</span>
       <p>{binding.host.workspace}</p>
       {error ? (
@@ -266,6 +267,7 @@ export function ReceptionCard({
       ) : null}
       {lastDelivery ? <p>{t(`reception.${lastDelivery.stage}`)}</p> : null}
       {pending ? <p>{t('reception.pending')}</p> : null}
+      {pending && !lastDelivery ? <p>{t('reception.legacyPending')}</p> : null}
       <div className="reception-actions">
         {running ? (
           <Button
@@ -282,6 +284,7 @@ export function ReceptionCard({
             size="compact"
             disabled={
               busy ||
+              (pending && !lastDelivery) ||
               (!pending && !allowed.some((grant) => grant.grantId === binding.automationGrantId))
             }
             onClick={() => {
@@ -296,7 +299,11 @@ export function ReceptionCard({
             <Button
               size="compact"
               tone="quiet"
-              disabled={busy}
+              disabled={
+                busy ||
+                !lastDelivery ||
+                !allowed.some((grant) => grant.grantId === binding.automationGrantId)
+              }
               onClick={() => {
                 onAction({ action: 'resolve', event: checkpoint.eventId, resolution: 'retry' });
               }}

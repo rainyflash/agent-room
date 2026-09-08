@@ -1,0 +1,11 @@
+# Merge with compose.yaml. Each service still belongs to exactly one owner.
+services:
+  mcp:
+    command:
+      - agent-room-mcp
+      - --http
+      - 0.0.0.0:8181
+      - --public-url
+      - ${AGENT_ROOM_MCP_PUBLIC_URL:?Set the HTTPS /mcp URL}
+      - --oauth-config
+      - /run/agent-secrets/oauth.json

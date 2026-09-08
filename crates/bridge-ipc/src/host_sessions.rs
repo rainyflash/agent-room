@@ -72,8 +72,17 @@ pub struct IpcHostSessionDiagnostics {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcRegisterReceptionRequest {
+    #[serde(default)]
+    pub host_type: IpcReceptionHost,
     pub task_id: String,
     pub workspace: String,
+}
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcReceptionHost {
+    #[default]
+    Codex,
+    ClaudeCode,
 }
 impl IpcRegisterReceptionRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {

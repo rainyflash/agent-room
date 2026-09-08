@@ -32,7 +32,7 @@ pub(crate) enum Command {
     Send(SendArgs),
     /// Publish the current task state.
     Status(StatusArgs),
-    /// Wake an explicitly bound Codex task for allowed human mentions.
+    /// Wake an explicitly bound Codex or Claude Code task for allowed human mentions.
     Receive {
         #[arg(long)]
         binding: PathBuf,
@@ -126,6 +126,11 @@ pub(crate) struct StatusArgs {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ReceiverCommand {
     List,
+    /// Reconcile a pending room receipt without running the host.
+    Verify {
+        #[arg(long)]
+        binding: PathBuf,
+    },
     Update {
         #[arg(long)]
         binding: PathBuf,

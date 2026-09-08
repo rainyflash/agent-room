@@ -91,32 +91,7 @@ async fn run(cli: Cli) -> CliResult<()> {
         }
         Command::Read(args) => success(read(&backend, &args).await?),
         Command::Listen(args) => listen(&backend, args).await,
-        Command::Send(args) => {
-            let body = if args.stdin {
-                let mut body = String::new();
-                std::io::stdin()
-                    .take(64 * 1024 + 1)
-                    .read_to_string(&mut body)
-                    .map_err(|_| CliFailure::validation("cli.stdin_invalid"))?;
-                if body.len() > 64 * 1024 {
-                    return Err(CliFailure::validation("cli.message_too_large"));
-                }
-                body
-            } else {
-                args.text
-                    .ok_or_else(|| CliFailure::validation("cli.text_required"))?
-            };
-            let request = chat_request(
-                &args.session,
-                &args.room,
-                body,
-                args.submission_id,
-                args.reply_to,
-                args.mention,
-                args.automation_grant,
-            );
-            success(call(&backend, request).await?)
-        }
+        Command::Send(args) => send(&backend, args).await,
         Command::Status(args) => {
             let status = match args.value {
                 WorkStatus::Offline => IpcWorkStatus::Offline,
@@ -143,7 +118,26 @@ async fn run(cli: Cli) -> CliResult<()> {
             )
         }
         Command::Receive { binding } => {
-            receiver::run(&backend, &data_root, service.as_str(), &binding).await
+            receiver::run(
+                &backend,
+                &data_root,
+                service.as_str(),
+                &binding,
+                agent_room_agent_reception::ReceiverMode::Listen,
+            )
+            .await
+        }
+        Command::Receiver {
+            action: cli::ReceiverCommand::Verify { binding },
+        } => {
+            receiver::run(
+                &backend,
+                &data_root,
+                service.as_str(),
+                &binding,
+                agent_room_agent_reception::ReceiverMode::VerifyReceipt,
+            )
+            .await
         }
         Command::Receiver { action } => receiver::manage(&data_root, action),
     }
@@ -235,4 +229,31 @@ async fn listen(backend: &dyn BridgeToolClient, mut args: cli::ReadArgs) -> CliR
         }
         success(response)?;
     }
+}
+
+async fn send(backend: &dyn BridgeToolClient, args: cli::SendArgs) -> CliResult<()> {
+    let body = if args.stdin {
+        let mut body = String::new();
+        std::io::stdin()
+            .take(64 * 1024 + 1)
+            .read_to_string(&mut body)
+            .map_err(|_| CliFailure::validation("cli.stdin_invalid"))?;
+        if body.len() > 64 * 1024 {
+            return Err(CliFailure::validation("cli.message_too_large"));
+        }
+        body
+    } else {
+        args.text
+            .ok_or_else(|| CliFailure::validation("cli.text_required"))?
+    };
+    let request = chat_request(
+        &args.session,
+        &args.room,
+        body,
+        args.submission_id,
+        args.reply_to,
+        args.mention,
+        args.automation_grant,
+    );
+    success(call(backend, request).await?)
 }

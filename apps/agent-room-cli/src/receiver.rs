@@ -11,19 +11,21 @@ pub(crate) async fn run(
     data_root: &Path,
     service: &str,
     path: &Path,
+    mode: agent_room_agent_reception::ReceiverMode,
 ) -> CliResult<()> {
     let binding = load_binding(path)?;
     let task_id = binding.host.task_id.clone();
-    let store = ReceiverStore::open(data_root, &task_id)?;
-    store.configure(binding, service)?;
-    drop(store);
+    if mode == agent_room_agent_reception::ReceiverMode::Listen {
+        let store = ReceiverStore::open(data_root, &task_id)?;
+        store.configure(binding, service)?;
+    }
     let emit = |event| {
         success(event)
             .map_err(|error| agent_room_agent_reception::ReceptionFailure::local(&error.code))
     };
     let context = ReceiverContext {
-        host: &agent_room_agent_reception::CodexHost,
-        mode: agent_room_agent_reception::ReceiverMode::Listen,
+        host: &agent_room_agent_reception::NativeHost,
+        mode,
         backend,
         data_root,
         service,
@@ -56,6 +58,9 @@ pub(crate) fn manage(data_root: &Path, action: ReceiverCommand) -> CliResult<()>
         | ReceiverCommand::Resolve { binding, .. }
         | ReceiverCommand::Update { binding } => binding,
         ReceiverCommand::List => return success(ReceiverStore::list(data_root)?),
+        ReceiverCommand::Verify { .. } => {
+            return Err(CliFailure::local("receiver.verification_requires_runtime"));
+        }
     };
     let binding = load_binding(path)?;
     if matches!(&action, ReceiverCommand::Inspect { .. }) {
@@ -76,6 +81,8 @@ pub(crate) fn manage(data_root: &Path, action: ReceiverCommand) -> CliResult<()>
                 .ok_or_else(|| CliFailure::local("receiver.state_missing"))?;
             success(store.configure(binding, &state.bridge_service)?)
         }
-        ReceiverCommand::Inspect { .. } | ReceiverCommand::List => unreachable!(),
+        ReceiverCommand::Inspect { .. }
+        | ReceiverCommand::List
+        | ReceiverCommand::Verify { .. } => unreachable!(),
     }
 }

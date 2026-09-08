@@ -9,6 +9,8 @@ export function receptionFixture(
   principalId: string,
   instanceId: string,
 ) {
+  const params = new URLSearchParams(location.search);
+  const hostType = params.get('receptionHost') === 'claude_code' ? 'claude_code' : 'codex';
   const grant = automationGrantSchema.parse({
     agentId,
     agentInstanceId: null,
@@ -37,6 +39,7 @@ export function receptionFixture(
         policy: { roomId: '!fixture:matrix.test', allowedPrincipalId: principalId },
         automationGrantId: grant.grantId,
         host: {
+          hostType,
           taskId,
           executable: 'C:/Agent Tools/codex.exe',
           mcpExecutable: 'C:/Agent Room/agent-room-mcp.exe',
@@ -109,7 +112,7 @@ export function receptionFixture(
       return Promise.resolve(ok(undefined));
     },
   };
-  if (new URLSearchParams(location.search).get('reception') === 'pending') {
+  if (['pending', 'legacy'].includes(params.get('reception') ?? '')) {
     const view = structuredClone(initial);
     view.state.checkpoint = { state: 'pending', afterEventId: null, eventId: '$input' };
     view.state.lastDelivery = {
@@ -125,6 +128,7 @@ export function receptionFixture(
         details: {},
       },
     };
+    if (params.get('reception') === 'legacy') view.state.lastDelivery = null;
     views = [view];
   }
   return {
@@ -132,7 +136,7 @@ export function receptionFixture(
     grant,
     sessionKey: taskId,
     offer: {
-      task: { taskId, workspace: 'C:/Projects/Studio' },
+      task: { taskId, workspace: 'C:/Projects/Studio', hostType },
       roomId: '!fixture:matrix.test',
       roomCatalogId: catalogId,
       instanceId,

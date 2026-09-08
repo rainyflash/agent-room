@@ -233,7 +233,13 @@ export const hostSessionDiagnosticsSchema = z
     sessionKey: z.uuid().nullable().optional(),
     receptionOffer: z
       .object({
-        task: z.object({ taskId: z.uuid(), workspace: z.string().max(4096) }).strict(),
+        task: z
+          .object({
+            taskId: z.uuid(),
+            workspace: z.string().max(4096),
+            hostType: z.enum(['codex', 'claude_code']).optional(),
+          })
+          .strict(),
         roomId: z.string(),
         roomCatalogId: z.uuid().nullable(),
         instanceId: z.uuid(),
