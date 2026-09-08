@@ -527,6 +527,21 @@ impl AgentRuntimeIpcFacade {
         &self,
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.read_previews(request, false).await
+    }
+
+    pub(super) async fn read_inbox(
+        &self,
+        request: IpcListPreviewsRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.read_previews(request, true).await
+    }
+
+    async fn read_previews(
+        &self,
+        request: IpcListPreviewsRequest,
+        oldest_first: bool,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
         let (room_id, _) = runtime.message_room(request.room_id).await?;
         let cursor = request
@@ -541,6 +556,7 @@ impl AgentRuntimeIpcFacade {
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
         let query = match after {
             Some(after) => MessagePreviewQuery::after(room_id.clone(), after, request.limit),
+            None if oldest_first => MessagePreviewQuery::from_start(room_id.clone(), request.limit),
             None => MessagePreviewQuery::new(room_id.clone(), cursor, request.limit),
         }
         .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;

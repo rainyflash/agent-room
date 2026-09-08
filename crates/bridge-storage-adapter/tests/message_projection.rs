@@ -762,6 +762,15 @@ async fn 人类聊天持久化且自报同一账号不能篡改他人消息() {
 #[tokio::test]
 async fn 增量分页不遗漏突发消息且拒绝跨房间游标() {
     let (_temporary, store, _inspector) = open_store().await;
+    let start = MessagePreviewQuery::from_start(room_id(), 2).expect("初次取信");
+    assert!(
+        store
+            .list_previews(&start)
+            .await
+            .expect("空房间")
+            .previews()
+            .is_empty()
+    );
     let mutations = (0..6)
         .map(|index| {
             preview_mutation(
@@ -784,6 +793,18 @@ async fn 增量分页不遗漏突发消息且拒绝跨房间游标() {
         ))
         .await
         .expect("写入成功");
+    let beginning = store
+        .list_previews(&start)
+        .await
+        .expect("空房间首批突发消息");
+    assert_eq!(
+        beginning
+            .previews()
+            .iter()
+            .map(|message| message.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["$chat-0", "$chat-1"]
+    );
     let first = store
         .list_previews(
             &MessagePreviewQuery::after(room_id(), event_id("$chat-0"), 2).expect("游标有效"),

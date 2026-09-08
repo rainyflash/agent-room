@@ -126,6 +126,7 @@ const fn caller_tag(caller: IpcCallerKind) -> u8 {
         IpcCallerKind::McpServer => 1,
         IpcCallerKind::DesktopShell => 2,
         IpcCallerKind::DiagnosticCli => 3,
+        IpcCallerKind::AgentCli => 4,
     }
 }
 

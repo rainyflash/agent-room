@@ -22,6 +22,7 @@ pub enum IpcMethod {
     MatrixRecovery(crate::IpcMatrixRecoveryRequest),
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
+    ReadInbox(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
@@ -46,6 +47,7 @@ impl IpcMethod {
             Self::MatrixRecovery(_) => "matrix_recovery",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
+            Self::ReadInbox(_) => "read_inbox",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -66,7 +68,7 @@ impl IpcMethod {
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
-            Self::ListPreviews(_) => IpcScope::PreviewsRead,
+            Self::ListPreviews(_) | Self::ReadInbox(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
@@ -111,6 +113,12 @@ impl IpcMethod {
             }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
+            Self::ReadInbox(request) => {
+                if request.before_event_id.is_some() {
+                    return Err(failure("bridge.ipc.event_cursor_invalid"));
+                }
+                request.validate()
+            }
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),

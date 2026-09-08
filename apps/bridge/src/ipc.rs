@@ -198,6 +198,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::ListPreviews(request) => {
                     self.agent_runtime()?.list_previews(request).await
                 }
+                IpcMethod::ReadInbox(request) => self.agent_runtime()?.read_inbox(request).await,
                 IpcMethod::PublishStatus(request) => {
                     self.agent_runtime()?.publish_status(request).await
                 }
@@ -608,15 +609,16 @@ fn authorize_method(
             false,
         ));
     }
-    if agreement.caller() == IpcCallerKind::McpServer
-        && !matches!(
-            method,
-            IpcMethod::BridgeStatus
-                | IpcMethod::OpenHostSession(_)
-                | IpcMethod::CloseHostSession(_)
-                | IpcMethod::WithSession { .. }
-        )
-    {
+    if matches!(
+        agreement.caller(),
+        IpcCallerKind::McpServer | IpcCallerKind::AgentCli
+    ) && !matches!(
+        method,
+        IpcMethod::BridgeStatus
+            | IpcMethod::OpenHostSession(_)
+            | IpcMethod::CloseHostSession(_)
+            | IpcMethod::WithSession { .. }
+    ) {
         return Err(BridgeIpcDispatchFailure::new(
             "bridge.host_session.required",
             IpcErrorCategory::Validation,
@@ -2347,6 +2349,45 @@ mod tests {
     }
 
     #[test]
+    fn 业务命令行必须绑定任务且没有桌面管理权限() {
+        let negotiate = |scope| {
+            let offer = IpcHandshakeOffer::new(
+                IpcCallerKind::AgentCli,
+                [IpcProtocolVersion::V3_0],
+                [scope],
+            )
+            .unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+        };
+        let agreement = negotiate(IpcScope::SelfRead).unwrap();
+        assert_eq!(
+            authorize_method(&IpcMethod::GetSelf, &agreement)
+                .unwrap_err()
+                .code(),
+            "bridge.host_session.required"
+        );
+        assert!(
+            authorize_method(
+                &IpcMethod::WithSession {
+                    session_id: Uuid::now_v7().to_string(),
+                    method: Box::new(IpcMethod::GetSelf),
+                },
+                &agreement,
+            )
+            .is_ok()
+        );
+        for scope in [
+            IpcScope::AgentBootstrap,
+            IpcScope::MatrixRecoveryManage,
+            IpcScope::HandoffApprove,
+        ] {
+            assert!(negotiate(scope).is_err());
+        }
+    }
+
+    #[test]
     fn 桌面读取默认人物的既有调用仍由桌面权限约束() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DesktopShell,
@@ -2368,6 +2409,7 @@ mod tests {
             IpcCallerKind::McpServer,
             IpcCallerKind::DesktopShell,
             IpcCallerKind::DiagnosticCli,
+            IpcCallerKind::AgentCli,
         ] {
             let offer = IpcHandshakeOffer::new(
                 caller,

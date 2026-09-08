@@ -285,6 +285,7 @@ const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessagePreviewQuery {
+    oldest_first: bool,
     after_event_id: Option<MatrixEventId>,
     room_id: MatrixRoomId,
     before_event_id: Option<MatrixEventId>,
@@ -311,6 +312,7 @@ impl MessagePreviewQuery {
             return Err(MessagePreviewQueryError::InvalidLimit);
         }
         Ok(Self {
+            oldest_first: false,
             room_id,
             before_event_id,
             after_event_id: None,
@@ -334,7 +336,22 @@ impl MessagePreviewQuery {
     ) -> Result<Self, MessagePreviewQueryError> {
         let mut query = Self::new(room_id, None, limit)?;
         query.after_event_id = Some(cursor);
+        query.oldest_first = true;
         Ok(query)
+    }
+
+    /// Start a forward stream at the first retained message, including an initially empty room.
+    ///
+    /// # Errors
+    /// Returns an error when the page size is outside the protocol limit.
+    pub fn from_start(room_id: MatrixRoomId, limit: u16) -> Result<Self, MessagePreviewQueryError> {
+        let mut query = Self::new(room_id, None, limit)?;
+        query.oldest_first = true;
+        Ok(query)
+    }
+
+    pub const fn oldest_first(&self) -> bool {
+        self.oldest_first
     }
 
     pub const fn after_event_id(&self) -> Option<&MatrixEventId> {

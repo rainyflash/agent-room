@@ -6,10 +6,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 
 ## Inventory
 
-- Cargo packages: 888
+- Cargo packages: 890
 - npm packages: 712
-- Total locked package versions: 1600
-- `Cargo.lock` SHA-256: `fcdd447c934ca3c335293143b80e1ddcea2827d3ab86df3dbb57c8c956881810`
+- Total locked package versions: 1602
+- `Cargo.lock` SHA-256: `305286aa791984f6ecb59b0636254e7bacb10d1e11314c06b1cdf55df55ba815`
 - `pnpm-lock.yaml` SHA-256: `12647936b9961787fd09ef273037665793d75670dc7c1224229ade5650cf1681`
 
 ## License expressions
@@ -53,7 +53,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
 | `MIT` | 765 |
 | `MIT AND BSD-3-Clause` | 1 |
-| `MIT OR Apache-2.0` | 378 |
+| `MIT OR Apache-2.0` | 380 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | 2 |
 | `MIT OR Apache-2.0 OR Zlib` | 3 |
@@ -147,6 +147,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [base16ct](https://github.com/RustCrypto/formats/tree/master/base16ct) | 0.2.0 | `Apache-2.0 OR MIT` |
 | cargo | [base64](https://github.com/marshallpierce/rust-base64) | 0.21.7 | `MIT OR Apache-2.0` |
 | cargo | [base64](https://github.com/marshallpierce/rust-base64) | 0.22.1 | `MIT OR Apache-2.0` |
+| cargo | [base64](https://github.com/marshallpierce/rust-base64) | 0.23.1 | `MIT OR Apache-2.0` |
 | cargo | [base64-simd](https://github.com/Nugine/simd) | 0.8.0 | `MIT` |
 | cargo | [base64ct](https://github.com/RustCrypto/formats) | 1.8.3 | `Apache-2.0 OR MIT` |
 | cargo | [bit-set](https://github.com/contain-rs/bit-set) | 0.8.0 | `Apache-2.0 OR MIT` |
@@ -731,6 +732,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [sqlx-mysql](https://github.com/launchbadge/sqlx) | 0.9.0 | `MIT OR Apache-2.0` |
 | cargo | [sqlx-postgres](https://github.com/launchbadge/sqlx) | 0.9.0 | `MIT OR Apache-2.0` |
 | cargo | [sqlx-sqlite](https://github.com/launchbadge/sqlx) | 0.9.0 | `MIT OR Apache-2.0` |
+| cargo | [sse-stream](https://github.com/4t145/sse-stream/) | 0.2.6 | `MIT OR Apache-2.0` |
 | cargo | [stable_deref_trait](https://github.com/storyyeller/stable_deref_trait) | 1.2.1 | `MIT OR Apache-2.0` |
 | cargo | [string_cache](https://github.com/servo/string-cache) | 0.9.0 | `MIT OR Apache-2.0` |
 | cargo | [string_cache_codegen](https://github.com/servo/string-cache) | 0.6.1 | `MIT OR Apache-2.0` |

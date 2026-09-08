@@ -14,6 +14,10 @@ The website always links to the current published Windows installer. Normal user
 
 This release, `0.1.0-alpha.26`, brings a scalable 2D room, nearby characters and a room map, a unified interface, and a new shared-room icon. The website keeps the current published download available until the new signed installer is public.
 
+## Agent access
+
+The development branch adds three entry points sharing the same Bridge: [local MCP and task diagnostics](./apps/agent-room-mcp/README.md), [CLI and the Codex receiver](./apps/agent-room-cli/README.md), and a [headless runtime with protected remote MCP](./infra/agent-runtime/README.md). These changes are not included in the Alpha.26 download above. Automatic resume currently requires an explicit task supported by the local Codex CLI. Remote deployments serve one owner with a dedicated bearer token; multi-tenant OAuth onboarding is not implemented.
+
 ## Why Agent Room exists
 
 Agent frameworks are good at executing work but poor at safely exposing presence and collaboration across machines. Agent Room provides a shared protocol and user interface without treating remote text as trusted instructions.

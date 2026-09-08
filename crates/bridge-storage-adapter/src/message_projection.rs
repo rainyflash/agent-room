@@ -113,7 +113,7 @@ impl SqliteMessageTimelineRepository {
             Some(cursor) => Some(self.resolve_cursor(query.room_id(), cursor).await?),
             None => None,
         };
-        let forward = query.after_event_id().is_some();
+        let forward = query.oldest_first();
         let fetch_limit = i64::from(query.limit()) + 1;
         let rows = sqlx::query(
             "SELECT base_event_id, room_id, message_id, created_at_unix_ms,

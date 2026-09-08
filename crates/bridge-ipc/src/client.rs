@@ -308,6 +308,7 @@ const fn wire_caller(caller: IpcCallerKind) -> IpcCaller {
         IpcCallerKind::McpServer => IpcCaller::McpServer,
         IpcCallerKind::DesktopShell => IpcCaller::DesktopShell,
         IpcCallerKind::DiagnosticCli => IpcCaller::DiagnosticCli,
+        IpcCallerKind::AgentCli => IpcCaller::AgentCli,
     }
 }
 

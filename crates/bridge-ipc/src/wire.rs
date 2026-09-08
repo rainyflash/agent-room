@@ -69,6 +69,7 @@ pub enum IpcCaller {
     McpServer,
     DesktopShell,
     DiagnosticCli,
+    AgentCli,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +163,7 @@ impl From<IpcCaller> for IpcCallerKind {
             IpcCaller::McpServer => Self::McpServer,
             IpcCaller::DesktopShell => Self::DesktopShell,
             IpcCaller::DiagnosticCli => Self::DiagnosticCli,
+            IpcCaller::AgentCli => Self::AgentCli,
         }
     }
 }

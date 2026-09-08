@@ -2,10 +2,12 @@
 members = [
   "apps/bridge",
   "apps/agent-room-mcp",
+  "apps/agent-room-cli",
   "apps/control-plane",
   "apps/desktop/src-tauri",
   "apps/release-tool",
   "crates/a2a-adapter",
+  "crates/agent-client",
   "crates/application",
   "crates/bridge-core",
   "crates/bridge-ipc",
@@ -33,6 +35,7 @@ repository = "https://github.com/rainyflash/agent-room"
 
 [workspace.dependencies]
 agent-room-a2a-adapter = { version = "0.1.0-alpha.26", path = "crates/a2a-adapter" }
+agent-room-agent-client = { version = "0.1.0-alpha.26", path = "crates/agent-client" }
 agent-room-application = { version = "0.1.0-alpha.26", path = "crates/application" }
 agent-room-bridge-core = { version = "0.1.0-alpha.26", path = "crates/bridge-core" }
 agent-room-bridge-ipc = { version = "0.1.0-alpha.26", path = "crates/bridge-ipc" }
@@ -83,6 +86,7 @@ serde_json = "1.0.151"
 serde_jcs = "0.2.0"
 semver = "1.0.28"
 sha2 = "0.11.0"
+subtle = "2.6.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid"] }
 thiserror = "2.0.20"
 tempfile = "3.25.0"

@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use agent_room_agent_client::BridgeToolFuture;
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcErrorCategory,
     IpcHostSessionState, IpcHostSessionSummary, IpcMethod, IpcOpenHostSessionRequest, IpcResponse,
@@ -19,13 +20,51 @@ use tokio::{
 };
 
 use super::{
-    super::{BridgeToolClient, BridgeToolFailure, bridge::BridgeToolFuture},
+    super::{BridgeToolClient, BridgeToolFailure},
     AgentRoomMcpServer,
 };
 
 const SESSION_A: &str = "01990d9e-8400-7000-8000-000000000010";
 const SESSION_B: &str = "01990d9e-8400-7000-8000-000000000011";
 const SESSION_C: &str = "01990d9e-8400-7000-8000-000000000012";
+
+#[tokio::test]
+async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝历史参数() {
+    let bridge = Arc::new(ScriptedBridge::new(vec![ExpectedCall {
+        method: IpcMethod::WithSession {
+            session_id: SESSION_A.into(),
+            method: Box::new(IpcMethod::ReadInbox(
+                agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    room_id: None,
+                    after_event_id: Some("$last".into()),
+                    before_event_id: None,
+                    limit: 20,
+                },
+            )),
+        },
+        response: Ok(IpcResponse::MessagePreviews {
+            previews: vec![],
+            next_cursor: None,
+        }),
+    }]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let result = harness
+        .call(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"afterEventId":"$last","waitSeconds":0}),
+        )
+        .await;
+    assert_ne!(result["isError"], true);
+    let invalid = harness
+        .call(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"beforeEventId":"$past"}),
+        )
+        .await;
+    assert_eq!(invalid["isError"], true);
+    bridge.assert_finished();
+    harness.stop().await;
+}
 const SESSION_KEY: &str = "01990d9e-8400-7000-8000-000000000020";
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 

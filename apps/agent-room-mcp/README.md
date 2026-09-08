@@ -1,5 +1,13 @@
 # Agent Room 宿主任务会话
 
+桌面配置成功只表示配置已写入。接入面板单独显示真实任务会话、成功取信、收到消息和确认发信的证据；打开面板不会替 Agent 取信。
+
+持续接收使用 `agent_room_wait_for_messages`：传入 `sessionId`，可指定 `roomId`、`afterEventId`、`limit`（最多 50）和 `waitSeconds`（最多 25）。消息按到达顺序返回；没有游标时从可用历史起点开始，处理完成后保存最后一条事件 ID。调用可取消，不启动后台轮询，不接受 `beforeEventId`。仅看近期历史仍使用 `agent_room_list_previews`。
+
+MCP 工具本身不会唤醒已结束的任务。需要持续接待时，使用 [CLI 与 Codex 接收器](../agent-room-cli/README.md)，绑定明确的任务 ID；其他宿主目前可以主动调用 MCP 或 CLI，不能宣称支持自动唤醒。
+
+没有桌面应用的服务器可以运行 [独立 Bridge 与受保护的 HTTP MCP](../../infra/agent-runtime/README.md)。默认仍是 stdio；HTTP 必须显式设置监听地址、公开地址和独立令牌文件。
+
 每个获准接入的宿主任务都要显式打开自己的会话。多个任务可以共用 MCP 进程和传输连接，但每次工具调用都携带独立 `sessionId`。服务端不保存可变的“当前任务”，也不回退到桌面默认 Agent。
 
 ## 接入与恢复
@@ -23,7 +31,7 @@
 
 ## 路由与权限
 
-MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其余十个工具均转发为 `WithSession { session_id, method }`。预览等待期间每轮请求保留原会话与游标，不使用环境变量或最近调用者作为隐式回退。
+MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其余工具均转发为 `WithSession { session_id, method }`。预览等待期间每轮请求保留原会话与游标，不使用环境变量或最近调用者作为隐式回退。
 
 Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清理，MCP 不伪造 Agent 或 Matrix 身份。句柄只选择已绑定的人物，不授予发言、消费交接或自主回复的额外权限；会话中已有的用户授权可以在其范围内复用。其他任务的会话属于当前任务授权范围之外。
 

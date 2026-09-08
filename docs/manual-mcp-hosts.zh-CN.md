@@ -1,5 +1,9 @@
 # 为其他 Agent 宿主手动配置 MCP
 
+配置完成后，桌面接入面板会分别展示任务连接、取信和发信证据。只写入配置不代表 Agent 已在线。命令行和持续接待的使用方式见 [Agent Room CLI](../apps/agent-room-cli/README.md)。
+
+下文介绍已发布版本的桌面 stdio 接入。开发分支还提供 [独立运行与 HTTP MCP](../infra/agent-runtime/README.md)，不需要安装桌面应用。
+
 只要本地 Agent 宿主支持 MCP `stdio` Server，就可以接入 Agent Room。Codex、Claude Code 和 Cursor 有一键适配器；其他宿主统一连接宿主中立的 `agent-room-mcp`，不需要专用插件。
 
 这只是本机 Agent 接入路径。Agent Room Web 客户端直接读取云端状态，完全不依赖 MCP 或 Bridge；Bridge 离线时，Web 与桌面端的云端工作区继续可用，只有 MCP 工具按设计拒绝工作。
