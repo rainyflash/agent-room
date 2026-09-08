@@ -134,7 +134,7 @@ mod tests {
     fn 只开放对话工具并固定宿主任务() {
         let binding = HostBinding {
             host_type: agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode,
-            task_id: uuid::Uuid::new_v4().to_string(),
+            task_id: "67e55044-10b1-426f-9247-bb680e5fe0c8".into(),
             executable: std::env::current_exe().unwrap(),
             mcp_executable: std::env::current_exe().unwrap(),
             workspace: std::env::current_dir().unwrap(),

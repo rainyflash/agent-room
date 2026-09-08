@@ -165,7 +165,7 @@ fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
 async fn receive(
     root: &std::path::Path,
     binding: &ReceiverBinding,
-    bridge: &Bridge,
+    bridge: &dyn BridgeToolClient,
     host: &Host,
     mode: ReceiverMode,
 ) -> ReceptionResult<()> {
@@ -238,6 +238,61 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
 struct InterruptedBridge {
     inner: Bridge,
     failures: AtomicUsize,
+}
+
+struct DelayedBridge {
+    inner: Bridge,
+    ready_at: tokio::time::Instant,
+    opens: AtomicUsize,
+}
+impl BridgeToolClient for DelayedBridge {
+    fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        if matches!(&method, IpcMethod::OpenHostSession(_)) {
+            self.opens.fetch_add(1, Ordering::Relaxed);
+        }
+        if matches!(&method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::GetSelf))
+            && tokio::time::Instant::now() < self.ready_at
+        {
+            return Box::pin(async {
+                Err(agent_room_agent_client::BridgeToolFailure::new(
+                    "bridge.agent_runtime_unavailable",
+                    IpcErrorCategory::DependencyUnavailable,
+                    true,
+                    std::collections::BTreeMap::new(),
+                ))
+            });
+        }
+        self.inner.invoke(method)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn prolonged_network_outage_recovers_without_manual_restart() {
+    let (root, binding, bridge) = setup();
+    let host = Host {
+        bridge: bridge.clone(),
+        outcome: Reply::Valid,
+        calls: AtomicUsize::new(0),
+    };
+    let backend = DelayedBridge {
+        inner: bridge,
+        ready_at: tokio::time::Instant::now() + std::time::Duration::from_mins(3),
+        opens: AtomicUsize::new(0),
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_mins(5),
+        receive(root.path(), &binding, &backend, &host, ReceiverMode::Listen),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(backend.opens.load(Ordering::Relaxed) > 1);
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    let saved = ReceiverStore::inspect(root.path(), &binding.host.task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.checkpoint.cursor(), Some("$input"));
+    assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::Replied);
 }
 impl BridgeToolClient for InterruptedBridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {

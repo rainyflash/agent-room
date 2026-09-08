@@ -6,8 +6,6 @@ It never claims to have run an authenticated external model host.
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 import sys
 
 import vertical as v
