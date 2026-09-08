@@ -1,4 +1,7 @@
-import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
+import type {
+  DesktopRuntimeGateway,
+  HostSessionDiagnostics,
+} from '@/features/desktop/domain/desktop-runtime';
 import { receiverViewSchema, type ReceiverView } from '@/features/desktop/domain/reception';
 import { automationGrantSchema } from '@/features/automation/domain/automation-grant';
 import { err, ok } from '@/shared/result';
@@ -140,6 +143,6 @@ export function receptionFixture(
       roomId: '!fixture:matrix.test',
       roomCatalogId: catalogId,
       instanceId,
-    },
+    } satisfies NonNullable<HostSessionDiagnostics['receptionOffer']>,
   };
 }

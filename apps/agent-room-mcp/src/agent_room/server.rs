@@ -120,7 +120,7 @@ impl AgentRoomMcpServer {
     /// Offer this exact host task for desktop reception; this grants no execution permission.
     #[tool(
         name = "agent_room_register_reception",
-        description = "用户要求后台接待时，登记当前 Codex 或 Claude Code 任务的准确 taskId、hostType（codex 或 claude_code）及绝对工作目录 workspace。只支持明确的当前任务 ID，禁止猜测或选最新任务。登记后人类须在桌面接待面板选择授权并启用；此工具本身不会唤醒任务或授予权限。",
+        description = "用户要求后台接待时，登记当前 Codex 或 Claude Code 任务的准确 taskId、hostType（codex 或 claude_code）及绝对工作目录 workspace。Codex 可省略 taskId，工具会使用宿主传递的 threadId；缺少元数据时必须提供准确 ID，禁止猜测或选最新任务。登记后人类须在桌面接待面板选择授权并启用；此工具本身不会唤醒任务或授予权限。",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -131,12 +131,34 @@ impl AgentRoomMcpServer {
     pub async fn register_reception(
         &self,
         Parameters(input): Parameters<RegisterReceptionInput>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> CallToolResult {
+        let host_type = input.host_type.into();
+        let metadata_task = context.meta.get("threadId");
+        let task_id = if host_type == agent_room_bridge_ipc::IpcReceptionHost::Codex
+            && let Some(metadata) = metadata_task
+        {
+            let Some(task_id) = metadata.as_str() else {
+                return reception_binding_failure("receiver.host_metadata_invalid");
+            };
+            if input
+                .task_id
+                .as_deref()
+                .is_some_and(|provided| provided != task_id)
+            {
+                return reception_binding_failure("receiver.host_task_mismatch");
+            }
+            task_id.to_owned()
+        } else if let Some(task_id) = input.task_id {
+            task_id
+        } else {
+            return reception_binding_failure("receiver.host_task_required");
+        };
         self.execute_scoped(
             input.session_id,
             IpcMethod::RegisterReception(agent_room_bridge_ipc::IpcRegisterReceptionRequest {
-                host_type: input.host_type.into(),
-                task_id: input.task_id,
+                host_type,
+                task_id,
                 workspace: input.workspace,
             }),
             ExpectedResponse::HostSession,
@@ -433,6 +455,13 @@ impl AgentRoomMcpServer {
         )
         .await
     }
+}
+
+fn reception_binding_failure(code: &str) -> CallToolResult {
+    CallToolResult::structured_error(
+        json!({"code":code,"category":"validation","retryable":false,
+        "message":"需要当前宿主任务的准确 ID；Codex 会优先使用调用中的 threadId 元数据，不接受不一致的任务 ID。"}),
+    )
 }
 
 #[tool_handler(router = self.tool_router)]

@@ -249,7 +249,7 @@ impl BridgeToolClient for InterruptedBridge {
                     "test.network_unavailable",
                     IpcErrorCategory::DependencyUnavailable,
                     true,
-                    Default::default(),
+                    std::collections::BTreeMap::new(),
                 ))
             });
         }

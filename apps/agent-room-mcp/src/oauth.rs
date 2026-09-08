@@ -279,3 +279,81 @@ async fn fetch<T: DeserializeOwned>(
     }
     serde_json::from_slice(&bytes).map_err(|_| "OAuth provider document invalid")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, routing::get};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn public_keys(kid: &str) -> JwkSet {
+        // Key refresh tests use public JWK-shaped data; actual RS256 signatures are tested over HTTP.
+        serde_json::from_value(json!({"keys":[{"kty":"RSA","kid":kid,"n":"AQAB","e":"AQAB","use":"sig","alg":"RS256"}]})).unwrap()
+    }
+    #[tokio::test]
+    async fn key_rotation_is_throttled_and_stale_keys_fail_closed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = requests.clone();
+        let app = Router::new().route(
+            "/keys",
+            get(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                async { Json(public_keys("rotated")) }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let oauth = OAuth {
+            settings: Settings {
+                issuer: url.clone(),
+                owner_subject: "owner".into(),
+                allowed_client_ids: vec!["client".into()],
+                scope: "agent-room".into(),
+            },
+            resource: "https://agents.example/mcp".into(),
+            client: reqwest::Client::new(),
+            jwks_url: Url::parse(&format!("{url}/keys")).unwrap(),
+            keys: Mutex::new(Keys {
+                set: public_keys("initial"),
+                fetched: Instant::now(),
+                attempted: Instant::now(),
+            }),
+        };
+        assert!(oauth.key("initial").await.is_ok());
+        for _ in 0..4 {
+            assert!(matches!(
+                oauth.key("rotated").await,
+                Err(Rejection::Invalid)
+            ));
+        }
+        assert_eq!(requests.load(Ordering::Relaxed), 0);
+        oauth.keys.lock().await.attempted = Instant::now() - Duration::from_secs(31);
+        assert!(oauth.key("rotated").await.is_ok());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            oauth.key("initial").await,
+            Err(Rejection::Invalid)
+        ));
+        server.abort();
+        let _ = server.await;
+        {
+            let mut keys = oauth.keys.lock().await;
+            keys.fetched = Instant::now() - Duration::from_mins(6);
+            keys.attempted = Instant::now() - Duration::from_secs(31);
+        }
+        assert!(matches!(
+            oauth.key("rotated").await,
+            Err(Rejection::Unavailable)
+        ));
+        assert!(matches!(
+            oauth.key("rotated").await,
+            Err(Rejection::Unavailable)
+        ));
+    }
+}
