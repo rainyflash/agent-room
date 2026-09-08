@@ -8,7 +8,7 @@ import { SceneDepthOrder } from '../scene-depth-order';
 import { SceneFrameScheduler, type SceneRenderFrame } from '../scene-frame-scheduler';
 import { loadStudioCharacters } from '../studio-assets';
 import { drawRoomPlan } from './room-plan-view';
-import { roomCrowdGroups, usesCrowdOverview } from '../../domain/room-crowd';
+import { roomHome } from '../../domain/room-map';
 import {
   sceneDetailForZoom,
   visibleLobbyNodes,
@@ -76,7 +76,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#callbacks = options;
     this.#camera = new ViewportController(options.projection.world, {
       padding: 22,
-      minimumScale: 0.04,
+      minimumScale: 0.3,
       ...(options.projection.nodes.length <= 48 ? { compactInitialScale: 0.48 } : {}),
     });
     this.#scheduler = new SceneFrameScheduler({
@@ -142,6 +142,10 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#worldLayer = world;
     this.#objectsLayer = objects;
     this.#camera.resize(app.screen.width, app.screen.height);
+    if (this.#projection.nodes.length > 48) {
+      const home = roomHome(this.#projection);
+      this.#camera.focusArea(home.x, home.y);
+    }
     this.#callbacks.onZoomChange(this.#camera.snapshot().scale);
     this.#resizeObserver = new ResizeObserver(() => {
       const next = this.#host.getBoundingClientRect();
@@ -190,7 +194,6 @@ class PixiLobbyScene implements LobbySceneHandle {
       'agentRoomTextureCount',
       'agentRoomAnimationFrame',
       'agentRoomMotion',
-      'agentRoomOverview',
     ])
       Reflect.deleteProperty(this.#host.dataset, key);
     app?.destroy({ removeView: true }, { children: true, context: true });
@@ -208,8 +211,19 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#scheduleRender();
   }
 
+  releaseFocus(): void {
+    this.#camera.releaseFocus();
+    this.#scheduleRender();
+  }
+
   resetViewport(): void {
-    this.#callbacks.onZoomChange(this.#camera.reset().scale);
+    const home = roomHome(this.#projection);
+    this.#camera.reset();
+    this.#callbacks.onZoomChange(
+      this.#projection.nodes.length > 48
+        ? this.#camera.focusArea(home.x, home.y).scale
+        : this.#camera.reset().scale,
+    );
     this.#scheduleRender();
   }
   update(projection: LobbySceneProjection): void {
@@ -234,7 +248,6 @@ class PixiLobbyScene implements LobbySceneHandle {
       !this.#destroyed &&
       !document.hidden &&
       !this.#motion.matches &&
-      !usesCrowdOverview(this.#projection.nodes.length, viewport.zoom) &&
       sceneCharacters(this.#projection).some(
         (node) =>
           node.characterId !== this.#projection.selectedAgentId &&
@@ -309,19 +322,14 @@ class PixiLobbyScene implements LobbySceneHandle {
     const detail: LobbySceneDetail =
       this.#projection.nodes.length <= 24 ? 'near' : sceneDetailForZoom(camera.scale);
     const viewport = this.#camera.viewport();
-    const overview = usesCrowdOverview(this.#projection.nodes.length, camera.scale);
-    this.#host.dataset.agentRoomOverview = String(overview);
     const visibleAgents = new Set(
-      (overview
-        ? []
-        : visibleLobbyNodes(this.#projection, {
-            ...viewport,
-            x: viewport.x - 120,
-            y: viewport.y - 120,
-            width: viewport.width + 240,
-            height: viewport.height + 240,
-          })
-      ).map((node) => node.agentId),
+      visibleLobbyNodes(this.#projection, {
+        ...viewport,
+        x: viewport.x - 120,
+        y: viewport.y - 120,
+        width: viewport.width + 240,
+        height: viewport.height + 240,
+      }).map((node) => node.agentId),
     );
     const visible = sceneCharacters(this.#projection, this.#labels.self).filter(
       (node) => node.kind === 'human' || visibleAgents.has(node.characterId),
@@ -389,13 +397,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#callbacks.onFrame?.({
       width: app.screen.width,
       height: app.screen.height,
-      characters: overview ? [] : frameCharacters,
-      overview,
-      groups: roomCrowdGroups(this.#projection, viewport).map((group) => ({
-        ...group,
-        screenX: camera.x + group.x * camera.scale,
-        screenY: camera.y + group.y * camera.scale,
-      })),
+      characters: frameCharacters,
+      viewport,
     });
     if (frame.animated) {
       this.#host.dataset.agentRoomAnimationFrame = String(

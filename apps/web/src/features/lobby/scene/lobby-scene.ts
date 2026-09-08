@@ -25,6 +25,7 @@ export type LobbySceneMountOptions = LobbySceneCallbacks & {
 export type LobbySceneHandle = {
   destroy(): void;
   resetViewport(): void;
+  releaseFocus(): void;
   focusAgent?(agentId: string): void;
   focusArea?(x: number, y: number): void;
   update(projection: LobbySceneProjection): void;

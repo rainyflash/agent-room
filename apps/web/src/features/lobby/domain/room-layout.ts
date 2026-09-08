@@ -10,6 +10,7 @@ export type RoomPlacement = FloorPoint & { readonly slot: string };
 export type RoomLayout = ReadonlyMap<string, RoomPlacement>;
 export type PlacementRequest = {
   readonly id: string;
+  readonly priority?: number;
   readonly preferred: {
     readonly x: number;
     readonly y: number;
@@ -18,9 +19,9 @@ export type PlacementRequest = {
   };
 };
 
-const stepX = 128;
-const stepY = 140;
-const firstX = 180;
+const stepX = 256;
+const stepY = 240;
+const firstX = 200;
 const firstY = 280;
 
 /** Expand the room instead of reducing the space available to each character. */
@@ -28,8 +29,8 @@ export function floorForOccupants(count: number, previous: RoomLayout = new Map(
   let width = roomFloor.width;
   let depth = roomFloor.depth;
   for (const point of previous.values()) {
-    width = Math.max(width, Math.ceil((point.x + 200) / 256) * 256);
-    depth = Math.max(depth, Math.ceil((point.y + 140) / 256) * 256);
+    width = Math.max(width, Math.ceil((point.x + 180) / 256) * 256);
+    depth = Math.max(depth, Math.ceil((point.y + 160) / 256) * 256);
   }
   while (slotCount(width, depth) < count) {
     if (width / depth < 1.5) width += 256;
@@ -57,7 +58,12 @@ export function allocateRoomLayout(
   const additions = requests
     .filter((request) => !assigned.has(request.id))
     .map((request) => ({ request, seed: characterSeed(request.id) }))
-    .toSorted((a, b) => a.seed - b.seed || a.request.id.localeCompare(b.request.id));
+    .toSorted(
+      (a, b) =>
+        (b.request.priority ?? 0) - (a.request.priority ?? 0) ||
+        a.seed - b.seed ||
+        a.request.id.localeCompare(b.request.id),
+    );
   for (const { request, seed } of additions) {
     let best: RoomPlacement | undefined;
     let bestScore = Number.NEGATIVE_INFINITY;
@@ -80,6 +86,10 @@ export function allocateRoomLayout(
       const score =
         clearance +
         (preferred ? 110 : 0) +
+        // Human arrivals start by the entrance; agent positions have no business grouping.
+        ((request.priority ?? 0) > 0
+          ? -Math.hypot(point.x - area.x - area.width / 2, point.y - area.y - area.height / 2)
+          : 0) +
         ((Math.imul(seed ^ candidate.seed, 1597334677) >>> 0) % 1000) / 25;
       if (score > bestScore) {
         best = point;
@@ -101,16 +111,22 @@ export function roamingRadius(): number {
 
 function slotCount(width: number, depth: number): number {
   return (
-    (Math.floor((width - 200 - firstX) / stepX) + 1) *
-    (Math.floor((depth - 140 - firstY) / stepY) + 1)
+    (Math.floor((width - 280 - firstX) / stepX) + 1) *
+    (Math.floor((depth - 220 - firstY) / stepY) + 1)
   );
 }
 
 function createSlots(floor: RoomFloor): readonly RoomPlacement[] {
   const result: RoomPlacement[] = [];
-  for (let y = firstY; y <= floor.depth - 140; y += stepY) {
-    for (let x = firstX; x <= floor.width - 200; x += stepX)
-      result.push(Object.freeze({ x, y, slot: `${String(x)}:${String(y)}` }));
+  for (let y = firstY; y <= floor.depth - 220; y += stepY) {
+    for (let x = firstX; x <= floor.width - 280; x += stepX) {
+      const slot = `${String(x)}:${String(y)}`;
+      // Stable offsets soften rows while retaining space for bodies, labels and roaming.
+      const seed = characterSeed(slot);
+      result.push(
+        Object.freeze({ x: x + (seed % 97) - 48, y: y + ((seed >>> 8) % 97) - 48, slot }),
+      );
+    }
   }
   return result;
 }

@@ -52,7 +52,7 @@ export class ViewportController {
       finiteOrZero(worldX) * this.#scale;
     this.#y =
       (this.#screenWidth < 768
-        ? Math.min(50, this.#screenHeight * 0.2)
+        ? Math.min(36, this.#screenHeight * 0.2)
         : this.#screenHeight * 0.48) -
       finiteOrZero(worldY) * this.#scale;
     // Allow space beyond room edges so edge characters remain above/beside the inspector.
@@ -61,9 +61,19 @@ export class ViewportController {
 
   focusArea(worldX: number, worldY: number): CameraSnapshot {
     this.#focusedPoint = null;
-    this.#scale = Math.max(this.#scale, 0.85);
+    this.#scale = Math.max(this.#scale, 1);
     this.#x = this.#screenWidth / 2 - finiteOrZero(worldX) * this.#scale;
     this.#y = this.#screenHeight / 2 - finiteOrZero(worldY) * this.#scale;
+    this.#clampPosition();
+    return this.snapshot();
+  }
+
+  releaseFocus(): CameraSnapshot {
+    const point = this.#focusedPoint;
+    if (point === null) return this.snapshot();
+    this.#focusedPoint = null;
+    this.#x = this.#screenWidth / 2 - point.x * this.#scale;
+    this.#y = this.#screenHeight / 2 - point.y * this.#scale;
     this.#clampPosition();
     return this.snapshot();
   }

@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { ViewportController } from './viewport-controller';
 
 describe('ViewportController', () => {
+  it('从地图进入区域时恢复可辨认的人物大小，并保持真实目的地居中', () => {
+    const controller = new ViewportController(
+      { width: 10000, height: 7000 },
+      { minimumScale: 0.3 },
+    );
+    controller.resize(1440, 800);
+    const view = controller.focusArea(7500, 1750);
+    expect(view.scale).toBe(1);
+    expect(view.x + 7500 * view.scale).toBe(720);
+    expect(view.y + 1750 * view.scale).toBe(400);
+  });
   it('手机初始人物可辨认，适应房间按钮仍能恢复全景', () => {
     const controller = new ViewportController(
       { width: 1536, height: 1024 },
@@ -48,7 +59,7 @@ describe('ViewportController', () => {
     expect(camera.scale).toBeGreaterThanOrEqual(0.55);
     expect(x).toBeGreaterThan(20);
     expect(x).toBeLessThan(width - 20);
-    if (width < 768) expect(y).toBe(50);
+    if (width < 768) expect(y).toBe(36);
     else {
       expect(y).toBeGreaterThan(120);
       expect(y).toBeLessThan(600);
@@ -65,9 +76,20 @@ describe('ViewportController', () => {
     controller.updateWorld({ height: 4864, width: 6400 });
     const camera = controller.resize(360, 500);
     expect(camera.x + 5900 * camera.scale).toBe(180);
-    expect(camera.y + 4400 * camera.scale).toBe(50);
+    expect(camera.y + 4400 * camera.scale).toBe(36);
     controller.panBy(0, 50);
-    expect(controller.resize(390, 500).y + 4400 * camera.scale).not.toBe(50);
+    expect(controller.resize(390, 500).y + 4400 * camera.scale).not.toBe(36);
+  });
+
+  it('关闭人物详情后恢复正常浏览位置，地图跳转不被旧选中位置拉回', () => {
+    const controller = new ViewportController({ width: 10000, height: 7000 });
+    controller.resize(390, 600);
+    controller.focusOn(5000, 3500);
+    const released = controller.releaseFocus();
+    expect(released.y + 3500 * released.scale).toBe(300);
+    controller.focusOn(5000, 3500);
+    const mapView = controller.focusArea(7000, 2000);
+    expect(controller.releaseFocus()).toEqual(mapView);
   });
 
   it('窗口变化保持原世界中心并拒绝非有限输入', () => {

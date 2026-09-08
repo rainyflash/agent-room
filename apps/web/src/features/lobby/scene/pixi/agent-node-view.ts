@@ -59,7 +59,7 @@ export function createAgentNodeView(
     style: {
       fill: '#233039',
       fontFamily: 'Instrument Sans Variable, Noto Sans SC Variable, sans-serif',
-      fontSize: 19,
+      fontSize: 17,
       fontWeight: '600',
       stroke: { color: '#fff', width: 4 },
     },

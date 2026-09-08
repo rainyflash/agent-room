@@ -28,6 +28,10 @@ export function furnishingsForFloor(floor: RoomFloor): readonly RoomFurnishing[]
     { kind: 'table', x: floor.width - 156, y: floor.depth * 0.5 - 72, width: 112, depth: 144 },
     { kind: 'sofa', x: 44, y: floor.depth * 0.5 - 72, width: 58, depth: 144 },
     { kind: 'plant', x: floor.width - 100, y: 70, width: 42, depth: 42 },
+    { kind: 'sofa', x: floor.width / 2 - 450, y: floor.depth - 100, width: 180, depth: 58 },
+    { kind: 'sofa', x: floor.width / 2 + 270, y: floor.depth - 100, width: 180, depth: 58 },
+    { kind: 'plant', x: floor.width / 2 - 510, y: floor.depth - 95, width: 42, depth: 42 },
+    { kind: 'plant', x: floor.width / 2 + 470, y: floor.depth - 95, width: 42, depth: 42 },
   ];
 }
 

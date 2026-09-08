@@ -1,17 +1,18 @@
+import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { expect, test, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 for (const count of [200, 1000]) {
-  test(`${String(count)} 人可从房间总览放大，再搜索定位到指定成员`, async ({ page }, testInfo) => {
+  test(`${String(count)} 人默认显示附近角色，通过小地图和搜索定位`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.setViewportSize({ width: 1536, height: 1024 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto(`/e2e/fixtures/lobby-scene.html?agents=${String(count)}`);
     await expect(page.locator('canvas')).toBeVisible();
     await expect(page.getByRole('option')).toHaveCount(count);
-    await checkOverview(page, count, 48);
-    await page.screenshot({ path: testInfo.outputPath('overview.png') });
-    await page.locator('.room-crowd-group').first().click();
+    await checkMap(page, count);
+    await page.screenshot({ path: testInfo.outputPath('nearby.png') });
+    await navigateMap(page);
     await expect(page.locator('.room-crowd-group')).toHaveCount(0);
     const host = page.locator('.lobby-scene__pixi');
     await expect
@@ -20,7 +21,7 @@ for (const count of [200, 1000]) {
     expect(Number(await host.getAttribute('data-agent-room-rendered-nodes'))).toBeLessThan(count);
     await page.screenshot({ path: testInfo.outputPath('zoomed.png') });
     await locateLastAgent(page, count);
-    await expect(host).toHaveAttribute('data-agent-room-overview', 'false');
+    await expect(page.locator('.room-minimap')).toBeHidden();
     await page.screenshot({ path: testInfo.outputPath('located.png') });
     await page.getByRole('button', { name: 'Message Agent', exact: true }).click();
     await expect(
@@ -31,14 +32,26 @@ for (const count of [200, 1000]) {
   });
 }
 
-test('手机 1,000 人总览可点击，搜索后消息操作始终可见', async ({ page }, testInfo) => {
+test('手机 1,000 人可浏览附近、折叠地图及搜索发送消息', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/e2e/fixtures/lobby-scene.html?agents=1000');
-  await checkOverview(page, 1000, 12);
-  await page.screenshot({ path: testInfo.outputPath('mobile-overview.png') });
-  await page.locator('.room-crowd-group').first().click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect
+    .poll(async () =>
+      Number(
+        await page.locator('.lobby-scene__pixi').getAttribute('data-agent-room-rendered-nodes'),
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath('mobile-nearby.png') });
+  await expect(page.locator('.room-minimap__surface')).toBeHidden();
+  await checkMap(page, 1000);
+  await page.locator('.room-minimap summary').click();
+  await expect(page.locator('.room-minimap__surface')).toBeHidden();
+  await page.locator('.room-minimap summary').click();
+  await navigateMap(page);
   await expect(page.locator('.room-crowd-group')).toHaveCount(0);
   await locateLastAgent(page, 1000);
   const message = page.getByRole('button', { name: 'Message Agent', exact: true });
@@ -52,7 +65,7 @@ test('手机 1,000 人总览可点击，搜索后消息操作始终可见', asyn
   expect(failures).toEqual([]);
 });
 
-test('SVG 降级也支持 1,000 人总览与定位，放大仅绘制视口内人物', async ({ page }, testInfo) => {
+test('SVG 降级支持千人地图和定位，默认仅绘制附近人物', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.addInitScript(() => {
     const original: unknown = Reflect.get(HTMLCanvasElement.prototype, 'getContext');
@@ -69,8 +82,8 @@ test('SVG 降级也支持 1,000 人总览与定位，放大仅绘制视口内人
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/e2e/fixtures/lobby-scene.html?agents=1000');
   await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
-  await checkOverview(page, 1000, 48);
-  await page.locator('.room-crowd-group').first().click();
+  await checkMap(page, 1000);
+  await navigateMap(page);
   await expect(page.locator('.room-crowd-group')).toHaveCount(0);
   const robots = page.locator('[data-renderer="svg"] image[data-character-sprite]');
   await expect.poll(() => robots.count()).toBeGreaterThan(0);
@@ -119,18 +132,37 @@ async function locateLastAgent(page: Page, count: number): Promise<void> {
   await expect(page.locator('.room-crowd-group')).toHaveCount(0);
 }
 
-async function checkOverview(page: Page, count: number, maximum: number): Promise<void> {
-  const groups = page.locator('.room-crowd-group');
-  await expect(groups.first()).toBeVisible();
-  expect(await groups.count()).toBeLessThanOrEqual(maximum);
-  const points = await groups.evaluateAll((elements) =>
-    elements.map((element) => {
-      const bounds = element.getBoundingClientRect();
-      return { count: Number(element.getAttribute('data-count')), x: bounds.x, y: bounds.y };
-    }),
-  );
-  expect(points.reduce((sum, point) => sum + point.count, 0)).toBe(count);
-  for (const [index, point] of points.entries())
-    for (const other of points.slice(index + 1))
-      expect(Math.hypot(point.x - other.x, point.y - other.y)).toBeGreaterThan(80);
+async function checkMap(page: Page, count: number): Promise<void> {
+  if (await page.locator('.room-minimap__surface').isHidden())
+    await page.locator('.room-minimap summary').click();
+  await expect(page.locator('.room-minimap__surface')).toBeVisible();
+  await expect(page.locator('[data-map-agent]')).toHaveCount(count);
+  await expect(page.locator('.room-crowd-group')).toHaveCount(0);
+  // Every dot comes from the same current coordinates as the room, not an invented group.
+  const positionsMatch = await page.evaluate(() => {
+    const scene = (window as LobbyFixtureWindow).__agentRoomFixtureScene;
+    return scene.nodes.every((node) => {
+      const dot = document.querySelector(`[data-map-agent="${node.agentId}"]`);
+      return (
+        dot?.getAttribute('cx') === String(node.x) && dot.getAttribute('cy') === String(node.y)
+      );
+    });
+  });
+  expect(positionsMatch).toBe(true);
+  await expect(page.getByLabel('Scene zoom', { exact: true })).toHaveText('100%');
+}
+
+async function navigateMap(page: Page): Promise<void> {
+  const map = page.locator('.room-minimap__surface');
+  const viewport = page.locator('.room-minimap__viewport');
+  const initialY = await viewport.getAttribute('y');
+  const bounds = await map.boundingBox();
+  if (bounds === null) throw new Error('Map is not visible.');
+  await map.click({ position: { x: bounds.width * 0.75, y: bounds.height * 0.25 } });
+  await expect.poll(() => viewport.getAttribute('y')).not.toBe(initialY);
+  const afterClickX = await viewport.getAttribute('x');
+  await map.press('ArrowLeft');
+  await expect.poll(() => viewport.getAttribute('x')).not.toBe(afterClickX);
+  await page.getByRole('button', { name: 'Return to your starting view', exact: true }).click();
+  await expect.poll(() => viewport.getAttribute('y')).toBe(initialY);
 }

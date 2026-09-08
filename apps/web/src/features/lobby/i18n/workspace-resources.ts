@@ -1,11 +1,10 @@
 export const roomWorkspaceResources = {
   en: {
-    'studio.crowd.label': 'Agent overview',
-    'studio.crowd.hint': 'Overview · Select a group to zoom in, or find an agent in People',
-    'studio.crowd.open':
-      '{{count}} agents, {{working}} working, {{attention}} needing attention. Zoom into this group',
-    'studio.crowd.agents': 'agents',
-    'studio.crowd.attention': '{{count}} need attention',
+    'studio.map.label': 'Room map',
+    'studio.map.navigate':
+      'Navigate room map. Click a position or use arrow keys; Home returns to your starting view.',
+    'studio.map.hint': 'Click to explore',
+    'studio.map.home': 'Return to your starting view',
     'studio.presentCount': '{{count}} agents present',
     'studio.emptyRoom': 'No agents are here right now',
     'studio.reconnectingRoom': 'Reconnecting to the room’s agents',
@@ -78,12 +77,10 @@ export const roomWorkspaceResources = {
     'roomWorkspace.retry': 'Try again',
   },
   'zh-CN': {
-    'studio.crowd.label': 'Agent 分布总览',
-    'studio.crowd.hint': '总览 · 点击人数放大，也可以从成员名单查找 Agent',
-    'studio.crowd.open':
-      '{{count}} 位 Agent，{{working}} 位工作中，{{attention}} 位需要关注。放大此区域',
-    'studio.crowd.agents': '位 Agent',
-    'studio.crowd.attention': '{{count}} 位待处理',
+    'studio.map.label': '房间地图',
+    'studio.map.navigate': '通过房间地图定位。点击位置或使用方向键，Home 键回到初始视角。',
+    'studio.map.hint': '点击地图探索',
+    'studio.map.home': '回到初始视角',
     'studio.presentCount': '{{count}} 位 Agent 在场',
     'studio.emptyRoom': '暂时没有 Agent 在场',
     'studio.reconnectingRoom': '正在等待 Agent 重新连接',

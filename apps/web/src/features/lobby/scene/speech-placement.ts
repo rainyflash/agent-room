@@ -12,17 +12,13 @@ export function placeSpeech(
   viewport: { readonly width: number; readonly height: number },
   occupied: readonly SpeechBounds[],
 ): SpeechBounds | null {
-  if (
-    anchor.x < 0 ||
-    anchor.x > viewport.width ||
-    anchor.y < 110 ||
-    anchor.y > viewport.height - 90
-  )
+  if (anchor.x < 0 || anchor.x > viewport.width || anchor.y < 0 || anchor.y > viewport.height - 40)
     return null;
   const desired = {
     ...size,
     x: Math.max(12, Math.min(viewport.width - size.width - 12, anchor.x - size.width / 2)),
-    y: Math.max(120, anchor.y - size.height - 10),
+    // The scene viewport already excludes the page header and bottom action dock.
+    y: Math.max(40, anchor.y - size.height - 10),
   };
   const candidates = [
     desired,
@@ -41,8 +37,8 @@ export function placeSpeech(
       (candidate) =>
         candidate.x >= 12 &&
         candidate.x + candidate.width <= viewport.width - 12 &&
-        candidate.y >= 120 &&
-        candidate.y + candidate.height <= viewport.height - 100 &&
+        candidate.y >= 40 &&
+        candidate.y + candidate.height <= viewport.height - 24 &&
         Math.hypot(candidate.x - desired.x, candidate.y - desired.y) <= 180 &&
         occupied.every(
           (prior) =>

@@ -10,14 +10,19 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { LobbySceneLabels } from '../lobby-scene';
-import { visibleLobbyNodes, type LobbySceneProjection } from '../../domain/scene-projection';
+import {
+  sceneDetailForZoom,
+  visibleLobbyNodes,
+  type LobbySceneProjection,
+} from '../../domain/scene-projection';
 import { ViewportController, type CameraSnapshot } from '../viewport-controller';
 import { characterStatusColor } from '../character-art';
 import { RoomPlan } from './room-plan';
-import { roomCrowdGroups, usesCrowdOverview } from '../../domain/room-crowd';
+import { roomHome } from '../../domain/room-map';
 import { StudioSprite } from './studio-sprite';
 
 export type SvgLobbySceneHandle = {
+  releaseFocus(): void;
   resetViewport(): void;
   focusAgent(agentId: string): void;
   focusArea(x: number, y: number): void;
@@ -42,11 +47,14 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     const controllerRef = useRef<ViewportController | null>(null);
     const pointers = useRef(new Map<number, Point>());
     const gestureMoved = useRef(false);
+    const initialized = useRef(false);
+    const projectionRef = useRef(projection);
+    projectionRef.current = projection;
     const [camera, setCamera] = useState<CameraSnapshot>({ scale: 1, x: 0, y: 0 });
     const [viewport, setViewport] = useState({ height: 1, width: 1 });
     controllerRef.current ??= new ViewportController(projection.world, {
       padding: 22,
-      minimumScale: 0.04,
+      minimumScale: 0.3,
       ...(projection.nodes.length <= 48 ? { compactInitialScale: 0.48 } : {}),
     });
 
@@ -61,6 +69,9 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     useImperativeHandle(
       forwardedRef,
       () => ({
+        releaseFocus: () => {
+          if (controllerRef.current !== null) commitCamera(controllerRef.current.releaseFocus());
+        },
         focusArea: (x, y) => {
           if (controllerRef.current !== null) commitCamera(controllerRef.current.focusArea(x, y));
         },
@@ -70,13 +81,21 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
             commitCamera(controllerRef.current.focusOn(node.x, node.y - 35));
         },
         resetViewport: () => {
-          if (controllerRef.current !== null) commitCamera(controllerRef.current.reset());
+          const controller = controllerRef.current;
+          if (controller === null) return;
+          const home = roomHome(projection);
+          controller.reset();
+          commitCamera(
+            projection.nodes.length > 48
+              ? controller.focusArea(home.x, home.y)
+              : controller.reset(),
+          );
         },
         zoomBy: (factor) => {
           if (controllerRef.current !== null) commitCamera(controllerRef.current.zoomBy(factor));
         },
       }),
-      [commitCamera, projection.nodes],
+      [commitCamera, projection],
     );
 
     useEffect(() => {
@@ -95,7 +114,13 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
         const width = Math.max(1, bounds.width);
         const height = Math.max(1, bounds.height);
         setViewport({ height, width });
-        commitCamera(controller.resize(width, height));
+        controller.resize(width, height);
+        if (!initialized.current && projectionRef.current.nodes.length > 48) {
+          const home = roomHome(projectionRef.current);
+          controller.focusArea(home.x, home.y);
+        }
+        initialized.current = true;
+        commitCamera(controller.snapshot());
       };
       resize();
       const observer = new ResizeObserver(resize);
@@ -122,18 +147,14 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
       height: viewport.height / camera.scale,
       zoom: camera.scale,
     };
-    const overview = usesCrowdOverview(projection.nodes.length, camera.scale);
     const visibleIds = new Set(
-      (overview
-        ? []
-        : visibleLobbyNodes(projection, {
-            ...worldViewport,
-            x: worldViewport.x - 100,
-            y: worldViewport.y - 100,
-            width: worldViewport.width + 200,
-            height: worldViewport.height + 200,
-          })
-      ).map((node) => node.agentId),
+      visibleLobbyNodes(projection, {
+        ...worldViewport,
+        x: worldViewport.x - 100,
+        y: worldViewport.y - 100,
+        width: worldViewport.width + 200,
+        height: worldViewport.height + 200,
+      }).map((node) => node.agentId),
     );
     const characters = sceneCharacters(projection, labels.self).filter(
       (node) => node.kind === 'human' || visibleIds.has(node.characterId),
@@ -141,19 +162,12 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     useEffect(() => {
       onFrame?.({
         ...viewport,
-        overview,
-        groups: roomCrowdGroups(projection, worldViewport).map((group) => ({
-          ...group,
-          screenX: camera.x + group.x * camera.scale,
-          screenY: camera.y + group.y * camera.scale,
+        viewport: worldViewport,
+        characters: characters.map((node) => ({
+          characterId: node.characterId,
+          x: camera.x + node.x * camera.scale,
+          y: camera.y + (node.y - 100 * Math.max(0.83, node.radius / 27)) * camera.scale,
         })),
-        characters: overview
-          ? []
-          : characters.map((node) => ({
-              characterId: node.characterId,
-              x: camera.x + node.x * camera.scale,
-              y: camera.y + (node.y - 100 * Math.max(0.83, node.radius / 27)) * camera.scale,
-            })),
       });
     }, [camera, projection, viewport, onFrame, labels.self]);
     const objects = [
@@ -178,10 +192,12 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
               node={node}
               selected={node.characterId === projection.selectedAgentId}
               showName={
-                node.kind === 'human' || projection.nodes.length <= 24 || camera.scale >= 1.18
+                node.kind === 'human' ||
+                projection.nodes.length <= 24 ||
+                sceneDetailForZoom(camera.scale) === 'near'
               }
               statusLabel={
-                projection.nodes.length <= 24 || camera.scale >= 1.18
+                projection.nodes.length <= 24 || sceneDetailForZoom(camera.scale) === 'near'
                   ? labels.statuses?.[node.status]
                   : undefined
               }
@@ -196,7 +212,6 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
         aria-hidden="true"
         className="lobby-scene__svg"
         data-renderer="svg"
-        data-agent-room-overview={overview}
         ref={hostRef}
         viewBox={`0 0 ${String(viewport.width)} ${String(viewport.height)}`}
         onClick={() => {

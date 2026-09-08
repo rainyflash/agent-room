@@ -1,5 +1,5 @@
 import { SceneSpeechLayer, type SceneSpeechLayerHandle } from './scene-speech-layer';
-import { RoomCrowdLayer, type RoomCrowdLayerHandle } from './room-crowd-layer';
+import { RoomMinimap, type RoomMinimapHandle } from './room-minimap';
 import type { RoomSpeech } from '../domain/room-speech';
 import type { SceneFrame } from '../scene/scene-character';
 import {
@@ -60,15 +60,16 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
     forwardedRef,
   ) {
     const bubbleLayer = useRef<SceneSpeechLayerHandle>(null);
-    const crowdLayer = useRef<RoomCrowdLayerHandle>(null);
+    const minimap = useRef<RoomMinimapHandle>(null);
     const humanSelection = useRef(onSelectHuman);
     humanSelection.current = onSelectHuman;
     const onFrame = useCallback((frame: SceneFrame): void => {
       bubbleLayer.current?.position(frame);
-      crowdLayer.current?.position(frame);
+      minimap.current?.position(frame);
     }, []);
     const [keyboardFocus, setKeyboardFocus] = useState(false);
     const externalSelection = useRef(projection.selectedAgentId);
+    const previousInspectorSelection = useRef(projection.selectedAgentId);
     externalSelection.current = projection.selectedAgentId;
     const hostRef = useRef<HTMLDivElement>(null);
     const canvasHostRef = useRef<HTMLDivElement>(null);
@@ -170,7 +171,13 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
       if (projection.selectedAgentId !== null) {
         if (renderer === 'pixi') handleRef.current?.focusAgent?.(projection.selectedAgentId);
         else svgHandleRef.current?.focusAgent(projection.selectedAgentId);
+      } else if (previousInspectorSelection.current !== null) {
+        // Returning keyboard focus to the scene still highlights a character, but the
+        // camera must stop reserving inspector space once the actual inspector closes.
+        if (renderer === 'pixi') handleRef.current?.releaseFocus();
+        else svgHandleRef.current?.releaseFocus();
       }
+      previousInspectorSelection.current = projection.selectedAgentId;
     }, [projection.selectedAgentId, renderer]);
 
     useEffect(() => {
@@ -251,9 +258,16 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
             optionId={optionId}
           />
         </div>
-        <RoomCrowdLayer
-          ref={crowdLayer}
-          onFocus={(x, y) => {
+        <RoomMinimap
+          ref={minimap}
+          projection={projection}
+          onHome={() => {
+            onSelectAgent(null);
+            if (renderer === 'pixi') handleRef.current?.resetViewport();
+            else svgHandleRef.current?.resetViewport();
+          }}
+          onNavigate={(x, y) => {
+            onSelectAgent(null);
             if (renderer === 'pixi') handleRef.current?.focusArea?.(x, y);
             else svgHandleRef.current?.focusArea(x, y);
           }}

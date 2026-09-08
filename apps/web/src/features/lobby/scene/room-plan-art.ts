@@ -76,7 +76,9 @@ export function roomPlanShapes(world: LobbyWorld): readonly RoomPlanShape[] {
       ellipse(item.x + 56, item.y + 74, 9, 9, '#d5e6df', '#799b91');
     } else if (item.kind === 'sofa') {
       rect(item.x, item.y, item.width, item.depth, 16);
-      rect(item.x + 4, item.y + 8, 10, item.depth - 16, 4, '#f3f6f4');
+      if (item.width > item.depth)
+        rect(item.x + 8, item.y + item.depth - 14, item.width - 16, 10, 4, '#f3f6f4');
+      else rect(item.x + 4, item.y + 8, 10, item.depth - 16, 4, '#f3f6f4');
     } else {
       ellipse(item.x + 20, item.y + 24, 18, 16);
       ellipse(item.x + 14, item.y + 13, 7, 13, '#a9c8ba', '#799b91');

@@ -54,8 +54,7 @@ for (const agentCount of [200, 1000]) {
     await page.goto(`/e2e/fixtures/lobby-scene.html?agents=${String(agentCount)}`);
     const canvas = page.locator('.lobby-scene__canvas');
     await expect(canvas).toBeVisible();
-    // Measure the individual-character view as well as testing the initial crowd overview.
-    await page.locator('.room-crowd-group').first().click();
+    // Large rooms start with individual characters; performance covers the first useful view.
     await expect(page.locator('.room-crowd-group')).toHaveCount(0);
 
     const sceneHost = page.locator('.lobby-scene__pixi');

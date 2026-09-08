@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { LobbyAgent, LobbyRoom } from './lobby';
-import { roomCrowdGroups } from './room-crowd';
+import { roomHome, roomMapDestination, roomMapViewport } from './room-map';
 import { isWalkableFloor } from './room-floor';
-import {
-  projectLobbyScene,
-  type LobbySceneProjection,
-  type LobbyViewport,
-} from './scene-projection';
+import { projectLobbyScene } from './scene-projection';
 
 describe('大房间容量与分层浏览', () => {
   it('1,000 位在场 Agent 都有独立可行走位置，人物间距不随人数缩小', () => {
@@ -40,43 +36,68 @@ describe('大房间容量与分层浏览', () => {
     }
   });
 
-  it.each([200, 1000])('%i 人总览准确统计全部成员，桌面与手机的组数都有界', (count) => {
-    const scene = projectLobbyScene(room(count), null);
-    for (const width of [1440, 390]) {
-      const viewport = fit(scene, width, 800);
-      const groups = roomCrowdGroups(scene, viewport);
-      expect(groups.length).toBeGreaterThan(0);
-      expect(groups.length).toBeLessThanOrEqual(width < 768 ? 12 : 48);
-      expect(groups.reduce((sum, group) => sum + group.count, 0)).toBe(count);
-      expect(groups.reduce((sum, group) => sum + group.working, 0)).toBe(count / 4);
-      expect(groups.reduce((sum, group) => sum + group.attention, 0)).toBe(count / 2);
-      for (const [index, group] of groups.entries()) {
-        for (const other of groups.slice(index + 1))
-          expect(Math.hypot(group.x - other.x, group.y - other.y) * viewport.zoom).toBeGreaterThan(
-            80,
-          );
-      }
+  it('状态和输入顺序不构成空间分组，首次布局与已有布局均保持相同位置', () => {
+    const initialRoom = room(200);
+    const initial = projectLobbyScene(initialRoom, null);
+    const changedRoom = {
+      ...initialRoom,
+      agents: initialRoom.agents
+        .toReversed()
+        .map((agent): LobbyAgent => ({ ...agent, status: 'idle' })),
+    };
+    const fresh = projectLobbyScene(changedRoom, null);
+    const updated = projectLobbyScene(changedRoom, null, { previous: initial.layout });
+    expect(updated.world).toEqual(initial.world);
+    for (const [id, position] of initial.layout) {
+      expect(fresh.layout.get(id)).toEqual(position);
+      expect(updated.layout.get(id)).toEqual(position);
     }
   });
 
-  it('平移只裁剪组，不改变组内人数；放大和小房间均显示具体人物', () => {
-    const scene = projectLobbyScene(room(1000), null);
-    const viewport = fit(scene, 1440, 800);
-    const full = roomCrowdGroups(scene, viewport);
-    const panned = roomCrowdGroups(scene, { ...viewport, x: scene.world.width / 2 });
-    expect(panned.length).toBeLessThan(full.length);
-    expect(panned.length).toBeGreaterThan(0);
-    for (const group of panned)
-      expect(full.find((candidate) => candidate.id === group.id)).toEqual(group);
-    expect(roomCrowdGroups(scene, { ...viewport, zoom: 0.85 })).toEqual([]);
-    expect(roomCrowdGroups(projectLobbyScene(room(24), null), viewport)).toEqual([]);
+  it('初始镜头靠近本人，自己与所有 Agent 仍有独立位置', () => {
+    const scene = projectLobbyScene(room(1000), null, {
+      humans: [{ matrixUserId: '@me:test', displayName: 'Me', isSelf: true }],
+    });
+    const self = scene.humans?.[0];
+    if (self === undefined) throw new Error('Missing human.');
+    expect(self.y).toBeGreaterThan(scene.world.height - 500);
+    expect(roomHome(scene)).toEqual({ x: self.x, y: self.y });
+    expect(scene.nodes.every((node) => Math.hypot(node.x - self.x, node.y - self.y) >= 128)).toBe(
+      true,
+    );
+    const withoutSelf = projectLobbyScene(room(1000), null);
+    expect(roomHome(withoutSelf)).toEqual({
+      x: withoutSelf.world.width / 2,
+      y: withoutSelf.world.height / 2,
+    });
+  });
+
+  it('地图点击映射到真实房间坐标，并约束越界或非有限输入', () => {
+    const world = { width: 10000, height: 7000 };
+    expect(roomMapDestination(world, 0.75, 0.25)).toEqual({ x: 7500, y: 1750 });
+    expect(roomMapDestination(world, -1, 2)).toEqual({ x: 0, y: 7000 });
+    expect(roomMapDestination(world, Number.NaN, Number.POSITIVE_INFINITY)).toEqual({
+      x: 5000,
+      y: 3500,
+    });
+  });
+
+  it('小地图视口仅显示镜头与房间交集，边缘人物定位不会让框溢出', () => {
+    const world = { width: 1000, height: 700 };
+    expect(roomMapViewport(world, { x: -100, y: 500, width: 600, height: 400, zoom: 1 })).toEqual({
+      x: 0,
+      y: 500,
+      width: 500,
+      height: 200,
+    });
+    expect(roomMapViewport(world, { x: 1100, y: 800, width: 600, height: 400, zoom: 1 })).toEqual({
+      x: 1000,
+      y: 700,
+      width: 0,
+      height: 0,
+    });
   });
 });
-
-function fit(scene: LobbySceneProjection, width: number, height: number): LobbyViewport {
-  const zoom = Math.min((width - 96) / scene.world.width, (height - 96) / scene.world.height);
-  return { x: -48 / zoom, y: -48 / zoom, width: width / zoom, height: height / zoom, zoom };
-}
 
 function room(count: number): LobbyRoom {
   const statuses = ['working', 'idle', 'waiting_input', 'blocked'] as const;

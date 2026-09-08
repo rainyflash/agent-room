@@ -104,11 +104,12 @@ export function projectLobbyScene(
   const requests = [
     ...presentAgents.map((agent) => ({
       id: agent.agentId,
-      preferred: zones[ZONE_BY_STATUS[agent.status]],
+      preferred: { x: 180, y: 240, width: world.width - 460, height: world.height - 460 },
     })),
     ...humans.map((human) => ({
       id: `human:${human.matrixUserId}`,
-      preferred: { x: world.width / 2 - 100, y: world.height - 320, width: 200, height: 220 },
+      priority: human.isSelf ? 2 : 1,
+      preferred: { x: world.width / 2 - 300, y: world.height - 410, width: 600, height: 200 },
     })),
   ];
   const layout = allocateRoomLayout(requests, options.previous, floorPlan);
@@ -184,5 +185,5 @@ export function sceneDetailForZoom(zoom: number): LobbySceneDetail {
   if (!Number.isFinite(zoom) || zoom < 0.4) {
     return 'distant';
   }
-  return zoom < 1.18 ? 'medium' : 'near';
+  return zoom < 0.82 ? 'medium' : 'near';
 }

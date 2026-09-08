@@ -1,7 +1,6 @@
 import type { LobbyAgentStatus } from '../domain/lobby';
 import type { FloorPoint, RoomFloor } from '../domain/room-floor';
-import type { RoomCrowdGroup } from '../domain/room-crowd';
-import type { LobbySceneProjection } from '../domain/scene-projection';
+import type { LobbySceneProjection, LobbyViewport } from '../domain/scene-projection';
 import { agentReception, type AgentReception } from '../domain/agent-attendance';
 
 export type SceneCharacter = {
@@ -47,11 +46,7 @@ export function sceneCharacters(
 }
 
 export type SceneFrame = {
-  readonly overview?: boolean;
-  readonly groups?: readonly (RoomCrowdGroup & {
-    readonly screenX: number;
-    readonly screenY: number;
-  })[];
+  readonly viewport?: LobbyViewport;
   readonly width: number;
   readonly height: number;
   readonly characters: readonly {
