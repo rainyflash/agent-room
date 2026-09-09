@@ -15,10 +15,13 @@
 
 - 接待服务 6 个宿主契约测试、7 个持久化/投递集成测试通过，涵盖伪完成、错误回复关系、授权更新、进度兼容、网络故障、运行中暂停和恢复后不重复调用。三分钟断网场景确认超出单次就绪等待期限后仍会重连，无需手动重启。
 - MCP 21 个单元/协议测试、4 个令牌 HTTP 测试、3 个 OAuth HTTP 测试通过；CLI 3 个真实命令进程测试通过。
-- Web 555 项单元测试通过；接入与接待共 8 项浏览器测试通过，1440/390 像素截图已人工审视。协议验证器覆盖率门槛通过，不将它描述为全项目覆盖率。
-- Python 全量 262 项测试完成，256 项通过、6 项依赖外部环境的测试按原规则跳过。Rust 静态检查、TypeScript、ESLint、格式、插件模板、许可证和凭据扫描均纳入交付检查。
+- Web 555 项单元测试、91 项浏览器回归及 3 项发行配置验收通过；接入、接待与统一界面的 19 项针对性浏览器检查也已通过，1440/390 像素截图已视觉检查。协议验证器覆盖率门槛通过，不将它描述为全项目覆盖率。
+- Linux CI 的 Python 全量 262 项测试通过；本机 Windows 为 256 项通过、6 项按原环境规则跳过。Rust 静态检查、TypeScript、ESLint、格式、插件模板、许可证和凭据扫描均通过。
 - Windows 已实际构建包含 CLI、Bridge 和 MCP 的本地 NSIS 调试包，核对安装/卸载条目及 CLI 版本。尚未执行签名发行构建或覆盖本机安装。
-- CI 已验证 Windows 原生检查、供应链及 Linux 非 root 运行时镜像 + 受信任 HTTPS 代理；Linux 隔离 Keycloak / Matrix + vault 重启恢复正在完整验收。
+- CI 已验证 Windows 原生检查、供应链及 Linux 非 root 运行时镜像 + 受信任 HTTPS 代理，14 项 MCP 工具可发现，错误令牌与越界 Origin 被拒绝。
+- Linux 隔离 Keycloak / Matrix 验收已通过：vault 恢复登录，SIGTERM 正常退出与强制中断后均恢复原 Agent、实例、Matrix 设备和房间；断网恢复后完成正文读取、交接及真实消息回复。新增 Unix 测试确认遗留端点可回收，活动监听器、普通文件和符号链接不被删除。
+
+上述 Linux、Windows、浏览器与质量检查对应代码修订 `7b3dcc2`，证据见 [CI 34296045337](https://github.com/rainyflash/agent-room/actions/runs/34296045337)。`agent-runtime-acceptance` 报告仅证明镜像与 HTTPS 传输；`agent-runtime-live` 报告中 `vaultRestored`、`gracefulRestart`、`crashRecovered`、`identityPreserved`、`matrixDeliveryTested` 均为 `true`，`hostModelInvoked` 为 `false`。完整数据库及登录恢复回归仍在该次 CI 中执行。
 
 ## 尚须区分的外部条件
 
@@ -27,4 +30,4 @@
 - 用户手动运行宿主任务与后台接待之间没有通用的宿主忙闲协议；界面明确要求手动继续前暂停接待。接待服务自身的重复启动由独占锁拒绝。
 - 这批功能位于开发分支，尚未写入已发布的 Alpha.26 安装包；不得把提交、CI 或连接配置成功描述为已部署生产。
 
-沿用项目 Python 虚拟环境。截图存于仓库外，CI 报告区分镜像、Matrix 和模型调用；所有者凭据仍只由 Bridge 持有。
+沿用项目 Python 虚拟环境。截图与调试构建产物未提交，CI 报告区分镜像、Matrix 和模型调用；所有者凭据仍只由 Bridge 持有。
