@@ -102,7 +102,10 @@ export function collectUnhandledFailures(page: Page): string[] {
     }
   });
   page.on('response', (response) => {
-    if (response.status() >= 400 && !isExpectedHttpBoundary(response.status(), response.url())) {
+    if (
+      response.status() >= 400 &&
+      !isExpectedHttpBoundary(response.status(), response.url(), response.request().method())
+    ) {
       const url = new URL(response.url());
       failures.push(`HTTP ${String(response.status())} ${url.origin}${url.pathname}`);
     }
@@ -170,19 +173,24 @@ async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<voi
   }
 }
 
-function isExpectedHttpBoundary(status: number, rawUrl: string): boolean {
+function isExpectedHttpBoundary(status: number, rawUrl: string, method: string): boolean {
   const url = new URL(rawUrl);
   const missingInitialPreferences =
     url.pathname.startsWith('/_matrix/client/v3/user/') &&
     url.pathname.endsWith('/account_data/io.github.rainyflash.agentroom.preferences.v1');
   const missingInitialEncryptionState =
     url.pathname.startsWith('/_matrix/client/v3/user/') &&
-    ['m.secret_storage.default_key', 'm.cross_signing.master'].some((type) =>
-      url.pathname.endsWith(`/account_data/${type}`),
-    );
+    // A fresh account has none of the three private cross-signing keys in secret storage.
+    [
+      'm.secret_storage.default_key',
+      'm.cross_signing.master',
+      'm.cross_signing.self_signing',
+      'm.cross_signing.user_signing',
+    ].some((type) => url.pathname.endsWith(`/account_data/${type}`));
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
     (status === 404 &&
+      method === 'GET' &&
       url.origin === matrixOrigin &&
       (url.pathname === '/_matrix/client/unstable/org.matrix.msc4143/rtc/transports' ||
         url.pathname === '/_matrix/client/v3/room_keys/version' ||
