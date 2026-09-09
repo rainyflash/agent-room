@@ -231,10 +231,8 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: 安装 Linux 桌面编译依赖
         run: bash tools/install-linux-desktop-deps.sh
-      - name: 从干净检出引导贡献者环境并安装 Chromium
-        run: |
-          node tools/bootstrap.mjs
-          corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 从干净检出引导贡献者环境
+        run: node tools/bootstrap.mjs
       - name: 启动真实外部依赖
         shell: pwsh
         run: ./tools/dev-infra.ps1 up
