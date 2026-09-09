@@ -10,18 +10,22 @@
 - [x] Codex 与 Claude Code 两种宿主适配，后者核对 CLI 权限限制能力后启动；Cursor 等无已验证恢复接口的宿主只提供主动 MCP / CLI 访问。
 - [x] 单所有者 OAuth 资源发现及 JWT 验证：签名、issuer、audience、subject、scope、客户端 ID、有效期、JWKS 轮换与限频。与专用令牌模式互斥；不宣称多租户或任意云端连接器均已接通。
 - [x] 云端 OIDC device client 默认值修正，提供 OAuth Compose 覆盖配置与运维说明。
+- [x] 网页与桌面清理账户状态时同步取消私人 HTTP 请求，避免注销后旧请求才返回 401；认证请求保持独立，后续登录使用新的请求生命周期。
 
 ## 验证记录（2026-09-08）
 
 - 接待服务 6 个宿主契约测试、7 个持久化/投递集成测试通过，涵盖伪完成、错误回复关系、授权更新、进度兼容、网络故障、运行中暂停和恢复后不重复调用。三分钟断网场景确认超出单次就绪等待期限后仍会重连，无需手动重启。
 - MCP 21 个单元/协议测试、4 个令牌 HTTP 测试、3 个 OAuth HTTP 测试通过；CLI 3 个真实命令进程测试通过。
-- Web 555 项单元测试、91 项浏览器回归及 3 项发行配置验收通过；接入、接待与统一界面的 19 项针对性浏览器检查也已通过，1440/390 像素截图已视觉检查。协议验证器覆盖率门槛通过，不将它描述为全项目覆盖率。
+- Web 559 项单元测试、91 项浏览器回归与 3 项发行配置验收通过；此前的 19 项针对性检查也已通过。退出请求修复后的 2 项真实账户浏览器验收通过，覆盖 OIDC / Matrix SSO、刷新恢复、关闭浏览器进程后恢复同一设备，以及退出后重启保持退出。1440/390 像素截图已视觉检查，协议验证器覆盖率门槛通过，不将它描述为全项目覆盖率。
 - Linux CI 的 Python 全量 262 项测试通过；本机 Windows 为 256 项通过、6 项按原环境规则跳过。Rust 静态检查、TypeScript、ESLint、格式、插件模板、许可证和凭据扫描均通过。
 - Windows 已实际构建包含 CLI、Bridge 和 MCP 的本地 NSIS 调试包，核对安装/卸载条目及 CLI 版本。尚未执行签名发行构建或覆盖本机安装。
 - CI 已验证 Windows 原生检查、供应链及 Linux 非 root 运行时镜像 + 受信任 HTTPS 代理，14 项 MCP 工具可发现，错误令牌与越界 Origin 被拒绝。
 - Linux 隔离 Keycloak / Matrix 验收已通过：vault 恢复登录，SIGTERM 正常退出与强制中断后均恢复原 Agent、实例、Matrix 设备和房间；断网恢复后完成正文读取、交接及真实消息回复。新增 Unix 测试确认遗留端点可回收，活动监听器、普通文件和符号链接不被删除。
+- PostgreSQL / Matrix / 对象存储真实依赖集成、数据库容量预算、迁移、种子幂等性、生产 Compose 配置及服务就绪/逐层断连状态映射均通过。
 
-上述 Linux、Windows、浏览器与质量检查对应代码修订 `7b3dcc2`，证据见 [CI 34296045337](https://github.com/rainyflash/agent-room/actions/runs/34296045337)。`agent-runtime-acceptance` 报告仅证明镜像与 HTTPS 传输；`agent-runtime-live` 报告中 `vaultRestored`、`gracefulRestart`、`crashRecovered`、`identityPreserved`、`matrixDeliveryTested` 均为 `true`，`hostModelInvoked` 为 `false`。完整数据库及登录恢复回归仍在该次 CI 中执行。
+本轮质量、Web 浏览器、Windows、供应链、数据库集成与两项 Linux 运行时检查在 [CI 34299183989](https://github.com/rainyflash/agent-room/actions/runs/34299183989) 通过。该轮独立登录任务在测试开始前遇到首次 Rust 编译超出服务启动时限的问题；增加预编译后，[登录专项 CI 34300553560](https://github.com/rainyflash/agent-room/actions/runs/34300553560) 的 2 项真实账户验收通过。两轮应用源码相同，后者仅修改 CI 配置；不能把专项任务跳过的其他检查计为通过，也不能把前一轮的整体状态写成成功。
+
+`agent-runtime-acceptance` 报告仅证明镜像与 HTTPS 传输；`agent-runtime-live` 报告中 `vaultRestored`、`gracefulRestart`、`crashRecovered`、`identityPreserved`、`matrixDeliveryTested` 均为 `true`，`hostModelInvoked` 为 `false`。
 
 ## 尚须区分的外部条件
 
@@ -30,4 +34,4 @@
 - 用户手动运行宿主任务与后台接待之间没有通用的宿主忙闲协议；界面明确要求手动继续前暂停接待。接待服务自身的重复启动由独占锁拒绝。
 - 这批功能位于开发分支，尚未写入已发布的 Alpha.26 安装包；不得把提交、CI 或连接配置成功描述为已部署生产。
 
-沿用项目 Python 虚拟环境。截图与调试构建产物未提交，CI 报告区分镜像、Matrix 和模型调用；所有者凭据仍只由 Bridge 持有。
+沿用项目 Python 虚拟环境。截图与调试构建产物未提交，CI 报告区分镜像、Matrix 和模型调用；Agent 的 Matrix 凭据由 Bridge 管理，不通过工具响应暴露给模型。
