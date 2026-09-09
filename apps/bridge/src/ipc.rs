@@ -302,6 +302,17 @@ pub(crate) struct BridgeIpcServer {
     request_handler: Arc<dyn BridgeIpcRequestHandler>,
 }
 
+#[cfg(unix)]
+pub(crate) async fn recover_endpoint(
+    paths: &BridgeRuntimePaths,
+    installation_id: &IpcInstallationId,
+) -> BridgeIpcResult<()> {
+    LocalIpcEndpoint::from_installation(paths.runtime_root(), installation_id)
+        .reclaim_stale_socket()
+        .await
+        .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Bind))
+}
+
 impl BridgeIpcServer {
     /// 创建仅当前登录会话可访问的本地 IPC 服务。
     ///

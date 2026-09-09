@@ -11,13 +11,26 @@ import sys
 import vertical as v
 
 
-def restart(runtime: v.AuthorizedBridgeRuntime, processes: v.ProcessStack, redactor: v.LogRedactor) -> None:
+def restart(
+    runtime: v.AuthorizedBridgeRuntime,
+    processes: v.ProcessStack,
+    redactor: v.LogRedactor,
+    *,
+    crash: bool = False,
+) -> None:
     v.close_bridge_session(runtime, redactor)
+    previous = runtime.process.process
+    if crash:
+        previous.kill()  # Only this acceptance harness's owned Bridge process.
+        previous.wait(timeout=10)
     runtime.process.stop()
+    if not crash and previous.returncode != 0:
+        raise v.VerticalFailure("Bridge did not shut down gracefully on SIGTERM.")
     observation = v.BridgeRuntimeObservation()
+    name = "bridge-target-crash-restored" if crash else "bridge-target-restored"
     process = processes.start(v.ManagedProcess(
-        name="bridge-target-restored", command=[str(v.runtime_binary("agent-room-bridge"))],
-        environment=runtime.environment, log_path=v.LOG_ROOT / "bridge-target-restored.log",
+        name=name, command=[str(v.runtime_binary("agent-room-bridge"))],
+        environment=runtime.environment, log_path=v.LOG_ROOT / f"{name}.log",
         redactor=redactor, on_line=observation.observe,
     ))
     # No new device grant approval. Reaching online must use the encrypted saved credentials.
@@ -50,6 +63,7 @@ def accept() -> None:
             sender, target = runtimes
             identity = dict(v.require_bridge_session(target))
             restart(target, processes, redactor)
+            restart(target, processes, redactor, crash=True)
             recovery = v.verify_matrix_disconnect_and_recovery(target, (sender,), redactor)
             result = v.verify_mcp_workflow(target_bridge=target, sender_bridge=sender,
                 principal_id=agent["principalId"], redactor=redactor)
@@ -61,6 +75,7 @@ def accept() -> None:
     report = v.ROOT / "artifacts" / "agent-runtime-live.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps({"platform":"linux", "vaultRestored":True, "identityPreserved":True,
+        "gracefulRestart":True, "crashRecovered":True,
         "matrixRecoveryGeneration":recovery, "matrixDeliveryTested":True, "replyMessageId":result["replyMessageId"],
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
