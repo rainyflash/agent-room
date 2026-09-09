@@ -155,6 +155,10 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         OsBridgeRuntimeSecretVault::system(config.secure_storage_service.as_str())
             .load_or_create()
             .map_err(BridgeRuntimeError::runtime_secrets)?;
+    #[cfg(unix)]
+    crate::ipc::recover_endpoint(&paths, runtime_secrets.installation_id())
+        .await
+        .map_err(BridgeRuntimeError::ipc)?;
     let matrix = initialize_matrix(&config, &paths, &runtime_secrets).await?;
     let handoff_store = initialize_handoff_store(&paths, &runtime_secrets).await?;
     let device_session = initialize_device_session(&config).await?;
@@ -1364,7 +1368,7 @@ async fn run_until_shutdown(
         }
     });
     let result = async { tokio::select! {
-        signal = tokio::signal::ctrl_c() => {
+        signal = wait_for_exit_signal() => {
             signal.map_err(|_| BridgeRuntimeError::shutdown_signal())?;
             status.mark_shutting_down();
             shutdown_sender
@@ -1407,6 +1411,20 @@ async fn run_until_shutdown(
         .await
         .map_err(|_| BridgeRuntimeError::session_task())?;
     result
+}
+
+async fn wait_for_exit_signal() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            signal = terminate.recv() => signal.ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 async fn maintain_sessions(
