@@ -41,6 +41,44 @@ afterEach(() => {
 });
 
 describe('应用组合根', () => {
+  it('清理会话会取消私人 API 请求，同时保留正在执行的注销请求', async () => {
+    const requests: { path: string; signal: AbortSignal | null | undefined }[] = [];
+    const finish: (() => void)[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (input, init) =>
+        new Promise<Response>((resolve) => {
+          const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+          requests.push({ path, signal: init?.signal });
+          finish.push(() => {
+            resolve(
+              path === '/auth/logout'
+                ? new Response(null, { status: 204 })
+                : Response.json(path === '/agents' ? { agents: [] } : { instances: [] }),
+            );
+          });
+        }),
+    );
+    const runtime = createCloudRuntime(config, runtimeGateway(false));
+    const pending = [
+      runtime.services.agentDirectory.listOwnedAgents(),
+      runtime.services.accessManagement.listAgentInstances(),
+      runtime.services.controlPlane.logout(),
+    ];
+    try {
+      runtime.services.session.privateState.clear();
+      expect(requests.map(({ path, signal }) => ({ path, aborted: signal?.aborted }))).toEqual([
+        { path: '/agents', aborted: true },
+        { path: '/agent-instances', aborted: true },
+        { path: '/auth/logout', aborted: false },
+      ]);
+    } finally {
+      finish.forEach((complete) => {
+        complete();
+      });
+      await Promise.all(pending);
+    }
+  });
+
   it('云端服务始终存在，本机 Runtime 仅作为同一个服务图中的可选能力', () => {
     const localRuntime = runtimeGateway(false);
 

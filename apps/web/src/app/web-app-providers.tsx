@@ -50,6 +50,7 @@ import { readLanguagePreference } from '@/shared/i18n/i18n';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
+import { SessionRequestScope } from '@/shared/http/session-request-scope';
 
 export type CloudAppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -77,15 +78,16 @@ export function createCloudRuntime(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: true, retry: false } },
   });
+  const privateRequests = new SessionRequestScope();
+  const businessApi = { baseUrl: config.controlPlaneUrl, fetch: privateRequests.fetch };
+  // Authentication must remain usable while private requests are being cancelled.
   const browserControlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
   const controlPlane = localRuntime.isAvailable()
     ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
     : browserControlPlane;
-  const roomDirectory = new ControlPlanePublicRoomDirectoryClient({
-    baseUrl: config.controlPlaneUrl,
-  });
+  const roomDirectory = new ControlPlanePublicRoomDirectoryClient(businessApi);
   const onboarding = new OnboardingCoordinator(
-    new ControlPlaneOnboardingClient({ baseUrl: config.controlPlaneUrl }),
+    new ControlPlaneOnboardingClient(businessApi),
     roomDirectory,
   );
   const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
@@ -116,48 +118,44 @@ export function createCloudRuntime(
   );
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
   const lobbyEntry = new PublicLobbyEntryCoordinator(
-    new ControlPlanePublicLobbyEntryClient({ baseUrl: config.controlPlaneUrl }),
+    new ControlPlanePublicLobbyEntryClient(businessApi),
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
   );
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   const messagePublisher = new HumanMessagePublisher({
     bodyPreparer: new BrowserMessageBodyPreparer(),
-    content: new ControlPlaneMessagePublicationContentGateway({
-      baseUrl: config.controlPlaneUrl,
-    }),
+    content: new ControlPlaneMessagePublicationContentGateway(businessApi),
     journal: new BrowserMessageSubmissionJournal(window.sessionStorage),
     matrix: new MatrixSdkHumanMessageGateway(matrixClients),
     session: controlPlane,
   });
-  const directSessions = new ControlPlaneDirectSessionClient({ baseUrl: config.controlPlaneUrl });
+  const directSessions = new ControlPlaneDirectSessionClient(businessApi);
   const directSessionCoordinator = new DirectSessionCoordinator(
     directSessions,
     new MatrixSdkDirectSessionGateway(matrixClients),
     new BrowserDirectBlockRegistry(window.localStorage),
   );
   const services: AppServices = {
-    accessManagement: new ControlPlaneAccessManagementClient({
-      baseUrl: config.controlPlaneUrl,
-    }),
-    agentDirectory: new ControlPlaneAgentDirectoryClient({ baseUrl: config.controlPlaneUrl }),
-    automation: new ControlPlaneAutomationGrantClient({ baseUrl: config.controlPlaneUrl }),
+    accessManagement: new ControlPlaneAccessManagementClient(businessApi),
+    agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
+    automation: new ControlPlaneAutomationGrantClient(businessApi),
     config,
-    content: new ControlPlaneContentClient({ baseUrl: config.controlPlaneUrl }),
+    content: new ControlPlaneContentClient(businessApi),
     contentVerifier: new BrowserContentVerifier(),
     controlPlane,
     directSessionCoordinator,
     directSessions,
-    handoffs: new ControlPlaneHandoffGateway({ baseUrl: config.controlPlaneUrl }),
+    handoffs: new ControlPlaneHandoffGateway(businessApi),
     lobby,
     lobbyEntry,
     localRuntime,
     messagePublisher,
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
-    moderation: new ControlPlaneModerationClient({ baseUrl: config.controlPlaneUrl }),
+    moderation: new ControlPlaneModerationClient(businessApi),
     onboarding,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
-    privateRooms: new ControlPlanePrivateRoomClient({ baseUrl: config.controlPlaneUrl }),
+    privateRooms: new ControlPlanePrivateRoomClient(businessApi),
     roomDirectory,
     security: new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys),
     session: {
@@ -166,6 +164,7 @@ export function createCloudRuntime(
       matrix,
       privateState: {
         clear: () => {
+          privateRequests.clear();
           queryClient.clear();
         },
       },
