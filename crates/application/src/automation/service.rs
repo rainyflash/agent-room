@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
+    content::ContentScanState,
     ids::PrincipalId,
     policy::{
         AutomationGrant, AutomationGrantAttempt, AutomationGrantDecision, AutomationGrantFields,
@@ -11,9 +12,10 @@ use agent_room_domain::{
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationDecisionRecord,
-        AutomationGrantRecord, AutomationGrantRepository, AutomationGrantRevocationOutcome,
-        AutomationScopeAuthority, AutomationScopeAuthorityRequest, AutomationSendAuthorityRequest,
+        AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationContentScanner,
+        AutomationDecisionRecord, AutomationGrantRecord, AutomationGrantRepository,
+        AutomationGrantRevocationOutcome, AutomationScopeAuthority,
+        AutomationScopeAuthorityRequest, AutomationSendAuthority, AutomationSendAuthorityRequest,
         Clock, MatrixRoomAuthorityGateway, PortFuture,
     },
 };
@@ -48,6 +50,7 @@ pub trait AutomationUseCases: Send + Sync {
 }
 
 pub struct AutomationDependencies {
+    pub scanner: Arc<dyn AutomationContentScanner>,
     pub grants: Arc<dyn AutomationGrantRepository>,
     pub authority: Arc<dyn AutomationScopeAuthority>,
     pub matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
@@ -55,6 +58,7 @@ pub struct AutomationDependencies {
 }
 
 pub struct AutomationService {
+    scanner: Arc<dyn AutomationContentScanner>,
     grants: Arc<dyn AutomationGrantRepository>,
     authority: Arc<dyn AutomationScopeAuthority>,
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
@@ -64,6 +68,7 @@ pub struct AutomationService {
 impl AutomationService {
     pub fn new(dependencies: AutomationDependencies) -> Self {
         Self {
+            scanner: dependencies.scanner,
             grants: dependencies.grants,
             authority: dependencies.authority,
             matrix_authority: dependencies.matrix_authority,
@@ -260,19 +265,9 @@ impl AutomationService {
         now: agent_room_domain::time::UtcMillis,
     ) -> AutomationResult<SendPreparation> {
         const OPERATION: &str = "automation.authorize_send";
-        let authority_request = AutomationSendAuthorityRequest {
-            principal_id: context.principal_id,
-            device_id: request.actor.device_id,
-            agent_id: request.agent_id,
-            agent_instance_id: request.agent_instance_id,
-            room_catalog_id: request.room_catalog_id,
-            matrix_room_id: request.matrix_room_id.clone(),
-        };
         let Some(authority) = self
-            .authority
-            .inspect_send(&authority_request)
-            .await
-            .map_err(|error| repository_failure(OPERATION, &error))?
+            .current_sender_authority(request, context.principal_id, now)
+            .await?
         else {
             return self
                 .deny_preparation(
@@ -332,11 +327,14 @@ impl AutomationService {
                 .await;
         }
 
+        let risk_scan = self
+            .scan_message(request, context.principal_id, now)
+            .await?;
         let final_attempt = attempt(
             request,
             context.message_kind,
             authority.contains_unknown_recipients,
-            request.risk_scan,
+            risk_scan,
             now,
         );
         if let AutomationGrantDecision::Denied(reason) = context
@@ -355,6 +353,62 @@ impl AutomationService {
         }
         context.attempt = final_attempt;
         Ok(SendPreparation::Ready(Box::new(context)))
+    }
+
+    async fn scan_message(
+        &self,
+        request: &AuthorizeAutomationSend,
+        principal_id: PrincipalId,
+        now: agent_room_domain::time::UtcMillis,
+    ) -> AutomationResult<AutomationRiskScanOutcome> {
+        let outcome = match request.message_text.as_ref() {
+            Some(text) => match self.scanner.scan(text).await {
+                Ok(ContentScanState::Clean) => AutomationRiskScanOutcome::Passed,
+                Ok(ContentScanState::Rejected | ContentScanState::Suspicious) => {
+                    AutomationRiskScanOutcome::Rejected
+                }
+                Ok(ContentScanState::Pending | ContentScanState::NotApplicable) | Err(_) => {
+                    self.record_denial(
+                        request,
+                        principal_id,
+                        "automation.risk_scan_unavailable",
+                        now,
+                    )
+                    .await?;
+                    return Err(failure(
+                        "automation.scan_message",
+                        AutomationFailureKind::DependencyUnavailable,
+                    ));
+                }
+            },
+            None => AutomationRiskScanOutcome::NotRequested,
+        };
+        Ok(outcome)
+    }
+
+    async fn current_sender_authority(
+        &self,
+        request: &AuthorizeAutomationSend,
+        principal_id: PrincipalId,
+        now: agent_room_domain::time::UtcMillis,
+    ) -> AutomationResult<Option<AutomationSendAuthority>> {
+        const OPERATION: &str = "automation.sender_authority";
+        let authority_request = AutomationSendAuthorityRequest {
+            principal_id,
+            device_id: request.actor.device_id,
+            agent_id: request.agent_id,
+            agent_instance_id: request.agent_instance_id,
+            room_catalog_id: request.room_catalog_id,
+            matrix_room_id: request.matrix_room_id.clone(),
+        };
+        self.authority
+            .refresh_sender_lease(&authority_request, now)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))?;
+        self.authority
+            .inspect_send(&authority_request)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))
     }
 
     async fn deny_preparation(

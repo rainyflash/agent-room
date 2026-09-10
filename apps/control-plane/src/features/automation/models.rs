@@ -8,7 +8,7 @@ use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, AutomationGrantId, MessageSubmissionId, RoomCatalogId},
     policy::{
         AutomationAudience, AutomationGrantScope, AutomationMessageKind, AutomationMessageKinds,
-        AutomationRiskScanOutcome,
+        AutomationMessageText,
     },
     time::{DurationMillis, UtcMillis},
 };
@@ -117,7 +117,11 @@ pub(super) struct AuthorizeAutomationSendBody {
     room_catalog_id: String,
     matrix_room_id: String,
     message_kind: AutomationMessageKindBody,
-    risk_scan: AutomationRiskScanBody,
+    // Legacy clients may still send a verdict. It is never an authority for the scan.
+    #[serde(default, rename = "riskScan")]
+    _legacy_risk_scan: Option<AutomationRiskScanBody>,
+    #[serde(default)]
+    message_text: Option<String>,
 }
 
 impl AuthorizeAutomationSendBody {
@@ -141,7 +145,11 @@ impl AuthorizeAutomationSendBody {
                 .ok()?,
             matrix_room_id: MatrixRoomId::new(self.matrix_room_id).ok()?,
             is_reply: matches!(self.message_kind, AutomationMessageKindBody::Reply),
-            risk_scan: self.risk_scan.into_domain(),
+            message_text: self
+                .message_text
+                .map(AutomationMessageText::new)
+                .transpose()
+                .ok()?,
         })
     }
 }
@@ -153,17 +161,6 @@ enum AutomationRiskScanBody {
     Rejected,
     Unavailable,
     NotRequested,
-}
-
-impl AutomationRiskScanBody {
-    const fn into_domain(self) -> AutomationRiskScanOutcome {
-        match self {
-            Self::Passed => AutomationRiskScanOutcome::Passed,
-            Self::Rejected => AutomationRiskScanOutcome::Rejected,
-            Self::Unavailable => AutomationRiskScanOutcome::Unavailable,
-            Self::NotRequested => AutomationRiskScanOutcome::NotRequested,
-        }
-    }
 }
 
 #[derive(Debug, Serialize)]

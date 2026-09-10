@@ -10,15 +10,17 @@ use agent_room_application::{
     devices::AuthenticatedDevice,
     persistence::RepositoryResult,
     ports::{
-        AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationDecisionRecord,
-        AutomationGrantRecord, AutomationGrantRepository, AutomationGrantRevocationOutcome,
-        AutomationScopeAuthority, AutomationScopeAuthorityRequest, AutomationSendAuthority,
-        AutomationSendAuthorityRequest, Clock, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixPowerLevel, MatrixResult, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
-        MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount,
+        AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationContentScanner,
+        AutomationDecisionRecord, AutomationGrantRecord, AutomationGrantRepository,
+        AutomationGrantRevocationOutcome, AutomationScopeAuthority,
+        AutomationScopeAuthorityRequest, AutomationSendAuthority, AutomationSendAuthorityRequest,
+        Clock, ContentScanFailure, ContentScanFailureKind, ContentScanResult, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixPowerLevel, MatrixResult, MatrixRoomAuthority,
+        MatrixRoomAuthorityGateway, MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount,
     },
 };
 use agent_room_domain::{
+    content::ContentScanState,
     identity::Principal,
     ids::{
         AgentId, AgentInstanceId, AutomationGrantId, DeviceId, MessageSubmissionId, PrincipalId,
@@ -27,7 +29,7 @@ use agent_room_domain::{
     policy::{
         AutomationAudience, AutomationGrant, AutomationGrantDenial, AutomationGrantFields,
         AutomationGrantLimits, AutomationGrantScope, AutomationGrantStatus, AutomationMessageKind,
-        AutomationMessageKinds, AutomationRiskScanOutcome, AutomationUsageSnapshot,
+        AutomationMessageKinds, AutomationMessageText, AutomationUsageSnapshot,
     },
     time::{DurationMillis, UtcMillis},
 };
@@ -165,6 +167,15 @@ struct FakeAuthority {
 }
 
 impl AutomationScopeAuthority for FakeAuthority {
+    fn refresh_sender_lease<'a>(
+        &'a self,
+        _request: &'a AutomationSendAuthorityRequest,
+        _now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        self.calls.lock().expect("调用顺序锁可用").push("activity");
+        Box::pin(async { Ok(()) })
+    }
+
     fn may_create<'a>(
         &'a self,
         _request: &'a AutomationScopeAuthorityRequest,
@@ -213,6 +224,28 @@ struct Fixture {
     authority: Arc<FakeAuthority>,
     matrix: Arc<FakeMatrixAuthority>,
     calls: Arc<Mutex<Vec<&'static str>>>,
+    scanner: Arc<FakeScanner>,
+}
+
+struct FakeScanner {
+    result: Mutex<ContentScanResult<ContentScanState>>,
+    calls: Arc<Mutex<Vec<&'static str>>>,
+    scanned: Mutex<Vec<String>>,
+}
+
+impl AutomationContentScanner for FakeScanner {
+    fn scan<'a>(
+        &'a self,
+        text: &'a AutomationMessageText,
+    ) -> PortFuture<'a, ContentScanResult<ContentScanState>> {
+        self.calls.lock().expect("调用顺序锁可用").push("scan");
+        self.scanned
+            .lock()
+            .expect("正文锁可用")
+            .push(text.as_str().to_owned());
+        let result = self.result.lock().expect("扫描结果锁可用").clone();
+        Box::pin(async move { result })
+    }
 }
 
 impl Fixture {
@@ -237,7 +270,13 @@ impl Fixture {
             authority: Mutex::new(Ok(MatrixRoomAuthority::joined(MatrixPowerLevel::finite(0)))),
             calls: calls.clone(),
         });
+        let scanner = Arc::new(FakeScanner {
+            result: Mutex::new(Ok(ContentScanState::Clean)),
+            calls: calls.clone(),
+            scanned: Mutex::new(Vec::new()),
+        });
         let service = AutomationService::new(AutomationDependencies {
+            scanner: scanner.clone(),
             grants: grants.clone(),
             authority: authority.clone(),
             matrix_authority: matrix.clone(),
@@ -249,6 +288,7 @@ impl Fixture {
             authority,
             matrix,
             calls,
+            scanner,
         }
     }
 }
@@ -292,7 +332,7 @@ async fn 自动发送严格按权威顺序校验后才原子消费() {
     ));
     assert_eq!(
         *fixture.calls.lock().expect("调用顺序锁可用"),
-        ["find", "scope_send", "matrix", "consume"]
+        ["find", "activity", "scope_send", "matrix", "consume"]
     );
 }
 
@@ -321,7 +361,7 @@ async fn 陌生受众越界在_matrix_调用之前拒绝并留存原因() {
     );
     assert_eq!(
         *fixture.calls.lock().expect("调用顺序锁可用"),
-        ["find", "scope_send", "record_denial"]
+        ["find", "activity", "scope_send", "record_denial"]
     );
     let decisions = fixture.grants.decisions.lock().expect("决策记录锁可用");
     assert_eq!(
@@ -350,7 +390,7 @@ async fn 房间成员或发言权变化立即阻止发送() {
     );
     assert_eq!(
         *fixture.calls.lock().expect("调用顺序锁可用"),
-        ["find", "scope_send", "matrix", "record_denial"]
+        ["find", "activity", "scope_send", "matrix", "record_denial"]
     );
 }
 
@@ -393,6 +433,117 @@ async fn 并发窗口在最终消费时耗尽仍拒绝() {
         AutomationAuthorizationOutcome::Denied(AutomationSendDenial::Grant(
             AutomationGrantDenial::RateLimitExceeded,
         ))
+    );
+}
+
+#[tokio::test]
+async fn 扫描实际正文通过后才允许公开自动回复() {
+    let fixture = Fixture::new(grant(AutomationAudience::AnyRoomMember, true));
+    let mut request = send_request();
+    request.message_text =
+        Some(AutomationMessageText::new("按实际问题生成的回复".to_owned()).expect("正文有效"));
+    let outcome = fixture
+        .service
+        .authorize_send(request)
+        .await
+        .expect("扫描成功");
+    assert!(matches!(
+        outcome,
+        AutomationAuthorizationOutcome::Authorized(_)
+    ));
+    assert_eq!(
+        *fixture.scanner.scanned.lock().expect("正文锁可用"),
+        ["按实际问题生成的回复"]
+    );
+    assert_eq!(
+        *fixture.calls.lock().expect("调用顺序锁可用"),
+        [
+            "find",
+            "activity",
+            "scope_send",
+            "matrix",
+            "scan",
+            "consume"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 缺少正文或扫描未通过均不会消费授权() {
+    for scan in [
+        Ok(ContentScanState::Rejected),
+        Ok(ContentScanState::Suspicious),
+    ] {
+        let fixture = Fixture::new(grant(AutomationAudience::AnyRoomMember, true));
+        *fixture.scanner.result.lock().expect("扫描结果锁可用") = scan;
+        let mut request = send_request();
+        request.message_text =
+            Some(AutomationMessageText::new("待扫描消息".to_owned()).expect("正文有效"));
+        assert_eq!(
+            fixture
+                .service
+                .authorize_send(request)
+                .await
+                .expect("显式拒绝"),
+            AutomationAuthorizationOutcome::Denied(AutomationSendDenial::Grant(
+                AutomationGrantDenial::RiskScanRejected
+            ))
+        );
+        assert!(
+            !fixture
+                .calls
+                .lock()
+                .expect("调用顺序锁可用")
+                .contains(&"consume")
+        );
+    }
+    let fixture = Fixture::new(grant(AutomationAudience::AnyRoomMember, true));
+    assert_eq!(
+        fixture
+            .service
+            .authorize_send(send_request())
+            .await
+            .expect("缺少扫描正文"),
+        AutomationAuthorizationOutcome::Denied(AutomationSendDenial::Grant(
+            AutomationGrantDenial::RiskScanRequired
+        ))
+    );
+    assert!(
+        fixture
+            .scanner
+            .scanned
+            .lock()
+            .expect("正文锁可用")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn 扫描服务不可用可恢复且不把失败算作已发送() {
+    let fixture = Fixture::new(grant(AutomationAudience::AnyRoomMember, true));
+    *fixture.scanner.result.lock().expect("扫描结果锁可用") = Err(ContentScanFailure::new(
+        "test.scanner",
+        ContentScanFailureKind::Unavailable,
+    ));
+    let mut request = send_request();
+    request.message_text =
+        Some(AutomationMessageText::new("待扫描消息".to_owned()).expect("正文有效"));
+    let error = fixture
+        .service
+        .authorize_send(request)
+        .await
+        .expect_err("扫描不可用不能放行");
+    assert_eq!(error.kind(), AutomationFailureKind::DependencyUnavailable);
+    assert!(
+        !fixture
+            .calls
+            .lock()
+            .expect("调用顺序锁可用")
+            .contains(&"consume")
+    );
+    assert_eq!(
+        fixture.grants.decisions.lock().expect("决策记录锁可用")[0].decision_code,
+        "automation.risk_scan_unavailable"
     );
 }
 
@@ -453,7 +604,7 @@ fn send_request() -> AuthorizeAutomationSend {
         room_catalog_id: room_id(),
         matrix_room_id: matrix_room_id(),
         is_reply: true,
-        risk_scan: AutomationRiskScanOutcome::Passed,
+        message_text: None,
     }
 }
 

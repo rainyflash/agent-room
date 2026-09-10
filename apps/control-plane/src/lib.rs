@@ -659,7 +659,7 @@ fn build_agent_collaboration_http_states(
         dependencies.repositories.clone(),
     ));
     let private_rooms = build_private_room_service(config, dependencies)?;
-    let automation = build_automation_http_state(config, dependencies);
+    let automation = build_automation_http_state(config, dependencies)?;
     let moderation = build_moderation_management(dependencies);
     let direct_sessions = build_direct_session_management(dependencies);
     Ok(AgentCollaborationHttpStates {
@@ -774,14 +774,23 @@ fn build_direct_session_management(
 fn build_automation_http_state(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-) -> AutomationHttpState {
+) -> Result<AutomationHttpState, StartupError> {
+    let scanner_config = agent_room_content_adapter::ClamAvScannerConfig::new(
+        &config.content.scanner_address,
+        config.content.scanner_connect_timeout,
+        config.content.scanner_timeout,
+    )
+    .map_err(|error| StartupError::new("startup.invalid_automation_scanner", error.to_string()))?;
     let automation = Arc::new(AutomationService::new(AutomationDependencies {
+        scanner: Arc::new(agent_room_content_adapter::ClamAvAutomationScanner::new(
+            scanner_config,
+        )),
         grants: dependencies.repositories.clone(),
         authority: dependencies.repositories.clone(),
         matrix_authority: dependencies.matrix_authority.clone(),
         clock: dependencies.system_runtime.clone(),
     }));
-    AutomationHttpState::new(
+    Ok(AutomationHttpState::new(
         AutomationHttpDependencies {
             automation,
             authentication: dependencies.authentication.clone(),
@@ -790,7 +799,7 @@ fn build_automation_http_state(
         },
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origin,
-    )
+    ))
 }
 
 fn content_authority_matrix_user(

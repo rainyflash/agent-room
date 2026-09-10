@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use agent_room_application::ports::{
-    ContentScanFailure, ContentScanFailureKind, ContentScanResult, ContentScanner,
-    ContentStreamFailureKind, PortFuture, PrivateContentObjectStore,
+    AutomationContentScanner, ContentScanFailure, ContentScanFailureKind, ContentScanResult,
+    ContentScanner, ContentStreamFailureKind, PortFuture, PrivateContentObjectStore,
 };
 use agent_room_domain::content::{ContentObject, ContentScanState, Sha256Digest};
+use agent_room_domain::policy::AutomationMessageText;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::{
@@ -47,31 +48,72 @@ impl ClamAvContentScanner {
             return Err(invalid_response("content.scan.object_metadata"));
         }
 
-        let connection = timeout(self.configuration.connect_timeout(), async {
-            let addresses = lookup_host(self.configuration.address())
-                .await
-                .map_err(|_| unavailable("content.scan.resolve"))?
-                .collect::<Vec<_>>();
-            if addresses.is_empty()
-                || addresses
-                    .iter()
-                    .any(|address| !is_private_address(address.ip()))
-            {
-                return Err(unavailable("content.scan.resolve"));
-            }
-            TcpStream::connect(addresses[0])
-                .await
-                .map_err(|_| unavailable("content.scan.connect"))
-        })
-        .await
-        .map_err(|_| unavailable("content.scan.connect"))??;
+        let connection = connect(&self.configuration).await?;
         timeout(
             self.configuration.scan_timeout(),
-            scan_stream(connection, opened.body, content),
+            scan_stream(
+                connection,
+                opened.body,
+                content.byte_length().value(),
+                content.digest(),
+            ),
         )
         .await
         .map_err(|_| unavailable("content.scan.timeout"))?
     }
+}
+
+pub struct ClamAvAutomationScanner {
+    configuration: ClamAvScannerConfig,
+}
+
+impl ClamAvAutomationScanner {
+    pub const fn new(configuration: ClamAvScannerConfig) -> Self {
+        Self { configuration }
+    }
+}
+
+impl AutomationContentScanner for ClamAvAutomationScanner {
+    fn scan<'a>(
+        &'a self,
+        text: &'a AutomationMessageText,
+    ) -> PortFuture<'a, ContentScanResult<ContentScanState>> {
+        Box::pin(async move {
+            let bytes = text.as_str().as_bytes().to_vec();
+            let byte_length = u64::try_from(bytes.len())
+                .map_err(|_| invalid_response("automation.scan.length"))?;
+            let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+            let connection = connect(&self.configuration).await?;
+            let body = Box::pin(futures_util::stream::once(async move { Ok(bytes) }));
+            timeout(
+                self.configuration.scan_timeout(),
+                scan_stream(connection, body, byte_length, digest),
+            )
+            .await
+            .map_err(|_| unavailable("automation.scan.timeout"))?
+        })
+    }
+}
+
+async fn connect(configuration: &ClamAvScannerConfig) -> ContentScanResult<TcpStream> {
+    timeout(configuration.connect_timeout(), async {
+        let addresses = lookup_host(configuration.address())
+            .await
+            .map_err(|_| unavailable("content.scan.resolve"))?
+            .collect::<Vec<_>>();
+        if addresses.is_empty()
+            || addresses
+                .iter()
+                .any(|address| !is_private_address(address.ip()))
+        {
+            return Err(unavailable("content.scan.resolve"));
+        }
+        TcpStream::connect(addresses[0])
+            .await
+            .map_err(|_| unavailable("content.scan.connect"))
+    })
+    .await
+    .map_err(|_| unavailable("content.scan.connect"))?
 }
 
 impl ContentScanner for ClamAvContentScanner {
@@ -86,7 +128,8 @@ impl ContentScanner for ClamAvContentScanner {
 async fn scan_stream(
     mut connection: TcpStream,
     mut body: agent_room_application::ports::ContentByteStream,
-    content: &ContentObject,
+    expected_length: u64,
+    expected_digest: Sha256Digest,
 ) -> ContentScanResult<ContentScanState> {
     connection
         .write_all(INSTREAM_COMMAND)
@@ -107,7 +150,7 @@ async fn scan_stream(
         observed_length = observed_length
             .checked_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX))
             .ok_or_else(|| invalid_response("content.scan.object_integrity"))?;
-        if observed_length > content.byte_length().value() {
+        if observed_length > expected_length {
             return Err(invalid_response("content.scan.object_integrity"));
         }
         hasher.update(&chunk);
@@ -125,7 +168,7 @@ async fn scan_stream(
         }
     }
     let observed_digest = Sha256Digest::from_bytes(hasher.finalize().into());
-    if observed_length != content.byte_length().value() || observed_digest != content.digest() {
+    if observed_length != expected_length || observed_digest != expected_digest {
         return Err(invalid_response("content.scan.object_integrity"));
     }
     connection
@@ -189,8 +232,9 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        ContentByteStream, ContentScanFailureKind, ContentScanner, ObjectStoreResult,
-        ObjectWriteReceipt, OpenedContentObject, PortFuture, PrivateContentObjectStore,
+        AutomationContentScanner, ContentByteStream, ContentScanFailureKind, ContentScanner,
+        ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject, PortFuture,
+        PrivateContentObjectStore,
     };
     use agent_room_domain::{
         content::{
@@ -198,6 +242,7 @@ mod tests {
             ContentObject, ContentObjectFields, ContentScanState, ContentStorageKey, Sha256Digest,
         },
         ids::{ContentId, PrincipalId},
+        policy::AutomationMessageText,
         time::UtcMillis,
     };
     use futures_util::stream;
@@ -208,7 +253,30 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::{ClamAvContentScanner, ClamAvScannerConfig, INSTREAM_COMMAND};
+    use super::{
+        ClamAvAutomationScanner, ClamAvContentScanner, ClamAvScannerConfig, INSTREAM_COMMAND,
+    };
+
+    #[tokio::test]
+    async fn 自动发言扫描传输实际_utf8_正文并使用扫描器结果() {
+        let message =
+            AutomationMessageText::new("真实模型的回答\n包含第二行".to_owned()).expect("正文有效");
+        for (response, expected) in [
+            (b"stream: OK\0".as_slice(), ContentScanState::Clean),
+            (
+                b"stream: Eicar-Test-Signature FOUND\0".as_slice(),
+                ContentScanState::Rejected,
+            ),
+        ] {
+            let (configuration, received) = fake_clamd(response).await;
+            let scanner = ClamAvAutomationScanner::new(configuration);
+            assert_eq!(scanner.scan(&message).await.expect("扫描完成"), expected);
+            assert_eq!(
+                received.await.expect("服务完成"),
+                message.as_str().as_bytes()
+            );
+        }
+    }
 
     #[tokio::test]
     async fn 使用_instream_发送完整对象并解析干净结果() {

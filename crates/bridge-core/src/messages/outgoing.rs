@@ -5,9 +5,10 @@ use agent_room_application::ports::{
     MatrixGateway, MatrixResult, MatrixRoomId, MatrixTransactionId, PortFuture,
 };
 use agent_room_domain::{
+    content::ContentEncryptionMode,
     ids::{ContentUploadRequestId, MessageSubmissionId, RoomCatalogId},
     messages::MessageProvenance,
-    policy::AutomationRiskScanOutcome,
+    policy::AutomationMessageText,
 };
 
 use crate::{agent_identity::BridgeAgentIdentity, ports::DeviceSigningIdentity};
@@ -234,7 +235,29 @@ impl MessagePublicationService {
                 room_catalog_id: self.room_catalog_id,
                 matrix_room_id: request.room_id().clone(),
                 is_reply: request.relation().is_some(),
-                risk_scan: AutomationRiskScanOutcome::NotRequested,
+                // Never reveal client-encrypted bytes to a server-side scanner.
+                message_text: if request.body().encryption_mode()
+                    == ContentEncryptionMode::ServerSide
+                {
+                    Some(
+                        AutomationMessageText::new(
+                            std::str::from_utf8(request.body().bytes())
+                                .map_err(|_| {
+                                    MessagePublicationFailure::simple(
+                                        MessagePublicationFailureKind::InvalidIntent,
+                                    )
+                                })?
+                                .to_owned(),
+                        )
+                        .map_err(|_| {
+                            MessagePublicationFailure::simple(
+                                MessagePublicationFailureKind::InvalidIntent,
+                            )
+                        })?,
+                    )
+                } else {
+                    None
+                },
             })
             .await
             .map_err(MessagePublicationFailure::automation)

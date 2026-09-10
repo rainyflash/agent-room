@@ -106,6 +106,46 @@ impl AutomationGrantRepository for PostgresRepositories {
 }
 
 impl AutomationScopeAuthority for PostgresRepositories {
+    fn refresh_sender_lease<'a>(
+        &'a self,
+        request: &'a AutomationSendAuthorityRequest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            sqlx::query(
+                r"UPDATE agent_room.agent_instance AS instance
+                  SET status = 'online',
+                      last_seen_at = to_timestamp($5::double precision / 1000.0),
+                      lease_expires_at = to_timestamp($5::double precision / 1000.0)
+                          + interval '90 seconds'
+                  FROM agent_room.device AS device,
+                       agent_room.principal AS principal,
+                       agent_room.agent AS agent,
+                       agent_room.agent_ownership AS ownership
+                  WHERE instance.id = $4 AND instance.agent_id = $3
+                    AND instance.device_id = $2
+                    AND instance.status IN ('connecting', 'degraded', 'offline', 'online')
+                    AND instance.revoked_at IS NULL
+                    AND device.id = instance.device_id
+                    AND device.principal_id = $1
+                    AND device.trust_state = 'verified' AND device.revoked_at IS NULL
+                    AND principal.id = device.principal_id AND principal.status = 'active'
+                    AND agent.id = instance.agent_id AND agent.lifecycle_state = 'active'
+                    AND ownership.agent_id = agent.id AND ownership.principal_id = principal.id
+                    AND ownership.role IN ('owner', 'operator') AND ownership.revoked_at IS NULL",
+            )
+            .bind(request.principal_id.as_uuid())
+            .bind(request.device_id.as_uuid())
+            .bind(request.agent_id.as_uuid())
+            .bind(request.agent_instance_id.as_uuid())
+            .bind(now.value())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("automation_authority.refresh_activity", &error))?;
+            Ok(())
+        })
+    }
+
     fn may_create<'a>(
         &'a self,
         request: &'a AutomationScopeAuthorityRequest,

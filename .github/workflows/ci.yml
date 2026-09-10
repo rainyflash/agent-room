@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, session]
+        options: [all, session, automation]
   pull_request:
   push:
     branches: [main]
@@ -28,9 +28,113 @@ env:
   RUST_BACKTRACE: '1'
 
 jobs:
+  automation:
+    name: 自动回复真实数据库与扫描验收
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'automation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: 恢复编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: linux-quality
+          add-job-id-key: false
+          save-if: false
+      - name: 检查自动回复与界面
+        run: |
+          cargo fmt --all --check
+          cargo clippy -p agent-room-application -p agent-room-content-adapter -p agent-room-postgres-adapter -p agent-room-control-plane -p agent-room-bridge --all-targets -- -D warnings
+          cargo test -p agent-room-application --test automation_flow
+          cargo test -p agent-room-bridge-core --test message_publication_flow
+          cargo test -p agent-room-content-adapter -p agent-room-control-plane -p agent-room-bridge --lib
+          corepack pnpm@10.28.0 install --frozen-lockfile
+          corepack pnpm@10.28.0 --filter @agent-room/web typecheck
+          corepack pnpm@10.28.0 --filter @agent-room/web exec vitest run src/features/automation
+      - name: 准备隔离 PostgreSQL 与 ClamAV
+        shell: pwsh
+        run: |
+          ./tools/dev-infra.ps1 prepare
+          docker compose --project-name agent-room-dev --env-file .env.local --file infra/compose/compose.yaml up --detach --wait --wait-timeout 420 postgres content-scanner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 验证实际数据库与扫描服务
+        env:
+          AGENT_ROOM_TEST_SCANNER_ADDRESS: 127.0.0.1:13310
+        run: |
+          python -c "from tools.database import read_environment, ENV_FILE, run_in_test_database; run_in_test_database(read_environment(ENV_FILE), [['cargo','test','-p','agent-room-postgres-adapter','--test','automation','--','--ignored']])"
+          cargo test -p agent-room-content-adapter --test automation_live -- --ignored
+      - name: 停止隔离依赖
+        if: always()
+        run: docker compose --project-name agent-room-dev --env-file .env.local --file infra/compose/compose.yaml down --volumes
+
+  automation-images:
+    name: 自动回复兼容服务候选镜像
+    needs: automation
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'automation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: control-plane
+            file: infra/production/Containerfile.control-plane
+          - name: web
+            file: infra/production/Containerfile.web
+    steps:
+      - name: 检出已验证提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 登录 GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # 版本 4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # 版本 4.3.0
+      - name: 构建兼容服务候选
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # 版本 7.3.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.name }}:automation-${{ github.sha }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}-amd64
+          build-args: |
+            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.room.the-zeroth.com/_agent-room/api
+            VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
+            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.26/agent-room-installer-v0.1.0-alpha.26-windows-x86_64.exe
+      - name: 保存不可变镜像摘要
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          mkdir -p image-digest
+          printf '%s\n' "$IMAGE_DIGEST" > "image-digest/$IMAGE_NAME.digest"
+      - name: 上传候选镜像证据
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: automation-image-${{ matrix.name }}
+          path: image-digest/
+          if-no-files-found: error
+          retention-days: 7
+
   quality:
     name: 格式、类型与测试
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'session' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -77,7 +181,7 @@ jobs:
 
   windows-runtime:
     name: Windows 客户端运行时原生检查
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'session' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -143,7 +247,7 @@ jobs:
 
   supply-chain:
     name: 供应链与物料清单
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite != 'session' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -228,7 +332,7 @@ jobs:
   integration:
     name: PostgreSQL、Matrix、对象存储与协议集成
     needs: quality
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite != 'session' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -285,7 +389,7 @@ jobs:
 
   agent-runtime-image:
     name: Linux Agent 运行时镜像与 HTTPS MCP 验收
-    if: github.event_name == 'workflow_dispatch' && inputs.suite != 'session'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -306,7 +410,7 @@ jobs:
 
   agent-runtime-live:
     name: Linux 无桌面凭据恢复与 Matrix 真实收发
-    if: github.event_name == 'workflow_dispatch' && inputs.suite != 'session'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

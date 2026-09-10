@@ -8,7 +8,7 @@ use agent_room_bridge_core::{
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
 };
-use agent_room_domain::policy::AutomationRiskScanOutcome;
+use agent_room_domain::policy::AutomationMessageText;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -94,7 +94,8 @@ struct AuthorizationBody<'a> {
     room_catalog_id: String,
     matrix_room_id: &'a str,
     message_kind: &'static str,
-    risk_scan: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message_text: Option<&'a str>,
 }
 
 impl<'a> From<&'a AutomationAuthorizationRequest> for AuthorizationBody<'a> {
@@ -110,7 +111,10 @@ impl<'a> From<&'a AutomationAuthorizationRequest> for AuthorizationBody<'a> {
             } else {
                 "room_message"
             },
-            risk_scan: risk_scan(request.risk_scan),
+            message_text: request
+                .message_text
+                .as_ref()
+                .map(AutomationMessageText::as_str),
         }
     }
 }
@@ -145,15 +149,6 @@ async fn decode_response(response: reqwest::Response) -> AutomationAuthorization
             Err(AutomationAuthorizationFailure::denied(reason))
         }
         _ => Err(AutomationAuthorizationFailure::invalid_response()),
-    }
-}
-
-const fn risk_scan(value: AutomationRiskScanOutcome) -> &'static str {
-    match value {
-        AutomationRiskScanOutcome::Passed => "passed",
-        AutomationRiskScanOutcome::Rejected => "rejected",
-        AutomationRiskScanOutcome::Unavailable => "unavailable",
-        AutomationRiskScanOutcome::NotRequested => "not_requested",
     }
 }
 
@@ -212,7 +207,7 @@ mod tests {
             AgentId, AgentInstanceId, AutomationGrantId, DeviceId, MessageSubmissionId,
             RoomCatalogId,
         },
-        policy::AutomationRiskScanOutcome,
+        policy::AutomationMessageText,
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -315,7 +310,7 @@ mod tests {
                 "roomCatalogId": CATALOG_ID,
                 "matrixRoomId": "!lobby:matrix.agent-room.test",
                 "messageKind": "reply",
-                "riskScan": "not_requested"
+                "messageText": "real message for scanning"
             })
         );
     }
@@ -461,7 +456,10 @@ mod tests {
             )
             .expect("测试 Matrix 房间有效"),
             is_reply: true,
-            risk_scan: AutomationRiskScanOutcome::NotRequested,
+            message_text: Some(
+                AutomationMessageText::new("real message for scanning".to_owned())
+                    .expect("有效正文"),
+            ),
         }
     }
 
