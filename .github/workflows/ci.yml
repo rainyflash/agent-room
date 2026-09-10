@@ -58,7 +58,7 @@ jobs:
           corepack pnpm@10.28.0 install --frozen-lockfile
           corepack pnpm@10.28.0 --filter @agent-room/protocol build
           corepack pnpm@10.28.0 --filter @agent-room/web typecheck
-          corepack pnpm@10.28.0 --filter @agent-room/web exec vitest run src/features/automation
+          corepack pnpm@10.28.0 --filter @agent-room/web exec vitest run src/features/automation src/features/session src/shared/browser/window-browser-gateway.spec.ts src/shared/routing/route-state.spec.ts
       - name: 准备隔离 PostgreSQL 与 ClamAV
         shell: pwsh
         run: |

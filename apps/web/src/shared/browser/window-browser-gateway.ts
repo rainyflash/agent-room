@@ -1,4 +1,5 @@
 import type { BrowserGateway } from '@/features/session/domain/session';
+import { authenticationCallbackFailure } from '@/features/session/domain/authentication-callback';
 
 export function safeInternalPath(value: string | null): string | null {
   if (value === null || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
@@ -10,7 +11,10 @@ export function safeInternalPath(value: string | null): string | null {
 export class WindowBrowserGateway implements BrowserGateway {
   currentPath(): string {
     const current = new URL(window.location.href);
-    if (current.pathname === '/connect') {
+    if (
+      current.pathname === '/connect' &&
+      authenticationCallbackFailure(`${current.pathname}${current.search}`) === null
+    ) {
       const requested = safeInternalPath(current.searchParams.get('returnTo'));
       if (requested !== null) {
         return requested;

@@ -9,6 +9,12 @@ afterEach(() => {
 });
 
 describe('WindowBrowserGateway', () => {
+  it('验证失败标记不能被返回房间的深链覆盖', () => {
+    window.history.replaceState({}, '', '/connect?authentication=expired&returnTo=%2Frooms');
+    expect(new WindowBrowserGateway().currentPath()).toBe(
+      '/connect?authentication=expired&returnTo=%2Frooms',
+    );
+  });
   it('连接后只导航到新地址，恢复当前房间时不重新加载页面', () => {
     const location = { pathname: '/connect', search: '', hash: '', replace: vi.fn() };
     vi.stubGlobal('window', { location });

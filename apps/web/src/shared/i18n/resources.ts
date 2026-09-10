@@ -256,6 +256,18 @@ export const resources = {
       'connection.health.checkedAt': 'Checked {{time}}',
       'connection.health.latency': '{{latency}} ms',
       'connection.action.loginControl': 'Sign in to Agent Room',
+      'connection.authenticationRecovery.title': 'Identity verification did not finish',
+      'connection.authenticationRecovery.expired':
+        'This sign-in request has expired or lost its browser binding. Continue with a new request; if your identity provider still remembers your recent verification, you will not need to enter your password again.',
+      'connection.authenticationRecovery.failed':
+        'The identity provider response could not be verified. Continue with a new sign-in request.',
+      'connection.authenticationRecovery.sessionRetained':
+        'Your existing account session is still signed in. The permission change has not been approved.',
+      'connection.authenticationRecovery.retryFailed':
+        'Verification could not be opened. Please retry.',
+      'connection.authenticationRecovery.retry': 'Continue verification',
+      'connection.authenticationRecovery.pending': 'Opening verification…',
+      'connection.authenticationRecovery.return': 'Return to rooms',
       'connection.action.loginMatrix': 'Reconnect conversations',
       'connection.action.reconnect': 'Reconnect',
       'connection.action.retry': 'Retry now',
@@ -996,6 +1008,16 @@ export const resources = {
       'connection.health.checkedAt': '检查于 {{time}}',
       'connection.health.latency': '{{latency}} 毫秒',
       'connection.action.loginControl': '登录 Agent Room',
+      'connection.authenticationRecovery.title': '这次身份验证未完成',
+      'connection.authenticationRecovery.expired':
+        '登录请求已过期或丢失浏览器绑定。点击继续会重新发起请求；如果身份服务仍记得你刚才的验证，就无需再次输入密码。',
+      'connection.authenticationRecovery.failed': '无法确认身份服务返回的结果，请重新继续验证。',
+      'connection.authenticationRecovery.sessionRetained':
+        '原有账户仍然保持登录，这次权限变更尚未获批。',
+      'connection.authenticationRecovery.retryFailed': '未能打开验证页面，请重试。',
+      'connection.authenticationRecovery.retry': '继续验证',
+      'connection.authenticationRecovery.pending': '正在打开验证…',
+      'connection.authenticationRecovery.return': '返回房间',
       'connection.action.loginMatrix': '重新连接对话',
       'connection.action.reconnect': '重新连接',
       'connection.action.retry': '立即重试',

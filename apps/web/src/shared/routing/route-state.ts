@@ -18,6 +18,7 @@ export const contextIdentifierSchema = z
   .regex(/^[^\s\\?#]+$/u);
 
 export type ConnectSearch = {
+  readonly authentication?: 'expired' | 'failed';
   readonly returnTo?: string;
 };
 
@@ -35,7 +36,12 @@ export type WorkspaceSearch = {
 
 export function normalizeConnectSearch(search: Record<string, unknown>): ConnectSearch {
   const returnTo = typeof search.returnTo === 'string' ? safeInternalPath(search.returnTo) : null;
-  return returnTo === null ? {} : { returnTo };
+  return {
+    ...(returnTo === null ? {} : { returnTo }),
+    ...(search.authentication === 'expired' || search.authentication === 'failed'
+      ? { authentication: search.authentication }
+      : {}),
+  };
 }
 
 export function normalizeLobbySearch(search: Record<string, unknown>): LobbySearch {

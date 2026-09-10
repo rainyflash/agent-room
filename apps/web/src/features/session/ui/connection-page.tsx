@@ -14,6 +14,8 @@ import {
 import { ConnectionRail } from '@/features/session/ui/connection-rail';
 import { ConnectionWorkspace } from '@/features/session/ui/connection-workspace';
 import { useSession } from '@/features/session/ui/session-provider';
+import { authenticationCallbackFailure } from '@/features/session/domain/authentication-callback';
+import { AuthenticationRecovery } from '@/features/session/ui/authentication-recovery';
 
 const eventByAction = {
   login: { type: 'LOGIN' },
@@ -64,6 +66,19 @@ export function ConnectionPage() {
     }
     send(eventByAction[action]);
   };
+
+  const callbackFailure = authenticationCallbackFailure(
+    `${window.location.pathname}${window.location.search}`,
+  );
+  if (callbackFailure !== null) {
+    return (
+      <AuthenticationRecovery
+        gateway={controlPlane}
+        principal={snapshot.context.principal}
+        reason={callbackFailure}
+      />
+    );
+  }
 
   return (
     <div
