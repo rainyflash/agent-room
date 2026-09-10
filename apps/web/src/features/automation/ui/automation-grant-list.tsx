@@ -12,19 +12,15 @@ import type { AgentInstance } from '@/features/security/domain/access-management
 export type AutomationGrantListProps = {
   readonly grants: readonly AutomationGrant[];
   readonly instances: readonly AgentInstance[];
-  readonly onReauthenticate: () => void;
   readonly onRevoke: (grantId: string) => void;
   readonly pendingGrantId: string | null;
-  readonly recentlyAuthenticated: boolean;
 };
 
 export function AutomationGrantList({
   grants,
   instances,
-  onReauthenticate,
   onRevoke,
   pendingGrantId,
-  recentlyAuthenticated,
 }: AutomationGrantListProps) {
   const { i18n, t } = useTranslation();
   const formatter = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
@@ -111,22 +107,16 @@ export function AutomationGrantList({
                   </span>
                 </div>
                 {active ? (
-                  recentlyAuthenticated ? (
-                    <Button
-                      disabled={pendingGrantId !== null}
-                      onClick={() => {
-                        onRevoke(grant.grantId);
-                      }}
-                      size="compact"
-                      tone="alert"
-                    >
-                      {t(pending ? 'automation.action.revoking' : 'automation.action.revoke')}
-                    </Button>
-                  ) : (
-                    <Button onClick={onReauthenticate} size="compact" tone="quiet">
-                      {t('automation.action.reauthenticate')}
-                    </Button>
-                  )
+                  <Button
+                    disabled={pendingGrantId !== null}
+                    onClick={() => {
+                      onRevoke(grant.grantId);
+                    }}
+                    size="compact"
+                    tone="alert"
+                  >
+                    {t(pending ? 'automation.action.revoking' : 'automation.action.revoke')}
+                  </Button>
                 ) : null}
               </li>
             );

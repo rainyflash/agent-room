@@ -175,7 +175,7 @@ async fn authenticate_write(
     authenticate_session(
         state.authentication.as_ref(),
         jar,
-        AuthenticationRequirement::RecentAuthentication,
+        AuthenticationRequirement::ActiveSession,
         correlation_id,
     )
     .await

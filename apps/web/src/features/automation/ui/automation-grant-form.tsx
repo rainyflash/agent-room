@@ -29,9 +29,7 @@ export type AutomationGrantFormProps = {
   readonly instances: readonly AgentInstance[];
   readonly initialDraft?: AutomationGrantDraftInput;
   readonly onCreate: (input: CreateAutomationGrantInput) => void;
-  readonly onReauthenticate: (draft: AutomationGrantDraftInput) => void;
   readonly pending: boolean;
-  readonly recentlyAuthenticated: boolean;
   readonly roomName: string;
 };
 
@@ -40,9 +38,7 @@ export function AutomationGrantForm({
   instances,
   initialDraft,
   onCreate,
-  onReauthenticate,
   pending,
-  recentlyAuthenticated,
   roomName,
 }: AutomationGrantFormProps) {
   const { t } = useTranslation();
@@ -107,12 +103,6 @@ export function AutomationGrantForm({
     requiresRiskScan,
     roomCatalogId: catalogId,
   });
-
-  const reauthenticate = (): void => {
-    const draft = automationGrantDraftInputSchema.safeParse(draftCandidate());
-    setInvalid(!draft.success);
-    if (draft.success) onReauthenticate(draft.data);
-  };
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -337,26 +327,14 @@ export function AutomationGrantForm({
           ) : null}
 
           <div className="automation-form__action">
-            {recentlyAuthenticated ? (
-              <Button
-                disabled={pending || !impactAcknowledged}
-                size="default"
-                tone="primary"
-                type="submit"
-              >
-                {t(pending ? 'automation.action.creating' : 'automation.action.create')}
-              </Button>
-            ) : (
-              <div className="automation-reauth">
-                <div>
-                  <strong>{t('automation.recentAuth.title')}</strong>
-                  <p>{t('automation.recentAuth.detail')}</p>
-                </div>
-                <Button onClick={reauthenticate} size="default" tone="primary" type="button">
-                  {t('automation.action.reauthenticate')}
-                </Button>
-              </div>
-            )}
+            <Button
+              disabled={pending || !impactAcknowledged}
+              size="default"
+              tone="primary"
+              type="submit"
+            >
+              {t(pending ? 'automation.action.creating' : 'automation.action.create')}
+            </Button>
           </div>
         </>
       )}

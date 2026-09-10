@@ -44,8 +44,6 @@ export function LobbyRoomActions({
         accessManagement={accessManagement}
         automation={automation}
         catalogId={catalogId}
-        onReauthenticate={reauthenticate}
-        recentlyAuthenticated={principal.recentlyAuthenticated}
         roomName={roomName}
       />
       <Button

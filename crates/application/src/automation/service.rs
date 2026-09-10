@@ -82,7 +82,10 @@ impl AutomationService {
     ) -> AutomationResult<AutomationGrantRecord> {
         const OPERATION: &str = "automation.create";
         let now = self.clock.now();
-        require_recent_actor(&request.actor, now, request.impact_acknowledged, OPERATION)?;
+        require_active_actor(&request.actor, now, OPERATION)?;
+        if !request.impact_acknowledged {
+            return Err(failure(OPERATION, AutomationFailureKind::Forbidden));
+        }
         let authority = AutomationScopeAuthorityRequest {
             principal_id: request.actor.principal_id,
             agent_id: request.scope.agent_id(),
@@ -140,7 +143,7 @@ impl AutomationService {
     ) -> AutomationResult<AutomationGrantRecord> {
         const OPERATION: &str = "automation.revoke";
         let now = self.clock.now();
-        require_recent_actor(&request.actor, now, true, OPERATION)?;
+        require_active_actor(&request.actor, now, OPERATION)?;
         match self
             .grants
             .revoke(request.actor.principal_id, request.grant_id, now)
@@ -522,19 +525,6 @@ fn require_active_actor(
     operation: &'static str,
 ) -> AutomationResult<()> {
     if now >= actor.expires_at {
-        return Err(failure(operation, AutomationFailureKind::Forbidden));
-    }
-    Ok(())
-}
-
-fn require_recent_actor(
-    actor: &crate::authentication::AuthenticatedPrincipal,
-    now: agent_room_domain::time::UtcMillis,
-    impact_acknowledged: bool,
-    operation: &'static str,
-) -> AutomationResult<()> {
-    require_active_actor(actor, now, operation)?;
-    if !actor.recently_authenticated || !impact_acknowledged {
         return Err(failure(operation, AutomationFailureKind::Forbidden));
     }
     Ok(())

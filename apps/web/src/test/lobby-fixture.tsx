@@ -802,7 +802,9 @@ function LobbyFixture() {
                   locale: 'en',
                   matrixUserId: '@fixture:matrix.test',
                   principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-                  recentlyAuthenticated: true,
+                  recentlyAuthenticated: !new URLSearchParams(window.location.search).has(
+                    'olderSession',
+                  ),
                 }}
                 roomId={room.roomId}
                 selectedAgentId={selectedAgentId}
