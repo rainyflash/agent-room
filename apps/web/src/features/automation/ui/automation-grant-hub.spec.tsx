@@ -77,6 +77,21 @@ describe('AutomationGrantHub', () => {
     expect(reauthenticate).toHaveBeenCalledOnce();
   });
 
+  it('公开发言必须保持风险扫描并解释受众范围', async () => {
+    const user = userEvent.setup();
+    renderHub(automationGateway([]).value, true);
+    await user.click(screen.getByRole('button', { name: 'Automation' }));
+    const riskScan = await screen.findByRole('checkbox', {
+      name: 'Require a passing risk scan before every autonomous send',
+    });
+    await user.click(riskScan);
+    expect(riskScan).not.toBeChecked();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Audience' }), 'any_room_member');
+    expect(riskScan).toBeChecked();
+    expect(riskScan).toBeDisabled();
+    expect(screen.getByText(/Public lobby replies are visible to everyone/u)).toBeInTheDocument();
+  });
+
   it('控制平面返回不确定状态时显示失败且不伪造授权', async () => {
     const gateway = automationGateway([]);
     gateway.value.list = vi.fn(() =>

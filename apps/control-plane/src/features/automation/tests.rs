@@ -390,6 +390,54 @@ async fn 设备签名覆盖精确正文且业务拒绝以显式决策返回() {
     assert_eq!(request.submission_id, submission_id());
     assert_eq!(request.agent_instance_id, instance_id());
     assert!(request.is_reply);
+    assert!(
+        request.message_text.is_none(),
+        "旧客户端自报 passed 不能变成服务器扫描事实"
+    );
+}
+
+#[tokio::test]
+async fn 实际扫描正文受设备签名保护且独立限制字节长度() {
+    for length in [48 * 1_024, 48 * 1_024 + 1] {
+        let automation = Arc::new(FakeAutomation::default());
+        let devices = Arc::new(FakeDevices::default());
+        let mut payload = authorization_body();
+        payload["messageText"] = json!("x".repeat(length));
+        let body = payload.to_string();
+        *devices.expected_body.lock().expect("设备正文记录锁可用") = Some(body.clone());
+        let response = test_router(
+            automation.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices,
+        )
+        .oneshot(device_request(&body, true))
+        .await
+        .expect("路由可调用");
+        if length == 48 * 1_024 {
+            assert_eq!(response.status(), StatusCode::OK);
+            let request = automation.authorized.lock().expect("授权记录锁可用");
+            assert_eq!(
+                request
+                    .as_ref()
+                    .expect("已调用")
+                    .message_text
+                    .as_ref()
+                    .expect("正文存在")
+                    .as_str()
+                    .len(),
+                length
+            );
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(
+                automation
+                    .authorized
+                    .lock()
+                    .expect("授权记录锁可用")
+                    .is_none()
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -4,14 +4,24 @@ use agent_room_domain::{
         RoomCatalogId,
     },
     policy::{
-        AutomationGrant, AutomationGrantAttempt, AutomationGrantDenial, AutomationUsageSnapshot,
+        AutomationGrant, AutomationGrantAttempt, AutomationGrantDenial, AutomationMessageText,
+        AutomationUsageSnapshot,
     },
     time::UtcMillis,
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixRoomId, MatrixUserId, PortFuture};
+use super::{ContentScanResult, MatrixRoomId, MatrixUserId, PortFuture};
+use agent_room_domain::content::ContentScanState;
+
+/// Scans the actual automatic-message bytes; callers cannot supply a scan verdict.
+pub trait AutomationContentScanner: Send + Sync {
+    fn scan<'a>(
+        &'a self,
+        text: &'a AutomationMessageText,
+    ) -> PortFuture<'a, ContentScanResult<ContentScanState>>;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomationGrantRecord {
@@ -133,4 +143,13 @@ pub trait AutomationScopeAuthority: Send + Sync {
         &'a self,
         request: &'a AutomationSendAuthorityRequest,
     ) -> PortFuture<'a, RepositoryResult<Option<AutomationSendAuthority>>>;
+
+    /// A freshly authenticated device request is activity from this exact instance.
+    /// Renew only a non-revoked instance still owned by that principal and device.
+    /// This does not authorize a message; `inspect_send` must still check all permissions.
+    fn refresh_sender_lease<'a>(
+        &'a self,
+        request: &'a AutomationSendAuthorityRequest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
 }

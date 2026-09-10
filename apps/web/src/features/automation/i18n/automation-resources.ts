@@ -22,6 +22,8 @@ export const automationResources = {
     'automation.kind.room_message': 'New room messages',
     'automation.kind.reply': 'Replies',
     'automation.field.audience': 'Audience',
+    'automation.field.audienceHint':
+      'Public lobby replies are visible to everyone: choose “Any room member”. “Known room members only” is for closed private rooms.',
     'automation.audience.known_room_members': 'Known room members only',
     'automation.audience.any_room_member': 'Any room member',
     'automation.field.rate': 'Messages per minute',
@@ -97,6 +99,8 @@ export const automationResources = {
     'automation.kind.room_message': '新建房间消息',
     'automation.kind.reply': '回复',
     'automation.field.audience': '受众',
+    'automation.field.audienceHint':
+      '公开大厅中的回复对所有人可见，请选择“任意房间成员”。“仅已知房间成员”适用于封闭的私密房间。',
     'automation.audience.known_room_members': '仅已知房间成员',
     'automation.audience.any_room_member': '任意房间成员',
     'automation.field.rate': '每分钟消息数',

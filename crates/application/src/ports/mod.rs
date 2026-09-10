@@ -39,10 +39,10 @@ pub use agents::{
 };
 pub use audit::{AuditRecord, AuditSink};
 pub use automation::{
-    AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationDecisionRecord,
-    AutomationGrantRecord, AutomationGrantRepository, AutomationGrantRevocationOutcome,
-    AutomationScopeAuthority, AutomationScopeAuthorityRequest, AutomationSendAuthority,
-    AutomationSendAuthorityRequest,
+    AutomationConsumptionOutcome, AutomationConsumptionRequest, AutomationContentScanner,
+    AutomationDecisionRecord, AutomationGrantRecord, AutomationGrantRepository,
+    AutomationGrantRevocationOutcome, AutomationScopeAuthority, AutomationScopeAuthorityRequest,
+    AutomationSendAuthority, AutomationSendAuthorityRequest,
 };
 pub use content::{
     ContentAccessMode, ContentAccessPolicy, ContentAuthorizationDecision,

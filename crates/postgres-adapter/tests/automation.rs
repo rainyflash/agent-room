@@ -100,6 +100,47 @@ async fn 自动发言作用域每次读取当前产品权限() {
         "实例离线后必须立即失败关闭"
     );
 
+    let now = database_now(&database.runtime).await;
+    let mut wrong_device = send_request.clone();
+    wrong_device.device_id = DeviceId::from_uuid(Uuid::now_v7());
+    AutomationScopeAuthority::refresh_sender_lease(&repositories, &wrong_device, now)
+        .await
+        .expect("错误设备不会更新实例");
+    assert!(
+        AutomationScopeAuthority::inspect_send(&repositories, &send_request)
+            .await
+            .expect("查询原实例")
+            .is_none()
+    );
+
+    for status in ["connecting", "degraded", "offline"] {
+        sqlx::query("UPDATE agent_room.agent_instance SET status = $2, lease_expires_at = NULL WHERE id = $1")
+            .bind(fixture.instance.as_uuid()).bind(status).execute(&database.runtime)
+            .await.expect("模拟新实例或掉线后恢复");
+        AutomationScopeAuthority::refresh_sender_lease(&repositories, &send_request, now)
+            .await
+            .expect("已认证的原设备可以恢复实例租约");
+        assert!(
+            AutomationScopeAuthority::inspect_send(&repositories, &send_request)
+                .await
+                .expect("查询恢复实例")
+                .is_some(),
+            "{status} 实例应由真实活动恢复"
+        );
+    }
+
+    sqlx::query("UPDATE agent_room.agent_instance SET status = 'revoked', lease_expires_at = NULL, revoked_at = clock_timestamp() WHERE id = $1")
+        .bind(fixture.instance.as_uuid()).execute(&database.runtime).await.expect("撤销实例");
+    AutomationScopeAuthority::refresh_sender_lease(&repositories, &send_request, now)
+        .await
+        .expect("已撤销实例不能被活动恢复");
+    assert!(
+        AutomationScopeAuthority::inspect_send(&repositories, &send_request)
+            .await
+            .expect("查询撤销实例")
+            .is_none()
+    );
+
     database.close().await;
 }
 

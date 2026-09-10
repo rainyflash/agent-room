@@ -1,7 +1,7 @@
 use agent_room_application::ports::{MatrixRoomId, PortFuture};
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, AutomationGrantId, MessageSubmissionId, RoomCatalogId},
-    policy::AutomationRiskScanOutcome,
+    policy::AutomationMessageText,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub struct AutomationAuthorizationRequest {
     pub room_catalog_id: RoomCatalogId,
     pub matrix_room_id: MatrixRoomId,
     pub is_reply: bool,
-    pub risk_scan: AutomationRiskScanOutcome,
+    pub message_text: Option<AutomationMessageText>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

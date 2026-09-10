@@ -1,6 +1,6 @@
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, AutomationGrantId, MessageSubmissionId, RoomCatalogId},
-    policy::{AutomationGrantScope, AutomationRiskScanOutcome},
+    policy::{AutomationGrantScope, AutomationMessageText},
     time::DurationMillis,
 };
 
@@ -44,7 +44,7 @@ pub struct AuthorizeAutomationSend {
     pub room_catalog_id: RoomCatalogId,
     pub matrix_room_id: MatrixRoomId,
     pub is_reply: bool,
-    pub risk_scan: AutomationRiskScanOutcome,
+    pub message_text: Option<AutomationMessageText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

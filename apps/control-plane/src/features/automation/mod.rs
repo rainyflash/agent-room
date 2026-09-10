@@ -18,7 +18,8 @@ use axum::{
     routing::{delete, get, post},
 };
 
-const MAX_AUTOMATION_BODY_BYTES: usize = 16 * 1_024;
+// A bounded 48 KiB text can expand sixfold when JSON escapes control characters.
+const MAX_AUTOMATION_BODY_BYTES: usize = 320 * 1_024;
 
 #[derive(Clone)]
 pub(crate) struct AutomationHttpState {

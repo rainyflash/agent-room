@@ -181,12 +181,18 @@ export function AutomationGrantForm({
               </div>
             </fieldset>
 
-            <label className="automation-field">
-              <span>{t('automation.field.audience')}</span>
+            <div className="automation-field">
+              <label htmlFor="automation-audience">{t('automation.field.audience')}</label>
               <select
+                aria-describedby="automation-audience-hint"
                 disabled={pending}
+                id="automation-audience"
                 onChange={(event) => {
-                  setAudience(event.target.value as AutomationAudience);
+                  const next = event.target.value;
+                  if (next === 'known_room_members' || next === 'any_room_member') {
+                    setAudience(next);
+                    if (next === 'any_room_member') setRequiresRiskScan(true);
+                  }
                 }}
                 value={audience}
               >
@@ -195,7 +201,8 @@ export function AutomationGrantForm({
                 </option>
                 <option value="any_room_member">{t('automation.audience.any_room_member')}</option>
               </select>
-            </label>
+              <small id="automation-audience-hint">{t('automation.field.audienceHint')}</small>
+            </div>
 
             <label className="automation-field">
               <span>{t('automation.field.lifetime')}</span>
@@ -250,7 +257,7 @@ export function AutomationGrantForm({
           <label className="automation-switch">
             <input
               checked={requiresRiskScan}
-              disabled={pending}
+              disabled={pending || audience === 'any_room_member'}
               onChange={(event) => {
                 setRequiresRiskScan(event.target.checked);
               }}
