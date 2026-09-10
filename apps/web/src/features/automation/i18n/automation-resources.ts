@@ -50,12 +50,8 @@ export const automationResources = {
     'automation.action.creating': 'Creating…',
     'automation.action.revoke': 'Revoke',
     'automation.action.revoking': 'Revoking…',
-    'automation.action.reauthenticate': 'Verify identity again',
     'automation.draft.failed':
-      'The draft could not be saved or restored on this device. Keep this page open and check browser storage before continuing verification.',
-    'automation.recentAuth.title': 'Verify this permission change',
-    'automation.recentAuth.detail':
-      'Your account remains signed in. Changing Agent permissions requires a recent identity check. Your grant settings will be kept when you return.',
+      'This device could not save or restore the draft. Keep this page open to avoid losing your settings.',
     'automation.validation': 'Complete every required scope and acknowledge the impact.',
     'automation.noInstances.title': 'No eligible Agent instance',
     'automation.noInstances.detail':
@@ -128,12 +124,7 @@ export const automationResources = {
     'automation.action.creating': '正在创建…',
     'automation.action.revoke': '撤销',
     'automation.action.revoking': '正在撤销…',
-    'automation.action.reauthenticate': '重新验证身份',
-    'automation.draft.failed':
-      '此设备无法保存或恢复草稿。请保留当前页面，检查浏览器存储后再继续验证。',
-    'automation.recentAuth.title': '验证这次权限变更',
-    'automation.recentAuth.detail':
-      '你的账户仍然保持登录。修改 Agent 权限需要近期身份验证，返回后会保留已填写的授权设置。',
+    'automation.draft.failed': '此设备无法保存或恢复草稿。请保留当前页面，以免丢失已填写的设置。',
     'automation.validation': '请补全全部必填范围并确认影响。',
     'automation.noInstances.title': '没有符合条件的 Agent 实例',
     'automation.noInstances.detail':

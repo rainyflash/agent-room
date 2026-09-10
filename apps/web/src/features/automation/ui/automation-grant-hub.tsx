@@ -33,8 +33,6 @@ export type AutomationGrantHubProps = {
   readonly automation: AutomationGrantGateway;
   readonly catalogId: string;
   readonly principalId: string;
-  readonly onReauthenticate: () => void;
-  readonly recentlyAuthenticated: boolean;
   readonly roomName: string;
 };
 
@@ -47,8 +45,6 @@ export function AutomationGrantHub({
   automation,
   catalogId,
   principalId,
-  onReauthenticate,
-  recentlyAuthenticated,
   roomName,
 }: AutomationGrantHubProps) {
   const { t } = useTranslation();
@@ -232,9 +228,7 @@ export function AutomationGrantHub({
                           {t('automation.draft.failed')}
                         </p>
                       ) : null}
-                      {failure === null ? null : (
-                        <AutomationFailure failure={failure} onReauthenticate={onReauthenticate} />
-                      )}
+                      {failure === null ? null : <AutomationFailure failure={failure} />}
                       <AutomationGrantForm
                         catalogId={catalogId}
                         instances={instances}
@@ -243,24 +237,16 @@ export function AutomationGrantHub({
                           setDraftFailure(!saveAutomationGrantDraft(principalId, input).ok);
                           mutation.mutate({ input, kind: 'create' });
                         }}
-                        onReauthenticate={(draft) => {
-                          const saved = saveAutomationGrantDraft(principalId, draft);
-                          setDraftFailure(!saved.ok);
-                          if (saved.ok) onReauthenticate();
-                        }}
                         pending={mutation.isPending}
-                        recentlyAuthenticated={recentlyAuthenticated}
                         roomName={roomName}
                       />
                       <AutomationGrantList
                         grants={roomGrants}
                         instances={instances}
-                        onReauthenticate={onReauthenticate}
                         onRevoke={(grantId) => {
                           mutation.mutate({ grantId, kind: 'revoke' });
                         }}
                         pendingGrantId={pendingGrantId}
-                        recentlyAuthenticated={recentlyAuthenticated}
                       />
                     </>
                   )}
@@ -275,15 +261,8 @@ export function AutomationGrantHub({
   );
 }
 
-function AutomationFailure({
-  failure,
-  onReauthenticate,
-}: {
-  readonly failure: AutomationGrantFailure;
-  readonly onReauthenticate: () => void;
-}) {
+function AutomationFailure({ failure }: { readonly failure: AutomationGrantFailure }) {
   const { t } = useTranslation();
-  const reauthenticationRequired = failure.code === 'authentication.reauthentication_required';
   return (
     <p className="automation-inline-failure" role="alert">
       <CircleAlert aria-hidden="true" />
@@ -291,11 +270,6 @@ function AutomationFailure({
         {t('automation.failure', { code: failure.code })}
         {failure.correlationId === undefined ? null : ` · ${failure.correlationId}`}
       </span>
-      {reauthenticationRequired ? (
-        <Button onClick={onReauthenticate} size="compact" tone="quiet">
-          {t('automation.action.reauthenticate')}
-        </Button>
-      ) : null}
     </p>
   );
 }

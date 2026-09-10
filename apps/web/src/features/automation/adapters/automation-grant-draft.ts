@@ -46,7 +46,7 @@ export function saveAutomationGrantDraft(
 ): Result<void, 'storage'> {
   try {
     const candidate = draftSchema.safeParse({
-      // Persist settings only; acknowledgement must be given again after verification.
+      // Persist settings only; restoring a draft must not authorize publication.
       input: automationGrantDraftInputSchema.strip().parse(input),
       principalId,
       returnPath: `${window.location.pathname}${window.location.search}${window.location.hash}`,

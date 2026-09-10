@@ -216,7 +216,7 @@ impl DeviceAuthorizationUseCases for FakeDevices {
 }
 
 #[tokio::test]
-async fn 创建授权要求同源近期认证并完整映射限制() {
+async fn 创建授权只要求同源有效登录并完整映射限制() {
     let automation = Arc::new(FakeAutomation::default());
     let authentication = Arc::new(FakeAuthentication::default());
     let response = test_router(
@@ -245,7 +245,7 @@ async fn 创建授权要求同源近期认证并完整映射限制() {
             .lock()
             .expect("认证要求记录锁可用")
             .as_slice(),
-        &[AuthenticationRequirement::RecentAuthentication]
+        &[AuthenticationRequirement::ActiveSession]
     );
     let request = automation
         .created
@@ -261,6 +261,7 @@ async fn 创建授权要求同源近期认证并完整映射限制() {
     assert_eq!(request.max_total_messages, Some(240));
     assert_eq!(request.lifetime.value(), 3_600_000);
     assert!(request.impact_acknowledged);
+    assert!(!request.actor.recently_authenticated);
 }
 
 #[tokio::test]
@@ -299,7 +300,54 @@ async fn 错误来源在认证和创建用例之前失败关闭() {
 }
 
 #[tokio::test]
-async fn 列表与撤销分别要求活动会话和近期认证() {
+async fn 创建和撤销仍拒绝缺失登录或无效来源() {
+    for (method, target) in [
+        (Method::POST, "/automation-grants".to_owned()),
+        (Method::DELETE, format!("/automation-grants/{GRANT_UUID}")),
+    ] {
+        for (missing_session, origin) in [
+            (true, Some(FRONTEND_ORIGIN)),
+            (false, None),
+            (false, Some("https://evil.test")),
+        ] {
+            let automation = Arc::new(FakeAutomation::default());
+            let authentication = Arc::new(FakeAuthentication::default());
+            let mut request =
+                session_request(method.clone(), &target, &creation_body(), true, true);
+            if missing_session {
+                request.headers_mut().remove(header::COOKIE);
+            }
+            request.headers_mut().remove(header::ORIGIN);
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert(header::ORIGIN, header::HeaderValue::from_static(origin));
+            }
+            let response = test_router(
+                automation.clone(),
+                authentication.clone(),
+                Arc::new(FakeDevices::default()),
+            )
+            .oneshot(request)
+            .await
+            .expect("路由可调用");
+            assert_eq!(
+                response.status(),
+                if missing_session {
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            );
+            assert_eq!(authentication.attempts.load(Ordering::SeqCst), 0);
+            assert!(automation.created.lock().expect("创建记录锁可用").is_none());
+            assert!(automation.revoked.lock().expect("撤销记录锁可用").is_none());
+        }
+    }
+}
+
+#[tokio::test]
+async fn 列表与撤销都只要求有效登录() {
     let automation = Arc::new(FakeAutomation::default());
     let authentication = Arc::new(FakeAuthentication::default());
     let app = test_router(
@@ -339,7 +387,7 @@ async fn 列表与撤销分别要求活动会话和近期认证() {
             .as_slice(),
         &[
             AuthenticationRequirement::ActiveSession,
-            AuthenticationRequirement::RecentAuthentication,
+            AuthenticationRequirement::ActiveSession,
         ]
     );
     assert_eq!(automation.listed.load(Ordering::SeqCst), 1);
@@ -600,7 +648,7 @@ fn authenticated_principal() -> AuthenticatedPrincipal {
         locale: "zh-CN".to_owned(),
         authenticated_at: time(1_700_000_000_000),
         expires_at: time(1_700_000_900_000),
-        recently_authenticated: true,
+        recently_authenticated: false,
     }
 }
 

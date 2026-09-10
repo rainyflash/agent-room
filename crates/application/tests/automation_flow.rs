@@ -161,7 +161,7 @@ impl AutomationGrantRepository for FakeGrants {
 }
 
 struct FakeAuthority {
-    may_create: bool,
+    may_create: Mutex<bool>,
     send: Mutex<Option<AutomationSendAuthority>>,
     calls: Arc<Mutex<Vec<&'static str>>>,
 }
@@ -184,7 +184,7 @@ impl AutomationScopeAuthority for FakeAuthority {
             .lock()
             .expect("调用顺序锁可用")
             .push("scope_create");
-        let allowed = self.may_create;
+        let allowed = *self.may_create.lock().expect("创建权威锁可用");
         Box::pin(async move { Ok(allowed) })
     }
 
@@ -259,7 +259,7 @@ impl Fixture {
             calls.clone(),
         ));
         let authority = Arc::new(FakeAuthority {
-            may_create: true,
+            may_create: Mutex::new(true),
             send: Mutex::new(Some(AutomationSendAuthority {
                 agent_matrix_user_id: matrix_user_id(),
                 contains_unknown_recipients: false,
@@ -294,7 +294,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn 创建授权同时要求影响确认近期认证和当前作用域权威() {
+async fn 已登录用户无需近期认证即可确认并创建精确授权() {
     let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
     let mut request = create_request();
     request.impact_acknowledged = false;
@@ -310,11 +310,91 @@ async fn 创建授权同时要求影响确认近期认证和当前作用域权�
         .service
         .create(create_request())
         .await
-        .expect("近期认证且权威允许时可创建");
+        .expect("登录有效且确认范围后可直接创建");
     assert_eq!(created.grant.grantor_id(), principal_id());
     assert_eq!(
         *fixture.calls.lock().expect("调用顺序锁可用"),
         ["scope_create", "create"]
+    );
+}
+
+#[tokio::test]
+async fn 过期会话不能创建或撤销授权() {
+    let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
+    let mut request = create_request();
+    request.actor.expires_at = time(NOW);
+    let actor = request.actor.clone();
+    let created = fixture
+        .service
+        .create(request)
+        .await
+        .expect_err("过期会话不能创建");
+    assert_eq!(created.kind(), AutomationFailureKind::Forbidden);
+    assert!(fixture.calls.lock().expect("调用顺序锁可用").is_empty());
+    let revoked = fixture
+        .service
+        .revoke(RevokeAutomationGrant {
+            actor,
+            grant_id: grant_id(),
+        })
+        .await
+        .expect_err("过期会话不能撤销");
+    assert_eq!(revoked.kind(), AutomationFailureKind::Forbidden);
+    assert_eq!(
+        fixture
+            .grants
+            .record
+            .lock()
+            .expect("授权锁可用")
+            .as_ref()
+            .expect("授权仍存在")
+            .grant
+            .status(),
+        AutomationGrantStatus::Active
+    );
+}
+
+#[tokio::test]
+async fn 登录有效仍不能授予超出自己权威的范围() {
+    let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
+    *fixture.authority.may_create.lock().expect("创建权威锁可用") = false;
+    let failed = fixture
+        .service
+        .create(create_request())
+        .await
+        .expect_err("必须有作用域权威");
+    assert_eq!(failed.kind(), AutomationFailureKind::Forbidden);
+    assert_eq!(
+        *fixture.calls.lock().expect("调用顺序锁可用"),
+        ["scope_create"]
+    );
+}
+
+#[tokio::test]
+async fn 登录有效仍不能撤销他人的授权() {
+    let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
+    let mut actor = web_actor(false);
+    actor.principal_id = PrincipalId::from_uuid(uuid("0198b601-77a1-7bb8-83eb-a8fe68c97e49"));
+    let failed = fixture
+        .service
+        .revoke(RevokeAutomationGrant {
+            actor,
+            grant_id: grant_id(),
+        })
+        .await
+        .expect_err("不能撤销他人授权");
+    assert_eq!(failed.kind(), AutomationFailureKind::NotFound);
+    assert_eq!(
+        fixture
+            .grants
+            .record
+            .lock()
+            .expect("授权锁可用")
+            .as_ref()
+            .expect("授权仍存在")
+            .grant
+            .status(),
+        AutomationGrantStatus::Active
     );
 }
 
@@ -548,12 +628,12 @@ async fn 扫描服务不可用可恢复且不把失败算作已发送() {
 }
 
 #[tokio::test]
-async fn 撤销幂等且下一次发送无需_agent_配合就被阻止() {
+async fn 无需近期认证即可幂等撤销且下一次发送立即被阻止() {
     let fixture = Fixture::new(grant(AutomationAudience::KnownRoomMembers, false));
     let first = fixture
         .service
         .revoke(RevokeAutomationGrant {
-            actor: web_actor(true),
+            actor: web_actor(false),
             grant_id: grant_id(),
         })
         .await
@@ -561,7 +641,7 @@ async fn 撤销幂等且下一次发送无需_agent_配合就被阻止() {
     let second = fixture
         .service
         .revoke(RevokeAutomationGrant {
-            actor: web_actor(true),
+            actor: web_actor(false),
             grant_id: grant_id(),
         })
         .await
@@ -584,7 +664,7 @@ async fn 撤销幂等且下一次发送无需_agent_配合就被阻止() {
 
 fn create_request() -> CreateAutomationGrant {
     CreateAutomationGrant {
-        actor: web_actor(true),
+        actor: web_actor(false),
         grant_id: grant_id(),
         scope: scope(AutomationAudience::KnownRoomMembers, false),
         max_messages_per_minute: 2,
@@ -641,7 +721,7 @@ fn web_actor(recently_authenticated: bool) -> AuthenticatedPrincipal {
         matrix_user_id: "@owner:matrix.test".to_owned(),
         display_name: "测试用户".to_owned(),
         locale: "zh-CN".to_owned(),
-        authenticated_at: time(NOW - 1_000),
+        authenticated_at: time(NOW - 24 * 60 * 60 * 1_000),
         expires_at: time(NOW + 60_000),
         recently_authenticated,
     }

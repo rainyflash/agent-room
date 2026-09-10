@@ -34,11 +34,11 @@ afterEach(() => {
 });
 
 describe('AutomationGrantHub', () => {
-  it('验证返回后恢复同一账户的精确授权草稿，重新确认后才创建并清理草稿', async () => {
+  it('提交失败后保留精确授权草稿，刷新后重新确认即可重试', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
-    const reauthenticate = vi.fn();
-    renderHub(gateway.value, false, reauthenticate);
+    gateway.create.mockResolvedValueOnce(err({ code: 'automation.unreachable', retryable: true }));
+    renderHub(gateway.value);
     await user.click(screen.getByRole('button', { name: 'Automation' }));
     await screen.findByRole('heading', { name: 'New bounded grant' });
     await user.click(screen.getByRole('checkbox', { name: 'New room messages' }));
@@ -49,11 +49,21 @@ describe('AutomationGrantHub', () => {
     await user.clear(screen.getByRole('spinbutton', { name: /Maximum total messages/u }));
     await user.type(screen.getByRole('spinbutton', { name: /Maximum total messages/u }), '20');
     await user.selectOptions(screen.getByRole('combobox', { name: /Lifetime/u }), '3600');
-    await user.click(screen.getByRole('button', { name: 'Verify identity again' }));
-    expect(reauthenticate).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'I understand this Agent can send without per-message approval.',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await screen.findByRole('alert');
+    expect(gateway.create).toHaveBeenCalledOnce();
+    expect(readAutomationGrantDraft(AGENT_ID)).toMatchObject({
+      ok: true,
+      value: { input: { messageKinds: ['reply'], maxTotalMessages: 20 } },
+    });
     expect(readAutomationGrantDraft(GRANT_ID)).toEqual(ok(null));
     cleanup();
-    renderHub(gateway.value, true);
+    renderHub(gateway.value);
     await screen.findByRole('heading', { name: 'New bounded grant' });
     expect(screen.getByRole('checkbox', { name: 'Replies' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'New room messages' })).not.toBeChecked();
@@ -62,7 +72,7 @@ describe('AutomationGrantHub', () => {
     expect(screen.getByRole('spinbutton', { name: /Maximum total messages/u })).toHaveValue(20);
     expect(screen.getByRole('combobox', { name: /Lifetime/u })).toHaveValue('3600');
     expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
-    expect(gateway.create).not.toHaveBeenCalled();
+    expect(gateway.create).toHaveBeenCalledOnce();
     await user.click(
       screen.getByRole('checkbox', {
         name: 'I understand this Agent can send without per-message approval.',
@@ -70,9 +80,9 @@ describe('AutomationGrantHub', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Create grant' }));
     await waitFor(() => {
-      expect(gateway.create).toHaveBeenCalledOnce();
+      expect(gateway.create).toHaveBeenCalledTimes(2);
     });
-    expect(gateway.create.mock.calls[0]?.[1]).toMatchObject({
+    expect(gateway.create.mock.calls[1]?.[1]).toMatchObject({
       agentInstanceId: INSTANCE_ID,
       messageKinds: ['reply'],
       maxMessagesPerMinute: 3,
@@ -84,7 +94,7 @@ describe('AutomationGrantHub', () => {
   it('默认关闭，明确确认影响后才提交精确实例授权', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
-    renderHub(gateway.value, true);
+    renderHub(gateway.value);
 
     await user.click(screen.getByRole('button', { name: 'Automation' }));
     expect(await screen.findByRole('heading', { name: 'New bounded grant' })).toBeInTheDocument();
@@ -115,22 +125,29 @@ describe('AutomationGrantHub', () => {
     expect(await screen.findByText('Local Agent')).toBeInTheDocument();
   });
 
-  it('近期认证缺失时不展示可提交写入并提供重新验证入口', async () => {
+  it('权限面板不要求再次验证身份，创建后可直接撤销', async () => {
     const user = userEvent.setup();
-    const reauthenticate = vi.fn();
-    renderHub(automationGateway([]).value, false, reauthenticate);
+    const gateway = automationGateway([]);
+    renderHub(gateway.value);
 
     await user.click(screen.getByRole('button', { name: 'Automation' }));
-    const action = await screen.findByRole('button', { name: 'Verify identity again' });
-    expect(screen.queryByRole('button', { name: 'Create grant' })).not.toBeInTheDocument();
-
-    await user.click(action);
-    expect(reauthenticate).toHaveBeenCalledOnce();
+    await screen.findByRole('button', { name: 'Create grant' });
+    expect(screen.queryByRole('button', { name: 'Verify identity again' })).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'I understand this Agent can send without per-message approval.',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await user.click(await screen.findByRole('button', { name: 'Revoke' }));
+    await screen.findByText('Revoked');
+    expect(gateway.revoke).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
   });
 
   it('公开发言必须保持风险扫描并解释受众范围', async () => {
     const user = userEvent.setup();
-    renderHub(automationGateway([]).value, true);
+    renderHub(automationGateway([]).value);
     await user.click(screen.getByRole('button', { name: 'Automation' }));
     const riskScan = await screen.findByRole('checkbox', {
       name: 'Require a passing risk scan before every autonomous send',
@@ -149,7 +166,7 @@ describe('AutomationGrantHub', () => {
       Promise.resolve(err({ code: 'automation.unreachable', retryable: true })),
     );
     const user = userEvent.setup();
-    renderHub(gateway.value, true);
+    renderHub(gateway.value);
 
     await user.click(screen.getByRole('button', { name: 'Automation' }));
 
@@ -158,11 +175,7 @@ describe('AutomationGrantHub', () => {
   });
 });
 
-function renderHub(
-  automation: AutomationGrantGateway,
-  recentlyAuthenticated: boolean,
-  onReauthenticate: () => void = vi.fn(),
-) {
+function renderHub(automation: AutomationGrantGateway) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -174,8 +187,6 @@ function renderHub(
           accessManagement={accessManagement}
           automation={automation}
           catalogId={ROOM_ID}
-          onReauthenticate={onReauthenticate}
-          recentlyAuthenticated={recentlyAuthenticated}
           roomName="Builders"
         />
       </QueryClientProvider>
@@ -185,35 +196,43 @@ function renderHub(
 
 function automationGateway(initial: readonly AutomationGrant[]) {
   let grants = [...initial];
-  const create = vi.fn((grantId: string, input: CreateAutomationGrantInput) => {
-    const created: AutomationGrant = {
-      agentId: input.agentId,
-      agentInstanceId: input.agentInstanceId ?? null,
-      audience: input.audience,
-      expiresAtUnixMs: Date.now() + input.lifetimeSeconds * 1_000,
-      grantId: grantId === '' ? GRANT_ID : grantId,
-      maxMessagesPerMinute: input.maxMessagesPerMinute,
-      maxTotalMessages: input.maxTotalMessages ?? null,
-      messageKinds: input.messageKinds,
-      messagesInCurrentMinute: 0,
-      requiresRiskScan: input.requiresRiskScan,
-      revokedAtUnixMs: null,
-      roomCatalogId: input.roomCatalogId,
-      startsAtUnixMs: Date.now(),
-      status: 'active',
-      totalMessages: 0,
-    };
-    grants = [created, ...grants];
-    return Promise.resolve(ok(created));
+  const create = vi.fn<AutomationGrantGateway['create']>(
+    (grantId: string, input: CreateAutomationGrantInput) => {
+      const created: AutomationGrant = {
+        agentId: input.agentId,
+        agentInstanceId: input.agentInstanceId ?? null,
+        audience: input.audience,
+        expiresAtUnixMs: Date.now() + input.lifetimeSeconds * 1_000,
+        grantId: grantId === '' ? GRANT_ID : grantId,
+        maxMessagesPerMinute: input.maxMessagesPerMinute,
+        maxTotalMessages: input.maxTotalMessages ?? null,
+        messageKinds: input.messageKinds,
+        messagesInCurrentMinute: 0,
+        requiresRiskScan: input.requiresRiskScan,
+        revokedAtUnixMs: null,
+        roomCatalogId: input.roomCatalogId,
+        startsAtUnixMs: Date.now(),
+        status: 'active',
+        totalMessages: 0,
+      };
+      grants = [created, ...grants];
+      return Promise.resolve(ok(created));
+    },
+  );
+  const revoke = vi.fn<AutomationGrantGateway['revoke']>((grantId) => {
+    const grant = grants.find((item) => item.grantId === grantId);
+    if (grant === undefined)
+      return Promise.resolve(err({ code: 'automation.not_found', retryable: false }));
+    const revoked: AutomationGrant = { ...grant, status: 'revoked', revokedAtUnixMs: Date.now() };
+    grants = grants.map((item) => (item.grantId === grantId ? revoked : item));
+    return Promise.resolve(ok(revoked));
   });
   const value: AutomationGrantGateway = {
     create,
     list: vi.fn(() => Promise.resolve(ok(grants))),
-    revoke: vi.fn(() =>
-      Promise.resolve(err({ code: 'automation.test_not_available', retryable: false })),
-    ),
+    revoke,
   };
-  return { create, value };
+  return { create, revoke, value };
 }
 
 const accessManagement: AccessManagementGateway = {

@@ -1545,28 +1545,6 @@
   padding-top: 0.35rem;
 }
 
-.automation-reauth {
-  display: grid;
-  width: 100%;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.85rem;
-  border: 1px solid color-mix(in srgb, var(--color-alert) 28%, var(--ar-ink-18));
-  background: color-mix(in srgb, var(--color-alert) 4%, transparent);
-}
-
-.automation-reauth strong {
-  font-size: 12px;
-}
-
-.automation-reauth p {
-  margin: 0.28rem 0 0;
-  color: var(--ar-ink-48);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .automation-grants__heading {
   margin-bottom: 0.8rem;
 }
@@ -4598,13 +4576,8 @@ p.message-dock__headline {
 
   .automation-form__grid,
   .automation-segmented,
-  .automation-checks,
-  .automation-reauth {
+  .automation-checks {
     grid-template-columns: 1fr;
-  }
-
-  .automation-reauth {
-    align-items: stretch;
   }
 
   .automation-grant-list > li {
