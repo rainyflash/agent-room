@@ -22,11 +22,17 @@ import { AutomationGrantList } from '@/features/automation/ui/automation-grant-l
 import { useAgentInstances } from '@/features/security/data/access-management-queries';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
+import {
+  clearAutomationGrantDraft,
+  readAutomationGrantDraft,
+  saveAutomationGrantDraft,
+} from '@/features/automation/adapters/automation-grant-draft';
 
 export type AutomationGrantHubProps = {
   readonly accessManagement: AccessManagementGateway;
   readonly automation: AutomationGrantGateway;
   readonly catalogId: string;
+  readonly principalId: string;
   readonly onReauthenticate: () => void;
   readonly recentlyAuthenticated: boolean;
   readonly roomName: string;
@@ -40,6 +46,7 @@ export function AutomationGrantHub({
   accessManagement,
   automation,
   catalogId,
+  principalId,
   onReauthenticate,
   recentlyAuthenticated,
   roomName,
@@ -53,7 +60,13 @@ export function AutomationGrantHub({
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
+  const [savedDraft, setSavedDraft] = useState(() => readAutomationGrantDraft(principalId));
+  const initialDraft =
+    savedDraft.ok && savedDraft.value?.input.roomCatalogId === catalogId
+      ? savedDraft.value.input
+      : undefined;
+  const [draftFailure, setDraftFailure] = useState(!savedDraft.ok);
+  const [open, setOpen] = useState(initialDraft !== undefined);
   const grants = grantsQuery.data?.ok === true ? grantsQuery.data.value : [];
   const roomGrants = grants.filter((grant) => grant.roomCatalogId === catalogId);
   const instances =
@@ -68,8 +81,12 @@ export function AutomationGrantHub({
       command.kind === 'create'
         ? await automation.create(identifiers.next(), command.input)
         : await automation.revoke(command.grantId),
-    onSuccess: async (result) => {
+    onSuccess: async (result, command) => {
       if (result.ok) {
+        if (command.kind === 'create') {
+          setDraftFailure(!clearAutomationGrantDraft(principalId, catalogId).ok);
+          setSavedDraft({ ok: true, value: null });
+        }
         await queryClient.invalidateQueries({ queryKey: automationGrantListQueryKey });
       }
     },
@@ -210,16 +227,27 @@ export function AutomationGrantHub({
                     </div>
                   ) : (
                     <>
+                      {draftFailure ? (
+                        <p className="automation-inline-failure" role="alert">
+                          {t('automation.draft.failed')}
+                        </p>
+                      ) : null}
                       {failure === null ? null : (
                         <AutomationFailure failure={failure} onReauthenticate={onReauthenticate} />
                       )}
                       <AutomationGrantForm
                         catalogId={catalogId}
                         instances={instances}
+                        {...(initialDraft === undefined ? {} : { initialDraft })}
                         onCreate={(input) => {
+                          setDraftFailure(!saveAutomationGrantDraft(principalId, input).ok);
                           mutation.mutate({ input, kind: 'create' });
                         }}
-                        onReauthenticate={onReauthenticate}
+                        onReauthenticate={(draft) => {
+                          const saved = saveAutomationGrantDraft(principalId, draft);
+                          setDraftFailure(!saved.ok);
+                          if (saved.ok) onReauthenticate();
+                        }}
                         pending={mutation.isPending}
                         recentlyAuthenticated={recentlyAuthenticated}
                         roomName={roomName}

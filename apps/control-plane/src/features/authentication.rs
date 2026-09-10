@@ -651,7 +651,14 @@ fn login_failure(
             error.code = error.code(),
             "浏览器登录回调失败，返回连接页重新开始"
         );
-        return no_store((jar, Redirect::to(&state.login_failure_redirect)).into_response());
+        let reason = match error.code() {
+            "authentication.missing_login_cookie" | "authentication.invalid_login_state" => {
+                "expired"
+            }
+            _ => "failed",
+        };
+        let destination = format!("{}?authentication={reason}", state.login_failure_redirect);
+        return no_store((jar, Redirect::to(&destination)).into_response());
     }
     no_store((jar, error).into_response())
 }
@@ -1358,10 +1365,14 @@ mod tests {
         assert_eq!(
             response.headers().get(header::LOCATION),
             Some(&header::HeaderValue::from_static(
-                "https://app.agent-room.test/connect"
+                "https://app.agent-room.test/connect?authentication=expired"
             ))
         );
         assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        assert!(set_cookies(&response).iter().all(|cookie| {
+            !cookie.starts_with("__Host-agent-room-session=")
+                && !cookie.starts_with("__Secure-agent-room-desktop-session=")
+        }));
         assert!(
             set_cookies(&response)
                 .iter()

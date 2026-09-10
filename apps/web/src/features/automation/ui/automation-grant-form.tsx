@@ -11,6 +11,10 @@ import {
   type CreateAutomationGrantInput,
 } from '@/features/automation/domain/automation-grant';
 import type { AgentInstance } from '@/features/security/domain/access-management';
+import {
+  automationGrantDraftInputSchema,
+  type AutomationGrantDraftInput,
+} from '@/features/automation/adapters/automation-grant-draft';
 
 const lifetimeOptions = [
   { label: 'hour', seconds: 60 * 60 },
@@ -23,8 +27,9 @@ const lifetimeOptions = [
 export type AutomationGrantFormProps = {
   readonly catalogId: string;
   readonly instances: readonly AgentInstance[];
+  readonly initialDraft?: AutomationGrantDraftInput;
   readonly onCreate: (input: CreateAutomationGrantInput) => void;
-  readonly onReauthenticate: () => void;
+  readonly onReauthenticate: (draft: AutomationGrantDraftInput) => void;
   readonly pending: boolean;
   readonly recentlyAuthenticated: boolean;
   readonly roomName: string;
@@ -33,6 +38,7 @@ export type AutomationGrantFormProps = {
 export function AutomationGrantForm({
   catalogId,
   instances,
+  initialDraft,
   onCreate,
   onReauthenticate,
   pending,
@@ -40,16 +46,34 @@ export function AutomationGrantForm({
   roomName,
 }: AutomationGrantFormProps) {
   const { t } = useTranslation();
-  const [instanceId, setInstanceId] = useState(instances[0]?.agentInstanceId ?? '');
-  const [scope, setScope] = useState<'agent' | 'exact'>('exact');
+  const [instanceId, setInstanceId] = useState(
+    initialDraft?.agentInstanceId ??
+      (initialDraft === undefined
+        ? instances[0]?.agentInstanceId
+        : instances.find((item) => item.agentId === initialDraft.agentId)?.agentInstanceId) ??
+      '',
+  );
+  const [scope, setScope] = useState<'agent' | 'exact'>(
+    initialDraft !== undefined && initialDraft.agentInstanceId === undefined ? 'agent' : 'exact',
+  );
   const [messageKinds, setMessageKinds] = useState<readonly AutomationMessageKind[]>([
-    'room_message',
+    ...(initialDraft?.messageKinds ?? ['room_message']),
   ]);
-  const [audience, setAudience] = useState<AutomationAudience>('known_room_members');
-  const [rate, setRate] = useState('6');
-  const [total, setTotal] = useState('100');
-  const [lifetimeSeconds, setLifetimeSeconds] = useState(8 * 60 * 60);
-  const [requiresRiskScan, setRequiresRiskScan] = useState(true);
+  const [audience, setAudience] = useState<AutomationAudience>(
+    initialDraft?.audience ?? 'known_room_members',
+  );
+  const [rate, setRate] = useState(String(initialDraft?.maxMessagesPerMinute ?? 6));
+  const [total, setTotal] = useState(
+    initialDraft === undefined
+      ? '100'
+      : initialDraft.maxTotalMessages === undefined
+        ? ''
+        : String(initialDraft.maxTotalMessages),
+  );
+  const [lifetimeSeconds, setLifetimeSeconds] = useState(
+    initialDraft?.lifetimeSeconds ?? 8 * 60 * 60,
+  );
+  const [requiresRiskScan, setRequiresRiskScan] = useState(initialDraft?.requiresRiskScan ?? true);
   const [impactAcknowledged, setImpactAcknowledged] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const instance = instances.find((candidate) => candidate.agentInstanceId === instanceId) ?? null;
@@ -72,21 +96,30 @@ export function AutomationGrantForm({
     [audience, instance?.agentDisplayName, kindSummary, lifetimeLabel, rate, scope, t, total],
   );
 
+  const draftCandidate = (): unknown => ({
+    agentId: instance?.agentId,
+    ...(scope === 'exact' ? { agentInstanceId: instance?.agentInstanceId } : {}),
+    audience,
+    lifetimeSeconds,
+    maxMessagesPerMinute: Number(rate),
+    ...(total.trim() === '' ? {} : { maxTotalMessages: Number(total) }),
+    messageKinds,
+    requiresRiskScan,
+    roomCatalogId: catalogId,
+  });
+
+  const reauthenticate = (): void => {
+    const draft = automationGrantDraftInputSchema.safeParse(draftCandidate());
+    setInvalid(!draft.success);
+    if (draft.success) onReauthenticate(draft.data);
+  };
+
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    const candidate: unknown = {
-      agentId: instance?.agentId,
-      ...(scope === 'exact' ? { agentInstanceId: instance?.agentInstanceId } : {}),
-      audience,
-      impactAcknowledged,
-      lifetimeSeconds,
-      maxMessagesPerMinute: Number(rate),
-      ...(total.trim() === '' ? {} : { maxTotalMessages: Number(total) }),
-      messageKinds,
-      requiresRiskScan,
-      roomCatalogId: catalogId,
-    };
-    const parsed = createAutomationGrantInputSchema.safeParse(candidate);
+    const draft = automationGrantDraftInputSchema.safeParse(draftCandidate());
+    const parsed = createAutomationGrantInputSchema.safeParse(
+      draft.success ? { ...draft.data, impactAcknowledged } : null,
+    );
     if (!parsed.success) {
       setInvalid(true);
       return;
@@ -319,7 +352,7 @@ export function AutomationGrantForm({
                   <strong>{t('automation.recentAuth.title')}</strong>
                   <p>{t('automation.recentAuth.detail')}</p>
                 </div>
-                <Button onClick={onReauthenticate} size="default" tone="primary" type="button">
+                <Button onClick={reauthenticate} size="default" tone="primary" type="button">
                   {t('automation.action.reauthenticate')}
                 </Button>
               </div>

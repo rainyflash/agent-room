@@ -79,6 +79,24 @@ function dependencies(
 }
 
 describe('Web 会话状态机', () => {
+  it('验证回调失败时保留旧会话并停止自动进房，不能伪装成本次验证成功', async () => {
+    const restore = vi.fn<MatrixGateway['restore']>();
+    const logout = vi.fn<ControlPlaneGateway['logout']>();
+    const runtime = dependencies({
+      controlPlane: { logout },
+      browser: { currentPath: () => '/connect?authentication=expired' },
+      matrix: { restore },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('degraded'));
+    expect(actor.getSnapshot().context.principal).toEqual(session);
+    expect(runtime.navigations).toEqual([]);
+    expect(restore).not.toHaveBeenCalled();
+    actor.send({ type: 'CONTROL_HEALTHY' });
+    expect(actor.getSnapshot().matches('degraded')).toBe(true);
+    expect(logout).not.toHaveBeenCalled();
+    actor.stop();
+  });
   it.each(['/connect', '/connect?loginToken=consumed', '/connect#status'])(
     '连接就绪后从 %s 自动进入房间',
     async (path) => {

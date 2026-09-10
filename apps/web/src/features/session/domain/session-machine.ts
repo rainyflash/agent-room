@@ -10,6 +10,7 @@ import type {
 } from './session';
 import { err, type Result } from '@/shared/result';
 import { cleanupSession } from './session-cleanup';
+import { authenticationCallbackFailure } from './authentication-callback';
 
 export type AuthenticationTarget = 'control' | 'matrix';
 
@@ -130,6 +131,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       },
       setControlUnavailable: assign({ controlStatus: 'unavailable' }),
       resumeRequestedRoute: ({ context }) => {
+        if (authenticationCallbackFailure(dependencies.browser.currentPath()) !== null) return;
         const requested = context.resumePath ?? dependencies.browser.currentPath();
         const destination = /^\/connect(?:[?#]|$)/u.test(requested) ? '/rooms' : requested;
         dependencies.browser.replacePath(destination);
@@ -173,6 +175,23 @@ export function createSessionMachine(dependencies: SessionDependencies) {
           id: 'load-control-session',
           src: 'loadControlSession',
           onDone: [
+            {
+              guard: ({ event }) =>
+                event.output.kind === 'authenticated' &&
+                authenticationCallbackFailure(dependencies.browser.currentPath()) !== null,
+              target: 'degraded',
+              actions: assign({
+                controlStatus: 'ready',
+                principal: ({ event }) =>
+                  event.output.kind === 'authenticated' ? event.output.session : null,
+                failure: {
+                  boundary: 'identity',
+                  code: 'authentication.callback_failed',
+                  offline: false,
+                  retryable: true,
+                },
+              }),
+            },
             {
               guard: ({ event }) => event.output.kind === 'authenticated',
               target: 'restoring',

@@ -17,6 +17,7 @@ import { AutomationGrantHub } from '@/features/automation/ui/automation-grant-hu
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
+import { readAutomationGrantDraft } from '@/features/automation/adapters/automation-grant-draft';
 
 const AGENT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
 const INSTANCE_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e45';
@@ -27,9 +28,59 @@ beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.sessionStorage.clear();
+});
 
 describe('AutomationGrantHub', () => {
+  it('验证返回后恢复同一账户的精确授权草稿，重新确认后才创建并清理草稿', async () => {
+    const user = userEvent.setup();
+    const gateway = automationGateway([]);
+    const reauthenticate = vi.fn();
+    renderHub(gateway.value, false, reauthenticate);
+    await user.click(screen.getByRole('button', { name: 'Automation' }));
+    await screen.findByRole('heading', { name: 'New bounded grant' });
+    await user.click(screen.getByRole('checkbox', { name: 'New room messages' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Replies' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Audience' }), 'any_room_member');
+    await user.clear(screen.getByRole('spinbutton', { name: 'Messages per minute' }));
+    await user.type(screen.getByRole('spinbutton', { name: 'Messages per minute' }), '3');
+    await user.clear(screen.getByRole('spinbutton', { name: /Maximum total messages/u }));
+    await user.type(screen.getByRole('spinbutton', { name: /Maximum total messages/u }), '20');
+    await user.selectOptions(screen.getByRole('combobox', { name: /Lifetime/u }), '3600');
+    await user.click(screen.getByRole('button', { name: 'Verify identity again' }));
+    expect(reauthenticate).toHaveBeenCalledOnce();
+    expect(readAutomationGrantDraft(GRANT_ID)).toEqual(ok(null));
+    cleanup();
+    renderHub(gateway.value, true);
+    await screen.findByRole('heading', { name: 'New bounded grant' });
+    expect(screen.getByRole('checkbox', { name: 'Replies' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'New room messages' })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Audience' })).toHaveValue('any_room_member');
+    expect(screen.getByRole('spinbutton', { name: 'Messages per minute' })).toHaveValue(3);
+    expect(screen.getByRole('spinbutton', { name: /Maximum total messages/u })).toHaveValue(20);
+    expect(screen.getByRole('combobox', { name: /Lifetime/u })).toHaveValue('3600');
+    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    expect(gateway.create).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'I understand this Agent can send without per-message approval.',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await waitFor(() => {
+      expect(gateway.create).toHaveBeenCalledOnce();
+    });
+    expect(gateway.create.mock.calls[0]?.[1]).toMatchObject({
+      agentInstanceId: INSTANCE_ID,
+      messageKinds: ['reply'],
+      maxMessagesPerMinute: 3,
+      maxTotalMessages: 20,
+      lifetimeSeconds: 3600,
+    });
+    expect(readAutomationGrantDraft(AGENT_ID)).toEqual(ok(null));
+  });
   it('默认关闭，明确确认影响后才提交精确实例授权', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
@@ -119,6 +170,7 @@ function renderHub(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
         <AutomationGrantHub
+          principalId={AGENT_ID}
           accessManagement={accessManagement}
           automation={automation}
           catalogId={ROOM_ID}

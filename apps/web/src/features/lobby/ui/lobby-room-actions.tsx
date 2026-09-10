@@ -39,6 +39,8 @@ export function LobbyRoomActions({
         roomName={roomName}
       />
       <AutomationGrantHub
+        key={`${principal.principalId}:${catalogId}`}
+        principalId={principal.principalId}
         accessManagement={accessManagement}
         automation={automation}
         catalogId={catalogId}
