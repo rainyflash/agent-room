@@ -34,12 +34,13 @@ use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
     devices::DevicePublicSigningKey,
     ids::{
-        AgentId, AgentInstanceId, AutomationGrantId, ContentId, MessageId, MessageSubmissionId,
-        RoomCatalogId,
+        AgentId, AgentInstanceId, AutomationGrantId, ContentEncryptionContextId, ContentId,
+        MessageId, MessageSubmissionId, RoomCatalogId,
     },
     messages::{
-        MessageLanguage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlag,
-        MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
+        ClientContentEncryption, ClientContentEncryptionAlgorithm, MessageLanguage, MessagePreview,
+        MessageProvenance, MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity,
+        MessageSummary, MessageTitle,
     },
 };
 use agent_room_identity_adapter::{Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey};
@@ -64,6 +65,28 @@ impl AutomationAuthorizationGateway for 允许自动授权 {
 }
 
 struct 拒绝自动授权;
+
+#[derive(Default)]
+struct 记录扫描正文(Mutex<Vec<Option<String>>>);
+
+impl AutomationAuthorizationGateway for 记录扫描正文 {
+    fn authorize<'a>(
+        &'a self,
+        request: &'a AutomationAuthorizationRequest,
+    ) -> PortFuture<'a, AutomationAuthorizationResult<()>> {
+        self.0.lock().expect("正文记录锁可用").push(
+            request
+                .message_text
+                .as_ref()
+                .map(|text| text.as_str().to_owned()),
+        );
+        Box::pin(async {
+            Err(AutomationAuthorizationFailure::denied(
+                AutomationAuthorizationDenial::RateLimitExceeded,
+            ))
+        })
+    }
+}
 
 impl AutomationAuthorizationGateway for 拒绝自动授权 {
     fn authorize<'a>(
@@ -445,6 +468,50 @@ impl 测试夹具 {
             service,
             audit,
         }
+    }
+}
+
+#[tokio::test]
+async fn 自动扫描收到原始正文且不接收客户端密文() {
+    let text = "真实回复的原始正文\n第二行";
+    let encrypted = MessageBody::client_encrypted(
+        vec![0xff, 0x00, 0xfe],
+        ContentMediaType::new("text/markdown").expect("媒体类型有效"),
+        ClientContentEncryption::new(
+            ClientContentEncryptionAlgorithm::Aes256GcmV1,
+            ContentEncryptionContextId::from_uuid(Uuid::now_v7()),
+            [11; 32],
+            [22; 12],
+            3,
+        )
+        .expect("加密描述有效"),
+        None,
+    )
+    .expect("密文消息有效");
+    for (message, expected) in [(body(text), Some(text.to_owned())), (encrypted, None)] {
+        let gateway = Arc::new(记录扫描正文::default());
+        let fixture = 测试夹具::with_automation(gateway.clone());
+        let request = SendMessageRequest::new(
+            MessageSubmissionId::from_uuid(Uuid::now_v7()),
+            room_id(),
+            preview("预览不作为扫描正文"),
+            message,
+            MessageProvenance::AutonomousAgent,
+            None,
+            Some(automation_grant_id()),
+        )
+        .expect("请求有效");
+        let failure = fixture
+            .service
+            .send(&request)
+            .await
+            .expect_err("测试网关停止发布");
+        assert_eq!(
+            failure.kind(),
+            MessagePublicationFailureKind::AutomationAuthorization
+        );
+        assert_eq!(*gateway.0.lock().expect("记录可读"), vec![expected]);
+        assert!(fixture.publisher.events().is_empty());
     }
 }
 

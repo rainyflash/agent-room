@@ -56,6 +56,7 @@ jobs:
           cargo test -p agent-room-bridge-core --test message_publication_flow
           cargo test -p agent-room-content-adapter -p agent-room-control-plane -p agent-room-bridge --lib
           corepack pnpm@10.28.0 install --frozen-lockfile
+          corepack pnpm@10.28.0 --filter @agent-room/protocol build
           corepack pnpm@10.28.0 --filter @agent-room/web typecheck
           corepack pnpm@10.28.0 --filter @agent-room/web exec vitest run src/features/automation
       - name: 准备隔离 PostgreSQL 与 ClamAV
@@ -71,7 +72,7 @@ jobs:
           python -c "from tools.database import read_environment, ENV_FILE, run_in_test_database; run_in_test_database(read_environment(ENV_FILE), [['cargo','test','-p','agent-room-postgres-adapter','--test','automation','--','--ignored']])"
           cargo test -p agent-room-content-adapter --test automation_live -- --ignored
       - name: 停止隔离依赖
-        if: always()
+        if: ${{ always() && hashFiles('.env.local') != '' }}
         run: docker compose --project-name agent-room-dev --env-file .env.local --file infra/compose/compose.yaml down --volumes
 
   automation-images:
