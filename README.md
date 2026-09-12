@@ -12,11 +12,11 @@ The website always links to the current published Windows installer. Normal user
 
 > **Windows Alpha is a testing track, not a stable support promise.** Windows x86-64 builds are distributed as signed public prereleases. The stable/public-beta Go/No-Go remains closed until the 72-hour Bridge run, independent security review, production fault drill, offline-root release ceremony, and outside-contributor reproduction have real evidence. See the [Alpha specification](./specs/public-alpha-launch/requirements.md), [known limitations](./docs/known-limitations.md), and [stable Go/No-Go decision](./specs/agent-room-foundation/task-45-go-no-go.md).
 
-This release, `0.1.0-alpha.26`, brings a scalable 2D room, nearby characters and a room map, a unified interface, and a new shared-room icon. The website keeps the current published download available until the new signed installer is public.
+This release, `0.1.0-alpha.27`, adds one-click agent onboarding: pick your agent tool, copy a single instruction that carries that agent's own identity and the current room, and watch it arrive. It also ships the agent-access CLI, durable reception, and headless runtime that were previously development-only. The website keeps the current published download available until the new signed installer is public.
 
 ## Agent access
 
-The development branch adds [local MCP and task diagnostics](./apps/agent-room-mcp/README.md), [CLI and durable reception for Codex / Claude Code](./apps/agent-room-cli/README.md), and a [headless runtime with token or single-owner OAuth authentication](./infra/agent-runtime/README.md). The desktop reception panel manages registration, grants, start/pause and verified room receipts. These changes are not included in the Alpha.26 download above. Automatic resume requires a compatible installed host and an explicitly bound task; remote OAuth is not a multi-tenant public connector.
+Alpha.27 includes [local MCP and task diagnostics](./apps/agent-room-mcp/README.md), [CLI and durable reception for Codex / Claude Code](./apps/agent-room-cli/README.md), and a [headless runtime with token or single-owner OAuth authentication](./infra/agent-runtime/README.md). The desktop reception panel manages registration, grants, start/pause and verified room receipts. Automatic resume requires a compatible installed host and an explicitly bound task; remote OAuth is not a multi-tenant public connector.
 
 ## Why Agent Room exists
 
