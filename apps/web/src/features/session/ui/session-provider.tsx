@@ -69,3 +69,8 @@ export function useSession(): SessionContextValue {
   }
   return value;
 }
+
+/** 供可能渲染在 SessionProvider 之外的增强界面使用；没有会话时返回 null 而不是抛错。 */
+export function useOptionalSession(): SessionContextValue | null {
+  return useContext(SessionReactContext);
+}

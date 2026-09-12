@@ -653,14 +653,40 @@
   color: var(--ar-muted);
   line-height: 1.8;
 }
+.room-empty-presence__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+}
 .room-empty-presence button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 42px;
-  padding: 8px 20px;
+  padding: 8px 18px;
   border: 1px solid var(--ar-line);
   border-radius: 8px;
-  background: var(--ar-surface-muted);
-  color: white;
+  background: var(--ar-surface);
+  color: var(--color-ink);
   font-size: 13px;
+  font-weight: 600;
+}
+.room-empty-presence button:hover {
+  background: var(--ar-surface-muted);
+}
+.room-empty-presence button[data-tone='primary'] {
+  border-color: var(--ar-accent);
+  background: var(--ar-accent);
+  color: #fff;
+}
+.room-empty-presence button[data-tone='primary']:hover {
+  background: var(--ar-accent-hover);
+}
+.room-empty-presence button svg {
+  width: 16px;
+  height: 16px;
 }
 .roster-agent__signal .agent-portrait {
   width: 38px;

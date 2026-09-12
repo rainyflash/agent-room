@@ -1,8 +1,9 @@
 import { Button } from '@agent-room/ui-system';
-import { Copy, Check } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { AgentInviteDialog } from './agent-invite-dialog';
 import type { DesktopRuntimeController } from './use-desktop-runtime';
 import type { HostSessionDiagnostics } from '../domain/desktop-runtime';
 
@@ -16,7 +17,7 @@ export function HostSessionOnboarding({
 }: Pick<DesktopRuntimeController, 'readHostSessions'>) {
   const { t } = useTranslation();
   const [observation, setObservation] = useState<Observation>({ kind: 'loading' });
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [inviteOpen, setInviteOpen] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -38,29 +39,29 @@ export function HostSessionOnboarding({
     };
   }, [readHostSessions]);
 
-  const copyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(t('desktop.hosts.onboarding.prompt'));
-      setCopyState('copied');
-    } catch {
-      setCopyState('failed');
-    }
-  };
-
   return (
     <div className="host-onboarding">
       <h3>{t('desktop.hosts.onboarding.title')}</h3>
       <p>{t('desktop.hosts.onboarding.description')}</p>
       <Button
-        icon={copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        onClick={() => void copyPrompt()}
+        icon={<Bot aria-hidden="true" />}
+        onClick={() => {
+          setInviteOpen(true);
+        }}
         size="compact"
-        tone={copyState === 'failed' ? 'alert' : 'quiet'}
+        tone="primary"
       >
-        {copyState === 'idle'
-          ? t('desktop.hosts.onboarding.copy')
-          : t(`desktop.hosts.manual.copy.${copyState}`)}
+        {t('agentInvite.open')}
       </Button>
+      {inviteOpen ? (
+        <AgentInviteDialog
+          downloadUrl={null}
+          onClose={() => {
+            setInviteOpen(false);
+          }}
+          room={null}
+        />
+      ) : null}
       {observation.kind === 'loading' ? <p>{t('desktop.hosts.onboarding.loading')}</p> : null}
       {observation.kind === 'failed' ? (
         <p role="status">
