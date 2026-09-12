@@ -21,6 +21,9 @@ import time
 from typing import Sequence
 
 
+MCP_PATH = "/mcp"
+
+
 def checked(command: Sequence[str]) -> str:
     result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
     return result.stdout.strip()
@@ -38,13 +41,17 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def do_POST(self) -> None:
+        # 这个验收代理只为一个端点存在；拒绝其他目标，请求行便无法影响转发目的地。
+        if self.path != MCP_PATH:
+            self.send_error(404)
+            return
         length = int(self.headers.get("Content-Length", "0"))
         if length > 65_536:
             self.send_error(413)
             return
         connection = HTTPConnection("127.0.0.1", self.server.backend_port, timeout=10)
         try:
-            connection.request("POST", self.path, self.rfile.read(length), dict(self.headers))
+            connection.request("POST", MCP_PATH, self.rfile.read(length), dict(self.headers))
             response = connection.getresponse()
             body = response.read(131_073)
             if len(body) > 131_072:
@@ -68,7 +75,7 @@ def probe(port: int, context: ssl.SSLContext, token: str | None,
     if origin is not None:
         headers["Origin"] = origin
     try:
-        connection.request("POST", "/mcp", json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}), headers)
+        connection.request("POST", MCP_PATH, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}), headers)
         response = connection.getresponse()
         payload = response.read(131_072)
         if response.status != 200:
@@ -93,6 +100,7 @@ def accept(image: str, report: Path) -> None:
                  "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
                  "-keyout", str(key), "-out", str(certificate)])
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.minimum_version = ssl.TLSVersion.TLSv1_2
         tls.load_cert_chain(certificate, key)
         client_tls = ssl.create_default_context(cafile=str(certificate))
         proxy = Proxy(("127.0.0.1", 0), Handler)
@@ -102,7 +110,7 @@ def accept(image: str, report: Path) -> None:
             "--security-opt=no-new-privileges", "--publish", "127.0.0.1::8181",
             "--mount", f"type=bind,source={token_file},target=/run/mcp.token,readonly",
             "--stop-signal=SIGINT", image, "agent-room-mcp", "--http", "0.0.0.0:8181",
-            "--public-url", f"https://127.0.0.1:{port}/mcp", "--token-file", "/run/mcp.token"])
+            "--public-url", f"https://127.0.0.1:{port}{MCP_PATH}", "--token-file", "/run/mcp.token"])
         thread = None
         try:
             proxy.backend_port = int(checked(["docker", "port", container, "8181/tcp"]).rsplit(":", 1)[1])
