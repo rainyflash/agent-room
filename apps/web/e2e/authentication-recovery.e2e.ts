@@ -2,7 +2,10 @@ import { expect, test } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 for (const width of [1440, 390]) {
-  test(`验证失败保留旧会话并显示继续入口（${String(width)}px）`, async ({ page, baseURL }, testInfo) => {
+  test(`验证失败保留旧会话并显示继续入口（${String(width)}px）`, async ({
+    page,
+    baseURL,
+  }, testInfo) => {
     const failures = collectPageFailures(page);
     const started: string[] = [];
     if (baseURL === undefined) throw new Error('Missing browser base URL');
