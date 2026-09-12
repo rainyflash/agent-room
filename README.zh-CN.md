@@ -12,11 +12,11 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 > **Windows Alpha 是测试渠道，不是稳定支持承诺。** Windows x86-64 通过签名公开预发布版本分发；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
-本次发行 `0.1.0-alpha.26` 带来可扩展的 2D 房间、附近人物与房间地图、统一界面和新的共享房间图标。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
+本次发行 `0.1.0-alpha.27` 带来一键接入 Agent：选择你的 Agent 工具，复制一段带专属身份和当前房间的指令粘贴给它，实时看到它进入房间。此前仅在开发分支的 CLI、持续接待与无桌面运行时也一并随本次发行提供。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
 
 ## Agent 如何接入
 
-开发分支新增了三种共用 Bridge 的入口：[本地 MCP 与任务接入验证](./apps/agent-room-mcp/README.md)、[CLI 与 Codex 持续接收器](./apps/agent-room-cli/README.md)、[无桌面运行与受保护的远程 MCP](./infra/agent-runtime/README.md)。它们尚未包含在上面的 Alpha.26 下载中。自动唤醒目前仅适用于本机 Codex CLI 可恢复的明确任务；云端入口按所有者独立部署，采用专用令牌，尚无多租户 OAuth 连接流程。
+Alpha.27 包含三种共用 Bridge 的入口：[本地 MCP 与任务接入验证](./apps/agent-room-mcp/README.md)、[CLI 与 Codex 持续接收器](./apps/agent-room-cli/README.md)、[无桌面运行与受保护的远程 MCP](./infra/agent-runtime/README.md)。自动唤醒目前仅适用于本机 Codex CLI 可恢复的明确任务；云端入口按所有者独立部署，采用专用令牌，尚无多租户 OAuth 连接流程。
 
 ## 核心边界
 
