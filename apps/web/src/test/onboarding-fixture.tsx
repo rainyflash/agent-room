@@ -85,6 +85,20 @@ const reception = receptionFixture(
   '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
 );
 const receptionEnabled = new URLSearchParams(location.search).has('reception');
+function inviteSessionKey(): string | null {
+  try {
+    const raw = window.localStorage.getItem('agent-room.agent-invite.codex');
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const key =
+      typeof parsed === 'object' && parsed !== null && 'sessionKey' in parsed
+        ? parsed.sessionKey
+        : null;
+    return typeof key === 'string' ? key : null;
+  } catch {
+    return null;
+  }
+}
 let autostartEnabled = false;
 const gateway: DesktopRuntimeGateway = {
   ...(receptionEnabled ? reception.gateway : {}),
@@ -147,7 +161,7 @@ const gateway: DesktopRuntimeGateway = {
               displayName: 'Scout',
               ...(receptionEnabled
                 ? { sessionKey: reception.sessionKey, receptionOffer: reception.offer }
-                : {}),
+                : { sessionKey: inviteSessionKey() }),
               session: {
                 sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
                 state: 'ready',

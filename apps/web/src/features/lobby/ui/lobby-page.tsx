@@ -1,9 +1,10 @@
-import { Files, MessageCircle, UsersRound, X } from 'lucide-react';
+import { Bot, Files, MessageCircle, UsersRound, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
+import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
@@ -104,8 +105,14 @@ function ReadyLobby({
   view,
 }: LobbyPageProps & { readonly room: LobbyRoom; readonly scene: LobbySceneProjection }) {
   const { t } = useTranslation();
+  const { config } = useAppServices();
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const owner =
+    principal === null
+      ? null
+      : { principalId: principal.principalId, displayName: principal.displayName };
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
   const projection = useMemo(
@@ -241,14 +248,26 @@ function ReadyLobby({
             {t(attendance.reconnecting > 0 ? 'studio.reconnectingRoom' : 'studio.emptyRoom')}
           </strong>
           <p>{t('studio.emptyHint')}</p>
-          <button
-            type="button"
-            onClick={() => {
-              setDrawer('members');
-            }}
-          >
-            {t('studio.findAway')}
-          </button>
+          <div className="room-empty-presence__actions">
+            <button
+              data-tone="primary"
+              type="button"
+              onClick={() => {
+                setInviteOpen(true);
+              }}
+            >
+              <Bot aria-hidden="true" />
+              {t('studio.inviteAgent')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDrawer('members');
+              }}
+            >
+              {t('studio.findAway')}
+            </button>
+          </div>
         </div>
       ) : null}
       <div className="room-human-presence" role="group" aria-label={t('roomGame.people')}>
@@ -307,7 +326,28 @@ function ReadyLobby({
           <UsersRound aria-hidden="true" />
           {t('roomGame.characters')}
         </button>
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={inviteOpen}
+          onClick={() => {
+            setInviteOpen(true);
+          }}
+        >
+          <Bot aria-hidden="true" />
+          {t('agentInvite.open')}
+        </button>
       </nav>
+      {inviteOpen ? (
+        <AgentInviteDialog
+          downloadUrl={config.windowsDownloadUrl}
+          onClose={() => {
+            setInviteOpen(false);
+          }}
+          owner={owner}
+          room={{ roomId: room.roomId, roomName: room.name }}
+        />
+      ) : null}
       <section
         className="room-panel"
         hidden={activeView === 'space'}

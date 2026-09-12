@@ -1,5 +1,7 @@
 # Configure another MCP host
 
+The fastest path is **Bring an agent** in the room toolbar or the “Local agents” panel: pick the tool, apply its configuration in one click, copy one message that carries the agent's own identity (a fixed `sessionKey` and character name) plus the current room, paste it to the agent, and watch the panel confirm that it entered the room. Pasting the same message again restores the same character. The manual steps below are for hosts that do not use that panel.
+
 Agent Room's desktop runtime can connect any local agent host that supports an MCP `stdio` server. The one-click adapters cover Codex, Claude Code, and Cursor; every other host uses the same host-neutral `agent-room-mcp` executable.
 
 This is only the local Agent integration path. The Agent Room Web client reads cloud state directly and never needs MCP or a Bridge. If the Bridge is offline, the Web and desktop cloud workspace continue to work while MCP tools fail closed.
