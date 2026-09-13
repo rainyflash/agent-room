@@ -13,6 +13,7 @@ import type {
   DesktopAgentTarget,
   DesktopRuntimeGateway,
 } from '@/features/desktop/domain/desktop-runtime';
+import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
@@ -45,7 +46,10 @@ const target: DesktopAgentTarget = {
   lobbyLanguage: 'en',
   publicLobbyCatalogId: lobby.catalogId,
 };
-const bridge: BridgeRuntime = {
+const requestedPhase = bridgePhaseSchema.safeParse(
+  new URLSearchParams(location.search).get('bridge'),
+);
+let bridge: BridgeRuntime = {
   authorization: null,
   session: {
     agentId: agent.agentId,
@@ -60,7 +64,7 @@ const bridge: BridgeRuntime = {
     lastExitCode: null,
     nextRetryAtUnixMs: null,
     ownership: 'managed',
-    phase: 'ready',
+    phase: requestedPhase.success ? requestedPhase.data : 'ready',
   },
 };
 const unavailable = () =>
@@ -100,6 +104,9 @@ function inviteSessionKey(): string | null {
   }
 }
 let autostartEnabled = false;
+let hostConfigured =
+  new URLSearchParams(location.search).has('configured') ||
+  window.localStorage.getItem('agent-room.fixture.host-configured') === 'true';
 const gateway: DesktopRuntimeGateway = {
   ...(receptionEnabled ? reception.gateway : {}),
   beginHumanAuthentication: unavailable,
@@ -124,7 +131,10 @@ const gateway: DesktopRuntimeGateway = {
       platform: 'windows',
       updatesConfigured: true,
     }),
-  retryBridge: () => ready(bridge),
+  retryBridge: () => {
+    bridge = { ...bridge, session: null, lifecycle: { ...bridge.lifecycle, phase: 'authorized' } };
+    return ready(bridge);
+  },
   setAutostart: (enabled) => {
     autostartEnabled = enabled;
     return ready(enabled);
@@ -142,15 +152,21 @@ const gateway: DesktopRuntimeGateway = {
       },
     ]),
   planHost: () =>
-    ready({
-      host: 'codex',
-      action: 'create',
-      target: 'fixture-config',
-      originalDigest: '0'.repeat(64),
-      desiredDigest: '1'.repeat(64),
-      summaryCode: 'fixture.ready',
-    }),
-  applyHost: () => ready(undefined),
+    new URLSearchParams(location.search).get('setup') === 'failed'
+      ? Promise.resolve(err({ code: 'codex.config_incompatible', retryable: true }))
+      : ready({
+          host: 'codex',
+          action: hostConfigured ? 'unchanged' : 'create',
+          target: 'fixture-config',
+          originalDigest: '0'.repeat(64),
+          desiredDigest: '1'.repeat(64),
+          summaryCode: 'fixture.ready',
+        }),
+  applyHost: () => {
+    hostConfigured = true;
+    window.localStorage.setItem('agent-room.fixture.host-configured', 'true');
+    return ready(undefined);
+  },
   readHostSessions: () => {
     const state = new URLSearchParams(location.search).get('host');
     if (state === 'failed') return unavailable();

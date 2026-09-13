@@ -72,12 +72,13 @@ export function bridgeWorkspaceStatus(
   if (!available) return 'unavailable';
   const statuses: Readonly<Record<BridgePhase, WorkspaceLayerStatus>> = {
     authorization_required: 'connecting',
-    authorized: 'connecting',
+    authorized: 'online',
     discovering: 'connecting',
     halted: 'degraded',
     ready: 'online',
     retry_scheduled: 'degraded',
     starting: 'connecting',
+    reconnecting: 'degraded',
     stopped: 'offline',
   };
   return phase === undefined ? 'connecting' : statuses[phase];

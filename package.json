@@ -16,6 +16,11 @@
     }
   },
   "scripts": {
+    "desktop:dev": "node tools/desktop.mjs dev",
+    "desktop:preview": "node tools/desktop.mjs preview",
+    "desktop:check": "node tools/desktop.mjs check",
+    "desktop:hosts": "node tools/desktop.mjs hosts",
+    "desktop:package": "node tools/desktop.mjs package",
     "actions:check": "node tools/check-actions-pinned.mjs",
     "audit:node": "corepack pnpm@10.28.0 audit --registry=https://registry.npmjs.org --audit-level high",
     "brand:sync": "node tools/sync-brand-assets.mjs",

@@ -200,6 +200,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let request_handler = Arc::new(SessionAwareIpcHandler {
         default: request_handler,
         sessions: host_sessions.clone(),
+        connection_status: Arc::new(DeviceConnectionStatus(status.clone())),
     });
     let server = BridgeIpcServer::bind(
         &paths,
@@ -643,7 +644,7 @@ async fn initialize_agent_session(
     else {
         return Ok(None);
     };
-    let mut runtime = compose_agent_session_runtime(
+    let runtime = compose_agent_session_runtime(
         config,
         paths,
         runtime_secrets,
@@ -659,27 +660,9 @@ async fn initialize_agent_session(
         },
     )
     .await?;
-    runtime.initial_session = match establish_agent_online(&runtime).await {
-        Ok(online) => {
-            announce_agent_online(&online)?;
-            runtime.state.publish(&online);
-            Some(online)
-        }
-        Err(failure) if is_reconnectable_agent_online_failure(failure) => {
-            if let Err(error) = announce_supervisor_diagnostic(failure) {
-                tracing::warn!(
-                    error_code = error.code(),
-                    "Agent 暂时失败诊断无法写入监督通道"
-                );
-            }
-            tracing::warn!(
-                failure_kind = ?failure.kind(),
-                "Agent 上线流程暂时不可用，Bridge 将在后台重试"
-            );
-            None
-        }
-        Err(failure) => return Err(BridgeRuntimeError::agent_online(failure)),
-    };
+    // Start the local endpoint as soon as the device is available. The default
+    // character joins in maintain_agent_session, with its own retry/failure
+    // state, just like host task sessions. A bad old room must not block IPC.
     Ok(Some(runtime))
 }
 
@@ -1868,7 +1851,6 @@ impl BridgeRuntimeStatus {
     fn mark_agent_failure(&self, failure: AgentOnlineFailure) {
         self.fatal_code
             .get_or_init(|| BridgeRuntimeError::agent_online(failure).code());
-        self.mark_fatal();
     }
 
     fn mark_shutting_down(&self) {
@@ -1876,18 +1858,35 @@ impl BridgeRuntimeStatus {
     }
 
     fn state(&self) -> IpcBridgeState {
+        self.state_for(self.required_components)
+    }
+
+    fn state_for(&self, components: u8) -> IpcBridgeState {
         if self.shutting_down.load(Ordering::Acquire) {
             IpcBridgeState::ShuttingDown
-        } else if self.fatal.load(Ordering::Acquire) {
+        } else if self.fatal.load(Ordering::Acquire)
+            || (components & Self::AGENT_COMPONENT != 0 && self.fatal_code.get().is_some())
+        {
             IpcBridgeState::Offline
         } else if self.starting.load(Ordering::Acquire) {
             IpcBridgeState::Starting
-        } else if self.ready_components.load(Ordering::Acquire) & self.required_components
-            == self.required_components
-        {
+        } else if self.ready_components.load(Ordering::Acquire) & components == components {
             IpcBridgeState::Ready
         } else {
             IpcBridgeState::Reconnecting
+        }
+    }
+}
+
+// Device connectivity is shared by all host sessions. A legacy/default Agent's
+// Matrix failure must not make a healthy device look unable to admit new Agents.
+struct DeviceConnectionStatus(Arc<BridgeRuntimeStatus>);
+
+impl BridgeStatusReader for DeviceConnectionStatus {
+    fn read_status(&self) -> BridgeStatusSnapshot {
+        BridgeStatusSnapshot {
+            state: self.0.state_for(BridgeRuntimeStatus::DEVICE_COMPONENT),
+            started_at_unix_ms: self.0.started_at_unix_ms,
         }
     }
 }
@@ -2584,6 +2583,23 @@ mod tests {
         TargetedHandoffPoller, TargetedHandoffPollingPolicy, is_reconnectable_agent_online_failure,
         spawn_targeted_handoff_worker_with_policy,
     };
+
+    #[test]
+    fn device_status_remains_ready_when_default_character_reconnects_or_fails() {
+        let runtime = Arc::new(BridgeRuntimeStatus::new(1_000, true));
+        let device = super::DeviceConnectionStatus(runtime.clone());
+        runtime.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, true);
+        runtime.finish_starting();
+        assert_eq!(runtime.read_status().state, IpcBridgeState::Reconnecting);
+        assert_eq!(device.read_status().state, IpcBridgeState::Ready);
+        runtime.mark_agent_failure(AgentOnlineFailure::InvalidRoom);
+        assert_eq!(runtime.read_status().state, IpcBridgeState::Offline);
+        assert_eq!(device.read_status().state, IpcBridgeState::Ready);
+        runtime.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, false);
+        assert_eq!(device.read_status().state, IpcBridgeState::Reconnecting);
+        runtime.mark_fatal();
+        assert_eq!(device.read_status().state, IpcBridgeState::Offline);
+    }
 
     #[test]
     fn matrix_依赖故障保留恢复与同步的操作维度() {

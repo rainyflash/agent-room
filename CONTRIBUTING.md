@@ -24,6 +24,30 @@ The bootstrap validates tool versions, installs the locked Node dependencies, re
 
 Run `just control-plane` and `just web` in separate terminals. Use `just dev-down` when finished.
 
+### Desktop development and packaging
+
+Use the same entrypoints locally and in the Windows candidate workflow:
+
+| Command                                 | Purpose                                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `corepack pnpm@10.28.0 desktop:dev`     | Build the UI and run the real desktop with saved login. No installer needed.                                                               |
+| `corepack pnpm@10.28.0 desktop:preview` | Build the UI and run the real desktop against the default service, using the installed app's origin and saved login. No installer needed.  |
+| `corepack pnpm@10.28.0 desktop:check`   | Run native adapter/Bridge/desktop checks, UI tests, and the agent access browser regressions.                                              |
+| `corepack pnpm@10.28.0 desktop:hosts`   | Build the diagnostic entrypoint and inspect the real installed tools through the production adapters, without editing their configuration. |
+| `corepack pnpm@10.28.0 desktop:package` | Run the checks, stop on failure, then build a local NSIS installer.                                                                        |
+
+`node tools/desktop.mjs <mode> --plan` prints the commands without running them. Build concurrency defaults to four jobs to keep a development computer responsive; `CARGO_BUILD_JOBS` overrides it. The read-only host report distinguishes not installed, configuration needed, and a failed configuration read. A report with no installed hosts does not prove compatibility with a real host.
+
+`desktop:dev` and `desktop:preview` are the same native entrypoint. It waits for the frontend build before compiling the native shell, uses `http://tauri.localhost`, and disables the development web server. This preserves the production cookie and CORS boundaries; an ordinary Vite page cannot substitute for it. The public desktop endpoints live in `apps/web/.env.desktop` and can be overridden with environment variables. Restart the preview after editing native or embedded UI code. For rapid layout work, use the existing `just web` hot reload with the local backend setup above; return to the native preview to verify desktop behavior.
+
+Close an already-running desktop from its tray before switching to a development build. A preview shares the normal device authorization and account storage. Configuring a host from a preview points that host to the debug MCP binary; after upgrading the installed application, run its one-click configuration again to select the installed binary.
+
+Desktop checks start their own browser test server on port 14174 with the test API settings. They never reuse a running development server. Set `AGENT_ROOM_E2E_PORT` to select another free port; a busy port fails instead of silently testing a different environment.
+
+Local packages are for validation. Public releases continue through the signed candidate and promotion workflow in [the release runbook](./docs/operations/signed-releases.md). Use its `client` profile for desktop-only changes; use `full` when server images also change. Before promotion, test the actual installed host and the native invite dialog, including an already-authorized device with no default Agent and recovery from a connection failure. Browser fixtures validate UI states; they do not establish that a real Codex task has joined a production room.
+
+The website's Windows download URL is currently embedded at build time. When it points to a versioned installer, publishing a client release alone leaves that link on the old version. Build the `full` candidate and deploy its Web image with the new installer URL; unchanged API and identity images can remain deployed. Verify the public download link after publication.
+
 ## Architecture rules
 
 - Dependencies point inward: UI and adapters depend on application ports and domain types, never the reverse.

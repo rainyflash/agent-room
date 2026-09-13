@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { BridgePhase } from '@/features/desktop/domain/desktop-runtime';
+import { localConnectionReady } from '@/features/desktop/domain/desktop-connection';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 
 export function useDesktopRuntimeTelemetry(
@@ -12,8 +13,9 @@ export function useDesktopRuntimeTelemetry(
   useEffect(() => {
     if (!available || telemetry === undefined || previousPhase.current === phase) return;
     const now = performance.now();
-    if (phase === 'retry_scheduled' || phase === 'starting') reconnectStartedAt.current ??= now;
-    if (phase === 'ready' && reconnectStartedAt.current !== null) {
+    if (phase === 'retry_scheduled' || phase === 'starting' || phase === 'reconnecting')
+      reconnectStartedAt.current ??= now;
+    if (localConnectionReady(phase) && reconnectStartedAt.current !== null) {
       void telemetry.record({
         metric: 'bridge_reconnect',
         surface: 'desktop',
@@ -24,7 +26,7 @@ export function useDesktopRuntimeTelemetry(
     void telemetry.record({
       metric: 'bridge_availability',
       surface: 'desktop',
-      value: phase === 'ready' ? 1 : 0,
+      value: localConnectionReady(phase) ? 1 : 0,
     });
     previousPhase.current = phase;
   }, [available, phase, telemetry]);

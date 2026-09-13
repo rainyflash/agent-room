@@ -111,7 +111,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: 安装 Rust
-        run: rustup toolchain install 1.97.1 --profile minimal
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
       - name: 恢复 Windows Release 编译缓存
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:
@@ -120,6 +120,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装固定依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 先验证桌面接入行为再生成候选
+        run: node tools/desktop.mjs native-check
       - name: 安装 Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
         with:

@@ -494,12 +494,20 @@ fn session_failure(code: &'static str, retryable: bool) -> BridgeIpcDispatchFail
 pub(crate) struct SessionAwareIpcHandler {
     pub(crate) default: Arc<dyn BridgeIpcRequestHandler>,
     pub(crate) sessions: Arc<HostSessionRegistry>,
+    pub(crate) connection_status: Arc<dyn crate::ipc::BridgeStatusReader>,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::BridgeStatus => {
+                    let status = self.connection_status.read_status();
+                    Ok(IpcResponse::BridgeStatus {
+                        state: status.state,
+                        started_at_unix_ms: status.started_at_unix_ms,
+                    })
+                }
                 IpcMethod::HostSessionDiagnostics => Ok(self.sessions.diagnostics().await),
                 IpcMethod::ListRecoverySessions => Ok(self.sessions.recovery_sessions().await),
                 IpcMethod::OpenHostSession(request) => self.sessions.open(request).await,

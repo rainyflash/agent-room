@@ -20,8 +20,8 @@ use url::Url;
 
 use crate::{
     bridge_lifecycle::{
-        BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy, ExitDecision,
-        ResumeDecision, ResumeProbeState, decide_resume,
+        BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy,
+        ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, decide_resume,
     },
     desktop_config::DesktopBridgeConfig,
 };
@@ -214,12 +214,11 @@ impl BridgeSupervisorActor {
                     .discovered_ready(now_unix_ms(), BridgeOwnership::External);
                 self.publish();
             }
-            ProbeOutcome::Pending => {
+            ProbeOutcome::Pending(progress) => {
                 self.session = None;
                 self.policy
-                    .discovered_pending(now_unix_ms(), BridgeOwnership::External);
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::External, progress);
                 self.publish();
-                schedule_external_probe(self.input.clone(), self.generation);
             }
             ProbeOutcome::Absent => self.start_managed(),
             ProbeOutcome::Blocked(code) => {
@@ -228,25 +227,27 @@ impl BridgeSupervisorActor {
             }
         }
 
-        while let Some(input) = self.receiver.recv().await {
+        let mut probes = tokio::time::interval(PROBE_INTERVAL);
+        probes.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            let input = tokio::select! {
+                input = self.receiver.recv() => match input { Some(input) => input, None => break },
+                _ = probes.tick() => {
+                    if !matches!(self.policy.snapshot().phase, BridgePhase::Halted | BridgePhase::Stopped | BridgePhase::RetryScheduled) {
+                        if self.managed_child_active { self.handle_managed_probe().await; }
+                        else { self.handle_external_probe().await; }
+                    }
+                    continue;
+                }
+            };
             match input {
-                ActorInput::ExplicitRetry => self.handle_explicit_retry(),
+                ActorInput::ExplicitRetry => self.handle_explicit_retry().await,
                 ActorInput::AutomaticRetry { generation } => {
                     if generation == self.generation
                         && self.policy.snapshot().phase == BridgePhase::RetryScheduled
                         && !self.managed_child_active
                     {
                         self.start_managed();
-                    }
-                }
-                ActorInput::ProbeManaged { generation } => {
-                    if generation == self.generation && self.managed_child_active {
-                        self.handle_managed_probe().await;
-                    }
-                }
-                ActorInput::ProbeExternal { generation } => {
-                    if generation == self.generation && !self.managed_child_active {
-                        self.handle_external_probe().await;
                     }
                 }
                 ActorInput::ProcessEvent { generation, event } => {
@@ -317,22 +318,25 @@ impl BridgeSupervisorActor {
                 }
             }
         });
-        schedule_probe(self.input.clone(), generation);
     }
 
-    fn handle_explicit_retry(&mut self) {
+    async fn handle_explicit_retry(&mut self) {
         if self.shutting_down.load(Ordering::SeqCst) {
             return;
         }
         if matches!(
             self.policy.snapshot().phase,
-            BridgePhase::Authorized
-                | BridgePhase::Ready
-                | BridgePhase::Starting
-                | BridgePhase::AuthorizationRequired
+            BridgePhase::Authorized | BridgePhase::Ready | BridgePhase::AuthorizationRequired
         ) {
             return;
         }
+        if self.policy.snapshot().ownership == Some(BridgeOwnership::External) {
+            // The desktop may inspect an external Bridge, but must not start a
+            // competing process or terminate a runtime it does not own.
+            self.handle_external_probe().await;
+            return;
+        }
+        self.generation = self.generation.saturating_add(1);
         self.kill_managed_child();
         self.policy.explicit_retry(now_unix_ms());
         self.start_managed();
@@ -362,20 +366,16 @@ impl BridgeSupervisorActor {
 
     async fn handle_resume(&mut self) {
         let probe = self.probe().await;
-        if matches!(&probe, ProbeOutcome::Pending) {
+        if let ProbeOutcome::Pending(progress) = &probe {
             self.session = None;
             let ownership = if self.managed_child_active {
                 BridgeOwnership::Managed
             } else {
                 BridgeOwnership::External
             };
-            self.policy.discovered_pending(now_unix_ms(), ownership);
+            self.policy
+                .discovered_pending(now_unix_ms(), ownership, *progress);
             self.publish();
-            if self.managed_child_active {
-                schedule_probe(self.input.clone(), self.generation);
-            } else {
-                schedule_external_probe(self.input.clone(), self.generation);
-            }
             return;
         }
         let probe_state = match probe {
@@ -383,7 +383,7 @@ impl BridgeSupervisorActor {
             ProbeOutcome::Ready(_) => ResumeProbeState::Ready,
             ProbeOutcome::Absent => ResumeProbeState::Absent,
             ProbeOutcome::Blocked(_) => ResumeProbeState::Blocked,
-            ProbeOutcome::Pending => unreachable!("等待态已提前处理"),
+            ProbeOutcome::Pending(_) => unreachable!("等待态已提前处理"),
         };
         match decide_resume(
             probe_state,
@@ -437,16 +437,29 @@ impl BridgeSupervisorActor {
                 self.authorization = None;
                 self.publish();
             }
-            ProbeOutcome::Pending => {
-                schedule_probe(self.input.clone(), self.generation);
+            ProbeOutcome::Pending(progress) => {
+                self.session = None;
+                self.policy
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::Managed, progress);
+                self.publish();
             }
             ProbeOutcome::Absent => {
-                if self.managed_child_active {
-                    schedule_probe(self.input.clone(), self.generation);
+                if matches!(
+                    self.policy.snapshot().phase,
+                    BridgePhase::Ready | BridgePhase::Authorized
+                ) {
+                    self.session = None;
+                    self.policy.discovered_pending(
+                        now_unix_ms(),
+                        BridgeOwnership::Managed,
+                        ConnectionProgress::Reconnecting,
+                    );
+                    self.publish();
                 }
             }
             ProbeOutcome::Blocked(code) => {
-                self.policy.set_diagnostic(now_unix_ms(), code);
+                self.session = None;
+                self.policy.halt(now_unix_ms(), code);
                 self.publish();
             }
         }
@@ -466,12 +479,11 @@ impl BridgeSupervisorActor {
                     .discovered_ready(now_unix_ms(), BridgeOwnership::External);
                 self.publish();
             }
-            ProbeOutcome::Pending => {
+            ProbeOutcome::Pending(progress) => {
                 self.session = None;
                 self.policy
-                    .discovered_pending(now_unix_ms(), BridgeOwnership::External);
+                    .discovered_pending(now_unix_ms(), BridgeOwnership::External, progress);
                 self.publish();
-                schedule_external_probe(self.input.clone(), self.generation);
             }
             ProbeOutcome::Absent => self.start_managed(),
             ProbeOutcome::Blocked(code) => {
@@ -538,10 +550,12 @@ impl BridgeSupervisorActor {
             BridgeSupervisorEvent::Ready { channel } if channel == SUPERVISOR_CHANNEL => {
                 self.authorization = None;
                 self.session = None;
-                self.policy
-                    .discovered_pending(now_unix_ms(), BridgeOwnership::Managed);
+                self.policy.discovered_pending(
+                    now_unix_ms(),
+                    BridgeOwnership::Managed,
+                    ConnectionProgress::Starting,
+                );
                 self.publish();
-                schedule_probe(self.input.clone(), self.generation);
             }
             BridgeSupervisorEvent::TransientFailure { channel, code }
                 if channel == SUPERVISOR_CHANNEL && is_stable_bridge_code(&code) =>
@@ -612,17 +626,23 @@ impl BridgeSupervisorActor {
                 {
                     ProbeOutcome::Ready(summary.into())
                 }
-                Ok(IpcResponse::SelfSummary { .. }) => ProbeOutcome::Pending,
+                Ok(IpcResponse::SelfSummary { .. }) => ProbeOutcome::Authorized,
                 Ok(_) => ProbeOutcome::Blocked("desktop.bridge.self_response_invalid".to_owned()),
                 Err(failure) if failure.code() == "bridge.agent_runtime_unavailable" => {
                     ProbeOutcome::Authorized
                 }
-                Err(failure) if failure.kind() == LocalBridgeClientFailureKind::Timeout => {
-                    ProbeOutcome::Pending
+                Err(failure)
+                    if failure.kind() == LocalBridgeClientFailureKind::Timeout
+                        || failure.category()
+                            == agent_room_bridge_ipc::IpcErrorCategory::DependencyUnavailable =>
+                {
+                    // The device is healthy; failure of the default character
+                    // must not prevent other host tasks from joining.
+                    ProbeOutcome::Authorized
                 }
                 Err(failure) => ProbeOutcome::Blocked(failure.code().to_owned()),
             },
-            Ok(IpcResponse::BridgeStatus { .. }) => ProbeOutcome::Pending,
+            Ok(IpcResponse::BridgeStatus { state, .. }) => probe_connection_state(state),
             Ok(_) => ProbeOutcome::Blocked("desktop.bridge.probe_response_invalid".to_owned()),
             Err(failure)
                 if matches!(
@@ -665,12 +685,6 @@ enum ActorInput {
     AutomaticRetry {
         generation: u64,
     },
-    ProbeManaged {
-        generation: u64,
-    },
-    ProbeExternal {
-        generation: u64,
-    },
     ProcessEvent {
         generation: u64,
         event: CommandEvent,
@@ -682,9 +696,20 @@ enum ActorInput {
 enum ProbeOutcome {
     Authorized,
     Ready(BridgeAgentSessionView),
-    Pending,
+    Pending(ConnectionProgress),
     Absent,
     Blocked(String),
+}
+
+fn probe_connection_state(state: IpcBridgeState) -> ProbeOutcome {
+    match state {
+        IpcBridgeState::Starting => ProbeOutcome::Pending(ConnectionProgress::Starting),
+        IpcBridgeState::Reconnecting | IpcBridgeState::ShuttingDown => {
+            ProbeOutcome::Pending(ConnectionProgress::Reconnecting)
+        }
+        IpcBridgeState::Offline => ProbeOutcome::Blocked("desktop.bridge.offline".to_owned()),
+        IpcBridgeState::Ready => ProbeOutcome::Authorized,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -781,20 +806,6 @@ impl SupervisorFailure {
     }
 }
 
-fn schedule_probe(sender: mpsc::Sender<ActorInput>, generation: u64) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(PROBE_INTERVAL).await;
-        let _ = sender.send(ActorInput::ProbeManaged { generation }).await;
-    });
-}
-
-fn schedule_external_probe(sender: mpsc::Sender<ActorInput>, generation: u64) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(PROBE_INTERVAL).await;
-        let _ = sender.send(ActorInput::ProbeExternal { generation }).await;
-    });
-}
-
 fn stable_bridge_error_code(bytes: &[u8]) -> Option<String> {
     let line = std::str::from_utf8(bytes).ok()?.trim();
     let prefix = "Agent Room Bridge 启动失败 [";
@@ -831,6 +842,23 @@ mod tests {
         AuthorizationPrompt, BridgeAgentSessionView, is_stable_bridge_code,
         stable_bridge_error_code,
     };
+
+    #[test]
+    fn offline_and_reconnecting_are_not_reported_as_starting() {
+        use super::{ConnectionProgress, ProbeOutcome, probe_connection_state};
+        use agent_room_bridge_ipc::IpcBridgeState;
+        assert!(matches!(
+            probe_connection_state(IpcBridgeState::Reconnecting),
+            ProbeOutcome::Pending(ConnectionProgress::Reconnecting)
+        ));
+        assert!(
+            matches!(probe_connection_state(IpcBridgeState::Offline), ProbeOutcome::Blocked(code) if code == "desktop.bridge.offline")
+        );
+        assert!(matches!(
+            probe_connection_state(IpcBridgeState::Ready),
+            ProbeOutcome::Authorized
+        ));
+    }
 
     #[test]
     fn 授权提示只接受_https_或本机地址且不暴露完整地址() {

@@ -1,0 +1,9 @@
+{
+  "build": {
+    "beforeDevCommand": {
+      "script": "corepack pnpm@10.28.0 --filter @agent-room/web build:desktop",
+      "wait": true
+    },
+    "devUrl": null
+  }
+}

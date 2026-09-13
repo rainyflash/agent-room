@@ -29,10 +29,11 @@ import {
   type AgentInviteIdentity,
   type AgentInviteStatus,
 } from '../domain/agent-invite';
-import { desktopPhaseMessage } from '../domain/desktop-connection';
+import { hostFailureMessage, localConnectionReady } from '../domain/desktop-connection';
 import type { AgentHostKind, HostSessionDiagnostics } from '../domain/desktop-runtime';
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
+import { LocalConnectionNotice } from './local-connection-notice';
 import './agent-invite-dialog.css';
 
 type InviteRoom = { readonly roomId: string; readonly roomName: string } | null;
@@ -261,15 +262,18 @@ function DesktopInvite({
 
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const detection = host === 'other' ? null : controller.hosts.find((entry) => entry.host === host);
+  const { checkHost } = controller;
+  useEffect(() => {
+    if (host !== 'other' && detection?.installed === true && detection.configurable)
+      void checkHost(host);
+  }, [host, detection?.installed, detection?.configurable, checkHost]);
+  const setup = host === 'other' ? null : controller.hostSetup[host];
+  const canCopy =
+    localConnectionReady(phase) && (host === 'other' || setup?.phase === 'configured');
 
   return (
     <div className="agent-invite__body">
-      {phase === 'ready' ? null : (
-        <p className="agent-invite__notice" role="status">
-          <AlertTriangle aria-hidden="true" />
-          {t('agentInvite.runtime.notReady', { phase: t(desktopPhaseMessage[phase]) })}
-        </p>
-      )}
+      <LocalConnectionNotice />
 
       <ol className="agent-invite__steps">
         <li>
@@ -292,6 +296,7 @@ function DesktopInvite({
                   onClick={() => {
                     setChosenHost(candidate);
                     setCopyState('idle');
+                    setCopiedAt(null);
                   }}
                   role="radio"
                   type="button"
@@ -338,6 +343,7 @@ function DesktopInvite({
           />
           <Button
             className="agent-invite__copy"
+            disabled={!canCopy}
             icon={
               copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
             }
@@ -379,6 +385,7 @@ function DesktopInvite({
         <li>
           <h3>{t('agentInvite.step.wait')}</h3>
           <ArrivalStatus
+            preparation={canCopy ? (copiedAt === null ? 'instructions' : null) : 'setup'}
             diagnosticsFailure={diagnosticsFailure}
             onDone={onClose}
             slow={slow && status.kind === 'waiting'}
@@ -454,8 +461,9 @@ function HostSetup({
     );
   }
 
-  const configuring = controller.busy === 'host-configure';
-  const configured = controller.configuredHost === host;
+  const setup = controller.hostSetup[host];
+  const configuring = setup?.phase === 'checking';
+  const configured = setup?.phase === 'configured';
   return (
     <div className="agent-invite__setup">
       {configured ? (
@@ -465,7 +473,7 @@ function HostSetup({
         </p>
       ) : (
         <Button
-          disabled={controller.busy !== null}
+          disabled={controller.busy !== null || configuring}
           icon={configuring ? <RefreshCw aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
           onClick={() => void controller.configureHost(host)}
           size="compact"
@@ -476,9 +484,10 @@ function HostSetup({
           })}
         </Button>
       )}
-      {controller.failure === null ? null : (
+      {setup?.phase !== 'failed' ? null : (
         <p className="agent-invite__error" role="alert">
-          {t('agentInvite.host.failed', { code: controller.failure.code })}
+          {t(hostFailureMessage(setup.error.code), { host: hostLabel })}
+          <small>{t('agentInvite.errorCode', { code: setup.error.code })}</small>
         </p>
       )}
     </div>
@@ -523,22 +532,35 @@ function NameField({
 }
 
 function ArrivalStatus({
+  preparation,
   diagnosticsFailure,
   onDone,
   slow,
   status,
 }: {
+  readonly preparation: 'setup' | 'instructions' | null;
   readonly diagnosticsFailure: string | null;
   readonly onDone: () => void;
   readonly slow: boolean;
   readonly status: AgentInviteStatus;
 }) {
   const { t } = useTranslation();
-  if (diagnosticsFailure !== null && status.kind === 'waiting') {
+  if (diagnosticsFailure !== null) {
     return (
       <p className="agent-invite__status agent-invite__error" data-kind="unavailable" role="status">
         <AlertTriangle aria-hidden="true" />
         {t('agentInvite.status.unavailable', { code: diagnosticsFailure })}
+      </p>
+    );
+  }
+  if (status.kind === 'waiting' && preparation !== null) {
+    return (
+      <p className="agent-invite__status" data-kind="preparing" role="status">
+        {t(
+          preparation === 'setup'
+            ? 'agentInvite.status.prepare'
+            : 'agentInvite.status.instructions',
+        )}
       </p>
     );
   }

@@ -111,6 +111,26 @@
   margin-top: 2px;
   color: var(--color-alert);
 }
+
+.agent-invite__notice > div {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.agent-invite__notice p {
+  margin: 0;
+}
+
+.agent-invite__notice[data-phase='starting'],
+.agent-invite__notice[data-phase='discovering'] {
+  border-color: var(--ar-line);
+  background: var(--ar-surface-muted);
+}
+
+.agent-invite__setup .agent-invite__error {
+  display: grid;
+}
 .agent-invite__steps {
   display: grid;
   gap: 0;

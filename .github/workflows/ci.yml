@@ -117,7 +117,7 @@ jobs:
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.room.the-zeroth.com/_agent-room/api
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
-            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.27/agent-room-installer-v0.1.0-alpha.27-windows-x86_64.exe
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.28/agent-room-installer-v0.1.0-alpha.28-windows-x86_64.exe
       - name: 保存不可变镜像摘要
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -171,6 +171,8 @@ jobs:
         run: corepack pnpm@10.28.0 test
       - name: 运行 Python 工具测试
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: 验证开发与打包入口不会越过失败检查
+        run: node --test tools/tests/desktop-workflow.node-test.mjs
       - name: 检查凭据泄漏
         run: node tools/check-secrets.mjs --self-test && corepack pnpm@10.28.0 secrets:check
       - name: 验证 TypeScript 覆盖率
@@ -193,7 +195,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
-        run: rustup toolchain install 1.97.1 --profile minimal
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
       - name: 恢复 Windows Runtime 编译缓存
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:
@@ -208,8 +210,8 @@ jobs:
         run: corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
       - name: 检查桌面壳与窄化 Capabilities
         run: cargo check -p agent-room-desktop --all-targets --all-features
-      - name: 运行桌面壳领域测试
-        run: cargo test -p agent-room-desktop --all-features
+      - name: 运行与候选构建一致的桌面接入门禁
+        run: node tools/desktop.mjs native-check
 
   web-browser:
     name: Web 真实浏览器验收
@@ -232,7 +234,7 @@ jobs:
       - name: 验收已发布 Alpha 的版本化下载入口
         env:
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
-          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.27/agent-room-installer-v0.1.0-alpha.27-windows-x86_64.exe
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.28/agent-room-installer-v0.1.0-alpha.28-windows-x86_64.exe
         run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright test e2e/public-alpha-landing.e2e.ts
       - name: 上传浏览器验收产物
         if: ${{ !cancelled() }}

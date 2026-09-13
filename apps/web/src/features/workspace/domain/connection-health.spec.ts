@@ -95,6 +95,8 @@ describe('工作区四层连接状态', () => {
       [false, undefined, 'unavailable'],
       [true, 'starting', 'connecting'],
       [true, 'ready', 'online'],
+      [true, 'authorized', 'online'],
+      [true, 'reconnecting', 'degraded'],
       [true, 'retry_scheduled', 'degraded'],
       [true, 'stopped', 'offline'],
     ];
