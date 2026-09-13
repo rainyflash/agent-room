@@ -69,11 +69,30 @@ class ArtifactRetentionPolicyTests(unittest.TestCase):
         self.assertFalse(by_identifier[3].keep)
         self.assertEqual(by_identifier[4].reason, "active_workflow")
         self.assertEqual(by_identifier[5].reason, "current_revision")
-        self.assertFalse(by_identifier[6].keep)
-        self.assertEqual(by_identifier[6].reason, "published_release_duplicate")
+        self.assertTrue(by_identifier[6].keep)
+        self.assertEqual(by_identifier[6].reason, "release_candidate_expiry")
         self.assertEqual(by_identifier[7].reason, "latest_by_name")
         self.assertEqual(by_identifier[8].reason, "latest_successful_by_name")
         self.assertEqual(by_identifier[9].reason, "latest_by_name")
+
+    def test_old_release_artifacts_survive_main_advance_and_newer_candidates(self) -> None:
+        for conclusion in ("success", "failure", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                values = tuple(
+                    artifact(index, name, "2026-08-25T00:00:00Z", 11, "old-main")
+                    for index, name in enumerate((
+                        "release-metadata", "release-native-windows-x86_64",
+                        "release-image-web", "release-candidate-v1",
+                    ), start=1)
+                ) + (artifact(5, "release-metadata", "2026-08-26T00:00:00Z", 12),)
+                runs = {
+                    11: WorkflowRun(11, "completed", conclusion),
+                    12: WorkflowRun(12, "completed", "success"),
+                }
+                decisions = retention_decisions(values, runs, "new-main")
+                self.assertEqual(len(decisions), 5)
+                self.assertTrue(all(item.keep for item in decisions))
+                self.assertTrue(all(item.reason == "release_candidate_expiry" for item in decisions))
 
     def test_policy_fails_closed_when_run_truth_is_missing(self) -> None:
         with self.assertRaisesRegex(ArtifactRetentionFailure, "缺少 Workflow Run"):

@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 
 ROOT: Final = Path(__file__).resolve().parent.parent
-EPHEMERAL_RELEASE_ARTIFACT_PREFIX: Final = "release-"
+RELEASE_ARTIFACT_PREFIX: Final = "release-"
 GITHUB_HTTP_STATUS_PATTERN: Final = re.compile(r"\bHTTP (?P<status>[1-5][0-9]{2})\b")
 TRANSIENT_GITHUB_FAILURE_PATTERN: Final = re.compile(
     r"\b(?:timeout|timed out|connection reset|EOF)\b", re.IGNORECASE
@@ -60,7 +60,7 @@ def retention_decisions(
     runs: Mapping[int, WorkflowRun],
     current_revision: str,
 ) -> tuple[RetentionDecision, ...]:
-    """保留当前修订、活跃运行及每个名称的最新与最近成功制品。"""
+    """保留发行候选、当前修订、活跃运行及最新与最近成功的普通制品。"""
 
     latest: dict[str, Artifact] = {}
     latest_successful: dict[str, Artifact] = {}
@@ -91,15 +91,10 @@ def retention_decisions(
             reason = "current_revision"
         elif run.status != "completed":
             reason = "active_workflow"
-        elif artifact.name.startswith(EPHEMERAL_RELEASE_ARTIFACT_PREFIX):
-            decisions.append(
-                RetentionDecision(
-                    artifact=artifact,
-                    keep=False,
-                    reason="published_release_duplicate",
-                )
-            )
-            continue
+        elif artifact.name.startswith(RELEASE_ARTIFACT_PREFIX):
+            # A completed build does not prove its assets were published. Keep
+            # recoverable candidates until their configured Actions expiry.
+            reason = "release_candidate_expiry"
         elif latest.get(artifact.name) == artifact:
             reason = "latest_by_name"
         elif latest_successful.get(artifact.name) == artifact:
