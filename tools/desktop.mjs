@@ -65,12 +65,9 @@ export function desktopPlan(mode) {
         pnpm('--filter', '@agent-room/desktop', 'prepare:sidecar:debug'),
         ['cargo', 'build', '--locked', '-p', 'agent-room-desktop'],
         [
-          resolve(
-            root,
-            'target',
-            'debug',
-            `agent-room-desktop${process.platform === 'win32' ? '.exe' : ''}`,
-          ),
+          process.platform === 'win32'
+            ? './target/debug/agent-room-desktop.exe'
+            : './target/debug/agent-room-desktop',
           '--check-hosts',
         ],
       ];
