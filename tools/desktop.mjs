@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { closeSync, openSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
@@ -93,12 +93,12 @@ function checkBuildFiles() {
   if (process.platform !== 'win32') return;
   for (const name of ['agent-room-desktop', 'agent-room-bridge', 'agent-room-mcp', 'agent-room']) {
     const path = resolve(root, 'target', 'debug', `${name}.exe`);
-    if (!existsSync(path)) continue;
     try {
       // Opening without writing detects Windows' executable lock before Cargo
       // spends minutes compiling. Never terminate another process implicitly.
       closeSync(openSync(path, 'r+'));
     } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
       throw new Error(
         `Cannot rebuild ${name}. Close the running desktop preview from its tray before starting checks, a preview, or packaging.`,
         { cause: error },
@@ -115,7 +115,7 @@ function run(command) {
     // by a user must always be executed directly, never interpolated here.
     if (args.some((arg) => !/^[a-zA-Z0-9_@/.=:-]+$/u.test(arg)))
       throw new Error('Unsafe Corepack argument');
-    executable = process.env.ComSpec ?? 'cmd.exe';
+    executable = 'cmd.exe';
     args = ['/d', '/s', '/c', 'corepack', ...args];
   }
   const result = spawnSync(executable, args, {
