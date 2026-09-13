@@ -9,8 +9,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
-        MatrixResult, MatrixUserId, PortFuture, PrincipalAccount, RoomAllocationStore,
-        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
+        MatrixResult, MatrixUserId, PortFuture, PrincipalAccount, RoomAllocationMode,
+        RoomAllocationStore, RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
     },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
@@ -36,6 +36,18 @@ const NOW: i64 = 1_700_000_000_000;
 struct 固定访问仓储(Option<AgentLobbyAccessRecord>);
 
 impl AgentLobbyAccessRepository for 固定访问仓储 {
+    fn find_public_lobby_room<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        matrix_room_id: &'a MatrixRoomReference,
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomInstanceId>>> {
+        Box::pin(async move {
+            Ok(
+                (catalog_id == room().catalog_id() && matrix_room_id == room().matrix_room_id())
+                    .then_some(room_instance_id()),
+            )
+        })
+    }
     fn find_lobby_access(
         &self,
         _agent_instance_id: AgentInstanceId,
@@ -84,6 +96,7 @@ impl AgentRoomMembershipFactory for 记录成员工厂 {
 struct 固定分配仓储 {
     reservation: RoomReservation,
     room: RoomInstance,
+    expected_mode: RoomAllocationMode,
 }
 
 impl RoomAllocationStore for 固定分配仓储 {
@@ -94,6 +107,7 @@ impl RoomAllocationStore for 固定分配仓储 {
         Box::pin(async move {
             assert_eq!(claim.agent_id, agent_id());
             assert_eq!(claim.agent_instance_id, instance_id());
+            assert_eq!(claim.mode, self.expected_mode);
             Ok(RoomReservationOutcome::ExistingAssignment {
                 reservation: self.reservation.clone(),
                 room: self.room.clone(),
@@ -218,6 +232,14 @@ fn service(
     access: AgentLobbyAccessRecord,
     memberships: Arc<记录成员工厂>,
 ) -> AgentLobbyEntryService {
+    service_with_mode(access, memberships, RoomAllocationMode::Automatic)
+}
+
+fn service_with_mode(
+    access: AgentLobbyAccessRecord,
+    memberships: Arc<记录成员工厂>,
+    expected_mode: RoomAllocationMode,
+) -> AgentLobbyEntryService {
     let runtime = Arc::new(固定运行时);
     AgentLobbyEntryService::new(
         AgentLobbyEntryDependencies {
@@ -225,6 +247,7 @@ fn service(
             allocations: Arc::new(固定分配仓储 {
                 reservation: reservation(),
                 room: room(),
+                expected_mode,
             }),
             memberships,
             provisioning: Arc::new(禁止供给),
@@ -242,6 +265,39 @@ fn access(active: bool, device_id: DeviceId) -> AgentLobbyAccessRecord {
         device_id,
         matrix_user_id: matrix_user_id(),
         active,
+    }
+}
+
+#[tokio::test]
+async fn 精确邀请只进入指定公共房间且不可用时不分配默认房间() {
+    for (room_id, allowed) in [
+        ("!lobby:matrix.test", true),
+        ("!missing:matrix.test", false),
+    ] {
+        let membership = Arc::new(记录成员能力::default());
+        let factory = Arc::new(记录成员工厂 {
+            users: Mutex::new(Vec::new()),
+            membership: membership.clone(),
+        });
+        let service = service_with_mode(
+            access(true, device_id()),
+            factory.clone(),
+            RoomAllocationMode::Manual(room_instance_id()),
+        );
+        let mut request = request(device_id());
+        request.target_room = Some(MatrixRoomReference::new(room_id).unwrap());
+        let result = service.enter(request).await;
+        if allowed {
+            assert!(result.is_ok());
+            assert_eq!(*membership.joins.lock().unwrap(), [room_id]);
+        } else {
+            assert_eq!(
+                result.unwrap_err().kind(),
+                AgentLobbyEntryFailureKind::NotFound
+            );
+            assert!(factory.users.lock().unwrap().is_empty());
+            assert!(membership.joins.lock().unwrap().is_empty());
+        }
     }
 }
 
@@ -264,6 +320,7 @@ fn request(device_id: DeviceId) -> EnterAgentLobby {
         catalog_id: catalog_id(),
         preferred_language: None,
         preferred_region: None,
+        target_room: None,
     }
 }
 

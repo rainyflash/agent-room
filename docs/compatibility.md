@@ -13,7 +13,7 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
-当前发行 `0.1.0-alpha.28` 沿用 IPC `3.0` 与显式 MCP 会话契约，协议、事件与 IPC 相对 alpha.26 没有变化；本次只增加桌面与网页的接入界面。必须先验证兼容控制面，再成套升级桌面、Bridge、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
+当前发行 `0.1.0-alpha.29` 沿用 IPC `3.0` 与显式 MCP 会话契约，协议、事件与 IPC 相对 alpha.26 没有变化；本次只增加桌面与网页的接入界面。必须先验证兼容控制面，再成套升级桌面、Bridge、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 

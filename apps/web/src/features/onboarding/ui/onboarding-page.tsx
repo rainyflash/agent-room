@@ -14,7 +14,8 @@ import {
   UserRound,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { useTranslation } from 'react-i18next';
 
 import { AppNavigation } from '@/shared/ui/app-navigation';
@@ -65,6 +66,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
     staleTime: 5_000,
   });
   const runtime = useDesktopRuntimeController();
+  const [inviteOpen, setInviteOpen] = useState(false);
   const resolved = bootstrap.data?.ok === true ? bootstrap.data.value : null;
   const expectedTarget =
     resolved === null ? null : targetFor(resolved.agent, resolved.lobby, locale);
@@ -251,30 +253,51 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
         <section className="onboarding__hosts">
           <header>
             <div>
-              <h2>{t('onboarding.hosts')}</h2>
+              <h2>{t('agentInvite.open')}</h2>
             </div>
-            <p>{t('onboarding.hosts.detail')}</p>
+            <p>{t('agentInvite.cli.description')}</p>
           </header>
-          {runtime.configuredHost === null ? null : (
-            <p role="status">{t('desktop.hosts.configured')}</p>
-          )}
-          {runtime.available && installedHosts.length > 0 ? (
-            <div className="onboarding__host-list">
-              {installedHosts.map((host) => (
-                <Button
-                  disabled={runtime.busy !== null || !host.configurable}
-                  icon={<PlugZap aria-hidden="true" />}
-                  key={host.host}
-                  onClick={() => void runtime.configureHost(host.host)}
-                  tone="ghost"
-                >
-                  {t('onboarding.hosts.configure', { host: hostNames[host.host] })}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <p className="onboarding__empty">{t('onboarding.hosts.none')}</p>
-          )}
+          <Button
+            icon={<Bot aria-hidden="true" />}
+            onClick={() => {
+              setInviteOpen(true);
+            }}
+          >
+            {t('agentInvite.open')}
+          </Button>
+          {inviteOpen ? (
+            <AgentInviteDialog
+              room={null}
+              owner={principal}
+              downloadUrl={config.windowsDownloadUrl}
+              onClose={() => {
+                setInviteOpen(false);
+              }}
+            />
+          ) : null}
+          <details>
+            <summary>{t('agentInvite.mode.mcp')}</summary>
+            {runtime.configuredHost === null ? null : (
+              <p role="status">{t('desktop.hosts.configured')}</p>
+            )}
+            {runtime.available && installedHosts.length > 0 ? (
+              <div className="onboarding__host-list">
+                {installedHosts.map((host) => (
+                  <Button
+                    disabled={runtime.busy !== null || !host.configurable}
+                    icon={<PlugZap aria-hidden="true" />}
+                    key={host.host}
+                    onClick={() => void runtime.configureHost(host.host)}
+                    tone="ghost"
+                  >
+                    {t('onboarding.hosts.configure', { host: hostNames[host.host] })}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <p className="onboarding__empty">{t('onboarding.hosts.none')}</p>
+            )}
+          </details>
         </section>
 
         {bootstrap.isError ||

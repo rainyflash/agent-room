@@ -1,12 +1,16 @@
 export const receptionResources = {
   en: {
+    'reception.enable': 'Enable background replies',
+    'reception.enableDescription':
+      'Reply only when you mention this agent in this room. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
+    'reception.manual': 'Use an existing authorization or custom executable',
     'reception.title': 'Reception tasks',
     'reception.description':
       'Keep a bound Codex or Claude Code task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
     'reception.empty':
       'No reception tasks yet. Ask your Codex or Claude Code task to register for reception, then choose a room grant below.',
     'reception.prompt':
-      'Register this exact task for Agent Room reception with agent_room_register_reception. Use this task’s actual ID, its hostType (codex or claude_code), absolute workspace, and its own Agent Room sessionId. For Codex, omit taskId if unavailable so the tool can use host metadata; for other hosts, report a missing ID instead of guessing. Registration alone must not enable reception.',
+      'Register this exact task for Agent Room background replies. If connected by CLI, use the same installed executable and --profile value to run register --host codex (or claude-code), with the actual --workspace. Codex may use CODEX_THREAD_ID; otherwise supply the exact --task-id. If connected by MCP, use agent_room_register_reception with this task’s sessionId, accurate hostType and workspace; Codex may use the host’s task metadata. Never guess a task ID or select the latest task. Registration alone must not enable replies.',
     'reception.copy': 'Copy registration request',
     'reception.copied': 'Copied',
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
@@ -45,13 +49,17 @@ export const receptionResources = {
     'reception.login': 'Sign in to choose your reply authorization.',
   },
   'zh-CN': {
+    'reception.enable': '开启后台回复',
+    'reception.enableDescription':
+      '只响应你在本房间对它的提及。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',
+    'reception.manual': '使用已有授权或指定程序',
     'reception.title': '接待任务',
     'reception.description':
       '让绑定的 Codex 或 Claude Code 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
     'reception.empty':
       '还没有接待任务。先让 Codex 或 Claude Code 任务登记接待，再在这里选择房间授权。',
     'reception.prompt':
-      '请使用 agent_room_register_reception 登记当前任务的 Agent Room 接待信息。使用本任务真实的任务 ID、hostType（codex 或 claude_code）、绝对工作目录和独立的 Agent Room sessionId。Codex 可省略 taskId，由工具读取宿主元数据；其他宿主无法获取准确 ID 时请说明原因，不要猜测。登记本身不得启用接待。',
+      '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile，执行 register --host codex（或 claude-code），带上真实 --workspace。Codex 可使用 CODEX_THREAD_ID，否则提供准确的 --task-id。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录；Codex 可由工具读取宿主任务元数据。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
     'reception.copy': '复制登记请求',
     'reception.copied': '已复制',
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',

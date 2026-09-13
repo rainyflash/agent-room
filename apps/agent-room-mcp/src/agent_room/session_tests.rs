@@ -298,6 +298,7 @@ fn self_summary(session_id: &str) -> IpcResponse {
 
 fn open_method(display_name: &str) -> IpcMethod {
     IpcMethod::OpenHostSession(IpcOpenHostSessionRequest {
+        room: None,
         session_key: SESSION_KEY.to_owned(),
         display_name: display_name.to_owned(),
     })

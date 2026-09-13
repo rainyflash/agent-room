@@ -92,6 +92,69 @@
 .agent-invite__web .ar-button {
   text-decoration: none;
 }
+
+.agent-invite__body > .agent-invite__web {
+  padding: 0 0 20px;
+  overflow: visible;
+}
+.agent-invite__steps > li > p {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.agent-invite__restore {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.agent-invite__restore select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--ar-line);
+  border-radius: 8px;
+  color: var(--ar-ink);
+  background: var(--ar-surface);
+}
+.agent-invite__advanced {
+  padding: 12px;
+  border: 1px solid var(--ar-line);
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.agent-invite__advanced summary {
+  cursor: pointer;
+  color: var(--ar-muted);
+}
+.agent-invite__advanced p {
+  margin: 12px 0;
+}
+.agent-invite__modes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.agent-invite__modes button {
+  padding: 8px 12px;
+  border: 1px solid var(--ar-line);
+  border-radius: 8px;
+  background: var(--ar-surface);
+  color: var(--ar-ink);
+}
+.agent-invite__modes button[aria-checked='true'] {
+  border-color: var(--ar-accent);
+  color: var(--ar-accent);
+  background: var(--ar-accent-soft);
+}
+.agent-invite__restore select:focus-visible,
+.agent-invite__advanced summary:focus-visible,
+.agent-invite__modes button:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 2px;
+}
 .agent-invite__notice {
   display: flex;
   gap: 8px;

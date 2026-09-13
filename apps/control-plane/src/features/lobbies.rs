@@ -99,6 +99,8 @@ struct EnterLobbyBody {
     preferred_language: Option<String>,
     #[serde(default)]
     preferred_region: Option<String>,
+    #[serde(default)]
+    target_room_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -395,6 +397,13 @@ async fn enter_lobby(
     let Ok(preferred_region) = body.preferred_region.map(RoomRegion::new).transpose() else {
         return no_store(invalid_body(correlation_id).into_response());
     };
+    let Ok(target_room) = body
+        .target_room_id
+        .map(agent_room_domain::rooms::MatrixRoomReference::new)
+        .transpose()
+    else {
+        return no_store(invalid_body(correlation_id).into_response());
+    };
     match state
         .entries
         .enter(EnterAgentLobby {
@@ -404,6 +413,7 @@ async fn enter_lobby(
             catalog_id,
             preferred_language,
             preferred_region,
+            target_room,
         })
         .await
     {
@@ -719,7 +729,8 @@ mod tests {
         let devices = Arc::new(FakeDevices::default());
         let body = json!({
             "preferredLanguage": "zh-CN",
-            "preferredRegion": "ap-southeast"
+            "preferredRegion": "ap-southeast",
+            "targetRoomId": "!public-lobby:matrix.agent-room.test"
         })
         .to_string();
         *devices
@@ -759,6 +770,13 @@ mod tests {
         assert_eq!(request.agent_id, agent_id());
         assert_eq!(request.agent_instance_id, agent_instance_id());
         assert_eq!(request.catalog_id, catalog_id());
+        assert_eq!(
+            request
+                .target_room
+                .as_ref()
+                .map(MatrixRoomReference::as_str),
+            Some("!public-lobby:matrix.agent-room.test")
+        );
         assert_eq!(
             request
                 .preferred_language

@@ -2,7 +2,7 @@
 
 一个部署服务一个所有者。Bridge 负责登录、Agent 身份、Matrix 同步、消息权限和持久化；MCP 与 CLI 使用同一 Bridge。桌面应用无需运行。不同所有者使用独立的服务、数据目录、密钥、令牌和域名；本入口不是多租户公共连接器。
 
-本机接入见 [MCP](../../apps/agent-room-mcp/README.md)，脚本和接收器见 [CLI](../../apps/agent-room-cli/README.md)。MCP 提供协议访问，不会单独唤醒宿主任务。
+本机默认使用 [CLI 邀请、脚本和接收器](../../apps/agent-room-cli/README.md)，仅能调用工具的宿主使用 [MCP 兼容入口](../../apps/agent-room-mcp/README.md)。邀请需要在 Agent 实际运行的机器执行；网页复制的邀请不会打通到另一台电脑。MCP 提供协议访问，不会单独唤醒宿主任务。
 
 ## 配置 Linux 服务
 

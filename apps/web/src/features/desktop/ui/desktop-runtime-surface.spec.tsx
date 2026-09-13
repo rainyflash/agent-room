@@ -48,6 +48,7 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
     autostartEnabled: false,
     bridge,
     deepLink: null,
+    cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
     manualHostConfiguration: {
       args: [],
       command: 'C:\\Agent Room\\agent-room-mcp.exe',
@@ -244,6 +245,7 @@ describe('桌面运行时界面', () => {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    fireEvent.click(screen.getByText('MCP compatibility'));
     fireEvent.click(screen.getByRole('button', { name: 'Other MCP hosts' }));
     expect(screen.getByText('C:\\Agent Room\\agent-room-mcp.exe')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));

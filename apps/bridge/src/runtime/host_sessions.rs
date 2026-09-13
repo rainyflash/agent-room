@@ -1,9 +1,10 @@
 use agent_room_bridge_core::onboarding::{
-    ControlPlaneOnboardingFailureKind, HostAgentRegistrationGateway,
+    ControlPlaneOnboardingFailureKind, ControlPlaneOnboardingGateway, HostAgentRegistrationGateway,
+    select_public_lobby,
 };
 use agent_room_bridge_ipc::IpcOpenHostSessionRequest;
 use agent_room_bridge_local_adapter::SecureStorageService;
-use agent_room_domain::ids::AgentCreationRequestId;
+use agent_room_domain::{ids::AgentCreationRequestId, rooms::MatrixRoomReference};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest as _, Sha256};
 
@@ -29,6 +30,7 @@ pub(super) struct HostAgentRuntimeFactory {
     paths: BridgeRuntimePaths,
     device_session: Arc<BridgeSessionService>,
     registration: Arc<dyn HostAgentRegistrationGateway>,
+    onboarding: Arc<dyn ControlPlaneOnboardingGateway>,
 }
 
 impl HostAgentRuntimeFactory {
@@ -45,11 +47,13 @@ impl HostAgentRuntimeFactory {
             device_session.clone(),
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
+        let registration = Arc::new(registration);
         Ok(Self {
             config,
             paths,
             device_session,
-            registration: Arc::new(registration),
+            registration: registration.clone(),
+            onboarding: registration,
         })
     }
 
@@ -58,10 +62,13 @@ impl HostAgentRuntimeFactory {
         request: IpcOpenHostSessionRequest,
         shutdown: watch::Receiver<bool>,
     ) -> Result<PreparedHostSession, BridgeIpcDispatchFailure> {
-        let lobby_catalog_id = self
-            .config
-            .public_lobby_catalog_id
-            .ok_or_else(|| host_failure("bridge.host_session.lobby_required", false))?;
+        let lobby_catalog_id = resolve_lobby_catalog(
+            request.room.as_ref(),
+            self.config.public_lobby_catalog_id,
+            self.onboarding.as_ref(),
+            self.config.lobby_language.as_ref(),
+        )
+        .await?;
         let key = uuid::Uuid::parse_str(&request.session_key)
             .map_err(|_| host_failure("bridge.host_session.key_invalid", false))?;
         let agent = self
@@ -108,6 +115,11 @@ impl HostAgentRuntimeFactory {
             AgentSessionTarget {
                 agent_id: agent.agent_id,
                 lobby_catalog_id,
+                room: request
+                    .room
+                    .map(|target| MatrixRoomReference::new(target.room_id))
+                    .transpose()
+                    .map_err(|_| host_failure("bridge.host_session.room_invalid", false))?,
             },
         )
         .await
@@ -162,6 +174,31 @@ impl HostSessionFactory for HostAgentRuntimeFactory {
     }
 }
 
+async fn resolve_lobby_catalog(
+    requested: Option<&agent_room_bridge_ipc::IpcHostRoomTarget>,
+    configured: Option<agent_room_domain::ids::RoomCatalogId>,
+    onboarding: &dyn ControlPlaneOnboardingGateway,
+    language: Option<&agent_room_domain::rooms::RoomLanguage>,
+) -> Result<agent_room_domain::ids::RoomCatalogId, BridgeIpcDispatchFailure> {
+    let catalog = if let Some(target) = requested {
+        agent_room_domain::ids::RoomCatalogId::from_uuid(
+            uuid::Uuid::parse_str(&target.catalog_id)
+                .map_err(|_| host_failure("bridge.host_session.catalog_invalid", false))?,
+        )
+    } else if let Some(catalog) = configured {
+        catalog
+    } else {
+        let lobbies = onboarding
+            .list_public_lobbies()
+            .await
+            .map_err(|failure| registration_failure(failure.kind()))?;
+        select_public_lobby(lobbies, language)
+            .ok_or_else(|| host_failure("bridge.host_session.lobby_unavailable", true))?
+            .catalog_id
+    };
+    Ok(catalog)
+}
+
 fn host_storage_service(
     parent_service: &str,
     agent_id: AgentId,
@@ -207,6 +244,57 @@ fn host_failure(code: &'static str, retryable: bool) -> BridgeIpcDispatchFailure
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_room_bridge_core::onboarding::{
+        BridgeDefaultAgent, BridgePublicLobby, ControlPlaneOnboardingResult,
+    };
+    use agent_room_domain::ids::RoomCatalogId;
+
+    struct Lobbies(Vec<BridgePublicLobby>);
+    impl ControlPlaneOnboardingGateway for Lobbies {
+        fn ensure_default_agent(
+            &self,
+        ) -> PortFuture<'_, ControlPlaneOnboardingResult<BridgeDefaultAgent>> {
+            panic!("邀请独立人物不能创建旧默认人物");
+        }
+        fn list_public_lobbies(
+            &self,
+        ) -> PortFuture<'_, ControlPlaneOnboardingResult<Vec<BridgePublicLobby>>> {
+            Box::pin(async { Ok(self.0.clone()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn 空设备从公共目录接入且明确邀请优先于默认大厅() {
+        let catalog = RoomCatalogId::from_uuid(uuid::Uuid::now_v7());
+        let gateway = Lobbies(vec![BridgePublicLobby {
+            catalog_id: catalog,
+            language: None,
+        }]);
+        assert_eq!(
+            resolve_lobby_catalog(None, None, &gateway, None)
+                .await
+                .unwrap(),
+            catalog
+        );
+        let invited = agent_room_bridge_ipc::IpcHostRoomTarget {
+            catalog_id: uuid::Uuid::now_v7().to_string(),
+            room_id: "!invited:test.invalid".into(),
+        };
+        assert_eq!(
+            resolve_lobby_catalog(Some(&invited), Some(catalog), &Lobbies(vec![]), None)
+                .await
+                .unwrap()
+                .to_string(),
+            invited.catalog_id
+        );
+        assert_eq!(
+            resolve_lobby_catalog(None, None, &Lobbies(vec![]), None)
+                .await
+                .unwrap_err()
+                .code(),
+            "bridge.host_session.lobby_unavailable"
+        );
+    }
 
     #[test]
     fn 人物存储命名空间稳定且隔离安装与身份() {

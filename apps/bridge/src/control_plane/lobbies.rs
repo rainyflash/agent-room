@@ -30,7 +30,7 @@ pub struct ReqwestControlPlaneLobbyEntryGateway {
 }
 
 impl ReqwestControlPlaneLobbyEntryGateway {
-    /// 创建只向固定控制面提交自动大厅分配的 HTTP 网关。
+    /// 创建向固定控制面提交大厅分配的 HTTP 网关。
     ///
     /// # Errors
     ///
@@ -60,6 +60,7 @@ impl ReqwestControlPlaneLobbyEntryGateway {
         let body = serde_json::to_string(&EnterLobbyBody {
             preferred_language: intent.preferred_language().map(RoomLanguage::as_str),
             preferred_region: intent.preferred_region().map(RoomRegion::as_str),
+            target_room_id: intent.target_room().map(MatrixRoomReference::as_str),
         })
         .map_err(|_| failure(ControlPlaneLobbyEntryFailureKind::Internal))?;
         let authorized = self
@@ -105,6 +106,8 @@ struct EnterLobbyBody<'a> {
     preferred_language: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     preferred_region: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_room_id: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -364,7 +367,8 @@ mod tests {
                         && serde_json::from_str::<Value>(&body).ok()
                             == Some(json!({
                                 "preferredLanguage": "zh-CN",
-                                "preferredRegion": "ap-southeast"
+                                "preferredRegion": "ap-southeast",
+                                "targetRoomId": "!public:example.org"
                             }));
                     if valid {
                         (StatusCode::OK, Json(joined_response())).into_response()
@@ -378,7 +382,13 @@ mod tests {
         let service = service(spawn_server(app).await, authorizer.clone());
 
         let outcome = service
-            .enter(&identity(), &config())
+            .enter(
+                &identity(),
+                &config().with_target_room(Some(
+                    agent_room_domain::rooms::MatrixRoomReference::new("!public:example.org")
+                        .unwrap(),
+                )),
+            )
             .await
             .expect("规范大厅响应可解析");
 

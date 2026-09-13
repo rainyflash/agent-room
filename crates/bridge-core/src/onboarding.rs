@@ -151,7 +151,7 @@ impl BridgeOnboardingService {
     }
 }
 
-fn select_public_lobby(
+pub fn select_public_lobby(
     mut lobbies: Vec<BridgePublicLobby>,
     preferred_language: Option<&RoomLanguage>,
 ) -> Option<BridgePublicLobby> {

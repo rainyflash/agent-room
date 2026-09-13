@@ -38,7 +38,11 @@ export function receptionFixture(
     failure: null,
     state: {
       binding: {
-        session: { sessionKey: taskId, displayName: 'Reception Scout' },
+        session: {
+          sessionKey: taskId,
+          displayName: 'Reception Scout',
+          room: { catalogId, roomId: '!fixture:matrix.test' },
+        },
         policy: { roomId: '!fixture:matrix.test', allowedPrincipalId: principalId },
         automationGrantId: grant.grantId,
         host: {

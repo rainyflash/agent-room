@@ -2,11 +2,13 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppProviders } from '@/app/app-providers';
+import { router } from '@/app/router';
+import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { createCloudRuntime } from '@/app/web-app-providers';
 import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import type {
@@ -137,6 +139,47 @@ describe('应用组合根', () => {
     window.sessionStorage.clear();
     expect(runtime.services.lobby).toBeDefined();
   });
+
+  it('真实路由的本机面板共享登录状态，展开接待和邀请不会丢失 SessionProvider', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    vi.spyOn(ControlPlaneClient.prototype, 'readSession').mockResolvedValue(
+      ok({
+        principalId: '018c251e-7b5a-7c7f-8a28-2de53f56a9a3',
+        matrixUserId: '@ada:matrix.agent-room.test',
+        displayName: 'Ada',
+        locale: 'en',
+        authenticatedAtUnixMs: 1,
+        expiresAtUnixMs: Date.now() + 60_000,
+        recentlyAuthenticated: true,
+      }),
+    );
+    vi.spyOn(DesktopMatrixGateway.prototype, 'restore').mockResolvedValue(
+      ok({
+        kind: 'connected',
+        connection: {
+          deviceId: 'TEST',
+          userId: '@ada:matrix.agent-room.test',
+          disconnect: () => undefined,
+          observe: () => () => undefined,
+          waitUntilPrepared: () => Promise.resolve(ok(undefined)),
+        },
+      }),
+    );
+    renderApplication({
+      ...runtimeGateway(true),
+      listReceivers: () => Promise.resolve(ok([])),
+      readHostSessions: () => Promise.resolve(ok([])),
+    });
+    await act(() => router.navigate({ to: '/rooms' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Reception tasks' })).toBeVisible();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
+    expect(await screen.findByRole('textbox', { name: 'Agent name' })).toHaveValue('Ada’s agent');
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+    expect(screen.queryByText('SessionProvider is missing.')).toBeNull();
+  });
 });
 
 function renderApplication(localRuntime: DesktopRuntimeGateway) {
@@ -167,6 +210,7 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
     autostartEnabled: false,
     bridge,
     deepLink: null,
+    cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
     manualHostConfiguration: {
       args: [],
       command: 'C:\\Agent Room\\agent-room-mcp.exe',

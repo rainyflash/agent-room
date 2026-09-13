@@ -3,8 +3,9 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomDirectory,
-        RoomDirectoryQuery, RoomReservationClaim, RoomReservationOutcome,
+        AgentLobbyAccessRepository, RoomAllocationEvidence, RoomAllocationMode,
+        RoomAllocationStore, RoomDirectory, RoomDirectoryQuery, RoomReservationClaim,
+        RoomReservationOutcome,
     },
 };
 use agent_room_domain::{
@@ -41,6 +42,48 @@ struct Fixture {
     agent_instances: Vec<AgentInstanceId>,
     catalog_id: RoomCatalogId,
     room_ids: Vec<RoomInstanceId>,
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 邀请只能解析同目录的活跃公共房间() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime, 1, 1, 1, 3).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let matrix_id: String =
+        sqlx::query_scalar("SELECT matrix_room_id FROM agent_room.room_instance WHERE id = $1")
+            .bind(fixture.room_ids[0].as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .unwrap();
+    let matrix_id = agent_room_domain::rooms::MatrixRoomReference::new(matrix_id).unwrap();
+    assert_eq!(
+        repositories
+            .find_public_lobby_room(fixture.catalog_id, &matrix_id)
+            .await
+            .unwrap(),
+        Some(fixture.room_ids[0])
+    );
+    assert_eq!(
+        repositories
+            .find_public_lobby_room(RoomCatalogId::from_uuid(Uuid::now_v7()), &matrix_id)
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query("UPDATE agent_room.room_catalog_entry SET visibility = 'private' WHERE id = $1")
+        .bind(fixture.catalog_id.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .unwrap();
+    assert_eq!(
+        repositories
+            .find_public_lobby_room(fixture.catalog_id, &matrix_id)
+            .await
+            .unwrap(),
+        None
+    );
+    database.close().await;
 }
 
 #[tokio::test]

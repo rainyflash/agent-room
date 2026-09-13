@@ -5,7 +5,16 @@ import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const packages = ['agent-room-host-adapters', 'agent-room-desktop', 'agent-room-bridge'];
+const packages = [
+  'agent-room-host-adapters',
+  'agent-room-desktop',
+  'agent-room-bridge',
+  'agent-room-bridge-ipc',
+  'agent-room-cli',
+  'agent-room-mcp',
+  'agent-room-agent-client',
+  'agent-room-agent-reception',
+];
 const cargoPackages = packages.flatMap((name) => ['-p', name]);
 const pnpm = (...args) => ['corepack', 'pnpm@10.28.0', ...args];
 const nativeChecks = [
@@ -38,6 +47,7 @@ const webChecks = [
     'playwright',
     'test',
     'agent-access.e2e.ts',
+    'reception.e2e.ts',
     'matrix-session-vault.e2e.ts',
   ),
 ];

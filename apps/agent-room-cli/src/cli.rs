@@ -10,12 +10,36 @@ use std::path::PathBuf;
 pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) data_root: Option<PathBuf>,
+    /// Saved identity returned by join. Keeps this task separate from other agents.
+    #[arg(long, global = true)]
+    pub(crate) profile: Option<String>,
+    /// Credential namespace provided by the installed desktop; contains no credentials.
+    #[arg(long, global = true)]
+    pub(crate) connection: Option<String>,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Connect with the invitation copied from a room; save identity and wait until ready.
+    Join {
+        #[arg(long)]
+        invite: String,
+    },
+    /// Resume a saved identity after the Bridge or task restarts.
+    Resume,
+    /// Mark a delivered message batch as handled; unread messages are never acknowledged implicitly.
+    Ack {
+        #[arg(long)]
+        event: String,
+    },
+    /// Close the saved connection while retaining identity and message progress.
+    Leave,
+    /// Print command guidance, JSON conventions and authorization rules without connecting.
+    Guide,
+    /// Create a `UUIDv7` for a new message; keep it unchanged when retrying that message.
+    Id,
     /// Check the authenticated local Bridge connection without creating an agent.
     Doctor,
     Session {
@@ -32,6 +56,17 @@ pub(crate) enum Command {
     Send(SendArgs),
     /// Publish the current task state.
     Status(StatusArgs),
+    /// Register this exact task for desktop background replies. Does not enable replies.
+    Register(RegisterArgs),
+    /// Inspect the participants in the current room.
+    Presence(RoomArgs),
+    /// Read the full content referenced by a message preview.
+    Content {
+        #[command(flatten)]
+        scope: RoomArgs,
+        #[arg(long)]
+        id: String,
+    },
     /// Wake an explicitly bound Codex or Claude Code task for allowed human mentions.
     Receive {
         #[arg(long)]
@@ -58,13 +93,13 @@ pub(crate) enum SessionCommand {
 #[derive(Debug, Args)]
 pub(crate) struct SessionArgs {
     #[arg(long)]
-    pub(crate) session: String,
+    pub(crate) session: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ReadArgs {
     #[arg(long)]
-    pub(crate) session: String,
+    pub(crate) session: Option<String>,
     #[arg(long)]
     pub(crate) room: Option<String>,
     #[arg(long)]
@@ -78,9 +113,9 @@ pub(crate) struct ReadArgs {
 #[derive(Debug, Args)]
 pub(crate) struct SendArgs {
     #[arg(long)]
-    pub(crate) session: String,
+    pub(crate) session: Option<String>,
     #[arg(long)]
-    pub(crate) room: String,
+    pub(crate) room: Option<String>,
     #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
     pub(crate) text: Option<String>,
     #[arg(long)]
@@ -114,13 +149,50 @@ pub(crate) enum WorkStatus {
 #[derive(Debug, Args)]
 pub(crate) struct StatusArgs {
     #[arg(long)]
-    pub(crate) session: String,
+    pub(crate) session: Option<String>,
     #[arg(long)]
-    pub(crate) room: String,
+    pub(crate) room: Option<String>,
     #[arg(long, value_enum)]
     pub(crate) value: WorkStatus,
     #[arg(long)]
     pub(crate) summary: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RoomArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum Host {
+    Codex,
+    ClaudeCode,
+}
+
+impl From<Host> for agent_room_bridge_ipc::IpcReceptionHost {
+    fn from(value: Host) -> Self {
+        match value {
+            Host::Codex => Self::Codex,
+            Host::ClaudeCode => Self::ClaudeCode,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RegisterArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    #[arg(long, value_enum, default_value = "codex")]
+    pub(crate) host: Host,
+    /// Accurate host task ID. Codex may use `CODEX_THREAD_ID` when it is available.
+    #[arg(long)]
+    pub(crate) task_id: Option<String>,
+    /// Defaults to the current directory. Must match the task being registered.
+    #[arg(long)]
+    pub(crate) workspace: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

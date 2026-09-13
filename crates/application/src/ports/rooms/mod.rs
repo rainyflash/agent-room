@@ -49,6 +49,13 @@ pub trait AgentLobbyAccessRepository: Send + Sync {
         &self,
         agent_instance_id: AgentInstanceId,
     ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>>;
+
+    /// Resolve an active room in the requested public catalog. This grants no private-room access.
+    fn find_public_lobby_room<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        matrix_room_id: &'a MatrixRoomReference,
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomInstanceId>>>;
 }
 
 /// 把受控 Matrix 用户绑定为最小房间成员能力，调用方不能选择任意认证方式。

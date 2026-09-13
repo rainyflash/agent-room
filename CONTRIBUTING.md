@@ -32,7 +32,7 @@ Use the same entrypoints locally and in the Windows candidate workflow:
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `corepack pnpm@10.28.0 desktop:dev`     | Build the UI and run the real desktop with saved login. No installer needed.                                                               |
 | `corepack pnpm@10.28.0 desktop:preview` | Build the UI and run the real desktop against the default service, using the installed app's origin and saved login. No installer needed.  |
-| `corepack pnpm@10.28.0 desktop:check`   | Run native adapter/Bridge/desktop checks, UI tests, and the agent access browser regressions.                                              |
+| `corepack pnpm@10.28.0 desktop:check`   | Check desktop, Bridge, CLI, MCP, shared client and reception; run UI tests and invitation/reception/login browser regressions.             |
 | `corepack pnpm@10.28.0 desktop:hosts`   | Build the diagnostic entrypoint and inspect the real installed tools through the production adapters, without editing their configuration. |
 | `corepack pnpm@10.28.0 desktop:package` | Run the checks, stop on failure, then build a local NSIS installer.                                                                        |
 
@@ -40,9 +40,13 @@ Use the same entrypoints locally and in the Windows candidate workflow:
 
 `desktop:dev` and `desktop:preview` are the same native entrypoint. It waits for the frontend build before compiling the native shell, uses `http://tauri.localhost`, and disables the development web server. This preserves the production cookie and CORS boundaries; an ordinary Vite page cannot substitute for it. The public desktop endpoints live in `apps/web/.env.desktop` and can be overridden with environment variables. Restart the preview after editing native or embedded UI code. For rapid layout work, use the existing `just web` hot reload with the local backend setup above; return to the native preview to verify desktop behavior.
 
-Close an already-running desktop from its tray before switching to a development build. A preview shares the normal device authorization and account storage. Configuring a host from a preview points that host to the debug MCP binary; after upgrading the installed application, run its one-click configuration again to select the installed binary.
+Close an already-running desktop from its tray before switching to a development build. A preview shares the normal device authorization and account storage. CLI invitations use the actual adjacent CLI and the preview's data directory and connection namespace. After installing a release, copy the invitation again to use the installed executable. MCP configuration is optional; configuring it from a preview points that host to the debug MCP binary, so configure it again from the installed app if you use that compatibility mode.
 
 Desktop checks start their own browser test server on port 14174 with the test API settings. They never reuse a running development server. Set `AGENT_ROOM_E2E_PORT` to select another free port; a busy port fails instead of silently testing a different environment.
+
+Desktop host-session responses have a shared fixture in `crates/bridge-ipc/tests/fixtures/host-session-diagnostics.json`. A Rust test checks the actual serialized structure, and the frontend adapter test consumes that same fixture through its strict validator. Update both sides when changing the native contract; keep the full-route test that opens Local agents under the real session provider. These checks are included in `desktop:check` and `desktop:package`.
+
+CLI room invitations add a target-room field to lobby entry. Their first release requires the `full` profile: deploy the compatible control plane before distributing the new desktop/CLI. The new server accepts legacy requests without the field; the new client must not silently enter another room when talking to an older server.
 
 Local packages are for validation. Public releases continue through the signed candidate and promotion workflow in [the release runbook](./docs/operations/signed-releases.md). Use its `client` profile for desktop-only changes; use `full` when server images also change. Before promotion, test the actual installed host and the native invite dialog, including an already-authorized device with no default Agent and recovery from a connection failure. Browser fixtures validate UI states; they do not establish that a real Codex task has joined a production room.
 

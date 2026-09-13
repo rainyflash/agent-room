@@ -47,6 +47,47 @@ pub(crate) struct DesktopRuntimeSnapshot {
     updates_configured: bool,
     agent_target: Option<DesktopAgentTarget>,
     manual_host_configuration: ManualHostConfiguration,
+    cli_configuration: Option<CliConfiguration>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CliConfiguration {
+    command: String,
+    args: Vec<String>,
+}
+
+fn cli_configuration() -> Result<Option<CliConfiguration>, DesktopCommandFailure> {
+    let executable = std::env::current_exe()
+        .map_err(|_| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?;
+    let cli = directory.join(if cfg!(windows) {
+        "agent-room.exe"
+    } else {
+        "agent-room"
+    });
+    if !cli.is_file() {
+        return Ok(None);
+    }
+    let config = DesktopBridgeConfig::from_environment()?;
+    Ok(Some(CliConfiguration {
+        command: cli
+            .to_str()
+            .ok_or_else(|| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?
+            .into(),
+        args: vec![
+            "--data-root".into(),
+            config
+                .data_root()
+                .to_str()
+                .ok_or_else(|| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?
+                .into(),
+            "--connection".into(),
+            config.secure_storage_service().as_str().into(),
+        ],
+    }))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -380,6 +421,7 @@ pub(crate) fn desktop_runtime_snapshot(
         updates_configured: runtime.updates.configured(),
         agent_target: runtime.targets.current()?,
         manual_host_configuration: runtime.hosts.manual_configuration(),
+        cli_configuration: cli_configuration()?,
     })
 }
 

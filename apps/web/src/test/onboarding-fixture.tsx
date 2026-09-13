@@ -1,3 +1,4 @@
+import { readInviteHistory } from '@/features/desktop/domain/cli-invitation';
 import { receptionFixture } from './reception-fixture';
 import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
 import type { SessionDependencies, WebSession } from '@/features/session/domain/session';
@@ -90,19 +91,11 @@ const reception = receptionFixture(
 );
 const receptionEnabled = new URLSearchParams(location.search).has('reception');
 function inviteSessionKey(): string | null {
-  try {
-    const raw = window.localStorage.getItem('agent-room.agent-invite.codex');
-    if (raw === null) return null;
-    const parsed: unknown = JSON.parse(raw);
-    const key =
-      typeof parsed === 'object' && parsed !== null && 'sessionKey' in parsed
-        ? parsed.sessionKey
-        : null;
-    return typeof key === 'string' ? key : null;
-  } catch {
-    return null;
-  }
+  return (
+    readInviteHistory(window.localStorage, principal.principalId).identities[0]?.sessionKey ?? null
+  );
 }
+
 let autostartEnabled = false;
 let hostConfigured =
   new URLSearchParams(location.search).has('configured') ||
@@ -122,6 +115,7 @@ const gateway: DesktopRuntimeGateway = {
       autostartEnabled,
       bridge,
       deepLink: null,
+      cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
       manualHostConfiguration: {
         args: [],
         command: 'C:\\Agent Room\\agent-room-mcp.exe',

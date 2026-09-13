@@ -261,16 +261,22 @@ impl ReceiverRuntime {
         let offer = session
             .reception_offer
             .ok_or_else(|| ReceptionFailure::validation("receiver.task_not_registered"))?;
-        let executable = request
-            .executable
-            .or_else(|| discover_host(offer.task.host_type))
-            .ok_or_else(|| ReceptionFailure::local("receiver.host_not_installed"))?;
+        let executable = if let Some(path) = request.executable {
+            path
+        } else {
+            let host_type = offer.task.host_type;
+            let mcp = self.inner.mcp_executable.clone();
+            tokio::task::spawn_blocking(move || discover_host(host_type, mcp))
+                .await
+                .map_err(|_| ReceptionFailure::local("receiver.host_detection_failed"))??
+        };
         let binding = ReceiverBinding {
             session: IpcOpenHostSessionRequest {
                 session_key: session
                     .session_key
                     .ok_or_else(|| ReceptionFailure::local("receiver.session_key_missing"))?,
                 display_name: session.display_name,
+                room: session.requested_room,
             },
             policy: ReceptionPolicy {
                 room_id: offer.room_id,
@@ -296,17 +302,16 @@ impl ReceiverRuntime {
     }
 }
 
-fn discover_host(host: agent_room_bridge_ipc::IpcReceptionHost) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    let filename = match (host, cfg!(windows)) {
-        (agent_room_bridge_ipc::IpcReceptionHost::Codex, true) => "codex.exe",
-        (agent_room_bridge_ipc::IpcReceptionHost::Codex, false) => "codex",
-        (agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode, true) => "claude.exe",
-        (agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode, false) => "claude",
-    };
-    std::env::split_paths(&paths)
-        .map(|directory| directory.join(filename))
-        .find(|path| path.is_absolute() && path.is_file())
+fn discover_host(host: agent_room_bridge_ipc::IpcReceptionHost, mcp: PathBuf) -> Result<PathBuf> {
+    use agent_room_host_adapters::{HostConfigurator, HostContext, HostKind};
+    let context = HostContext::from_environment(mcp)
+        .map_err(|error| ReceptionFailure::local(error.code()))?;
+    HostConfigurator::system(context)
+        .reception_executable(match host {
+            agent_room_bridge_ipc::IpcReceptionHost::Codex => HostKind::Codex,
+            agent_room_bridge_ipc::IpcReceptionHost::ClaudeCode => HostKind::ClaudeCode,
+        })
+        .map_err(|error| ReceptionFailure::local(error.code()))
 }
 
 #[derive(Deserialize)]

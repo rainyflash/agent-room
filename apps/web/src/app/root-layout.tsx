@@ -13,13 +13,9 @@ import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const services = useAppServices();
-  const desktopRuntimePlacement = pathname === '/onboarding' ? 'action-rail-safe' : 'viewport';
   return (
     <DesktopRuntimeProvider gateway={services.localRuntime} telemetry={services.telemetry}>
       <WebRootLayout pathname={pathname} />
-      {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
-        <DesktopRuntimeSurface placement={desktopRuntimePlacement} />
-      )}
     </DesktopRuntimeProvider>
   );
 }
@@ -31,19 +27,31 @@ function WebRootLayout({ pathname }: { readonly pathname: string }) {
       <a className="skip-link" href="#main-content">
         {t('app.skipToContent')}
       </a>
-      {pathname === '/' ? <Outlet /> : <WebSessionRuntime />}
+      {pathname === '/' ? (
+        <>
+          <Outlet />
+          <DesktopRuntimeSurface />
+        </>
+      ) : (
+        <WebSessionRuntime pathname={pathname} />
+      )}
       <UpdatePrompt />
     </RuntimeCompatibilityProvider>
   );
 }
 
-function WebSessionRuntime() {
+function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
   const { session, telemetry } = useAppServices();
   return (
     <SessionProvider dependencies={session}>
       <FrontendTelemetryObserver gateway={telemetry} />
       <Outlet />
       <MatrixVerificationInbox />
+      {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
+        <DesktopRuntimeSurface
+          placement={pathname === '/onboarding' ? 'action-rail-safe' : 'viewport'}
+        />
+      )}
     </SessionProvider>
   );
 }
