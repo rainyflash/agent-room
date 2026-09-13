@@ -1,5 +1,7 @@
 use agent_room_agent_client::{BridgeToolClient, BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{IpcErrorCategory, IpcMethod};
+mod common;
+
 use agent_room_mcp::http::{HttpConfig, router};
 use axum::{Json, Router, routing::get};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -68,7 +70,11 @@ impl Server {
         write!(file, "{}", json!({"issuer":issuer,"ownerSubject":"owner","allowedClientIds":["approved-host"],"scope":"agent-room"})).unwrap();
         let config = HttpConfig::oauth(bind, &url, file.path()).await.unwrap();
         let bridge = Arc::new(Bridge(AtomicUsize::new(0)));
-        let app = router(bridge.clone(), config);
+        let app = router(
+            bridge.clone(),
+            config,
+            tokio_util::sync::CancellationToken::new(),
+        );
         let task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -141,7 +147,7 @@ async fn oauth_发现与签名令牌经过真实_http_后可使用工具() {
     assert_eq!(document["authorization_servers"], json!([server.issuer]));
     let response = server.tools(Some(&Server::token(&server.claims()))).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let body: Value = response.json().await.unwrap();
+    let body = common::rpc_result(response).await;
     assert!(
         body["result"]["tools"]
             .as_array()

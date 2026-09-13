@@ -23,5 +23,10 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["process", "io-std"] }
 uuid.workspace = true
 
+[dev-dependencies]
+agent-room-bridge-core.workspace = true
+interprocess.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
 [lints]
 workspace = true

@@ -67,6 +67,25 @@ fn 真实命令进程提供帮助和结构化参数错误() {
 }
 
 #[test]
+fn 收信期限为可选参数并拒绝无效输入() {
+    for wait in ["-1", "86401", "1.5"] {
+        let output = run(&["read", "--wait", wait]);
+        assert_eq!(output.status.code(), Some(2));
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], "cli.arguments_invalid");
+    }
+    for args in [
+        vec!["read"],
+        vec!["read", "--wait", "0"],
+        vec!["read", "--wait", "90"],
+    ] {
+        let output = run(&args);
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], "cli.session_required");
+    }
+}
+
+#[test]
 fn 发送必须明确声明用户授权或自动授权且失败有稳定退出码() {
     let output = run(&[
         "send",

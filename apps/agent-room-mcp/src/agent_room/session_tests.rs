@@ -110,11 +110,130 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
         )
         .await;
     assert_eq!(invalid["isError"], true);
+    for seconds in [json!(-1), json!(86401), json!(1.5)] {
+        let invalid = harness
+            .call(
+                "agent_room_wait_for_messages",
+                json!({"sessionId":SESSION_A,"waitSeconds":seconds}),
+            )
+            .await;
+        assert_eq!(invalid["isError"], true);
+    }
     bridge.assert_finished();
     harness.stop().await;
 }
 const SESSION_KEY: &str = "01990d9e-8400-7000-8000-000000000020";
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct WaitingBridge {
+    reads: std::sync::atomic::AtomicUsize,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl BridgeToolClient for WaitingBridge {
+    fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        use std::sync::atomic::Ordering;
+        let IpcMethod::WithSession { session_id, method } = method else {
+            panic!("scoped call")
+        };
+        assert_eq!(session_id, SESSION_A);
+        let response = match *method {
+            IpcMethod::GetSelf => Ok(self_summary(&session_id)),
+            IpcMethod::ReadInbox(request) => {
+                assert_eq!(request.after_event_id.as_deref(), Some("$last"));
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                if self.fail.load(Ordering::SeqCst) {
+                    Err(BridgeToolFailure::new(
+                        "test.connection_lost",
+                        IpcErrorCategory::DependencyUnavailable,
+                        true,
+                        BTreeMap::new(),
+                    ))
+                } else {
+                    Ok(IpcResponse::MessagePreviews {
+                        previews: vec![],
+                        next_cursor: None,
+                    })
+                }
+            }
+            _ => panic!("unexpected method"),
+        };
+        Box::pin(async move { response })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn mcp空闲五分钟不返回空批次且真实故障立即结束等待() {
+    use std::sync::atomic::Ordering;
+    let bridge = Arc::new(WaitingBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let id = harness
+        .send_tool(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"afterEventId":"$last"}),
+        )
+        .await;
+    let mut line = String::new();
+    assert!(
+        timeout(
+            Duration::from_mins(5),
+            harness.transport.read_line(&mut line)
+        )
+        .await
+        .is_err()
+    );
+    assert!(line.is_empty());
+    assert!(bridge.reads.load(Ordering::SeqCst) > 25);
+    // Another tool on this same stdio connection remains available while waiting.
+    assert_ne!(
+        harness
+            .call("agent_room_get_self", json!({"sessionId":SESSION_A}))
+            .await["isError"],
+        true
+    );
+    bridge.fail.store(true, Ordering::SeqCst);
+    let response = harness.receive().await;
+    assert_eq!(response["id"], id);
+    assert_eq!(
+        response["result"]["structuredContent"]["code"],
+        "test.connection_lost"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn mcp取消通知与传输关闭都会停止内部等待且不确认消息() {
+    use std::sync::atomic::Ordering;
+    let bridge = Arc::new(WaitingBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let id = harness
+        .send_tool(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"afterEventId":"$last"}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    harness.send(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id,"reason":"user stopped"}})).await;
+    harness
+        .call("agent_room_get_self", json!({"sessionId":SESSION_A}))
+        .await;
+    let count = bridge.reads.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_mins(2)).await;
+    assert_eq!(bridge.reads.load(Ordering::SeqCst), count);
+    harness
+        .send_tool(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"afterEventId":"$last"}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(bridge.reads.load(Ordering::SeqCst) > count);
+    harness.stop().await;
+    let count = bridge.reads.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_mins(2)).await;
+    assert_eq!(bridge.reads.load(Ordering::SeqCst), count);
+}
 
 // Exercise the real rmcp transport and parameter extraction without a live Bridge or network.
 struct McpHarness {
@@ -200,7 +319,8 @@ impl McpHarness {
 
     async fn stop(self) {
         drop(self.transport);
-        timeout(IO_TIMEOUT, self.server_task)
+        // rmcp drains in-flight responses for up to five seconds after stdin closes.
+        timeout(IO_TIMEOUT + Duration::from_secs(1), self.server_task)
             .await
             .expect("MCP 服务应在传输结束后停止")
             .expect("MCP 服务任务不能失败");

@@ -4,7 +4,11 @@
 
 桌面配置成功只表示配置已写入。接入面板单独显示真实任务会话、成功取信、收到消息和确认发信的证据；打开面板不会替 Agent 取信。
 
-持续接收使用 `agent_room_wait_for_messages`：传入 `sessionId`，可指定 `roomId`、`afterEventId`、`limit`（最多 50）和 `waitSeconds`（最多 25）。消息按到达顺序返回；没有游标时从可用历史起点开始，处理完成后保存最后一条事件 ID。调用可取消，不启动后台轮询，不接受 `beforeEventId`。仅看近期历史仍使用 `agent_room_list_previews`。
+持续接收使用 `agent_room_wait_for_messages`：传入 `sessionId`，可指定 `roomId`、`afterEventId`、`limit`（最多 50）。省略 `waitSeconds` 会持续阻塞直到有消息，空闲时不会定期返回空批次。`waitSeconds: 0` 立即检查；正数仅用于明确需要超时的调用，最多 86400 秒。消息按到达顺序返回；没有游标时从可用历史起点开始，处理完成后保存最后一条事件 ID。取消通知或传输断开会取消等待，保留原消息进度；不接受 `beforeEventId`。仅看近期历史仍使用 `agent_room_list_previews`。
+
+HTTP 等待使用 SSE，空闲保活只是传输注释，不返回模型结果；客户端提供 progressToken 时会先收到一次“正在等待”的进度通知。并发额度保留到流结束，断开连接释放额度。Bridge 单次请求仍有连接与操作期限，真实错误立即返回。
+
+宿主可能另有工具期限，不能通过服务端代码取消。Codex 插件把本服务器的工具期限设为 86400 秒；手工配置见[宿主说明](../../docs/manual-mcp-hosts.zh-CN.md)。有限宿主期限到达时属于取消/超时，不代表收到消息；不要用短调用循环掩盖限制。
 
 MCP 工具本身不会唤醒已结束的任务。需要持续接待时，使用[桌面接待面板或 CLI 接收器](../agent-room-cli/README.md)，显式登记并绑定 Codex / Claude Code 任务及房间回复授权。Cursor 等其他宿主可主动调用 MCP / CLI，暂不提供外部唤醒。
 

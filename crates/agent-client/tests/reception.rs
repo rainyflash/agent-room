@@ -1,5 +1,5 @@
 use agent_room_agent_client::{
-    BridgeToolClient, BridgeToolFailure, BridgeToolFuture, MessageReadMode,
+    BridgeToolClient, BridgeToolFailure, BridgeToolFuture, MessageReadMode, MessageWait,
     reception::{CheckpointFailure, DeliveryDecision, ReceptionCheckpoint, ReceptionPolicy},
     wait_for_messages,
 };
@@ -93,7 +93,7 @@ async fn 等待复用同一游标并且返回后不再后台轮询() {
         SESSION.into(),
         request(),
         MessageReadMode::Inbox,
-        25,
+        MessageWait::UntilMessage,
     )
     .await
     .unwrap();
@@ -116,7 +116,7 @@ async fn 取消等待停止轮询且失败不会被当作空房间() {
                 SESSION.into(),
                 request(),
                 MessageReadMode::Inbox,
-                25
+                MessageWait::UntilMessage
             )
         )
         .await
@@ -136,12 +136,116 @@ async fn 取消等待停止轮询且失败不会被当作空房间() {
             SESSION.into(),
             request(),
             MessageReadMode::Inbox,
-            25
+            MessageWait::UntilMessage
         )
         .await
         .unwrap_err()
         .code(),
         "test.denied"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 默认等待五分钟不返回空结果并在有消息时完成同一次调用() {
+    let mut replies = vec![Ok(page(vec![])); 301];
+    replies.push(Ok(page(vec![preview("$next")])));
+    let backend = Backend::new(replies);
+    let waiting = wait_for_messages(
+        &backend,
+        SESSION.into(),
+        request(),
+        MessageReadMode::Inbox,
+        MessageWait::UntilMessage,
+    );
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(Duration::from_mins(5), &mut waiting)
+            .await
+            .is_err()
+    );
+    assert_eq!(waiting.await.unwrap(), page(vec![preview("$next")]));
+    let calls = backend.calls.lock().unwrap();
+    assert_eq!(calls.len(), 302);
+    assert!(calls.iter().all(|method| method == &calls[0]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn 只有显式期限会返回空页且允许超过二十五秒() {
+    let backend = Backend::new(vec![Ok(page(vec![])); 90]);
+    let start = tokio::time::Instant::now();
+    let response = wait_for_messages(
+        &backend,
+        SESSION.into(),
+        request(),
+        MessageReadMode::Inbox,
+        MessageWait::For(Duration::from_secs(90)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response, page(vec![]));
+    assert_eq!(start.elapsed(), Duration::from_secs(90));
+    let backend = Backend::new(vec![Ok(page(vec![]))]);
+    assert_eq!(
+        wait_for_messages(
+            &backend,
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::For(Duration::ZERO)
+        )
+        .await
+        .unwrap(),
+        page(vec![])
+    );
+    assert_eq!(backend.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 曾经空闲不代表后续连接失败或挂起可以当作空页() {
+    struct StalledBackend(std::sync::atomic::AtomicBool);
+    impl BridgeToolClient for StalledBackend {
+        fn invoke(&self, _: IpcMethod) -> BridgeToolFuture<'_> {
+            if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                Box::pin(std::future::pending())
+            } else {
+                Box::pin(async { Ok(page(vec![])) })
+            }
+        }
+    }
+    assert_eq!(
+        wait_for_messages(
+            &StalledBackend(std::sync::atomic::AtomicBool::new(false)),
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::For(Duration::from_secs(2))
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        "agent.inbox.timeout"
+    );
+    let backend = Backend::new(vec![
+        Ok(page(vec![])),
+        Err(BridgeToolFailure::new(
+            "test.disconnected",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+            BTreeMap::new(),
+        )),
+    ]);
+    assert_eq!(
+        wait_for_messages(
+            &backend,
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::UntilMessage
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        "test.disconnected"
     );
 }
 

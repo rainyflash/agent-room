@@ -12,6 +12,7 @@ agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
 axum.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
@@ -20,6 +21,7 @@ serde_json.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 tokio.workspace = true
+tokio-util = "0.7.18"
 url.workspace = true
 zeroize.workspace = true
 
@@ -29,6 +31,8 @@ proptest.workspace = true
 rand.workspace = true
 rsa.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true
 
 [lints]
 workspace = true

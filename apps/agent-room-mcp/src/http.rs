@@ -5,17 +5,20 @@ use std::{fs::File, io::Read as _, net::SocketAddr, path::Path, sync::Arc, time:
 
 use axum::{
     Json, Router,
+    body::{Body, to_bytes},
     extract::{Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse as _, Response},
 };
+use futures_util::{StreamExt as _, stream};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use url::{Host, Position, Url};
 use zeroize::Zeroizing;
 
@@ -125,15 +128,22 @@ fn read_token(path: &Path) -> Result<Zeroizing<String>, &'static str> {
 
 struct HttpBoundary {
     config: HttpConfig,
-    permits: Semaphore,
+    permits: Arc<Semaphore>,
 }
 
 /// Builds an authenticated router. No Bridge administration or native IPC endpoint
 /// is exposed. The caller must terminate TLS at its trusted reverse proxy.
-pub fn router(backend: Arc<dyn BridgeToolClient>, config: HttpConfig) -> Router {
+pub fn router(
+    backend: Arc<dyn BridgeToolClient>,
+    config: HttpConfig,
+    shutdown: CancellationToken,
+) -> Router {
     let transport_config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
-        .with_json_response(true)
+        .with_cancellation_token(shutdown)
+        // Stream protocol progress and keep idle waits alive with SSE comments.
+        .with_json_response(false)
+        .with_sse_keep_alive(Some(Duration::from_secs(15)))
         .with_allowed_hosts([config.host.clone()])
         .with_allowed_origins([config.origin.clone()])
         .with_max_request_body_bytes(65_536);
@@ -153,7 +163,7 @@ pub fn router(backend: Arc<dyn BridgeToolClient>, config: HttpConfig) -> Router 
     app.layer(middleware::from_fn_with_state(
         Arc::new(HttpBoundary {
             config,
-            permits: Semaphore::new(32),
+            permits: Arc::new(Semaphore::new(32)),
         }),
         protect,
     ))
@@ -171,7 +181,7 @@ async fn protect(
     {
         return (StatusCode::FORBIDDEN, "Unexpected origin or host").into_response();
     }
-    let Ok(_permit) = boundary.permits.try_acquire() else {
+    let Ok(permit) = boundary.permits.clone().try_acquire_owned() else {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(header::RETRY_AFTER, "1")],
@@ -199,13 +209,32 @@ async fn protect(
             return rejected(&boundary.config, error);
         }
     }
-    let mut response = tokio::time::timeout(Duration::from_secs(155), next.run(request))
-        .await
-        .unwrap_or_else(|_| (StatusCode::GATEWAY_TIMEOUT, "Request timed out").into_response());
+    // Bound input collection, not the lifetime of a validated wait tool. Newer MCP versions
+    // may defer response headers until their first protocol message even in SSE mode.
+    let (parts, body) = request.into_parts();
+    let body = match tokio::time::timeout(Duration::from_secs(15), to_bytes(body, 65_536)).await {
+        Ok(Ok(body)) => body,
+        Ok(Err(_)) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Invalid or oversized request body",
+            )
+                .into_response();
+        }
+        Err(_) => return (StatusCode::REQUEST_TIMEOUT, "Request body timed out").into_response(),
+    };
+    let mut response = next.run(Request::from_parts(parts, Body::from(body))).await;
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    // The limit covers the entire stream, including idle waits. Dropping this body also drops
+    // rmcp's stream, which cancels the handler and its Bridge polling future.
+    let (parts, body) = response.into_parts();
+    let stream = stream::unfold(
+        (body.into_data_stream(), permit),
+        |(mut body, permit)| async { body.next().await.map(|chunk| (chunk, (body, permit))) },
+    );
+    Response::from_parts(parts, Body::from_stream(stream))
 }
 
 fn rejected(config: &HttpConfig, rejection: Rejection) -> Response {

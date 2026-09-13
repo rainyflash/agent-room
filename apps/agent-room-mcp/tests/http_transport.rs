@@ -1,3 +1,5 @@
+mod common;
+
 use std::{
     collections::BTreeMap,
     io::Write as _,
@@ -17,11 +19,14 @@ const TOKEN: &str = "test-only-bearer-token-abcdefghijklmnopqrstuvwxyz-012345678
 const SESSION: &str = "01990d9e-8400-7000-8000-000000000010";
 
 #[derive(Default)]
-struct RecordingBridge(Mutex<Vec<IpcMethod>>);
+struct RecordingBridge {
+    calls: Mutex<Vec<IpcMethod>>,
+    next: Mutex<Option<IpcResponse>>,
+}
 
 impl BridgeToolClient for RecordingBridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
-        self.0.lock().unwrap().push(method.clone());
+        self.calls.lock().unwrap().push(method.clone());
         Box::pin(async move {
             match method {
                 IpcMethod::OpenHostSession(_) => Ok(IpcResponse::HostSession {
@@ -34,10 +39,12 @@ impl BridgeToolClient for RecordingBridge {
                 }),
                 IpcMethod::WithSession { session_id, method } if session_id == SESSION => {
                     match *method {
-                        IpcMethod::ReadInbox(_) => Ok(IpcResponse::MessagePreviews {
-                            previews: vec![],
-                            next_cursor: None,
-                        }),
+                        IpcMethod::ReadInbox(_) => Ok(self.next.lock().unwrap().take().unwrap_or(
+                            IpcResponse::MessagePreviews {
+                                previews: vec![],
+                                next_cursor: None,
+                            },
+                        )),
                         _ => Err(BridgeToolFailure::new(
                             "test.unexpected",
                             IpcErrorCategory::Validation,
@@ -74,7 +81,11 @@ impl Server {
         token.write_all(TOKEN.as_bytes()).unwrap();
         let config = HttpConfig::load(bind, &url, token.path()).unwrap();
         let bridge = Arc::new(RecordingBridge::default());
-        let app = router(bridge.clone(), config);
+        let app = router(
+            bridge.clone(),
+            config,
+            tokio_util::sync::CancellationToken::new(),
+        );
         let task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -103,7 +114,7 @@ impl Server {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["cache-control"], "no-store");
-        response.json().await.unwrap()
+        common::rpc_result(response).await
     }
 }
 
@@ -111,6 +122,141 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+fn in_memory_app(
+    bridge: Arc<RecordingBridge>,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> axum::Router {
+    let mut token = tempfile::NamedTempFile::new().unwrap();
+    token.write_all(TOKEN.as_bytes()).unwrap();
+    router(
+        bridge,
+        HttpConfig::load(
+            "127.0.0.1:8181".parse().unwrap(),
+            "http://127.0.0.1:8181/mcp",
+            token.path(),
+        )
+        .unwrap(),
+        shutdown,
+    )
+}
+
+fn wait_request(version: &str, progress: bool) -> axum::extract::Request {
+    let mut meta = json!({});
+    if version == "2026-07-28" {
+        meta = json!({"io.modelcontextprotocol/protocolVersion":version,
+            "io.modelcontextprotocol/clientInfo":{"name":"blocking-test","version":"1"},
+            "io.modelcontextprotocol/clientCapabilities":{}});
+    }
+    if progress {
+        meta["progressToken"] = json!("waiting");
+    }
+    axum::extract::Request::builder().method("POST").uri("/mcp")
+        .header("host", "127.0.0.1:8181").header("Authorization", format!("Bearer {TOKEN}"))
+        .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", version).header("Mcp-Method", "tools/call").header("Mcp-Name", "agent_room_wait_for_messages")
+        .body(axum::body::Body::from(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+            "name":"agent_room_wait_for_messages","arguments":{"sessionId":SESSION,"afterEventId":"$last"},"_meta":meta
+        }}).to_string())).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn http等待超过旧期限只发送传输保活且断开立即释放等待() {
+    use futures_util::StreamExt as _;
+    use tower::ServiceExt as _;
+    for version in ["2025-06-18", "2026-07-28"] {
+        let bridge = Arc::new(RecordingBridge::default());
+        let app = in_memory_app(bridge.clone(), tokio_util::sync::CancellationToken::new());
+        let response = app.oneshot(wait_request(version, true)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut stream = response.into_body().into_data_stream();
+        let first = stream.next().await.unwrap().unwrap();
+        let first = std::str::from_utf8(&first).unwrap();
+        assert!(first.contains("notifications/progress"));
+        let start = tokio::time::Instant::now();
+        for _ in 0..12 {
+            // The SDK SSE timer mixes std and Tokio clocks; advance explicitly in this test.
+            tokio::time::advance(Duration::from_secs(15)).await;
+            tokio::task::yield_now().await;
+            let chunk = stream.next().await.unwrap().unwrap();
+            let text = std::str::from_utf8(&chunk).unwrap();
+            assert!(
+                text.lines()
+                    .all(|line| line.is_empty() || line.starts_with(':')),
+                "transport keepalive only: {text}"
+            );
+        }
+        assert!(start.elapsed() >= Duration::from_mins(3));
+        assert!(bridge.calls.lock().unwrap().len() > 1);
+        drop(stream);
+        tokio::task::yield_now().await;
+        let count = bridge.calls.lock().unwrap().len();
+        tokio::time::sleep(Duration::from_mins(2)).await;
+        assert_eq!(bridge.calls.lock().unwrap().len(), count);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn http未请求进度通知也不会在一百五十五秒截断并可正常返回消息() {
+    use tower::ServiceExt as _;
+    let bridge = Arc::new(RecordingBridge::default());
+    let app = in_memory_app(bridge.clone(), tokio_util::sync::CancellationToken::new());
+    let response = app.oneshot(wait_request("2026-07-28", false));
+    tokio::pin!(response);
+    assert!(
+        tokio::time::timeout(Duration::from_mins(3), &mut response)
+            .await
+            .is_err()
+    );
+    *bridge.next.lock().unwrap() = Some(message_page("$next"));
+    let response = response.await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.contains("$next"));
+    assert!(!text.contains("notifications/progress"));
+    assert!(bridge.calls.lock().unwrap().iter().all(|method| matches!(method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$last")))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn http并发限制覆盖整个等待流并在取消后释放额度() {
+    use futures_util::StreamExt as _;
+    use tower::ServiceExt as _;
+    let app = in_memory_app(
+        Arc::new(RecordingBridge::default()),
+        tokio_util::sync::CancellationToken::new(),
+    );
+    let mut streams = vec![];
+    for _ in 0..32 {
+        let response = app
+            .clone()
+            .oneshot(wait_request("2026-07-28", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut stream = response.into_body().into_data_stream();
+        stream.next().await.unwrap().unwrap();
+        streams.push(stream);
+    }
+    assert_eq!(
+        app.clone()
+            .oneshot(wait_request("2026-07-28", true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    drop(streams.pop());
+    assert_eq!(
+        app.oneshot(wait_request("2026-07-28", true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -132,13 +278,58 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
         "name":"agent_room_wait_for_messages","arguments":{"sessionId":SESSION,"afterEventId":"$last","waitSeconds":0}
     }})).await;
     assert_ne!(wait["result"]["isError"], true);
-    let calls = server.bridge.0.lock().unwrap();
+    let calls = server.bridge.calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
     assert!(
         matches!(&calls[1], IpcMethod::WithSession { session_id, method }
         if session_id == SESSION && matches!(method.as_ref(), IpcMethod::ReadInbox(request)
             if request.after_event_id.as_deref() == Some("$last")))
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn http服务器关闭也会结束阻塞流并停止读取() {
+    use futures_util::StreamExt as _;
+    use tower::ServiceExt as _;
+    let bridge = Arc::new(RecordingBridge::default());
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let app = in_memory_app(bridge.clone(), shutdown.clone());
+    let response = app.oneshot(wait_request("2026-07-28", true)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    stream.next().await.unwrap().unwrap();
+    shutdown.cancel();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(stream);
+    tokio::task::yield_now().await;
+    let count = bridge.calls.lock().unwrap().len();
+    tokio::time::sleep(Duration::from_mins(2)).await;
+    assert_eq!(bridge.calls.lock().unwrap().len(), count);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 阻塞工具不会取消对慢请求体的期限限制() {
+    use tower::ServiceExt as _;
+    let app = in_memory_app(
+        Arc::new(RecordingBridge::default()),
+        tokio_util::sync::CancellationToken::new(),
+    );
+    let (parts, _) = wait_request("2026-07-28", true).into_parts();
+    let body = axum::body::Body::from_stream(futures_util::stream::pending::<
+        Result<axum::body::Bytes, std::convert::Infallible>,
+    >());
+    let started = tokio::time::Instant::now();
+    let response = app
+        .oneshot(axum::extract::Request::from_parts(parts, body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    assert_eq!(started.elapsed(), Duration::from_secs(15));
 }
 
 #[tokio::test]
@@ -179,7 +370,7 @@ async fn 未授权错误来源和超大请求不会访问_bridge() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert!(server.bridge.0.lock().unwrap().is_empty());
+    assert!(server.bridge.calls.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -221,10 +412,8 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .send()
         .await
         .unwrap();
-    let status = response.status();
-    let body = response.text().await.unwrap();
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let result: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = common::rpc_result(response).await;
     assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 14);
     let response = server
         .client
@@ -235,5 +424,44 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert!(server.bridge.0.lock().unwrap().is_empty());
+    assert!(server.bridge.calls.lock().unwrap().is_empty());
+}
+
+fn message_page(event: &str) -> IpcResponse {
+    use agent_room_bridge_ipc::{
+        IpcActorSummary, IpcContentReference, IpcConversationMessage, IpcMessagePreviewSummary,
+        IpcMessageSensitivity,
+    };
+    let id = "01990d9e-8400-7000-8000-000000000010";
+    IpcResponse::MessagePreviews {
+        previews: vec![IpcMessagePreviewSummary {
+            event_id: event.into(),
+            message_id: id.into(),
+            room_id: "!room:example.test".into(),
+            actor: IpcActorSummary::Human {
+                principal_id: id.into(),
+                display_name: "Owner".into(),
+                matrix_user_id: "@owner:example.test".into(),
+                avatar_url: None,
+            },
+            conversation: Some(IpcConversationMessage {
+                text: "hello".into(),
+                mentions: vec![],
+            }),
+            reply_to_message_id: None,
+            created_at_unix_ms: 1,
+            title: "hello".into(),
+            summary: "hello".into(),
+            content: IpcContentReference {
+                content_id: id.into(),
+                digest_sha256: "0".repeat(64),
+                media_type: "text/plain".into(),
+                size_bytes: 5,
+            },
+            language: None,
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: vec![],
+        }],
+        next_cursor: None,
+    }
 }
