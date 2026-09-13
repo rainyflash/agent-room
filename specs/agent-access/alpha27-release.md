@@ -44,3 +44,7 @@ Desktop 的 `--installer-version` 与 CLI 的 `--version` 均返回 Alpha.27；�
 ## 公开发布流程
 
 [最终发布任务](https://github.com/rainyflash/agent-room/actions/runs/34736810397)的第一次尝试完成审核和 10 分钟保护等待后，持续超过 15 分钟未分配到 GitHub runner，未执行发布步骤。取消该排队尝试后，对同一任务做一次标准重试；源码、签名资产及部署证据均未变化，第二次尝试仍保留原有审核与等待规则。
+
+第二次尝试在保护等待结束后仍未分配 runner。随后在本机执行未经修改的 `tools/release.py verify` 及 `tools/release_promotion.py verify` / `verify-evidence`：使用原已信任 testing 公钥、Cosign 3.1.3 和精确的 `main` 候选工作流身份，全部文件摘要、SBOM、Ed25519 / Sigstore 签名、序号与三个不可变 OCI 引用可达性均通过。停止第二次排队任务后，使用项目原有 `tools/release_surface.py` 完成发布，并更新 testing 渠道及客户端晋级记录。两个最终发布工作流尝试均为取消，不能记为 CI 发布成功；人工恢复的验证记录已作为发行资产保存。
+
+[Alpha.27](https://github.com/rainyflash/agent-room/releases/tag/v0.1.0-alpha.27) 于 **2026-09-13 04:43:10 UTC** 公开为 prerelease。匿名访问 Windows 安装包返回 HTTP 200，长度为 36,982,235 字节；公开 testing 渠道清单与已完整验证的序号 27 签名清单完全一致。本机已安装的正是该发行包。发布状态现为 `clients-published`，尚未宣称完成长期兼容观察。

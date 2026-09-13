@@ -4,7 +4,7 @@
 
 - There is no production-supported or publicly signed stable release.
 - The source repository is public, but an outside contributor has not yet completed a clean-room reproduction.
-- `0.1.0-alpha.8` is public and its cloud-first production rollout passed backup, restore-drill, migration, CORS, browser/PWA, Windows upgrade, Bridge, and nine-tool MCP acceptance.
+- `0.1.0-alpha.27` is public. Its rollout passed backup and restore, full CI, CORS, browser/PWA upgrade, Windows installation, identity recovery, and 14-tool MCP verification; see the [release record](../specs/agent-access/alpha27-release.md) for the manual publication recovery and validation boundaries.
 - The offline root-key ceremony remains a stable-release blocker, not an Alpha prerequisite. Same-revision GitHub M2 acceptance and Windows x86-64 packaging pass, but no publicly signed stable package exists yet.
 - Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
 - Five real capacity scenarios pass on the same revision; the 72-hour active Bridge run is still missing.
