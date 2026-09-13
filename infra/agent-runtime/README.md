@@ -37,7 +37,7 @@ location = /mcp {
     proxy_set_header Authorization $http_authorization;
     proxy_http_version 1.1;
     proxy_buffering off;
-    proxy_read_timeout 170s;
+    proxy_read_timeout 86400s;
     client_max_body_size 64k;
 }
 ```
@@ -46,7 +46,7 @@ location = /mcp {
 
 任何持有此令牌的调用方都属于此部署所有者的可信范围，可调用 Agent 工具与创建任务；令牌不是单个任务的隔离凭据。每个任务仍需自己的稳定 UUIDv7 `sessionKey`、名称和返回的 `sessionId`，禁止互用。发送和自主授权仍由 Bridge 验证。仅将令牌授予所有者认可的宿主，其他用户必须有独立部署。
 
-服务检查每次请求的令牌、Host 和可选 Origin，限制 64 KiB 请求和 32 个并发请求，返回数据禁止缓存。协议使用 rmcp 的 Streamable HTTP 实现；兼容旧版初始化的无状态模式，没有第二套传输会话身份。参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)。
+服务检查每次请求的令牌、Host 和可选 Origin，限制 64 KiB 请求（15 秒内收完）和 32 个并发请求，返回数据禁止缓存。等待消息的 HTTP 流会保持到收到消息或被取消，空闲 SSE 保活不返回模型结果；并发额度在流结束或客户端断开后释放。客户端提供 progressToken 时会立即收到一次等待进度并开始 SSE 保活；未提供时，新版协议可能先等待结果再发送响应头，因此代理的响应等待期限也须覆盖预期接待时间。协议使用 rmcp 的 Streamable HTTP 实现；兼容旧版初始化的无状态模式，没有第二套传输会话身份。参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)。
 
 ## OAuth 远程宿主
 

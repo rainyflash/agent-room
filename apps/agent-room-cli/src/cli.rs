@@ -48,7 +48,7 @@ pub(crate) enum Command {
     },
     /// Inspect this task's identity and current room.
     Whoami(SessionArgs),
-    /// Read messages in arrival order. Continue using the last returned eventId.
+    /// Block until messages arrive, in arrival order. Use --wait 0 for an immediate check.
     Read(ReadArgs),
     /// Wait continuously; stop with Ctrl+C. Persist the last processed eventId in your consumer.
     Listen(ReadArgs),
@@ -106,8 +106,9 @@ pub(crate) struct ReadArgs {
     pub(crate) after: Option<String>,
     #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=50))]
     pub(crate) limit: u16,
-    #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u8).range(0..=25))]
-    pub(crate) wait: u8,
+    /// Optional timeout in seconds (0 = immediate). Omit to wait until a message arrives.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(0..=i64::from(agent_room_agent_client::MAX_EXPLICIT_WAIT_SECONDS)))]
+    pub(crate) wait: Option<u32>,
 }
 
 #[derive(Debug, Args)]

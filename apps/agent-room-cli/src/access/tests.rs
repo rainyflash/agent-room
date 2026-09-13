@@ -10,6 +10,9 @@ struct Bridge {
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
+    read_pages:
+        Mutex<std::collections::VecDeque<Vec<agent_room_bridge_ipc::IpcMessagePreviewSummary>>>,
+    read_cursors: Mutex<Vec<Option<String>>>,
 }
 impl Bridge {
     fn new() -> Self {
@@ -31,18 +34,30 @@ impl Bridge {
             opened: Mutex::new(Vec::new()),
             read_started: tokio::sync::Notify::new(),
             finish_read: tokio::sync::Notify::new(),
+            read_pages: Mutex::new(std::collections::VecDeque::new()),
+            read_cursors: Mutex::new(vec![]),
         }
     }
 }
 impl BridgeToolClient for Bridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
-        if matches!(&method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::ReadInbox(_)))
+        if let IpcMethod::WithSession { method, .. } = &method
+            && let IpcMethod::ReadInbox(request) = method.as_ref()
         {
+            self.read_cursors
+                .lock()
+                .unwrap()
+                .push(request.after_event_id.clone());
             return Box::pin(async move {
                 self.read_started.notify_one();
                 self.finish_read.notified().await;
                 Ok(IpcResponse::MessagePreviews {
-                    previews: vec![],
+                    previews: self
+                        .read_pages
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .unwrap_or_default(),
                     next_cursor: None,
                 })
             });
@@ -181,7 +196,7 @@ async fn 等待消息期间可确认已处理批次且返回空批次不覆盖�
             room: None,
             after: None,
             limit: 20,
-            wait: 0,
+            wait: Some(0),
         }),
     ));
     let acknowledging = async {
@@ -209,6 +224,60 @@ async fn 等待消息期间可确认已处理批次且返回空批次不覆盖�
             .as_deref(),
         Some("$handled")
     );
+}
+
+#[tokio::test]
+async fn 并发确认吞掉整批消息时默认read会接着等下一批() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut saved = profile();
+    saved.session_id = Some(uuid::Uuid::now_v7().to_string());
+    saved.record_delivery(["$handled".into()]).unwrap();
+    let key = saved.invitation.session_key.clone();
+    ProfileStore::open(directory.path(), &key)
+        .unwrap()
+        .save(&saved)
+        .unwrap();
+    let args = ReadArgs {
+        session: saved.session_id.clone(),
+        room: None,
+        after: None,
+        limit: 20,
+        wait: None,
+    };
+    let bridge = Bridge::new();
+    bridge
+        .read_pages
+        .lock()
+        .unwrap()
+        .extend([vec![preview("$handled")], vec![preview("$new")]]);
+    let reading = read_batch(&bridge, directory.path(), &mut saved, args);
+    let delivering = async {
+        bridge.read_started.notified().await;
+        let store = ProfileStore::open(directory.path(), &key).unwrap();
+        let mut current = store.load().unwrap().unwrap();
+        current.acknowledge("$handled").unwrap();
+        store.save(&current).unwrap();
+        drop(store);
+        bridge.finish_read.notify_one();
+        bridge.read_started.notified().await;
+        assert_eq!(
+            *bridge.read_cursors.lock().unwrap(),
+            [None, Some("$handled".into())]
+        );
+        bridge.finish_read.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(reading, delivering)
+    })
+    .await
+    .unwrap();
+    let IpcResponse::MessagePreviews { previews, .. } = result.unwrap().unwrap() else {
+        panic!("message page")
+    };
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].event_id, "$new");
+    assert_eq!(saved.after_event_id.as_deref(), Some("$handled"));
+    assert_eq!(saved.delivered, ["$new"]);
 }
 
 #[tokio::test]

@@ -8,6 +8,7 @@ use agent_room_mcp::agent_room::{AgentRoomMcpServer, LocalBridgeToolClient};
 use agent_room_mcp::http::{HttpConfig, router};
 use clap::Parser;
 use rmcp::{ServiceExt, transport::stdio};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(
@@ -72,11 +73,13 @@ async fn run() -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
         eprintln!("Agent Room private MCP listening on {bind}");
-        return axum::serve(listener, router(backend, config))
-            .with_graceful_shutdown(async {
+        let shutdown = CancellationToken::new();
+        return axum::serve(listener, router(backend, config, shutdown.clone()))
+            .with_graceful_shutdown(async move {
                 if let Err(error) = tokio::signal::ctrl_c().await {
                     eprintln!("Shutdown signal unavailable: {error}");
                 }
+                shutdown.cancel();
             })
             .await
             .map_err(|error| error.to_string());

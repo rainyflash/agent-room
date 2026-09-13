@@ -118,23 +118,18 @@ pub struct WaitMessagesInput {
     #[serde(default = "default_preview_limit")]
     #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
     pub limit: u16,
-    #[serde(default = "default_wait_seconds")]
-    #[schemars(range(min = 0, max = 25))]
-    pub wait_seconds: u8,
+    /// 省略时持续阻塞到有消息；0 立即检查；正数显式设置最长等待秒数（最多一天）。
+    #[serde(default)]
+    #[schemars(range(min = 0, max = agent_room_agent_client::MAX_EXPLICIT_WAIT_SECONDS))]
+    pub wait_seconds: Option<u32>,
 }
 
-const fn default_wait_seconds() -> u8 {
-    25
-}
-
-impl From<WaitMessagesInput> for ListPreviewsInput {
+impl From<WaitMessagesInput> for IpcListPreviewsRequest {
     fn from(input: WaitMessagesInput) -> Self {
         Self {
-            session_id: input.session_id,
             after_event_id: input.after_event_id,
             room_id: input.room_id,
             limit: input.limit,
-            wait_seconds: input.wait_seconds,
             before_event_id: None,
         }
     }

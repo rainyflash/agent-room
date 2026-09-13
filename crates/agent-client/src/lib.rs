@@ -3,4 +3,4 @@ mod bridge;
 mod inbox;
 pub mod reception;
 pub use bridge::{BridgeToolClient, BridgeToolFailure, BridgeToolFuture, LocalBridgeToolClient};
-pub use inbox::{MessageReadMode, wait_for_messages};
+pub use inbox::{MAX_EXPLICIT_WAIT_SECONDS, MessageReadMode, MessageWait, wait_for_messages};

@@ -14,6 +14,7 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 
 const SERVER_NAME: &str = "agent_room";
+mod codex_timeout;
 mod command;
 pub use command::SystemCommandRunner;
 
@@ -103,6 +104,7 @@ pub struct HostContext {
     pub path_entries: Vec<PathBuf>,
     pub mcp_executable: PathBuf,
     pub codex_cli_path: Option<PathBuf>,
+    pub codex_home: Option<PathBuf>,
 }
 
 impl HostContext {
@@ -125,6 +127,7 @@ impl HostContext {
             path_entries,
             mcp_executable,
             codex_cli_path: env::var_os("CODEX_CLI_PATH").map(PathBuf::from),
+            codex_home: env::var_os("CODEX_HOME").map(PathBuf::from),
         })
     }
 }
@@ -329,19 +332,25 @@ impl AgentHostAdapter for CodexAdapter {
             return Ok(receipt(self.kind(), false, plan.desired_digest));
         }
         let path = context.mcp_executable.to_string_lossy().into_owned();
-        require_success(
-            runner.run(
-                &executable,
-                &[
-                    "mcp".into(),
-                    "add".into(),
-                    SERVER_NAME.into(),
-                    "--".into(),
-                    path,
-                ],
-            )?,
-            "codex.add_failed",
-        )?;
+        if !current
+            .as_ref()
+            .is_some_and(|current| codex_transport_matches(context, current))
+        {
+            require_success(
+                runner.run(
+                    &executable,
+                    &[
+                        "mcp".into(),
+                        "add".into(),
+                        SERVER_NAME.into(),
+                        "--".into(),
+                        path,
+                    ],
+                )?,
+                "codex.add_failed",
+            )?;
+        }
+        codex_timeout::configure(context)?;
         let verified = codex_plan(context, codex_state(runner, &executable)?.as_ref());
         if verified.action != ConfigurationAction::Unchanged {
             return Err(HostFailure::new("codex.verify_failed", true));
@@ -376,16 +385,13 @@ impl AgentHostAdapter for CodexAdapter {
 }
 
 fn codex_plan(context: &HostContext, current: Option<&Value>) -> ConfigurationPlan {
-    let desired = json!({"name": SERVER_NAME, "transport": {"type": "stdio", "command": context.mcp_executable, "args": []}});
+    let desired = json!({"name": SERVER_NAME, "transport": {"type": "stdio", "command": context.mcp_executable, "args": []}, "tool_timeout_sec": codex_timeout::TOOL_TIMEOUT_SECONDS});
     let unchanged = current.is_some_and(|value| {
-        value.get("enabled").and_then(Value::as_bool) != Some(false)
-            && value.pointer("/transport/type").and_then(Value::as_str) == Some("stdio")
-            && value.pointer("/transport/command").and_then(Value::as_str)
-                == context.mcp_executable.to_str()
+        codex_transport_matches(context, value)
             && value
-                .pointer("/transport/args")
-                .and_then(Value::as_array)
-                .is_some_and(Vec::is_empty)
+                .get("tool_timeout_sec")
+                .and_then(Value::as_f64)
+                .is_some_and(|seconds| seconds >= f64::from(codex_timeout::TOOL_TIMEOUT_SECONDS))
     });
     plan_for(
         HostKind::Codex,
@@ -394,6 +400,17 @@ fn codex_plan(context: &HostContext, current: Option<&Value>) -> ConfigurationPl
         &desired,
         unchanged,
     )
+}
+
+fn codex_transport_matches(context: &HostContext, value: &Value) -> bool {
+    value.get("enabled").and_then(Value::as_bool) != Some(false)
+        && value.pointer("/transport/type").and_then(Value::as_str) == Some("stdio")
+        && value.pointer("/transport/command").and_then(Value::as_str)
+            == context.mcp_executable.to_str()
+        && value
+            .pointer("/transport/args")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
 }
 
 struct ClaudeAdapter;
@@ -921,7 +938,7 @@ mod tests {
         }
     }
 
-    fn context(root: &Path) -> HostContext {
+    pub(super) fn context(root: &Path) -> HostContext {
         let mcp = root.join("agent-room-mcp.exe");
         fs::write(&mcp, b"test").expect("测试 MCP 可写");
         HostContext {
@@ -931,6 +948,7 @@ mod tests {
             path_entries: vec![],
             mcp_executable: mcp,
             codex_cli_path: None,
+            codex_home: None,
         }
     }
 
@@ -1067,7 +1085,17 @@ mod tests {
     fn incompatible_installation_falls_back_and_keeps_same_executable_for_write_and_verify() {
         let directory = tempfile::tempdir().unwrap();
         let (context, bundled, npm) = installed_codex(directory.path());
-        let configured = json!([{"name": SERVER_NAME, "transport": {"type": "stdio", "command": context.mcp_executable, "args": []}}]).to_string();
+        let configured = json!([{"name": SERVER_NAME, "transport": {"type": "stdio", "command": context.mcp_executable, "args": []}, "tool_timeout_sec": 86400}]).to_string();
+        let config = directory.path().join(".codex/config.toml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(
+            &config,
+            format!(
+                "[mcp_servers.agent_room]\ncommand = {}\n",
+                serde_json::to_string(context.mcp_executable.to_str().unwrap()).unwrap()
+            ),
+        )
+        .unwrap();
         let runner = FakeRunner::with(vec![
             output(1, "", "unknown variant `max` secret-not-for-ui"),
             output(0, "[]", ""),
@@ -1100,6 +1128,58 @@ mod tests {
         assert_eq!(failure.code(), "codex.config_incompatible");
         assert!(!failure.to_string().contains("secret"));
         assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn 短工具期限需要升级且不重建已经正确的服务器配置() {
+        let directory = tempfile::tempdir().unwrap();
+        let (context, _, _) = installed_codex(directory.path());
+        let previous = json!({"name": SERVER_NAME, "transport": {"type": "stdio", "command": context.mcp_executable, "args": []}, "tool_timeout_sec": 150});
+        assert_eq!(
+            codex_plan(&context, Some(&previous)).action,
+            ConfigurationAction::Replace
+        );
+        let mut updated = previous.clone();
+        updated["tool_timeout_sec"] = json!(86400);
+        let config = directory.path().join(".codex/config.toml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(
+            &config,
+            format!(
+                "[mcp_servers.agent_room]\ncommand = {}\ntool_timeout_sec = 150\n",
+                serde_json::to_string(context.mcp_executable.to_str().unwrap()).unwrap()
+            ),
+        )
+        .unwrap();
+        let runner = FakeRunner::with(vec![
+            output(0, &json!([previous]).to_string(), ""),
+            output(0, &json!([updated]).to_string(), ""),
+        ]);
+        let digest = codex_plan(&context, Some(&previous)).original_digest;
+        assert!(
+            CodexAdapter
+                .apply(&context, &runner, &digest)
+                .unwrap()
+                .changed
+        );
+        assert!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, args)| args == &["mcp", "list", "--json"])
+        );
+        assert!(
+            fs::read_to_string(&config)
+                .unwrap()
+                .contains("tool_timeout_sec = 86400")
+        );
+        updated["tool_timeout_sec"] = json!(172_800);
+        assert_eq!(
+            codex_plan(&context, Some(&updated)).action,
+            ConfigurationAction::Unchanged
+        );
     }
 
     #[test]

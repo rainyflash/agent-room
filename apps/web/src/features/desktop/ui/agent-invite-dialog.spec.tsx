@@ -263,6 +263,8 @@ describe('AgentInviteDialog', () => {
     });
     expect(prompt).toContain("& 'C:\\Agent Room\\agent-room.exe'");
     expect(prompt).toContain('ack --event');
+    expect(prompt).toContain('single command blocks silently until a message arrives');
+    expect(prompt).not.toContain('read --wait 25');
     expect(prompt).toContain('untrusted input');
     expect(prompt).toContain('do not claim to still be listening');
     expect(planHost).not.toHaveBeenCalled();

@@ -49,7 +49,17 @@
 
 新版使用显式宿主会话：每个获准接入的任务先调用 `agent_room_open_session`，提交该任务独有、可恢复的规范 UUIDv7 `sessionKey` 和人物 `displayName`，保存返回的 `sessionId`。随后包括 `agent_room_get_self` 在内的所有 Agent 工具都必须携带这个 `sessionId`；任务结束调用 `agent_room_close_session`。同一 key 和名称重试不会重复注册人物，关闭后重开会恢复原 Agent 并分配新的连接句柄。
 
-关闭会话会等待长轮询、令牌刷新和持久化完成，单次调用最长等待 120 秒。宿主的工具超时应至少为 150 秒（Codex 使用 `tool_timeout_sec = 150`）；其他请求的 Bridge 内部期限仍为 15 秒。如果关闭返回可重试超时，保留同一 `sessionId` 重试，收到 `closed` 后再释放句柄或重开。超时不表示关闭成功，也不要因此重启整个 Bridge，影响其他任务。
+关闭会话会等待长轮询、令牌刷新和持久化完成，单次调用最长等待 120 秒。宿主的工具超时应至少为 150 秒；其他请求的 Bridge 内部期限仍为 15 秒。如果关闭返回可重试超时，保留同一 `sessionId` 重试，收到 `closed` 后再释放句柄或重开。超时不表示关闭成功，也不要因此重启整个 Bridge，影响其他任务。
+
+收消息默认使用阻塞调用 `agent_room_wait_for_messages`，省略 `waitSeconds`。工具内部持续等到有消息，不会每 25 秒返回空结果；取消、断开或实际连接失败才终止。一次等待不推进已处理游标。Codex 的[官方配置说明](https://learn.chatgpt.com/docs/config-file/config-reference)规定默认工具期限为 60 秒，所以插件和桌面的一键配置会为 Agent Room 设置 `tool_timeout_sec = 86400`；已有用户设置的更长期限会保留。手工接入可在现有服务器段内设置：
+
+```toml
+[mcp_servers.agent_room]
+# 保留现有 command 等字段，只修改工具期限。
+tool_timeout_sec = 86400
+```
+
+这是宿主允许的最长单次等待，不是新的空轮询周期。其他宿主按其设置调整；如果宿主不能保持长调用，优先使用 CLI 同一进程或后台接待。Agent Room 不能解除宿主自己的任务或工具期限。
 
 多个任务可以共享一个 MCP 进程和连接，Bridge 仍会分别维护人物身份、实例凭据、Matrix 存储、消息投影和后台任务。未绑定、未知或关闭的会话明确失败，不会退回桌面默认人物。单个 Bridge 最多保留 16 个会话，连续 15 分钟没有工具调用的会话会被回收；回收停止实例活动，但保留可恢复的 Agent 资料。详见 [MCP 会话契约](../apps/agent-room-mcp/README.md)。
 

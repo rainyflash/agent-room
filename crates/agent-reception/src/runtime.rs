@@ -3,7 +3,7 @@ use crate::{
     ReceiverStore, ReceptionFailure as Failure, ReceptionResult as Result, call, scoped,
 };
 use agent_room_agent_client::{
-    BridgeToolClient, MessageReadMode,
+    BridgeToolClient, MessageReadMode, MessageWait,
     reception::{DeliveryDecision, ReceptionCheckpoint},
     wait_for_messages,
 };
@@ -173,7 +173,7 @@ async fn poll_inbox(
             session_id.to_owned(),
             binding.inbox_request(state.checkpoint.cursor().map(str::to_owned)),
             MessageReadMode::Inbox,
-            25,
+            MessageWait::UntilMessage,
         )
         .await
         .map_err(|error| {

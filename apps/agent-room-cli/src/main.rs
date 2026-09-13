@@ -5,7 +5,7 @@ mod profile;
 mod receiver;
 
 use agent_room_agent_client::{
-    BridgeToolClient, LocalBridgeToolClient, MessageReadMode, wait_for_messages,
+    BridgeToolClient, LocalBridgeToolClient, MessageReadMode, MessageWait, wait_for_messages,
 };
 use agent_room_bridge_ipc::{
     IpcCloseHostSessionRequest, IpcListPreviewsRequest, IpcMethod, IpcOpenHostSessionRequest,
@@ -139,7 +139,7 @@ async fn run_command(
             )
             .await?,
         ),
-        Command::Read(args) => success(read(backend, &args).await?),
+        Command::Read(args) => read_once(backend, &args).await,
         Command::Listen(args) => listen(backend, args).await,
         Command::Send(args) => send(backend, args).await,
         Command::Status(args) => publish_status(backend, args).await,
@@ -196,8 +196,18 @@ async fn run_command(
     }
 }
 
-async fn read(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<IpcResponse> {
-    Ok(wait_for_messages(
+async fn read_once(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<()> {
+    match read(backend, args).await? {
+        Some(response) => success(response),
+        None => success(json!({"type": "stopped", "afterEventId": args.after})),
+    }
+}
+
+async fn read(
+    backend: &dyn BridgeToolClient,
+    args: &cli::ReadArgs,
+) -> CliResult<Option<IpcResponse>> {
+    let waiting = wait_for_messages(
         backend,
         required(args.session.clone(), "cli.session_required")?,
         IpcListPreviewsRequest {
@@ -207,9 +217,15 @@ async fn read(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult
             limit: args.limit,
         },
         MessageReadMode::Inbox,
-        args.wait,
-    )
-    .await?)
+        MessageWait::from_seconds(args.wait),
+    );
+    tokio::select! {
+        result = waiting => Ok(Some(result?)),
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|_| CliFailure::local("cli.signal_failed"))?;
+            Ok(None)
+        }
+    }
 }
 
 pub(crate) async fn call(
@@ -267,20 +283,20 @@ fn chat_request(
 }
 
 async fn listen(backend: &dyn BridgeToolClient, mut args: cli::ReadArgs) -> CliResult<()> {
-    if args.wait == 0 {
+    if args.wait == Some(0) {
         return Err(CliFailure::validation("cli.listen_wait_must_be_positive"));
     }
     loop {
-        let response = tokio::select! { result = read(backend, &args) => result?, signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|_| CliFailure::local("cli.signal_failed"))?; return success(json!({"type": "stopped", "afterEventId": args.after}));
-        }};
+        let Some(response) = read(backend, &args).await? else {
+            return success(json!({"type": "stopped", "afterEventId": args.after}));
+        };
         let IpcResponse::MessagePreviews { previews, .. } = &response else {
             return Err(CliFailure::local("cli.response_invalid"));
         };
         if let Some(last) = previews.last() {
             args.after = Some(last.event_id.clone());
+            success(response)?;
         }
-        success(response)?;
     }
 }
 

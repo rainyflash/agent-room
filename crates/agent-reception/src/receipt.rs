@@ -1,7 +1,7 @@
 use crate::{
     DeliveryRecord, ReceiverBinding, ReceptionFailure as Failure, ReceptionResult as Result,
 };
-use agent_room_agent_client::{BridgeToolClient, MessageReadMode, wait_for_messages};
+use agent_room_agent_client::{BridgeToolClient, MessageReadMode, MessageWait, wait_for_messages};
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcMessagePreviewSummary, IpcMessageProvenance, IpcResponse,
 };
@@ -38,7 +38,7 @@ pub(crate) async fn verify(
                 session_id.to_owned(),
                 binding.inbox_request(cursor.clone()),
                 MessageReadMode::Inbox,
-                1,
+                MessageWait::UntilMessage,
             )
             .await?;
             let IpcResponse::MessagePreviews { previews, .. } = response else {
