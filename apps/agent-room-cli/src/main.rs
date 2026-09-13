@@ -1,5 +1,7 @@
+mod access;
 mod cli;
 mod output;
+mod profile;
 mod receiver;
 
 use agent_room_agent_client::{
@@ -49,25 +51,66 @@ fn report_failure(error: &CliFailure) -> ExitCode {
 }
 
 async fn run(cli: Cli) -> CliResult<()> {
+    match &cli.command {
+        Command::Guide => return success(access::guide()),
+        Command::Id => return success(json!({"id": uuid::Uuid::now_v7()})),
+        _ => {}
+    }
     let data_root = match cli.data_root {
         Some(path) if path.is_absolute() => path,
         Some(_) => return Err(CliFailure::validation("cli.data_root_must_be_absolute")),
         None => bridge_data_root_from_environment()
             .map_err(|_| CliFailure::validation("cli.data_root_invalid"))?,
     };
-    let service = secure_storage_service_from_environment()
-        .map_err(|_| CliFailure::validation("cli.secure_storage_service_invalid"))?;
+    let service = match cli.connection {
+        Some(name) => agent_room_bridge_local_adapter::SecureStorageService::new(name),
+        None => secure_storage_service_from_environment(),
+    }
+    .map_err(|_| CliFailure::validation("cli.secure_storage_service_invalid"))?;
     let backend =
         LocalBridgeToolClient::agent_cli(bridge_runtime_root(&data_root), service.clone());
-    match cli.command {
-        Command::Doctor => success(call(&backend, IpcMethod::BridgeStatus).await?),
+    if matches!(&cli.command, Command::Doctor) {
+        return success(call(&backend, IpcMethod::BridgeStatus).await?);
+    }
+    if cli.profile.is_some()
+        || matches!(
+            &cli.command,
+            Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave
+        )
+    {
+        return access::run(
+            &backend,
+            &data_root,
+            service.as_str(),
+            cli.profile,
+            cli.command,
+        )
+        .await;
+    }
+    run_command(&backend, &data_root, service.as_str(), cli.command).await
+}
+
+async fn run_command(
+    backend: &dyn BridgeToolClient,
+    data_root: &std::path::Path,
+    service: &str,
+    command: Command,
+) -> CliResult<()> {
+    match command {
+        Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave => {
+            Err(CliFailure::validation("cli.profile.required"))
+        }
+        Command::Guide => success(access::guide()),
+        Command::Id => success(json!({"id": uuid::Uuid::now_v7()})),
+        Command::Doctor => success(call(backend, IpcMethod::BridgeStatus).await?),
         Command::Session {
             action: SessionCommand::Open { name, key },
         } => {
             let key = key.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
             let result = call(
-                &backend,
+                backend,
                 IpcMethod::OpenHostSession(IpcOpenHostSessionRequest {
+                    room: None,
                     session_key: key.clone(),
                     display_name: name,
                 }),
@@ -79,49 +122,59 @@ async fn run(cli: Cli) -> CliResult<()> {
             action: SessionCommand::Close(args),
         } => success(
             call(
-                &backend,
+                backend,
                 IpcMethod::CloseHostSession(IpcCloseHostSessionRequest {
-                    session_id: args.session,
+                    session_id: required(args.session, "cli.session_required")?,
                 }),
             )
             .await?,
         ),
-        Command::Whoami(args) => {
-            success(call(&backend, scoped(args.session, IpcMethod::GetSelf)).await?)
-        }
-        Command::Read(args) => success(read(&backend, &args).await?),
-        Command::Listen(args) => listen(&backend, args).await,
-        Command::Send(args) => send(&backend, args).await,
-        Command::Status(args) => {
-            let status = match args.value {
-                WorkStatus::Offline => IpcWorkStatus::Offline,
-                WorkStatus::Idle => IpcWorkStatus::Idle,
-                WorkStatus::Working => IpcWorkStatus::Working,
-                WorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
-                WorkStatus::Blocked => IpcWorkStatus::Blocked,
-                WorkStatus::Completed => IpcWorkStatus::Completed,
-            };
-            success(
-                call(
-                    &backend,
-                    scoped(
-                        args.session,
-                        IpcMethod::PublishStatus(IpcPublishStatusRequest {
-                            room_id: args.room,
-                            status,
-                            task_summary: args.summary,
-                            progress_basis_points: None,
-                        }),
-                    ),
-                )
-                .await?,
+        Command::Whoami(args) => success(
+            call(
+                backend,
+                scoped(
+                    required(args.session, "cli.session_required")?,
+                    IpcMethod::GetSelf,
+                ),
             )
-        }
+            .await?,
+        ),
+        Command::Read(args) => success(read(backend, &args).await?),
+        Command::Listen(args) => listen(backend, args).await,
+        Command::Send(args) => send(backend, args).await,
+        Command::Status(args) => publish_status(backend, args).await,
+        Command::Register(args) => register(backend, args).await,
+        Command::Presence(args) => success(
+            call(
+                backend,
+                scoped(
+                    required(args.session, "cli.session_required")?,
+                    IpcMethod::GetPresence(agent_room_bridge_ipc::IpcGetPresenceRequest {
+                        room_id: required(args.room, "cli.room_required")?,
+                        agent_ids: Vec::new(),
+                    }),
+                ),
+            )
+            .await?,
+        ),
+        Command::Content { scope, id } => success(
+            call(
+                backend,
+                scoped(
+                    required(scope.session, "cli.session_required")?,
+                    IpcMethod::OpenContent(agent_room_bridge_ipc::IpcOpenContentRequest {
+                        room_id: scope.room,
+                        content_id: id,
+                    }),
+                ),
+            )
+            .await?,
+        ),
         Command::Receive { binding } => {
             receiver::run(
-                &backend,
-                &data_root,
-                service.as_str(),
+                backend,
+                data_root,
+                service,
                 &binding,
                 agent_room_agent_reception::ReceiverMode::Listen,
             )
@@ -131,22 +184,22 @@ async fn run(cli: Cli) -> CliResult<()> {
             action: cli::ReceiverCommand::Verify { binding },
         } => {
             receiver::run(
-                &backend,
-                &data_root,
-                service.as_str(),
+                backend,
+                data_root,
+                service,
                 &binding,
                 agent_room_agent_reception::ReceiverMode::VerifyReceipt,
             )
             .await
         }
-        Command::Receiver { action } => receiver::manage(&data_root, action),
+        Command::Receiver { action } => receiver::manage(data_root, action),
     }
 }
 
 async fn read(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<IpcResponse> {
     Ok(wait_for_messages(
         backend,
-        args.session.clone(),
+        required(args.session.clone(), "cli.session_required")?,
         IpcListPreviewsRequest {
             room_id: args.room.clone(),
             after_event_id: args.after.clone(),
@@ -247,8 +300,8 @@ async fn send(backend: &dyn BridgeToolClient, args: cli::SendArgs) -> CliResult<
             .ok_or_else(|| CliFailure::validation("cli.text_required"))?
     };
     let request = chat_request(
-        &args.session,
-        &args.room,
+        &required(args.session, "cli.session_required")?,
+        &required(args.room, "cli.room_required")?,
         body,
         args.submission_id,
         args.reply_to,
@@ -256,4 +309,76 @@ async fn send(backend: &dyn BridgeToolClient, args: cli::SendArgs) -> CliResult<
         args.automation_grant,
     );
     success(call(backend, request).await?)
+}
+
+fn required(value: Option<String>, code: &str) -> CliResult<String> {
+    value.ok_or_else(|| CliFailure::validation(code))
+}
+
+async fn register(backend: &dyn BridgeToolClient, args: cli::RegisterArgs) -> CliResult<()> {
+    let host_type = args.host.into();
+    let metadata = if matches!(args.host, cli::Host::Codex) {
+        profile::codex_task_id()?
+    } else {
+        None
+    };
+    if let (Some(actual), Some(provided)) = (&metadata, &args.task_id)
+        && actual != provided
+    {
+        return Err(CliFailure::validation("cli.profile.task_mismatch"));
+    }
+    let task_id = required(metadata.or(args.task_id), "cli.task_id_required")?;
+    profile::validate_task_id(&task_id)?;
+    let workspace = match args.workspace {
+        Some(path) => path,
+        None => {
+            std::env::current_dir().map_err(|_| CliFailure::local("cli.workspace_unavailable"))?
+        }
+    };
+    if !workspace.is_absolute() || !workspace.is_dir() {
+        return Err(CliFailure::validation("cli.workspace_invalid"));
+    }
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| CliFailure::validation("cli.workspace_invalid"))?
+        .to_owned();
+    success(
+        call(
+            backend,
+            scoped(
+                required(args.session, "cli.session_required")?,
+                IpcMethod::RegisterReception(agent_room_bridge_ipc::IpcRegisterReceptionRequest {
+                    host_type,
+                    task_id,
+                    workspace,
+                }),
+            ),
+        )
+        .await?,
+    )
+}
+async fn publish_status(backend: &dyn BridgeToolClient, args: cli::StatusArgs) -> CliResult<()> {
+    let status = match args.value {
+        WorkStatus::Offline => IpcWorkStatus::Offline,
+        WorkStatus::Idle => IpcWorkStatus::Idle,
+        WorkStatus::Working => IpcWorkStatus::Working,
+        WorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
+        WorkStatus::Blocked => IpcWorkStatus::Blocked,
+        WorkStatus::Completed => IpcWorkStatus::Completed,
+    };
+    success(
+        call(
+            backend,
+            scoped(
+                required(args.session, "cli.session_required")?,
+                IpcMethod::PublishStatus(IpcPublishStatusRequest {
+                    room_id: required(args.room, "cli.room_required")?,
+                    status,
+                    task_summary: args.summary,
+                    progress_basis_points: None,
+                }),
+            ),
+        )
+        .await?,
+    )
 }

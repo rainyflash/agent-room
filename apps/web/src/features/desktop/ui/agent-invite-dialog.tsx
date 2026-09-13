@@ -11,7 +11,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -20,15 +20,18 @@ import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import {
   agentInviteHosts,
   defaultInviteHost,
-  inviteIdentityStorageKey,
   normalizeInviteDisplayName,
   projectInviteStatus,
-  readInviteIdentity,
-  writeInviteIdentity,
   type AgentInviteHost,
   type AgentInviteIdentity,
   type AgentInviteStatus,
 } from '../domain/agent-invite';
+import {
+  cliInvocation,
+  encodeCliInvitation,
+  readInviteHistory,
+  saveInviteHistory,
+} from '../domain/cli-invitation';
 import { hostFailureMessage, localConnectionReady } from '../domain/desktop-connection';
 import type { AgentHostKind, HostSessionDiagnostics } from '../domain/desktop-runtime';
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
@@ -36,7 +39,11 @@ import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
 import './agent-invite-dialog.css';
 
-type InviteRoom = { readonly roomId: string; readonly roomName: string } | null;
+type InviteRoom = {
+  readonly roomId: string;
+  readonly roomName: string;
+  readonly catalogId?: string;
+} | null;
 type InviteOwner = { readonly principalId: string; readonly displayName: string } | null;
 
 export type AgentInviteDialogProps = {
@@ -107,11 +114,7 @@ export function AgentInviteDialog({
         </span>
         <div>
           <h2 id="agent-invite-title">{t('agentInvite.title')}</h2>
-          <p>
-            {room === null
-              ? t('agentInvite.subtitle.default')
-              : t('agentInvite.subtitle.room', { room: room.roomName })}
-          </p>
+          <p>{t('agentInvite.subtitle')}</p>
         </div>
         <button
           aria-label={t('agentInvite.close')}
@@ -128,81 +131,95 @@ export function AgentInviteDialog({
   );
 }
 
-function InviteBody({ room, owner, downloadUrl, onClose }: InviteBodyProps) {
-  const { t } = useTranslation();
-  const controller = useDesktopRuntimeController();
-  if (!controller.available) {
-    return (
-      <section className="agent-invite__web">
-        <h3>{t('agentInvite.web.title')}</h3>
-        <p>{t('agentInvite.web.description')}</p>
-        {downloadUrl === null ? (
-          <Button disabled icon={<Download aria-hidden="true" />} tone="quiet">
-            {t('agentInvite.web.downloadPending')}
-          </Button>
-        ) : (
-          <a className="ar-button ar-button--primary ar-button--default" href={downloadUrl}>
-            <span className="ar-button__icon">
-              <Download aria-hidden="true" />
-            </span>
-            <span>{t('agentInvite.web.download')}</span>
-          </a>
-        )}
-      </section>
-    );
-  }
-  return <DesktopInvite onClose={onClose} owner={owner} room={room} />;
-}
-
-function DesktopInvite({
-  room,
-  owner: ownerProp,
-  onClose,
-}: Pick<InviteBodyProps, 'room' | 'owner' | 'onClose'>) {
-  const { t } = useTranslation();
-  const controller = useDesktopRuntimeController();
+function InviteBody({ room, owner: ownerProp, downloadUrl, onClose }: InviteBodyProps) {
   const session = useOptionalSession();
-  const sessionPrincipal = session?.snapshot.context.principal ?? null;
+  const principal = session?.snapshot.context.principal ?? null;
   const owner =
     ownerProp ??
-    (sessionPrincipal === null
+    (principal === null
       ? null
-      : { principalId: sessionPrincipal.principalId, displayName: sessionPrincipal.displayName });
+      : {
+          principalId: principal.principalId,
+          displayName: principal.displayName,
+        });
+  return (
+    <ConnectionInvite
+      key={owner?.principalId ?? 'anonymous'}
+      room={room}
+      owner={owner}
+      downloadUrl={downloadUrl}
+      onClose={onClose}
+    />
+  );
+}
+
+function ConnectionInvite({ room: currentRoom, owner, downloadUrl, onClose }: InviteBodyProps) {
+  const { t } = useTranslation();
+  const controller = useDesktopRuntimeController();
   const ownerId = owner?.principalId ?? null;
+  const [storage] = useState(() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  });
+  const [mode, setMode] = useState<'cli' | 'mcp'>('cli');
   const [chosenHost, setChosenHost] = useState<AgentInviteHost | null>(null);
   const host = chosenHost ?? defaultInviteHost(controller.hosts);
   const hostLabel = host === 'other' ? t('agentInvite.host.other') : hostLabels[host];
-
-  const identities = useRef<Partial<Record<AgentInviteHost, AgentInviteIdentity>>>({});
-  const [, bump] = useReducer((count: number) => count + 1, 0);
-  const resolveIdentity = (target: AgentInviteHost): AgentInviteIdentity => {
-    const cached = identities.current[target];
-    if (cached !== undefined) return cached;
-    const key = inviteIdentityStorageKey(target);
-    const stored = readInviteIdentity(window.localStorage, key, ownerId);
-    const label = target === 'other' ? t('agentInvite.host.other') : hostLabels[target];
-    const created: AgentInviteIdentity = stored ?? {
-      sessionKey: uuid.next(),
-      displayName:
-        owner === null
-          ? t('agentInvite.defaultName.anonymous', { host: label })
-          : t('agentInvite.defaultName', { host: label, owner: owner.displayName }),
-      ownerId,
-    };
-    if (stored === null) writeInviteIdentity(window.localStorage, key, created);
-    identities.current[target] = created;
-    return created;
-  };
-  const identity = resolveIdentity(host);
-  const replaceIdentity = (next: AgentInviteIdentity): void => {
-    identities.current[host] = next;
-    writeInviteIdentity(window.localStorage, inviteIdentityStorageKey(host), next);
-    bump();
-  };
-
+  const makeIdentity = (): AgentInviteIdentity => ({
+    sessionKey: uuid.next(),
+    displayName:
+      owner === null
+        ? t('agentInvite.cli.anonymous')
+        : t('agentInvite.cli.name', { owner: owner.displayName }),
+    ownerId,
+    room: currentRoom,
+  });
+  const [identity, setIdentity] = useState(makeIdentity);
+  const room = identity.room === undefined ? currentRoom : identity.room;
+  const [history, setHistory] = useState(() =>
+    storage === null ? { identities: [], unavailable: true } : readInviteHistory(storage, ownerId),
+  );
+  const [restored, setRestored] = useState(false);
+  const [validName, setValidName] = useState(true);
   const [copyState, setCopyState] = useState<CopyState>('idle');
+  const copyGeneration = useRef(0);
+  useEffect(
+    () => () => {
+      copyGeneration.current += 1;
+    },
+    [],
+  );
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const [storageFailed, setStorageFailed] = useState(false);
   const [slow, setSlow] = useState(false);
+  const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
+  const localReady = localConnectionReady(phase);
+  const cliConfiguration = controller.snapshot?.cliConfiguration ?? null;
+  const detection = host === 'other' ? null : controller.hosts.find((entry) => entry.host === host);
+  const { checkHost, readHostSessions } = controller;
+  const setup = host === 'other' ? null : controller.hostSetup[host];
+  const canCopy =
+    validName &&
+    normalizeInviteDisplayName(identity.displayName) !== null &&
+    (!controller.available ||
+      (localReady &&
+        (mode === 'cli'
+          ? cliConfiguration !== null
+          : host === 'other' || setup?.phase === 'configured')));
+
+  useEffect(() => {
+    if (
+      mode === 'mcp' &&
+      host !== 'other' &&
+      detection?.installed === true &&
+      detection.configurable
+    )
+      void checkHost(host);
+  }, [mode, host, detection?.installed, detection?.configurable, checkHost]);
+
   useEffect(() => {
     if (copiedAt === null) return undefined;
     setSlow(false);
@@ -216,8 +233,8 @@ function DesktopInvite({
 
   const [sessions, setSessions] = useState<readonly HostSessionDiagnostics[] | null>(null);
   const [diagnosticsFailure, setDiagnosticsFailure] = useState<string | null>(null);
-  const { readHostSessions } = controller;
   useEffect(() => {
+    if (!controller.available || !localReady) return undefined;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -226,9 +243,7 @@ function DesktopInvite({
       if (result.ok) {
         setSessions(result.value);
         setDiagnosticsFailure(null);
-      } else {
-        setDiagnosticsFailure(result.error.code);
-      }
+      } else setDiagnosticsFailure(result.error.code);
       timer = setTimeout(() => void poll(), SESSION_POLL_MS);
     };
     void poll();
@@ -236,111 +251,231 @@ function DesktopInvite({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [readHostSessions]);
+  }, [controller.available, localReady, readHostSessions]);
   const status: AgentInviteStatus =
-    sessions === null ? { kind: 'waiting' } : projectInviteStatus(sessions, identity.sessionKey);
-
+    sessions === null || !localReady
+      ? { kind: 'waiting' }
+      : projectInviteStatus(sessions, identity.sessionKey, room?.roomId);
   const roomLine =
     room === null
       ? t('agentInvite.prompt.roomDefault')
       : t('agentInvite.prompt.roomKnown', { roomId: room.roomId, roomName: room.roomName });
-  const prompt = t('agentInvite.prompt', {
-    displayName: identity.displayName,
-    room: roomLine,
-    sessionKey: identity.sessionKey,
-  });
+  const invocation = cliInvocation(cliConfiguration, controller.snapshot?.platform ?? 'unknown');
+  const scope = invocation + ' --profile ' + identity.sessionKey;
+  const prompt =
+    mode === 'cli'
+      ? t('agentInvite.cli.prompt', {
+          command:
+            invocation +
+            ' join --invite ' +
+            encodeCliInvitation(identity, room?.roomId ?? null, room?.catalogId),
+          scope,
+          room: roomLine,
+        })
+      : t('agentInvite.prompt', {
+          displayName: identity.displayName,
+          room: roomLine,
+          sessionKey: identity.sessionKey,
+          target:
+            room?.catalogId === undefined
+              ? ''
+              : '\n   room = ' + JSON.stringify({ catalogId: room.catalogId, roomId: room.roomId }),
+        });
 
+  const resetCopy = () => {
+    copyGeneration.current += 1;
+    setCopyState('idle');
+    setCopiedAt(null);
+  };
+  const newIdentity = () => {
+    setIdentity(makeIdentity());
+    setRestored(false);
+    setValidName(true);
+    setStorageFailed(false);
+    resetCopy();
+  };
   const copyPrompt = async (): Promise<void> => {
+    if (!canCopy) return;
+    const generation = ++copyGeneration.current;
     try {
       await navigator.clipboard.writeText(prompt);
+      const saved = storage !== null && saveInviteHistory(storage, identity);
+      if (generation !== copyGeneration.current) return;
       setCopyState('copied');
       setCopiedAt(Date.now());
+      setStorageFailed(!saved);
+      if (saved) setHistory(readInviteHistory(storage, ownerId));
     } catch {
-      setCopyState('failed');
+      if (generation === copyGeneration.current) setCopyState('failed');
     }
   };
-
-  const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
-  const detection = host === 'other' ? null : controller.hosts.find((entry) => entry.host === host);
-  const { checkHost } = controller;
-  useEffect(() => {
-    if (host !== 'other' && detection?.installed === true && detection.configurable)
-      void checkHost(host);
-  }, [host, detection?.installed, detection?.configurable, checkHost]);
-  const setup = host === 'other' ? null : controller.hostSetup[host];
-  const canCopy =
-    localConnectionReady(phase) && (host === 'other' || setup?.phase === 'configured');
-
   return (
     <div className="agent-invite__body">
-      <LocalConnectionNotice />
-
+      {controller.available ? (
+        <LocalConnectionNotice />
+      ) : (
+        <section className="agent-invite__web">
+          <h3>{t('agentInvite.web.title')}</h3>
+          <p>{t('agentInvite.web.description')}</p>
+          {room?.catalogId ? (
+            <a
+              className="ar-button ar-button--primary ar-button--default"
+              href={'agent-room://lobby/' + room.catalogId + '/instance/' + room.roomId}
+            >
+              {t('agentInvite.web.openDesktop')}
+            </a>
+          ) : null}
+          {downloadUrl === null ? (
+            <p>{t('agentInvite.web.downloadPending')}</p>
+          ) : (
+            <a className="ar-button ar-button--quiet ar-button--default" href={downloadUrl}>
+              <Download aria-hidden="true" /> {t('agentInvite.web.download')}
+            </a>
+          )}
+        </section>
+      )}
       <ol className="agent-invite__steps">
         <li>
-          <h3>{t('agentInvite.step.host')}</h3>
-          <div
-            className="agent-invite__hosts"
-            role="radiogroup"
-            aria-label={t('agentInvite.step.host')}
-          >
-            {agentInviteHosts.map((candidate) => {
-              const found =
-                candidate === 'other'
-                  ? null
-                  : controller.hosts.find((entry) => entry.host === candidate);
-              return (
-                <button
-                  aria-checked={candidate === host}
-                  className="agent-invite__host"
-                  key={candidate}
-                  onClick={() => {
-                    setChosenHost(candidate);
-                    setCopyState('idle');
-                    setCopiedAt(null);
-                  }}
-                  role="radio"
-                  type="button"
-                >
-                  <strong>
-                    {candidate === 'other' ? t('agentInvite.host.other') : hostLabels[candidate]}
-                  </strong>
-                  {candidate === 'other' ? null : (
-                    <small data-installed={found?.installed === true ? 'true' : 'false'}>
-                      {t(
-                        found?.installed === true
-                          ? 'agentInvite.host.installed'
-                          : 'agentInvite.host.missing',
-                      )}
-                    </small>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <HostSetup
-            detection={detection}
-            host={host}
-            hostLabel={hostLabel}
-            manualConfiguration={
-              controller.snapshot === null
-                ? null
-                : serializeManualHostConfiguration(controller.snapshot.manualHostConfiguration)
-            }
-          />
-        </li>
-
-        <li>
-          <h3>{t('agentInvite.step.copy')}</h3>
+          <h3>{t('agentInvite.identity.title')}</h3>
+          <p>{t('agentInvite.identity.description')}</p>
+          {history.identities.length === 0 ? null : (
+            <label className="agent-invite__restore">
+              {t('agentInvite.identity.restore')}
+              <select
+                value={restored ? identity.sessionKey : ''}
+                onChange={(event) => {
+                  const previous = history.identities.find(
+                    (entry) => entry.sessionKey === event.target.value,
+                  );
+                  if (previous === undefined) newIdentity();
+                  else {
+                    setIdentity(previous);
+                    setRestored(true);
+                    setValidName(true);
+                    resetCopy();
+                  }
+                }}
+              >
+                <option value="">{t('agentInvite.identity.new')}</option>
+                {history.identities.map((entry) => (
+                  <option key={entry.sessionKey} value={entry.sessionKey}>
+                    {entry.displayName} · {entry.sessionKey.slice(-6)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <NameField
             key={identity.sessionKey}
             initial={identity.displayName}
+            disabled={restored || copiedAt !== null}
+            onValidityChange={setValidName}
             onCommit={(displayName) => {
-              if (displayName !== identity.displayName) {
-                replaceIdentity({ ...identity, displayName });
-                setCopyState('idle');
-              }
+              copyGeneration.current += 1;
+              setIdentity((current) => ({ ...current, displayName }));
             }}
           />
+          {restored && room?.roomId !== currentRoom?.roomId ? (
+            <p role="status">
+              {t('agentInvite.identity.restoredRoom', {
+                room: room?.roomName ?? t('agentInvite.prompt.roomDefault'),
+              })}
+            </p>
+          ) : null}
+          <button className="agent-invite__link" type="button" onClick={newIdentity}>
+            {t('agentInvite.identity.add')}
+          </button>
+          {history.unavailable || storageFailed ? (
+            <p role="status" className="agent-invite__error">
+              {t('agentInvite.identity.storageFailed')}
+            </p>
+          ) : null}
+        </li>
+        <li>
+          <h3>{t('agentInvite.step.copy')}</h3>
+          <p>{t('agentInvite.cli.description')}</p>
+          {controller.available && cliConfiguration === null && mode === 'cli' ? (
+            <p role="status">{t('agentInvite.cli.missing')}</p>
+          ) : null}
+          <details className="agent-invite__advanced">
+            <summary>{t('agentInvite.advanced')}</summary>
+            <div
+              className="agent-invite__modes"
+              role="radiogroup"
+              aria-label={t('agentInvite.mode')}
+            >
+              {(['cli', 'mcp'] as const).map((value) => (
+                <button
+                  key={value}
+                  role="radio"
+                  type="button"
+                  aria-checked={mode === value}
+                  onClick={() => {
+                    setMode(value);
+                    resetCopy();
+                  }}
+                >
+                  {t(value === 'cli' ? 'agentInvite.mode.cli' : 'agentInvite.mode.mcp')}
+                </button>
+              ))}
+            </div>
+            {mode === 'mcp' ? (
+              <>
+                <p>{t('agentInvite.mcp.description')}</p>
+                {controller.available ? (
+                  <>
+                    <div
+                      className="agent-invite__hosts"
+                      role="radiogroup"
+                      aria-label={t('agentInvite.step.host')}
+                    >
+                      {agentInviteHosts.map((candidate) => (
+                        <button
+                          className="agent-invite__host"
+                          key={candidate}
+                          aria-checked={candidate === host}
+                          role="radio"
+                          type="button"
+                          onClick={() => {
+                            setChosenHost(candidate);
+                            resetCopy();
+                          }}
+                        >
+                          <strong>
+                            {candidate === 'other'
+                              ? t('agentInvite.host.other')
+                              : hostLabels[candidate]}
+                          </strong>
+                        </button>
+                      ))}
+                    </div>
+                    <HostSetup
+                      detection={detection}
+                      host={host}
+                      hostLabel={hostLabel}
+                      manualConfiguration={
+                        controller.snapshot === null
+                          ? null
+                          : serializeManualHostConfiguration(
+                              controller.snapshot.manualHostConfiguration,
+                            )
+                      }
+                    />
+                  </>
+                ) : (
+                  <p>{t('agentInvite.mcp.web')}</p>
+                )}
+              </>
+            ) : null}
+            <p>{t('agentInvite.remote.description')}</p>
+            <a
+              href="https://github.com/rainyflash/agent-room/blob/main/infra/agent-runtime/README.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t('agentInvite.remote.docs')}
+            </a>
+          </details>
           <Button
             className="agent-invite__copy"
             disabled={!canCopy}
@@ -366,31 +501,22 @@ function DesktopInvite({
             </summary>
             <pre>{prompt}</pre>
           </details>
-          <p className="agent-invite__note">
-            {t('agentInvite.identityNote')}{' '}
-            <button
-              className="agent-invite__link"
-              onClick={() => {
-                replaceIdentity({ ...identity, sessionKey: uuid.next() });
-                setCopyState('idle');
-                setCopiedAt(null);
-              }}
-              type="button"
-            >
-              {t('agentInvite.newIdentity')}
-            </button>
-          </p>
+          <p className="agent-invite__note">{t('agentInvite.identityNote')}</p>
         </li>
-
         <li>
           <h3>{t('agentInvite.step.wait')}</h3>
-          <ArrivalStatus
-            preparation={canCopy ? (copiedAt === null ? 'instructions' : null) : 'setup'}
-            diagnosticsFailure={diagnosticsFailure}
-            onDone={onClose}
-            slow={slow && status.kind === 'waiting'}
-            status={status}
-          />
+          {controller.available ? (
+            <ArrivalStatus
+              preparation={canCopy ? (copiedAt === null ? 'instructions' : null) : 'setup'}
+              diagnosticsFailure={diagnosticsFailure}
+              onDone={onClose}
+              slow={slow && status.kind === 'waiting'}
+              status={status}
+            />
+          ) : (
+            <p role="status">{t('agentInvite.web.observe')}</p>
+          )}
+          <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
         </li>
       </ol>
     </div>
@@ -497,9 +623,13 @@ function HostSetup({
 function NameField({
   initial,
   onCommit,
+  disabled = false,
+  onValidityChange,
 }: {
   readonly initial: string;
   readonly onCommit: (displayName: string) => void;
+  readonly disabled?: boolean;
+  readonly onValidityChange?: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
   const id = useId();
@@ -511,6 +641,7 @@ function NameField({
       <input
         aria-describedby={`${id}-hint`}
         aria-invalid={normalized === null}
+        disabled={disabled}
         id={id}
         maxLength={128}
         onBlur={() => {
@@ -519,6 +650,7 @@ function NameField({
         onChange={(event) => {
           setDraft(event.target.value);
           const next = normalizeInviteDisplayName(event.target.value);
+          onValidityChange?.(next !== null);
           if (next !== null) onCommit(next);
         }}
         type="text"
@@ -565,6 +697,12 @@ function ArrivalStatus({
     );
   }
   switch (status.kind) {
+    case 'room_mismatch':
+      return (
+        <p className="agent-invite__status agent-invite__error" role="alert">
+          {t('agentInvite.status.roomMismatch', { name: status.displayName })}
+        </p>
+      );
     case 'waiting':
       return (
         <div className="agent-invite__status" data-kind="waiting" role="status">

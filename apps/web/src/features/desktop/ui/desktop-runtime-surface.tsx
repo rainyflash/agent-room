@@ -26,6 +26,7 @@ import {
 import { LocalConnectionNotice } from './local-connection-notice';
 import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
 import { HostSessionOnboarding } from '@/features/desktop/ui/host-session-onboarding';
+import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 
 export type DesktopRuntimeSurfaceProps = {
@@ -35,6 +36,7 @@ export type DesktopRuntimeSurfaceProps = {
 export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntimeSurfaceProps) {
   const { i18n, t } = useTranslation();
   const controller = useDesktopRuntimeController();
+  const session = useOptionalSession();
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
@@ -235,28 +237,37 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   <p>{t('desktop.hosts.description')}</p>
                 </div>
                 <div className="desktop-runtime__host-list">
-                  {controller.hosts
-                    .filter((host) => host.installed)
-                    .map((host) => (
-                      <Button
-                        disabled={controller.busy !== null || !host.configurable}
-                        icon={<PlugZap aria-hidden="true" />}
-                        key={host.host}
-                        onClick={() => void controller.configureHost(host.host)}
-                        size="compact"
-                        tone="quiet"
-                      >
-                        {t(`desktop.hosts.${host.host}`)}
-                      </Button>
-                    ))}
-                  <ManualHostConfiguration
-                    configuration={controller.snapshot.manualHostConfiguration}
-                  />
-                  {controller.configuredHost === null ? null : (
-                    <p role="status">{t('desktop.hosts.configured')}</p>
-                  )}
                   <HostSessionOnboarding readHostSessions={controller.readHostSessions} />
-                  {controller.receptionAvailable ? <ReceptionPanel /> : null}
+                  {controller.receptionAvailable ? (
+                    session === null ? (
+                      <p>{t('reception.login')}</p>
+                    ) : (
+                      <ReceptionPanel />
+                    )
+                  ) : null}
+                  <details>
+                    <summary>{t('agentInvite.mode.mcp')}</summary>
+                    {controller.hosts
+                      .filter((host) => host.installed)
+                      .map((host) => (
+                        <Button
+                          disabled={controller.busy !== null || !host.configurable}
+                          icon={<PlugZap aria-hidden="true" />}
+                          key={host.host}
+                          onClick={() => void controller.configureHost(host.host)}
+                          size="compact"
+                          tone="quiet"
+                        >
+                          {t(`desktop.hosts.${host.host}`)}
+                        </Button>
+                      ))}
+                    <ManualHostConfiguration
+                      configuration={controller.snapshot.manualHostConfiguration}
+                    />
+                    {controller.configuredHost === null ? null : (
+                      <p role="status">{t('desktop.hosts.configured')}</p>
+                    )}
+                  </details>
                 </div>
               </section>
             ) : null}

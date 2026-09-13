@@ -225,6 +225,33 @@ impl HostConfigurator {
         }
     }
 
+    /// Resolve a native executable for background reception without changing MCP configuration.
+    /// # Errors
+    /// The host is missing, incompatible, or only available through a shell wrapper.
+    pub fn reception_executable(&self, host: HostKind) -> Result<PathBuf, HostFailure> {
+        let executable = match host {
+            HostKind::Codex => compatible_codex(&self.context, self.runner.as_ref())?.0,
+            HostKind::ClaudeCode => path_commands(&self.context, "claude")
+                .into_iter()
+                .find(|path| {
+                    !cfg!(windows)
+                        || path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+                })
+                .ok_or_else(|| HostFailure::new("claude.not_installed", false))?,
+            HostKind::Cursor => return Err(HostFailure::new("host.reception_unsupported", false)),
+        };
+        if cfg!(windows)
+            && !executable
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        {
+            return Err(HostFailure::new("host.native_executable_required", false));
+        }
+        Ok(executable)
+    }
+
     pub fn plan(&self, host: HostKind) -> Result<ConfigurationPlan, HostFailure> {
         self.adapter(host)?
             .plan(&self.context, self.runner.as_ref())
@@ -1007,6 +1034,21 @@ mod tests {
         let plan = CodexAdapter.plan(&context, &runner).unwrap();
         assert_eq!(plan.action, ConfigurationAction::Create);
         assert_eq!(runner.calls.lock().unwrap()[0].0, bundled);
+    }
+
+    #[test]
+    fn background_reception_uses_bundled_codex_without_writing_mcp_configuration() {
+        let directory = tempfile::tempdir().unwrap();
+        let (context, bundled, _) = installed_codex(directory.path());
+        let runner = Arc::new(FakeRunner::with(vec![output(0, "[]", "")]));
+        let configurator = HostConfigurator::new(context, runner.clone());
+        assert_eq!(
+            configurator.reception_executable(HostKind::Codex).unwrap(),
+            bundled
+        );
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, ["mcp", "list", "--json"]);
     }
 
     #[test]

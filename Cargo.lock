@@ -173,6 +173,7 @@ name = "agent-room-bridge-ipc"
 version = "0.1.0-alpha.28"
 dependencies = [
  "agent-room-bridge-core",
+ "agent-room-domain",
  "base64 0.22.1",
  "hmac 0.13.0",
  "proptest",

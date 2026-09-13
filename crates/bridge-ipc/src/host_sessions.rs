@@ -8,11 +8,25 @@ use crate::tools::{IpcMethodValidationFailure, failure};
 pub struct IpcOpenHostSessionRequest {
     pub session_key: String,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<IpcHostRoomTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcHostRoomTarget {
+    pub catalog_id: String,
+    pub room_id: String,
 }
 
 impl IpcOpenHostSessionRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_session_id(&self.session_key)?;
+        if let Some(room) = &self.room {
+            validate_session_id(&room.catalog_id)?;
+            agent_room_domain::rooms::MatrixRoomReference::new(room.room_id.clone())
+                .map_err(|_| failure("bridge.ipc.room_invalid"))?;
+        }
         if self.display_name.trim() != self.display_name
             || self.display_name.is_empty()
             || self.display_name.chars().count() > 128
@@ -60,6 +74,10 @@ pub struct IpcHostSessionSummary {
 pub struct IpcHostSessionDiagnostics {
     pub session: IpcHostSessionSummary,
     pub display_name: String,
+    #[serde(default)]
+    pub room_id: Option<String>,
+    #[serde(default)]
+    pub requested_room: Option<IpcHostRoomTarget>,
     #[serde(default)]
     pub session_key: Option<String>,
     #[serde(default)]
@@ -159,12 +177,14 @@ mod tests {
             "01a07063-4799-7a29-08e1-c9f43de239ef",
         ] {
             let request = IpcOpenHostSessionRequest {
+                room: None,
                 session_key: session_key.into(),
                 display_name: "调试人物".into(),
             };
             assert!(request.validate().is_err());
         }
         let request = IpcOpenHostSessionRequest {
+            room: None,
             session_key: Uuid::now_v7().to_string(),
             display_name: " ".into(),
         };
@@ -176,6 +196,7 @@ mod tests {
         let wrapped = IpcMethod::WithSession {
             session_id: Uuid::now_v7().to_string(),
             method: Box::new(IpcMethod::OpenHostSession(IpcOpenHostSessionRequest {
+                room: None,
                 session_key: Uuid::now_v7().to_string(),
                 display_name: "调试人物".into(),
             })),

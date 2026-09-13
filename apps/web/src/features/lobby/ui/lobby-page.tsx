@@ -345,7 +345,7 @@ function ReadyLobby({
             setInviteOpen(false);
           }}
           owner={owner}
-          room={{ roomId: room.roomId, roomName: room.name }}
+          room={{ catalogId, roomId: room.roomId, roomName: room.name }}
         />
       ) : null}
       <section

@@ -63,7 +63,17 @@ export const receiverViewSchema = z
       .object({
         binding: z
           .object({
-            session: z.object({ sessionKey: z.uuid(), displayName: z.string() }).strict(),
+            session: z
+              .object({
+                sessionKey: z.uuid(),
+                displayName: z.string(),
+                room: z
+                  .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512) })
+                  .strict()
+                  .nullable()
+                  .optional(),
+              })
+              .strict(),
             policy: z.object({ roomId: z.string(), allowedPrincipalId: z.uuid() }).strict(),
             automationGrantId: z.uuid(),
             host: z

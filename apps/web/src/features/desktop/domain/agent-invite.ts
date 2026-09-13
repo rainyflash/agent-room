@@ -18,11 +18,17 @@ export type AgentInviteIdentity = {
   readonly sessionKey: string;
   readonly displayName: string;
   readonly ownerId: string | null;
+  readonly room?: {
+    readonly roomId: string;
+    readonly roomName: string;
+    readonly catalogId?: string;
+  } | null;
 };
 
 export type AgentInviteStatus =
   | { readonly kind: 'waiting' }
   | { readonly kind: 'starting'; readonly displayName: string }
+  | { readonly kind: 'room_mismatch'; readonly displayName: string }
   | {
       readonly kind: 'ready';
       readonly displayName: string;
@@ -120,6 +126,7 @@ export function defaultInviteHost(hosts: readonly AgentHostDetection[]): AgentIn
 export function projectInviteStatus(
   sessions: readonly HostSessionDiagnostics[],
   sessionKey: string,
+  expectedRoomId?: string,
 ): AgentInviteStatus {
   const match = sessions.find((entry) => entry.sessionKey === sessionKey);
   if (match === undefined) return { kind: 'waiting' };
@@ -127,6 +134,9 @@ export function projectInviteStatus(
     case 'starting':
       return { kind: 'starting', displayName: match.displayName };
     case 'ready':
+      if (expectedRoomId !== undefined && match.roomId != null && match.roomId !== expectedRoomId) {
+        return { kind: 'room_mismatch', displayName: match.displayName };
+      }
       return {
         kind: 'ready',
         displayName: match.displayName,

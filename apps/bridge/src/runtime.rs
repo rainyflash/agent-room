@@ -329,10 +329,11 @@ impl MatrixIdentityRecovery {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct AgentSessionTarget {
     agent_id: AgentId,
     lobby_catalog_id: RoomCatalogId,
+    room: Option<agent_room_domain::rooms::MatrixRoomReference>,
 }
 
 struct AgentHandoffStores {
@@ -657,6 +658,7 @@ async fn initialize_agent_session(
         AgentSessionTarget {
             agent_id,
             lobby_catalog_id,
+            room: None,
         },
     )
     .await?;
@@ -721,7 +723,8 @@ async fn compose_agent_session_runtime(
         target.lobby_catalog_id,
         config.lobby_language.clone(),
         config.lobby_region.clone(),
-    );
+    )
+    .with_target_room(target.room);
     let sync_timeout = domain_duration(config.matrix_sync_timeout)?;
     let status_policy = AgentStatusLeasePolicy::new(
         DurationMillis::new(STATUS_LEASE_LIFETIME_MILLIS)

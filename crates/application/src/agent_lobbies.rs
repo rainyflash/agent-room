@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
-    rooms::{RoomLanguage, RoomRegion},
+    rooms::{MatrixRoomReference, RoomLanguage, RoomRegion},
 };
 
 use crate::{
@@ -29,6 +29,7 @@ pub struct EnterAgentLobby {
     pub catalog_id: RoomCatalogId,
     pub preferred_language: Option<RoomLanguage>,
     pub preferred_region: Option<RoomRegion>,
+    pub target_room: Option<MatrixRoomReference>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,17 @@ impl AgentLobbyEntryService {
         {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
+        let mode = if let Some(room) = &request.target_room {
+            let target = self
+                .access
+                .find_public_lobby_room(request.catalog_id, room)
+                .await
+                .map_err(AgentLobbyEntryFailure::Access)?
+                .ok_or(AgentLobbyEntryFailure::NotFound)?;
+            RoomAllocationMode::Manual(target)
+        } else {
+            RoomAllocationMode::Automatic
+        };
         let membership = self
             .memberships
             .bind(&access.matrix_user_id)
@@ -145,7 +157,7 @@ impl AgentLobbyEntryService {
             agent_id: request.agent_id,
             agent_instance_id: request.agent_instance_id,
             catalog_id: request.catalog_id,
-            mode: RoomAllocationMode::Automatic,
+            mode,
             preferred_language: request.preferred_language,
             preferred_region: request.preferred_region,
             evidence: RoomAllocationEvidence::default(),

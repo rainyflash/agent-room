@@ -1,6 +1,8 @@
 import { Button } from '@agent-room/ui-system';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
+import { enableReception, RECEPTION_AUTHORIZATION_DAYS } from '../application/enable-reception';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { useSession } from '@/features/session/ui/session-provider';
@@ -42,10 +44,12 @@ export function ReceptionPanel() {
       )
     : [];
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'copyFailed'>('idle');
+  const pendingGrantIds = useRef(new Map<string, string>());
   const command = useMutation({
     mutationFn: (run: () => Promise<Result<void, DesktopRuntimeFailure>>) => run(),
-    onSuccess: async (result) => {
-      if (result.ok) await queryClient.invalidateQueries({ queryKey });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey });
+      await grantsQuery.refetch();
     },
   });
   const act = (id: string, request: ReceiverAction) => {
@@ -105,6 +109,29 @@ export function ReceptionPanel() {
           session={session}
           grants={grants}
           busy={command.isPending || !principal}
+          onEnable={() => {
+            if (principal === null || !grantsQuery.data?.ok) return;
+            const key = session.session.sessionId;
+            const grantId = pendingGrantIds.current.get(key) ?? new BrowserUuidV7Factory().next();
+            pendingGrantIds.current.set(key, grantId);
+            command.mutate(() =>
+              enableReception(
+                {
+                  session,
+                  principalId: principal.principalId,
+                  grantId,
+                  grants,
+                  now: Date.now(),
+                },
+                { automation, runtime: gateway },
+              ),
+            );
+          }}
+          canEnable={
+            grantsQuery.data?.ok === true &&
+            session.session.state === 'ready' &&
+            session.receptionOffer?.roomCatalogId != null
+          }
           onConfigure={(grantId, executable) => {
             if (principal)
               command.mutate(
@@ -172,11 +199,15 @@ function ReceptionOffer({
   grants,
   busy,
   onConfigure,
+  onEnable,
+  canEnable,
 }: {
   readonly session: HostSessionDiagnostics;
   readonly grants: readonly AutomationGrant[];
   readonly busy: boolean;
   readonly onConfigure: (grantId: string, executable: string) => void;
+  readonly onEnable: () => void;
+  readonly canEnable: boolean;
 }) {
   const { t } = useTranslation();
   const [grantId, setGrantId] = useState('');
@@ -194,29 +225,36 @@ function ReceptionOffer({
     <div className="reception-card">
       <strong>{session.displayName}</strong>
       <p>{offer.task.workspace}</p>
-      <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
-      {allowed.length === 0 ? <p>{t('reception.noGrant')}</p> : null}
-      <details>
-        <summary>{t('reception.settings')}</summary>
-        <label>
-          {t('reception.executable')}
-          <input
-            value={executable}
-            onChange={(event) => {
-              setExecutable(event.target.value);
-            }}
-          />
-        </label>
-      </details>
-      <Button
-        size="compact"
-        disabled={busy || !allowed.some((grant) => grant.grantId === grantId)}
-        onClick={() => {
-          onConfigure(grantId, executable);
-        }}
-      >
-        {t('reception.bind')}
+      <p>{t('reception.enableDescription', { days: RECEPTION_AUTHORIZATION_DAYS })}</p>
+      <Button size="compact" disabled={busy || !canEnable} onClick={onEnable}>
+        {t('reception.enable')}
       </Button>
+      <details>
+        <summary>{t('reception.manual')}</summary>
+        <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
+        {allowed.length === 0 ? <p>{t('reception.noGrant')}</p> : null}
+        <details>
+          <summary>{t('reception.settings')}</summary>
+          <label>
+            {t('reception.executable')}
+            <input
+              value={executable}
+              onChange={(event) => {
+                setExecutable(event.target.value);
+              }}
+            />
+          </label>
+        </details>
+        <Button
+          size="compact"
+          disabled={busy || !allowed.some((grant) => grant.grantId === grantId)}
+          onClick={() => {
+            onConfigure(grantId, executable);
+          }}
+        >
+          {t('reception.bind')}
+        </Button>
+      </details>
     </div>
   );
 }

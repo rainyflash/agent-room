@@ -2,12 +2,38 @@ use agent_room_application::{
     persistence::RepositoryResult,
     ports::{AgentLobbyAccessRecord, AgentLobbyAccessRepository, MatrixUserId, PortFuture},
 };
-use agent_room_domain::ids::{AgentId, AgentInstanceId, DeviceId};
+use agent_room_domain::{
+    ids::{AgentId, AgentInstanceId, DeviceId, RoomCatalogId, RoomInstanceId},
+    rooms::MatrixRoomReference,
+};
 use sqlx::{Row, postgres::PgRow};
 
 use crate::{PostgresRepositories, agents::decode_column, error::map_sqlx_error};
 
 impl AgentLobbyAccessRepository for PostgresRepositories {
+    fn find_public_lobby_room<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        matrix_room_id: &'a MatrixRoomReference,
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomInstanceId>>> {
+        Box::pin(async move {
+            let operation = "agent_lobby.room.find";
+            let id: Option<uuid::Uuid> = sqlx::query_scalar(
+                r"SELECT instance.id FROM agent_room.room_instance AS instance
+                  JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = instance.catalog_entry_id
+                  WHERE catalog.id = $1 AND instance.matrix_room_id = $2
+                    AND instance.state = 'active' AND catalog.status = 'active'
+                    AND catalog.kind = 'public_lobby' AND catalog.visibility = 'public'",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(matrix_room_id.as_str())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(id.map(RoomInstanceId::from_uuid))
+        })
+    }
+
     fn find_lobby_access(
         &self,
         agent_instance_id: AgentInstanceId,

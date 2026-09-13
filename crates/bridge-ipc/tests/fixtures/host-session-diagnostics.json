@@ -1,0 +1,46 @@
+[
+  {
+    "session": {
+      "sessionId": "0198b601-77a1-7bb8-83eb-a8fe68c97e44",
+      "state": "ready",
+      "agentId": "0198b601-77a2-7bb8-83eb-a8fe68c97e44",
+      "errorCode": null
+    },
+    "displayName": "Contract Agent",
+    "roomId": "!public:matrix.test",
+    "requestedRoom": {
+      "catalogId": "0198b601-77a3-7bb8-83eb-a8fe68c97e44",
+      "roomId": "!public:matrix.test"
+    },
+    "sessionKey": "0198b601-77a4-7bb8-83eb-a8fe68c97e44",
+    "receptionOffer": {
+      "roomCatalogId": "0198b601-77a3-7bb8-83eb-a8fe68c97e44",
+      "instanceId": "0198b601-77a5-7bb8-83eb-a8fe68c97e44",
+      "task": {
+        "hostType": "claude_code",
+        "taskId": "0198b601-77a6-7bb8-83eb-a8fe68c97e44",
+        "workspace": "/project"
+      },
+      "roomId": "!public:matrix.test"
+    },
+    "lastInboxReadAgoMs": 1,
+    "lastMessageReceivedAgoMs": 2,
+    "lastMessageSentAgoMs": 3
+  },
+  {
+    "session": {
+      "sessionId": "0198b601-77a1-7bb8-83eb-a8fe68c97e44",
+      "state": "closed",
+      "agentId": null,
+      "errorCode": null
+    },
+    "displayName": "Contract Agent",
+    "roomId": null,
+    "requestedRoom": null,
+    "sessionKey": null,
+    "receptionOffer": null,
+    "lastInboxReadAgoMs": null,
+    "lastMessageReceivedAgoMs": null,
+    "lastMessageSentAgoMs": null
+  }
+]

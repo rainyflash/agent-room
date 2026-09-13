@@ -12,6 +12,7 @@ import {
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readInviteHistory } from '../domain/cli-invitation';
 import { AgentInviteDialog } from './agent-invite-dialog';
 import { DesktopRuntimeProvider } from './desktop-runtime-provider';
 import { useDesktopRuntime } from './use-desktop-runtime';
@@ -95,6 +96,7 @@ function gateway(
           autostartEnabled: false,
           bridge: readyBridge,
           deepLink: null,
+          cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
           manualHostConfiguration: {
             args: [],
             command: 'C:\\Agent Room\\agent-room-mcp.exe',
@@ -156,6 +158,32 @@ function renderDialog(
   return { ...view, onClose };
 }
 
+async function readyToCopy() {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+  });
+}
+function selectMcp() {
+  fireEvent.click(screen.getByText('Other connection options'));
+  fireEvent.click(screen.getByRole('radio', { name: 'MCP compatibility' }));
+}
+function profileIn(prompt: string): string {
+  const key = /--profile ([0-9a-f-]+)/u.exec(prompt)?.[1];
+  if (key === undefined) throw new Error('Invitation has no task profile');
+  return key;
+}
+function invitationIn(prompt: string): unknown {
+  const value = /join --invite ([A-Za-z0-9_-]+)/u.exec(prompt)?.[1];
+  if (value === undefined) throw new Error('Invitation missing');
+  return JSON.parse(
+    new TextDecoder().decode(
+      Uint8Array.from(atob(value.replaceAll('-', '+').replaceAll('_', '/')), (character) =>
+        character.charCodeAt(0),
+      ),
+    ),
+  ) as unknown;
+}
+
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en-US']);
 });
@@ -193,104 +221,114 @@ describe('AgentInviteDialog', () => {
     expect(result.current.hostSetup.codex?.phase).toBe('configured');
   });
 
-  it('浏览器里没有桌面运行时时，指向运行 Agent 的电脑并提供下载', () => {
+  it('浏览器提供 CLI 邀请与下载，不伪造本机进程状态', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ available: false }).value);
-    expect(screen.getByRole('heading', { name: 'Bring an agent into the room' })).toBeVisible();
-    expect(screen.getByText('Finish this on the computer that runs your agent')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
       'https://download.test/agent-room.exe',
     );
-    expect(screen.queryByRole('button', { name: 'Copy connection instructions' })).toBeNull();
-  });
-
-  it('复制的指令带专属身份和当前房间，身份持久化后再次打开保持不变', async () => {
-    const writeText = clipboardMock();
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway().value;
-    const first = renderDialog(runtime);
-    await waitFor(() => {
-      expect(screen.getByRole('radio', { name: /Codex/u })).toHaveAttribute('aria-checked', 'true');
-    });
-    await screen.findByText(/Codex is set up\./u);
-    expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s Codex');
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
-      expect(screen.getByText('Copied. Paste it to your agent.')).toBeVisible();
+      expect(writeText).toHaveBeenCalledOnce();
     });
+    expect(copied(writeText, 0)).toContain('agent-room join --invite');
+    expect(screen.getByText(/This browser cannot inspect/u)).toBeVisible();
+    expect(
+      screen.queryByText('Waiting for the agent to run its connection instructions…'),
+    ).toBeNull();
+  });
+
+  it('默认 CLI 无需 MCP 配置；新任务独立，旧人物可明确恢复', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const runtime = gateway({ configured: false });
+    const planHost = vi.fn(runtime.value.planHost?.bind(runtime.value));
+    const value = { ...runtime.value, planHost };
+    const first = renderDialog(value);
+    await readyToCopy();
+    expect(screen.queryByRole('button', { name: 'Set up Codex in one click' })).toBeNull();
+    expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s agent');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await screen.findByText('Copied. Paste it to your agent.');
     const prompt = copied(writeText, 0);
-    const key = /sessionKey = (\S+)/u.exec(prompt)?.[1];
+    const key = profileIn(prompt);
     expect(key).toMatch(uuidV7);
-    expect(prompt).toContain('displayName = Ada’s Codex');
-    expect(prompt).toContain('roomId = !builders:matrix.test (Builders Exchange)');
+    expect(invitationIn(prompt)).toEqual({
+      version: 1,
+      sessionKey: key,
+      displayName: 'Ada’s agent',
+      roomId: room.roomId,
+    });
+    expect(prompt).toContain("& 'C:\\Agent Room\\agent-room.exe'");
+    expect(prompt).toContain('ack --event');
     expect(prompt).toContain('untrusted input');
     expect(prompt).toContain('do not claim to still be listening');
-    expect(screen.getByText('Waiting for it to call the Agent Room tools…')).toBeVisible();
-
+    expect(planHost).not.toHaveBeenCalled();
+    expect(runtime.applyHost).not.toHaveBeenCalled();
     first.unmount();
-    renderDialog(runtime);
-    await screen.findByText(/Codex is set up\./u);
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledTimes(2);
-    });
-    expect(copied(writeText, 1)).toContain(`sessionKey = ${key ?? ''}`);
-  });
 
-  it('改名和换新身份都会更新指令；不同宿主使用不同身份', async () => {
-    const writeText = clipboardMock();
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    renderDialog(gateway({ installed: ['codex', 'cursor'] }).value);
-    await waitFor(() => {
-      expect(screen.getByRole('radio', { name: /Codex/u })).toHaveAttribute('aria-checked', 'true');
-    });
-    const name = screen.getByLabelText('Agent name');
-    await screen.findByText(/Codex is set up\./u);
-    fireEvent.change(name, { target: { value: '  Scout  ' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledTimes(1);
-    });
-    const firstPrompt = copied(writeText, 0);
-    expect(firstPrompt).toContain('displayName = Scout');
-    const firstKey = /sessionKey = (\S+)/u.exec(firstPrompt)?.[1];
-
-    fireEvent.change(name, { target: { value: '   ' } });
-    expect(screen.getByText('Use 1 to 128 characters, not only spaces.')).toBeVisible();
-    expect(name).toHaveAttribute('aria-invalid', 'true');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Use a new identity' }));
+    renderDialog(value);
+    await readyToCopy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(2);
     });
-    const secondPrompt = copied(writeText, 1);
-    expect(secondPrompt).toContain('displayName = Scout');
-    expect(/sessionKey = (\S+)/u.exec(secondPrompt)?.[1]).not.toBe(firstKey);
-
-    fireEvent.click(screen.getByRole('radio', { name: /Cursor/u }));
-    await screen.findByText(/Cursor is set up\./u);
-    expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s Cursor');
+    expect(profileIn(copied(writeText, 1))).not.toBe(key);
+    fireEvent.change(screen.getByLabelText('Saved characters'), { target: { value: key } });
+    expect(screen.getByLabelText('Agent name')).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(3);
     });
-    expect(/sessionKey = (\S+)/u.exec(copied(writeText, 2))?.[1]).not.toBe(
-      /sessionKey = (\S+)/u.exec(secondPrompt)?.[1],
-    );
+    expect(copied(writeText, 2)).toBe(prompt);
+  });
+
+  it('空名字不能复制；复制后锁定身份，切换协议不会创建另一个人物', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    renderDialog(gateway({ installed: ['codex', 'cursor'] }).value);
+    await readyToCopy();
+    const name = screen.getByLabelText('Agent name');
+    fireEvent.change(name, { target: { value: '   ' } });
+    expect(name).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+    fireEvent.change(name, { target: { value: 'Scout' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledOnce();
+    });
+    const key = profileIn(copied(writeText, 0));
+    expect(name).toBeDisabled();
+    selectMcp();
+    await screen.findByText(/Codex is set up\./u);
+    fireEvent.click(screen.getByRole('radio', { name: 'Cursor' }));
+    await screen.findByText(/Cursor is set up\./u);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(2);
+    });
+    expect(copied(writeText, 1)).toContain('sessionKey = ' + key);
+    expect(copied(writeText, 1)).toContain('displayName = Scout');
+    fireEvent.click(screen.getByRole('button', { name: 'Invite another agent' }));
+    expect(screen.getByLabelText('Agent name')).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(3);
+    });
+    expect(copied(writeText, 2)).not.toContain('sessionKey = ' + key);
   });
 
   it('只有携带本次 sessionKey 的会话才算进入房间，然后可以完成', async () => {
     vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.resolve() } });
-    const storageKey = 'agent-room.agent-invite.codex';
     let sessions: HostSessionDiagnostics[] = [];
     const view = renderDialog(gateway({ sessions: () => ok(sessions) }).value);
-    await screen.findByText(/Codex is set up\./u);
+    await readyToCopy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
-    await screen.findByText('Waiting for it to call the Agent Room tools…');
-    const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as {
-      sessionKey: string;
-    };
+    await screen.findByText('Waiting for the agent to run its connection instructions…');
+    const stored = readInviteHistory(window.localStorage, owner.principalId).identities[0];
+    if (stored === undefined) throw new Error('Invitation was not saved');
     const entry = (state: HostSessionDiagnostics['session']['state'], key: string) => ({
       displayName: 'Ada’s Codex',
       session: {
@@ -306,7 +344,9 @@ describe('AgentInviteDialog', () => {
     });
     sessions = [entry('ready', '0198b601-77a1-7bb8-83eb-a8fe68c97e99')];
     await new Promise((resolve) => setTimeout(resolve, 3_100));
-    expect(screen.getByText('Waiting for it to call the Agent Room tools…')).toBeVisible();
+    expect(
+      screen.getByText('Waiting for the agent to run its connection instructions…'),
+    ).toBeVisible();
 
     sessions = [entry('starting', stored.sessionKey)];
     await screen.findByText('“Ada’s Codex” is entering the room…', undefined, { timeout: 5_000 });
@@ -344,6 +384,9 @@ describe('AgentInviteDialog', () => {
         sessions: () => ok([{ ...failed, sessionKey: '0198b601-77a1-7bb8-83eb-a8fe68c97e44' }]),
       }).value,
     );
+    fireEvent.change(screen.getByLabelText('Saved characters'), {
+      target: { value: '0198b601-77a1-7bb8-83eb-a8fe68c97e44' },
+    });
     await screen.findByText('“Ada’s Codex” could not connect');
     expect(screen.getByText('bridge.session.denied')).toBeVisible();
     expect(screen.getByRole('alert')).toHaveTextContent('Do not retry with a different identity');
@@ -355,7 +398,9 @@ describe('AgentInviteDialog', () => {
     );
     await screen.findByText(/Cannot check task connections right now/u);
     expect(screen.getByText(/bridge\.ipc\.bridge_unavailable/u)).toBeVisible();
-    expect(screen.queryByText('Waiting for it to call the Agent Room tools…')).toBeNull();
+    expect(
+      screen.queryByText('Waiting for the agent to run its connection instructions…'),
+    ).toBeNull();
   });
 
   it('一键配置已安装的宿主，未安装的宿主给出说明，其他工具提供可复制的 JSON', async () => {
@@ -363,6 +408,7 @@ describe('AgentInviteDialog', () => {
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     const runtime = gateway({ configured: false });
     renderDialog(runtime.value);
+    selectMcp();
     fireEvent.click(await screen.findByRole('button', { name: 'Set up Codex in one click' }));
     await waitFor(() => {
       expect(runtime.applyHost).toHaveBeenCalledWith('codex', '0'.repeat(64));
@@ -396,7 +442,9 @@ describe('AgentInviteDialog', () => {
     });
     expect(await screen.findByText(/Allow this computer to connect your agents/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
-    expect(screen.queryByText('Waiting for it to call the Agent Room tools…')).toBeNull();
+    expect(
+      screen.queryByText('Waiting for the agent to run its connection instructions…'),
+    ).toBeNull();
   });
 
   it('已授权且没有默认 Agent 时可以直接接入，不要求再次授权', async () => {
@@ -416,7 +464,7 @@ describe('AgentInviteDialog', () => {
           : value;
       },
     });
-    await screen.findByText(/Codex is set up\./u);
+    await readyToCopy();
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
     expect(screen.queryByText(/Finish authorization/u)).toBeNull();
     expect(screen.getByText(/Ready\. Copy the instructions above/u)).toBeVisible();
@@ -428,9 +476,13 @@ describe('AgentInviteDialog', () => {
       ...runtime,
       planHost: () => Promise.resolve(err({ code: 'codex.config_incompatible', retryable: true })),
     });
+    await readyToCopy();
+    selectMcp();
     expect(await screen.findByText(/cannot read your current settings/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
-    expect(screen.queryByText('Waiting for it to call the Agent Room tools…')).toBeNull();
+    expect(
+      screen.queryByText('Waiting for the agent to run its connection instructions…'),
+    ).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'Other MCP tool' }));
     expect(screen.queryByText(/cannot read your current settings/u)).toBeNull();
   });

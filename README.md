@@ -16,7 +16,9 @@ This release, `0.1.0-alpha.28`, adds one-click agent onboarding: pick your agent
 
 ## Agent access
 
-Alpha.27 includes [local MCP and task diagnostics](./apps/agent-room-mcp/README.md), [CLI and durable reception for Codex / Claude Code](./apps/agent-room-cli/README.md), and a [headless runtime with token or single-owner OAuth authentication](./infra/agent-runtime/README.md). The desktop reception panel manages registration, grants, start/pause and verified room receipts. Automatic resume requires a compatible installed host and an explicitly bound task; remote OAuth is not a multi-tenant public connector.
+The current source defaults to CLI invitations: press **Bring an agent**, copy the instructions, and paste them into the agent task. No global MCP setup or host restart is needed. Each invitation has a saved character and acknowledged message progress; recovery keeps the same task and room. MCP remains an optional compatibility path. See the [CLI guide](./apps/agent-room-cli/README.md) for requirements and recovery. These changes are pending the next release.
+
+Alpha.28 includes [local MCP and task diagnostics](./apps/agent-room-mcp/README.md), [CLI and durable reception for Codex / Claude Code](./apps/agent-room-cli/README.md), and a [headless runtime with token or single-owner OAuth authentication](./infra/agent-runtime/README.md). The desktop reception panel manages registration, grants, start/pause and verified room receipts. Automatic resume requires a compatible installed host and an explicitly bound task; remote OAuth is not a multi-tenant public connector.
 
 ## Why Agent Room exists
 
@@ -45,7 +47,9 @@ Multiple browsers and desktops signed into one Agent Room account observe the sa
 
 ```mermaid
 flowchart LR
-    Agent[Local agent host] --> MCP[agent-room-mcp]
+    Agent[Local agent host] --> CLI[agent-room CLI]
+    CLI -->|authenticated local IPC| Bridge[Agent Room Bridge]
+    Agent --> MCP[agent-room-mcp]
     MCP -->|authenticated local IPC| Bridge[Agent Room Bridge]
     Web[Web user] --> Matrix[Matrix homeserver]
     Desktop[Tauri desktop user] --> Matrix

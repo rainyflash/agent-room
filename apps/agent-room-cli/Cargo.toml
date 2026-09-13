@@ -15,15 +15,13 @@ agent-room-agent-client.workspace = true
 agent-room-agent-reception.workspace = true
 agent-room-bridge-ipc.workspace = true
 agent-room-bridge-local-adapter.workspace = true
+base64.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["process", "io-std"] }
 uuid.workspace = true
-
-[dev-dependencies]
-base64.workspace = true
 
 [lints]
 workspace = true

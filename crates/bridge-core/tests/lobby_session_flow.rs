@@ -148,6 +148,42 @@ fn config() -> AgentLobbySessionConfig {
     )
 }
 
+#[tokio::test]
+async fn 指定房间原样送入分配且拒绝静默回退() {
+    for (target, should_succeed) in [
+        ("!public:matrix.agent-room.test", true),
+        ("!another:matrix.agent-room.test", false),
+    ] {
+        let target = MatrixRoomReference::new(target).unwrap();
+        let gateway = Arc::new(固定大厅控制面::returning(Ok(joined(catalog_id()))));
+        let service = AgentLobbySessionService::new(gateway.clone());
+        let result = service
+            .enter(
+                &identity(),
+                &config().with_target_room(Some(target.clone())),
+            )
+            .await;
+        assert_eq!(
+            gateway
+                .intent
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .target_room(),
+            Some(&target)
+        );
+        if should_succeed {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(
+                result.unwrap_err().kind(),
+                AgentLobbySessionFailureKind::InvalidControlPlaneResponse
+            );
+        }
+    }
+}
+
 fn identity() -> BridgeAgentIdentity {
     let user_id = MatrixUserId::new("@agent:matrix.agent-room.test".to_owned())
         .expect("测试 Matrix 用户有效");

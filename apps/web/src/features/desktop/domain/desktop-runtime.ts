@@ -173,6 +173,14 @@ export const desktopRuntimeSnapshotSchema = z
     deepLink: desktopDeepLinkSchema.nullable(),
     updatesConfigured: z.boolean(),
     agentTarget: desktopAgentTargetSchema.nullable(),
+    cliConfiguration: z
+      .object({
+        command: z.string().min(1).max(4096),
+        args: z.array(z.string().max(4096)).max(16),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     manualHostConfiguration: z
       .object({
         args: z.array(z.string().max(2_048)).max(32),
@@ -223,6 +231,12 @@ export type AgentHostDetection = z.infer<typeof agentHostDetectionSchema>;
 export const hostSessionDiagnosticsSchema = z
   .object({
     displayName: z.string().min(1).max(128),
+    roomId: z.string().max(512).nullable().optional(),
+    requestedRoom: z
+      .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512) })
+      .strict()
+      .nullable()
+      .optional(),
     session: z
       .object({
         sessionId: z.uuid(),

@@ -14,6 +14,7 @@ pub struct AgentLobbySessionConfig {
     catalog_id: RoomCatalogId,
     preferred_language: Option<RoomLanguage>,
     preferred_region: Option<RoomRegion>,
+    target_room: Option<MatrixRoomReference>,
 }
 
 impl AgentLobbySessionConfig {
@@ -26,11 +27,18 @@ impl AgentLobbySessionConfig {
             catalog_id,
             preferred_language,
             preferred_region,
+            target_room: None,
         }
     }
 
     pub const fn catalog_id(&self) -> RoomCatalogId {
         self.catalog_id
+    }
+
+    #[must_use]
+    pub fn with_target_room(mut self, room: Option<MatrixRoomReference>) -> Self {
+        self.target_room = room;
+        self
     }
 
     pub const fn preferred_language(&self) -> Option<&RoomLanguage> {
@@ -49,6 +57,7 @@ pub struct AgentLobbyEntryIntent {
     catalog_id: RoomCatalogId,
     preferred_language: Option<RoomLanguage>,
     preferred_region: Option<RoomRegion>,
+    target_room: Option<MatrixRoomReference>,
 }
 
 impl AgentLobbyEntryIntent {
@@ -59,11 +68,16 @@ impl AgentLobbyEntryIntent {
             catalog_id: config.catalog_id,
             preferred_language: config.preferred_language.clone(),
             preferred_region: config.preferred_region.clone(),
+            target_room: config.target_room.clone(),
         }
     }
 
     pub const fn agent_id(&self) -> AgentId {
         self.agent_id
+    }
+
+    pub const fn target_room(&self) -> Option<&MatrixRoomReference> {
+        self.target_room.as_ref()
     }
 
     pub const fn agent_instance_id(&self) -> AgentInstanceId {
@@ -205,7 +219,9 @@ impl AgentLobbySessionService {
             .enter(&intent)
             .await
             .map_err(map_control_plane_failure)?;
-        if !outcome_matches_catalog(&outcome, config.catalog_id) {
+        let wrong_room = matches!(&outcome, ControlPlaneLobbyEntryOutcome::Joined(room)
+            if config.target_room.as_ref().is_some_and(|target| target != room.matrix_room_id()));
+        if wrong_room || !outcome_matches_catalog(&outcome, config.catalog_id) {
             return Err(failure(
                 "bridge.lobby.validate_response",
                 AgentLobbySessionFailureKind::InvalidControlPlaneResponse,

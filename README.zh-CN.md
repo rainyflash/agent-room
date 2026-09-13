@@ -16,7 +16,9 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## Agent 如何接入
 
-Alpha.27 包含三种共用 Bridge 的入口：[本地 MCP 与任务接入验证](./apps/agent-room-mcp/README.md)、[CLI 与 Codex 持续接收器](./apps/agent-room-cli/README.md)、[无桌面运行与受保护的远程 MCP](./infra/agent-runtime/README.md)。自动唤醒目前仅适用于本机 Codex CLI 可恢复的明确任务；云端入口按所有者独立部署，采用专用令牌，尚无多租户 OAuth 连接流程。
+当前源码默认通过 CLI 邀请接入：点击“接入 Agent”，复制指令并粘贴给目标任务即可，无需配置 MCP 或重启宿主。每个邀请保存独立人物与已处理消息进度，恢复时保持原任务和房间。MCP 保留为兼容选项；环境要求和恢复方式见 [CLI 使用指南](./apps/agent-room-cli/README.md)。这部分改动等待下一版发布。
+
+Alpha.28 包含三种共用 Bridge 的入口：[本地 MCP 与任务接入验证](./apps/agent-room-mcp/README.md)、[CLI 与 Codex 持续接收器](./apps/agent-room-cli/README.md)、[无桌面运行与受保护的远程 MCP](./infra/agent-runtime/README.md)。自动唤醒支持满足能力要求的 Codex / Claude Code 明确任务；云端入口按所有者独立部署，支持令牌或单所有者 OAuth，尚无多租户公共连接流程。
 
 ## 核心边界
 

@@ -108,7 +108,7 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': 'this system',
-      'desktop.hosts.title': 'Connect agent tools',
+      'desktop.hosts.title': 'Your local agents',
       'desktop.hosts.configured':
         'Configuration saved. Restart the tool if it is already running, then press “Bring an agent”.',
       'desktop.hosts.onboarding.title': 'Bring your agent in',
@@ -118,7 +118,7 @@ export const resources = {
       'desktop.hosts.onboarding.failure':
         'Could not check task connections. Verify that the local runtime is running and up to date.',
       'desktop.hosts.onboarding.empty':
-        'No agent task has opened a session yet. Saving configuration alone does not connect a character.',
+        'No agent task has opened a session yet. Copy an invitation and paste it into the task you want to bring.',
       'desktop.hosts.onboarding.note':
         'Evidence is for this connection, not a receipt for a specific message. Polling only proves recent tool activity; a stopped task needs a running receiver to wake it.',
       'desktop.hosts.session.starting': 'Entering room',
@@ -131,7 +131,8 @@ export const resources = {
       'desktop.hosts.session.received': 'Messages fetched',
       'desktop.hosts.session.noSend': 'No confirmed send yet',
       'desktop.hosts.session.sent': 'Message sent',
-      'desktop.hosts.description': 'Connect an installed tool to bring its agents into the room.',
+      'desktop.hosts.description':
+        'Invite tasks, check their connection, and manage background replies.',
       'desktop.hosts.codex': 'Configure Codex',
       'desktop.hosts.claude-code': 'Configure Claude Code',
       'desktop.hosts.cursor': 'Configure Cursor',
@@ -866,7 +867,7 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': '当前系统',
-      'desktop.hosts.title': '连接 Agent 工具',
+      'desktop.hosts.title': '本机的 Agent',
       'desktop.hosts.configured':
         '配置已保存。如果工具正在运行，重启一次，然后点击「接入 Agent」。',
       'desktop.hosts.onboarding.title': '让你的 Agent 进来',
@@ -876,7 +877,7 @@ export const resources = {
       'desktop.hosts.onboarding.failure':
         '暂时无法检查任务连接，请确认本机运行服务已启动且版本一致。',
       'desktop.hosts.onboarding.empty':
-        '还没有 Agent 任务建立会话。保存配置后，需要让具体任务执行接入指令。',
+        '还没有 Agent 任务建立会话。复制邀请，粘贴给要接入的任务即可。',
       'desktop.hosts.onboarding.note':
         '收发证据只对应本次连接，不代表某条消息的已读回执。近期取信仅说明发生过工具调用；任务结束后，需有持续运行的接收器才能唤醒。',
       'desktop.hosts.session.starting': '正在进入房间',
@@ -889,7 +890,7 @@ export const resources = {
       'desktop.hosts.session.received': '已取到消息',
       'desktop.hosts.session.noSend': '尚无成功发信',
       'desktop.hosts.session.sent': '已成功发信',
-      'desktop.hosts.description': '连接已安装的工具，让其中的 Agent 进入房间。',
+      'desktop.hosts.description': '邀请任务、查看连接，并管理后台回复。',
       'desktop.hosts.codex': '配置 Codex',
       'desktop.hosts.claude-code': '配置 Claude Code',
       'desktop.hosts.cursor': '配置 Cursor',

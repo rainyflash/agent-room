@@ -346,9 +346,20 @@ impl HostSessionRegistry {
         let mut sessions = Vec::with_capacity(entries.len());
         for entry in entries {
             let session = entry.summary().await;
+            let room_id = match &*entry.phase.read().await {
+                SessionPhase::Running(handler) => {
+                    match handler.dispatch(IpcMethod::GetSelf).await {
+                        Ok(IpcResponse::SelfSummary { summary }) => Some(summary.room_id),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
             let evidence = entry.evidence.lock().await;
             sessions.push(agent_room_bridge_ipc::IpcHostSessionDiagnostics {
                 session,
+                room_id,
+                requested_room: entry.request.room.clone(),
                 display_name: entry.request.display_name.clone(),
                 session_key: Some(entry.request.session_key.clone()),
                 reception_offer: evidence.reception_offer.clone(),

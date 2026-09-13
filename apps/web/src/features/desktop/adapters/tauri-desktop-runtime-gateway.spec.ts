@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   TauriDesktopRuntimeGateway,
@@ -43,6 +44,24 @@ function transport(overrides: Partial<TauriDesktopTransport> = {}): TauriDesktop
 }
 
 describe('Tauri 桌面运行时适配器', () => {
+  it('接受由 Rust 序列化测试锁定的完整会话响应，新增字段不能导致已接入人物消失', async () => {
+    const payload: unknown = JSON.parse(
+      readFileSync(
+        new URL(
+          '../../../../../../crates/bridge-ipc/tests/fixtures/host-session-diagnostics.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    const gateway = new TauriDesktopRuntimeGateway(
+      transport({
+        invoke: vi.fn().mockResolvedValue(payload),
+      }),
+    );
+    await expect(gateway.readHostSessions()).resolves.toEqual({ ok: true, value: payload });
+  });
+
   it('浏览器模式拒绝原生命令而不尝试调用传输层', async () => {
     const invoke = vi.fn();
     const gateway = new TauriDesktopRuntimeGateway(transport({ available: () => false, invoke }));

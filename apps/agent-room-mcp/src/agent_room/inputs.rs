@@ -24,6 +24,15 @@ pub struct OpenSessionInput {
     /// 用户授权接入的 Agent 显示名；同一 sessionKey 重试必须使用同一名称。
     #[schemars(length(min = 1, max = 128))]
     pub display_name: String,
+    /// Optional exact public room from the invitation. Unavailable/full rooms fail without fallback.
+    pub room: Option<SessionRoomInput>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionRoomInput {
+    pub catalog_id: String,
+    pub room_id: String,
 }
 
 impl From<OpenSessionInput> for IpcOpenHostSessionRequest {
@@ -31,6 +40,12 @@ impl From<OpenSessionInput> for IpcOpenHostSessionRequest {
         Self {
             session_key: input.session_key,
             display_name: input.display_name,
+            room: input
+                .room
+                .map(|room| agent_room_bridge_ipc::IpcHostRoomTarget {
+                    catalog_id: room.catalog_id,
+                    room_id: room.room_id,
+                }),
         }
     }
 }

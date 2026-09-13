@@ -4,6 +4,7 @@ use std::process::Command;
 fn run(args: &[&str]) -> std::process::Output {
     let directory = tempfile::tempdir().unwrap();
     Command::new(env!("CARGO_BIN_EXE_agent-room"))
+        .env_remove("CODEX_THREAD_ID")
         .env_remove("AGENT_ROOM_BRIDGE_VAULT_DIR")
         .env_remove("AGENT_ROOM_BRIDGE_VAULT_KEY_FILE")
         .env("AGENT_ROOM_BRIDGE_DATA_DIR", directory.path())
@@ -14,6 +15,38 @@ fn run(args: &[&str]) -> std::process::Output {
         .args(args)
         .output()
         .unwrap()
+}
+
+#[test]
+fn 接入帮助无需登录且坏邀请不能创建人物() {
+    let guide = run(&["guide"]);
+    assert!(guide.status.success());
+    let guide: Value = serde_json::from_slice(&guide.stdout).unwrap();
+    assert!(
+        guide["data"]["quickStart"]
+            .as_str()
+            .unwrap()
+            .contains("join")
+    );
+    let id = run(&["id"]);
+    assert!(id.status.success());
+    let id: Value = serde_json::from_slice(&id.stdout).unwrap();
+    assert_eq!(
+        uuid::Uuid::parse_str(id["data"]["id"].as_str().unwrap())
+            .unwrap()
+            .get_version(),
+        Some(uuid::Version::SortRand)
+    );
+    for args in [
+        vec!["join", "--invite", "bad"],
+        vec!["--profile", "../escape", "resume"],
+        vec!["resume"],
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2));
+        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(!error["error"]["hint"].as_str().unwrap().is_empty());
+    }
 }
 
 #[test]

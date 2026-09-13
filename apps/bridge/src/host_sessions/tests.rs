@@ -155,6 +155,7 @@ impl HostSessionFactory for TestFactory {
 
 fn request(name: &str) -> IpcOpenHostSessionRequest {
     IpcOpenHostSessionRequest {
+        room: None,
         session_key: Uuid::now_v7().to_string(),
         display_name: name.into(),
     }
@@ -254,6 +255,7 @@ async fn 并发打开同一会话仅初始化一次且名称冲突不会覆盖�
     let original = identity(&registry, &first).await;
     assert_eq!(factory.starts.load(Ordering::Acquire), 1);
     let conflicting = IpcOpenHostSessionRequest {
+        room: None,
         display_name: "另一个名字".into(),
         ..request
     };

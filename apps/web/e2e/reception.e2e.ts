@@ -9,11 +9,9 @@ for (const width of [1440, 390]) {
     await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1');
     await page.getByRole('button', { name: /Local agents/u }).click();
     const panel = page.getByRole('region', { name: 'Reception tasks' });
-    await panel.getByLabel('Reply authorization').selectOption({ index: 1 });
-    await panel.getByRole('button', { name: 'Add reception task' }).click();
+    await panel.getByRole('button', { name: 'Enable background replies' }).click();
     const card = panel.getByRole('article');
     await expect(card.getByText('Reception Scout')).toBeVisible();
-    await card.getByRole('button', { name: 'Start reception' }).click();
     await expect(card.getByText('Waiting for your mention')).toBeVisible();
     await card.getByRole('button', { name: 'Pause', exact: true }).click();
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
@@ -59,7 +57,6 @@ test('Claude Code 登记使用相同的接待管理入口', async ({ page }) => 
   await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1&receptionHost=claude_code');
   await page.getByRole('button', { name: /Local agents/u }).click();
   const panel = page.getByRole('region', { name: 'Reception tasks' });
-  await panel.getByLabel('Reply authorization').selectOption({ index: 1 });
-  await panel.getByRole('button', { name: 'Add reception task' }).click();
+  await panel.getByRole('button', { name: 'Enable background replies' }).click();
   await expect(panel.getByRole('article').getByText('Claude Code', { exact: true })).toBeVisible();
 });
