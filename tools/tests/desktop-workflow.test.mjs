@@ -24,10 +24,10 @@ test('a failed check prevents installer creation', () => {
   assert.ok(calls.every((command) => !command.includes('build:desktop')));
 });
 
-test('daily development uses hot reload without creating an installer', () => {
+test('daily development uses the actual desktop origin without creating an installer', () => {
   const plan = desktopPlan('dev');
   assert.equal(plan.length, 1);
-  assert.equal(plan[0].at(-1), 'dev');
+  assert.deepEqual(plan, desktopPlan('preview'));
   assert.throws(() => desktopPlan('unchecked-package'));
 });
 

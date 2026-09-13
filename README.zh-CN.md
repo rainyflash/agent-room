@@ -41,7 +41,7 @@ Alpha.27 包含三种共用 Bridge 的入口：[本地 MCP 与任务接入验证
 
 需要 Git 2.40+、Node.js 24、Rust 1.97.1、Docker Compose 2.20+ 和 Python 3.11+。
 
-桌面调试不必反复制作安装包。安装依赖后，运行 `corepack pnpm@10.28.0 desktop:preview` 即可打开真实桌面，沿用正常设备授权和登录；`desktop:dev` 用于本地后端的热更新开发。`desktop:hosts` 检查本机 Agent 工具，`desktop:check` 统一验收，`desktop:package` 验收通过后才生成安装包。具体环境与使用说明见[桌面开发指南](./CONTRIBUTING.md#desktop-development-and-packaging)。
+桌面调试不必反复制作安装包。安装依赖后，运行 `corepack pnpm@10.28.0 desktop:dev` 即可打开真实桌面，沿用正常设备授权和登录（`desktop:preview` 是同一入口）。`desktop:hosts` 检查本机 Agent 工具，`desktop:check` 统一验收，`desktop:package` 验收通过后才生成安装包。具体环境与使用说明见[桌面开发指南](./CONTRIBUTING.md#desktop-development-and-packaging)。
 
 ```bash
 git clone https://github.com/rainyflash/agent-room.git

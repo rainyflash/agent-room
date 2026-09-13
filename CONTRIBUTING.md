@@ -30,7 +30,7 @@ Use the same entrypoints locally and in the Windows candidate workflow:
 
 | Command                                 | Purpose                                                                                                                                    |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `corepack pnpm@10.28.0 desktop:dev`     | Start with Vite hot reload against the local backend configured in `.env`. UI edits do not require an installer.                           |
+| `corepack pnpm@10.28.0 desktop:dev`     | Build the UI and run the real desktop with saved login. No installer needed.                                                               |
 | `corepack pnpm@10.28.0 desktop:preview` | Build the UI and run the real desktop against the default service, using the installed app's origin and saved login. No installer needed.  |
 | `corepack pnpm@10.28.0 desktop:check`   | Run native adapter/Bridge/desktop checks, UI tests, and the agent access browser regressions.                                              |
 | `corepack pnpm@10.28.0 desktop:hosts`   | Build the diagnostic entrypoint and inspect the real installed tools through the production adapters, without editing their configuration. |
@@ -38,7 +38,7 @@ Use the same entrypoints locally and in the Windows candidate workflow:
 
 `node tools/desktop.mjs <mode> --plan` prints the commands without running them. Build concurrency defaults to four jobs to keep a development computer responsive; `CARGO_BUILD_JOBS` overrides it. The read-only host report distinguishes not installed, configuration needed, and a failed configuration read. A report with no installed hosts does not prove compatibility with a real host.
 
-Use `desktop:preview` for real desktop acceptance. It waits for the frontend build before compiling the native shell, uses `http://tauri.localhost`, and disables the development web server. This preserves the production cookie and CORS boundaries; an ordinary Vite page cannot substitute for it. The public desktop endpoints live in `apps/web/.env.desktop` and can be overridden with environment variables. Hot reload uses the local backend setup above and loads the root `.env`; the script stops with instructions when its API settings are absent.
+`desktop:dev` and `desktop:preview` are the same native entrypoint. It waits for the frontend build before compiling the native shell, uses `http://tauri.localhost`, and disables the development web server. This preserves the production cookie and CORS boundaries; an ordinary Vite page cannot substitute for it. The public desktop endpoints live in `apps/web/.env.desktop` and can be overridden with environment variables. Restart the preview after editing native or embedded UI code. For rapid layout work, use the existing `just web` hot reload with the local backend setup above; return to the native preview to verify desktop behavior.
 
 Close an already-running desktop from its tray before switching to a development build. A preview shares the normal device authorization and account storage. Configuring a host from a preview points that host to the debug MCP binary; after upgrading the installed application, run its one-click configuration again to select the installed binary.
 

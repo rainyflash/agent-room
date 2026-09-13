@@ -21,8 +21,8 @@ Alpha.27 的接入弹窗同时出现 `codex.list_failed` 和“本机连接还�
 
 ## 开发与发布入口
 
-- `desktop:dev`：本地后端与 Vite 热更新，从 `.env` 读取配置；缺少配置立即说明原因。
-- `desktop:preview`：等待前端构建完成，再启动真实桌面，不生成安装包，也不把 Vite 页面当作原生验收。
+- `desktop:dev`：直接构建并运行真实桌面，不生成安装包。
+- `desktop:preview`：与 `desktop:dev` 相同；等待前端构建完成，再启动真实桌面，不把 Vite 页面当作原生验收。
 - `desktop:hosts`：只读检查实际安装的宿主；未安装的宿主明确列出，不计为兼容性通过。
 - `desktop:check`：Rust 格式、Clippy、原生测试、前端格式、Lint、类型、文案、单元测试与浏览器回归统一执行。
 - `desktop:package`：执行同一套检查，通过后才构建本地安装包。

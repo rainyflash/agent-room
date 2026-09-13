@@ -52,7 +52,6 @@ const webChecks = [
 export function desktopPlan(mode) {
   switch (mode) {
     case 'dev':
-      return [pnpm('--filter', '@agent-room/desktop', 'dev')];
     case 'preview':
       return [pnpm('--filter', '@agent-room/desktop', 'preview')];
     case 'native-check':
@@ -148,17 +147,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (option === '--plan') process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
     else {
       checkBuildFiles();
-      if (mode === 'dev') {
-        const envFile = resolve(root, '.env');
-        if (existsSync(envFile)) process.loadEnvFile(envFile);
-        if (
-          !process.env.AGENT_ROOM_CONTROL_PLANE_URL ||
-          !process.env.VITE_AGENT_ROOM_CONTROL_PLANE_URL
-        )
-          throw new Error(
-            'Hot reload needs the local backend settings in .env (see CONTRIBUTING.md). Use desktop:preview to run against the desktop service without an installer.',
-          );
-      }
       executePlan(plan, run);
     }
   } catch (error) {
