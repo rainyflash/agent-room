@@ -25,19 +25,12 @@ const nativeChecks = [
 ];
 const webChecks = [
   pnpm('format:check'),
-  ['node', '--test', 'tools/tests/desktop-workflow.test.mjs'],
+  ['node', '--test', 'tools/tests/desktop-workflow.node-test.mjs'],
   pnpm('--filter', '@agent-room/protocol', 'build'),
   pnpm('lint'),
   pnpm('--filter', '@agent-room/web', 'typecheck'),
   pnpm('i18n:check'),
-  pnpm(
-    'exec',
-    'vitest',
-    'run',
-    'apps/web/src/features/desktop',
-    'apps/web/src/features/session',
-    'apps/web/src/features/workspace/domain/connection-health.spec.ts',
-  ),
+  pnpm('test'),
   pnpm(
     '--filter',
     '@agent-room/web',

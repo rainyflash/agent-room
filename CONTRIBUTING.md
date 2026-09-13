@@ -46,6 +46,8 @@ Desktop checks start their own browser test server on port 14174 with the test A
 
 Local packages are for validation. Public releases continue through the signed candidate and promotion workflow in [the release runbook](./docs/operations/signed-releases.md). Use its `client` profile for desktop-only changes; use `full` when server images also change. Before promotion, test the actual installed host and the native invite dialog, including an already-authorized device with no default Agent and recovery from a connection failure. Browser fixtures validate UI states; they do not establish that a real Codex task has joined a production room.
 
+The website's Windows download URL is currently embedded at build time. When it points to a versioned installer, publishing a client release alone leaves that link on the old version. Build the `full` candidate and deploy its Web image with the new installer URL; unchanged API and identity images can remain deployed. Verify the public download link after publication.
+
 ## Architecture rules
 
 - Dependencies point inward: UI and adapters depend on application ports and domain types, never the reverse.

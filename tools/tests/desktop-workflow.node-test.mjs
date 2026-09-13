@@ -2,6 +2,8 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { desktopPlan, executePlan } from '../desktop.mjs';
 
+// Run with node --test; keep this suite outside Vitest's *.test.mjs discovery.
+
 test('packaging runs the same native and browser checks as local validation', () => {
   const checks = desktopPlan('check');
   const packaging = desktopPlan('package');
