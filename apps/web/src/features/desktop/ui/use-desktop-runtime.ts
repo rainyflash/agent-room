@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import { err, ok, type Result } from '@/shared/result';
@@ -30,6 +30,10 @@ type DesktopOperation =
   | 'update-check'
   | 'update-install';
 
+export type HostSetupState =
+  | { readonly phase: 'checking' | 'required' | 'configured' }
+  | { readonly phase: 'failed'; readonly error: DesktopRuntimeFailure };
+
 export type DesktopRuntimeController = {
   readonly available: boolean;
   readonly receptionAvailable: boolean;
@@ -39,6 +43,8 @@ export type DesktopRuntimeController = {
   readonly update: ReleaseUpdateCheck | null;
   readonly hosts: readonly AgentHostDetection[];
   readonly configuredHost: AgentHostKind | null;
+  readonly hostSetup: Readonly<Partial<Record<AgentHostKind, HostSetupState>>>;
+  readonly checkHost: (host: AgentHostKind) => Promise<void>;
   readonly readHostSessions: () => Promise<
     Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
   >;
@@ -65,6 +71,28 @@ export function useDesktopRuntime(
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
   const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
   const [configuredHost, setConfiguredHost] = useState<AgentHostKind | null>(null);
+  const [hostSetup, setHostSetup] = useState<Partial<Record<AgentHostKind, HostSetupState>>>({});
+  const hostChecks = useRef<Partial<Record<AgentHostKind, number>>>({});
+  const configuringHosts = useRef(new Set<AgentHostKind>());
+  const checkHost = useCallback(
+    async (host: AgentHostKind): Promise<void> => {
+      if (configuringHosts.current.has(host)) return;
+      const generation = (hostChecks.current[host] ?? 0) + 1;
+      hostChecks.current[host] = generation;
+      setHostSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
+      const plan =
+        (await gateway.planHost?.(host)) ??
+        err({ code: 'desktop.hosts.configuration_unavailable', retryable: false });
+      if (hostChecks.current[host] !== generation) return;
+      setHostSetup((previous) => ({
+        ...previous,
+        [host]: plan.ok
+          ? { phase: plan.value.action === 'unchanged' ? 'configured' : 'required' }
+          : { phase: 'failed', error: plan.error },
+      }));
+    },
+    [gateway],
+  );
   const readHostSessions = useCallback(
     () =>
       gateway.readHostSessions?.() ??
@@ -255,16 +283,25 @@ export function useDesktopRuntime(
 
   const configureHost = useCallback(
     async (host: AgentHostKind): Promise<void> => {
+      if (configuringHosts.current.has(host)) return;
       if (gateway.planHost === undefined || gateway.applyHost === undefined) {
         setFailure({ code: 'desktop.hosts.configuration_unavailable', retryable: false });
         return;
       }
+      configuringHosts.current.add(host);
+      hostChecks.current[host] = (hostChecks.current[host] ?? 0) + 1;
       setBusy('host-configure');
       setConfiguredHost(null);
+      setHostSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
       const plan = await gateway.planHost(host);
       if (!plan.ok) {
         setFailure(plan.error);
+        setHostSetup((previous) => ({
+          ...previous,
+          [host]: { phase: 'failed', error: plan.error },
+        }));
         setBusy(null);
+        configuringHosts.current.delete(host);
         return;
       }
       const result =
@@ -272,6 +309,10 @@ export function useDesktopRuntime(
           ? ok(undefined)
           : await gateway.applyHost(host, plan.value.originalDigest);
       setFailure(result.ok ? null : result.error);
+      setHostSetup((previous) => ({
+        ...previous,
+        [host]: result.ok ? { phase: 'configured' } : { phase: 'failed', error: result.error },
+      }));
       if (result.ok) setConfiguredHost(host);
       if (result.ok && gateway.detectHosts !== undefined) {
         const detected = await gateway.detectHosts();
@@ -279,6 +320,7 @@ export function useDesktopRuntime(
         else setFailure(detected.error);
       }
       setBusy(null);
+      configuringHosts.current.delete(host);
     },
     [gateway],
   );
@@ -326,6 +368,8 @@ export function useDesktopRuntime(
     update,
     hosts,
     configuredHost,
+    hostSetup,
+    checkHost,
     readHostSessions,
     checkUpdate,
     bootstrapDefaultAgent,

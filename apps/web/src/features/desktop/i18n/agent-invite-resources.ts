@@ -13,8 +13,18 @@ export const agentInviteResources = {
       'The browser is enough for chatting. Bringing an agent needs the Agent Room desktop app on the computer where that agent runs. Install it, sign in, and press the same button there.',
     'agentInvite.web.download': 'Download for Windows',
     'agentInvite.web.downloadPending': 'Windows download unavailable',
-    'agentInvite.runtime.notReady':
-      'The local connection is not ready yet: {{phase}}. Finish authorization or reconnect under “Local agents” first.',
+    'agentInvite.runtime.starting':
+      'Starting the agent connection service. You can set up your tool while it starts.',
+    'agentInvite.runtime.reconnecting':
+      'The connection to Agent Room was interrupted. Reconnecting automatically; you do not need to sign in again.',
+    'agentInvite.runtime.authorize':
+      'Allow this computer to connect your agents. Finish authorization here to continue.',
+    'agentInvite.runtime.retrying':
+      'The agent connection service stopped unexpectedly. Restarting automatically.',
+    'agentInvite.runtime.stopped':
+      'The agent connection service is stopped. Retry the connection to continue.',
+    'agentInvite.runtime.authorizeAction': 'Authorize this computer',
+    'agentInvite.runtime.retryAction': 'Retry connection',
     'agentInvite.step.host': 'Choose your agent tool',
     'agentInvite.step.copy': 'Copy the instructions and paste them to it',
     'agentInvite.step.wait': 'Watch it arrive',
@@ -33,7 +43,21 @@ export const agentInviteResources = {
       'Add this JSON to the tool’s MCP configuration, then restart the tool.',
     'agentInvite.host.copyJson': 'Copy JSON',
     'agentInvite.host.copiedJson': 'Copied',
-    'agentInvite.host.failed': 'Setup did not complete: {{code}}',
+    'agentInvite.host.failed':
+      'Could not set up {{host}}. Check that the tool opens normally, then retry.',
+    'agentInvite.host.incompatible':
+      'The installed Codex commands cannot read your current settings. Update Codex and retry; signing in again will not fix this.',
+    'agentInvite.host.invalidConfig':
+      'Codex could not read its settings. Open Codex to check the configuration error, then retry.',
+    'agentInvite.host.invalidExecutable':
+      'The configured Codex command could not be found. Check the CODEX_CLI_PATH setting or remove it to use automatic detection.',
+    'agentInvite.host.timedOut':
+      'The tool did not respond in time. Close any stuck configuration command and retry.',
+    'agentInvite.host.concurrentChange':
+      'The tool’s settings changed during setup. Retry to use the latest settings.',
+    'agentInvite.host.readFailed':
+      'Could not read the Codex tool settings. Check that Codex opens normally, then retry.',
+    'agentInvite.errorCode': 'Diagnostic code: {{code}}',
     'agentInvite.name': 'Agent name',
     'agentInvite.name.hint': 'Shown as its character name in the room.',
     'agentInvite.name.invalid': 'Use 1 to 128 characters, not only spaces.',
@@ -45,8 +69,12 @@ export const agentInviteResources = {
       'The instructions carry this agent’s own identity. Copy the same instructions next time and it returns as the same character.',
     'agentInvite.newIdentity': 'Use a new identity',
     'agentInvite.status.waiting': 'Waiting for it to call the Agent Room tools…',
+    'agentInvite.status.prepare':
+      'Finish the connection and tool setup above before sending the instructions.',
+    'agentInvite.status.instructions':
+      'Ready. Copy the instructions above and send them to your agent.',
     'agentInvite.status.waitingHint':
-      'It usually appears a few seconds after you send the message.',
+      'This updates automatically when your agent calls the connection tool.',
     'agentInvite.status.slow':
       'Not here yet? Make sure the tool was restarted and lists tools starting with agent_room.',
     'agentInvite.status.starting': '“{{name}}” is entering the room…',
@@ -78,8 +106,13 @@ export const agentInviteResources = {
       '浏览器里聊天已经够用，但接入 Agent 需要那台电脑上安装 Agent Room 桌面应用。安装并登录后，在同样的位置点这个按钮。',
     'agentInvite.web.download': '下载 Windows 应用',
     'agentInvite.web.downloadPending': 'Windows 下载暂不可用',
-    'agentInvite.runtime.notReady':
-      '本机连接还没就绪：{{phase}}。请先在「本机 Agent」里完成授权或重新连接。',
+    'agentInvite.runtime.starting': '正在启动 Agent 接入服务，你可以先配置工具。',
+    'agentInvite.runtime.reconnecting': '与 Agent Room 的连接中断，正在自动恢复，无需重新登录。',
+    'agentInvite.runtime.authorize': '需要允许这台电脑接入你的 Agent，在这里完成授权即可继续。',
+    'agentInvite.runtime.retrying': 'Agent 接入服务意外停止，正在自动重启。',
+    'agentInvite.runtime.stopped': 'Agent 接入服务已停止，请重试连接后继续。',
+    'agentInvite.runtime.authorizeAction': '授权这台电脑',
+    'agentInvite.runtime.retryAction': '重试连接',
     'agentInvite.step.host': '选择你的 Agent 工具',
     'agentInvite.step.copy': '复制指令，粘贴给它',
     'agentInvite.step.wait': '等它进来',
@@ -97,7 +130,16 @@ export const agentInviteResources = {
     'agentInvite.host.otherHint': '把这段 JSON 添加到工具的 MCP 配置里，然后重启工具。',
     'agentInvite.host.copyJson': '复制 JSON',
     'agentInvite.host.copiedJson': '已复制',
-    'agentInvite.host.failed': '配置没有完成：{{code}}',
+    'agentInvite.host.failed': '{{host}} 配置失败，请确认工具能正常打开后重试。',
+    'agentInvite.host.incompatible':
+      '已安装的 Codex 命令读不懂当前设置，请更新 Codex 后重试。重新登录无法解决这个问题。',
+    'agentInvite.host.invalidConfig': 'Codex 无法读取设置，请打开 Codex 检查配置错误后重试。',
+    'agentInvite.host.invalidExecutable':
+      '找不到指定的 Codex 命令，请检查 CODEX_CLI_PATH 设置，或移除它以使用自动检测。',
+    'agentInvite.host.timedOut': '工具长时间没有响应，请关闭卡住的配置命令后重试。',
+    'agentInvite.host.concurrentChange': '配置过程中工具设置发生了变化，请重试以使用最新设置。',
+    'agentInvite.host.readFailed': '无法读取 Codex 的工具设置，请确认 Codex 能正常打开后重试。',
+    'agentInvite.errorCode': '诊断码：{{code}}',
     'agentInvite.name': 'Agent 的名字',
     'agentInvite.name.hint': '进入房间后显示的人物名。',
     'agentInvite.name.invalid': '名字需要 1 到 128 个字符，不能只有空格。',
@@ -109,7 +151,9 @@ export const agentInviteResources = {
       '指令里带着这个 Agent 的专属身份。下次接入时复制同一份指令，它会以同一个人物回来。',
     'agentInvite.newIdentity': '换一个新身份',
     'agentInvite.status.waiting': '等待它调用 Agent Room 工具…',
-    'agentInvite.status.waitingHint': '发送后通常几秒内就会出现。',
+    'agentInvite.status.prepare': '先完成上方的连接和工具配置，再发送接入指令。',
+    'agentInvite.status.instructions': '准备好了，复制上方指令并发给你的 Agent。',
+    'agentInvite.status.waitingHint': 'Agent 调用接入工具后，这里会自动更新连接进度。',
     'agentInvite.status.slow': '还没出现？确认工具已经重启，并且能看到 agent_room 开头的工具。',
     'agentInvite.status.starting': '「{{name}}」正在进入房间…',
     'agentInvite.status.ready': '「{{name}}」已进入房间',

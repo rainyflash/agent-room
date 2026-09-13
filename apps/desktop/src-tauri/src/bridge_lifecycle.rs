@@ -15,6 +15,7 @@ const RESTART_DELAYS: [Duration; MAX_AUTOMATIC_RESTARTS] = [
 pub(crate) enum BridgePhase {
     Discovering,
     Starting,
+    Reconnecting,
     AuthorizationRequired,
     Authorized,
     Ready,
@@ -62,6 +63,12 @@ pub(crate) enum ResumeProbeState {
     Ready,
     Absent,
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectionProgress {
+    Starting,
+    Reconnecting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,29 +128,52 @@ impl BridgeRestartPolicy {
     }
 
     pub(crate) fn discovered_ready(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
+        if self.snapshot.phase != BridgePhase::Ready || self.snapshot.ownership != Some(ownership) {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
         self.snapshot.phase = BridgePhase::Ready;
         self.snapshot.ownership = Some(ownership);
         self.snapshot.diagnostic_code = None;
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
-        self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
     pub(crate) fn discovered_authorized(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
+        if self.snapshot.phase != BridgePhase::Authorized
+            || self.snapshot.ownership != Some(ownership)
+        {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
         self.snapshot.phase = BridgePhase::Authorized;
         self.snapshot.ownership = Some(ownership);
         self.snapshot.diagnostic_code = None;
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
-        self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
-    pub(crate) fn discovered_pending(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
-        self.snapshot.phase = BridgePhase::Starting;
+    pub(crate) fn discovered_pending(
+        &mut self,
+        now_unix_ms: i64,
+        ownership: BridgeOwnership,
+        progress: ConnectionProgress,
+    ) {
+        let phase = match progress {
+            ConnectionProgress::Starting => BridgePhase::Starting,
+            ConnectionProgress::Reconnecting => BridgePhase::Reconnecting,
+        };
+        if self.snapshot.phase != phase || self.snapshot.ownership != Some(ownership) {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
+        self.snapshot.phase = phase;
         self.snapshot.ownership = Some(ownership);
-        self.snapshot.diagnostic_code = Some("desktop.bridge.session_pending".to_owned());
+        self.snapshot.diagnostic_code = Some(
+            match progress {
+                ConnectionProgress::Starting => "desktop.bridge.session_pending",
+                ConnectionProgress::Reconnecting => "desktop.bridge.reconnecting",
+            }
+            .to_owned(),
+        );
         self.snapshot.next_retry_at_unix_ms = None;
-        self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
     pub(crate) fn starting(&mut self, now_unix_ms: i64) {
@@ -238,8 +268,8 @@ impl BridgeRestartPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        BridgeOwnership, BridgePhase, BridgeRestartPolicy, ExitDecision, ResumeDecision,
-        ResumeProbeState, decide_resume,
+        BridgeOwnership, BridgePhase, BridgeRestartPolicy, ConnectionProgress, ExitDecision,
+        ResumeDecision, ResumeProbeState, decide_resume,
     };
 
     #[test]
@@ -255,7 +285,11 @@ mod tests {
     fn 可达但未就绪的外部_bridge_不会被误报为_ready() {
         let mut policy = BridgeRestartPolicy::new(1_000);
 
-        policy.discovered_pending(1_100, BridgeOwnership::External);
+        policy.discovered_pending(
+            1_100,
+            BridgeOwnership::External,
+            ConnectionProgress::Starting,
+        );
 
         assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
         assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::External));
@@ -273,6 +307,26 @@ mod tests {
 
         assert_eq!(policy.snapshot().phase, BridgePhase::Authorized);
         assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::Managed));
+        assert_eq!(policy.snapshot().diagnostic_code, None);
+    }
+
+    #[test]
+    fn repeated_probes_preserve_reconnect_start_time_until_recovery() {
+        let mut policy = BridgeRestartPolicy::new(1_000);
+        policy.discovered_pending(
+            1_100,
+            BridgeOwnership::Managed,
+            ConnectionProgress::Reconnecting,
+        );
+        policy.discovered_pending(
+            2_100,
+            BridgeOwnership::Managed,
+            ConnectionProgress::Reconnecting,
+        );
+        assert_eq!(policy.snapshot().phase, BridgePhase::Reconnecting);
+        assert_eq!(policy.snapshot().changed_at_unix_ms, 1_100);
+        policy.discovered_authorized(3_100, BridgeOwnership::Managed);
+        assert_eq!(policy.snapshot().phase, BridgePhase::Authorized);
         assert_eq!(policy.snapshot().diagnostic_code, None);
     }
 

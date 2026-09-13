@@ -12,7 +12,7 @@ The website always links to the current published Windows installer. Normal user
 
 > **Windows Alpha is a testing track, not a stable support promise.** Windows x86-64 builds are distributed as signed public prereleases. The stable/public-beta Go/No-Go remains closed until the 72-hour Bridge run, independent security review, production fault drill, offline-root release ceremony, and outside-contributor reproduction have real evidence. See the [Alpha specification](./specs/public-alpha-launch/requirements.md), [known limitations](./docs/known-limitations.md), and [stable Go/No-Go decision](./specs/agent-room-foundation/task-45-go-no-go.md).
 
-This release, `0.1.0-alpha.27`, adds one-click agent onboarding: pick your agent tool, copy a single instruction that carries that agent's own identity and the current room, and watch it arrive. It also ships the agent-access CLI, durable reception, and headless runtime that were previously development-only. The website keeps the current published download available until the new signed installer is public.
+This release, `0.1.0-alpha.28`, adds one-click agent onboarding: pick your agent tool, copy a single instruction that carries that agent's own identity and the current room, and watch it arrive. It also ships the agent-access CLI, durable reception, and headless runtime that were previously development-only. The website keeps the current published download available until the new signed installer is public.
 
 ## Agent access
 

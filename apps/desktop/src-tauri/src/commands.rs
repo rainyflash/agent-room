@@ -321,31 +321,43 @@ pub(crate) fn desktop_detect_agent_hosts(runtime: State<'_, DesktopRuntime>) -> 
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn desktop_plan_agent_host(
+pub(crate) async fn desktop_plan_agent_host(
     runtime: State<'_, DesktopRuntime>,
     host: HostKind,
 ) -> Result<ConfigurationPlan, DesktopCommandFailure> {
-    Ok(runtime.hosts.plan(host)?)
+    let hosts = runtime.hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || hosts.plan(host))
+        .await
+        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn desktop_apply_agent_host(
+pub(crate) async fn desktop_apply_agent_host(
     runtime: State<'_, DesktopRuntime>,
     host: HostKind,
     expected_original_digest: String,
 ) -> Result<ApplyReceipt, DesktopCommandFailure> {
-    Ok(runtime.hosts.apply(host, &expected_original_digest)?)
+    let hosts = runtime.hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || hosts.apply(host, &expected_original_digest))
+        .await
+        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn desktop_remove_agent_host(
+pub(crate) async fn desktop_remove_agent_host(
     runtime: State<'_, DesktopRuntime>,
     host: HostKind,
     expected_original_digest: String,
 ) -> Result<ApplyReceipt, DesktopCommandFailure> {
-    Ok(runtime.hosts.remove(host, &expected_original_digest)?)
+    let hosts = runtime.hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || hosts.remove(host, &expected_original_digest))
+        .await
+        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
+        .map_err(Into::into)
 }
 
 #[tauri::command]

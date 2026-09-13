@@ -44,6 +44,7 @@ use matrix_session::MatrixSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
+mod host_check;
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 use tauri::{
     Manager as _, RunEvent,
@@ -74,6 +75,7 @@ pub fn run_entrypoint() -> ExitCode {
         installer_acceptance::DesktopLaunchMode::InstallerVersion => {
             installer_acceptance::print_version()
         }
+        installer_acceptance::DesktopLaunchMode::HostCheck => host_check::run(),
     }
 }
 

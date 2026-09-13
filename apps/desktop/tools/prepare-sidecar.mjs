@@ -23,7 +23,7 @@ const sidecars = [
   { packageName: 'agent-room-bridge', executableName: 'agent-room-bridge' },
   { packageName: 'agent-room-mcp', executableName: 'agent-room-mcp' },
 ];
-const cargoArguments = ['build'];
+const cargoArguments = ['build', '--locked'];
 for (const sidecar of sidecars) {
   cargoArguments.push('-p', sidecar.packageName);
 }
@@ -52,6 +52,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
+    windowsHide: true,
     stdio: options.inherit === true ? 'inherit' : ['ignore', 'pipe', 'pipe'],
   });
   if (result.status !== 0) {

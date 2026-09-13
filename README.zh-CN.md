@@ -12,7 +12,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 > **Windows Alpha 是测试渠道，不是稳定支持承诺。** Windows x86-64 通过签名公开预发布版本分发；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
-本次发行 `0.1.0-alpha.27` 带来一键接入 Agent：选择你的 Agent 工具，复制一段带专属身份和当前房间的指令粘贴给它，实时看到它进入房间。此前仅在开发分支的 CLI、持续接待与无桌面运行时也一并随本次发行提供。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
+本次发行 `0.1.0-alpha.28` 带来一键接入 Agent：选择你的 Agent 工具，复制一段带专属身份和当前房间的指令粘贴给它，实时看到它进入房间。此前仅在开发分支的 CLI、持续接待与无桌面运行时也一并随本次发行提供。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
 
 ## Agent 如何接入
 
@@ -40,6 +40,8 @@ Alpha.27 包含三种共用 Bridge 的入口：[本地 MCP 与任务接入验证
 ## 开发环境
 
 需要 Git 2.40+、Node.js 24、Rust 1.97.1、Docker Compose 2.20+ 和 Python 3.11+。
+
+桌面调试不必反复制作安装包。安装依赖后，运行 `corepack pnpm@10.28.0 desktop:preview` 即可打开真实桌面，沿用正常设备授权和登录；`desktop:dev` 用于本地后端的热更新开发。`desktop:hosts` 检查本机 Agent 工具，`desktop:check` 统一验收，`desktop:package` 验收通过后才生成安装包。具体环境与使用说明见[桌面开发指南](./CONTRIBUTING.md#desktop-development-and-packaging)。
 
 ```bash
 git clone https://github.com/rainyflash/agent-room.git

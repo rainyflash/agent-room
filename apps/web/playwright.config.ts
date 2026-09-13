@@ -36,7 +36,7 @@ export default defineConfig({
       ? `corepack pnpm@10.28.0 --filter @agent-room/web exec vite preview --host 127.0.0.1 --port ${portText} --strictPort`
       : `corepack pnpm@10.28.0 --filter @agent-room/web exec vite --host 127.0.0.1 --port ${portText} --strictPort`,
     cwd: '../..',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: !process.env.CI && process.env.AGENT_ROOM_E2E_REUSE_SERVER !== '0',
     timeout: 30_000,
     url: `${baseUrl}/connect`,
   },

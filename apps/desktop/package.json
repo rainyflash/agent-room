@@ -1,12 +1,13 @@
 {
   "name": "@agent-room/desktop",
-  "version": "0.1.0-alpha.27",
+  "version": "0.1.0-alpha.28",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "corepack pnpm@10.28.0 prepare:sidecar && tauri build --config src-tauri/tauri.sidecar.conf.json",
     "build:signed": "corepack pnpm@10.28.0 prepare:sidecar && tauri build --config src-tauri/tauri.release.conf.json",
     "dev": "corepack pnpm@10.28.0 prepare:sidecar:debug && tauri dev --config src-tauri/tauri.sidecar.conf.json",
+    "preview": "corepack pnpm@10.28.0 prepare:sidecar:debug && tauri dev --no-dev-server --no-watch --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.preview.conf.json",
     "prepare:sidecar": "node tools/prepare-sidecar.mjs --release",
     "prepare:sidecar:debug": "node tools/prepare-sidecar.mjs",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",

@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentInviteDialog } from './agent-invite-dialog';
 import { DesktopRuntimeProvider } from './desktop-runtime-provider';
+import { useDesktopRuntime } from './use-desktop-runtime';
 import type {
   BridgeRuntime,
   DesktopRuntimeGateway,
@@ -56,10 +65,15 @@ function gateway(
     readonly available?: boolean;
     readonly sessions?: () => SessionsResult;
     readonly installed?: readonly ('codex' | 'claude-code' | 'cursor')[];
+    readonly configured?: boolean;
   } = {},
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
-  const applyHost = vi.fn(() => Promise.resolve(ok(undefined)));
+  let configured = options.configured ?? true;
+  const applyHost = vi.fn(() => {
+    configured = true;
+    return Promise.resolve(ok(undefined));
+  });
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
     beginMatrixAuthentication: unavailable,
@@ -109,7 +123,7 @@ function gateway(
       Promise.resolve(
         ok({
           host,
-          action: 'create',
+          action: configured ? 'unchanged' : 'create',
           target: 'config',
           originalDigest: '0'.repeat(64),
           desiredDigest: '1'.repeat(64),
@@ -154,6 +168,31 @@ afterEach(() => {
 });
 
 describe('AgentInviteDialog', () => {
+  it('迟到的配置检查不能覆盖已经成功的一键配置', async () => {
+    const runtime = gateway({ configured: false }).value;
+    const fallbackPlan = runtime.planHost?.bind(runtime);
+    if (fallbackPlan === undefined) throw new Error('Fixture requires planHost');
+    const delayed =
+      Promise.withResolvers<Awaited<ReturnType<NonNullable<DesktopRuntimeGateway['planHost']>>>>();
+    const planHost = vi
+      .fn<NonNullable<DesktopRuntimeGateway['planHost']>>()
+      .mockImplementationOnce(() => delayed.promise)
+      .mockImplementation(fallbackPlan);
+    const runtimeWithDelayedCheck = { ...runtime, planHost };
+    const { result } = renderHook(() => useDesktopRuntime(runtimeWithDelayedCheck));
+    let checking: Promise<void>;
+    act(() => {
+      checking = result.current.checkHost('codex');
+    });
+    await act(() => result.current.configureHost('codex'));
+    expect(result.current.hostSetup.codex?.phase).toBe('configured');
+    await act(async () => {
+      delayed.resolve(err({ code: 'codex.list_failed', retryable: true }));
+      await checking;
+    });
+    expect(result.current.hostSetup.codex?.phase).toBe('configured');
+  });
+
   it('浏览器里没有桌面运行时时，指向运行 Agent 的电脑并提供下载', () => {
     renderDialog(gateway({ available: false }).value);
     expect(screen.getByRole('heading', { name: 'Bring an agent into the room' })).toBeVisible();
@@ -173,6 +212,7 @@ describe('AgentInviteDialog', () => {
     await waitFor(() => {
       expect(screen.getByRole('radio', { name: /Codex/u })).toHaveAttribute('aria-checked', 'true');
     });
+    await screen.findByText(/Codex is set up\./u);
     expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s Codex');
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
@@ -189,6 +229,7 @@ describe('AgentInviteDialog', () => {
 
     first.unmount();
     renderDialog(runtime);
+    await screen.findByText(/Codex is set up\./u);
     fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(2);
@@ -204,6 +245,7 @@ describe('AgentInviteDialog', () => {
       expect(screen.getByRole('radio', { name: /Codex/u })).toHaveAttribute('aria-checked', 'true');
     });
     const name = screen.getByLabelText('Agent name');
+    await screen.findByText(/Codex is set up\./u);
     fireEvent.change(name, { target: { value: '  Scout  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
@@ -227,6 +269,7 @@ describe('AgentInviteDialog', () => {
     expect(/sessionKey = (\S+)/u.exec(secondPrompt)?.[1]).not.toBe(firstKey);
 
     fireEvent.click(screen.getByRole('radio', { name: /Cursor/u }));
+    await screen.findByText(/Cursor is set up\./u);
     expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s Cursor');
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
@@ -242,6 +285,8 @@ describe('AgentInviteDialog', () => {
     const storageKey = 'agent-room.agent-invite.codex';
     let sessions: HostSessionDiagnostics[] = [];
     const view = renderDialog(gateway({ sessions: () => ok(sessions) }).value);
+    await screen.findByText(/Codex is set up\./u);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await screen.findByText('Waiting for it to call the Agent Room tools…');
     const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as {
       sessionKey: string;
@@ -316,7 +361,7 @@ describe('AgentInviteDialog', () => {
   it('一键配置已安装的宿主，未安装的宿主给出说明，其他工具提供可复制的 JSON', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway();
+    const runtime = gateway({ configured: false });
     renderDialog(runtime.value);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up Codex in one click' }));
     await waitFor(() => {
@@ -349,10 +394,73 @@ describe('AgentInviteDialog', () => {
         return base.ok ? ok({ ...base.value, bridge: starting }) : base;
       },
     });
-    expect(
-      await screen.findByText(
-        /The local connection is not ready yet: Local access needs authorization/u,
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText(/Allow this computer to connect your agents/u)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+    expect(screen.queryByText('Waiting for it to call the Agent Room tools…')).toBeNull();
+  });
+
+  it('已授权且没有默认 Agent 时可以直接接入，不要求再次授权', async () => {
+    const runtime = gateway().value;
+    renderDialog({
+      ...runtime,
+      snapshot: async () => {
+        const value = await runtime.snapshot();
+        return value.ok
+          ? ok({
+              ...value.value,
+              bridge: {
+                ...readyBridge,
+                lifecycle: { ...readyBridge.lifecycle, phase: 'authorized' },
+              },
+            })
+          : value;
+      },
+    });
+    await screen.findByText(/Codex is set up\./u);
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+    expect(screen.queryByText(/Finish authorization/u)).toBeNull();
+    expect(screen.getByText(/Ready\. Copy the instructions above/u)).toBeVisible();
+  });
+
+  it('旧 Codex 配置错误解释原因并阻止伪造等待，切换宿主不携带旧错误', async () => {
+    const runtime = gateway().value;
+    renderDialog({
+      ...runtime,
+      planHost: () => Promise.resolve(err({ code: 'codex.config_incompatible', retryable: true })),
+    });
+    expect(await screen.findByText(/cannot read your current settings/u)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+    expect(screen.queryByText('Waiting for it to call the Agent Room tools…')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Other MCP tool' }));
+    expect(screen.queryByText(/cannot read your current settings/u)).toBeNull();
+  });
+
+  it('重连可以在弹窗内重试，恢复后直接继续无需重新登录', async () => {
+    const runtime = gateway().value;
+    const retryBridge = vi.fn(() => runtime.retryBridge());
+    renderDialog({
+      ...runtime,
+      retryBridge,
+      snapshot: async () => {
+        const value = await runtime.snapshot();
+        return value.ok
+          ? ok({
+              ...value.value,
+              bridge: {
+                ...readyBridge,
+                lifecycle: { ...readyBridge.lifecycle, phase: 'reconnecting' },
+              },
+            })
+          : value;
+      },
+    });
+    await screen.findByText(/Reconnecting automatically/u);
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+    });
+    expect(retryBridge).toHaveBeenCalledOnce();
+    expect(screen.queryByText(/Reconnecting automatically/u)).toBeNull();
   });
 });

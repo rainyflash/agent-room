@@ -24,7 +24,9 @@ for (const width of [1440, 390]) {
       'true',
     );
     await expect(dialog.getByText(/Codex is set up\./u)).toBeVisible();
-    await expect(dialog.getByText('Waiting for it to call the Agent Room tools…')).toBeVisible();
+    await expect(
+      dialog.getByText('Ready. Copy the instructions above and send them to your agent.'),
+    ).toBeVisible();
     await dialog.getByRole('button', { name: 'Copy connection instructions' }).click();
     await expect(dialog.getByText('Copied. Paste it to your agent.')).toBeVisible();
     const clipboard = await page.evaluate(() => navigator.clipboard.readText());
@@ -63,4 +65,32 @@ test('连接检查失败提供诊断而非伪造空清单', async ({ page }) => 
   await expect(
     page.getByRole('dialog').getByText(/Cannot check task connections right now/u),
   ).toBeVisible();
+});
+
+test('已授权空设备直接接入；重连恢复无需重新登录', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto('/e2e/fixtures/onboarding.html?bridge=reconnecting&configured=1');
+  await page.getByRole('button', { name: /Local agents/u }).click();
+  await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(/Reconnecting automatically/u)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Retry connection' }).click();
+  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+  await expect(dialog.getByText(/Reconnecting automatically/u)).toHaveCount(0);
+  await expect(dialog.getByText(/Finish authorization/u)).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test('配置失败显示可理解的原因，既不放行复制也不假装正在等待', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto('/e2e/fixtures/onboarding.html?bridge=authorized&setup=failed');
+  await page.getByRole('button', { name: /Local agents/u }).click();
+  await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(/cannot read your current settings/u)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
+  await expect(dialog.getByText('Waiting for it to call the Agent Room tools…')).toHaveCount(0);
+  await expect(dialog.getByText(/Finish the connection and tool setup above/u)).toBeVisible();
+  expect(failures).toEqual([]);
 });

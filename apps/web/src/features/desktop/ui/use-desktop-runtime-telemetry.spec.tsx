@@ -50,4 +50,27 @@ describe('桌面运行时观测', () => {
       value: 1,
     });
   });
+
+  it('重连完成到已授权状态也恢复可用率', () => {
+    const telemetry = { record: vi.fn().mockResolvedValue(undefined) };
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
+    const { rerender } = renderHook(
+      ({ phase }: { readonly phase: BridgePhase }) => {
+        useDesktopRuntimeTelemetry(true, phase, telemetry);
+      },
+      { initialProps: { phase: 'reconnecting' } },
+    );
+    clock.mockReturnValue(500);
+    rerender({ phase: 'authorized' });
+    expect(telemetry.record).toHaveBeenCalledWith({
+      metric: 'bridge_reconnect',
+      surface: 'desktop',
+      value: 400,
+    });
+    expect(telemetry.record).toHaveBeenLastCalledWith({
+      metric: 'bridge_availability',
+      surface: 'desktop',
+      value: 1,
+    });
+  });
 });

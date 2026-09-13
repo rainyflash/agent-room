@@ -12,6 +12,7 @@ const diagnosticCodeSchema = z
 export const bridgePhaseSchema = z.enum([
   'discovering',
   'starting',
+  'reconnecting',
   'authorization_required',
   'authorized',
   'ready',

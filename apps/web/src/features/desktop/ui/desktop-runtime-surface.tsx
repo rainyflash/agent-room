@@ -19,7 +19,11 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
-import { desktopPhaseMessage } from '@/features/desktop/domain/desktop-connection';
+import {
+  desktopPhaseMessage,
+  hostFailureMessage,
+} from '@/features/desktop/domain/desktop-connection';
+import { LocalConnectionNotice } from './local-connection-notice';
 import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
 import { HostSessionOnboarding } from '@/features/desktop/ui/host-session-onboarding';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
@@ -123,6 +127,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               </section>
             )}
 
+            {phase === 'reconnecting' || phase === 'starting' ? <LocalConnectionNotice /> : null}
             {phase === 'halted' ? (
               <section className="desktop-runtime__failure">
                 <AlertTriangle aria-hidden="true" />
@@ -161,7 +166,14 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               <section className="desktop-runtime__command-failure">
                 <AlertTriangle aria-hidden="true" />
                 <div>
-                  <p>{t('desktop.failure.description')}</p>
+                  <p>
+                    {t(
+                      /^(host|codex|claude|cursor)\./u.test(controller.failure.code)
+                        ? hostFailureMessage(controller.failure.code)
+                        : 'desktop.failure.description',
+                      { host: controller.configuredHost ?? 'Agent' },
+                    )}
+                  </p>
                   <code>{controller.failure.code}</code>
                 </div>
                 {controller.failure.retryable ? (
