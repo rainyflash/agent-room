@@ -54,8 +54,22 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("default: client", candidate)
-        self.assertEqual(candidate.count("if: ${{ inputs.profile == 'full' }}"), 2)
+        self.assertEqual(
+            candidate.count("if: ${{ inputs.profile == 'full' && inputs.reuse_run_id == '' }}"), 2
+        )
         self.assertIn('--profile "${{ inputs.profile }}"', candidate)
+
+    def test_候选先验证并保存再调用草稿接口(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+        verify = candidate.index("完整验证候选来源和签名")
+        archive = candidate.index("保存完整候选用于发布审查")
+        publish = candidate.index("创建仅维护者可见的草稿 Release")
+        self.assertLess(verify, archive)
+        self.assertLess(archive, publish)
+        self.assertIn("python tools/release_recovery.py", candidate)
+        self.assertIn("run-id: ${{ needs.metadata.outputs.artifact_run_id }}", candidate)
+        self.assertIn("needs.metadata.result == 'success'", candidate)
+        self.assertIn("inputs.reuse_run_id != '' && needs.native.result == 'skipped'", candidate)
 
     def test_浏览器候选使用同源代理并保留桌面独立会话域(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")

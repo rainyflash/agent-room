@@ -56,6 +56,12 @@ target/release/agent-room-release-tool keygen \
 
 GitHub runner 是短生命周期环境，但它仍是在线信任边界。Environment Secret、分支保护、固定 Action SHA 和审计日志缺一不可。
 
+完整候选通过逐件签名与摘要验证后，先保存为 Actions Artifact，再创建草稿 Release。GitHub 草稿或上传接口故障不会再导致已签候选丢失。若完整候选已经保存，下载该 Artifact，按本文同样的密码学门禁验证后恢复上传，不重新编译或签署它。
+
+`release-*` 候选产物由 Actions 的 `retention-days` 到期清理。仓库日常清理不能仅因主分支前进或工作流结束就把它们当成“已发布副本”删除；失败运行中的原生产物同样可能是恢复来源。需要跨越保留期处理时，应提前下载完整候选并保留验证证据。
+
+若旧运行在保存完整候选前因汇总或上传失败，可在同一候选工作流填写 `reuse_run_id`，并保留原 tag、channel、sequence、profile 和 rollback_from。恢复入口只接受本仓库已结束的 `main` 候选工作流、主分支历史中的提交、仍有效的原元数据和完整的原生/镜像产物；它不会延长有效期、变更来源提交或重新执行原生构建。下载的产物会再次验证 SBOM、摘要、Sigstore 身份和 Ed25519 清单。此入口用于未公开候选的流程恢复，不能修补已经公开的版本；代码修复仍需新版本和新序号。
+
 Web OCI 镜像必须把 `VITE_AGENT_ROOM_CONTROL_PLANE_URL` 编译为 `https://app.room.the-zeroth.com/_agent-room/api`，与浏览器回调 `https://app.room.the-zeroth.com/connect/finalize` 共用主机。登录 Cookie 使用 `__Host` 前缀，跨主机回调会丢失它。Windows 原生候选仍使用 `https://api.room.the-zeroth.com`，匹配桌面授权兑换后的 API 域会话 Cookie。Vite 参数在镜像构建时写入静态文件，不能靠运行时容器环境变量修正。
 
 ## 4. 数据库与服务端晋级
@@ -134,7 +140,7 @@ Codex、Claude Code 与 Cursor 适配器只配置通用 MCP 路径，不参与 I
 
 ## 8. 故障与撤回
 
-- 候选失败：保留 Draft 与 Actions 证据，不更新渠道入口；修复后使用新序号和新标签重新候选。
+- 候选失败：保留 Draft 与 Actions 证据，不更新渠道入口。若只是草稿创建或上传失败，按候选构建一节恢复原产物；若必须修改应用代码，使用新序号和新标签重新候选。
 - 公布后发现客户端缺陷：生成更高序号、`rollbackFrom` 精确等于当前版本的回滚清单；不得移动旧标签或降低序号。
 - 渠道入口更新失败：公开资产仍不可被自动更新发现；修复入口后重试最终步骤。
 - Tauri 密钥泄露：冻结 testing 渠道，轮换 Tauri 密钥，并通过仍可信的 testing 发布密钥发布新客户端。

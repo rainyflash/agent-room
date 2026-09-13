@@ -19,6 +19,17 @@ Alpha.27 的接入弹窗同时出现 `codex.list_failed` 和“本机连接还�
 - 对实际 MCP 可执行文件完成 stdio 初始化，发现 14 项工具，调用 `agent_room_get_self` 返回同一身份和 `ready`。这是实际工具连接检查，不是宿主模型自动回复验收。
 - 调试会话结束后收到 `closed`。模型唤醒与自动接待的既有边界仍见 [真实 Codex 验收](./live-codex.md)。
 
+## 正式安装目录验收
+
+2026-09-13 使用 [候选运行 34745222980](https://github.com/rainyflash/agent-room/actions/runs/34745222980) 生成的 Windows 安装包，在普通用户的原安装目录覆盖 Alpha.27。候选源提交为 `1ca422c75fb5560adb0b53e2f88bde791881360a`。
+
+- 安装前，安装包通过精确 `release-candidate.yml@refs/heads/main` 身份的 Sigstore 验证和内置公钥的 Tauri 签名验证。安装器 SHA-256 为 `07e9677bd2b92608d55fa3a621c1aa6a85b5b265974e39e83b4420fb28f2522f`。
+- 安装器退出码为 0；安装后的 Bridge、CLI、MCP 摘要与候选文件一致，CLI 和桌面检查均报告 `0.1.0-alpha.28`。
+- 正式应用自动恢复登录，显示“本机接入已授权”；原生弹窗一键配置成功，Codex 回读确认使用安装目录内的 MCP，复制按钮可用。
+- 正式 CLI 恢复原有调试身份；正式 MCP 完成初始化、14 项工具发现和 `agent_room_get_self` 调用，连接状态为 `ready`，Agent、实例和 Matrix 设备身份保持不变。调试会话随后正常关闭。
+
+这是候选安装验收，尚不代表公开发行。首次候选汇总在 GitHub 创建草稿时收到 HTTP 500/502；完整 Ed25519 发行清单及所有产物仍须通过最终发布门禁。恢复流程复用上述原始产物，不改变源提交、版本、序号或有效期。
+
 ## 开发与发布入口
 
 - `desktop:dev`：直接构建并运行真实桌面，不生成安装包。
