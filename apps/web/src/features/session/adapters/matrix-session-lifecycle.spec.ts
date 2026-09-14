@@ -298,6 +298,32 @@ describe('Matrix 网关持久会话生命周期', () => {
     await expect(vault.load()).resolves.toEqual(ok(null));
   });
 
+  it('退出取消仍在加载的推送规则时保留诊断，不误报同步故障', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const debugLog = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    try {
+      const vault = storage();
+      const matrix = gateway(vault);
+      const restored = await matrix.restore(session.userId);
+      expect(restored).toMatchObject({ ok: true, value: { kind: 'connected' } });
+      const logger = sdk.options.find((options) => options.deviceId === session.deviceId)?.logger;
+      if (logger === undefined) throw new Error('同步客户端必须拥有独立的生命周期日志');
+      const child = logger.getChild('sync');
+      const cancellation = new DOMException('signal is aborted without reason', 'AbortError');
+      sdk.abort.mockImplementationOnce(() => {
+        child.error('Getting push rules failed', cancellation);
+      });
+      await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+      expect(sdk.abort).toHaveBeenCalled();
+      expect(errorLog).not.toHaveBeenCalled();
+      expect(debugLog).toHaveBeenCalledWith('sync', 'Getting push rules failed', cancellation);
+      await expect(vault.load()).resolves.toEqual(ok(null));
+    } finally {
+      errorLog.mockRestore();
+      debugLog.mockRestore();
+    }
+  });
+
   it('退出清理失败必须上报但仍尝试关闭远端会话', async () => {
     const vault = storage();
     const matrix = gateway(vault);
