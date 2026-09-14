@@ -430,6 +430,19 @@ mod tests {
     }
 
     #[test]
+    fn 授权已保存后启动故障仍可使用已有凭据自动重连() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.authorization_required(1);
+        policy.discovered_pending(2, BridgeOwnership::Managed, ConnectionProgress::Starting);
+        policy.set_diagnostic(3, "bridge.matrix_store_unavailable");
+        assert_eq!(
+            policy.child_exited(4, Some(1), false),
+            ExitDecision::RetryAfter(std::time::Duration::from_secs(1))
+        );
+        assert_eq!(policy.snapshot().phase, BridgePhase::RetryScheduled);
+    }
+
+    #[test]
     fn 关闭期间的退出不会触发重启() {
         let mut policy = BridgeRestartPolicy::new(0);
         assert_eq!(policy.child_exited(1, Some(0), true), ExitDecision::Stop);

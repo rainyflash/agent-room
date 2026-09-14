@@ -1916,6 +1916,11 @@ fn announce_active_session(session: &ActiveBridgeSession) -> Result<(), BridgeRu
 }
 
 fn announce_authorized_device(device: AuthorizedBridgeDevice) -> Result<(), BridgeRuntimeError> {
+    if supervisor_events_enabled() {
+        return write_supervisor_event(&BridgeSupervisorEvent::DeviceAuthorized {
+            channel: "agent_room_desktop",
+        });
+    }
     write_stdout(&format!(
         "设备授权完成，Agent Room Bridge 已就绪。\n设备：{}\n访问会话到期时间：{}\n刷新会话到期时间：{}\n",
         device.device_id,
@@ -2016,6 +2021,9 @@ enum BridgeSupervisorEvent<'a> {
         user_code: &'a str,
         #[serde(rename = "expiresInSeconds")]
         expires_in_seconds: u64,
+    },
+    DeviceAuthorized {
+        channel: &'static str,
     },
     Ready {
         channel: &'static str,

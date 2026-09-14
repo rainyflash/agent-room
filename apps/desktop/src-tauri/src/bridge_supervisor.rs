@@ -550,7 +550,10 @@ impl BridgeSupervisorActor {
                 self.policy.authorization_required(now_unix_ms());
                 self.publish();
             }
-            BridgeSupervisorEvent::Ready { channel } if channel == SUPERVISOR_CHANNEL => {
+            BridgeSupervisorEvent::DeviceAuthorized { channel }
+            | BridgeSupervisorEvent::Ready { channel }
+                if channel == SUPERVISOR_CHANNEL =>
+            {
                 self.authorization = None;
                 self.session = None;
                 self.policy.discovered_pending(
@@ -726,6 +729,9 @@ enum BridgeSupervisorEvent {
         user_code: String,
         #[serde(rename = "expiresInSeconds")]
         expires_in_seconds: u64,
+    },
+    DeviceAuthorized {
+        channel: String,
     },
     Ready {
         channel: String,
