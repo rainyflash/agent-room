@@ -23,7 +23,8 @@ use agent_room_application::{
         MatrixAgentDeviceSessionTarget, MatrixFailure, MatrixFailureKind, MatrixOperation,
         MatrixResult, PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount,
         PrincipalRegistration, ProfileImportConsent, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue, StoredDeviceSession, VerifiedOidcIdentity,
+        SecretGenerationFailure, SecretValue, StoredDeviceSession, VerifiedOidcDeviceAssertion,
+        VerifiedOidcIdentity,
     },
 };
 use agent_room_domain::{
@@ -513,6 +514,53 @@ async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
 }
 
 #[tokio::test]
+async fn 新设备授权不要求浏览器重新登录() {
+    for authenticated_at in [Some(time(NOW - 24 * 60 * 60 * 1_000)), None] {
+        let (service, store, secrets, _, _) = service(true);
+        service
+            .register_device(registration_with_times(
+                &secrets,
+                time(NOW),
+                authenticated_at,
+            ))
+            .await
+            .expect("刚批准的新设备授权不能因浏览器登录较早或没有 auth_time 而被拒绝");
+        assert!(store.state.lock().expect("仓储锁可用").session.is_some());
+    }
+}
+
+#[tokio::test]
+async fn 过旧或未来签发的设备断言不会写入设备() {
+    for issued_at in [NOW - 630_001, NOW + 30_001] {
+        let (service, store, secrets, _, _) = service(true);
+        let failure = service
+            .register_device(registration_with_times(
+                &secrets,
+                time(issued_at),
+                Some(time(NOW)),
+            ))
+            .await
+            .expect_err("刚登录不能使过旧或未来签发的断言变得有效");
+        assert_eq!(
+            failure.kind(),
+            DeviceAuthorizationFailureKind::InvalidAuthorization
+        );
+        assert!(store.state.lock().expect("仓储锁可用").session.is_none());
+    }
+}
+
+#[tokio::test]
+async fn 设备断言签发时间遵守既定时钟偏差边界() {
+    for issued_at in [NOW - 630_000, NOW + 30_000] {
+        let (service, _, secrets, _, _) = service(true);
+        service
+            .register_device(registration_with_times(&secrets, time(issued_at), None))
+            .await
+            .expect("边界内的签发时间有效");
+    }
+}
+
+#[tokio::test]
 async fn 公钥持有证明失败时不会写入设备() {
     let (service, store, secrets, _, _) = service(false);
     let failure = service
@@ -642,17 +690,25 @@ fn service(
 }
 
 fn registration(secrets: &SequentialSecrets) -> RegisterDevice {
+    registration_with_times(secrets, time(NOW), Some(time(NOW)))
+}
+
+fn registration_with_times(
+    secrets: &SequentialSecrets,
+    issued_at: UtcMillis,
+    authenticated_at: Option<UtcMillis>,
+) -> RegisterDevice {
     let identity = VerifiedOidcIdentity::new(
         "https://issuer.example",
         "stable-subject",
         None,
         None,
-        Some(time(NOW)),
+        authenticated_at,
     )
     .expect("身份有效");
     RegisterDevice {
         authorization: VerifiedDeviceAuthorization::new(
-            identity,
+            VerifiedOidcDeviceAssertion::new(identity, issued_at),
             secrets.digest("short-lived-oidc-token"),
         ),
         label: "开发工作站".to_owned(),

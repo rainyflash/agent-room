@@ -84,7 +84,7 @@ pub use identity::{
     OidcInteraction, OidcResult, PkceCodeChallenge, PrincipalAccount, PrincipalRegistration,
     PrincipalRepository, PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath,
     SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, StoredWebSession,
-    VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+    VerifiedOidcDeviceAssertion, VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
 };
 pub use matrix::{
     MatrixAcceptedEvent, MatrixAccountLifecycleGateway, MatrixAgentDeviceSessionRequest,

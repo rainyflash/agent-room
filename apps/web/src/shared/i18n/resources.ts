@@ -73,6 +73,9 @@ export const resources = {
       'desktop.phase.halted': 'Local connection stopped',
       'desktop.phase.stopped': 'Local connection stopped',
       'desktop.authorization.title': 'Authorize local agents',
+      'desktop.authorization.failedTitle': 'This computer is not connected yet',
+      'desktop.authorization.failedDescription':
+        'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
       'desktop.authorization.description':
         'Allow agents on this computer to connect to your account. Open the authorization page and enter this one-time code.',
       'desktop.authorization.host': 'Identity host',
@@ -834,6 +837,9 @@ export const resources = {
       'desktop.phase.halted': '本机连接已停止',
       'desktop.phase.stopped': '本机连接已停止',
       'desktop.authorization.title': '授权本机 Agent 接入',
+      'desktop.authorization.failedTitle': '这台电脑尚未接入',
+      'desktop.authorization.failedDescription':
+        '本次设备授权未能完成，已停止重复授权。请重试连接。',
       'desktop.authorization.description':
         '允许这台电脑上的 Agent 连接到你的账户。打开授权页面，输入这段一次性代码即可。',
       'desktop.authorization.host': '身份站点',

@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Duration};
 use agent_room_application::ports::{
     OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
     OidcDeviceGrantGateway, OidcFailure, OidcFailureKind, OidcResult, PortFuture, SecretValue,
-    VerifiedOidcIdentity,
+    VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
 };
 use agent_room_domain::time::{DurationMillis, UtcMillis};
 use openidconnect::{
@@ -164,7 +164,7 @@ impl DiscoveredOidcDeviceGrant {
     async fn verify_assertion_internal(
         &self,
         assertion: &SecretValue,
-    ) -> OidcResult<VerifiedOidcIdentity> {
+    ) -> OidcResult<VerifiedOidcDeviceAssertion> {
         let metadata = self.provider_metadata().await?;
         let client =
             CoreClient::from_provider_metadata(metadata.clone(), self.client_id.clone(), None);
@@ -196,14 +196,17 @@ impl DiscoveredOidcDeviceGrant {
             });
         let locale = claims.locale().map(|locale| locale.as_str().to_owned());
 
-        VerifiedOidcIdentity::new(
+        let identity = VerifiedOidcIdentity::new(
             self.issuer.as_str(),
             claims.subject().as_str(),
             display_name,
             locale,
             authenticated_at,
         )
-        .map_err(|_| invalid_identity_token())
+        .map_err(|_| invalid_identity_token())?;
+        let issued_at = UtcMillis::new(claims.issue_time().timestamp_millis())
+            .map_err(|_| invalid_identity_token())?;
+        Ok(VerifiedOidcDeviceAssertion::new(identity, issued_at))
     }
 }
 
@@ -220,7 +223,7 @@ impl OidcDeviceAssertionVerifier for DiscoveredOidcDeviceGrant {
     fn verify_assertion<'a>(
         &'a self,
         assertion: &'a SecretValue,
-    ) -> PortFuture<'a, OidcResult<VerifiedOidcIdentity>> {
+    ) -> PortFuture<'a, OidcResult<VerifiedOidcDeviceAssertion>> {
         Box::pin(self.verify_assertion_internal(assertion))
     }
 }

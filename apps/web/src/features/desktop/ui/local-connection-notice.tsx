@@ -10,12 +10,24 @@ export function LocalConnectionNotice() {
   const controller = useDesktopRuntimeController();
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const authorization = controller.snapshot?.bridge.authorization;
+  const lifecycle = controller.snapshot?.bridge.lifecycle;
+  const authorizationFailed =
+    phase === 'halted' && lifecycle?.diagnosticCode === 'desktop.authorization.failed';
   if (phase === 'ready' || phase === 'authorized') return null;
   return (
     <section className="agent-invite__notice" data-phase={phase} role="status">
       <AlertTriangle aria-hidden="true" />
       <div>
-        <p>{t(localConnectionNotice[phase])}</p>
+        <p>
+          {t(
+            authorizationFailed
+              ? 'desktop.authorization.failedDescription'
+              : localConnectionNotice[phase],
+          )}
+        </p>
+        {authorizationFailed && lifecycle.lastFailureCode != null ? (
+          <code>{lifecycle.lastFailureCode}</code>
+        ) : null}
         {phase === 'authorization_required' ? (
           authorization == null ? null : (
             <Button

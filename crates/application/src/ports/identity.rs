@@ -325,12 +325,37 @@ pub trait OidcDeviceGrantGateway: Send + Sync {
     ) -> PortFuture<'a, OidcResult<SecretValue>>;
 }
 
+/// 已验证的设备 ID Token。签发时间与浏览器上次登录时间属于不同事实。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedOidcDeviceAssertion {
+    identity: VerifiedOidcIdentity,
+    issued_at: UtcMillis,
+}
+
+impl VerifiedOidcDeviceAssertion {
+    /// 仅供完成签名、issuer、设备 audience、期限和 nonce 校验的适配器调用。
+    pub const fn new(identity: VerifiedOidcIdentity, issued_at: UtcMillis) -> Self {
+        Self {
+            identity,
+            issued_at,
+        }
+    }
+
+    pub const fn identity(&self) -> &VerifiedOidcIdentity {
+        &self.identity
+    }
+
+    pub const fn issued_at(&self) -> UtcMillis {
+        self.issued_at
+    }
+}
+
 pub trait OidcDeviceAssertionVerifier: Send + Sync {
-    /// 校验设备授权返回的 OIDC ID Token，并投影稳定主体声明。
+    /// 校验设备授权返回的 OIDC ID Token，并保留受签名保护的签发时间。
     fn verify_assertion<'a>(
         &'a self,
         assertion: &'a SecretValue,
-    ) -> PortFuture<'a, OidcResult<VerifiedOidcIdentity>>;
+    ) -> PortFuture<'a, OidcResult<VerifiedOidcDeviceAssertion>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
