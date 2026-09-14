@@ -1,5 +1,5 @@
 import { Button } from '@agent-room/ui-system';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import { enableReception, RECEPTION_AUTHORIZATION_DAYS } from '../application/enable-reception';
@@ -12,35 +12,48 @@ import type { HostSessionDiagnostics } from '../domain/desktop-runtime';
 import { receptionGrants, type ReceiverAction, type ReceiverView } from '../domain/reception';
 import { err, type Result } from '@/shared/result';
 import type { DesktopRuntimeFailure } from '../domain/desktop-runtime';
+import { receiverAgentId, receiverStatus } from '../domain/reception-status';
+import { useReceptionQueries } from './use-reception-queries';
 import './reception-panel.css';
 
 const unavailable = () => err({ code: 'receiver.unavailable', retryable: false });
 
-export function ReceptionPanel() {
+export function ReceptionPanel({
+  agentId,
+  roomId,
+}: {
+  readonly agentId?: string;
+  readonly roomId?: string;
+}) {
   const { t } = useTranslation();
   const { localRuntime: gateway, automation } = useAppServices();
   const { snapshot } = useSession();
   const principal = snapshot.context.principal;
   const queryClient = useQueryClient();
-  const queryKey = ['desktop-reception', principal?.principalId ?? null];
-  const receivers = useQuery({
-    queryKey: [...queryKey, 'receivers'],
-    queryFn: () => gateway.listReceivers?.() ?? unavailable(),
-    refetchInterval: 3000,
-  });
-  const sessions = useQuery({
-    queryKey: [...queryKey, 'sessions'],
-    queryFn: () => gateway.readHostSessions?.() ?? unavailable(),
-    refetchInterval: 5000,
-  });
+  const { queryKey, receivers, sessions } = useReceptionQueries(
+    gateway,
+    principal?.principalId ?? null,
+  );
   const grantsQuery = useAutomationGrantList(automation);
   const grants = grantsQuery.data?.ok ? grantsQuery.data.value : [];
-  const views = receivers.data?.ok ? receivers.data.value : [];
+  const allViews = receivers.data?.ok
+    ? receivers.data.value.filter(
+        (view) => view.state.binding.policy.allowedPrincipalId === principal?.principalId,
+      )
+    : [];
+  const views = allViews.filter(
+    (view) =>
+      (agentId === undefined ||
+        receiverAgentId(view, sessions.data?.ok ? sessions.data.value : [], grants) === agentId) &&
+      (roomId === undefined || view.state.binding.policy.roomId === roomId),
+  );
   const offers = sessions.data?.ok
     ? sessions.data.value.filter(
         (session) =>
           session.receptionOffer &&
-          !views.some((view) => view.state.binding.session.sessionKey === session.sessionKey),
+          (agentId === undefined || session.session.agentId === agentId) &&
+          (roomId === undefined || session.receptionOffer.roomId === roomId) &&
+          !allViews.some((view) => view.state.binding.session.sessionKey === session.sessionKey),
       )
     : [];
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'copyFailed'>('idle');
@@ -69,7 +82,7 @@ export function ReceptionPanel() {
   return (
     <section className="reception-panel" aria-label={t('reception.title')}>
       <h3>{t('reception.title')}</h3>
-      <p>{t('reception.description')}</p>
+      <p>{t(agentId === undefined ? 'reception.description' : 'reception.agentDescription')}</p>
       <div className="reception-actions">
         <Button size="compact" tone="quiet" onClick={() => void copy()}>
           {t(copyState === 'copied' ? 'reception.copied' : 'reception.copy')}
@@ -101,7 +114,7 @@ export function ReceptionPanel() {
       ) : null}
       {!principal ? <p>{t('reception.login')}</p> : null}
       {views.length === 0 && offers.length === 0 && !receivers.isPending ? (
-        <p>{t('reception.empty')}</p>
+        <p>{t(agentId === undefined ? 'reception.empty' : 'reception.agentUnavailable')}</p>
       ) : null}
       {offers.map((session) => (
         <ReceptionOffer
@@ -286,12 +299,7 @@ export function ReceptionCard({
   );
   const pending = checkpoint.state === 'pending';
   const error = view.failure ?? lastDelivery?.failure;
-  const activeStage =
-    running && lastDelivery && ['running', 'verifying'].includes(lastDelivery.stage)
-      ? lastDelivery.stage
-      : null;
-  const status =
-    activeStage ?? (error || pending ? 'needs_review' : running ? 'waiting' : 'paused');
+  const status = receiverStatus(view);
   return (
     <article className="reception-card" data-status={status}>
       <strong>{binding.session.displayName}</strong>

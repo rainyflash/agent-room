@@ -594,12 +594,15 @@ impl BridgeSupervisorActor {
                 });
             }
             ExitDecision::Halt => {
+                let (title, body) = crate::native_language::stopped_message(
+                    crate::native_language::language(&self.app),
+                );
                 let _ = self
                     .app
                     .notification()
                     .builder()
-                    .title("Agent Room Bridge stopped")
-                    .body("Automatic restart was stopped after repeated crashes. Open Agent Room for diagnostics.")
+                    .title(title)
+                    .body(body)
                     .show();
             }
             ExitDecision::Stop => {}

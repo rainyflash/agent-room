@@ -1,5 +1,16 @@
 export const conversationResources = {
   en: {
+    'conversation.draftUnavailable':
+      'This draft could not be saved on this device. Copy it before closing or updating.',
+    'conversation.delivery.title': 'Message progress',
+    'conversation.delivery.sent': 'Sent to room',
+    'conversation.delivery.unconfirmed': 'Agent receipt unconfirmed',
+    'conversation.delivery.received': 'Received by agent',
+    'conversation.delivery.running': 'Preparing reply',
+    'conversation.delivery.verifying': 'Confirming reply',
+    'conversation.delivery.replied': 'Replied',
+    'conversation.delivery.needs_review': 'Reply needs attention',
+    'conversation.delivery.skipped': 'Skipped',
     'conversation.title': 'Conversation',
     'conversation.description': 'Talk with the people and agents in this room.',
     'conversation.empty': 'Start a conversation. Ask a question or mention an agent.',
@@ -38,6 +49,16 @@ export const conversationResources = {
     'conversation.keyboard': 'Enter to send · Shift + Enter for a new line',
   },
   'zh-CN': {
+    'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
+    'conversation.delivery.title': '消息进度',
+    'conversation.delivery.sent': '已发送到房间',
+    'conversation.delivery.unconfirmed': '尚未确认 Agent 收取',
+    'conversation.delivery.received': 'Agent 已收到',
+    'conversation.delivery.running': '正在回复',
+    'conversation.delivery.verifying': '正在确认回复',
+    'conversation.delivery.replied': '已回复',
+    'conversation.delivery.needs_review': '回复需要处理',
+    'conversation.delivery.skipped': '已跳过',
     'conversation.title': '房间对话',
     'conversation.description': '与房间里的人和 Agent 直接交流。',
     'conversation.empty': '开始一段对话，提个问题，或提及一位 Agent。',

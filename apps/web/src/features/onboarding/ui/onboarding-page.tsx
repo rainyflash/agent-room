@@ -1,3 +1,4 @@
+import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { Button, StatusMark } from '@agent-room/ui-system';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -57,6 +58,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
   const { config, lobbyEntry, onboarding } = useAppServices();
+  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
   const locale = principal.locale;
   const bootstrap = useQuery({
     networkMode: 'always',
@@ -202,7 +204,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
           >
             <div className="onboarding__actions">
               {!runtime.available ? (
-                config.windowsDownloadUrl === null ? (
+                downloadUrl === null ? (
                   <button
                     className="ar-button ar-button--default ar-button--primary"
                     disabled
@@ -214,7 +216,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
                 ) : (
                   <a
                     className="ar-button ar-button--default ar-button--primary"
-                    href={config.windowsDownloadUrl}
+                    href={downloadUrl}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -269,7 +271,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
             <AgentInviteDialog
               room={null}
               owner={principal}
-              downloadUrl={config.windowsDownloadUrl}
+              downloadUrl={downloadUrl}
               onClose={() => {
                 setInviteOpen(false);
               }}

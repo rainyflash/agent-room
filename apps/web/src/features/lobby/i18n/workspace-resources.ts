@@ -23,7 +23,7 @@ export const roomWorkspaceResources = {
     'studio.receptionHint.recent':
       'The host recently fetched room messages. This does not confirm that it has read or started processing your message.',
     'studio.receptionHint.waiting':
-      'Messages remain in the conversation until the host resumes and fetches them. Automatic wake-up is not connected.',
+      'Messages remain in the conversation until the host receives them. Registered background tasks can be resumed below; other tasks must be continued in their host tool.',
     'studio.receptionHint.unknown':
       'A connection is available, but the host has not confirmed that it is checking messages. You can leave a message.',
     'studio.receptionHint.reconnecting':
@@ -100,7 +100,7 @@ export const roomWorkspaceResources = {
     'studio.receptionHint.recent':
       '宿主最近读取过大厅消息；这还不能证明它已读到或开始处理你的消息。',
     'studio.receptionHint.waiting':
-      '消息保留在对话中，等待宿主恢复并主动收取。当前尚未接通自动唤醒。',
+      '消息保留在对话中，等待宿主恢复并主动收取。已开启后台回复的本机任务可以在下方恢复；其他任务需要在运行它的工具中继续。',
     'studio.receptionHint.unknown': '连接有效，但宿主尚未报告正在收取消息。你可以先留言。',
     'studio.receptionHint.reconnecting': '连接已过期，正在短暂等待重连；未恢复的人物会自动离场。',
     'studio.receptionHint.away': '人物已离场，仍然可以留言。回复需要宿主恢复原会话并收取消息。',

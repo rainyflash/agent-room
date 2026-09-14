@@ -13,6 +13,8 @@ import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/br
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
+import { useReceptionEvidence } from '@/features/desktop/ui/reception-evidence-context';
+import { conversationDeliveries } from '../domain/message-delivery';
 import './conversation-panel.css';
 
 const emptyParticipants: readonly ConversationParticipant[] = [];
@@ -48,6 +50,7 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
   const runtime = useRuntimeCompatibility();
+  const receivers = useReceptionEvidence();
   const reduceMotion = useReducedMotion();
   const input = useRef<HTMLTextAreaElement>(null);
   const composer = useConversationComposer(publisher, roomId, submissionIds);
@@ -109,6 +112,10 @@ export function ConversationPanel({
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.messageId, message])),
     [messages],
+  );
+  const deliveries = useMemo(
+    () => conversationDeliveries(timeline, receivers),
+    [timeline, receivers],
   );
   const canEdit = writesAllowed && runtime.writes.allowed && composer.editable;
   const canSend = canEdit && state === 'ready' && composer.valid;
@@ -183,6 +190,7 @@ export function ConversationPanel({
                   </div>
                 ) : null}
                 <ConversationMessage
+                  delivery={deliveries.get(message.messageId) ?? []}
                   message={message}
                   parent={
                     message.relation === undefined

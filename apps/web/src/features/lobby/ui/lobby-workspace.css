@@ -1095,3 +1095,20 @@
     border-bottom: 2px solid Highlight !important;
   }
 }
+.room-first-reply {
+  position: relative;
+  flex-shrink: 0;
+  padding: 12px 44px 12px 18px;
+  background: #edf6f4;
+  border-bottom: 1px solid #d6e5e2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.room-first-reply p {
+  margin: 4px 0 0;
+}
+.room-first-reply > button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}

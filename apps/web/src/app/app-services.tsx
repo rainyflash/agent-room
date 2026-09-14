@@ -70,3 +70,7 @@ export function useAppServices(): AppServices {
   }
   return services;
 }
+
+export function useOptionalAppServices(): AppServices | null {
+  return useContext(AppServicesContext);
+}

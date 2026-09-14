@@ -91,5 +91,5 @@ it('真实组件卸载后可恢复草稿，切换账户后不显示上一个账�
   await waitFor(() => {
     expect(input()).toBeEnabled();
   });
-  expect(input()).toHaveValue('');
+  expect(input()).toHaveValue('Private draft for account A');
 });

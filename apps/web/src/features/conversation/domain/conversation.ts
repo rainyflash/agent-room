@@ -49,6 +49,6 @@ export function conversationMessages(
     );
 }
 
-export function replyRelation(message: RoomMessageSignal): MessageRelation {
+export function replyRelation(message: Pick<RoomMessageSignal, 'messageId'>): MessageRelation {
   return Object.freeze({ kind: 'reply', targetMessageId: message.messageId });
 }

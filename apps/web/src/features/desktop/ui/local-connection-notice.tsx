@@ -25,8 +25,11 @@ export function LocalConnectionNotice() {
               : localConnectionNotice[phase],
           )}
         </p>
-        {authorizationFailed && lifecycle.lastFailureCode != null ? (
-          <code>{lifecycle.lastFailureCode}</code>
+        {phase === 'halted' && lifecycle?.lastFailureCode != null ? (
+          <details>
+            <summary>{t('connection.details')}</summary>
+            <code>{lifecycle.lastFailureCode}</code>
+          </details>
         ) : null}
         {phase === 'authorization_required' ? (
           authorization == null ? null : (

@@ -548,3 +548,15 @@
     height: 44px;
   }
 }
+.conversation-message__delivery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: var(--text-secondary, #526766);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.conversation-message__delivery [data-stage='needs_review'] {
+  color: #a83d32;
+}

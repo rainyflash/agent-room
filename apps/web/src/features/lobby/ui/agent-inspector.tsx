@@ -2,6 +2,7 @@ import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
+import type { ReactNode } from 'react';
 
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
@@ -17,6 +18,8 @@ const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freez
 });
 
 export type AgentInspectorProps = {
+  readonly hasBackgroundReception?: boolean;
+  readonly receptionControls?: ReactNode;
   readonly actionFailure?: string | null;
   readonly agent: LobbyAgent;
   readonly observedAtUnixMs?: number;
@@ -27,6 +30,8 @@ export type AgentInspectorProps = {
 };
 
 export function AgentInspector({
+  hasBackgroundReception = false,
+  receptionControls,
   actionFailure = null,
   agent,
   observedAtUnixMs = Date.now(),
@@ -82,14 +87,17 @@ export function AgentInspector({
             <span>{t('studio.lastConnection', { time: lastActive })}</span>
           )}
         </div>
-        <section
-          className="agent-reception"
-          aria-label={t('studio.reception')}
-          data-state={reception}
-        >
-          <strong>{t(`studio.reception.${reception}`)}</strong>
-          <p>{t(`studio.receptionHint.${reception}`)}</p>
-        </section>
+        {hasBackgroundReception ? null : (
+          <section
+            className="agent-reception"
+            aria-label={t('studio.reception')}
+            data-state={reception}
+          >
+            <strong>{t(`studio.reception.${reception}`)}</strong>
+            <p>{t(`studio.receptionHint.${reception}`)}</p>
+          </section>
+        )}
+        {receptionControls}
         <section className="agent-inspector__summary">
           <h3>{t('lobby.inspector.summary')}</h3>
           <p>{agent.summary ?? t('lobby.inspector.noSummary')}</p>

@@ -87,6 +87,12 @@ export function receptionFixture(
         case 'start':
           view.running = true;
           view.state.enabled = true;
+          view.progress = {
+            type: 'ready',
+            agentId,
+            hostTaskId: taskId,
+            roomId: view.state.binding.policy.roomId,
+          };
           break;
         case 'pause':
           view.running = false;

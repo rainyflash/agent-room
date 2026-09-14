@@ -1,3 +1,4 @@
+import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { Bot, Files, MessageCircle, UsersRound, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -6,6 +7,13 @@ import { useAppServices } from '@/app/app-services';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
+import { ReceptionPanel } from '@/features/desktop/ui/reception-panel';
+import { InviteReplyProgress } from '@/features/desktop/ui/invite-reply-progress';
+import type { ConnectedInvitation } from '@/features/desktop/domain/invite-reply';
+import {
+  ReceptionEvidenceProvider,
+  useReceptionEvidence,
+} from '@/features/desktop/ui/reception-evidence-context';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
@@ -56,33 +64,38 @@ export type LobbyPageProps = {
 };
 
 export function LobbyPage(props: LobbyPageProps) {
-  const { lobby, messages, messagePublisher } = useAppServices();
+  const { lobby, messages, messagePublisher, localRuntime } = useAppServices();
   const store = useMemo(
     () => new LobbyExperienceStore(lobby, messages, props.roomId, props.principal),
     [lobby, messages, props.roomId, props.principal?.matrixUserId, props.principal?.displayName],
   );
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   return (
-    <ConversationWorkspaceProvider
-      publisher={messagePublisher}
-      scope={props.principal?.matrixUserId ?? null}
+    <ReceptionEvidenceProvider
+      gateway={localRuntime}
+      principalId={props.principal?.principalId ?? null}
     >
-      {state.kind !== 'ready' ? (
-        <>
-          <LobbyStateBoundary onRetry={store.retry} state={state} />
-          <DesktopRuntimeSurface />
-        </>
-      ) : (
-        <RoomMessagesProvider store={store.messages}>
-          <ReadyLobby
-            {...props}
-            key={state.room.roomId}
-            room={state.room}
-            scene={state.projection}
-          />
-        </RoomMessagesProvider>
-      )}
-    </ConversationWorkspaceProvider>
+      <ConversationWorkspaceProvider
+        publisher={messagePublisher}
+        scope={props.principal?.matrixUserId ?? null}
+      >
+        {state.kind !== 'ready' ? (
+          <>
+            <LobbyStateBoundary onRetry={store.retry} state={state} />
+            <DesktopRuntimeSurface />
+          </>
+        ) : (
+          <RoomMessagesProvider store={store.messages}>
+            <ReadyLobby
+              {...props}
+              key={state.room.roomId}
+              room={state.room}
+              scene={state.projection}
+            />
+          </RoomMessagesProvider>
+        )}
+      </ConversationWorkspaceProvider>
+    </ReceptionEvidenceProvider>
   );
 }
 
@@ -105,10 +118,13 @@ function ReadyLobby({
   view,
 }: LobbyPageProps & { readonly room: LobbyRoom; readonly scene: LobbySceneProjection }) {
   const { t } = useTranslation();
-  const { config } = useAppServices();
+  const { config, localRuntime, messages: messageGateway } = useAppServices();
+  const reception = useReceptionEvidence();
+  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
   const owner =
     principal === null
       ? null
@@ -340,7 +356,12 @@ function ReadyLobby({
       </nav>
       {inviteOpen ? (
         <AgentInviteDialog
-          downloadUrl={config.windowsDownloadUrl}
+          onConnected={setInvitation}
+          onStartConversation={() => {
+            setInviteOpen(false);
+            onOpenRoomPanel('conversation');
+          }}
+          downloadUrl={downloadUrl}
           onClose={() => {
             setInviteOpen(false);
           }}
@@ -366,6 +387,27 @@ function ReadyLobby({
             <X aria-hidden="true" />
           </button>
         </header>
+        {publicConversationVisible && invitation !== null && principal !== null ? (
+          <div className="room-first-reply">
+            <strong>{invitation.displayName}</strong>
+            <InviteReplyProgress
+              gateway={messageGateway}
+              agentId={invitation.agentId}
+              roomId={invitation.roomId}
+              startedAt={invitation.startedAt}
+              principalId={principal.principalId}
+            />
+            <button
+              type="button"
+              aria-label={t('agentInvite.close')}
+              onClick={() => {
+                setInvitation(null);
+              }}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
         <div
           className="room-panel__content"
           id="workspace-current-view"
@@ -407,6 +449,16 @@ function ReadyLobby({
       <AnimatePresence>
         {selectedAgent === null ? null : (
           <AgentInspector
+            hasBackgroundReception={reception.some(
+              (view) =>
+                view.state.agentId === selectedAgent.agentId &&
+                view.state.binding.policy.roomId === room.roomId,
+            )}
+            receptionControls={
+              principal !== null && localRuntime.isAvailable() ? (
+                <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
+              ) : undefined
+            }
             actionFailure={directSessions.failure?.code ?? null}
             agent={selectedAgent}
             observedAtUnixMs={room.observedAtUnixMs}

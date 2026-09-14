@@ -45,7 +45,8 @@ export const resources = {
       'landing.flow.talk.detail':
         'Select a character to say hello, ask a question, or share an idea.',
       'landing.flow.bring.title': 'Bring your agents',
-      'landing.flow.bring.detail': 'Connect Codex, Claude Code, Cursor, or another MCP host.',
+      'landing.flow.bring.detail':
+        'Give your agent one connection command. Codex, Claude Code and other tools can join through the CLI.',
       'connection.welcome.title': 'Make yourself at home.',
       'connection.welcome.detail': 'Your agents, conversations, and shared spaces are right here.',
       'connection.details': 'Connection and identity details',
@@ -759,6 +760,10 @@ export const resources = {
         'The browser could not recover the idempotent submission state.',
       'messages.failure.publication.unexpected_failure':
         'A publication boundary failed without a trustworthy result.',
+      'pwa.update.compatible':
+        'An update is ready. You can keep working and update when convenient.',
+      'pwa.update.failed':
+        'Update did not finish. Copy any unsaved draft, check your connection and try again.',
       'pwa.update.title': 'A verified update is ready',
       'pwa.update.action': 'Reload update',
       'pwa.update.writeBlocked': 'Writes are paused until this protocol update is applied.',
@@ -811,7 +816,8 @@ export const resources = {
       'landing.flow.talk.title': '开始一段交流',
       'landing.flow.talk.detail': '点击人物，打个招呼、提出问题，或分享一个想法。',
       'landing.flow.bring.title': '带上你的 Agent',
-      'landing.flow.bring.detail': '连接 Codex、Claude Code、Cursor 或其他支持 MCP 的工具。',
+      'landing.flow.bring.detail':
+        '把接入指令交给 Agent，即可通过 CLI 加入。支持 Codex、Claude Code 等工具。',
       'connection.welcome.title': '欢迎来到你的房间。',
       'connection.welcome.detail': '你的 Agent、对话和共享空间，都在这里。',
       'connection.details': '连接与身份详情',
@@ -949,7 +955,7 @@ export const resources = {
       'desktop.connection.state.ready.detail': '设备会话、Agent 运行时与大厅通道都已报告就绪。',
       'desktop.connection.state.halted.title': '本机运行时需要处理',
       'desktop.connection.state.halted.detail':
-        '连续失败后自动重启已停止；下方诊断是 Bridge 的真实结果。',
+        '连接多次失败，已暂停重试。请查看原因，再点“重新连接”。',
       'desktop.connection.state.stopped.title': '本机运行时已停止',
       'desktop.connection.state.stopped.detail': '请重启受管 Bridge 以恢复当前设备会话。',
       'desktop.lobby.eyebrow': '桌面端 / 实时大厅',
@@ -976,7 +982,7 @@ export const resources = {
       'route.invalid.description': '必需的路径标识格式错误；客户端没有据此请求或推测任何数据。',
       'config.title': '运行配置无效',
       'config.eyebrow': '运行时 / 配置',
-      'config.description': '客户端在建立网络会话前已停止。请修正构建期 Origin 后重新加载。',
+      'config.description': '应用的连接配置有误，请更新到最新版本。详细原因可在诊断中查看。',
       'connection.eyebrow': '房间在等你',
       'connection.transport': 'Agent Room',
       'connection.session': '随时回来，继续交流',
@@ -1103,8 +1109,8 @@ export const resources = {
       'connection.status.offline': '离线',
       'connection.status.connecting': '连接中',
       'connection.status.actionRequired': '需要操作',
-      'lobby.boundary.eyebrow': '实时房间投影',
-      'lobby.loading.title': '正在解析真实房间',
+      'lobby.boundary.eyebrow': '房间状态',
+      'lobby.loading.title': '正在加载房间',
       'lobby.loading.detail':
         '正在等待当前 Matrix 设备提供已加入房间的时间线。同步完成前不会推测任何成员。',
       'lobby.failure.matrixUnavailable.title': 'Matrix 设备尚不可用',
@@ -1450,9 +1456,11 @@ export const resources = {
         '请先验证对话参与者。让 Agent 发起设备验证，在其宿主中核对双方安全码后重试；草稿已保留。',
       'messages.failure.publication.persistence_failed': '浏览器无法恢复幂等提交状态。',
       'messages.failure.publication.unexpected_failure': '发布边界失败，且没有可信结果。',
+      'pwa.update.compatible': '新版本已准备好。你可以继续使用，方便时再更新。',
+      'pwa.update.failed': '更新未完成。请先复制未保存的草稿，检查连接后重试。',
       'pwa.update.title': '已验证的新版本可用',
       'pwa.update.action': '重新加载更新',
-      'pwa.update.writeBlocked': '应用协议更新前，写入操作已暂停。',
+      'pwa.update.writeBlocked': '这个版本需要更新后才能发送消息。你的草稿会保留。',
       'pwa.writeBlocked.title': '只读安全模式',
       'pwa.writeBlocked.offline': '网络离线；本次请求不会进入不可控的盲目重放队列。',
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',

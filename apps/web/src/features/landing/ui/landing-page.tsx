@@ -1,3 +1,4 @@
+import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, Download } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
@@ -10,6 +11,7 @@ import './landing-page.css';
 export function LandingPage() {
   const { t } = useTranslation();
   const { config, controlPlane } = useAppServices();
+  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
   const reduceMotion = useReducedMotion();
   const registrationOpen = config.registrationMode === 'open-email';
   return (
@@ -60,7 +62,7 @@ export function LandingPage() {
               {t('landing.preview')}
               <ArrowRight aria-hidden="true" />
             </Link>
-            {config.windowsDownloadUrl === null ? (
+            {downloadUrl === null ? (
               <button
                 className="ar-button ar-button--large ar-button--ghost"
                 disabled
@@ -72,7 +74,7 @@ export function LandingPage() {
             ) : (
               <a
                 className="ar-button ar-button--large ar-button--ghost"
-                href={config.windowsDownloadUrl}
+                href={downloadUrl}
                 rel="noreferrer"
                 target="_blank"
               >

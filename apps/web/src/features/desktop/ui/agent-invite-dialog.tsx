@@ -38,6 +38,9 @@ import { serializeManualHostConfiguration } from '../domain/manual-host-configur
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
 import './agent-invite-dialog.css';
+import { useOptionalAppServices } from '@/app/app-services';
+import { InviteReplyProgress } from './invite-reply-progress';
+import type { ConnectedInvitation } from '../domain/invite-reply';
 
 type InviteRoom = {
   readonly roomId: string;
@@ -53,6 +56,8 @@ export type AgentInviteDialogProps = {
   readonly owner?: InviteOwner;
   readonly downloadUrl: string | null;
   readonly onClose: () => void;
+  readonly onStartConversation?: (() => void) | undefined;
+  readonly onConnected?: ((invitation: ConnectedInvitation) => void) | undefined;
 };
 
 type InviteBodyProps = {
@@ -60,6 +65,8 @@ type InviteBodyProps = {
   readonly owner: InviteOwner;
   readonly downloadUrl: string | null;
   readonly onClose: () => void;
+  readonly onStartConversation?: (() => void) | undefined;
+  readonly onConnected?: ((invitation: ConnectedInvitation) => void) | undefined;
 };
 
 const hostLabels: Readonly<Record<Exclude<AgentInviteHost, 'other'>, string>> = {
@@ -79,6 +86,8 @@ export function AgentInviteDialog({
   owner = null,
   downloadUrl,
   onClose,
+  onStartConversation,
+  onConnected,
 }: AgentInviteDialogProps) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -125,13 +134,27 @@ export function AgentInviteDialog({
           <X aria-hidden="true" />
         </button>
       </header>
-      <InviteBody downloadUrl={downloadUrl} onClose={onClose} owner={owner} room={room} />
+      <InviteBody
+        onConnected={onConnected}
+        downloadUrl={downloadUrl}
+        onClose={onClose}
+        onStartConversation={onStartConversation}
+        owner={owner}
+        room={room}
+      />
     </dialog>,
     document.body,
   );
 }
 
-function InviteBody({ room, owner: ownerProp, downloadUrl, onClose }: InviteBodyProps) {
+function InviteBody({
+  room,
+  owner: ownerProp,
+  downloadUrl,
+  onClose,
+  onStartConversation,
+  onConnected,
+}: InviteBodyProps) {
   const session = useOptionalSession();
   const principal = session?.snapshot.context.principal ?? null;
   const owner =
@@ -144,17 +167,27 @@ function InviteBody({ room, owner: ownerProp, downloadUrl, onClose }: InviteBody
         });
   return (
     <ConnectionInvite
+      onConnected={onConnected}
       key={owner?.principalId ?? 'anonymous'}
       room={room}
       owner={owner}
       downloadUrl={downloadUrl}
       onClose={onClose}
+      onStartConversation={onStartConversation}
     />
   );
 }
 
-function ConnectionInvite({ room: currentRoom, owner, downloadUrl, onClose }: InviteBodyProps) {
+function ConnectionInvite({
+  room: currentRoom,
+  owner,
+  downloadUrl,
+  onClose,
+  onStartConversation,
+  onConnected,
+}: InviteBodyProps) {
   const { t } = useTranslation();
+  const services = useOptionalAppServices();
   const controller = useDesktopRuntimeController();
   const ownerId = owner?.principalId ?? null;
   const [storage] = useState(() => {
@@ -256,6 +289,33 @@ function ConnectionInvite({ room: currentRoom, owner, downloadUrl, onClose }: In
     sessions === null || !localReady
       ? { kind: 'waiting' }
       : projectInviteStatus(sessions, identity.sessionKey, room?.roomId);
+  const invitedAgentId = sessions?.find((entry) => entry.sessionKey === identity.sessionKey)
+    ?.session.agentId;
+  const inviteRoomId = room?.roomId;
+  useEffect(() => {
+    if (
+      status.kind !== 'ready' ||
+      diagnosticsFailure !== null ||
+      invitedAgentId == null ||
+      inviteRoomId === undefined ||
+      copiedAt === null
+    )
+      return;
+    onConnected?.({
+      agentId: invitedAgentId,
+      roomId: inviteRoomId,
+      startedAt: copiedAt,
+      displayName: identity.displayName,
+    });
+  }, [
+    status.kind,
+    diagnosticsFailure,
+    invitedAgentId,
+    inviteRoomId,
+    copiedAt,
+    identity.displayName,
+    onConnected,
+  ]);
   const roomLine =
     room === null
       ? t('agentInvite.prompt.roomDefault')
@@ -509,13 +569,30 @@ function ConnectionInvite({ room: currentRoom, owner, downloadUrl, onClose }: In
             <ArrivalStatus
               preparation={canCopy ? (copiedAt === null ? 'instructions' : null) : 'setup'}
               diagnosticsFailure={diagnosticsFailure}
-              onDone={onClose}
+              onDone={onStartConversation ?? onClose}
               slow={slow && status.kind === 'waiting'}
               status={status}
             />
           ) : (
             <p role="status">{t('agentInvite.web.observe')}</p>
           )}
+          {copiedAt === null ? null : (
+            <p className="agent-invite__note">{t('agentInvite.progress.copied')}</p>
+          )}
+          {status.kind === 'ready' &&
+          services !== null &&
+          room !== null &&
+          owner !== null &&
+          invitedAgentId != null &&
+          copiedAt !== null ? (
+            <InviteReplyProgress
+              gateway={services.messages}
+              agentId={invitedAgentId}
+              roomId={room.roomId}
+              principalId={owner.principalId}
+              startedAt={copiedAt}
+            />
+          ) : null}
           <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
         </li>
       </ol>

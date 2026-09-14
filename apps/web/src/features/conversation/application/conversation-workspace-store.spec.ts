@@ -6,6 +6,10 @@ import type {
   MessagePublisher,
 } from '@/features/messages/domain/publication';
 import { ok } from '@/shared/result';
+import {
+  BrowserConversationStorage,
+  type ConversationStorage,
+} from '../domain/conversation-storage';
 
 const submissionId = '01990d9e-8400-7000-8000-000000000003';
 const releases: (() => void)[] = [];
@@ -14,7 +18,7 @@ afterEach(async () => {
   await Promise.resolve();
 });
 
-function fixture() {
+function fixture(storage?: ConversationStorage) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(published(request.submissionId)),
   );
@@ -36,10 +40,10 @@ function fixture() {
       ),
   };
   const ids = { next: vi.fn(() => submissionId) };
-  const workspace = new ConversationWorkspaceStore(publisher, ids);
+  const workspace = new ConversationWorkspaceStore(publisher, ids, storage);
   const release = workspace.retain();
   releases.push(release);
-  return { workspace, publish, reconcile, ids, release };
+  return { workspace, publish, reconcile, ids, release, publisher };
 }
 
 function published(id: string): MessagePublicationResult {
@@ -57,6 +61,49 @@ async function open(workspace: ConversationWorkspaceStore, roomId: string) {
 }
 
 describe('工作区对话生命周期', () => {
+  it('刷新中断发送后核对原提交，不再次发送，也不丢草稿', async () => {
+    const values = new Map<string, string>();
+    const storage = new BrowserConversationStorage(
+      {
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => {
+          values.set(key, value);
+        },
+        removeItem: (key) => {
+          values.delete(key);
+        },
+      },
+      '@owner:room.test',
+    );
+    const first = fixture(storage);
+    const pending = Promise.withResolvers<MessagePublicationResult>();
+    first.publish.mockReturnValueOnce(pending.promise);
+    const a = await open(first.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(a.session.editable).toBe(true);
+    });
+    a.session.changeText('Send once after restart');
+    a.session.submit();
+    expect(a.session.safeToReload).toBe(true);
+    first.release();
+    await Promise.resolve();
+    const restored = fixture(storage);
+    const verify = Promise.withResolvers<MessagePublicationResult>();
+    restored.reconcile.mockReturnValueOnce(verify.promise);
+    const b = await open(restored.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(restored.reconcile).toHaveBeenCalledExactlyOnceWith(submissionId);
+    });
+    expect(b.session.getSnapshot().text).toBe('Send once after restart');
+    expect(b.session.editable).toBe(false);
+    expect(restored.publish).not.toHaveBeenCalled();
+    expect(restored.ids.next).not.toHaveBeenCalled();
+    verify.resolve(published(submissionId));
+    await vi.waitFor(() => {
+      expect(b.session.getSnapshot().text).toBe('');
+    });
+    expect(storage.read('!a:room.test')).toEqual(ok(null));
+  });
   it('卸载面板保留私聊草稿、提及，各个房间相互隔离', async () => {
     const { workspace } = fixture();
     const a = await open(workspace, '!a:room.test');

@@ -214,6 +214,8 @@ describe('桌面运行时界面', () => {
         'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
       ),
     ).toBeVisible();
+    expect(screen.getByText('bridge.identity_assertion_invalid')).not.toBeVisible();
+    fireEvent.click(screen.getByText('Connection and identity details'));
     expect(screen.getByText('bridge.identity_assertion_invalid')).toBeVisible();
     expect(runtime.retryBridge).not.toHaveBeenCalled();
     expect(runtime.openAuthorization).not.toHaveBeenCalled();
