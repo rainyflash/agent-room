@@ -32,9 +32,8 @@ function consoleLogger(namespace: string): Logger {
   const scoped = (details: readonly unknown[]) =>
     namespace === '' ? details : [namespace, ...details];
   return {
-    trace: (...details: unknown[]) => {
-      console.trace(...scoped(details));
-    },
+    // Match the SDK's default DEBUG threshold; TRACE can contain key diagnostics.
+    trace: () => undefined,
     debug: (...details: unknown[]) => {
       console.debug(...scoped(details));
     },

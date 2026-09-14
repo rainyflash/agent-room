@@ -15,6 +15,17 @@ function sink() {
 }
 
 describe('Matrix shutdown logging', () => {
+  it('keeps verbose SDK trace output disabled by default', () => {
+    const trace = vi.spyOn(console, 'trace').mockImplementation(() => undefined);
+    try {
+      const lifecycle = new MatrixLifecycleLogger();
+      lifecycle.logger.getChild('crypto').trace('verbose diagnostic');
+      expect(trace).not.toHaveBeenCalled();
+    } finally {
+      trace.mockRestore();
+    }
+  });
+
   it('keeps an unexpected active-client abort at error level', () => {
     const output = sink();
     const lifecycle = new MatrixLifecycleLogger(output);
