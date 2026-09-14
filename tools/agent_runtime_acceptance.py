@@ -22,6 +22,49 @@ from typing import Sequence
 
 
 MCP_PATH = "/mcp"
+MCP_PROTOCOL_VERSION = "2025-03-26"
+MAX_RESPONSE_BYTES = 131_072
+
+
+def decode_rpc_response(payload: bytes, content_type: str, request_id: int) -> dict[str, object]:
+    """Decode a bounded JSON or SSE response, ignoring transport heartbeats and progress."""
+    if len(payload) > MAX_RESPONSE_BYTES:
+        raise ValueError("MCP response exceeds the acceptance limit.")
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "application/json":
+        messages = [json.loads(payload)]
+    elif media_type == "text/event-stream":
+        messages = []
+        data_lines: list[str] = []
+        for line in payload.decode("utf-8-sig").splitlines():
+            if not line:
+                if data_lines:
+                    messages.append(json.loads("\n".join(data_lines)))
+                    data_lines.clear()
+                continue
+            if line.startswith(":"):
+                continue
+            field, separator, value = line.partition(":")
+            if field == "data":
+                data_lines.append(value.removeprefix(" ") if separator else "")
+        if data_lines:
+            raise ValueError("MCP SSE response ended inside an event.")
+    else:
+        raise ValueError("MCP response has an unsupported content type.")
+    responses = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            raise ValueError("MCP response is not a JSON-RPC object.")
+        if "id" not in message and isinstance(message.get("method"), str):
+            continue
+        if type(message.get("id")) is not int or message["id"] != request_id:
+            raise ValueError("MCP response has an unexpected request ID.")
+        if ("result" in message) == ("error" in message):
+            raise ValueError("MCP response must contain a result or an error.")
+        responses.append(message)
+    if len(responses) != 1:
+        raise ValueError("MCP request must have exactly one terminal response.")
+    return responses[0]
 
 
 def checked(command: Sequence[str]) -> str:
@@ -53,8 +96,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             connection.request("POST", MCP_PATH, self.rfile.read(length), dict(self.headers))
             response = connection.getresponse()
-            body = response.read(131_073)
-            if len(body) > 131_072:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
                 self.send_error(502)
                 return
             self.send_response(response.status)
@@ -69,7 +112,8 @@ class Handler(BaseHTTPRequestHandler):
 def probe(port: int, context: ssl.SSLContext, token: str | None,
           method: str, params: dict[str, object], origin: str | None = None) -> tuple[int, object]:
     connection = HTTPSConnection("127.0.0.1", port, context=context, timeout=10)
-    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+               "MCP-Protocol-Version": MCP_PROTOCOL_VERSION}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
     if origin is not None:
@@ -77,10 +121,10 @@ def probe(port: int, context: ssl.SSLContext, token: str | None,
     try:
         connection.request("POST", MCP_PATH, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}), headers)
         response = connection.getresponse()
-        payload = response.read(131_072)
+        payload = response.read(MAX_RESPONSE_BYTES + 1)
         if response.status != 200:
             return response.status, None
-        return response.status, json.loads(payload)
+        return response.status, decode_rpc_response(payload, response.getheader("Content-Type", ""), 1)
     finally:
         connection.close()
 
@@ -129,7 +173,7 @@ def accept(image: str, report: Path) -> None:
                     raise RuntimeError("MCP did not become ready behind TLS.")
                 time.sleep(0.25)
             status, response = probe(port, client_tls, token, "initialize", {
-                "protocolVersion": "2025-03-26", "capabilities": {},
+                "protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {},
                 "clientInfo": {"name": "image-acceptance", "version": "1"}})
             if status != 200 or not isinstance(response, dict) or "result" not in response:
                 raise RuntimeError("MCP initialization failed.")

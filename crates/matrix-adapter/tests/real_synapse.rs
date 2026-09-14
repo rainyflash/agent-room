@@ -42,14 +42,16 @@ mod recovery;
 #[tokio::test]
 async fn 网络断线和超时被映射为不同的可恢复错误() {
     let closing = ClosingServer::start().await;
-    let disconnected = factory(closing.url(), Duration::from_millis(200), 3);
+    // 断线分类使用宽松请求期限，避免 CI 调度延迟先触发超时。
+    // 后面的无响应端点单独验证短请求期限。
+    let disconnected = factory(closing.url(), TEST_REQUEST_TIMEOUT, 3);
     let failure = timeout(
-        Duration::from_secs(2),
+        TEST_REQUEST_TIMEOUT + Duration::from_secs(5),
         disconnected.login(&login("nobody", "not-a-secret")),
     )
     .await
     .expect("断线探测必须在外层预算内结束")
-    .expect_err("未监听端口必须拒绝连接");
+    .expect_err("受控端点必须关闭连接");
     assert_eq!(failure.kind(), MatrixFailureKind::DependencyUnavailable);
 
     let hanging = HangingServer::start().await;
@@ -1349,7 +1351,9 @@ impl ClosingServer {
             .expect("必须能启动受控断线端点");
         let address = listener.local_addr().expect("回环地址有效");
         let task = tokio::spawn(async move {
-            if let Ok((socket, _)) = listener.accept().await {
+            // SDK 可先发现服务器版本，再尝试登录；每次连接都必须立即关闭。
+            loop {
+                let (socket, _) = listener.accept().await.expect("断线端点必须接受连接");
                 drop(socket);
             }
         });
