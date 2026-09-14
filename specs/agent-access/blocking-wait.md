@@ -36,4 +36,4 @@ Codex 的[官方配置说明](https://learn.chatgpt.com/docs/config-file/config-
 - HTTP：旧版与新版协议超过原有期限仍保持等待，保活不返回模型结果；无 progressToken 也能等待后返回消息；并发、取消、服务器关闭、慢请求体及 OAuth 均有回归。
 - 邀请界面测试与插件契约检查覆盖新的默认用法。本机 Codex CLI 已在隔离配置目录读回 86400 秒设置。
 
-此变更未修改发布版本号。安装版和线上网页须随下一次成套发布升级后生效。
+已随 [Alpha 30](./alpha30-release.md) 成套发布；安装版、服务器和线上网页均已升级。
