@@ -42,6 +42,8 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
   const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const authorization = controller.snapshot?.bridge.authorization ?? null;
+  const authorizationFailed =
+    controller.snapshot?.bridge.lifecycle.diagnosticCode === 'desktop.authorization.failed';
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
   const open = expanded;
@@ -134,8 +136,20 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               <section className="desktop-runtime__failure">
                 <AlertTriangle aria-hidden="true" />
                 <div>
-                  <h2>{t('desktop.halted.title')}</h2>
-                  <p>{t('desktop.halted.description')}</p>
+                  <h2>
+                    {t(
+                      authorizationFailed
+                        ? 'desktop.authorization.failedTitle'
+                        : 'desktop.halted.title',
+                    )}
+                  </h2>
+                  <p>
+                    {t(
+                      authorizationFailed
+                        ? 'desktop.authorization.failedDescription'
+                        : 'desktop.halted.description',
+                    )}
+                  </p>
                   <code>{controller.snapshot?.bridge.lifecycle.diagnosticCode}</code>
                   {controller.snapshot?.bridge.lifecycle.lastFailureCode === null ||
                   controller.snapshot?.bridge.lifecycle.lastFailureCode ===

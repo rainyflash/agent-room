@@ -405,6 +405,9 @@ impl BridgeSupervisorActor {
             }
             ResumeDecision::StartManaged => self.start_managed(),
             ResumeDecision::KeepProbing => {
+                if self.policy.snapshot().phase == BridgePhase::Halted {
+                    return;
+                }
                 self.policy.set_diagnostic(
                     now_unix_ms(),
                     "desktop.bridge.resume_probe_pending".to_owned(),

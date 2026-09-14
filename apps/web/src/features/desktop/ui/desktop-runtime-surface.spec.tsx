@@ -13,6 +13,7 @@ import type {
 } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
+import { LocalConnectionNotice } from '@/features/desktop/ui/local-connection-notice';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -187,6 +188,46 @@ describe('桌面运行时界面', () => {
     const trigger = await screen.findByRole('button', { name: /Local agents/u });
     expect(trigger.closest('aside')).toHaveAttribute('data-placement', 'action-rail-safe');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('设备注册失败保留原因和显式重试，不再提示用户批准旧授权', async () => {
+    const runtime = gateway({
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        diagnosticCode: 'desktop.authorization.failed',
+        lastFailureCode: 'bridge.identity_assertion_invalid',
+        phase: 'halted',
+      },
+    });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <LocalConnectionNotice />
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+    expect(
+      await screen.findByText(
+        'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
+      ),
+    ).toBeVisible();
+    expect(screen.getByText('bridge.identity_assertion_invalid')).toBeVisible();
+    expect(runtime.retryBridge).not.toHaveBeenCalled();
+    expect(runtime.openAuthorization).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'This computer is not connected yet' }),
+      ).toBeVisible();
+    });
+    expect(screen.queryByRole('button', { name: 'Open secure sign-in' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect local agents' }));
+    await waitFor(() => {
+      expect(runtime.retryBridge).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('只有签名更新已配置时才允许显式检查并安装同一序号', async () => {

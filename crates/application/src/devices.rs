@@ -18,7 +18,7 @@ use crate::{
         DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
         IdentifierFactory, MatrixAgentDeviceSessionRevoker, PendingAgentMatrixDeviceRevocation,
         PortFuture, PrincipalAccount, ProfileImportConsent, SecretDigest, SecretFactory,
-        SecretValue, StoredDeviceSession, VerifiedOidcIdentity,
+        SecretValue, StoredDeviceSession, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
     },
 };
 
@@ -82,24 +82,28 @@ pub enum DeviceAuthorizationConfigurationError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedDeviceAuthorization {
-    identity: VerifiedOidcIdentity,
+    assertion: VerifiedOidcDeviceAssertion,
     authorization_token_digest: SecretDigest,
 }
 
 impl VerifiedDeviceAuthorization {
     /// 仅供已经完成 OIDC 签名、issuer、audience 和期限校验的边界适配器调用。
     pub const fn new(
-        identity: VerifiedOidcIdentity,
+        assertion: VerifiedOidcDeviceAssertion,
         authorization_token_digest: SecretDigest,
     ) -> Self {
         Self {
-            identity,
+            assertion,
             authorization_token_digest,
         }
     }
 
     pub const fn identity(&self) -> &VerifiedOidcIdentity {
-        &self.identity
+        self.assertion.identity()
+    }
+
+    pub const fn issued_at(&self) -> UtcMillis {
+        self.assertion.issued_at()
     }
 
     pub const fn authorization_token_digest(&self) -> &SecretDigest {
@@ -409,7 +413,7 @@ impl DeviceAuthorizationService {
     ) -> DeviceAuthorizationResult<DeviceCredentials> {
         validate_device_label(&request.label)?;
         let now = self.clock.now();
-        validate_device_authorization_time(request.authorization.identity(), now, &self.policy)?;
+        validate_device_authorization_time(request.authorization.issued_at(), now, &self.policy)?;
         let registration_message = canonical_device_registration_message(
             request.authorization.authorization_token_digest(),
             &request.label,
@@ -794,24 +798,20 @@ fn validate_device_label(label: &str) -> DeviceAuthorizationResult<()> {
 }
 
 fn validate_device_authorization_time(
-    identity: &VerifiedOidcIdentity,
+    issued_at: UtcMillis,
     now: UtcMillis,
     policy: &DeviceAuthorizationPolicy,
 ) -> DeviceAuthorizationResult<()> {
-    let authenticated_at = identity.authenticated_at().ok_or_else(|| {
-        failure(
-            "device.register",
-            DeviceAuthorizationFailureKind::InvalidAuthorization,
-        )
-    })?;
+    // auth_time 可以来自早已登录的浏览器，也可以省略；设备授权的新鲜度取决于
+    // 本次 ID Token 的 iat。签名、有效期、设备受众和一次性消费仍由各边界校验。
     let latest_allowed = now
         .checked_add(policy.allowed_clock_skew)
         .map_err(|_| internal_failure("device.register"))?;
-    let oldest_allowed = authenticated_at
+    let oldest_allowed = issued_at
         .checked_add(policy.device_authorization_maximum_age)
         .and_then(|value| value.checked_add(policy.allowed_clock_skew))
         .map_err(|_| internal_failure("device.register"))?;
-    if authenticated_at > latest_allowed || now > oldest_allowed {
+    if issued_at > latest_allowed || now > oldest_allowed {
         return Err(failure(
             "device.register",
             DeviceAuthorizationFailureKind::InvalidAuthorization,

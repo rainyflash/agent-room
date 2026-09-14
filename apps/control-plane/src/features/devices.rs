@@ -177,7 +177,7 @@ async fn registration_request(
     body: RegisterDeviceBody,
     correlation_id: CorrelationId,
 ) -> Result<RegisterDevice, ApiError> {
-    let identity = state
+    let verified_assertion = state
         .assertion_verifier
         .verify_assertion(&assertion)
         .await
@@ -197,8 +197,10 @@ async fn registration_request(
     })?;
     let platform = DevicePlatform::try_from(body.platform.as_str())
         .map_err(|_| ApiError::invalid_request("device.invalid_platform", correlation_id))?;
-    let authorization =
-        VerifiedDeviceAuthorization::new(identity, state.secrets.digest(assertion.expose()));
+    let authorization = VerifiedDeviceAuthorization::new(
+        verified_assertion,
+        state.secrets.digest(assertion.expose()),
+    );
 
     Ok(RegisterDevice {
         authorization,
@@ -514,7 +516,7 @@ mod tests {
         },
         ports::{
             OidcDeviceAssertionVerifier, OidcResult, PortFuture, PrincipalAccount, SecretFactory,
-            SecretValue, VerifiedOidcIdentity,
+            SecretValue, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
         },
     };
     use agent_room_domain::{
@@ -663,17 +665,21 @@ mod tests {
         fn verify_assertion<'a>(
             &'a self,
             assertion: &'a SecretValue,
-        ) -> PortFuture<'a, OidcResult<VerifiedOidcIdentity>> {
+        ) -> PortFuture<'a, OidcResult<VerifiedOidcDeviceAssertion>> {
             assert_eq!(assertion.expose(), "oidc-assertion");
             Box::pin(async {
-                Ok(VerifiedOidcIdentity::new(
+                let identity = VerifiedOidcIdentity::new(
                     "https://identity.example",
                     "stable-subject",
                     Some("Agent Room User".to_owned()),
                     Some("zh-CN".to_owned()),
-                    Some(time(1_700_000_000_000)),
+                    Some(time(1_699_913_600_000)),
                 )
-                .expect("测试 OIDC 身份有效"))
+                .expect("测试 OIDC 身份有效");
+                Ok(VerifiedOidcDeviceAssertion::new(
+                    identity,
+                    time(1_700_000_000_000),
+                ))
             })
         }
     }
@@ -811,6 +817,14 @@ mod tests {
         assert_eq!(
             registration.authorization.identity().subject(),
             "stable-subject"
+        );
+        assert_eq!(
+            registration.authorization.issued_at(),
+            time(1_700_000_000_000)
+        );
+        assert_eq!(
+            registration.authorization.identity().authenticated_at(),
+            Some(time(1_699_913_600_000)),
         );
     }
 

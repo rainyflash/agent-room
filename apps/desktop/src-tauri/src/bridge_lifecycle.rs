@@ -225,6 +225,14 @@ impl BridgeRestartPolicy {
             return ExitDecision::Stop;
         }
 
+        if self.snapshot.phase == BridgePhase::AuthorizationRequired {
+            // 重启会申请全新的设备码，无法继续用户刚批准的那次授权。
+            // 保留具体失败原因，等待显式重试，避免把注册失败变成重复授权。
+            self.snapshot.phase = BridgePhase::Halted;
+            self.snapshot.diagnostic_code = Some("desktop.authorization.failed".to_owned());
+            return ExitDecision::Halt;
+        }
+
         let restart_window_ms = i64::try_from(RESTART_WINDOW.as_millis()).unwrap_or(i64::MAX);
         while self
             .crashes
@@ -376,6 +384,49 @@ mod tests {
 
         assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
         assert_eq!(policy.snapshot().automatic_restart_count, 0);
+    }
+
+    #[test]
+    fn 授权期间失败不会自动申请新设备码并保留错误() {
+        for code in [
+            "bridge.identity_assertion_invalid",
+            "bridge.authorization_denied",
+            "bridge.secure_storage_unavailable",
+            "bridge.registration_outcome_unknown",
+        ] {
+            let mut policy = BridgeRestartPolicy::new(0);
+            policy.authorization_required(1);
+            policy.set_diagnostic(2, code);
+
+            assert_eq!(policy.child_exited(3, Some(1), false), ExitDecision::Halt);
+            assert_eq!(policy.snapshot().phase, BridgePhase::Halted);
+            assert_eq!(policy.snapshot().last_failure_code.as_deref(), Some(code));
+            assert_eq!(
+                policy.snapshot().diagnostic_code.as_deref(),
+                Some("desktop.authorization.failed")
+            );
+            assert_eq!(policy.snapshot().next_retry_at_unix_ms, None);
+            assert_eq!(policy.snapshot().automatic_restart_count, 0);
+            assert_eq!(
+                decide_resume(ResumeProbeState::Absent, false, BridgePhase::Halted),
+                ResumeDecision::KeepProbing
+            );
+
+            policy.explicit_retry(4);
+            assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
+        }
+    }
+
+    #[test]
+    fn 授权期间无诊断退出也不会自动创建新授权() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.authorization_required(1);
+        assert_eq!(policy.child_exited(2, None, false), ExitDecision::Halt);
+        assert_eq!(policy.snapshot().last_failure_code, None);
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.authorization.failed")
+        );
     }
 
     #[test]

@@ -39,6 +39,9 @@ const TEST_KEY_ID: &str = "agent-room-device-grant-test-key";
 enum 断言变体 {
     有效,
     错误受众,
+    复用旧登录,
+    省略登录时间,
+    已过期,
 }
 
 #[derive(Clone)]
@@ -186,18 +189,28 @@ fn 表单(body: &[u8]) -> HashMap<String, String> {
 fn 创建令牌响应(state: &提供者状态) -> CoreTokenResponse {
     let now = Utc::now();
     let audience = match state.assertion_variant {
-        断言变体::有效 => CLIENT_ID,
         断言变体::错误受众 => "another-device-client",
+        _ => CLIENT_ID,
+    };
+    let authenticated_at = match state.assertion_variant {
+        断言变体::复用旧登录 => Some(now - TimeDelta::days(1)),
+        断言变体::省略登录时间 => None,
+        _ => Some(now),
+    };
+    let expires_at = if matches!(state.assertion_variant, 断言变体::已过期) {
+        now - TimeDelta::minutes(1)
+    } else {
+        now + TimeDelta::minutes(5)
     };
     let claims = CoreIdTokenClaims::new(
         IssuerUrl::new(state.issuer.clone()).expect("测试 issuer 有效"),
         vec![Audience::new(audience.to_owned())],
-        now + TimeDelta::minutes(5),
+        expires_at,
         now,
         StandardClaims::new(SubjectIdentifier::new("device-subject-42".to_owned())),
         EmptyAdditionalClaims {},
     )
-    .set_auth_time(Some(now))
+    .set_auth_time(authenticated_at)
     .set_preferred_username(Some(EndUserUsername::new("设备测试用户".to_owned())))
     .set_locale(Some(LanguageTag::new("zh-CN".to_owned())));
     let id_token = CoreIdToken::new(
@@ -245,10 +258,11 @@ async fn 设备授权遵守轮询间隔并返回可验证的一次性身份断�
         .expect("提示锁未中毒")
         .clone()
         .expect("授权提示必须展示");
-    let identity = gateway
+    let verified = gateway
         .verify_assertion(&assertion)
         .await
         .expect("公开客户端 ID Token 应通过签名与声明校验");
+    let identity = verified.identity();
 
     assert_eq!(prompt.user_code.expose(), USER_CODE);
     assert_eq!(
@@ -259,6 +273,55 @@ async fn 设备授权遵守轮询间隔并返回可验证的一次性身份断�
     assert_eq!(identity.display_name(), Some("设备测试用户"));
     assert_eq!(identity.locale(), Some("zh-CN"));
     assert!(identity.authenticated_at().is_some());
+    assert!(verified.issued_at().value() <= Utc::now().timestamp_millis());
+}
+
+#[tokio::test]
+async fn 设备断言保留新签发时间并区分旧登录或可选登录时间() {
+    for variant in [断言变体::复用旧登录, 断言变体::省略登录时间] {
+        let provider = 假设备授权提供者::启动(variant).await;
+        let gateway = provider.网关();
+        let before = Utc::now().timestamp_millis() - 1_000;
+        let assertion = gateway
+            .authorize(&记录提示::default())
+            .await
+            .expect("授权成功");
+        let verified = gateway
+            .verify_assertion(&assertion)
+            .await
+            .expect("断言可验证");
+
+        assert!(verified.issued_at().value() >= before);
+        match variant {
+            断言变体::复用旧登录 => assert!(
+                verified
+                    .identity()
+                    .authenticated_at()
+                    .expect("保留实际登录时间")
+                    .value()
+                    < verified.issued_at().value() - 23 * 60 * 60 * 1_000
+            ),
+            断言变体::省略登录时间 => {
+                assert_eq!(verified.identity().authenticated_at(), None);
+            }
+            _ => unreachable!("只验证已有会话和省略登录时间"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn 过期设备断言仍被拒绝() {
+    let provider = 假设备授权提供者::启动(断言变体::已过期).await;
+    let gateway = provider.网关();
+    let assertion = gateway
+        .authorize(&记录提示::default())
+        .await
+        .expect("提供者签发测试断言");
+    let failure = gateway
+        .verify_assertion(&assertion)
+        .await
+        .expect_err("过期断言必须失败");
+    assert_eq!(failure.kind(), OidcFailureKind::InvalidIdentityToken);
 }
 
 #[tokio::test]
