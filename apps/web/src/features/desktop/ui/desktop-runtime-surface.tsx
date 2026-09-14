@@ -184,9 +184,11 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                 <div>
                   <p>
                     {t(
-                      /^(host|codex|claude|cursor)\./u.test(controller.failure.code)
-                        ? hostFailureMessage(controller.failure.code)
-                        : 'desktop.failure.description',
+                      controller.failure.code === 'desktop.update.draft_unsaved'
+                        ? 'conversation.draftUnavailable'
+                        : /^(host|codex|claude|cursor)\./u.test(controller.failure.code)
+                          ? hostFailureMessage(controller.failure.code)
+                          : 'desktop.failure.description',
                       { host: controller.configuredHost ?? 'Agent' },
                     )}
                   </p>

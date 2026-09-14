@@ -26,6 +26,7 @@ export type MessagePublicationEvent =
   | { readonly roomId: string; readonly type: 'OPEN' }
   | { readonly type: 'CLOSE' }
   | { readonly request: MessagePublicationRequest; readonly type: 'SUBMIT' }
+  | { readonly request: MessagePublicationRequest; readonly type: 'RESTORE' }
   | { readonly type: 'RETRY' }
   | { readonly type: 'RETRY_IDENTITY' }
   | { readonly type: 'RECONCILE' }
@@ -101,7 +102,7 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
       canRetryPublication: ({ context }) => context.recovery === 'publish',
       canRetryReconciliation: ({ context }) => context.recovery === 'reconcile',
       requestIsValid: ({ context, event }) =>
-        event.type === 'SUBMIT' &&
+        (event.type === 'SUBMIT' || event.type === 'RESTORE') &&
         event.request.roomId === context.roomId &&
         validatePublicationRequest(event.request).length === 0,
       resolvedAsBindingPending: ({ event }) =>
@@ -215,6 +216,14 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
       },
       ready: {
         on: {
+          RESTORE: {
+            guard: 'requestIsValid',
+            actions: assign({
+              request: ({ event }) => event.request,
+              recovery: 'reconcile' as const,
+            }),
+            target: 'reconciling',
+          },
           CLOSE: { actions: 'clearSession', target: 'closed' },
           SUBMIT: [
             {

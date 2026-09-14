@@ -1,5 +1,10 @@
 export const receptionResources = {
   en: {
+    'reception.agentDescription': 'Background replies for this agent in this room.',
+    'reception.agentUnavailable':
+      'This agent has no background task registered here. Register its Codex or Claude Code task using the request above. For an agent on another computer, manage it there.',
+    'reception.starting': 'Starting reception…',
+    'reception.reconnecting': 'Reconnecting; replies are paused',
     'reception.enable': 'Enable background replies',
     'reception.enableDescription':
       'Reply only when you mention this agent in this room. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
@@ -49,6 +54,11 @@ export const receptionResources = {
     'reception.login': 'Sign in to choose your reply authorization.',
   },
   'zh-CN': {
+    'reception.agentDescription': '管理这个 Agent 在本房间的后台回复。',
+    'reception.agentUnavailable':
+      '这个 Agent 尚未在本机登记后台任务。可将上面的登记请求交给它的 Codex 或 Claude Code 任务；在其他电脑运行的 Agent，需要到那台电脑上管理。',
+    'reception.starting': '正在启动接待…',
+    'reception.reconnecting': '正在恢复连接，回复暂时中断',
     'reception.enable': '开启后台回复',
     'reception.enableDescription':
       '只响应你在本房间对它的提及。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',

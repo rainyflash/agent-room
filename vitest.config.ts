@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import { writeContract } from './apps/web/build/runtime-manifest.js';
 
 export default defineConfig({
+  define: { __AGENT_ROOM_WRITE_CONTRACT__: JSON.stringify(writeContract) },
   resolve: {
     alias: {
       '@': new URL('./apps/web/src', import.meta.url).pathname,

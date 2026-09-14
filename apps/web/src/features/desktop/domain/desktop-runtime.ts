@@ -340,6 +340,7 @@ export type DesktopRuntimeEventHandlers = {
 };
 
 export type DesktopRuntimeGateway = {
+  setLanguage?(language: 'en' | 'zh-CN'): Promise<Result<void, DesktopRuntimeFailure>>;
   listReceivers?(): Promise<Result<readonly ReceiverView[], DesktopRuntimeFailure>>;
   configureReceiver?(request: ConfigureReceiver): Promise<Result<void, DesktopRuntimeFailure>>;
   receiverAction?(

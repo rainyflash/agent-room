@@ -4,7 +4,6 @@ import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import type { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
-import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 
 export type ConversationComposerController = ReturnType<typeof useConversationComposer>;
 
@@ -26,9 +25,8 @@ export function ConversationComposer({
   readonly input: RefObject<HTMLTextAreaElement | null>;
 }) {
   const { t } = useTranslation();
-  const runtime = useRuntimeCompatibility();
   const { publication } = composer;
-  const canEdit = composer.editable && runtime.writes.allowed && writesAllowed;
+  const canEdit = composer.editable && writesAllowed;
   const pending = publication.matches('unknown') || publication.matches('acceptedBindingPending');
   const submitting = publication.matches('publishing') || publication.matches('reconciling');
   const failed = publication.matches('failed');
@@ -41,6 +39,9 @@ export function ConversationComposer({
         if (canSend) composer.submit();
       }}
     >
+      {composer.draftPersistence === 'unavailable' ? (
+        <p role="alert">{t('conversation.draftUnavailable')}</p>
+      ) : null}
       {composer.reply === null ? null : (
         <div className="conversation-panel__reply">
           <Reply aria-hidden="true" />

@@ -3,6 +3,7 @@ export type RuntimeWriteBlockReason = 'offline' | 'update_required';
 export type RuntimeCompatibilityInput = {
   readonly online: boolean;
   readonly updateWaiting: boolean;
+  readonly contractCompatible?: boolean;
 };
 
 export type RuntimeWriteAvailability =
@@ -17,7 +18,8 @@ type CompatibilityRule = {
 const writeBlockRules: readonly CompatibilityRule[] = Object.freeze([
   {
     reason: 'update_required',
-    violated: ({ updateWaiting }) => updateWaiting,
+    violated: ({ updateWaiting, contractCompatible }) =>
+      updateWaiting && contractCompatible !== true,
   },
   {
     reason: 'offline',
@@ -25,7 +27,7 @@ const writeBlockRules: readonly CompatibilityRule[] = Object.freeze([
   },
 ]);
 
-/** 写入必须由当前页面与当前 Service Worker 共同解释；发现待激活版本后，旧页面只读。 */
+/** Unknown and changed contracts remain read-only; compatible UI updates do not interrupt work. */
 export function runtimeWriteAvailability(
   input: RuntimeCompatibilityInput,
 ): RuntimeWriteAvailability {

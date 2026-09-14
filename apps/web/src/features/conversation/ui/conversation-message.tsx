@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import { initials } from '@/shared/ui/display-name';
+import type { AgentDelivery } from '../domain/message-delivery';
 
 export function ConversationMessage({
   message,
@@ -12,6 +13,7 @@ export function ConversationMessage({
   own,
   onReply,
   time,
+  delivery = [],
 }: {
   readonly message: RoomMessageSignal;
   readonly parent: RoomMessageSignal | undefined;
@@ -20,6 +22,7 @@ export function ConversationMessage({
   readonly own: boolean;
   readonly onReply: (message: RoomMessageSignal) => void;
   readonly time: Intl.DateTimeFormat;
+  readonly delivery?: readonly AgentDelivery[];
 }) {
   const { t } = useTranslation();
   const chat = message.preview?.conversation;
@@ -64,6 +67,23 @@ export function ConversationMessage({
           ) : null}
           <p>{chat?.text}</p>
         </div>
+        {own ? (
+          <div
+            className="conversation-message__delivery"
+            aria-label={t('conversation.delivery.title')}
+          >
+            <span>{t('conversation.delivery.sent')}</span>
+            {delivery.length === 0 ? (
+              <span>{t('conversation.delivery.unconfirmed')}</span>
+            ) : (
+              delivery.map((item) => (
+                <span key={item.agentId} data-stage={item.stage}>
+                  {item.name} · {t(`conversation.delivery.${item.stage}`)}
+                </span>
+              ))
+            )}
+          </div>
+        ) : null}
       </div>
       <button
         className="conversation-message__reply"

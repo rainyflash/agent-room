@@ -14,6 +14,8 @@ mod installer_acceptance;
 mod loopback_callback;
 mod matrix_credentials;
 mod matrix_session;
+mod native_language;
+use native_language::desktop_set_language;
 mod receiver_runtime;
 mod release_update_config;
 mod release_update_state;
@@ -46,11 +48,7 @@ use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
 mod host_check;
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
-use tauri::{
-    Manager as _, RunEvent,
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-};
+use tauri::{Manager as _, RunEvent, tray::TrayIconBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_deep_link::DeepLinkExt as _;
 
@@ -109,6 +107,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             Some(vec!["--autostart"]),
         ))
         .manage(DeepLinkInbox::default())
+        .manage(native_language::NativeLanguageState::default())
         .invoke_handler(tauri::generate_handler![
             desktop_begin_human_authentication,
             desktop_begin_matrix_authentication,
@@ -120,6 +119,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_runtime_snapshot,
             desktop_retry_bridge,
             desktop_set_autostart,
+            desktop_set_language,
             desktop_open_authorization,
             desktop_check_update,
             desktop_install_update,
@@ -257,10 +257,7 @@ fn installed_mcp_executable() -> Result<PathBuf, String> {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Agent Room", true, None::<&str>)?;
-    let retry = MenuItem::with_id(app, "retry", "Retry Bridge", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &retry, &quit])?;
+    let menu = native_language::tray_menu(app.handle(), native_language::language(app.handle()))?;
     let mut tray = TrayIconBuilder::with_id("agent-room")
         .menu(&menu)
         .show_menu_on_left_click(true)

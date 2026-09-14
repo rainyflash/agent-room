@@ -48,6 +48,7 @@ const desktopCommands = {
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   autostart: 'desktop_set_autostart',
+  language: 'desktop_set_language',
   beginHumanAuthentication: 'desktop_begin_human_authentication',
   beginMatrixAuthentication: 'desktop_begin_matrix_authentication',
   bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
@@ -208,6 +209,14 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.autostart, { enabled }, z.boolean());
+  }
+
+  async setLanguage(language: 'en' | 'zh-CN'): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.language,
+      { language },
+      z.null().transform(() => undefined),
+    );
   }
 
   async openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>> {

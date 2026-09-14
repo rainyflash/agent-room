@@ -66,6 +66,8 @@ Web OCI 镜像必须把 `VITE_AGENT_ROOM_CONTROL_PLANE_URL` 编译为 `https://a
 
 ## 4. 数据库与服务端晋级
 
+网页构建同时生成 `runtime-manifest.json`，提供当前下载入口和写入兼容标识；该文件不进入离线预缓存。兼容标识包含事件 Schema 摘要与 `apps/web/build/runtime-manifest.ts` 中的 `writeEpoch`。不体现在事件 Schema 中的 HTTP/API 或客户端不兼容变更，必须递增 `writeEpoch`。同标识的界面更新不暂停发送；标识变化或读取失败时保留更新门禁。发布验收检查该文件与当前静态包一致，并验证刷新恢复草稿、未确认发送复用原提交编号。
+
 先用标准命令生成部署证据，禁止临时手写易漂移的 JSON。每个 `--check` 都必须来自刚执行完的真实探针、备份验证或恢复演练：
 
 ```bash

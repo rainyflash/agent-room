@@ -1,5 +1,7 @@
+import { prepareForUpdate } from '@/features/updates/application/update-readiness';
 import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import { err, ok, type Result } from '@/shared/result';
@@ -65,8 +67,24 @@ export function useDesktopRuntime(
 ): DesktopRuntimeController {
   const navigate = useNavigate();
   const available = gateway.isAvailable();
+  const { i18n } = useTranslation();
   const [snapshot, setSnapshot] = useState<DesktopRuntimeSnapshot | null>(null);
   const [failure, setFailure] = useState<DesktopRuntimeFailure | null>(null);
+  useEffect(() => {
+    if (!available || !gateway.setLanguage) return;
+    let active = true;
+    void gateway
+      .setLanguage(i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en')
+      .then((result) => {
+        if (active && !result.ok) setFailure(result.error);
+      })
+      .catch(() => {
+        if (active) setFailure({ code: 'desktop.language.failed', retryable: true });
+      });
+    return () => {
+      active = false;
+    };
+  }, [available, gateway, i18n.resolvedLanguage]);
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
   const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
@@ -273,6 +291,10 @@ export function useDesktopRuntime(
 
   const installUpdate = useCallback(async (): Promise<void> => {
     if (!update?.available) {
+      return;
+    }
+    if (!prepareForUpdate()) {
+      setFailure({ code: 'desktop.update.draft_unsaved', retryable: true });
       return;
     }
     setBusy('update-install');
