@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { failure } from '@/features/session/adapters/control-plane-client';
 import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
 import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
+import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
 import {
   storedMatrixSessionSchema,
   type MatrixSessionVault,
@@ -78,6 +79,7 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
   readonly #sessionStorage: Storage;
   readonly #sessions: MatrixSessionRepository;
+  readonly #clientLogs = new WeakMap<MatrixClient, MatrixLifecycleLogger>();
   #restoreAttempt = 0;
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
@@ -253,12 +255,14 @@ export class MatrixWebGateway implements MatrixGateway {
         if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
       }
       const refreshClient = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
+      const lifecycleLog = new MatrixLifecycleLogger();
       const client = sdk.createClient({
         accessToken: session.accessToken,
         baseUrl: this.#baseUrl,
         cryptoCallbacks: this.#secretStorageKeys.callbacks,
         deviceId: session.deviceId,
         localTimeoutMs: 20_000,
+        logger: lifecycleLog.logger,
         ...(session.refreshToken === undefined ? {} : { refreshToken: session.refreshToken }),
         store,
         timelineSupport: true,
@@ -297,6 +301,7 @@ export class MatrixWebGateway implements MatrixGateway {
         verificationMethods: [MATRIX_SAS_VERIFICATION_METHOD],
       });
       candidate = client;
+      this.#clientLogs.set(client, lifecycleLog);
       await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());
       if (attempt !== this.#restoreAttempt) {
@@ -307,7 +312,7 @@ export class MatrixWebGateway implements MatrixGateway {
         whoAmI.data.user_id !== expectedUserId ||
         (whoAmI.data.device_id !== undefined && whoAmI.data.device_id !== session.deviceId)
       ) {
-        await discardMatrixClient(client);
+        await discardMatrixClient(client, lifecycleLog);
         const cleared = await this.#sessions.clear();
         if (!cleared.ok) return cleared;
         return err(failure('identity', 'matrix.identity_mismatch', false, false));
@@ -354,7 +359,7 @@ export class MatrixWebGateway implements MatrixGateway {
       return err(failure('matrix', 'matrix.restore_failed', !this.#online(), true));
     } finally {
       if (!connected && candidate !== undefined) {
-        stopMatrixClient(candidate);
+        stopMatrixClient(candidate, this.#clientLogs.get(candidate));
         this.#retainClientForLogout(candidate, sdk.ClientEvent.Sync, sdk.SyncState, lease);
       }
       if (lease !== this.#cryptoLease) lease?.release();
@@ -430,6 +435,7 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#syncTimeoutMs,
       this.#onClientActivity,
       () => this.#sessions.failure,
+      this.#clientLogs.get(client),
     );
   }
 
@@ -605,6 +611,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     syncTimeoutMs: number,
     onClientActivity: (client: MatrixClient) => void,
     persistenceFailure: () => SessionFailure | null,
+    private readonly lifecycleLog: MatrixLifecycleLogger | undefined,
   ) {
     this.#client = client;
     this.#syncEvent = syncEvent;
@@ -620,7 +627,7 @@ class BrowserMatrixConnection implements MatrixConnection {
 
   disconnect(): void {
     this.#stopObservingActivity();
-    stopMatrixClient(this.#client);
+    stopMatrixClient(this.#client, this.lifecycleLog);
   }
 
   observe(listener: (status: MatrixConnectionStatus) => void): () => void {
@@ -685,6 +692,7 @@ class BrowserMatrixConnection implements MatrixConnection {
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
+    this.lifecycleLog?.beginShutdown();
     let remoteResult: Result<void, SessionFailure> = ok(undefined);
     if (!this.#revoked) {
       try {
@@ -775,12 +783,17 @@ function isUnauthorized(error: unknown): boolean {
   );
 }
 
-function stopMatrixClient(client: MatrixClient): void {
+function stopMatrixClient(client: MatrixClient, lifecycleLog?: MatrixLifecycleLogger): void {
+  lifecycleLog?.beginShutdown();
   client.stopClient();
   client.http.abort();
 }
 
-async function discardMatrixClient(client: MatrixClient): Promise<void> {
+async function discardMatrixClient(
+  client: MatrixClient,
+  lifecycleLog: MatrixLifecycleLogger,
+): Promise<void> {
+  lifecycleLog.beginShutdown();
   try {
     await client.logout(true);
   } catch {
