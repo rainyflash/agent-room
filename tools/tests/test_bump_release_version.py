@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.bump_release_version import (
     JSON_VERSION_FILES,
@@ -78,6 +81,33 @@ class BumpReleaseVersionTests(unittest.TestCase):
     def test_拒绝非法版本(self) -> None:
         with self.assertRaisesRegex(VersionBumpFailure, "SemVer"):
             bump(self.root, "alpha two", refresh_lock=False)
+
+    def test_升版后的许可证摘要对应新锁文件(self) -> None:
+        lock = self.root / "Cargo.lock"
+        notice = self.root / "THIRD_PARTY_NOTICES.md"
+        lock.write_text("old lock", encoding="utf-8")
+        notice.write_text("old digest", encoding="utf-8")
+
+        def run(command, **kwargs):
+            if command[0] == "cargo":
+                lock.write_text(workspace_version(self.root), encoding="utf-8")
+            else:
+                notice.write_text(hashlib.sha256(lock.read_bytes()).hexdigest(), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tools.bump_release_version.subprocess.run", side_effect=run):
+            bump(self.root, "0.1.0-alpha.2")
+
+        self.assertEqual(lock.read_text(encoding="utf-8"), "0.1.0-alpha.2")
+        self.assertEqual(notice.read_text(encoding="utf-8"), hashlib.sha256(lock.read_bytes()).hexdigest())
+
+    def test_许可证生成失败不能报告升版成功(self) -> None:
+        with patch("tools.bump_release_version.subprocess.run", side_effect=[
+            subprocess.CompletedProcess(["cargo"], 0),
+            subprocess.CompletedProcess(["license_inventory.py"], 1),
+        ]):
+            with self.assertRaisesRegex(VersionBumpFailure, "许可证清单刷新失败"):
+                bump(self.root, "0.1.0-alpha.2")
 
 
 if __name__ == "__main__":

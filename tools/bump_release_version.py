@@ -104,6 +104,17 @@ def refresh_cargo_lock(root: Path) -> None:
         raise VersionBumpFailure("Cargo.lock 刷新或 workspace 校验失败。")
 
 
+def refresh_license_inventory(root: Path) -> None:
+    # 清单绑定完整锁文件摘要；仅工作区版本变化也必须重新生成。
+    result = subprocess.run(
+        [sys.executable, str(root / "tools" / "license_inventory.py"), "generate"],
+        cwd=root,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise VersionBumpFailure("许可证清单刷新失败；升版尚未完成。")
+
+
 def bump(root: Path, new: str, *, refresh_lock: bool = True) -> str:
     if VERSION_PATTERN.fullmatch(new) is None:
         raise VersionBumpFailure("目标版本不是有效 SemVer。")
@@ -117,6 +128,7 @@ def bump(root: Path, new: str, *, refresh_lock: bool = True) -> str:
         replace_text_version(root / relative, old, new)
     if refresh_lock:
         refresh_cargo_lock(root)
+        refresh_license_inventory(root)
     return old
 
 
