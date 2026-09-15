@@ -19,7 +19,7 @@ export function receptionFixture(
     agentInstanceId: null,
     roomCatalogId: catalogId,
     grantId: '0198b601-77a4-74f1-b4f4-940f291951b9',
-    audience: 'known_room_members',
+    audience: 'any_room_member',
     expiresAtUnixMs: Date.now() + 86400000,
     startsAtUnixMs: Date.now() - 1000,
     maxMessagesPerMinute: 5,

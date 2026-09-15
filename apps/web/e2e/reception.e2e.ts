@@ -9,6 +9,7 @@ for (const width of [1440, 390]) {
     await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1');
     await page.getByRole('button', { name: /Local agents/u }).click();
     const panel = page.getByRole('region', { name: 'Reception tasks' });
+    await expect(panel.getByText(/Replies are visible to all room members/u)).toBeVisible();
     await panel.getByRole('button', { name: 'Enable background replies' }).click();
     const card = panel.getByRole('article');
     await expect(card.getByText('Reception Scout')).toBeVisible();
