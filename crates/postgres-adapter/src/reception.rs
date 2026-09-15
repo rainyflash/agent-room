@@ -8,7 +8,8 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId},
+    agents::host_agent_slug,
+    ids::{AgentCreationRequestId, AgentId, DeviceId, PrincipalId, RoomCatalogId},
     reception::{ReceptionExecution, ReceptionMode, ReceptionOwner, ReceptionTransition},
 };
 use sqlx::{Postgres, Transaction, postgres::PgRow};
@@ -186,7 +187,9 @@ async fn create(
     let matches: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_room.agent WHERE id=$1 AND slug=$2)")
             .bind(request.agent_id)
-            .bind(format!("host-{session_key}"))
+            .bind(host_agent_slug(AgentCreationRequestId::from_uuid(
+                *session_key,
+            )))
             .fetch_one(&mut **tx)
             .await
             .map_err(|error| map_sqlx_error(OP, &error))?;

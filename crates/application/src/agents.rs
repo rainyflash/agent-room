@@ -4,7 +4,7 @@ use agent_room_domain::{
     DomainError,
     agents::{
         AdapterBinding, AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
-        AgentMatrixDeviceId, AgentRole, AgentVisibility,
+        AgentMatrixDeviceId, AgentRole, AgentVisibility, host_agent_slug,
     },
     ids::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
@@ -254,7 +254,7 @@ impl AgentManagementService {
         let operation = "agent.create_host_for_device";
         ensure_active_device(&request.actor, self.clock.now(), operation)?;
         // slug 必须在重试时稳定，不能取决于每次新提议的 Agent ID。
-        let slug = format!("host-{}", request.request_id.as_uuid().simple());
+        let slug = host_agent_slug(request.request_id);
         validate_agent_profile(&slug, &request.display_name, "")?;
         self.create_agent_with_id(
             AgentCreationDraft {

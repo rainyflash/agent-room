@@ -3,13 +3,16 @@ use agent_room_application::reception::{
     ReceptionCommand, ReceptionPending, ReceptionProgress, ReceptionRepository, ReceptionRequest,
     ReceptionStatus,
 };
+use agent_room_domain::{agents::host_agent_slug, ids::AgentCreationRequestId};
 
 async fn setup(pool: &PgPool) -> (AutomationFixture, ReceptionRequest) {
     let fixture = seed_automation_fixture(pool).await;
     let session_key = Uuid::now_v7();
     sqlx::query("UPDATE agent_room.agent SET slug=$2 WHERE id=$1")
         .bind(fixture.agent.as_uuid())
-        .bind(format!("host-{session_key}"))
+        .bind(host_agent_slug(AgentCreationRequestId::from_uuid(
+            session_key,
+        )))
         .execute(pool)
         .await
         .expect("set stable host identity");
@@ -26,6 +29,39 @@ async fn setup(pool: &PgPool) -> (AutomationFixture, ReceptionRequest) {
         },
     };
     (fixture, request)
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn registered_host_identity_accepts_its_session_and_rejects_another() {
+    let database = TestDatabase::connect().await;
+    let (fixture, request) = setup(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let wrong_session = ReceptionRequest {
+        command: ReceptionCommand::Claim {
+            session_key: Uuid::now_v7(),
+            display_name: "Reception".into(),
+            initial: ReceptionProgress::default(),
+        },
+        ..request.clone()
+    };
+    assert_eq!(
+        repositories
+            .execute(fixture.principal, fixture.device, &wrong_session)
+            .await
+            .expect_err("an owned Agent still requires its original host session")
+            .kind(),
+        RepositoryErrorKind::Forbidden
+    );
+    let record = repositories
+        .execute(fixture.principal, fixture.device, &request)
+        .await
+        .expect("the compact identity created during host registration must be accepted");
+    assert_eq!(record.status, ReceptionStatus::Active);
+    assert_eq!(record.agent_id, request.agent_id);
+    assert_eq!(record.instance_id, request.instance_id);
+    assert_eq!(record.run_id, request.run_id);
+    database.close().await;
 }
 
 async fn second_device(pool: &PgPool, fixture: &AutomationFixture) -> (DeviceId, AgentInstanceId) {
