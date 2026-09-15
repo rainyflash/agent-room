@@ -7,6 +7,7 @@ mod content;
 mod devices;
 mod handoffs;
 mod identity;
+mod inbox;
 mod matrix;
 mod moderation;
 mod notifications;
@@ -15,6 +16,7 @@ mod projections;
 mod rooms;
 mod runtime;
 
+pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
 use std::{future::Future, pin::Pin};
 
 pub use accounts::{

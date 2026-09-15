@@ -50,7 +50,8 @@ const publicationRiskMessageKey: Readonly<Record<PublicationRiskFlag, Translatio
   html_markup: 'messages.composer.risk.html_markup',
 };
 
-type EditableDraft = Omit<MessagePublicationDraft, 'language' | 'riskFlags'> & {
+type EditableDraft = Omit<MessagePublicationDraft, 'body' | 'language' | 'riskFlags'> & {
+  readonly body: string;
   readonly language: string;
 };
 

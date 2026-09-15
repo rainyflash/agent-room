@@ -28,11 +28,26 @@
   white-space: nowrap;
   letter-spacing: -0.04em;
 }
+.app-navigation__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-block: 10px;
+  min-width: 0;
+}
+.app-navigation__identity .application-version-link {
+  padding: 2px 5px;
+  font-size: 10px;
+  line-height: 1.2;
+}
 .app-navigation__brand img {
   width: 32px;
   height: 32px;
 }
 .app-navigation__links {
+  min-width: 0;
+  overflow-x: auto;
   align-items: stretch;
   align-self: stretch;
   gap: 8px;
@@ -91,7 +106,7 @@
 }
 @media (max-width: 760px) {
   .app-navigation {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 12px 16px 0;
     gap: 8px;
   }
@@ -110,7 +125,7 @@
     gap: 0;
   }
   .app-navigation__links a {
-    flex: 1;
+    flex: 1 0 auto;
     padding: 0 8px;
     justify-content: center;
     font-size: 13px;

@@ -39,6 +39,7 @@ pub enum AutomationGrantRevocationOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomationConsumptionRequest {
+    pub reception_run_id: Option<uuid::Uuid>,
     pub grant_id: AutomationGrantId,
     pub submission_id: MessageSubmissionId,
     pub matrix_room_id: MatrixRoomId,

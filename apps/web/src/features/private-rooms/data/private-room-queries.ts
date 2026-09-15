@@ -4,9 +4,9 @@ import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private
 
 export const privateRoomListQueryKey = ['control-plane', 'private-rooms'] as const;
 
-export function privateRoomListQueryOptions(gateway: PrivateRoomGateway) {
+export function privateRoomListQueryOptions(gateway: PrivateRoomGateway, accountId?: string) {
   return queryOptions({
-    queryKey: privateRoomListQueryKey,
+    queryKey: [...privateRoomListQueryKey, accountId ?? 'session'],
     queryFn: async () => await gateway.list(),
     networkMode: 'always',
     retry: false,
@@ -14,6 +14,6 @@ export function privateRoomListQueryOptions(gateway: PrivateRoomGateway) {
   });
 }
 
-export function usePrivateRoomList(gateway: PrivateRoomGateway) {
-  return useQuery(privateRoomListQueryOptions(gateway));
+export function usePrivateRoomList(gateway: PrivateRoomGateway, accountId?: string) {
+  return useQuery(privateRoomListQueryOptions(gateway, accountId));
 }

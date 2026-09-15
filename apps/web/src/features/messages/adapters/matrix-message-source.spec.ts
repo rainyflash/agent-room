@@ -10,6 +10,86 @@ import {
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 describe('MatrixSdkMessageSource', () => {
+  it('expands cached history before requesting another real page', async () => {
+    const events = Array.from({ length: 600 }, (_, index) =>
+      matrixEvent(matrixMessagePreviewEventType, `$event${String(index)}`, index),
+    );
+    const room = matrixRoom(
+      events,
+      [],
+      () => 'join',
+      () => 'older',
+    );
+    const client = matrixClient(room);
+    const fetch = vi.spyOn(client, 'scrollback');
+    const registry = new MatrixClientRegistry();
+    registry.replace(client);
+    const source = new MatrixSdkMessageSource(registry);
+    expect((await source.loadOlder('!public:agent-room.test')).ok).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+    const read = source.read('!public:agent-room.test');
+    expect(read.kind === 'ready' && read.room.windowSize).toBe(400);
+    await source.loadOlder('!public:agent-room.test');
+    await source.loadOlder('!public:agent-room.test');
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(room, 200);
+  });
+
+  it('coalesces pagination and rejects results after membership or account changes', async () => {
+    let membership = 'join';
+    const room = matrixRoom(
+      [],
+      [],
+      () => membership,
+      () => 'older',
+    );
+    const client = matrixClient(room);
+    let finish: () => void = () => undefined;
+    vi.spyOn(client, 'scrollback').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            resolve(room);
+          };
+        }),
+    );
+    const registry = new MatrixClientRegistry();
+    registry.replace(client);
+    const source = new MatrixSdkMessageSource(registry);
+    const pending = source.loadOlder('!public:agent-room.test');
+    expect(source.loadOlder('!public:agent-room.test')).toBe(pending);
+    membership = 'leave';
+    finish();
+    expect(await pending).toEqual({
+      ok: false,
+      error: { code: 'history.session_changed', retryable: true },
+    });
+    expect(source.read('!public:agent-room.test').kind).toBe('room-not-joined');
+    membership = 'join';
+    const oldAccount = source.loadOlder('!public:agent-room.test');
+    registry.replace(matrixClient(matrixRoom([])));
+    finish();
+    expect((await oldAccount).ok).toBe(false);
+    const read = source.read('!public:agent-room.test');
+    expect(read.kind === 'ready' && read.room.windowSize).toBe(200);
+  });
+
+  it('reports paging failures without growing the search coverage', async () => {
+    const client = matrixClient(
+      matrixRoom(
+        [],
+        [],
+        () => 'join',
+        () => 'older',
+      ),
+    );
+    vi.spyOn(client, 'scrollback').mockRejectedValue(new Error('offline'));
+    const registry = new MatrixClientRegistry();
+    registry.replace(client);
+    const source = new MatrixSdkMessageSource(registry);
+    expect((await source.loadOlder('!public:agent-room.test')).ok).toBe(false);
+    const read = source.read('!public:agent-room.test');
+    expect(read.kind === 'ready' && read.room.windowSize).toBe(200);
+  });
   it('只复制当前房间实时时间线中的 Agent Room 消息事件', () => {
     const preview = matrixEvent(matrixMessagePreviewEventType, '$preview', 20);
     const revision = matrixEvent(matrixMessageRevisionEventType, '$revision', 30);
@@ -31,6 +111,8 @@ describe('MatrixSdkMessageSource', () => {
     expect(source.read('!public:agent-room.test')).toEqual({
       kind: 'ready',
       room: {
+        windowSize: 200,
+        hasOlder: false,
         roomId: '!public:agent-room.test',
         timelineEvents: [
           {
@@ -118,10 +200,14 @@ function matrixEvent(type: string, eventId: string, serverTimestamp: number): Ma
 function matrixRoom(
   events: readonly MatrixEvent[],
   stateEvents: readonly MatrixEvent[] = [],
+  membership: () => string = () => 'join',
+  pagination: () => string | null = () => null,
 ): Room {
   return {
+    getMyMembership: membership,
     getLiveTimeline: () =>
       ({
+        getPaginationToken: pagination,
         getEvents: () => [...events],
         getState: () => ({
           getStateEvents: () => [...stateEvents],
@@ -133,5 +219,6 @@ function matrixRoom(
 function matrixClient(room: Room | null): MatrixClient {
   return {
     getRoom: () => room,
+    scrollback: () => Promise.resolve(room),
   } as unknown as MatrixClient;
 }

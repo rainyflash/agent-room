@@ -71,6 +71,14 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertIn("needs.metadata.result == 'success'", candidate)
         self.assertIn("inputs.reuse_run_id != '' && needs.native.result == 'skipped'", candidate)
 
+    def test_调度锁定签名提交并保留人工汇总恢复路径(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+        for workflow in (candidate, self.workflow):
+            self.assertIn('REVISION_ARGS=(--expected-revision "$EXPECTED_REVISION")', workflow)
+            self.assertIn('"${REVISION_ARGS[@]}"', workflow)
+        self.assertIn('test "$GITHUB_SHA" = "$EXPECTED_REVISION"', self.workflow)
+        self.assertIn('test "$EXPECTED_REVISION" = "$REVISION"', self.workflow)
+
     def test_浏览器候选使用同源代理并保留桌面独立会话域(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
         browser_urls = re.findall(

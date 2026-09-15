@@ -79,7 +79,7 @@ describe('消息发布状态机', () => {
     await waitFor(actor, (snapshot) => snapshot.matches('published'));
 
     expect(runtime.reconcile).toHaveBeenCalledOnce();
-    expect(runtime.reconcile).toHaveBeenCalledWith(request.submissionId);
+    expect(runtime.reconcile).toHaveBeenCalledWith(request.submissionId, request);
     expect(runtime.publish).toHaveBeenCalledOnce();
     actor.stop();
   });

@@ -10,11 +10,13 @@ mod content;
 mod devices;
 mod error;
 mod handoffs;
+mod inbox;
 mod migrations;
 mod moderation;
 mod outbox;
 mod principals;
 mod projections;
+mod reception;
 mod rooms;
 mod transaction;
 

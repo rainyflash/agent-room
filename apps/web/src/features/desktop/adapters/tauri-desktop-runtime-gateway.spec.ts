@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { URL as FileURL } from 'node:url';
 
 import {
   TauriDesktopRuntimeGateway,
@@ -47,7 +48,7 @@ describe('Tauri 桌面运行时适配器', () => {
   it('接受由 Rust 序列化测试锁定的完整会话响应，新增字段不能导致已接入人物消失', async () => {
     const payload: unknown = JSON.parse(
       readFileSync(
-        new URL(
+        new FileURL(
           '../../../../../../crates/bridge-ipc/tests/fixtures/host-session-diagnostics.json',
           import.meta.url,
         ),

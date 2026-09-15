@@ -1,4 +1,11 @@
 import { evaluateAgentStatusLease } from '@agent-room/protocol/status-lease';
+import {
+  agentConnection,
+  agentLifecyclePolicy,
+  projectAgentLifecycles,
+} from '@agent-room/protocol';
+import { presenceEvidence } from '../domain/agent-attendance';
+import { agentRosterPolicySchema } from '../domain/agent-roster-policy';
 import { z } from 'zod';
 
 import type { MatrixLobbyRoomSnapshot, MatrixLobbySource } from './matrix-lobby-source';
@@ -48,6 +55,7 @@ const statusEventSchema = z
     id: uuidV7Schema,
     leaseExpiresAt: z.iso.datetime({ offset: true }),
     lastPolledAt: z.iso.datetime({ offset: true }).optional(),
+    listeningUntil: z.iso.datetime({ offset: true }).nullable().optional(),
     progress: z.number().min(0).max(1).optional(),
     schemaVersion: z.literal('1.0'),
     signature: z
@@ -62,6 +70,14 @@ const statusEventSchema = z
   })
   .superRefine((event, context) => {
     limitProperties(24)(event, context);
+    if (
+      event.listeningUntil !== undefined &&
+      event.listeningUntil !== null &&
+      Date.parse(event.listeningUntil) >
+        Date.parse(event.createdAt) + agentLifecyclePolicy.receptionFreshnessMs
+    ) {
+      context.addIssue({ code: 'custom', message: '等待信号过期时间超出上限。' });
+    }
     if (
       event.visibility === 'coarse' &&
       (event.taskSummary !== undefined ||
@@ -126,6 +142,10 @@ export class MatrixLobbyGateway implements LobbyGateway {
 }
 
 function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): LobbyRoom {
+  const archiveAfterDays =
+    room.rosterPolicy === undefined
+      ? agentLifecyclePolicy.archiveAfterDays
+      : agentRosterPolicySchema.parse(room.rosterPolicy).archiveAfterDays;
   const joinedMembers = new Set(room.joinedMemberIds);
   const candidatesByAgent = new Map<string, AgentCandidate[]>();
   for (const stateEvent of room.statusEvents) {
@@ -165,10 +185,22 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
   }
 
   const agents = [...candidatesByAgent.entries()]
-    .flatMap(([agentId, candidates]) => aggregateAgent(agentId, candidates))
+    .flatMap(([agentId, candidates]) => aggregateAgent(agentId, candidates, observedAtUnixMs))
     .toSorted((left, right) => left.agentId.localeCompare(right.agentId));
+  const lifecycles = projectAgentLifecycles(
+    agents.map(presenceEvidence),
+    observedAtUnixMs,
+    archiveAfterDays,
+  );
   return Object.freeze({
-    agents: Object.freeze(agents),
+    agents: Object.freeze(
+      agents.map((agent) => {
+        const lifecycle = lifecycles.get(agent.agentId);
+        if (lifecycle === undefined) throw new Error('Missing agent lifecycle projection');
+        return Object.freeze({ ...agent, lifecycle });
+      }),
+    ),
+    archiveAfterDays,
     joinedMemberIds: Object.freeze([...room.joinedMemberIds]),
     name: room.name,
     observedAtUnixMs,
@@ -180,6 +212,7 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
 function aggregateAgent(
   agentId: string,
   candidates: readonly AgentCandidate[],
+  now: number,
 ): readonly LobbyAgent[] {
   const matrixUserIds = new Set(
     candidates.map((candidate) => candidate.event.actor.agent.matrixUserId),
@@ -187,7 +220,7 @@ function aggregateAgent(
   if (matrixUserIds.size !== 1) {
     return [];
   }
-  const representative = candidates.toSorted(compareCandidates)[0];
+  const representative = candidates.toSorted((a, b) => compareCandidates(a, b, now))[0];
   if (representative === undefined) {
     return [];
   }
@@ -197,6 +230,16 @@ function aggregateAgent(
     const polled = Date.parse(candidate.event.lastPolledAt);
     return polled <= candidate.createdAtUnixMs ? [polled] : [];
   });
+  const waitDeadlines = candidates.flatMap((candidate) =>
+    candidate.status !== 'offline' &&
+    candidate.event.listeningUntil !== undefined &&
+    candidate.event.listeningUntil !== null
+      ? [Date.parse(candidate.event.listeningUntil)]
+      : [],
+  );
+  const receptionKnown = candidates.some(
+    (candidate) => candidate.status !== 'offline' && candidate.event.listeningUntil !== undefined,
+  );
   return [
     Object.freeze({
       agentId,
@@ -205,13 +248,21 @@ function aggregateAgent(
         : { avatarUrl: event.actor.agent.avatarUrl }),
       displayName: event.actor.agent.displayName,
       instanceIds: Object.freeze(
-        candidates.map((candidate) => candidate.event.actor.instanceId).toSorted(),
+        candidates
+          .filter((candidate) => candidate === representative || candidate.status !== 'offline')
+          .map((candidate) => candidate.event.actor.instanceId)
+          .toSorted(),
       ),
       matrixUserId: event.actor.agent.matrixUserId,
       status: representative.status,
       reportedStatus: event.status,
       lastActiveAtUnixMs: Math.max(...candidates.map((candidate) => candidate.createdAtUnixMs)),
       ...(polledTimes.length === 0 ? {} : { lastPolledAtUnixMs: Math.max(...polledTimes) }),
+      ...(waitDeadlines.length === 0
+        ? receptionKnown
+          ? { listeningUntilUnixMs: null }
+          : {}
+        : { listeningUntilUnixMs: Math.max(...waitDeadlines) }),
       statusExpiresAtUnixMs: representative.expiresAtUnixMs,
       ...(event.visibility === 'detailed' && event.taskSummary !== undefined
         ? { summary: event.taskSummary }
@@ -222,14 +273,29 @@ function aggregateAgent(
   ];
 }
 
-function compareCandidates(left: AgentCandidate, right: AgentCandidate): number {
-  const priorityDifference = STATUS_PRIORITY[right.status] - STATUS_PRIORITY[left.status];
+function compareCandidates(left: AgentCandidate, right: AgentCandidate, now: number): number {
+  const tier = (candidate: AgentCandidate) => {
+    const connection = agentConnection(
+      {
+        agentId: candidate.event.actor.agent.agentId,
+        reportedStatus: candidate.event.status,
+        leaseExpiresAtUnixMs: candidate.expiresAtUnixMs,
+        lastActiveAtUnixMs: candidate.createdAtUnixMs,
+      },
+      now,
+    );
+    return connection === 'online' ? 2 : connection === 'reconnecting' ? 1 : 0;
+  };
+  const connectionDifference = tier(right) - tier(left);
+  if (connectionDifference !== 0) return connectionDifference;
+  const priorityDifference =
+    tier(right) === 2 ? STATUS_PRIORITY[right.status] - STATUS_PRIORITY[left.status] : 0;
   if (priorityDifference !== 0) {
     return priorityDifference;
   }
   const timeDifference = right.createdAtUnixMs - left.createdAtUnixMs;
   return timeDifference === 0
-    ? left.event.actor.instanceId.localeCompare(right.event.actor.instanceId)
+    ? right.event.actor.instanceId.localeCompare(left.event.actor.instanceId)
     : timeDifference;
 }
 

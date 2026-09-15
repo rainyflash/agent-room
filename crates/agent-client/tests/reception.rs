@@ -18,6 +18,7 @@ const SESSION: &str = "01990d9e-8400-7000-8000-000000000010";
 fn preview(event: &str) -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
         conversation: Some(IpcConversationMessage {
+            attachment_name: None,
             text: "hello".into(),
             mentions: vec!["@agent:test".into()],
         }),
@@ -102,7 +103,7 @@ async fn 等待复用同一游标并且返回后不再后台轮询() {
     let calls = backend.calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0], calls[1]);
-    assert_eq!(calls[0].name(), "read_inbox");
+    assert_eq!(calls[0].name(), "wait_inbox");
 }
 
 #[tokio::test(start_paused = true)]
@@ -171,7 +172,7 @@ async fn 默认等待五分钟不返回空结果并在有消息时完成同一�
 
 #[tokio::test(start_paused = true)]
 async fn 只有显式期限会返回空页且允许超过二十五秒() {
-    let backend = Backend::new(vec![Ok(page(vec![])); 90]);
+    let backend = Backend::new(vec![Ok(page(vec![])); 91]);
     let start = tokio::time::Instant::now();
     let response = wait_for_messages(
         &backend,
@@ -184,6 +185,17 @@ async fn 只有显式期限会返回空页且允许超过二十五秒() {
     .unwrap();
     assert_eq!(response, page(vec![]));
     assert_eq!(start.elapsed(), Duration::from_secs(90));
+    {
+        let calls = backend.calls.lock().unwrap();
+        assert_eq!(calls.len(), 91);
+        assert!(calls[..90].iter().all(|method| method == &calls[0]));
+        assert_eq!(calls[0].name(), "wait_inbox");
+        assert_eq!(
+            calls[90].name(),
+            "read_inbox",
+            "期限结束必须立即撤销等待状态"
+        );
+    }
     let backend = Backend::new(vec![Ok(page(vec![]))]);
     assert_eq!(
         wait_for_messages(
@@ -198,6 +210,7 @@ async fn 只有显式期限会返回空页且允许超过二十五秒() {
         page(vec![])
     );
     assert_eq!(backend.calls.lock().unwrap().len(), 1);
+    assert_eq!(backend.calls.lock().unwrap()[0].name(), "read_inbox");
 }
 
 #[tokio::test(start_paused = true)]

@@ -3,11 +3,21 @@ import { ConversationWorkspaceStore } from '../application/conversation-workspac
 import { BrowserSubmissionIdFactory } from '@/features/messages/adapters/browser-submission-id-factory';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import { BrowserConversationStorage } from '../domain/conversation-storage';
+import { BrowserAttachmentStorage } from '../adapters/browser-attachment-storage';
 
 const ConversationWorkspaceContext = createContext<ConversationWorkspaceStore | null>(null);
 const submissionIds = new BrowserSubmissionIdFactory();
 
-export function ConversationWorkspaceProvider({
+export function ConversationWorkspaceProvider(props: {
+  readonly publisher: MessagePublisher;
+  readonly scope: string | null;
+  readonly children: ReactNode;
+}) {
+  const inherited = useContext(ConversationWorkspaceContext);
+  return inherited === null ? <OwnedConversationWorkspace {...props} /> : <>{props.children}</>;
+}
+
+function OwnedConversationWorkspace({
   publisher,
   scope,
   children,
@@ -35,6 +45,7 @@ export function ConversationWorkspaceProvider({
               },
               scope,
             ),
+        scope === null ? undefined : new BrowserAttachmentStorage(scope),
       ),
     [publisher, scope],
   );

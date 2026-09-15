@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ConversationWorkspaceStore } from '../application/conversation-workspace-store';
-import { validConversation } from '../domain/conversation';
 import { useConversationWorkspace } from './conversation-workspace-context';
 import {
   BrowserSubmissionIdFactory,
@@ -30,7 +29,9 @@ export function useConversationComposer(
   return {
     ...snapshot,
     editable: session.editable,
-    valid: validConversation(snapshot),
+    valid: session.valid,
+    attach: session.attach,
+    removeAttachment: session.removeAttachment,
     changeText: session.changeText,
     mention: session.mention,
     respond: session.respond,

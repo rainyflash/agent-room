@@ -1,6 +1,9 @@
 import { Button } from '@agent-room/ui-system';
 import { AtSign, Reply, Send, X } from 'lucide-react';
-import type { RefObject } from 'react';
+import { useState, type RefObject } from 'react';
+import { AttachmentPicker, selectAttachment } from './attachment-picker';
+import type { AttachmentFailure } from '../domain/conversation-attachment';
+import './conversation-attachments.css';
 import { useTranslation } from 'react-i18next';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import type { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
@@ -25,6 +28,7 @@ export function ConversationComposer({
   readonly input: RefObject<HTMLTextAreaElement | null>;
 }) {
   const { t } = useTranslation();
+  const [fileFailure, setFileFailure] = useState<AttachmentFailure | 'oneFile' | null>(null);
   const { publication } = composer;
   const canEdit = composer.editable && writesAllowed;
   const pending = publication.matches('unknown') || publication.matches('acceptedBindingPending');
@@ -34,6 +38,14 @@ export function ConversationComposer({
   return (
     <form
       className="conversation-panel__composer"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files.length) return;
+        event.preventDefault();
+        if (canEdit) void selectAttachment(event.dataTransfer.files, composer).then(setFileFailure);
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (canSend) composer.submit();
@@ -78,6 +90,12 @@ export function ConversationComposer({
         {t('conversation.input')}
       </label>
       <textarea
+        onPaste={(event) => {
+          if (canEdit && event.clipboardData.files.length) {
+            event.preventDefault();
+            void selectAttachment(event.clipboardData.files, composer).then(setFileFailure);
+          }
+        }}
         id={`chat-${roomId}`}
         ref={input}
         rows={3}
@@ -95,6 +113,11 @@ export function ConversationComposer({
           }
         }}
       />
+      <AttachmentPicker composer={composer} disabled={!canEdit} onFailure={setFileFailure} />
+      {fileFailure !== null ? <p role="alert">{t(`attachments.${fileFailure}`)}</p> : null}
+      {composer.attachmentFailure !== null ? (
+        <p role="alert">{t(`attachments.${composer.attachmentFailure}`)}</p>
+      ) : null}
       <div className="conversation-panel__tools">
         <label>
           <AtSign aria-hidden="true" />

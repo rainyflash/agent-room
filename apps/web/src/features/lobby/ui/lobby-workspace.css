@@ -455,6 +455,7 @@
 }
 .workspace-members .list-roster__filters {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 0 auto;
   gap: 8px;
   padding: 0 16px 16px;

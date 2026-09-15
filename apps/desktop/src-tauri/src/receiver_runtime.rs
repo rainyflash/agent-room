@@ -201,6 +201,7 @@ impl ReceiverRuntime {
 
     async fn pause(&self, task_id: &str, persist: bool) -> Result<()> {
         let mut workers = self.inner.workers.lock().await;
+        let mut stop_failure = None;
         if let Some(worker) = workers.get_mut(task_id) {
             worker.stop.send_replace(true);
             if let Some(mut task) = worker.task.take() {
@@ -221,24 +222,42 @@ impl ReceiverRuntime {
                     }
                 }
             }
+            stop_failure = worker.failure.clone();
         }
+        let store = ReceiverStore::open(&self.inner.config.data_root(), task_id)?;
+        let mut state = store
+            .load()?
+            .ok_or_else(|| ReceptionFailure::local("receiver.state_missing"))?;
         if persist {
-            let store = ReceiverStore::open(&self.inner.config.data_root(), task_id)?;
-            let mut state = store
-                .load()?
-                .ok_or_else(|| ReceptionFailure::local("receiver.state_missing"))?;
             state.enabled = false;
             store.save(&state)?;
+        }
+        // A failed host turn does not prevent manual takeover when the receiver
+        // has drained its session and confirmed release with the server.
+        if state.execution.is_some()
+            || stop_failure.as_ref().is_some_and(|error| {
+                error.details.contains_key("closeError")
+                    || matches!(
+                        error.code.as_str(),
+                        "receiver.stop_timeout" | "receiver.worker_failed"
+                    )
+            })
+        {
+            return Err(stop_failure
+                .unwrap_or_else(|| ReceptionFailure::local("receiver.release_unconfirmed")));
         }
         Ok(())
     }
 
     pub(crate) async fn shutdown(&self) -> Result<()> {
         let task_ids: Vec<_> = self.inner.workers.lock().await.keys().cloned().collect();
+        let mut failure = None;
         for task_id in task_ids {
-            self.pause(&task_id, false).await?;
+            if let Err(error) = self.pause(&task_id, false).await {
+                failure.get_or_insert(error);
+            }
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     async fn configure(&self, request: ConfigureReceiver) -> Result<()> {

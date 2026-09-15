@@ -6,6 +6,7 @@ const replySchema = z.object({
   actor: z.object({ displayName: z.string().max(256), matrixUserId: z.string().max(255) }),
 });
 const savedConversationSchema = z.object({
+  attachment: z.object({ key: z.string().max(255), name: z.string().max(240) }).optional(),
   version: z.literal(1),
   text: z.string().max(8000),
   mentions: z.array(z.string().max(255)).max(8),
@@ -44,7 +45,8 @@ export class BrowserConversationStorage implements ConversationStorage {
         draft.text === '' &&
         draft.mentions.length === 0 &&
         draft.reply === null &&
-        draft.pendingSubmissionId === null
+        draft.pendingSubmissionId === null &&
+        draft.attachment === undefined
       )
         this.storage.removeItem(this.key(roomId));
       else this.storage.setItem(this.key(roomId), JSON.stringify(draft));

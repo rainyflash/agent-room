@@ -1,21 +1,15 @@
-import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
+import { Button } from '@agent-room/ui-system';
 import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
-import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
-import { agentAttendance, agentReception } from '../domain/agent-attendance';
-
-const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
-  blocked: 'alert',
-  completed: 'active',
-  idle: 'network',
-  offline: 'offline',
-  waiting_input: 'alert',
-  working: 'active',
-});
+import type { LobbyAgent } from '@/features/lobby/domain/lobby';
+import { agentAttendance, agentLifecycle, agentRosterGroup } from '../domain/agent-attendance';
+import { AgentStateLabel } from './agent-state-label';
+import './agent-roster.css';
+import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
 
 export type AgentInspectorProps = {
   readonly hasBackgroundReception?: boolean;
@@ -43,7 +37,8 @@ export function AgentInspector({
   const { i18n, t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const attendance = agentAttendance(agent, observedAtUnixMs);
-  const reception = agentReception(agent, observedAtUnixMs);
+  const lifecycle = agentLifecycle(agent, observedAtUnixMs);
+  const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
   const lastActive =
     agent.lastActiveAtUnixMs === undefined
       ? null
@@ -81,23 +76,47 @@ export function AgentInspector({
           <AgentPortrait id={agent.agentId} />
         </div>
         <div className="agent-inspector__status">
-          <StatusMark label={t(`lobby.status.${agent.status}`)} tone={STATUS_TONE[agent.status]} />
-          <strong>{t(`lobby.status.${agent.status}`)}</strong>
+          <AgentStateLabel agent={agent} now={observedAtUnixMs} />
           {lastActive === null ? null : (
             <span>{t('studio.lastConnection', { time: lastActive })}</span>
           )}
         </div>
-        {hasBackgroundReception ? null : (
-          <section
-            className="agent-reception"
-            aria-label={t('studio.reception')}
-            data-state={reception}
-          >
-            <strong>{t(`studio.reception.${reception}`)}</strong>
-            <p>{t(`studio.receptionHint.${reception}`)}</p>
-          </section>
-        )}
+        <section
+          className="agent-reception"
+          aria-label={t('studio.reception')}
+          data-state={reception}
+        >
+          <strong>{t(`agentState.${reception}`)}</strong>
+          <p>
+            {t(
+              hasBackgroundReception && lifecycle.reception !== 'waiting'
+                ? 'agentState.hint.background'
+                : `agentState.hint.${reception}`,
+            )}
+          </p>
+        </section>
+        <dl className="agent-lifecycle-facts">
+          <div>
+            <dt>
+              {t(lifecycle.connection === 'online' ? 'agentState.work' : 'agentState.lastWork')}
+            </dt>
+            <dd>{t(`lobby.status.${agent.reportedStatus ?? agent.status}`)}</dd>
+          </div>
+          {lifecycle.connection === 'offline' ? (
+            <div>
+              <dt>{t('agentState.offlineTime')}</dt>
+              <dd>{t(`agentState.group.${agentRosterGroup(agent, observedAtUnixMs)}`)}</dd>
+            </div>
+          ) : null}
+          {lifecycle.archiveReason !== null ? (
+            <div>
+              <dt>{t('agentState.rosterView')}</dt>
+              <dd>{t(`agentState.reason.${lifecycle.archiveReason}`)}</dd>
+            </div>
+          ) : null}
+        </dl>
         {receptionControls}
+        <AgentOrganizationControls key={agent.agentId} agentId={agent.agentId} />
         <section className="agent-inspector__summary">
           <h3>{t('lobby.inspector.summary')}</h3>
           <p>{agent.summary ?? t('lobby.inspector.noSummary')}</p>

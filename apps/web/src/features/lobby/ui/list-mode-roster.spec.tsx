@@ -11,6 +11,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { projectAgentLifecycles } from '@agent-room/protocol';
+import { presenceEvidence } from '../domain/agent-attendance';
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -19,6 +21,52 @@ beforeAll(async () => {
 afterEach(cleanup);
 
 describe('ListModeRoster', () => {
+  it('separates actual waiters, next-run readers, offline ages and recoverable archives', async () => {
+    const now = 1_700_000_000_000;
+    const entries = [
+      { ...agent('waiting', 'idle'), lastPolledAtUnixMs: now, listeningUntilUnixMs: now + 15000 },
+      { ...agent('resume', 'completed'), lastPolledAtUnixMs: now, listeningUntilUnixMs: null },
+      { ...agent('hour', 'offline'), lastActiveAtUnixMs: now - 60000 },
+      { ...agent('day', 'offline'), lastActiveAtUnixMs: now - 4 * 3600000 },
+      { ...agent('week', 'offline'), lastActiveAtUnixMs: now - 2 * 86400000 },
+      { ...agent('old', 'offline'), lastActiveAtUnixMs: now - 8 * 86400000 },
+    ];
+    const user = userEvent.setup();
+    renderRoster({ agents: entries, onSelectAgent: vi.fn(), selectedAgentId: null });
+    for (const name of [
+      'Online · waiting for messages',
+      'Online · reads on next run',
+      'Offline · under 1 hour',
+      'Offline · 1–24 hours',
+      'Offline · 1–7 days',
+    ]) {
+      expect(screen.getByRole('heading', { name })).toBeVisible();
+    }
+    expect(screen.queryByRole('button', { name: /^Old/u })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Archived (1)' }));
+    expect(screen.getByRole('button', { name: /^Old/u })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Waiting/u })).not.toBeInTheDocument();
+  });
+  it('paginates a large archive without rendering every historical member', async () => {
+    const now = 1_700_000_000_000;
+    const entries = Array.from({ length: 500 }, (_, index) => ({
+      ...agent(`a${String(index).padStart(3, '0')}`, 'offline'),
+      lastActiveAtUnixMs: now - 1000 - index,
+    }));
+    const lifecycle = projectAgentLifecycles(entries.map(presenceEvidence), now);
+    const projected = entries.map((entry) => {
+      const state = lifecycle.get(entry.agentId);
+      if (!state) throw new Error('missing fixture lifecycle');
+      return { ...entry, lifecycle: state };
+    });
+    const user = userEvent.setup();
+    renderRoster({ agents: projected, onSelectAgent: vi.fn(), selectedAgentId: null });
+    expect(screen.getByRole('button', { name: 'Members (100)' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Archived (400)' }));
+    expect(document.querySelectorAll('.roster-agent')).toHaveLength(100);
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('2 / 4')).toBeVisible();
+  });
   it('按名称搜索、按状态筛选并只选择真实 Agent', async () => {
     const user = userEvent.setup();
     const onSelectAgent = vi.fn();

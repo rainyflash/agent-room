@@ -48,10 +48,11 @@ pub async fn wait_for_messages(
         ));
     }
     let method = IpcMethod::WithSession {
-        session_id,
+        session_id: session_id.clone(),
         method: Box::new(match mode {
-            MessageReadMode::History => IpcMethod::ListPreviews(request),
-            MessageReadMode::Inbox => IpcMethod::ReadInbox(request),
+            MessageReadMode::History => IpcMethod::ListPreviews(request.clone()),
+            MessageReadMode::Inbox if !immediate => IpcMethod::WaitInbox(request.clone()),
+            MessageReadMode::Inbox => IpcMethod::ReadInbox(request.clone()),
         }),
     };
     method
@@ -86,7 +87,17 @@ pub async fn wait_for_messages(
         let next_check = tokio::time::Instant::now() + Duration::from_secs(1);
         tokio::time::sleep_until(deadline.map_or(next_check, |end| end.min(next_check))).await;
         if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) {
-            return Ok(response);
+            return if mode == MessageReadMode::Inbox {
+                // Finish the wait explicitly. A killed process is covered by the short wait lease.
+                backend
+                    .invoke(IpcMethod::WithSession {
+                        session_id,
+                        method: Box::new(IpcMethod::ReadInbox(request)),
+                    })
+                    .await
+            } else {
+                Ok(response)
+            };
         }
     }
 }

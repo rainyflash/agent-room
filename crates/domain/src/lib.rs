@@ -1,4 +1,5 @@
 pub mod agent_cards;
+pub mod agent_lifecycle;
 pub mod agent_status;
 pub mod agents;
 pub mod content;
@@ -13,6 +14,7 @@ pub mod messages;
 pub mod moderation;
 pub mod policy;
 pub mod private_rooms;
+pub mod reception;
 pub mod rooms;
 pub mod time;
 pub mod version;

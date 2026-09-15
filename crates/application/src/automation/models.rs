@@ -36,6 +36,7 @@ pub struct RevokeAutomationGrant {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizeAutomationSend {
+    pub reception_run_id: Option<uuid::Uuid>,
     pub actor: AuthenticatedDevice,
     pub grant_id: AutomationGrantId,
     pub submission_id: MessageSubmissionId,

@@ -4,10 +4,13 @@ import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 
 import { navigationFallbackDenylist } from './src/shared/pwa/navigation-fallback.js';
-import { runtimeManifest, writeContract } from './build/runtime-manifest.js';
+import { runtimeManifest, writeContract, applicationVersion } from './build/runtime-manifest.js';
 
 export default defineConfig(({ mode }) => ({
-  define: { __AGENT_ROOM_WRITE_CONTRACT__: JSON.stringify(writeContract) },
+  define: {
+    __AGENT_ROOM_WRITE_CONTRACT__: JSON.stringify(writeContract),
+    __AGENT_ROOM_VERSION__: JSON.stringify(applicationVersion),
+  },
   plugins: [
     runtimeManifest(mode),
     react(),

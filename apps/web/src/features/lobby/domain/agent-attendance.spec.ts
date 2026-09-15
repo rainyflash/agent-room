@@ -21,11 +21,13 @@ describe('工作室接待与在场规则', () => {
     expect(agentAttendance({ ...agent, status: 'completed' }, 50_000)).toBe('present');
     expect(agentReception({ ...agent, status: 'completed' }, 50_000)).toBe('unknown');
   });
-  it('读取证据会过期，不能用未来时间伪装接待', () => {
-    const polled = { ...agent, lastPolledAtUnixMs: 10_000 };
-    expect(agentReception(polled, 20_000)).toBe('recent');
+  it('实际等待证据会过期，最近读取不能冒充持续等待', () => {
+    const polled = { ...agent, lastPolledAtUnixMs: 10_000, listeningUntilUnixMs: null };
+    expect(agentReception(polled, 20_000)).toBe('waiting');
+    expect(agentReception({ ...polled, listeningUntilUnixMs: 25_000 }, 20_000)).toBe('recent');
+    expect(agentReception({ ...polled, listeningUntilUnixMs: 25_000 }, 25_000)).toBe('waiting');
     expect(agentReception(polled, 45_000)).toBe('waiting');
-    expect(agentReception({ ...agent, lastPolledAtUnixMs: 90_000 }, 50_000)).toBe('waiting');
+    expect(agentReception({ ...agent, lastPolledAtUnixMs: 90_000 }, 50_000)).toBe('unknown');
   });
   it('显式离线立即退场，租约过期有 30 秒重连宽限', () => {
     expect(agentAttendance({ ...agent, status: 'offline' }, 90_000)).toBe('away');

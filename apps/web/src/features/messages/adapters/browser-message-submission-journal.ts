@@ -9,6 +9,7 @@ import type {
   ProtectedMessageBody,
 } from '@/features/messages/domain/publication';
 import { err, ok } from '@/shared/result';
+import { BrowserBinaryStore } from '@/shared/storage/browser-binary-store';
 
 const uuidV7Schema = z
   .string()
@@ -18,7 +19,11 @@ const contentSchema = z
     encryption: contentEncryptionSchema.optional(),
     contentId: uuidV7Schema,
     digestSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-    mediaType: z.enum(['text/markdown', 'text/plain']),
+    mediaType: z
+      .string()
+      .min(3)
+      .max(128)
+      .regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u),
     sizeBytes: z
       .number()
       .int()
@@ -50,7 +55,11 @@ const eventSchema = z
     preview: z
       .object({
         conversation: conversationSchema.optional(),
-        contentType: z.enum(['text/markdown', 'text/plain']),
+        contentType: z
+          .string()
+          .min(3)
+          .max(128)
+          .regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u),
         language: z.string().min(2).max(35).optional(),
         riskFlags: z.array(z.string().min(1).max(64)).max(16),
         sensitivity: z.enum(['normal', 'sensitive', 'restricted']),
@@ -91,14 +100,30 @@ const storagePrefix = 'agent-room.message-submission.v2.';
 export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal {
   readonly #memory = new Map<string, MessageSubmissionRecord>();
   readonly #storage: Storage | null;
+  readonly #binary = new BrowserBinaryStore('protected-publications');
 
-  constructor(storage: Storage | null) {
+  constructor(
+    storage: Storage | null,
+    private readonly legacyStorage: Storage | null = null,
+  ) {
     this.#storage = storage;
+  }
+
+  private persistedItem(key: string): string | null {
+    const current = this.#storage?.getItem(key);
+    if (current != null) return current;
+    const legacy = this.legacyStorage?.getItem(key);
+    if (legacy == null || this.#storage === null) return null;
+    // Older builds kept submission identity only until the window was closed.
+    // Move it before recovery so an application restart can keep the same transaction.
+    this.#storage.setItem(key, legacy);
+    this.legacyStorage?.removeItem(key);
+    return legacy;
   }
 
   readonly #bodies = new Map<string, ProtectedMessageBody>();
 
-  releaseBody(scope: string, submissionId: string): void {
+  async releaseBody(scope: string, submissionId: string): Promise<void> {
     const record = this.#memory.get(submissionId);
     if (record === undefined) return;
     if (this.#storage !== null) {
@@ -107,10 +132,16 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
         if (this.#storage.getItem(`${storagePrefix}${submissionId}`) !== JSON.stringify(record))
           return;
         this.#storage.removeItem(`${storagePrefix}body.${scope}`);
+        this.legacyStorage?.removeItem(`${storagePrefix}body.${scope}`);
       } catch {
         // 保留副本支持恢复，清理失败不会改变已经提交的消息结果。
         return;
       }
+    }
+    if (typeof indexedDB !== 'undefined') {
+      // The durable submission record is now authoritative. Failure here preserves the bytes
+      // and surfaces as an interrupted publication, recoverable through that same record.
+      await this.#binary.remove(scope);
     }
     this.#bodies.delete(scope);
   }
@@ -119,8 +150,9 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
     const cached = this.#bodies.get(scope);
     if (cached !== undefined) return ok(cached);
     try {
-      const text = this.#storage?.getItem(`${storagePrefix}body.${scope}`);
-      if (text === null || text === undefined) return ok(null);
+      const text = this.persistedItem(`${storagePrefix}body.${scope}`);
+      if (text === null)
+        return typeof indexedDB === 'undefined' ? ok(null) : this.#readBinary(scope);
       const parsed = z
         .object({
           bytes: z.array(z.number().int().min(0).max(255)).max(25 * 1024 * 1024),
@@ -144,6 +176,7 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
   writeBody(scope: string, value: ProtectedMessageBody) {
     this.#bodies.set(scope, value);
     if (value.encryption === undefined || this.#storage === null) return ok(undefined);
+    if (value.body.bytes.byteLength > 256 * 1024) return this.#writeBinary(scope, value);
     try {
       this.#storage.setItem(
         `${storagePrefix}body.${scope}`,
@@ -160,6 +193,41 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
     }
   }
 
+  async #readBinary(scope: string) {
+    try {
+      const raw = await this.#binary.read(scope);
+      if (raw === undefined) return ok(null);
+      const parsed = z
+        .object({
+          bytes: z.instanceof(Uint8Array).refine((bytes) => bytes.byteLength <= 25 * 1024 * 1024),
+          digestSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          encryption: contentEncryptionSchema,
+        })
+        .safeParse(raw);
+      if (!parsed.success) return err(persistenceFailure(false));
+      const value = {
+        body: { bytes: Uint8Array.from(parsed.data.bytes), digestSha256: parsed.data.digestSha256 },
+        encryption: parsed.data.encryption,
+      };
+      this.#bodies.set(scope, value);
+      return ok(value);
+    } catch {
+      return err(persistenceFailure(true));
+    }
+  }
+  async #writeBinary(scope: string, value: ProtectedMessageBody) {
+    try {
+      await this.#binary.write(scope, {
+        bytes: value.body.bytes,
+        digestSha256: value.body.digestSha256,
+        encryption: value.encryption,
+      });
+      return ok(undefined);
+    } catch {
+      return err(persistenceFailure(true));
+    }
+  }
+
   read(submissionId: string) {
     const memoryRecord = this.#memory.get(submissionId);
     if (memoryRecord !== undefined) {
@@ -169,7 +237,7 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
       return ok(null);
     }
     try {
-      const serialized = this.#storage.getItem(`${storagePrefix}${submissionId}`);
+      const serialized = this.persistedItem(`${storagePrefix}${submissionId}`);
       if (serialized === null) {
         return ok(null);
       }
@@ -191,16 +259,18 @@ export class BrowserMessageSubmissionJournal implements MessageSubmissionJournal
       return err(persistenceFailure(false));
     }
     const frozen = freezeRecord(parsed.data);
-    this.#memory.set(record.submissionId, frozen);
     if (this.#storage === null) {
+      this.#memory.set(record.submissionId, frozen);
       return ok(undefined);
     }
     try {
       this.#storage.setItem(`${storagePrefix}${record.submissionId}`, JSON.stringify(frozen));
+      this.#memory.set(record.submissionId, frozen);
       return ok(undefined);
     } catch {
-      // 内存日志仍可保证当前会话恢复；浏览器存储不可用不应阻断已登录用户发消息。
-      return ok(undefined);
+      // Keep the prepared ciphertext and original draft for a retry; claiming a durable
+      // submission here would make a restart lose the only record of a Matrix delivery.
+      return err(persistenceFailure(true));
     }
   }
 }

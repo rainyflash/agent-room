@@ -1,6 +1,7 @@
 pub(crate) mod accounts;
 pub(crate) mod agent_cards;
 pub(crate) mod agent_instances;
+pub(crate) mod agent_roster;
 pub(crate) mod agents;
 pub(crate) mod authentication;
 pub(crate) mod automation;
@@ -10,8 +11,10 @@ pub(crate) mod devices;
 pub(crate) mod direct_sessions;
 pub(crate) mod handoffs;
 pub(crate) mod health;
+pub(crate) mod inbox;
 pub(crate) mod lobbies;
 pub(crate) mod moderation;
 pub(crate) mod private_rooms;
+pub(crate) mod reception;
 mod resource_ids;
 pub(crate) mod telemetry;

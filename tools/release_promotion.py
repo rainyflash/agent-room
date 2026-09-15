@@ -78,6 +78,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     advance_parser.add_argument("--evidence-url", required=True)
     advance_parser.add_argument("--evidence-sha256", required=True)
     advance_parser.add_argument("--recorded-at-unix-seconds", type=int, required=True)
+    advance_parser.add_argument("--resume", action="store_true", help="仅复用完全相同的已有阶段和证据，保留原时间")
 
     verify_parser = subcommands.add_parser("verify", help="验证记录及指定门禁阶段")
     verify_parser.add_argument("--record", type=Path, required=True)
@@ -252,6 +253,8 @@ def advance(
     evidence_url: str,
     evidence_sha256: str,
     recorded_at_unix_seconds: int,
+    *,
+    resume: bool = False,
 ) -> None:
     record = load_record(record_path)
     current = require_string(record, "stage", "record")
@@ -278,6 +281,20 @@ def advance(
         },
     ]
     validate_record(updated)
+    if resume and output.exists():
+        existing = load_record(output)
+        saved_history = existing.get("history")
+        if not isinstance(saved_history, list) or not saved_history or not isinstance(saved_history[-1], dict):
+            raise PromotionFailure("已有晋级记录缺少可核对的历史。")
+        saved_time = require_integer(saved_history[-1], "recordedAtUnixSeconds", "history")
+        if saved_time > recorded_at_unix_seconds:
+            raise PromotionFailure("已有晋级记录时间晚于本次核对时间。")
+        # A lost upload response must not create a new timestamp or overwrite
+        # evidence already reviewed. Only the exact same transition can resume.
+        updated["history"][-1]["recordedAtUnixSeconds"] = saved_time
+        if existing != updated:
+            raise PromotionFailure("已有晋级记录与本次阶段或证据不一致，不能覆盖。")
+        return
     write_new(output, updated)
 
 
@@ -399,6 +416,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.evidence_url,
                 args.evidence_sha256,
                 args.recorded_at_unix_seconds,
+                resume=args.resume,
             )
         elif args.command == "verify":
             verify(args.record, args.expected_stage, args.version, args.revision)

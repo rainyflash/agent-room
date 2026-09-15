@@ -38,3 +38,7 @@ export function useDesktopRuntimeController(): DesktopRuntimeController {
   }
   return controller;
 }
+
+export function useOptionalDesktopRuntimeController(): DesktopRuntimeController | null {
+  return useContext(DesktopRuntimeContext);
+}

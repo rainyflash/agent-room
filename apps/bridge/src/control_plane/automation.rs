@@ -88,6 +88,8 @@ impl AutomationAuthorizationGateway for ReqwestControlPlaneAutomationAuthorizati
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthorizationBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reception_run_id: Option<uuid::Uuid>,
     submission_id: String,
     agent_id: String,
     agent_instance_id: String,
@@ -101,6 +103,7 @@ struct AuthorizationBody<'a> {
 impl<'a> From<&'a AutomationAuthorizationRequest> for AuthorizationBody<'a> {
     fn from(request: &'a AutomationAuthorizationRequest) -> Self {
         Self {
+            reception_run_id: request.reception_run_id,
             submission_id: request.submission_id.to_string(),
             agent_id: request.agent_id.to_string(),
             agent_instance_id: request.agent_instance_id.to_string(),
@@ -446,6 +449,7 @@ mod tests {
 
     fn authorization_request() -> AutomationAuthorizationRequest {
         AutomationAuthorizationRequest {
+            reception_run_id: None,
             grant_id: AutomationGrantId::from_uuid(uuid(GRANT_ID)),
             submission_id: MessageSubmissionId::from_uuid(uuid(SUBMISSION_ID)),
             agent_id: AgentId::from_uuid(uuid(AGENT_ID)),

@@ -14,6 +14,10 @@ pub use matrix_security::{
 };
 pub mod limits;
 mod tools;
+pub use agent_room_application::reception::{
+    ReceptionCommand, ReceptionPending, ReceptionProgress, ReceptionRecord, ReceptionRequest,
+    ReceptionStatus,
+};
 pub use host_sessions::{
     IpcCloseHostSessionRequest, IpcHostRoomTarget, IpcHostSessionDiagnostics, IpcHostSessionState,
     IpcHostSessionSummary, IpcOpenHostSessionRequest, IpcReceptionHost, IpcReceptionOffer,
@@ -28,16 +32,17 @@ pub use authentication::{
 pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, IpcClientSession};
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
-    IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
+    IpcActorSummary, IpcAgentArchiveReason, IpcAgentConnection, IpcAgentLifecycle,
+    IpcAgentReception, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
     IpcBridgeState, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
     IpcConversationMessage, IpcDeclinedHandoff, IpcDeclinedTargetedHandoff,
     IpcDefaultAgentBootstrap, IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose,
     IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission, IpcHumanHandoffSource,
     IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance,
     IpcMessageSensitivity, IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest,
-    IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest,
-    IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage,
-    IpcSubmissionState, IpcWorkStatus,
+    IpcOpenedAttachment, IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary,
+    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
 };
 pub use wire::{
     IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,

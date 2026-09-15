@@ -65,6 +65,13 @@ describe('MatrixLobbyGateway', () => {
         statusExpiresAtUnixMs: Date.parse('2026-08-24T16:00:30.000Z') + 15_000,
         reportedStatus: 'blocked',
         lastActiveAtUnixMs: NOW,
+        lifecycle: {
+          connection: 'online',
+          reception: 'unknown',
+          offlineSinceUnixMs: null,
+          archived: false,
+          archiveReason: null,
+        },
         summary: '等待仓库权限',
         trust: 'unknown',
         visibility: 'detailed',
@@ -114,6 +121,63 @@ describe('MatrixLobbyGateway', () => {
       agentId: AGENT_ID,
       instanceIds: ['01990d9e-8400-7000-8000-000000000011'],
       status: 'offline',
+    });
+  });
+
+  it.each([
+    [undefined, 'unknown'],
+    [null, 'on_resume'],
+    ['2026-08-24T16:00:15.000Z', 'waiting'],
+    ['2026-08-24T16:00:00.000Z', 'on_resume'],
+  ] as const)('区分旧客户端、无等待和实际阻塞等待：%s', (listeningUntil, reception) => {
+    const room = snapshot([
+      statusState({
+        instanceSuffix: '1',
+        status: 'working',
+        ...(listeningUntil === undefined ? {} : { listeningUntil }),
+        lastPolledAt: '2026-08-24T16:00:00.000Z',
+      }),
+    ]);
+    const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+      room.roomId,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.agents[0]?.lifecycle).toMatchObject({ connection: 'online', reception });
+  });
+
+  it('共享归档期限生效且同一身份重新接入后恢复', () => {
+    const old = statusState({
+      instanceSuffix: '1',
+      status: 'offline',
+      createdAt: '2026-08-16T16:00:00.000Z',
+      leaseExpiresAt: '2026-08-16T16:00:30.000Z',
+    });
+    const room = snapshot([old]);
+    const read = (value: MatrixLobbyRoomSnapshot) => {
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room: value }), () => NOW).read(
+        value.roomId,
+      );
+      if (!result.ok) throw new Error(result.error.code);
+      return result.value.agents;
+    };
+    expect(read(room)[0]?.lifecycle?.archived).toBe(true);
+    expect(
+      read({ ...room, rosterPolicy: { schemaVersion: 1, archiveAfterDays: 30 } })[0]?.lifecycle
+        ?.archived,
+    ).toBe(false);
+    const returning = read({
+      ...room,
+      statusEvents: [
+        old,
+        statusState({ instanceSuffix: '2', status: 'working', listeningUntil: null }),
+      ],
+    });
+    expect(returning).toHaveLength(1);
+    expect(returning[0]?.lifecycle).toMatchObject({
+      connection: 'online',
+      reception: 'on_resume',
+      archived: false,
     });
   });
 
@@ -218,6 +282,7 @@ type StatusOptions = {
   readonly instanceSuffix: string;
   readonly leaseExpiresAt?: string;
   readonly lastPolledAt?: string;
+  readonly listeningUntil?: string | null;
   readonly status: 'blocked' | 'working' | 'offline';
   readonly summary?: string;
 };
@@ -241,6 +306,7 @@ function statusContent(options: StatusOptions) {
     id: `01990d9e-8400-7000-8000-00000000002${options.instanceSuffix}`,
     leaseExpiresAt: options.leaseExpiresAt ?? '2026-08-24T16:00:30.000Z',
     ...(options.lastPolledAt === undefined ? {} : { lastPolledAt: options.lastPolledAt }),
+    ...(options.listeningUntil === undefined ? {} : { listeningUntil: options.listeningUntil }),
     progress: 0.5,
     schemaVersion: '1.0',
     signature: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',

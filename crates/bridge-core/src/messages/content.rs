@@ -14,6 +14,7 @@ use super::{
 };
 
 const MAX_INLINE_CONTENT_BYTES: u64 = 48 * 1_024;
+const MAX_ATTACHMENT_BYTES: u64 = 20 * 1_024 * 1_024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageContentReadRequest {
@@ -97,7 +98,13 @@ impl OpenMessageContentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenedMessageContent {
     source: ProjectedMessagePreview,
-    body: String,
+    body: OpenedMessageBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenedMessageBody {
+    Text(String),
+    Attachment { name: String, bytes: Arc<[u8]> },
 }
 
 impl OpenedMessageContent {
@@ -105,7 +112,7 @@ impl OpenedMessageContent {
         &self.source
     }
 
-    pub fn body(&self) -> &str {
+    pub const fn body(&self) -> &OpenedMessageBody {
         &self.body
     }
 }
@@ -226,7 +233,11 @@ impl OpenMessageContentService {
                 OpenMessageContentFailure::simple(OpenMessageContentFailureKind::NotFound)
             })?;
         let expected = &source.content;
-        if !is_inline_text(source.preview.content_type()) {
+        let attachment_name = source
+            .preview
+            .conversation()
+            .and_then(|chat| chat.attachment_name());
+        if attachment_name.is_none() && !is_inline_text(source.preview.content_type()) {
             return Err(OpenMessageContentFailure::simple(
                 OpenMessageContentFailureKind::UnsupportedMediaType,
             ));
@@ -236,7 +247,12 @@ impl OpenMessageContentService {
             .map_or(expected.size_bytes(), |encryption| {
                 encryption.plaintext_size_bytes()
             });
-        if plaintext_size > MAX_INLINE_CONTENT_BYTES {
+        let maximum_bytes = if attachment_name.is_some() {
+            MAX_ATTACHMENT_BYTES
+        } else {
+            MAX_INLINE_CONTENT_BYTES
+        };
+        if plaintext_size > maximum_bytes {
             return Err(OpenMessageContentFailure::simple(
                 OpenMessageContentFailureKind::TooLarge,
             ));
@@ -272,11 +288,21 @@ impl OpenMessageContentService {
                 .map_err(OpenMessageContentFailure::cryptography)?,
             None => opened.bytes.clone(),
         };
-        let body = std::str::from_utf8(&plaintext)
-            .map_err(|_| {
-                OpenMessageContentFailure::simple(OpenMessageContentFailureKind::InvalidEncoding)
-            })?
-            .to_owned();
+        let body = match attachment_name {
+            Some(name) => OpenedMessageBody::Attachment {
+                name: name.to_owned(),
+                bytes: plaintext,
+            },
+            None => OpenedMessageBody::Text(
+                std::str::from_utf8(&plaintext)
+                    .map_err(|_| {
+                        OpenMessageContentFailure::simple(
+                            OpenMessageContentFailureKind::InvalidEncoding,
+                        )
+                    })?
+                    .to_owned(),
+            ),
+        };
         Ok(OpenedMessageContent { source, body })
     }
 }

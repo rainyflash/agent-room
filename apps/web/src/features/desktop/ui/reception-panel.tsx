@@ -15,6 +15,7 @@ import type { DesktopRuntimeFailure } from '../domain/desktop-runtime';
 import { receiverAgentId, receiverStatus } from '../domain/reception-status';
 import { useReceptionQueries } from './use-reception-queries';
 import './reception-panel.css';
+import { ReceptionOwnershipPanel } from './reception-ownership-panel';
 
 const unavailable = () => err({ code: 'receiver.unavailable', retryable: false });
 
@@ -82,6 +83,7 @@ export function ReceptionPanel({
   return (
     <section className="reception-panel" aria-label={t('reception.title')}>
       <h3>{t('reception.title')}</h3>
+      <ReceptionOwnershipPanel agentId={agentId} roomId={roomId} />
       <p>{t(agentId === undefined ? 'reception.description' : 'reception.agentDescription')}</p>
       <div className="reception-actions">
         <Button size="compact" tone="quiet" onClick={() => void copy()}>
@@ -323,7 +325,7 @@ export function ReceptionCard({
               onAction({ action: 'pause' });
             }}
           >
-            {t('reception.pause')}
+            {t(busy ? 'receptionOwner.stopping' : 'receptionOwner.manual')}
           </Button>
         ) : (
           <Button
@@ -337,7 +339,7 @@ export function ReceptionCard({
               onAction({ action: pending ? 'verify' : 'start' });
             }}
           >
-            {t(pending ? 'reception.verify' : 'reception.start')}
+            {t(pending ? 'reception.verify' : 'receptionOwner.return')}
           </Button>
         )}
         {checkpoint.state === 'pending' && !running ? (

@@ -8,6 +8,7 @@ import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conver
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { ReceptionPanel } from '@/features/desktop/ui/reception-panel';
+import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
 import { InviteReplyProgress } from '@/features/desktop/ui/invite-reply-progress';
 import type { ConnectedInvitation } from '@/features/desktop/domain/invite-reply';
 import {
@@ -29,6 +30,7 @@ import { attendanceCounts } from '@/features/lobby/domain/agent-attendance';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
+import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
 import { LobbyRoomActions } from '@/features/lobby/ui/lobby-room-actions';
 import {
@@ -187,6 +189,7 @@ function ReadyLobby({
   };
   const navigation = (
     <WorkspaceNavigation
+      currentCatalogId={catalogId}
       activeDirectId={selectedDirectSessionId}
       controller={directSessions}
       onActivateRoom={() => {
@@ -223,6 +226,11 @@ function ReadyLobby({
         variant="compact"
       />
       <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
+      <AgentRosterPolicyPanel
+        key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
+        catalogId={catalogId}
+        days={room.archiveAfterDays ?? 7}
+      />
     </div>
   );
 
@@ -457,6 +465,8 @@ function ReadyLobby({
             receptionControls={
               principal !== null && localRuntime.isAvailable() ? (
                 <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
+              ) : principal !== null ? (
+                <ReceptionOwnershipPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
               ) : undefined
             }
             actionFailure={directSessions.failure?.code ?? null}

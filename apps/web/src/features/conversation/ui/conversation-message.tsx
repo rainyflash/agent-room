@@ -4,6 +4,7 @@ import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import { initials } from '@/shared/ui/display-name';
 import type { AgentDelivery } from '../domain/message-delivery';
+import { MessageAttachment } from './message-attachment';
 
 export function ConversationMessage({
   message,
@@ -65,7 +66,16 @@ export function ConversationMessage({
               ))}
             </div>
           ) : null}
-          <p>{chat?.text}</p>
+          {chat?.attachmentName !== undefined && chat.text === chat.attachmentName ? null : (
+            <p>{chat?.text}</p>
+          )}
+          {chat?.attachmentName !== undefined && message.content !== null ? (
+            <MessageAttachment
+              content={message.content}
+              roomId={message.roomId}
+              name={chat.attachmentName}
+            />
+          ) : null}
         </div>
         {own ? (
           <div

@@ -76,6 +76,8 @@ pub enum ReceiverStart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReceiverState {
+    #[serde(default)]
+    pub execution: Option<ReceiverExecution>,
     pub binding: ReceiverBinding,
     pub bridge_service: String,
     pub agent_id: Option<String>,
@@ -88,6 +90,14 @@ pub struct ReceiverState {
     pub enabled: bool,
     #[serde(default)]
     pub last_delivery: Option<DeliveryRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReceiverExecution {
+    pub run_id: uuid::Uuid,
+    pub revision: i64,
+    pub releasing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

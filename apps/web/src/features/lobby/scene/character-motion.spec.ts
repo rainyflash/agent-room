@@ -27,6 +27,7 @@ const agents: readonly LobbyAgent[] = Array.from({ length: 200 }, (_, index) => 
   status: statuses[index % statuses.length] ?? 'idle',
   statusExpiresAtUnixMs: 300_000,
   lastPolledAtUnixMs: 0,
+  listeningUntilUnixMs: 15_000,
   trust: 'unknown',
   visibility: 'coarse',
 }));

@@ -56,6 +56,7 @@ mod message_content;
 mod targeted_handoffs;
 
 pub use automation::ReqwestControlPlaneAutomationAuthorizationGateway;
+pub mod reception;
 pub use content::ReqwestControlPlaneContentGateway;
 pub use handoffs::ReqwestControlPlaneHandoffGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;

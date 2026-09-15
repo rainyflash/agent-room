@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::runtime_files::BridgeRuntimePaths;
 
 mod agent_runtime;
+mod attachment_downloads;
 
 use agent_runtime::AgentRuntimeIpcFacade;
 pub(crate) use agent_runtime::{BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot};
@@ -71,6 +72,7 @@ pub(crate) struct FoundationBridgeIpcRequestHandler {
     status_reader: Arc<dyn BridgeStatusReader>,
     onboarding: Option<Arc<BridgeOnboardingService>>,
     agent_runtime: Option<AgentRuntimeIpcFacade>,
+    reception: Option<Arc<dyn agent_room_application::reception::ReceptionControlGateway>>,
 }
 
 impl FoundationBridgeIpcRequestHandler {
@@ -80,6 +82,7 @@ impl FoundationBridgeIpcRequestHandler {
             status_reader,
             onboarding: None,
             agent_runtime: None,
+            reception: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl FoundationBridgeIpcRequestHandler {
             status_reader,
             onboarding: Some(onboarding),
             agent_runtime: None,
+            reception: None,
         }
     }
 
@@ -104,6 +108,7 @@ impl FoundationBridgeIpcRequestHandler {
     ) -> Self {
         Self {
             status_reader: status_reader.clone(),
+            reception: None,
             onboarding: None,
             agent_runtime: Some(AgentRuntimeIpcFacade::new(
                 consumer,
@@ -120,6 +125,13 @@ impl FoundationBridgeIpcRequestHandler {
         self.agent_runtime
             .as_ref()
             .ok_or_else(agent_runtime_unavailable)
+    }
+    pub(crate) fn with_reception(
+        mut self,
+        gateway: Arc<dyn agent_room_application::reception::ReceptionControlGateway>,
+    ) -> Self {
+        self.reception = Some(gateway);
+        self
     }
 
     fn onboarding(&self) -> Result<&BridgeOnboardingService, BridgeIpcDispatchFailure> {
@@ -168,6 +180,29 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::ReceptionControl(request) => self
+                    .reception
+                    .as_ref()
+                    .ok_or_else(agent_runtime_unavailable)?
+                    .execute(request)
+                    .await
+                    .map(|record| IpcResponse::Reception { record })
+                    .map_err(|error| {
+                        BridgeIpcDispatchFailure::new(
+                            error.code,
+                            if error.retryable {
+                                IpcErrorCategory::DependencyUnavailable
+                            } else {
+                                IpcErrorCategory::Conflict
+                            },
+                            error.retryable,
+                        )
+                    }),
+                IpcMethod::SendReceptionMessage { run_id, request } => {
+                    self.agent_runtime()?
+                        .send_message_with_run(request, Some(run_id))
+                        .await
+                }
                 IpcMethod::OpenHostSession(_)
                 | IpcMethod::RegisterReception(_)
                 | IpcMethod::HostSessionDiagnostics
@@ -200,6 +235,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     self.agent_runtime()?.list_previews(request).await
                 }
                 IpcMethod::ReadInbox(request) => self.agent_runtime()?.read_inbox(request).await,
+                IpcMethod::WaitInbox(request) => self.agent_runtime()?.wait_inbox(request).await,
                 IpcMethod::PublishStatus(request) => {
                     self.agent_runtime()?.publish_status(request).await
                 }
@@ -450,7 +486,7 @@ where
     }
 
     let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
@@ -891,7 +927,7 @@ mod tests {
         IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
         IpcListHandoffsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
         IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName,
-        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcVersion, IpcWorkStatus,
+        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcWorkStatus,
         create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
@@ -1492,6 +1528,10 @@ mod tests {
                 observed_at: UtcMillis::new(900).expect("观察时间有效"),
                 lease_expires_at: UtcMillis::new(2_000).expect("租约时间有效"),
                 origin_server_timestamp: 900,
+                published_at: UtcMillis::new(900).expect("发布时间有效"),
+                last_polled_at: None,
+                listening_until: None,
+                reception_known: false,
             }),
             queries: Mutex::new(Vec::new()),
         });
@@ -1517,13 +1557,16 @@ mod tests {
             .dispatch(IpcMethod::GetPresence(IpcGetPresenceRequest {
                 room_id: room_id.as_str().to_owned(),
                 agent_ids: vec![identity.agent_id().to_string()],
+                include_archived: false,
+                after_agent_id: None,
+                limit: 100,
             }))
             .await
             .expect("当前大厅 Presence 可读");
 
         assert!(matches!(
             response,
-            IpcResponse::Presence { entries }
+            IpcResponse::Presence { entries, .. }
                 if entries.len() == 1
                     && entries[0].room_id == room_id.as_str()
                     && entries[0].agent.agent_id == identity.agent_id().to_string()
@@ -1577,9 +1620,10 @@ mod tests {
 
         // Reading a private conversation is not evidence of receiving public lobby messages.
         status
-            .note_inbox_read(
+            .note_inbox_wait(
                 &MatrixRoomId::new("!private:matrix.test").expect("私聊标识有效"),
                 固定时钟.now(),
+                false,
             )
             .await
             .expect("私聊读取不发布状态");
@@ -1734,6 +1778,75 @@ mod tests {
                         == "d661c3d96d53ebc0ca8a55aae24b5df4a4d1bf28d37337b982fe8ebf54846eeb"
                     && content.risk_flags == ["external_link"]
         ));
+    }
+
+    #[tokio::test]
+    async fn 附件打开返回可读取的本地文件而不把二进制塞进工具正文() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间有效");
+        let content_id = ContentId::from_uuid(Uuid::now_v7());
+        let bytes = Arc::<[u8]>::from([0, 0xff, 0x80, 1, 2, 3]);
+        let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+        let mut source = 测试正文投影(room_id.clone(), content_id, digest);
+        let media_type = ContentMediaType::new("image/png").expect("媒体类型有效");
+        source.preview = MessagePreview::new(
+            MessageTitle::new("附件").expect("标题有效"),
+            MessageSummary::new("查看图片").expect("摘要有效"),
+            media_type.clone(),
+            None,
+            MessageSensitivity::Normal,
+            MessageRiskFlags::new([]).expect("风险标签有效"),
+        )
+        .with_conversation(
+            agent_room_domain::messages::ConversationMessage::new("查看图片".into(), vec![])
+                .expect("聊天有效")
+                .with_attachment_name(Some("diagram.png".into()))
+                .expect("附件名有效"),
+        );
+        let projections = Arc::new(固定正文投影(source));
+        let service = Arc::new(OpenMessageContentService::new(
+            OpenMessageContentDependencies {
+                projections: projections.clone(),
+                cryptography: None,
+                content: Arc::new(固定正文网关(DownloadedMessageContent {
+                    bytes: bytes.clone(),
+                    digest,
+                    byte_length: ContentByteLength::new(6).expect("长度有效"),
+                    media_type,
+                })),
+            },
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                测试_agent_身份(),
+                "DEVICE-1",
+                room_id,
+                ["content.read"],
+            ))),
+            projections,
+            service,
+            Arc::new(固定时钟),
+        );
+        let response = handler
+            .dispatch(IpcMethod::OpenContent(IpcOpenContentRequest {
+                room_id: None,
+                content_id: content_id.to_string(),
+            }))
+            .await
+            .expect("附件可读取");
+        let IpcResponse::OpenedContent { content } = response else {
+            panic!("应返回完整内容");
+        };
+        assert!(content.body.is_empty());
+        let attachment = content.attachment.expect("返回附件元数据");
+        assert_eq!(attachment.name, "diagram.png");
+        assert_eq!(
+            std::fs::read(&attachment.local_path).expect("宿主可读取文件"),
+            bytes.as_ref()
+        );
+        drop(handler);
+        assert!(!std::path::Path::new(&attachment.local_path).exists());
     }
 
     #[tokio::test]
@@ -2238,7 +2351,7 @@ mod tests {
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DiagnosticCli,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试提议有效");
@@ -2247,7 +2360,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::DiagnosticCli,
-                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
+                supported_versions: vec![IpcProtocolVersion::V4_0.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
@@ -2255,7 +2368,7 @@ mod tests {
         .expect("客户端问候可发送");
         let (challenge_id, challenge) = read_challenge(&mut client).await;
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .expect("测试协商器有效")
                 .negotiate(&offer)
                 .expect("测试提议可协商");
@@ -2319,12 +2432,12 @@ mod tests {
     fn 已认证的_mcp_调用仍必须携带会话且不能借包装扩大权限() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::McpServer,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -2365,11 +2478,11 @@ mod tests {
         let negotiate = |scope| {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::AgentCli,
-                [IpcProtocolVersion::V3_0],
+                [IpcProtocolVersion::V4_0],
                 [scope],
             )
             .unwrap();
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
         };
@@ -2403,12 +2516,12 @@ mod tests {
     fn 桌面读取默认人物的既有调用仍由桌面权限约束() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DesktopShell,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -2425,12 +2538,12 @@ mod tests {
         ] {
             let offer = IpcHandshakeOffer::new(
                 caller,
-                [IpcProtocolVersion::V3_0],
+                [IpcProtocolVersion::V4_0],
                 [IpcScope::BridgeStatusRead],
             )
             .unwrap();
             let agreement =
-                IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                     .unwrap()
                     .negotiate(&offer)
                     .unwrap();
@@ -2481,7 +2594,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::McpServer,
-                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
+                supported_versions: vec![IpcProtocolVersion::V4_0.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )

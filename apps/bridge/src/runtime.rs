@@ -176,19 +176,35 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         SystemClock.now().value(),
         agent_session.is_some(),
     ));
+    let reception = Arc::new(
+        agent_room_bridge::control_plane::reception::HttpReceptionGateway::new(
+            &ControlPlaneHttpConfig {
+                base_url: config.control_plane_url.clone(),
+                request_timeout: config.request_timeout,
+            },
+            device_session.service.clone(),
+        )
+        .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
     let request_handler: Arc<dyn BridgeIpcRequestHandler> = match agent_session.as_ref() {
-        Some(runtime) => Arc::new(FoundationBridgeIpcRequestHandler::with_agent_runtime(
-            crate::ipc::AgentRuntimeConsumer::Desktop,
-            status.clone(),
-            runtime.state.clone(),
-            runtime.previews.clone(),
-            runtime.content.clone(),
-            Arc::new(SystemClock),
-        )),
-        None => Arc::new(FoundationBridgeIpcRequestHandler::with_onboarding(
-            status.clone(),
-            initialize_onboarding(&config, device_session.service.clone())?,
-        )),
+        Some(runtime) => Arc::new(
+            FoundationBridgeIpcRequestHandler::with_agent_runtime(
+                crate::ipc::AgentRuntimeConsumer::Desktop,
+                status.clone(),
+                runtime.state.clone(),
+                runtime.previews.clone(),
+                runtime.content.clone(),
+                Arc::new(SystemClock),
+            )
+            .with_reception(reception.clone()),
+        ),
+        None => Arc::new(
+            FoundationBridgeIpcRequestHandler::with_onboarding(
+                status.clone(),
+                initialize_onboarding(&config, device_session.service.clone())?,
+            )
+            .with_reception(reception),
+        ),
     };
     let host_sessions = Arc::new(HostSessionRegistry::new(Arc::new(
         host_sessions::HostAgentRuntimeFactory::new(

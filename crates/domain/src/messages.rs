@@ -241,6 +241,7 @@ impl MessageRiskFlags {
 pub struct ConversationMessage {
     text: String,
     mentions: Vec<String>,
+    attachment_name: Option<String>,
 }
 
 impl ConversationMessage {
@@ -273,7 +274,36 @@ impl ConversationMessage {
                 reason: "聊天文本或提及超出允许范围",
             });
         }
-        Ok(Self { text, mentions })
+        Ok(Self {
+            text,
+            mentions,
+            attachment_name: None,
+        })
+    }
+    /// Attaches a display filename to the message's existing content reference.
+    ///
+    /// # Errors
+    /// Rejects empty, overlong, control-containing or path-like filenames.
+    pub fn with_attachment_name(mut self, name: Option<String>) -> DomainResult<Self> {
+        if let Some(value) = &name
+            && (value.trim().is_empty()
+                || value.chars().count() > 120
+                || value
+                    .chars()
+                    .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+                || value == "."
+                || value == "..")
+        {
+            return Err(DomainError::Validation {
+                field: "attachment_name",
+                reason: "附件名无效",
+            });
+        }
+        self.attachment_name = name;
+        Ok(self)
+    }
+    pub fn attachment_name(&self) -> Option<&str> {
+        self.attachment_name.as_deref()
     }
     pub fn text(&self) -> &str {
         &self.text

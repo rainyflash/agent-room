@@ -166,10 +166,22 @@ pub struct GetPresenceInput {
     /// Matrix 房间 ID。
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: String,
-    /// 可选 Agent UUID 列表；空数组表示房间内全部在线 Agent。
+    /// 可选 Agent UUID 列表；空数组表示普通名册（含最近离线）。
     #[serde(default)]
     #[schemars(length(max = PRESENCE_TARGETS), inner(length(equal = UUID_TEXT_CHARACTERS)))]
     pub agent_ids: Vec<String>,
+    /// 同时查看自动归档的身份。新连接会自动恢复。
+    #[serde(default)]
+    pub include_archived: bool,
+    /// 上一页返回的 nextCursor。
+    pub after_agent_id: Option<String>,
+    #[serde(default = "default_presence_limit")]
+    #[schemars(range(min = 1, max = 100))]
+    pub limit: u16,
+}
+
+const fn default_presence_limit() -> u16 {
+    100
 }
 
 impl From<GetPresenceInput> for IpcGetPresenceRequest {
@@ -177,6 +189,9 @@ impl From<GetPresenceInput> for IpcGetPresenceRequest {
         Self {
             room_id: input.room_id,
             agent_ids: input.agent_ids,
+            include_archived: input.include_archived,
+            after_agent_id: input.after_agent_id,
+            limit: input.limit,
         }
     }
 }

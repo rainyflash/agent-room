@@ -54,6 +54,7 @@ pub struct AgentStatusIntent {
     host_state: HostAgentState,
     details: Option<AgentStatusDetails>,
     last_polled_at: Option<UtcMillis>,
+    listening_until: Option<UtcMillis>,
 }
 
 impl AgentStatusIntent {
@@ -62,6 +63,7 @@ impl AgentStatusIntent {
             host_state,
             details,
             last_polled_at: None,
+            listening_until: None,
         }
     }
 
@@ -73,6 +75,15 @@ impl AgentStatusIntent {
 
     pub const fn last_polled_at(&self) -> Option<UtcMillis> {
         self.last_polled_at
+    }
+
+    #[must_use]
+    pub const fn with_listening_until(mut self, until: Option<UtcMillis>) -> Self {
+        self.listening_until = until;
+        self
+    }
+    pub const fn listening_until(&self) -> Option<UtcMillis> {
+        self.listening_until
     }
 
     fn snapshot(
@@ -231,6 +242,7 @@ struct PublishedRoomStatus {
     renew_at: UtcMillis,
     lease_expires_at: UtcMillis,
     last_polled_at: Option<UtcMillis>,
+    listening_until: Option<UtcMillis>,
 }
 
 pub struct AgentStatusPublicationService {
@@ -284,6 +296,16 @@ impl AgentStatusPublicationService {
                 StatusPublicationFailureKind::InvalidIntent,
             ));
         }
+        if intent.listening_until.is_some_and(|until| {
+            until.value()
+                > now
+                    .value()
+                    .saturating_add(agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS)
+        }) {
+            return Err(StatusPublicationFailure::new(
+                StatusPublicationFailureKind::InvalidIntent,
+            ));
+        }
         let snapshot = intent.snapshot(target.visibility()).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent)
         })?;
@@ -293,6 +315,12 @@ impl AgentStatusPublicationService {
             } else if previous.snapshot.visibility() != snapshot.visibility() {
                 StatusPublicationReason::VisibilityChanged
             } else if now >= previous.renew_at
+                || previous.listening_until.is_some() != intent.listening_until.is_some()
+                || intent.listening_until.is_some_and(|until| {
+                    previous
+                        .listening_until
+                        .is_none_or(|old| until.value() - old.value() >= 5_000)
+                })
                 || intent.last_polled_at.is_some_and(|polled| {
                     previous
                         .last_polled_at
@@ -316,7 +344,7 @@ impl AgentStatusPublicationService {
             self.policy.lifetime,
         )
         .map_err(|_| StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent))?;
-        let event = self.state_event(&lease, intent.last_polled_at)?;
+        let event = self.state_event(&lease, intent.last_polled_at, intent.listening_until)?;
         let event_id = self
             .publisher
             .publish(target.room_id(), &event)
@@ -334,6 +362,7 @@ impl AgentStatusPublicationService {
                 renew_at,
                 lease_expires_at: lease.expires_at(),
                 last_polled_at: intent.last_polled_at,
+                listening_until: intent.listening_until,
             },
         );
         Ok(StatusPublicationOutcome::Published {
@@ -348,6 +377,7 @@ impl AgentStatusPublicationService {
         &self,
         lease: &AgentStatusLease,
         last_polled_at: Option<UtcMillis>,
+        listening_until: Option<UtcMillis>,
     ) -> StatusPublicationResult<MatrixStateEvent> {
         let event_id = self.identifiers.event_id();
         let correlation_id = self.identifiers.correlation_id();
@@ -361,6 +391,7 @@ impl AgentStatusPublicationService {
         let mut unsigned =
             UnsignedStatusEvent::new(&self.identity, lease, event_id, correlation_id)?;
         unsigned.last_polled_at = last_polled_at.map(rfc3339).transpose()?;
+        unsigned.listening_until = listening_until.map(rfc3339).transpose()?;
         let mut content = serde_json::to_value(unsigned).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization)
         })?;
@@ -416,6 +447,7 @@ impl AgentStatusStatePublisher for MatrixStatusStatePublisher {
 struct UnsignedStatusEvent<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_polled_at: Option<String>,
+    listening_until: Option<String>,
     schema_version: &'static str,
     event_type: &'static str,
     id: Uuid,
@@ -443,6 +475,7 @@ impl<'a> UnsignedStatusEvent<'a> {
         let details = lease.snapshot().details();
         Ok(Self {
             last_polled_at: None,
+            listening_until: None,
             schema_version: "1.0",
             event_type: STATUS_EVENT_TYPE,
             id: event_id,

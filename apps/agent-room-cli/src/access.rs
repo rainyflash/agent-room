@@ -260,7 +260,10 @@ fn apply_context(command: &mut Command, profile: &Profile) -> Result<()> {
         Command::Send(args) => set_scope(&mut args.session, Some(&mut args.room), profile),
         Command::Status(args) => set_scope(&mut args.session, Some(&mut args.room), profile),
         Command::Register(args) => set_scope(&mut args.session, None, profile),
-        Command::Presence(args) | Command::Content { scope: args, .. } => {
+        Command::Presence(args) => {
+            set_scope(&mut args.scope.session, Some(&mut args.scope.room), profile)
+        }
+        Command::Content { scope: args, .. } => {
             set_scope(&mut args.session, Some(&mut args.room), profile)
         }
         _ => Err(Failure::validation("cli.profile.command_unsupported")),

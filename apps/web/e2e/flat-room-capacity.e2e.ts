@@ -1,6 +1,7 @@
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { expect, test, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { expectCompleteRosterPages } from './support/roster-pages';
 
 for (const count of [200, 1000]) {
   test(`${String(count)} 人默认显示附近角色，通过小地图和搜索定位`, async ({ page }, testInfo) => {
@@ -114,17 +115,11 @@ test('SVG 降级支持千人地图和定位，默认仅绘制附近人物', asyn
 async function locateLastAgent(page: Page, count: number): Promise<void> {
   const name = `Build Agent ${String(count).padStart(3, '0')}`;
   await page.getByRole('button', { name: 'View agents', exact: true }).click();
-  // All roster portraits share a compact resource reference, including at 1,000 members.
-  const portraits = page.locator('.roster-agent image[data-character-sprite]');
-  await expect(portraits).toHaveCount(count);
-  const sources = await portraits.evaluateAll((images) =>
-    images.map((image) => image.getAttribute('href')),
-  );
-  expect(new Set(sources).size).toBe(1);
-  expect(sources[0]?.length).toBeLessThan(200);
+  await expectCompleteRosterPages(page, count);
   await page.getByRole('searchbox', { name: 'Search agents', exact: true }).fill(name);
   const member = page.locator('.roster-agent');
   await expect(member).toHaveCount(1);
+  await expect(page.getByRole('navigation', { name: 'Agent pages' })).toHaveCount(0);
   await member.click();
   await expect(
     page.getByRole('complementary').getByRole('heading', { name, exact: true }),

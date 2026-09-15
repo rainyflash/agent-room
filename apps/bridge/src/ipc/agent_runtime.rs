@@ -22,9 +22,9 @@ use agent_room_bridge_core::{
         MessagePublicationOutcome, MessagePublicationService, MessageStoreFailureKind,
         MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
-        OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
-        ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
-        ProtectMessageBodyRequest, SendMessageRequest,
+        OpenMessageContentRequest, OpenMessageContentService, OpenedMessageBody,
+        ProjectedMessageActor, ProjectedMessagePreview, ProtectMessageBodyFailure,
+        ProtectMessageBodyFailureKind, ProtectMessageBodyRequest, SendMessageRequest,
     },
     presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
     status::{
@@ -451,6 +451,7 @@ pub(super) struct AgentRuntimeIpcFacade {
     runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
     previews: Arc<dyn MessageTimelineQueryRepository>,
     content: Arc<OpenMessageContentService>,
+    attachments: Arc<super::attachment_downloads::AttachmentDownloads>,
     clock: Arc<dyn Clock>,
 }
 
@@ -469,6 +470,7 @@ impl AgentRuntimeIpcFacade {
             runtime_reader,
             previews,
             content,
+            attachments: Arc::default(),
             clock,
         }
     }
@@ -531,20 +533,28 @@ impl AgentRuntimeIpcFacade {
         &self,
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
-        self.read_previews(request, false).await
+        self.read_previews(request, false, false).await
     }
 
     pub(super) async fn read_inbox(
         &self,
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
-        self.read_previews(request, true).await
+        self.read_previews(request, true, false).await
+    }
+
+    pub(super) async fn wait_inbox(
+        &self,
+        request: IpcListPreviewsRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.read_previews(request, true, true).await
     }
 
     async fn read_previews(
         &self,
         request: IpcListPreviewsRequest,
         oldest_first: bool,
+        waiting: bool,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
         let (room_id, _) = runtime.message_room(request.room_id).await?;
@@ -576,7 +586,13 @@ impl AgentRuntimeIpcFacade {
         // The desktop reads the same projection, but only the host can attest to receiving it.
         if self.consumer == AgentRuntimeConsumer::HostSession
             && let Some(status) = runtime.status
-            && let Err(failure) = status.note_inbox_read(&room_id, self.clock.now()).await
+            && let Err(failure) = status
+                .note_inbox_wait(
+                    &room_id,
+                    self.clock.now(),
+                    waiting && page.previews().is_empty(),
+                )
+                .await
         {
             tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
@@ -598,12 +614,27 @@ impl AgentRuntimeIpcFacade {
             .collect::<Result<Vec<_>, _>>()?;
         let query = PresenceQuery::new(room_id, agent_ids, self.clock.now())
             .map_err(|_| invalid_request("bridge.ipc.presence_targets_invalid"))?;
-        let entries = runtime
+        let observations = runtime
             .presence
             .ok_or_else(agent_runtime_unavailable)?
             .list(&query)
             .await
-            .map_err(map_presence_projection_failure)?
+            .map_err(map_presence_projection_failure)?;
+        let after = request
+            .after_agent_id
+            .as_deref()
+            .map(|id| parse_uuid_v7(id, "bridge.ipc.agent_id_invalid").map(AgentId::from_uuid))
+            .transpose()?;
+        let page = agent_room_bridge_core::presence_roster::paginate_roster(
+            observations,
+            request.include_archived,
+            after,
+            request.limit,
+        )
+        .map_err(|_| invalid_request("bridge.ipc.presence_limit_invalid"))?;
+        let next_cursor = page.next_cursor.map(|id| id.to_string());
+        let entries = page
+            .entries
             .iter()
             .map(|observation| {
                 let presence = observation.presence();
@@ -614,10 +645,14 @@ impl AgentRuntimeIpcFacade {
                     status: ipc_work_status(observation.status()),
                     observed_at_unix_ms: observation.observed_at().value(),
                     lease_expires_at_unix_ms: presence.lease_expires_at().value(),
+                    lifecycle: Some(observation.into()),
                 }
             })
             .collect();
-        Ok(IpcResponse::Presence { entries })
+        Ok(IpcResponse::Presence {
+            entries,
+            next_cursor,
+        })
     }
 
     pub(super) async fn publish_status(
@@ -659,6 +694,27 @@ impl AgentRuntimeIpcFacade {
             .await
             .map_err(map_content_open_failure)?;
         let source = opened.source();
+        let (body, attachment) = match opened.body() {
+            OpenedMessageBody::Text(text) => (text.clone(), None),
+            OpenedMessageBody::Attachment { name, bytes } => {
+                let downloads = self.attachments.clone();
+                let name = name.clone();
+                let bytes = bytes.clone();
+                let media_type = source.preview.content_type().as_str().to_owned();
+                let saved =
+                    tokio::task::spawn_blocking(move || downloads.save(name, &media_type, &bytes))
+                        .await
+                        .map_err(|_| internal_failure("bridge.attachment_cache_unavailable"))?
+                        .map_err(|_| {
+                            BridgeIpcDispatchFailure::new(
+                                "bridge.attachment_cache_unavailable",
+                                IpcErrorCategory::DependencyUnavailable,
+                                true,
+                            )
+                        })?;
+                (String::new(), Some(saved))
+            }
+        };
         Ok(IpcResponse::OpenedContent {
             content: IpcOpenedContent {
                 content: ipc_content(&source.content, source.preview.content_type().as_str()),
@@ -671,7 +727,8 @@ impl AgentRuntimeIpcFacade {
                     .iter()
                     .map(|flag| flag.as_str().to_owned())
                     .collect(),
-                body: opened.body().to_owned(),
+                body,
+                attachment,
             },
         })
     }
@@ -680,6 +737,16 @@ impl AgentRuntimeIpcFacade {
         &self,
         request: IpcSendMessageRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.send_message_with_run(request, None).await
+    }
+    pub(super) async fn send_message_with_run(
+        &self,
+        request: IpcSendMessageRequest,
+        run_id: Option<Uuid>,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        if run_id.is_some() && request.provenance != IpcMessageProvenance::AutonomousAgent {
+            return Err(invalid_request("reception.background_reply_required"));
+        }
         let runtime = self.runtime_snapshot()?;
         let (room_id, room_encryption) = runtime.message_room(Some(request.room_id)).await?;
         runtime
@@ -762,7 +829,8 @@ impl AgentRuntimeIpcFacade {
             relation,
             automation_grant_id,
         )
-        .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?;
+        .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?
+        .with_reception_run(run_id);
 
         let outcome = match publication.send(&intent).await {
             Ok(outcome) => ipc_publication_outcome(outcome),
@@ -1302,6 +1370,7 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
         conversation: preview.preview.conversation().map(|chat| {
             agent_room_bridge_ipc::IpcConversationMessage {
+                attachment_name: chat.attachment_name().map(str::to_owned),
                 text: chat.text().to_owned(),
                 mentions: chat.mentions().to_vec(),
             }

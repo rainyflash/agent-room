@@ -118,6 +118,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_parser.add_argument("--cosign", default="cosign")
     verify_parser.add_argument("--docker", default="docker")
     verify_parser.add_argument("--certificate-identity-regexp", required=True)
+    verify_parser.add_argument("--expected-revision", help="要求每份 Sigstore 证据来自同一完整 Git SHA")
     verify_parser.add_argument(
         "--certificate-oidc-issuer",
         default="https://token.actions.githubusercontent.com",
@@ -616,6 +617,7 @@ def verify_sigstore_evidence(
     cosign: str,
     certificate_identity_regexp: str,
     certificate_oidc_issuer: str,
+    expected_revision: str | None = None,
 ) -> None:
     artifacts = parse_artifacts(root, inventory)
     for artifact in artifacts:
@@ -624,6 +626,7 @@ def verify_sigstore_evidence(
             cosign,
             certificate_identity_regexp,
             certificate_oidc_issuer,
+            expected_revision,
         )
         run_checked(command, f"Sigstore 证据验证 {artifact.kind}/{artifact.name}")
 
@@ -633,7 +636,10 @@ def build_sigstore_verify_command(
     cosign: str,
     certificate_identity_regexp: str,
     certificate_oidc_issuer: str,
+    expected_revision: str | None = None,
 ) -> tuple[str, ...]:
+    if expected_revision is not None and not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
+        raise ReleaseFailure("expected revision 必须是完整 Git SHA。")
     return (
         cosign,
         "verify-blob",
@@ -643,6 +649,7 @@ def build_sigstore_verify_command(
         certificate_identity_regexp,
         "--certificate-oidc-issuer",
         certificate_oidc_issuer,
+        *(("--certificate-github-workflow-sha", expected_revision) if expected_revision else ()),
         str(artifact.path),
     )
 
@@ -691,6 +698,7 @@ def verify(args: argparse.Namespace) -> None:
         args.cosign,
         args.certificate_identity_regexp,
         args.certificate_oidc_issuer,
+        getattr(args, "expected_revision", None),
     )
     verify_oci_availability(args.root, inventory, args.docker)
 

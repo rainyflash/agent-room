@@ -111,6 +111,7 @@ struct IdentityRuntime {
 }
 
 struct AgentFeatureHttpStates {
+    roster: features::agent_roster::AgentRosterHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -129,6 +130,7 @@ struct AgentIdentityHttpStates {
 }
 
 struct AgentCollaborationHttpStates {
+    roster: features::agent_roster::AgentRosterHttpState,
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
@@ -350,12 +352,12 @@ async fn build_identity_router(
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let agent_dependencies = AgentFeatureDependencies {
-        repositories,
-        system_runtime,
-        secrets,
+        repositories: repositories.clone(),
+        system_runtime: system_runtime.clone(),
+        secrets: secrets.clone(),
         matrix_identities,
-        authentication: service,
-        devices,
+        authentication: service.clone(),
+        devices: devices.clone(),
         matrix_authority,
         content_authorizer,
     };
@@ -366,7 +368,7 @@ async fn build_identity_router(
         account_state,
         device_state,
         agent_features,
-        content_routes,
+        content_routes.merge(personal_routes(authentication_config, &agent_dependencies)),
     );
     Ok(IdentityRuntime {
         routes,
@@ -374,6 +376,28 @@ async fn build_identity_router(
         account_deletion,
         operational_metrics,
     })
+}
+
+fn personal_routes(
+    config: &AuthenticationConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Router {
+    features::inbox::router(features::inbox::InboxHttpState {
+        repository: dependencies.repositories.clone(),
+        authentication: dependencies.authentication.clone(),
+    })
+    .merge(features::reception::router(
+        features::reception::ReceptionHttpState {
+            repository: dependencies.repositories.clone(),
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.frontend_origin,
+                &config.desktop_origin,
+            ),
+        },
+    ))
 }
 
 fn build_authentication_runtime(
@@ -426,6 +450,7 @@ fn compose_identity_routes(
         .merge(features::agent_cards::router(agents.cards))
         .merge(features::automation::router(agents.automation))
         .merge(features::moderation::router(agents.moderation))
+        .merge(features::agent_roster::router(agents.roster))
         .merge(content)
 }
 
@@ -559,6 +584,7 @@ fn build_agent_feature_states(
         cards,
     } = build_agent_identity_http_states(config, request_timeout, dependencies);
     let AgentCollaborationHttpStates {
+        roster,
         handoffs,
         lobbies,
         private_rooms,
@@ -567,6 +593,7 @@ fn build_agent_feature_states(
         moderation,
     } = build_agent_collaboration_http_states(config, dependencies)?;
     Ok(AgentFeatureHttpStates {
+        roster,
         agents,
         instances,
         cards,
@@ -702,6 +729,20 @@ fn build_agent_collaboration_http_states(
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origin,
         ),
+        roster: features::agent_roster::AgentRosterHttpState {
+            service: Arc::new(
+                agent_room_application::agent_roster::AgentRosterService::new(
+                    dependencies.repositories.clone(),
+                    dependencies.matrix_identities.clone(),
+                    dependencies.system_runtime.clone(),
+                ),
+            ),
+            authentication: dependencies.authentication.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.authentication.frontend_origin,
+                &config.authentication.desktop_origin,
+            ),
+        },
     })
 }
 

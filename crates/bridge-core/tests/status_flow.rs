@@ -262,6 +262,64 @@ async fn 拒绝未来的接待证据() {
 }
 
 #[tokio::test]
+async fn 等待开始结束立即发布且普通续租不延长等待信号() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let room = target(AgentStatusVisibility::Coarse);
+    let waiting = AgentStatusIntent::new(HostAgentState::Available, None)
+        .with_last_polled_at(Some(time(1_000)))
+        .with_listening_until(Some(time(16_000)));
+    service
+        .publish_if_due(&room, &waiting, 0)
+        .await
+        .expect("等待发布");
+    fixture.clock.set(time(2_000));
+    service
+        .publish_if_due(
+            &room,
+            &waiting.clone().with_listening_until(Some(time(17_000))),
+            0,
+        )
+        .await
+        .expect("频繁等待检查受节流保护");
+    fixture.clock.set(time(6_000));
+    service
+        .publish_if_due(
+            &room,
+            &waiting.clone().with_listening_until(Some(time(21_000))),
+            0,
+        )
+        .await
+        .expect("等待信号更新");
+    fixture.clock.set(time(7_000));
+    let resumed = waiting.clone().with_listening_until(None);
+    service
+        .publish_if_due(&room, &resumed, 0)
+        .await
+        .expect("有消息后结束等待");
+    fixture.clock.set(time(120_000));
+    service
+        .publish_if_due(&room, &resumed, 0)
+        .await
+        .expect("后台续租");
+    let events = fixture.publisher.events.lock().expect("events lock");
+    assert_eq!(events.len(), 4);
+    assert_eq!(
+        events[0].1.content()["listeningUntil"],
+        "1970-01-01T00:00:16.000Z"
+    );
+    assert_eq!(
+        events[1].1.content()["listeningUntil"],
+        "1970-01-01T00:00:21.000Z"
+    );
+    assert!(events[2].1.content()["listeningUntil"].is_null());
+    assert!(events[3].1.content()["listeningUntil"].is_null());
+    for (_, event) in events.iter() {
+        assert_protocol_event(event.content());
+    }
+}
+
+#[tokio::test]
 async fn 状态与可见性变化立即发布而详情变化等待续租() {
     let fixture = fixture();
     let mut service = fixture.service();

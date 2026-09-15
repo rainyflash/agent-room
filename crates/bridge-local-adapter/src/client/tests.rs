@@ -1,7 +1,7 @@
-use agent_room_bridge_core::ipc::IpcInstallationId;
+use agent_room_bridge_core::ipc::{IpcInstallationId, IpcProtocolVersion};
 use agent_room_bridge_ipc::{
     IpcClientCredentials, IpcCloseHostSessionRequest, IpcFrame, IpcFrameCodec, IpcHostSessionState,
-    IpcHostSessionSummary, IpcScopeName, IpcSharedSecret, IpcVersion,
+    IpcHostSessionSummary, IpcScopeName, IpcSharedSecret,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use tokio::{
@@ -60,7 +60,7 @@ async fn delayed_server(
             &IpcFrame::ServerChallenge {
                 challenge_id: SESSION_ID.parse().unwrap(),
                 challenge: URL_SAFE_NO_PAD.encode([9_u8; 32]),
-                selected_version: IpcVersion { major: 3, minor: 0 },
+                selected_version: IpcProtocolVersion::V4_0.into(),
                 granted_scopes: vec![IpcScopeName::from(scope)],
             },
         )
@@ -74,7 +74,7 @@ async fn delayed_server(
             &mut server_stream,
             &IpcFrame::ServerReady {
                 server_instance_id: SESSION_ID.parse().unwrap(),
-                selected_version: IpcVersion { major: 3, minor: 0 },
+                selected_version: IpcProtocolVersion::V4_0.into(),
                 granted_scopes: vec![IpcScopeName::from(scope)],
             },
         )

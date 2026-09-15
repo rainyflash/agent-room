@@ -356,6 +356,12 @@ export class MatrixMessageGateway implements MessageGateway {
   subscribe(roomId: string, listener: () => void): () => void {
     return this.#source.subscribe(roomId, listener);
   }
+
+  async loadOlder(roomId: string) {
+    return (
+      this.#source.loadOlder?.(roomId) ?? err({ code: 'history.unavailable', retryable: false })
+    );
+  }
 }
 
 function projectRoom(
@@ -432,11 +438,21 @@ function projectRoom(
     }
   }
 
+  const windowSize = Math.max(
+    MAX_PROJECTED_MESSAGES,
+    Math.min(5000, room.windowSize ?? MAX_PROJECTED_MESSAGES),
+  );
+  const more = messages.size > windowSize || room.hasOlder === true;
   const projected = [...messages.values()]
     .toSorted(compareMessages)
-    .slice(0, MAX_PROJECTED_MESSAGES)
+    .slice(0, windowSize)
     .map(freezeMessage);
   return Object.freeze({
+    ...(room.windowSize === undefined
+      ? {}
+      : {
+          history: { canLoadMore: more && windowSize < 5000, limited: more && windowSize >= 5000 },
+        }),
     messages: Object.freeze(projected),
     observedAtUnixMs,
     readOnlyFederatedEvents: Object.freeze(
@@ -497,6 +513,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
           parsed.data.content.encryption.plaintextSizeBytes + 16)) ||
     parsed.data.preview.contentType !== parsed.data.content.mediaType ||
     (parsed.data.preview.conversation !== undefined &&
+      parsed.data.preview.conversation.attachmentName === undefined &&
       parsed.data.preview.contentType !== 'text/plain') ||
     event.eventId === undefined ||
     !validServerTimestamp(event.serverTimestamp)
@@ -624,6 +641,9 @@ function toPreview(preview: z.output<typeof previewSchema>): MessagePreview {
       ? {}
       : {
           conversation: Object.freeze({
+            ...(preview.conversation.attachmentName === undefined
+              ? {}
+              : { attachmentName: preview.conversation.attachmentName }),
             text: preview.conversation.text,
             mentions: Object.freeze([...preview.conversation.mentions]),
           }),

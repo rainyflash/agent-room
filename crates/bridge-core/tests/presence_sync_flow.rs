@@ -195,6 +195,54 @@ async fn 只有已入房且签名可信的短租约状态进入投影() {
 }
 
 #[tokio::test]
+async fn 等待信号受签名和时限保护并读取房间统一归档规则() {
+    use agent_room_application::agent_roster::AGENT_ROSTER_POLICY_EVENT_TYPE;
+    let fixture = 测试夹具::new();
+    let mut payload = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    payload["lastPolledAt"] = json!(NOW_RFC3339);
+    payload["listeningUntil"] = json!("2026-04-24T12:00:15.000Z");
+    sign_payload(&fixture.signing_key, &mut payload);
+    let policy = MatrixTimelineEvent::new(
+        Some(MatrixEventId::new("$policy:matrix.test").unwrap()),
+        Some(MatrixUserId::new("@service:matrix.test").unwrap()),
+        MatrixEventType::new(AGENT_ROSTER_POLICY_EVENT_TYPE).unwrap(),
+        Some(String::new()),
+        None,
+        Some(1),
+        json!({ "schemaVersion": 1, "archiveAfterDays": 30 }),
+    )
+    .unwrap();
+    let mut tampered = payload.clone();
+    tampered["listeningUntil"] = json!("2026-04-24T12:00:14.000Z");
+    let mut excessive = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    excessive["listeningUntil"] = json!("2026-04-24T12:00:16.000Z");
+    sign_payload(&fixture.signing_key, &mut excessive);
+    let outcome = fixture
+        .service()
+        .process(
+            &sync_with_state(vec![
+                membership_event("join"),
+                policy,
+                status_timeline_event("$valid:matrix.test", payload, 2),
+                status_timeline_event("$tampered:matrix.test", tampered, 3),
+                status_timeline_event("$excessive:matrix.test", excessive, 4),
+            ]),
+            true,
+        )
+        .await
+        .expect("同步成功");
+    assert_eq!(outcome.accepted_statuses(), 1);
+    assert_eq!(outcome.issues().len(), 2);
+    let batches = fixture.projections.batches.lock().unwrap();
+    let room = &batches[0].rooms()[0];
+    assert_eq!(room.policy().unwrap().archive_after_days(), 30);
+    assert_eq!(
+        room.presences()[0].listening_until().unwrap().value(),
+        NOW_UNIX_MS + 15_000
+    );
+}
+
+#[tokio::test]
 async fn 篡改签名与超长租约被逐条隔离而不污染投影() {
     let fixture = 测试夹具::new();
     let mut tampered_payload = status_payload("working", NOW_RFC3339, EXPIRY_RFC3339);

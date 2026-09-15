@@ -42,7 +42,7 @@ impl Bridge {
 impl BridgeToolClient for Bridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
         if let IpcMethod::WithSession { method, .. } = &method
-            && let IpcMethod::ReadInbox(request) = method.as_ref()
+            && let IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) = method.as_ref()
         {
             self.read_cursors
                 .lock()

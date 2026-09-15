@@ -47,13 +47,20 @@ pub async fn run(
     if context.mode == ReceiverMode::Listen {
         state.binding.host.validate()?;
     }
+    if state
+        .execution
+        .as_ref()
+        .is_some_and(|execution| execution.releasing)
+    {
+        crate::execution::release(context.backend, &store, &mut state).await?;
+    }
     let mut session_id = None;
     let result = tokio::select! {
         biased;
         () = stop => Ok(()),
         result = receive_loop(&context, &store, &mut state, &mut session_id) => result,
     };
-    let close = if let Some(session_id) = session_id {
+    let mut close = if let Some(session_id) = session_id {
         call(
             context.backend,
             IpcMethod::CloseHostSession(IpcCloseHostSessionRequest { session_id }),
@@ -63,13 +70,20 @@ pub async fn run(
     } else {
         Ok(())
     };
+    if close.is_ok() {
+        close = crate::execution::release(context.backend, &store, &mut state).await;
+    }
     if let Err(mut error) = result {
         if let Err(close_error) = close {
             error.details.insert("closeError".into(), close_error.code);
         }
         return Err(error);
     }
-    close?;
+    close.map_err(|cause| {
+        let mut error = Failure::local("receiver.release_unconfirmed");
+        error.details.insert("closeError".into(), cause.code);
+        error
+    })?;
     (context.emit)(ReceiverEvent::Stopped)
 }
 
@@ -82,7 +96,24 @@ async fn receive_loop(
     let mut delay = 1;
     loop {
         match receive_connected(context, store, state, session_id).await {
+            Err(error) if error.code == "reception.handoff_requested" => {
+                state.enabled = false;
+                store.save(state)?;
+                return Ok(());
+            }
             Err(error) if error.retryable => {
+                // Draining the previous session also covers outbound IPC calls that
+                // survived cancellation of a host turn or a network request.
+                if let Some(id) = session_id.as_ref() {
+                    call(
+                        context.backend,
+                        IpcMethod::CloseHostSession(IpcCloseHostSessionRequest {
+                            session_id: id.clone(),
+                        }),
+                    )
+                    .await?;
+                    *session_id = None;
+                }
                 (context.emit)(ReceiverEvent::Reconnecting {
                     error,
                     retry_in_seconds: delay,
@@ -136,6 +167,7 @@ async fn receive_connected(
         state.agent_id = Some(summary.agent.agent_id.clone());
     }
     store.save(state)?;
+    crate::execution::claim(context.backend, &session.session_id, store, state).await?;
     if matches!(state.checkpoint, ReceptionCheckpoint::Pending { .. }) {
         reconcile(
             context,
@@ -156,7 +188,12 @@ async fn receive_connected(
         host_task_id: binding.host.task_id.clone(),
         room_id: binding.policy.room_id.clone(),
     })?;
-    poll_inbox(context, store, state, &summary, &session.session_id).await
+    let heartbeat =
+        crate::execution::request(state, agent_room_bridge_ipc::ReceptionCommand::Heartbeat)?;
+    tokio::select! {
+        result = crate::execution::monitor(context.backend, &session.session_id, heartbeat) => result,
+        result = poll_inbox(context, store, state, &summary, &session.session_id) => result,
+    }
 }
 
 async fn poll_inbox(
@@ -210,8 +247,11 @@ async fn deliver(
         .as_ref()
         .is_some_and(|record| record.event_id == message.event_id);
     if !prepare_delivery(state, store, message, &summary.agent.matrix_user_id)? {
+        crate::execution::save(context.backend, Some(session_id), store, state).await?;
         return Ok(());
     }
+    // Persist the original submission on the server before a model can run.
+    crate::execution::save(context.backend, Some(session_id), store, state).await?;
     emit_delivery(context, state)?;
     let record = state
         .last_delivery
@@ -338,6 +378,7 @@ async fn reconcile(
             record.reply_event_id = Some(event_id);
             record.failure = None;
             store.save(state)?;
+            crate::execution::save(context.backend, Some(session_id), store, state).await?;
             emit_delivery(context, state)
         }
         Err(mut error) => {

@@ -27,6 +27,8 @@ import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import type { AgentDirectoryGateway } from '@/features/workspace/domain/agent-directory';
 
 export type AppServices = {
+  readonly agentRosterPolicy?: import('@/features/lobby/domain/agent-roster-policy').AgentRosterPolicyGateway;
+  readonly receptionOwnership?: import('@/features/desktop/domain/reception-ownership').ReceptionOwnershipGateway;
   readonly accessManagement: AccessManagementGateway;
   readonly agentDirectory: AgentDirectoryGateway;
   readonly automation: AutomationGrantGateway;

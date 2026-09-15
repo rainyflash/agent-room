@@ -1,13 +1,21 @@
 import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resources';
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
+import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
+import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
+import { agentStateResources } from '@/features/lobby/i18n/agent-state-resources';
 import { conversationResources } from '@/features/conversation/i18n/conversation-resources';
+import { attachmentResources } from '@/features/conversation/i18n/attachment-resources';
+import { historyResources } from '@/features/conversation/i18n/history-resources';
+import { inboxResources } from '@/features/inbox/i18n/inbox-resources';
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
+import { hallResources } from '@/features/room-directory/i18n/hall-resources';
+import { applicationResources } from '@/features/updates/i18n/application-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
@@ -775,13 +783,21 @@ export const resources = {
       ...automationResources.en,
       ...agentInviteResources.en,
       ...receptionResources.en,
+      ...receptionOwnershipResources.en,
+      ...personalWorkspaceResources.en,
       ...conversationResources.en,
+      ...attachmentResources.en,
+      ...historyResources.en,
+      ...inboxResources.en,
       ...roomWorkspaceResources.en,
+      ...agentStateResources.en,
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
       ...onboardingResources.en,
       ...privateRoomResources.en,
       ...roomDirectoryResources.en,
+      ...hallResources.en,
+      ...applicationResources.en,
       ...securityResources.en,
       ...workspaceResources.en,
     },
@@ -1467,13 +1483,21 @@ export const resources = {
       ...automationResources['zh-CN'],
       ...agentInviteResources['zh-CN'],
       ...receptionResources['zh-CN'],
+      ...receptionOwnershipResources['zh-CN'],
+      ...personalWorkspaceResources['zh-CN'],
       ...conversationResources['zh-CN'],
+      ...attachmentResources['zh-CN'],
+      ...historyResources['zh-CN'],
+      ...inboxResources['zh-CN'],
       ...roomWorkspaceResources['zh-CN'],
+      ...agentStateResources['zh-CN'],
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
       ...onboardingResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
+      ...hallResources['zh-CN'],
+      ...applicationResources['zh-CN'],
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
     },

@@ -676,6 +676,7 @@ fn create_request() -> CreateAutomationGrant {
 
 fn send_request() -> AuthorizeAutomationSend {
     AuthorizeAutomationSend {
+        reception_run_id: None,
         actor: device_actor(),
         grant_id: grant_id(),
         submission_id: submission_id(),

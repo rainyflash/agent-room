@@ -57,6 +57,24 @@ impl HostAgentRuntimeFactory {
         })
     }
 
+    fn reception_gateway(
+        &self,
+    ) -> Result<
+        Arc<dyn agent_room_application::reception::ReceptionControlGateway>,
+        BridgeIpcDispatchFailure,
+    > {
+        Ok(Arc::new(
+            agent_room_bridge::control_plane::reception::HttpReceptionGateway::new(
+                &ControlPlaneHttpConfig {
+                    base_url: self.config.control_plane_url.clone(),
+                    request_timeout: self.config.request_timeout,
+                },
+                self.device_session.clone(),
+            )
+            .map_err(|_| host_failure("reception.configuration_invalid", false))?,
+        ))
+    }
+
     async fn prepare_runtime(
         &self,
         request: IpcOpenHostSessionRequest,
@@ -79,14 +97,7 @@ impl HostAgentRuntimeFactory {
             )
             .await
             .map_err(|failure| registration_failure(failure.kind()))?;
-        let paths = self.paths.for_host_agent(agent.agent_id);
-        paths
-            .prepare()
-            .map_err(BridgeRuntimeError::runtime_files)
-            .map_err(BridgeIpcDispatchFailure::from)?;
-        let store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
-            .map_err(BridgeRuntimeError::matrix_store_lock)
-            .map_err(BridgeIpcDispatchFailure::from)?;
+        let (paths, store_lock) = self.prepare_agent_storage(agent.agent_id)?;
         // 只为子运行时选择独立存储命名空间；设备认证继续共享传入的服务，根 IPC 身份不变。
         let mut config = self.config.clone();
         config.secure_storage_service =
@@ -144,14 +155,17 @@ impl HostAgentRuntimeFactory {
         }
         status.finish_starting();
         let state = runtime.state.clone();
-        let handler = Arc::new(FoundationBridgeIpcRequestHandler::with_agent_runtime(
-            crate::ipc::AgentRuntimeConsumer::HostSession,
-            status.clone(),
-            state.clone(),
-            runtime.previews.clone(),
-            runtime.content.clone(),
-            Arc::new(SystemClock),
-        ));
+        let handler = Arc::new(
+            FoundationBridgeIpcRequestHandler::with_agent_runtime(
+                crate::ipc::AgentRuntimeConsumer::HostSession,
+                status.clone(),
+                state.clone(),
+                runtime.previews.clone(),
+                runtime.content.clone(),
+                Arc::new(SystemClock),
+            )
+            .with_reception(self.reception_gateway()?),
+        );
         Ok(PreparedHostSession {
             handler,
             run: Box::pin(async move {
@@ -161,6 +175,21 @@ impl HostAgentRuntimeFactory {
                 state.clear();
             }),
         })
+    }
+
+    fn prepare_agent_storage(
+        &self,
+        agent_id: AgentId,
+    ) -> Result<(BridgeRuntimePaths, BridgeExclusiveLock), BridgeIpcDispatchFailure> {
+        let paths = self.paths.for_host_agent(agent_id);
+        paths
+            .prepare()
+            .map_err(BridgeRuntimeError::runtime_files)
+            .map_err(BridgeIpcDispatchFailure::from)?;
+        let store_lock = BridgeExclusiveLock::acquire(paths.matrix_store_lock_path())
+            .map_err(BridgeRuntimeError::matrix_store_lock)
+            .map_err(BridgeIpcDispatchFailure::from)?;
+        Ok((paths, store_lock))
     }
 }
 

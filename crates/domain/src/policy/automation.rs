@@ -445,11 +445,25 @@ impl AutomationGrant {
         attempt: &AutomationGrantAttempt,
         usage: AutomationUsageSnapshot,
     ) -> AutomationGrantDecision {
+        self.evaluate_internal(attempt, Some(usage))
+    }
+
+    /// Check current scope, revocation and content policy before resolving an
+    /// idempotent submission. Usage is enforced atomically for new consumption.
+    pub fn evaluate_policy(&self, attempt: &AutomationGrantAttempt) -> AutomationGrantDecision {
+        self.evaluate_internal(attempt, None)
+    }
+
+    fn evaluate_internal(
+        &self,
+        attempt: &AutomationGrantAttempt,
+        usage: Option<AutomationUsageSnapshot>,
+    ) -> AutomationGrantDecision {
         use AutomationGrantDenial as Denial;
 
         let denial = match self.state {
             AutomationGrantStatus::Revoked => Some(Denial::Revoked),
-            AutomationGrantStatus::Exhausted => Some(Denial::TotalLimitExceeded),
+            AutomationGrantStatus::Exhausted => usage.map(|_| Denial::TotalLimitExceeded),
             AutomationGrantStatus::Expired => Some(Denial::Expired),
             AutomationGrantStatus::Active => None,
         }
@@ -478,11 +492,15 @@ impl AutomationGrant {
         .or_else(|| {
             self.limits
                 .max_total_messages()
-                .is_some_and(|maximum| usage.total_messages >= maximum)
+                .is_some_and(|maximum| usage.is_some_and(|usage| usage.total_messages >= maximum))
                 .then_some(Denial::TotalLimitExceeded)
         })
         .or_else(|| {
-            (usage.messages_in_current_minute >= u32::from(self.limits.max_messages_per_minute()))
+            usage
+                .is_some_and(|usage| {
+                    usage.messages_in_current_minute
+                        >= u32::from(self.limits.max_messages_per_minute())
+                })
                 .then_some(Denial::RateLimitExceeded)
         })
         .or_else(|| match attempt.risk_scan {

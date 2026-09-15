@@ -1,3 +1,4 @@
+import { visibleCharacterLabels } from '../character-labels';
 // 使用静态着色器同步实现，确保发布环境禁止动态代码求值时也能保留 Pixi 场景。
 import 'pixi.js/unsafe-eval';
 import { sceneCharacters, type SceneFrame } from '../scene-character';
@@ -334,6 +335,11 @@ class PixiLobbyScene implements LobbySceneHandle {
     const visible = sceneCharacters(this.#projection, this.#labels.self).filter(
       (node) => node.kind === 'human' || visibleAgents.has(node.characterId),
     );
+    const names = visibleCharacterLabels(
+      visible,
+      this.#projection.selectedAgentId,
+      detail === 'near',
+    );
     const frameCharacters: SceneFrame['characters'][number][] = [];
     const visibleIds = new Set(visible.map((node) => node.characterId));
     for (const [id, stored] of this.#views) {
@@ -352,6 +358,7 @@ class PixiLobbyScene implements LobbySceneHandle {
         node.radius,
         detail,
         selected,
+        names.has(node.characterId),
       ].join(':');
       let stored = this.#views.get(node.characterId);
       if (stored?.signature !== signature) {
@@ -362,7 +369,7 @@ class PixiLobbyScene implements LobbySceneHandle {
           walkingBody: characterTextures.createBody(node, true),
           parts: characterTextures.createParts(node, selected),
           detail,
-          statusLabel: this.#labels.statuses?.[node.status],
+          statusLabel: characterStatusLabel(node, this.#labels),
           node,
           onInvalidate: () => {
             this.#scheduleRender();
@@ -373,6 +380,7 @@ class PixiLobbyScene implements LobbySceneHandle {
             } else this.#selectAgent(id);
           },
           selected,
+          showName: names.has(node.characterId),
         });
         objects.addChild(view.container);
         stored = { signature, view };
@@ -421,3 +429,4 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#syncAnimation();
   }
 }
+import { characterStatusLabel } from '../lobby-scene';

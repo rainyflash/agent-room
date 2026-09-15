@@ -52,6 +52,7 @@ struct HostSession {
     closing: AtomicBool,
     activity: Mutex<Instant>,
     evidence: Mutex<HostCallEvidence>,
+    reception_run: Mutex<Option<Uuid>>,
     /// 读锁覆盖完整业务调用；关闭拿写锁后才能释放身份与存储。
     calls: RwLock<()>,
     shutdown: watch::Sender<bool>,
@@ -147,7 +148,10 @@ impl HostSession {
         }
     }
 
-    async fn execute(&self, method: IpcMethod) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+    async fn execute(
+        &self,
+        mut method: IpcMethod,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         if self.closing.load(Ordering::Acquire) {
             return Err(session_failure("bridge.host_session.closed", false));
         }
@@ -201,7 +205,31 @@ impl HostSession {
                 session: self.summary().await,
             });
         }
+        if let IpcMethod::ReceptionControl(request) = &method {
+            let IpcResponse::SelfSummary { summary } = handler.dispatch(IpcMethod::GetSelf).await?
+            else {
+                return Err(session_failure("reception.identity_unavailable", false));
+            };
+            if summary.agent.agent_id != request.agent_id.to_string()
+                || summary.instance_id != request.instance_id.to_string()
+                || summary.room_catalog_id.as_deref()
+                    != Some(request.catalog_id.to_string().as_str())
+                || summary.room_id != request.room_id
+            {
+                return Err(session_failure("reception.identity_changed", false));
+            }
+        }
+        if let IpcMethod::SendMessage(request) = method {
+            method = if let Some(run_id) = *self.reception_run.lock().await {
+                IpcMethod::SendReceptionMessage { run_id, request }
+            } else {
+                IpcMethod::SendMessage(request)
+            };
+        }
         let response = handler.dispatch(method).await?;
+        if let IpcResponse::Reception { record } = &response {
+            *self.reception_run.lock().await = Some(record.run_id);
+        }
         self.evidence.lock().await.record(&response);
         Ok(response)
     }
@@ -285,6 +313,7 @@ impl HostSessionRegistry {
             closing: AtomicBool::new(false),
             activity: Mutex::new(Instant::now()),
             evidence: Mutex::new(HostCallEvidence::default()),
+            reception_run: Mutex::new(None),
             calls: RwLock::new(()),
             shutdown,
             worker: Mutex::new(None),

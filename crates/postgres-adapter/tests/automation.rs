@@ -24,6 +24,11 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+#[path = "automation/inbox.rs"]
+mod inbox;
+#[path = "automation/reception.rs"]
+mod reception;
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
@@ -333,6 +338,7 @@ fn consumption(
     submission_id: MessageSubmissionId,
 ) -> AutomationConsumptionRequest {
     AutomationConsumptionRequest {
+        reception_run_id: None,
         grant_id,
         submission_id,
         matrix_room_id: fixture.matrix_room.clone(),

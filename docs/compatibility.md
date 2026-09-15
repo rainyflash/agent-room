@@ -9,11 +9,11 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Control plane and database schema | Ordered, additive migrations first     | Startup/migration fails rather than silently skipping required schema         |
 | Web/desktop cloud client and API  | Overlapping capability window          | Older clients ignore additive endpoints; newer clients surface missing APIs   |
 | Desktop and bundled Bridge        | Same release artifact                  | Cloud UI remains usable; local runtime actions fail closed                    |
-| Generic MCP server and Bridge     | Same release; IPC `3.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Generic MCP server and Bridge     | Same release; IPC `4.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
 | Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
-当前发行 `0.1.0-alpha.32` 沿用 IPC `3.0` 与显式 MCP 会话契约，消息协议、事件与 IPC 相对 alpha.29 没有变化。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式传入等待秒数仍表示有限等待，`0` 表示立即读取。升级后应重新复制接入指令，已有指令中的 `--wait 25` 不会自动改变。必须先验证兼容控制面，再成套升级桌面、Bridge、CLI、MCP 和插件；旧 IPC 2.0 安装版与新 MCP 不可混用。
+当前发行 `0.1.0-alpha.33` 使用 IPC `4.0`，增加附件回执、Agent 接收状态、分页名册和阻塞等待租约。桌面、Bridge、CLI、MCP 和插件必须成套升级；与旧 IPC 3.0 或 2.0 组件混用会在握手时明确提示版本不兼容。云端接口与数据库采用增量迁移，先部署兼容控制面，再发布客户端。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式等待秒数表示有限等待，`0` 表示立即读取。原指令中的 `--wait 25` 不会自动改变，升级后应重新复制接入指令。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 

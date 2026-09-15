@@ -11,6 +11,8 @@ test('packaging runs the same native and browser checks as local validation', ()
   assert.equal(packaging.at(-1).at(-1), 'build:desktop');
   assert.ok(checks.some((command) => command.includes('agent-access.e2e.ts')));
   assert.ok(checks.some((command) => command.includes('reception.e2e.ts')));
+  assert.ok(checks.some((command) => command.includes('conversation-lifecycle.e2e.ts')));
+  assert.ok(checks.some((command) => command.includes('agent-lifecycle.e2e.ts')));
   for (const operation of ['clippy', 'test']) {
     const command = checks.find((entry) => entry.includes(operation) && entry[0] === 'cargo');
     for (const component of ['cli', 'mcp', 'bridge-ipc', 'agent-client', 'agent-reception'])

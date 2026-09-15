@@ -144,19 +144,7 @@ async fn run_command(
         Command::Send(args) => send(backend, args).await,
         Command::Status(args) => publish_status(backend, args).await,
         Command::Register(args) => register(backend, args).await,
-        Command::Presence(args) => success(
-            call(
-                backend,
-                scoped(
-                    required(args.session, "cli.session_required")?,
-                    IpcMethod::GetPresence(agent_room_bridge_ipc::IpcGetPresenceRequest {
-                        room_id: required(args.room, "cli.room_required")?,
-                        agent_ids: Vec::new(),
-                    }),
-                ),
-            )
-            .await?,
-        ),
+        Command::Presence(args) => read_presence(backend, args).await,
         Command::Content { scope, id } => success(
             call(
                 backend,
@@ -194,6 +182,25 @@ async fn run_command(
         }
         Command::Receiver { action } => receiver::manage(data_root, action),
     }
+}
+
+async fn read_presence(backend: &dyn BridgeToolClient, args: cli::PresenceArgs) -> CliResult<()> {
+    success(
+        call(
+            backend,
+            scoped(
+                required(args.scope.session, "cli.session_required")?,
+                IpcMethod::GetPresence(agent_room_bridge_ipc::IpcGetPresenceRequest {
+                    room_id: required(args.scope.room, "cli.room_required")?,
+                    agent_ids: Vec::new(),
+                    include_archived: args.include_archived,
+                    after_agent_id: args.after,
+                    limit: args.limit,
+                }),
+            ),
+        )
+        .await?,
+    )
 }
 
 async fn read_once(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<()> {

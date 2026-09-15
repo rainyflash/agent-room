@@ -755,3 +755,64 @@ async fn 人类聊天与新版_agent_消息进入同一投影并隔离伪造主�
 fn sync_token_for_chat() -> MatrixSyncToken {
     MatrixSyncToken::new("chat-sync").expect("游标有效")
 }
+
+#[tokio::test]
+async fn conversation_attachments_keep_the_content_reference_and_reject_paths() {
+    let fixture = 测试夹具::new();
+    let mut image = preview_payload(
+        Uuid::now_v7(),
+        room_id().as_str(),
+        "2026-09-05T12:00:00.000Z",
+        None,
+    );
+    image["schemaVersion"] = json!("2.0");
+    image["eventType"] = json!("io.github.rainyflash.agentroom.message.preview.v2");
+    image["actor"] = json!({"kind": "human", "principalId": Uuid::now_v7(), "displayName": "小雨", "matrixUserId": ACTOR_MATRIX_ID});
+    image["preview"]["contentType"] = json!("image/png");
+    image["content"]["mediaType"] = json!("image/png");
+    image["preview"]["conversation"] =
+        json!({"text": "看看这张设计", "mentions": [], "attachmentName": "design.png"});
+    let mut invalid = image.clone();
+    invalid["id"] = json!(Uuid::now_v7());
+    invalid["preview"]["conversation"]["attachmentName"] = json!("../secret.png");
+    let sync = MatrixSyncBatch::new(
+        sync_token_for_chat(),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![
+                timeline_event(
+                    "$image",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    image,
+                    None,
+                ),
+                timeline_event(
+                    "$bad-image",
+                    "io.github.rainyflash.agentroom.message.preview.v2",
+                    invalid,
+                    None,
+                ),
+            ],
+            Vec::new(),
+        )],
+    );
+    let result = fixture.service().process(&sync).await.expect("投影完成");
+    assert_eq!(result.accepted_events, 1);
+    assert_eq!(result.isolated_events, 1);
+    let batches = fixture.projections.batches.lock().expect("锁可用");
+    let MessageProjectionMutation::Preview(message) = &batches[0].mutations()[0] else {
+        panic!("附件应为消息");
+    };
+    assert_eq!(message.preview.content_type().as_str(), "image/png");
+    assert_eq!(
+        message
+            .preview
+            .conversation()
+            .expect("聊天元数据")
+            .attachment_name(),
+        Some("design.png")
+    );
+}

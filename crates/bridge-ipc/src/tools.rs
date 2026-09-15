@@ -18,12 +18,18 @@ pub enum IpcMethod {
     },
     GetSelf,
     RegisterReception(crate::IpcRegisterReceptionRequest),
+    ReceptionControl(crate::ReceptionRequest),
+    SendReceptionMessage {
+        run_id: Uuid,
+        request: IpcSendMessageRequest,
+    },
     MatrixSecurity(crate::IpcMatrixSecurityRequest),
     ListRecoverySessions,
     MatrixRecovery(crate::IpcMatrixRecoveryRequest),
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
     ReadInbox(IpcListPreviewsRequest),
+    WaitInbox(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
@@ -44,16 +50,18 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::RegisterReception(_) => "register_reception",
+            Self::ReceptionControl(_) => "reception_control",
+            Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
             Self::MatrixSecurity(_) => "matrix_security",
             Self::ListRecoverySessions => "list_recovery_sessions",
             Self::MatrixRecovery(_) => "matrix_recovery",
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
             Self::ReadInbox(_) => "read_inbox",
+            Self::WaitInbox(_) => "wait_inbox",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
-            Self::SendMessage(_) => "send_message",
             Self::ApproveHandoff(_) => "approve_handoff",
             Self::ListHandoffs(_) => "list_handoffs",
             Self::ConsumeHandoff(_) => "consume_handoff",
@@ -64,19 +72,22 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
-            Self::OpenHostSession(_) | Self::CloseHostSession(_) | Self::RegisterReception(_) => {
-                IpcScope::HostSessionsManage
-            }
+            Self::OpenHostSession(_)
+            | Self::CloseHostSession(_)
+            | Self::RegisterReception(_)
+            | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
-            Self::ListPreviews(_) | Self::ReadInbox(_) => IpcScope::PreviewsRead,
+            Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) => {
+                IpcScope::PreviewsRead
+            }
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
-            Self::SendMessage(_) => IpcScope::MessageSend,
+            Self::SendMessage(_) | Self::SendReceptionMessage { .. } => IpcScope::MessageSend,
             Self::ApproveHandoff(_) => IpcScope::HandoffApprove,
             Self::ListHandoffs(_) => IpcScope::HandoffList,
             Self::ConsumeHandoff(_) => IpcScope::HandoffConsume,
@@ -100,6 +111,17 @@ impl IpcMethod {
             Self::OpenHostSession(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
             Self::RegisterReception(request) => request.validate(),
+            Self::ReceptionControl(request) => {
+                if request.valid() {
+                    Ok(())
+                } else {
+                    Err(failure("bridge.ipc.reception_invalid"))
+                }
+            }
+            Self::SendReceptionMessage { run_id, request } => {
+                validate_uuid_v7(&run_id.to_string(), "bridge.ipc.reception_invalid")?;
+                request.validate()
+            }
             Self::WithSession { session_id, method } => {
                 crate::host_sessions::validate_session_id(session_id)?;
                 if matches!(
@@ -118,7 +140,7 @@ impl IpcMethod {
             }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
-            Self::ReadInbox(request) => {
+            Self::ReadInbox(request) | Self::WaitInbox(request) => {
                 if request.before_event_id.is_some() {
                     return Err(failure("bridge.ipc.event_cursor_invalid"));
                 }
@@ -195,6 +217,16 @@ pub struct IpcGetPresenceRequest {
     pub room_id: String,
     #[serde(default)]
     pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub after_agent_id: Option<String>,
+    #[serde(default = "default_presence_limit")]
+    pub limit: u16,
+}
+
+const fn default_presence_limit() -> u16 {
+    100
 }
 
 impl IpcGetPresenceRequest {
@@ -206,6 +238,12 @@ impl IpcGetPresenceRequest {
         )?;
         if self.agent_ids.len() > limits::PRESENCE_TARGETS {
             return Err(failure("bridge.ipc.presence_targets_invalid"));
+        }
+        if self.limit == 0 || self.limit > 100 {
+            return Err(failure("bridge.ipc.presence_limit_invalid"));
+        }
+        if let Some(after) = &self.after_agent_id {
+            validate_uuid_v7(after, "bridge.ipc.agent_id_invalid")?;
         }
         self.agent_ids
             .iter()
@@ -419,6 +457,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    Reception {
+        record: crate::ReceptionRecord,
+    },
     HostSessionDiagnostics {
         sessions: Vec<crate::IpcHostSessionDiagnostics>,
     },
@@ -452,6 +493,12 @@ pub enum IpcResponse {
     },
     Presence {
         entries: Vec<IpcPresenceSummary>,
+        #[serde(
+            rename = "nextCursor",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        next_cursor: Option<String>,
     },
     OpenedContent {
         content: IpcOpenedContent,
@@ -567,6 +614,83 @@ pub struct IpcPresenceSummary {
     pub status: IpcWorkStatus,
     pub observed_at_unix_ms: i64,
     pub lease_expires_at_unix_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<IpcAgentLifecycle>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcAgentLifecycle {
+    pub connection: IpcAgentConnection,
+    pub reception: IpcAgentReception,
+    pub reported_status: IpcWorkStatus,
+    pub last_active_at_unix_ms: i64,
+    pub last_polled_at_unix_ms: Option<i64>,
+    pub listening_until_unix_ms: Option<i64>,
+    pub offline_since_unix_ms: Option<i64>,
+    pub archive_reason: Option<IpcAgentArchiveReason>,
+    pub archive_after_days: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentConnection {
+    Online,
+    Reconnecting,
+    Offline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentReception {
+    Waiting,
+    OnResume,
+    Unknown,
+    Unavailable,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentArchiveReason {
+    Expired,
+    Capacity,
+}
+
+impl From<&agent_room_bridge_core::presence::PresenceObservation> for IpcAgentLifecycle {
+    fn from(entry: &agent_room_bridge_core::presence::PresenceObservation) -> Self {
+        use agent_room_domain::agent_lifecycle::{
+            AgentArchiveReason, AgentConnection, AgentReception,
+        };
+        use agent_room_domain::agent_status::AgentWorkStatus;
+        Self {
+            connection: match entry.lifecycle.connection {
+                AgentConnection::Online => IpcAgentConnection::Online,
+                AgentConnection::Reconnecting => IpcAgentConnection::Reconnecting,
+                AgentConnection::Offline => IpcAgentConnection::Offline,
+            },
+            reception: match entry.lifecycle.reception {
+                AgentReception::Waiting => IpcAgentReception::Waiting,
+                AgentReception::OnResume => IpcAgentReception::OnResume,
+                AgentReception::Unknown => IpcAgentReception::Unknown,
+                AgentReception::Unavailable => IpcAgentReception::Unavailable,
+            },
+            reported_status: match entry.presence().status() {
+                AgentWorkStatus::Offline => IpcWorkStatus::Offline,
+                AgentWorkStatus::Idle => IpcWorkStatus::Idle,
+                AgentWorkStatus::Working => IpcWorkStatus::Working,
+                AgentWorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
+                AgentWorkStatus::Blocked => IpcWorkStatus::Blocked,
+                AgentWorkStatus::Completed => IpcWorkStatus::Completed,
+            },
+            last_active_at_unix_ms: entry.last_active_at,
+            last_polled_at_unix_ms: entry.last_polled_at,
+            listening_until_unix_ms: entry.listening_until,
+            offline_since_unix_ms: entry.lifecycle.offline_since,
+            archive_reason: entry.lifecycle.archive_reason.map(|reason| match reason {
+                AgentArchiveReason::Expired => IpcAgentArchiveReason::Expired,
+                AgentArchiveReason::Capacity => IpcAgentArchiveReason::Capacity,
+            }),
+            archive_after_days: entry.archive_after_days,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,6 +702,18 @@ pub struct IpcOpenedContent {
     pub source_actor: IpcActorSummary,
     pub risk_flags: Vec<String>,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<IpcOpenedAttachment>,
+}
+
+/// Verified attachment downloaded on the machine running the Bridge. Re-open the
+/// content if this bounded temporary cache has expired or the application restarted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcOpenedAttachment {
+    pub name: String,
+    pub local_path: String,
+    pub byte_length: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1074,8 +1210,10 @@ mod tests {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcConversationMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_name: Option<String>,
     pub text: String,
     pub mentions: Vec<String>,
 }

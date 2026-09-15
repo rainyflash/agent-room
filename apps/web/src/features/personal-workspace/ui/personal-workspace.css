@@ -1,0 +1,95 @@
+.agent-organization {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  padding-block: 1rem;
+  border-block: 1px solid var(--ar-line);
+}
+.agent-organization form {
+  display: grid;
+  gap: 0.6rem;
+}
+.agent-organization label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+.agent-organization input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--ar-line);
+  border-radius: 0.65rem;
+  background: var(--ar-surface);
+  color: inherit;
+}
+.agent-organization button,
+.personal-sync button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  min-height: 2.6rem;
+  border: 1px solid var(--ar-line);
+  border-radius: 0.65rem;
+  background: var(--ar-surface-muted);
+  color: inherit;
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.personal-favorite[aria-pressed='true'] {
+  color: var(--ar-accent);
+}
+.personal-favorite svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex-shrink: 0;
+}
+.personal-sync,
+.agent-organization small {
+  color: var(--ar-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.personal-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.personal-sync[role='alert'] {
+  color: var(--ar-danger, #a63b32);
+}
+.roster-personal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+.roster-personal-filters select {
+  flex: 1 1 9rem;
+  min-width: 0;
+  padding: 0.6rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--ar-line);
+  background: var(--ar-surface);
+  color: inherit;
+}
+.roster-agent__favorite {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-inline-start: 0.3rem;
+  color: var(--ar-accent);
+}
+.roster-agent__tags {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}

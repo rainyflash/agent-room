@@ -1,6 +1,11 @@
 import { ArrowDown, Radio, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import type { MessageRoomProjection } from '@/features/messages/domain/message';
+import type { Result } from '@/shared/result';
+import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
+import { ConversationSearch } from './conversation-search';
+import { useConversationPosition } from './use-conversation-position';
 import { useTranslation } from 'react-i18next';
 import {
   conversationMessages,
@@ -21,6 +26,10 @@ const emptyParticipants: readonly ConversationParticipant[] = [];
 
 export type ConversationPanelProps = {
   readonly active?: boolean;
+  readonly history?: MessageRoomProjection['history'];
+  readonly onLoadOlder?: () => Promise<
+    Result<void, { readonly code: string; readonly retryable: boolean }>
+  >;
   readonly focusMessageId?: string | null;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly messages: readonly RoomMessageSignal[];
@@ -36,6 +45,8 @@ export type ConversationPanelProps = {
 
 export function ConversationPanel({
   active = true,
+  history,
+  onLoadOlder,
   focusMessageId = null,
   onLatestDisplayed,
   messages,
@@ -55,10 +66,31 @@ export function ConversationPanel({
   const input = useRef<HTMLTextAreaElement>(null);
   const composer = useConversationComposer(publisher, roomId, submissionIds);
   const timeline = useMemo(() => conversationMessages(messages), [messages]);
+  const [filter, setFilter] = useState(emptyConversationFilter);
+  const deferredFilter = useDeferredValue(filter);
+  const visibleTimeline = useMemo(
+    () => searchConversation(timeline, deferredFilter),
+    [timeline, deferredFilter],
+  );
+  const filtered = Object.entries(filter).some(
+    ([key, value]) => value !== (key === 'topic' ? null : ''),
+  );
+  const [historyState, setHistoryState] = useState<'ready' | 'loading' | 'failed'>('ready');
   const timelineElement = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const position = useConversationPosition({
+    roomId,
+    timeline,
+    element: timelineElement,
+    following,
+    active,
+    filtered,
+    focusMessageId,
+  });
+  const markRead = position.markRead;
   const [unseen, setUnseen] = useState(false);
   const focusedMessage = useRef<HTMLDivElement>(null);
+  const focusAvailable = visibleTimeline.some((message) => message.messageId === focusMessageId);
   const latestEvent = timeline.at(-1)?.matrixEventId;
   const displayedEvent = useRef<string | null>(null);
   const markLatestDisplayed = useCallback((): void => {
@@ -68,16 +100,29 @@ export function ConversationPanel({
       state !== 'ready' ||
       document.visibilityState === 'hidden' ||
       latestEvent === undefined ||
-      onLatestDisplayed === undefined ||
-      displayedEvent.current === latestEvent ||
+      filtered ||
+      position.missing ||
+      !following.current ||
       element === null ||
       element.clientHeight === 0 ||
       element.scrollHeight - element.scrollTop - element.clientHeight >= 48
     )
       return;
-    displayedEvent.current = latestEvent;
-    onLatestDisplayed(latestEvent);
-  }, [active, latestEvent, onLatestDisplayed, state]);
+    if (displayedEvent.current !== latestEvent) {
+      displayedEvent.current = latestEvent;
+      onLatestDisplayed?.(latestEvent);
+    }
+    markRead();
+  }, [
+    active,
+    latestEvent,
+    onLatestDisplayed,
+    state,
+    filtered,
+    position.missing,
+    following,
+    markRead,
+  ]);
   useEffect(() => {
     const element = timelineElement.current;
     if (!active) return;
@@ -96,7 +141,7 @@ export function ConversationPanel({
     if (!active || focusMessageId === null || focusedMessage.current === null) return;
     focusedMessage.current.scrollIntoView({ block: 'center' });
     focusedMessage.current.focus({ preventScroll: true });
-  }, [active, focusMessageId]);
+  }, [active, focusMessageId, focusAvailable]);
   const names = useMemo(
     () =>
       new Map([
@@ -138,6 +183,57 @@ export function ConversationPanel({
         </span>
         <span className="conversation-panel__room">{roomName}</span>
       </div>
+      <ConversationSearch
+        messages={timeline}
+        filter={filter}
+        onChange={setFilter}
+        count={visibleTimeline.length}
+      />
+      <div className="conversation-history-tools">
+        <span>{t('history.scope', { count: timeline.length })}</span>
+        {history?.canLoadMore && onLoadOlder ? (
+          <button
+            type="button"
+            disabled={historyState === 'loading'}
+            onClick={() => {
+              position.preserve();
+              setHistoryState('loading');
+              void onLoadOlder().then(
+                (result) => {
+                  setHistoryState(result.ok ? 'ready' : 'failed');
+                },
+                () => {
+                  setHistoryState('failed');
+                },
+              );
+            }}
+          >
+            {t(historyState === 'loading' ? 'history.loading' : 'history.older')}
+          </button>
+        ) : null}
+        {history?.limited ? (
+          <span>{t('history.limit')}</span>
+        ) : history && !history.canLoadMore ? (
+          <span>{t('history.complete')}</span>
+        ) : null}
+        {historyState === 'failed' ? <p role="alert">{t('history.failed')}</p> : null}
+        {position.missing ? <p role="status">{t('history.positionMissing')}</p> : null}
+        {position.missing || filtered ? (
+          <button
+            type="button"
+            onClick={() => {
+              setFilter(emptyConversationFilter);
+              position.latest();
+              requestAnimationFrame(() => {
+                if (timelineElement.current)
+                  timelineElement.current.scrollTop = timelineElement.current.scrollHeight;
+              });
+            }}
+          >
+            {t('history.latest')}
+          </button>
+        ) : null}
+      </div>
       <div className="conversation-panel__history">
         <div
           className="conversation-panel__timeline"
@@ -148,6 +244,7 @@ export function ConversationPanel({
               element.scrollHeight - element.scrollTop - element.clientHeight < 48;
             if (following.current) setUnseen(false);
             markLatestDisplayed();
+            position.record();
           }}
           role="log"
           aria-label={t('conversation.title')}
@@ -172,8 +269,11 @@ export function ConversationPanel({
               <p>{t('conversation.empty')}</p>
             </motion.div>
           ) : null}
-          {timeline.map((message, index) => {
-            const previous = timeline[index - 1];
+          {filtered && visibleTimeline.length === 0 ? (
+            <p className="conversation-panel__boundary">{t('history.empty')}</p>
+          ) : null}
+          {visibleTimeline.map((message, index) => {
+            const previous = visibleTimeline[index - 1];
             const day = new Date(message.serverTimestamp).toDateString();
             return (
               <div
@@ -209,6 +309,16 @@ export function ConversationPanel({
                     input.current?.focus();
                   }}
                 />
+                <button
+                  type="button"
+                  className="conversation-topic-link"
+                  onClick={() => {
+                    following.current = false;
+                    setFilter({ ...emptyConversationFilter, topic: message.messageId });
+                  }}
+                >
+                  {t('history.viewTopic')}
+                </button>
               </div>
             );
           })}
@@ -221,6 +331,7 @@ export function ConversationPanel({
               const element = timelineElement.current;
               if (element !== null) element.scrollTop = element.scrollHeight;
               following.current = true;
+              position.latest();
               setUnseen(false);
               markLatestDisplayed();
             }}

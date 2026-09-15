@@ -16,6 +16,8 @@ import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-pr
 import { LocalConnectionNotice } from '@/features/desktop/ui/local-connection-notice';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
+import { ApplicationAboutPage } from '@/features/updates/ui/application-about-page';
+import { RouterTestProvider } from '@/test/router-test-provider';
 
 const router = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -116,6 +118,32 @@ beforeAll(async () => {
 afterEach(cleanup);
 
 describe('桌面运行时界面', () => {
+  it('未授权本机 Agent 也可在关于页检查升级，异常后按钮恢复并允许重试', async () => {
+    const runtime = gateway(authorizationRuntime, true);
+    runtime.checkUpdate.mockRejectedValueOnce(new Error('transport unavailable'));
+    render(
+      <RouterTestProvider>
+        <I18nextProvider i18n={i18n}>
+          <DesktopRuntimeProvider gateway={runtime.value}>
+            <ApplicationAboutPage />
+          </DesktopRuntimeProvider>
+        </I18nextProvider>
+      </RouterTestProvider>,
+    );
+    const check = await screen.findByRole('button', { name: 'Check' });
+    fireEvent.click(check);
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('The update did not complete');
+    });
+    expect(check).toBeEnabled();
+    fireEvent.click(check);
+    const install = await screen.findByRole('button', { name: 'Install and restart' });
+    fireEvent.click(install);
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
+    expect(runtime.openAuthorization).not.toHaveBeenCalled();
+  });
   it('只展示身份站点和一次性代码，并通过闭合命令打开完整地址', async () => {
     const runtime = gateway(authorizationRuntime);
     render(

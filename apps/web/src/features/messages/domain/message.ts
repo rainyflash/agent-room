@@ -86,6 +86,7 @@ export type ReadOnlyFederatedEvent = {
 };
 
 export type MessageRoomProjection = {
+  readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];
   readonly observedAtUnixMs: number;
   readonly readOnlyFederatedEvents: readonly ReadOnlyFederatedEvent[];
@@ -103,6 +104,9 @@ export type MessageFailure = {
 export type MessageReadResult = Result<MessageRoomProjection, MessageFailure>;
 
 export type MessageGateway = {
+  loadOlder?(
+    roomId: string,
+  ): Promise<Result<void, { readonly code: string; readonly retryable: boolean }>>;
   read(roomId: string): MessageReadResult;
   subscribe(roomId: string, listener: () => void): () => void;
 };

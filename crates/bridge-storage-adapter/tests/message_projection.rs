@@ -710,7 +710,9 @@ async fn 人类聊天持久化且自报同一账号不能篡改他人消息() {
                 "原始问题".to_owned(),
                 vec!["@agent:matrix.test".to_owned()],
             )
-            .expect("聊天有效"),
+            .expect("聊天有效")
+            .with_attachment_name(Some("design.png".to_owned()))
+            .expect("附件名有效"),
         );
     }
     store
@@ -749,6 +751,14 @@ async fn 人类聊天持久化且自报同一账号不能篡改他人消息() {
         .await
         .expect("重开后可读取人类聊天");
     assert_eq!(recovered.previews()[0].actor, human);
+    assert_eq!(
+        recovered.previews()[0]
+            .preview
+            .conversation()
+            .expect("聊天已持久化")
+            .attachment_name(),
+        Some("design.png")
+    );
     assert_eq!(
         recovered.previews()[0]
             .preview

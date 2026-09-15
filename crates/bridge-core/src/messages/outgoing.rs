@@ -228,6 +228,7 @@ impl MessagePublicationService {
         })?;
         self.automation
             .authorize(&AutomationAuthorizationRequest {
+                reception_run_id: request.reception_run_id(),
                 grant_id,
                 submission_id: request.submission_id(),
                 agent_id: self.identity.agent_id(),

@@ -16,8 +16,10 @@ export class BrowserMessageBodyPreparer implements MessageBodyPreparer {
     this.#digest = digest;
   }
 
-  async prepare(body: string): Promise<Result<PreparedMessageBody, MessagePublicationFailure>> {
-    const encoded = new TextEncoder().encode(body);
+  async prepare(
+    body: string | Uint8Array<ArrayBuffer>,
+  ): Promise<Result<PreparedMessageBody, MessagePublicationFailure>> {
+    const encoded = typeof body === 'string' ? new TextEncoder().encode(body) : body;
     const bytes = new Uint8Array(encoded.byteLength);
     bytes.set(encoded);
     try {

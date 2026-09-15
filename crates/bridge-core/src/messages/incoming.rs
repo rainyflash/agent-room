@@ -541,7 +541,8 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
         risk_flags,
     );
     if let Some(conversation) = preview.conversation {
-        if result.content_type().as_str() != "text/plain" {
+        if conversation.attachment_name.is_none() && result.content_type().as_str() != "text/plain"
+        {
             return Err(MessageSyncIssueReason::InvalidEnvelope);
         }
         result = result.with_conversation(
@@ -549,6 +550,7 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
                 conversation.text,
                 conversation.mentions,
             )
+            .and_then(|chat| chat.with_attachment_name(conversation.attachment_name))
             .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
         );
     }

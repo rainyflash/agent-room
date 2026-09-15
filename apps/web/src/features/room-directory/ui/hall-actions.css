@@ -1,0 +1,165 @@
+.hall-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.hall-dialog {
+  box-sizing: border-box;
+  margin: auto;
+  width: min(560px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 3rem);
+  padding: 1.5rem;
+  border: 1px solid #dce5e3;
+  border-radius: 1.2rem;
+  box-shadow: 0 24px 90px #173c3930;
+  color: #193b37;
+  background: #fff;
+}
+.hall-dialog::backdrop {
+  background: #12353255;
+  backdrop-filter: blur(4px);
+}
+.hall-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.hall-dialog h2 {
+  margin: 0.2rem 0;
+  font-size: 1.5rem;
+}
+.hall-dialog h3 {
+  font-size: 0.85rem;
+  color: #647975;
+  margin: 1.4rem 0 0.5rem;
+}
+.hall-dialog header button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+.hall-dialog form {
+  display: grid;
+  gap: 1rem;
+}
+.hall-dialog label {
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.hall-dialog input,
+.hall-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #ccdcd7;
+  border-radius: 0.6rem;
+  padding: 0.75rem;
+  font: inherit;
+  color: inherit;
+  background: #fafcfb;
+}
+.hall-dialog__privacy {
+  display: flex;
+  gap: 0.5rem;
+  color: #687b75;
+  font-size: 0.85rem;
+}
+.hall-dialog__privacy svg {
+  width: 1.2rem;
+  flex-shrink: 0;
+}
+.hall-dialog__tools {
+  display: flex;
+  gap: 0.6rem;
+}
+.hall-dialog__tools input {
+  flex: 1;
+}
+.hall-dialog__row,
+.hall-directory-card {
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.85rem;
+  border: 1px solid #dce6e1;
+  border-radius: 0.7rem;
+  margin-bottom: 0.5rem;
+  font: inherit;
+  text-decoration: none;
+  color: inherit;
+  background: #f8fbf9;
+  text-align: left;
+  cursor: pointer;
+}
+.hall-dialog__row:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.hall-dialog__row span,
+.hall-directory-card span {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.hall-dialog__row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hall-dialog__row svg,
+.hall-directory-card svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex-shrink: 0;
+}
+.hall-dialog small,
+.hall-directory-card small {
+  color: #687a73;
+  font-size: 0.75rem;
+}
+.hall-dialog__failure {
+  color: #a53232;
+  margin-top: 1rem;
+  overflow-wrap: anywhere;
+}
+.hall-directory-section {
+  width: min(var(--ar-page-width), calc(100% - 80px));
+  margin: 0 auto 2rem;
+}
+.hall-directory-section h2 {
+  font-size: 1.1rem;
+}
+.hall-directory-section > p {
+  color: #647775;
+  font-size: 0.9rem;
+}
+.hall-directory-section__rooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 0.7rem;
+}
+@media (max-width: 480px) {
+  .hall-dialog {
+    padding: 1rem;
+  }
+  .hall-dialog__tools {
+    flex-wrap: wrap;
+  }
+  .hall-dialog__tools input {
+    flex-basis: 100%;
+  }
+}
+@media (max-width: 760px) {
+  .hall-directory-section {
+    width: calc(100% - 32px);
+  }
+}
