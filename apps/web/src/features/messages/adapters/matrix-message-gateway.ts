@@ -356,6 +356,12 @@ export class MatrixMessageGateway implements MessageGateway {
   subscribe(roomId: string, listener: () => void): () => void {
     return this.#source.subscribe(roomId, listener);
   }
+
+  async loadOlder(roomId: string) {
+    return (
+      this.#source.loadOlder?.(roomId) ?? err({ code: 'history.unavailable', retryable: false })
+    );
+  }
 }
 
 function projectRoom(
@@ -432,11 +438,21 @@ function projectRoom(
     }
   }
 
+  const windowSize = Math.max(
+    MAX_PROJECTED_MESSAGES,
+    Math.min(5000, room.windowSize ?? MAX_PROJECTED_MESSAGES),
+  );
+  const more = messages.size > windowSize || room.hasOlder === true;
   const projected = [...messages.values()]
     .toSorted(compareMessages)
-    .slice(0, MAX_PROJECTED_MESSAGES)
+    .slice(0, windowSize)
     .map(freezeMessage);
   return Object.freeze({
+    ...(room.windowSize === undefined
+      ? {}
+      : {
+          history: { canLoadMore: more && windowSize < 5000, limited: more && windowSize >= 5000 },
+        }),
     messages: Object.freeze(projected),
     observedAtUnixMs,
     readOnlyFederatedEvents: Object.freeze(

@@ -1,3 +1,4 @@
+import { visibleCharacterLabels, characterLabel } from '../character-labels';
 import { sceneCharacters, type SceneCharacter, type SceneFrame } from '../scene-character';
 import {
   forwardRef,
@@ -170,6 +171,11 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
         })),
       });
     }, [camera, projection, viewport, onFrame, labels.self]);
+    const names = visibleCharacterLabels(
+      characters,
+      projection.selectedAgentId,
+      sceneDetailForZoom(camera.scale) === 'near',
+    );
     const objects = [
       ...characters.map((node) => ({
         key: node.characterId,
@@ -191,13 +197,9 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
             <SvgCharacter
               node={node}
               selected={node.characterId === projection.selectedAgentId}
-              showName={
-                node.kind === 'human' ||
-                projection.nodes.length <= 24 ||
-                sceneDetailForZoom(camera.scale) === 'near'
-              }
+              showName={names.has(node.characterId)}
               statusLabel={
-                projection.nodes.length <= 24 || sceneDetailForZoom(camera.scale) === 'near'
+                names.has(node.characterId) && sceneDetailForZoom(camera.scale) === 'near'
                   ? labels.statuses?.[node.status]
                   : undefined
               }
@@ -333,7 +335,7 @@ function SvgCharacter({
         y="30"
         data-visible={selected || showName}
       >
-        {node.displayName}
+        {characterLabel(node.displayName)}
       </text>
       {statusLabel === undefined || node.kind === 'human' ? null : (
         <text x="0" y="50" textAnchor="middle" className="room-character-status">

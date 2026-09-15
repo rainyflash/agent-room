@@ -350,12 +350,12 @@ async fn build_identity_router(
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let agent_dependencies = AgentFeatureDependencies {
-        repositories,
-        system_runtime,
-        secrets,
+        repositories: repositories.clone(),
+        system_runtime: system_runtime.clone(),
+        secrets: secrets.clone(),
         matrix_identities,
-        authentication: service,
-        devices,
+        authentication: service.clone(),
+        devices: devices.clone(),
         matrix_authority,
         content_authorizer,
     };
@@ -366,7 +366,7 @@ async fn build_identity_router(
         account_state,
         device_state,
         agent_features,
-        content_routes,
+        content_routes.merge(personal_routes(authentication_config, &agent_dependencies)),
     );
     Ok(IdentityRuntime {
         routes,
@@ -374,6 +374,28 @@ async fn build_identity_router(
         account_deletion,
         operational_metrics,
     })
+}
+
+fn personal_routes(
+    config: &AuthenticationConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Router {
+    features::inbox::router(features::inbox::InboxHttpState {
+        repository: dependencies.repositories.clone(),
+        authentication: dependencies.authentication.clone(),
+    })
+    .merge(features::reception::router(
+        features::reception::ReceptionHttpState {
+            repository: dependencies.repositories.clone(),
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.frontend_origin,
+                &config.desktop_origin,
+            ),
+        },
+    ))
 }
 
 fn build_authentication_runtime(

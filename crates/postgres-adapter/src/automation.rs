@@ -309,30 +309,13 @@ async fn consume_in_transaction(
     request: &AutomationConsumptionRequest,
 ) -> RepositoryResult<AutomationConsumptionOutcome> {
     const OPERATION: &str = "automation_grant.consume";
-    if let Some(existing) = find_consumption(transaction, request.submission_id.as_uuid()).await? {
-        if !consumption_matches(&existing, request) {
-            return Err(RepositoryError::new(
-                OPERATION,
-                RepositoryErrorKind::Conflict,
-            ));
-        }
-        let record = find_grant_in_transaction(transaction, request.grant_id, request.attempt.now)
-            .await?
-            .ok_or_else(|| RepositoryError::new(OPERATION, RepositoryErrorKind::CorruptData))?;
-        return Ok(AutomationConsumptionOutcome::Consumed {
-            record,
-            reused: true,
-        });
-    }
-
+    require_reception_owner(transaction, request).await?;
     expire_grant_in_transaction(transaction, request.grant_id, request.attempt.now).await?;
     let Some(record) =
         find_grant_for_update(transaction, request.grant_id, request.attempt.now).await?
     else {
         return Ok(AutomationConsumptionOutcome::NotFound);
     };
-    // 相同提交可能在等待授权行锁期间已经被另一事务消费；拿锁后必须重查，
-    // 否则会把安全重试错误地变成唯一键冲突。
     if let Some(existing) = find_consumption(transaction, request.submission_id.as_uuid()).await? {
         if !consumption_matches(&existing, request) {
             return Err(RepositoryError::new(
@@ -340,11 +323,69 @@ async fn consume_in_transaction(
                 RepositoryErrorKind::Conflict,
             ));
         }
+        if existing.grant_id != request.grant_id {
+            let original =
+                find_grant_in_transaction(transaction, existing.grant_id, request.attempt.now)
+                    .await?
+                    .ok_or_else(|| {
+                        RepositoryError::new(OPERATION, RepositoryErrorKind::CorruptData)
+                    })?;
+            if original.grant.grantor_id() != record.grant.grantor_id() {
+                return Err(RepositoryError::new(
+                    OPERATION,
+                    RepositoryErrorKind::Forbidden,
+                ));
+            }
+        }
+        if let AutomationGrantDecision::Denied(reason) =
+            record.grant.evaluate_policy(&request.attempt)
+        {
+            insert_consumption_denial(transaction, request, &record, reason.as_str()).await?;
+            return Ok(AutomationConsumptionOutcome::Denied(reason));
+        }
+        // A transferred execution can retry the original submission using its
+        // current grant. Keep the original ledger entry and its usage unchanged.
         return Ok(AutomationConsumptionOutcome::Consumed {
             record,
             reused: true,
         });
     }
+    consume_new_submission(transaction, request, record).await
+}
+
+async fn require_reception_owner(
+    transaction: &mut Transaction<'_, Postgres>,
+    request: &AutomationConsumptionRequest,
+) -> RepositoryResult<()> {
+    const OPERATION: &str = "automation_grant.consume";
+    // Serialize with first claim, drain and transfer on the logical Agent. A
+    // previously authorized submission never bypasses the current execution fence.
+    sqlx::query("SELECT id FROM agent_room.agent WHERE id=$1 FOR UPDATE")
+        .bind(request.attempt.agent_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+    let permitted: bool = sqlx::query_scalar(r"SELECT CASE WHEN EXISTS(SELECT 1 FROM agent_room.reception_execution WHERE agent_id=$1 AND catalog_id=$2)
+        THEN EXISTS(SELECT 1 FROM agent_room.reception_execution WHERE agent_id=$1 AND catalog_id=$2 AND instance_id=$3 AND run_id=$4 AND state='active'
+            AND (progress->'pending'->>'submissionId'=$5 OR progress->'retry'->>'submissionId'=$5)) ELSE $4::uuid IS NULL END")
+        .bind(request.attempt.agent_id.as_uuid()).bind(request.attempt.room_catalog_id.as_uuid())
+        .bind(request.attempt.agent_instance_id.map(AgentInstanceId::as_uuid)).bind(request.reception_run_id)
+        .bind(request.submission_id.to_string()).fetch_one(&mut **transaction).await.map_err(|error| map_sqlx_error(OPERATION, &error))?;
+    if !permitted {
+        return Err(RepositoryError::new(
+            OPERATION,
+            RepositoryErrorKind::Forbidden,
+        ));
+    }
+    Ok(())
+}
+
+async fn consume_new_submission(
+    transaction: &mut Transaction<'_, Postgres>,
+    request: &AutomationConsumptionRequest,
+    record: AutomationGrantRecord,
+) -> RepositoryResult<AutomationConsumptionOutcome> {
+    const OPERATION: &str = "automation_grant.consume";
     if let AutomationGrantDecision::Denied(reason) =
         record.grant.evaluate(&request.attempt, record.usage)
     {
@@ -874,9 +915,10 @@ fn consumption_matches(
     existing: &ExistingConsumption,
     request: &AutomationConsumptionRequest,
 ) -> bool {
-    existing.grant_id == request.grant_id
+    (request.reception_run_id.is_some() || existing.grant_id == request.grant_id)
         && existing.agent_id == request.attempt.agent_id
-        && Some(existing.agent_instance_id) == request.attempt.agent_instance_id
+        && (request.reception_run_id.is_some()
+            || Some(existing.agent_instance_id) == request.attempt.agent_instance_id)
         && existing.room_catalog_id == request.attempt.room_catalog_id
         && existing.matrix_room_id == request.matrix_room_id.as_str()
         && existing.message_kind == request.attempt.message_kind

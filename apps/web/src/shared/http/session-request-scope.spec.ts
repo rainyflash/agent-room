@@ -13,7 +13,11 @@ function pendingFetch(signals: AbortSignal[]): typeof globalThis.fetch {
         'abort',
         () => {
           const reason: unknown = signal.reason;
-          reject(reason instanceof Error ? reason : new Error('Request cancelled'));
+          reject(
+            reason instanceof Error || reason instanceof DOMException
+              ? reason
+              : new Error('Request cancelled'),
+          );
         },
         { once: true },
       );

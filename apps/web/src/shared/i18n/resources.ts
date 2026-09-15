@@ -1,7 +1,11 @@
 import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resources';
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
+import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
+import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
 import { conversationResources } from '@/features/conversation/i18n/conversation-resources';
+import { historyResources } from '@/features/conversation/i18n/history-resources';
+import { inboxResources } from '@/features/inbox/i18n/inbox-resources';
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
@@ -775,7 +779,11 @@ export const resources = {
       ...automationResources.en,
       ...agentInviteResources.en,
       ...receptionResources.en,
+      ...receptionOwnershipResources.en,
+      ...personalWorkspaceResources.en,
       ...conversationResources.en,
+      ...historyResources.en,
+      ...inboxResources.en,
       ...roomWorkspaceResources.en,
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
@@ -1467,7 +1475,11 @@ export const resources = {
       ...automationResources['zh-CN'],
       ...agentInviteResources['zh-CN'],
       ...receptionResources['zh-CN'],
+      ...receptionOwnershipResources['zh-CN'],
+      ...personalWorkspaceResources['zh-CN'],
       ...conversationResources['zh-CN'],
+      ...historyResources['zh-CN'],
+      ...inboxResources['zh-CN'],
       ...roomWorkspaceResources['zh-CN'],
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],

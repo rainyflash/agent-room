@@ -9,6 +9,7 @@ import { SessionProvider } from '@/features/session/ui/session-provider';
 import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
 import { RuntimeCompatibilityProvider } from '@/features/updates/ui/runtime-compatibility-provider';
 import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
+import { InboxNotice } from '@/features/inbox/ui/inbox-notice';
 
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -47,6 +48,7 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
       <FrontendTelemetryObserver gateway={telemetry} />
       <Outlet />
       <MatrixVerificationInbox />
+      <InboxNotice />
       {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
         <DesktopRuntimeSurface
           placement={pathname === '/onboarding' ? 'action-rail-safe' : 'viewport'}

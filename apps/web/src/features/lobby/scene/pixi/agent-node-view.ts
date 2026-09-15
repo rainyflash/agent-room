@@ -1,4 +1,5 @@
 import type { SceneCharacter } from '../scene-character';
+import { characterLabel } from '../character-labels';
 import type { Container, FederatedPointerEvent, Sprite } from 'pixi.js';
 import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
 import type { CharacterPose } from '../character-motion';
@@ -15,6 +16,7 @@ export type AgentNodeViewOptions = {
   readonly onInvalidate: () => void;
   readonly onSelect: (agentId: string) => void;
   readonly selected: boolean;
+  readonly showName?: boolean;
   readonly statusLabel?: string | undefined;
 };
 export type AgentCharacterView = {
@@ -54,7 +56,7 @@ export function createAgentNodeView(
   character.addChild(parts.marker);
   if (parts.bubble !== null) character.addChild(parts.bubble);
   const label = new pixi.Text({
-    text: truncateLabel(node.displayName),
+    text: characterLabel(node.displayName),
     anchor: { x: 0.5, y: 0 },
     style: {
       fill: '#233039',
@@ -65,9 +67,16 @@ export function createAgentNodeView(
     },
   });
   label.position.set(0, 14);
-  label.visible = selected || node.kind === 'human' || options.detail === 'near';
+  const showLabel =
+    selected || (options.showName ?? (node.kind === 'human' || options.detail === 'near'));
+  label.visible = showLabel;
   character.addChild(label);
-  if (options.detail === 'near' && options.statusLabel !== undefined && node.kind === 'agent') {
+  if (
+    showLabel &&
+    options.detail === 'near' &&
+    options.statusLabel !== undefined &&
+    node.kind === 'agent'
+  ) {
     const status = new pixi.Text({
       text: options.statusLabel,
       anchor: { x: 0.5, y: 0 },
@@ -89,7 +98,7 @@ export function createAgentNodeView(
   });
   container.on('pointerout', () => {
     hovered = false;
-    label.visible = selected || node.kind === 'human' || options.detail === 'near';
+    label.visible = showLabel;
     body.scale.set(1);
     options.onInvalidate();
   });
@@ -122,11 +131,6 @@ export function createAgentNodeView(
 export function monogram(displayName: string): string {
   const characters = graphemes(displayName.trim()).filter((segment) => segment.trim().length > 0);
   return characters.slice(0, 2).join('').toLocaleUpperCase() || 'AR';
-}
-
-function truncateLabel(displayName: string): string {
-  const characters = graphemes(displayName.trim());
-  return characters.length <= 20 ? displayName.trim() : `${characters.slice(0, 19).join('')}…`;
 }
 
 function graphemes(value: string): string[] {

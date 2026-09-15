@@ -71,6 +71,7 @@ pub(crate) struct FoundationBridgeIpcRequestHandler {
     status_reader: Arc<dyn BridgeStatusReader>,
     onboarding: Option<Arc<BridgeOnboardingService>>,
     agent_runtime: Option<AgentRuntimeIpcFacade>,
+    reception: Option<Arc<dyn agent_room_application::reception::ReceptionControlGateway>>,
 }
 
 impl FoundationBridgeIpcRequestHandler {
@@ -80,6 +81,7 @@ impl FoundationBridgeIpcRequestHandler {
             status_reader,
             onboarding: None,
             agent_runtime: None,
+            reception: None,
         }
     }
 
@@ -91,6 +93,7 @@ impl FoundationBridgeIpcRequestHandler {
             status_reader,
             onboarding: Some(onboarding),
             agent_runtime: None,
+            reception: None,
         }
     }
 
@@ -104,6 +107,7 @@ impl FoundationBridgeIpcRequestHandler {
     ) -> Self {
         Self {
             status_reader: status_reader.clone(),
+            reception: None,
             onboarding: None,
             agent_runtime: Some(AgentRuntimeIpcFacade::new(
                 consumer,
@@ -120,6 +124,13 @@ impl FoundationBridgeIpcRequestHandler {
         self.agent_runtime
             .as_ref()
             .ok_or_else(agent_runtime_unavailable)
+    }
+    pub(crate) fn with_reception(
+        mut self,
+        gateway: Arc<dyn agent_room_application::reception::ReceptionControlGateway>,
+    ) -> Self {
+        self.reception = Some(gateway);
+        self
     }
 
     fn onboarding(&self) -> Result<&BridgeOnboardingService, BridgeIpcDispatchFailure> {
@@ -168,6 +179,29 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
+                IpcMethod::ReceptionControl(request) => self
+                    .reception
+                    .as_ref()
+                    .ok_or_else(agent_runtime_unavailable)?
+                    .execute(request)
+                    .await
+                    .map(|record| IpcResponse::Reception { record })
+                    .map_err(|error| {
+                        BridgeIpcDispatchFailure::new(
+                            error.code,
+                            if error.retryable {
+                                IpcErrorCategory::DependencyUnavailable
+                            } else {
+                                IpcErrorCategory::Conflict
+                            },
+                            error.retryable,
+                        )
+                    }),
+                IpcMethod::SendReceptionMessage { run_id, request } => {
+                    self.agent_runtime()?
+                        .send_message_with_run(request, Some(run_id))
+                        .await
+                }
                 IpcMethod::OpenHostSession(_)
                 | IpcMethod::RegisterReception(_)
                 | IpcMethod::HostSessionDiagnostics

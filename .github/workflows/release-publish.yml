@@ -1,8 +1,17 @@
 name: 验证并发布 testing 签名发行
+run-name: ${{ inputs.operation_id && format('release-flow:{0}', inputs.operation_id) || github.workflow }}
 
 on:
   workflow_dispatch:
     inputs:
+      operation_id:
+        description: 发布调度续跑标识
+        required: false
+        type: string
+      expected_revision:
+        description: 发布调度锁定的候选提交
+        required: false
+        type: string
       tag:
         description: 已完成 testing 签名和服务端晋级的草稿 Release 标签
         required: true
@@ -37,6 +46,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: 核对发布调度提交
+        env:
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+        run: |
+          if [ -n "$EXPECTED_REVISION" ]; then test "$GITHUB_SHA" = "$EXPECTED_REVISION"; fi
       - name: 检出受保护主分支
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
         with:
@@ -75,12 +89,14 @@ jobs:
       - name: 核对服务端已完成兼容晋级
         env:
           TAG: ${{ inputs.tag }}
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
           VERSION="${TAG#v}"
           test "$(jq -er '.tag | select(type == "string")' candidate/release-metadata.json)" = "$TAG"
           test "$(jq -er '.version | select(type == "string")' candidate/release-metadata.json)" = "$VERSION"
           REVISION="$(jq -er '.revision | select(type == "string" and test("^[0-9a-f]{40}$"))' candidate/release-metadata.json)"
           test "$(git rev-parse --verify "$REVISION^{commit}")" = "$REVISION"
+          if [ -n "$EXPECTED_REVISION" ]; then test "$EXPECTED_REVISION" = "$REVISION"; fi
           python tools/release_promotion.py verify --record candidate/release-promotion-compatible-server.json --expected-stage compatible-server --version "$VERSION" --revision "$REVISION"
           python tools/release_promotion.py verify-evidence --record candidate/release-promotion-compatible-server.json --root candidate --release-base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
       - name: 验证 testing 签名、所有摘要、SBOM 与 Sigstore 身份
@@ -88,19 +104,29 @@ jobs:
           INSTALLED_VERSION: ${{ inputs.installed_version }}
           HIGHEST_SEQUENCE: ${{ inputs.highest_sequence }}
           CERTIFICATE_IDENTITY: ^https://github.com/${{ github.repository }}/\.github/workflows/release-candidate\.yml@refs/heads/main$
-        run: >-
-          python tools/release.py verify
-          --root candidate
-          --inventory candidate/release-inventory.json
-          --manifest candidate/release.json
-          --evidence candidate/release-evidence.json
-          --signed-manifest candidate/release.signed.json
-          --public-key candidate/release-public-key.json
-          --release-tool target/release/agent-room-release-tool
-          --installed-version "$INSTALLED_VERSION"
-          --highest-sequence "$HIGHEST_SEQUENCE"
-          --now-unix-seconds "$(date +%s)"
-          --certificate-identity-regexp "$CERTIFICATE_IDENTITY"
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+        run: |
+          REVISION_ARGS=()
+          if [ -n "$EXPECTED_REVISION" ]; then REVISION_ARGS=(--expected-revision "$EXPECTED_REVISION"); fi
+          python tools/release.py verify \
+            --root candidate \
+            --inventory candidate/release-inventory.json \
+            --manifest candidate/release.json \
+            --evidence candidate/release-evidence.json \
+            --signed-manifest candidate/release.signed.json \
+            --public-key candidate/release-public-key.json \
+            --release-tool target/release/agent-room-release-tool \
+            --installed-version "$INSTALLED_VERSION" \
+            --highest-sequence "$HIGHEST_SEQUENCE" \
+            --now-unix-seconds "$(date +%s)" \
+            --certificate-identity-regexp "$CERTIFICATE_IDENTITY" \
+            "${REVISION_ARGS[@]}"
+      - name: 验证新设备升级及真实宿主接待
+        env:
+          TAG: ${{ inputs.tag }}
+        run: python tools/release_acceptance.py --root candidate --version "${TAG#v}" --revision "$(jq -er .revision candidate/release-metadata.json)"
+      - name: 核对原生安装验收及更新载荷签名
+        run: python tools/release_native.py --root candidate --release-tool target/release/agent-room-release-tool
       - name: 整理面向普通用户的 Release 下载入口
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,12 +154,20 @@ jobs:
         run: |
           SIGNED_SHA="$(sha256sum candidate/release.signed.json | cut -d ' ' -f 1)"
           NOW="$(date +%s)"
-          python tools/release_promotion.py advance --record candidate/release-promotion-compatible-server.json --output candidate/release-promotion-clients-published.json --stage clients-published --evidence-url "https://github.com/${{ github.repository }}/releases/tag/$TAG" --evidence-sha256 "$SIGNED_SHA" --recorded-at-unix-seconds "$NOW"
+          python tools/release_promotion.py advance --record candidate/release-promotion-compatible-server.json --output candidate/release-promotion-clients-published.json --stage clients-published --evidence-url "https://github.com/${{ github.repository }}/releases/tag/$TAG" --evidence-sha256 "$SIGNED_SHA" --recorded-at-unix-seconds "$NOW" --resume
       - name: 上传客户端晋级证据
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release upload "$TAG" candidate/release-promotion-clients-published.json
+          RECEIPT=release-promotion-clients-published.json
+          gh release view "$TAG" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/release-assets.txt"
+          if grep -Fxq "$RECEIPT" "$RUNNER_TEMP/release-assets.txt"; then
+            mkdir -p "$RUNNER_TEMP/published-receipt"
+            gh release download "$TAG" --pattern "$RECEIPT" --dir "$RUNNER_TEMP/published-receipt" --clobber
+            cmp "candidate/$RECEIPT" "$RUNNER_TEMP/published-receipt/$RECEIPT"
+          else
+            gh release upload "$TAG" "candidate/$RECEIPT"
+          fi
           VERSION="${TAG#v}"
           python tools/release_surface.py apply --repository "${{ github.repository }}" --tag "$TAG" --version "$VERSION"

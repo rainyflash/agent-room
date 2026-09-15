@@ -69,6 +69,31 @@ class ReleasePromotionTests(unittest.TestCase):
                 1_800_000_000,
             )
 
+    def test_resume_retains_original_bytes_and_rejects_changed_evidence(self) -> None:
+        current, following = self.root / "candidate.json", self.root / "next.json"
+        initialize("0.2.0", self.revision, current)
+        arguments = (current, following, "database-expanded", "https://evidence.example/database.json", "b" * 64)
+        advance(*arguments, 1_800_000_000)
+        original = following.read_bytes()
+        advance(*arguments, 1_800_000_060, resume=True)
+        self.assertEqual(following.read_bytes(), original)
+        with self.assertRaisesRegex(PromotionFailure, "不能覆盖"):
+            advance(*arguments[:-1], "c" * 64, 1_800_000_060, resume=True)
+        with self.assertRaisesRegex(PromotionFailure, "晚于"):
+            advance(*arguments, 1_799_999_999, resume=True)
+        self.assertEqual(following.read_bytes(), original)
+
+    def test_resume_does_not_accept_a_record_for_a_different_release(self) -> None:
+        current, following = self.root / "candidate.json", self.root / "next.json"
+        other = self.root / "other.json"
+        initialize("0.2.0", self.revision, current)
+        initialize("0.3.0", self.revision, other)
+        advance(other, following, "database-expanded", "https://evidence.example/database.json", "b" * 64, 1_800_000_000)
+        original = following.read_bytes()
+        with self.assertRaisesRegex(PromotionFailure, "不一致"):
+            advance(current, following, "database-expanded", "https://evidence.example/database.json", "b" * 64, 1_800_000_060, resume=True)
+        self.assertEqual(following.read_bytes(), original)
+
     def test_create_evidence_writes_valid_checked_document(self) -> None:
         output = self.root / "database-expanded-evidence.json"
 

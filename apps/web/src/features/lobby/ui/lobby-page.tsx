@@ -8,6 +8,7 @@ import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conver
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { ReceptionPanel } from '@/features/desktop/ui/reception-panel';
+import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
 import { InviteReplyProgress } from '@/features/desktop/ui/invite-reply-progress';
 import type { ConnectedInvitation } from '@/features/desktop/domain/invite-reply';
 import {
@@ -457,6 +458,8 @@ function ReadyLobby({
             receptionControls={
               principal !== null && localRuntime.isAvailable() ? (
                 <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
+              ) : principal !== null ? (
+                <ReceptionOwnershipPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
               ) : undefined
             }
             actionFailure={directSessions.failure?.code ?? null}

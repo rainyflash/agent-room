@@ -130,6 +130,7 @@ pub struct SendMessageRequest {
     provenance: MessageProvenance,
     relation: Option<MessageRelation>,
     automation_grant_id: Option<AutomationGrantId>,
+    reception_run_id: Option<uuid::Uuid>,
 }
 
 impl SendMessageRequest {
@@ -163,6 +164,7 @@ impl SendMessageRequest {
             provenance,
             relation,
             automation_grant_id,
+            reception_run_id: None,
         })
     }
 
@@ -192,6 +194,14 @@ impl SendMessageRequest {
 
     pub const fn automation_grant_id(&self) -> Option<AutomationGrantId> {
         self.automation_grant_id
+    }
+    pub const fn reception_run_id(&self) -> Option<uuid::Uuid> {
+        self.reception_run_id
+    }
+    #[must_use]
+    pub fn with_reception_run(mut self, run_id: Option<uuid::Uuid>) -> Self {
+        self.reception_run_id = run_id;
+        self
     }
 }
 

@@ -109,6 +109,7 @@ dependencies = [
  "agent-room-domain",
  "base64 0.22.1",
  "futures-util",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.20",
@@ -172,6 +173,7 @@ dependencies = [
 name = "agent-room-bridge-ipc"
 version = "0.1.0-alpha.32"
 dependencies = [
+ "agent-room-application",
  "agent-room-bridge-core",
  "agent-room-domain",
  "base64 0.22.1",

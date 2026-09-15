@@ -111,6 +111,8 @@ impl AutomationAudienceBody {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct AuthorizeAutomationSendBody {
+    #[serde(default)]
+    reception_run_id: Option<uuid::Uuid>,
     submission_id: String,
     agent_id: String,
     agent_instance_id: String,
@@ -131,6 +133,7 @@ impl AuthorizeAutomationSendBody {
         grant_id: AutomationGrantId,
     ) -> Option<AuthorizeAutomationSend> {
         Some(AuthorizeAutomationSend {
+            reception_run_id: self.reception_run_id,
             actor,
             grant_id,
             submission_id: parse_uuid_v7(&self.submission_id)

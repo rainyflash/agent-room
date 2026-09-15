@@ -2,6 +2,25 @@ import { createRoot, type Root } from 'react-dom/client';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+  useRouterState,
+} from '@tanstack/react-router';
+import { PersonalWorkspaceStore } from '@/features/personal-workspace/application/personal-workspace-store';
+import { BrowserWorkspaceCache } from '@/features/personal-workspace/adapters/browser-workspace-cache';
+import {
+  emptyWorkspace,
+  type WorkspaceDocument,
+} from '@/features/personal-workspace/domain/workspace-document';
+import { PersonalWorkspaceProvider } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import { InboxStore } from '@/features/inbox/application/inbox-store';
+import { InboxProvider } from '@/features/inbox/ui/inbox-provider';
+import { InboxPage } from '@/features/inbox/ui/inbox-page';
+import { conversationFixture } from '@/features/conversation/testing/conversation-fixture';
 
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
@@ -132,18 +151,72 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
 );
 const conversationListeners = new Set<() => void>();
 let publishedConversations: RoomMessageSignal[] = [];
+const historyFixture = new URLSearchParams(window.location.search).has('history');
+const fixtureHistory = historyFixture
+  ? Array.from({ length: 80 }, (_, index): RoomMessageSignal => {
+      const agent = room.agents[index % room.agents.length];
+      if (!agent) throw new Error('No fixture Agent');
+      const messageId = `01990d9e-8400-7000-8000-${String(1000 + index).padStart(12, '0')}`;
+      const original = conversationFixture(messageId, {
+        roomId: room.roomId,
+        serverTimestamp: Date.now() - (80 - index) * 60000,
+      });
+      return {
+        ...original,
+        actor: {
+          kind: 'agent',
+          agentId: agent.agentId,
+          displayName: agent.displayName,
+          matrixUserId: agent.matrixUserId,
+          instanceId: agent.instanceIds[0] ?? agent.agentId,
+          provenance: 'autonomous_agent',
+        },
+        preview: {
+          title: 'Conversation',
+          summary: `Review milestone ${String(index + 1)}`,
+          contentType: 'text/plain',
+          sensitivity: 'normal',
+          riskFlags: [],
+          conversation: {
+            text: `Review milestone ${String(index + 1)}: implementation and verification details.`,
+            mentions: index % 6 === 0 ? [fixtureIdentity.matrixUserId] : [],
+          },
+        },
+        ...(index % 3 === 1
+          ? {
+              relation: {
+                kind: 'reply' as const,
+                targetMessageId: `01990d9e-8400-7000-8000-${String(999 + index).padStart(12, '0')}`,
+              },
+            }
+          : {}),
+      };
+    })
+  : [];
+let historyWindow = 20;
 const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
     ok({
       messages: [
         ...testMessages(requestedRoomId),
+        ...fixtureHistory
+          .filter((message) => message.roomId === requestedRoomId)
+          .slice(-historyWindow),
         ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
       ].toSorted((left, right) => right.serverTimestamp - left.serverTimestamp),
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
+      ...(historyFixture
+        ? { history: { canLoadMore: historyWindow < fixtureHistory.length, limited: false } }
+        : {}),
     }),
+  loadOlder: () => {
+    historyWindow += 20;
+    for (const listener of conversationListeners) listener();
+    return Promise.resolve(ok(undefined));
+  },
   subscribe: (_roomId, listener) => {
     conversationListeners.add(listener);
     return () => {
@@ -151,6 +224,53 @@ const messages: MessageGateway = {
     };
   },
 };
+const workspaceCache = new BrowserWorkspaceCache(window.localStorage);
+let remoteWorkspace: WorkspaceDocument = emptyWorkspace;
+const personalWorkspace = new PersonalWorkspaceStore(
+  {
+    scope: () => ({ accountId: fixtureIdentity.matrixUserId, writerId: 'fixture-device' }),
+    read: () => Promise.resolve(ok(remoteWorkspace)),
+    write: (_scope, document) => {
+      remoteWorkspace = document;
+      return Promise.resolve(ok(undefined));
+    },
+    subscribe: () => () => undefined,
+  },
+  workspaceCache,
+);
+const inboxStore = new InboxStore(
+  {
+    read: (accountId) =>
+      Promise.resolve(
+        ok({
+          accountId,
+          rooms: [
+            {
+              catalogId: '01990d9e-8400-7000-8000-000000000401',
+              roomId: room.roomId,
+              name: room.name,
+              direct: false,
+            },
+          ],
+          handoffs: [],
+          limited: false,
+        }),
+      ),
+  },
+  {
+    accountId: () => fixtureIdentity.matrixUserId,
+    isJoined: (id) => id === room.roomId,
+    isIgnored: () => false,
+    subscribe: (listener) => {
+      conversationListeners.add(listener);
+      return () => {
+        conversationListeners.delete(listener);
+      };
+    },
+  },
+  messages,
+  personalWorkspace,
+);
 const fixtureControls: LobbyFixtureControls = {
   displayedEvents: () => [...displayedEvents],
   receive: (input) => {
@@ -740,14 +860,22 @@ const services: AppServices = {
   },
 };
 
-function LobbyFixture() {
+function LobbyFixture({
+  search,
+  inboxMode,
+}: {
+  readonly search: string;
+  readonly inboxMode: boolean;
+}) {
   const [view, setView] = useState<RoomWorkspaceView>(() => {
-    const requested = new URLSearchParams(window.location.search).get('view');
+    const requested = new URLSearchParams(search).get('view');
     return requested === 'conversation' || requested === 'resources' ? requested : 'space';
   });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(() =>
+    new URLSearchParams(search).get('message'),
+  );
   const updateView = (nextView: RoomWorkspaceView): void => {
     const url = new URL(window.location.href);
     if (nextView === 'space') url.searchParams.delete('view');
@@ -760,58 +888,66 @@ function LobbyFixture() {
       <QueryClientProvider client={queryClient}>
         <AppServicesProvider services={services}>
           <AccountPreferencesProvider store={accountPreferences}>
-            <DesktopRuntimeProvider gateway={desktop}>
-              <LobbyPage
-                catalogId="01990d9e-8400-7000-8000-000000000401"
-                onEnterRoom={() => undefined}
-                onExitRoom={() => undefined}
-                onOpenSecurity={() => undefined}
-                view={view}
-                onViewChange={(nextView) => {
-                  if (nextView === 'space') {
-                    setSelectedDirectSessionId(null);
-                    setSelectedMessageId(null);
-                  }
-                  updateView(nextView);
-                }}
-                onOpenRoomPanel={(nextView) => {
-                  setSelectedDirectSessionId(null);
-                  setSelectedAgentId(null);
-                  setSelectedMessageId(null);
-                  updateView(nextView);
-                }}
-                onSelectedAgentChange={(id) => {
-                  setSelectedAgentId(id);
-                  if (id !== null) {
-                    setSelectedDirectSessionId(null);
-                    setSelectedMessageId(null);
-                    updateView('space');
-                  }
-                }}
-                onSelectedDirectSessionChange={(id) => {
-                  setSelectedDirectSessionId(id);
-                  setSelectedAgentId(null);
-                  setSelectedMessageId(null);
-                  updateView(id === null ? 'space' : 'conversation');
-                }}
-                onSelectedMessageChange={setSelectedMessageId}
-                principal={{
-                  authenticatedAtUnixMs: Date.now(),
-                  displayName: 'Fixture operator',
-                  expiresAtUnixMs: Date.now() + 60_000,
-                  locale: 'en',
-                  matrixUserId: '@fixture:matrix.test',
-                  principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-                  recentlyAuthenticated: !new URLSearchParams(window.location.search).has(
-                    'olderSession',
-                  ),
-                }}
-                roomId={room.roomId}
-                selectedAgentId={selectedAgentId}
-                selectedDirectSessionId={selectedDirectSessionId}
-                selectedMessageId={selectedMessageId}
-              />
-            </DesktopRuntimeProvider>
+            <PersonalWorkspaceProvider store={personalWorkspace}>
+              <InboxProvider store={inboxStore}>
+                <DesktopRuntimeProvider gateway={desktop}>
+                  {inboxMode ? (
+                    <InboxPage />
+                  ) : (
+                    <LobbyPage
+                      catalogId="01990d9e-8400-7000-8000-000000000401"
+                      onEnterRoom={() => undefined}
+                      onExitRoom={() => undefined}
+                      onOpenSecurity={() => undefined}
+                      view={view}
+                      onViewChange={(nextView) => {
+                        if (nextView === 'space') {
+                          setSelectedDirectSessionId(null);
+                          setSelectedMessageId(null);
+                        }
+                        updateView(nextView);
+                      }}
+                      onOpenRoomPanel={(nextView) => {
+                        setSelectedDirectSessionId(null);
+                        setSelectedAgentId(null);
+                        setSelectedMessageId(null);
+                        updateView(nextView);
+                      }}
+                      onSelectedAgentChange={(id) => {
+                        setSelectedAgentId(id);
+                        if (id !== null) {
+                          setSelectedDirectSessionId(null);
+                          setSelectedMessageId(null);
+                          updateView('space');
+                        }
+                      }}
+                      onSelectedDirectSessionChange={(id) => {
+                        setSelectedDirectSessionId(id);
+                        setSelectedAgentId(null);
+                        setSelectedMessageId(null);
+                        updateView(id === null ? 'space' : 'conversation');
+                      }}
+                      onSelectedMessageChange={setSelectedMessageId}
+                      principal={{
+                        authenticatedAtUnixMs: Date.now(),
+                        displayName: 'Fixture operator',
+                        expiresAtUnixMs: Date.now() + 60_000,
+                        locale: 'en',
+                        matrixUserId: '@fixture:matrix.test',
+                        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                        recentlyAuthenticated: !new URLSearchParams(window.location.search).has(
+                          'olderSession',
+                        ),
+                      }}
+                      roomId={room.roomId}
+                      selectedAgentId={selectedAgentId}
+                      selectedDirectSessionId={selectedDirectSessionId}
+                      selectedMessageId={selectedMessageId}
+                    />
+                  )}
+                </DesktopRuntimeProvider>
+              </InboxProvider>
+            </PersonalWorkspaceProvider>
           </AccountPreferencesProvider>
         </AppServicesProvider>
       </QueryClientProvider>
@@ -826,7 +962,38 @@ async function bootstrapFixture(): Promise<void> {
     throw new Error('大厅测试根节点不存在。');
   }
   fixtureRoot = createRoot(root);
-  fixtureRoot.render(<LobbyFixture />);
+  const fixtureRoute = createRootRoute({
+    component: () => {
+      const location = useRouterState({ select: (state) => state.location });
+      return (
+        <LobbyFixture
+          key={location.href}
+          search={location.searchStr}
+          inboxMode={location.pathname === '/inbox'}
+        />
+      );
+    },
+  });
+  const routes = [
+    '/inbox',
+    '/e2e/fixtures/lobby-scene.html',
+    '/lobby/$catalogId/instance/$roomId',
+  ].map((path) =>
+    createRoute({
+      getParentRoute: () => fixtureRoute,
+      path,
+      component: () => null,
+      validateSearch: (search: Record<string, unknown>) => search,
+    }),
+  );
+  const initial = new URLSearchParams(window.location.search).has('inbox')
+    ? `/inbox${window.location.search}`
+    : `${window.location.pathname}${window.location.search}`;
+  const router = createRouter({
+    routeTree: fixtureRoute.addChildren(routes),
+    history: createMemoryHistory({ initialEntries: [initial] }),
+  });
+  fixtureRoot.render(<RouterProvider router={router} />);
 }
 
 function testRoom(agentCount: number): LobbyRoom {

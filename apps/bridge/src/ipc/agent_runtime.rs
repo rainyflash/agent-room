@@ -680,6 +680,16 @@ impl AgentRuntimeIpcFacade {
         &self,
         request: IpcSendMessageRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.send_message_with_run(request, None).await
+    }
+    pub(super) async fn send_message_with_run(
+        &self,
+        request: IpcSendMessageRequest,
+        run_id: Option<Uuid>,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        if run_id.is_some() && request.provenance != IpcMessageProvenance::AutonomousAgent {
+            return Err(invalid_request("reception.background_reply_required"));
+        }
         let runtime = self.runtime_snapshot()?;
         let (room_id, room_encryption) = runtime.message_room(Some(request.room_id)).await?;
         runtime
@@ -762,7 +772,8 @@ impl AgentRuntimeIpcFacade {
             relation,
             automation_grant_id,
         )
-        .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?;
+        .map_err(|_| invalid_request("bridge.ipc.message_intent_invalid"))?
+        .with_reception_run(run_id);
 
         let outcome = match publication.send(&intent).await {
             Ok(outcome) => ipc_publication_outcome(outcome),

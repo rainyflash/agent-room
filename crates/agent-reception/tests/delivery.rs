@@ -7,11 +7,65 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+#[path = "delivery/ownership.rs"]
+mod ownership;
+
 #[derive(Clone)]
 struct Bridge {
     identity: String,
     source: IpcMessagePreviewSummary,
     replies: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
+    reception: Arc<Mutex<Option<ReceptionRecord>>>,
+}
+impl Bridge {
+    fn control(&self, request: ReceptionRequest) -> IpcResponse {
+        let mut reception = self.reception.lock().unwrap();
+        match request.command {
+            ReceptionCommand::Claim {
+                session_key,
+                display_name,
+                initial,
+            } => {
+                let previous = reception.take();
+                assert!(
+                    previous
+                        .as_ref()
+                        .is_none_or(|record| record.status == ReceptionStatus::Idle
+                            || record.run_id == request.run_id)
+                );
+                *reception = Some(ReceptionRecord {
+                    agent_id: request.agent_id,
+                    instance_id: request.instance_id,
+                    catalog_id: request.catalog_id,
+                    room_id: request.room_id,
+                    session_key,
+                    display_name,
+                    device_id: request.instance_id,
+                    device_label: "Test computer".into(),
+                    run_id: request.run_id,
+                    status: ReceptionStatus::Active,
+                    next_device_id: None,
+                    last_seen_unix_ms: 1,
+                    revision: previous.as_ref().map_or(0, |record| record.revision),
+                    progress: previous.map_or(initial, |record| record.progress),
+                });
+            }
+            ReceptionCommand::Save { revision, progress } => {
+                let record = reception.as_mut().unwrap();
+                assert_eq!(record.run_id, request.run_id);
+                assert_eq!(record.revision, revision);
+                record.progress = progress;
+                record.revision += 1;
+            }
+            ReceptionCommand::Release => {
+                reception.as_mut().unwrap().status = ReceptionStatus::Idle;
+            }
+            ReceptionCommand::Heartbeat => {}
+        }
+        IpcResponse::Reception {
+            record: reception.as_ref().unwrap().clone(),
+        }
+    }
 }
 impl BridgeToolClient for Bridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
@@ -21,6 +75,7 @@ impl BridgeToolClient for Bridge {
                 method => method,
             };
             Ok(match method {
+                IpcMethod::ReceptionControl(request) => self.control(request),
                 IpcMethod::OpenHostSession(_) => IpcResponse::HostSession {
                     session: IpcHostSessionSummary {
                         session_id: self.identity.clone(),
@@ -159,6 +214,7 @@ fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
             identity: id,
             source,
             replies: Arc::default(),
+            reception: Arc::default(),
         },
     )
 }

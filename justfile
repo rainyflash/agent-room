@@ -177,6 +177,9 @@ infra-config:
 sbom:
   node tools/run-powershell.mjs tools/sbom.ps1
 
+release-flow *args:
+  python tools/release_flow.py {{args}}
+
 production-render config state:
   python tools/production.py render --config {{config}} --state-dir {{state}}
 

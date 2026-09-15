@@ -1,12 +1,12 @@
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { AnimatePresence } from 'motion/react';
-import { useEffect, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
 import { useRoomMessages } from './room-messages-context';
-import type { ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
+import type { MessageGateway, ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
 import { projectMessageSignals } from '@/features/signals/adapters/message-signal-projector';
@@ -48,11 +48,13 @@ export function MessageLayer({
     contentVerifier,
     handoffs,
     messagePublisher,
+    messages: messageGateway,
     messageTranslation,
     moderation,
     telemetry,
   } = useAppServices();
   const { state, store } = useRoomMessages(roomId);
+  const loadOlder = messageGateway.loadOlder?.bind(messageGateway);
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const latestMessage = projectedMessages[0];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
@@ -74,20 +76,18 @@ export function MessageLayer({
     }
   };
 
-  useEffect(() => {
-    if (selectedMessageId !== null && state.kind === 'ready' && selectedMessage === null) {
-      onSelectedMessageChange(null);
-    }
-  }, [onSelectedMessageChange, selectedMessage, selectedMessageId, state.kind]);
-
   return (
     <>
       <div className={`message-workspace message-workspace--${variant}`} data-view={view}>
         <div className="message-workspace__conversation" hidden={view !== 'conversation'}>
           <ConversationPanel
             active={active && view === 'conversation'}
+            history={state.kind === 'ready' ? state.room.history : undefined}
+            {...(loadOlder ? { onLoadOlder: () => loadOlder(roomId) } : {})}
             {...(onLatestDisplayed === undefined ? {} : { onLatestDisplayed })}
-            focusMessageId={focusedConversationMessageId}
+            focusMessageId={
+              focusedConversationMessageId ?? (view === 'conversation' ? selectedMessageId : null)
+            }
             variant={variant}
             key={`chat:${roomId}`}
             writesAllowed={writesAllowed}
@@ -113,6 +113,15 @@ export function MessageLayer({
             <p>{t('roomWorkspace.resourcesDetail')}</p>
           </header>
           <ReadOnlyFederationEvents events={readOnlyFederatedEvents} />
+          {state.kind === 'ready' ? (
+            <ResourceHistory
+              key={`history:${roomId}`}
+              roomId={roomId}
+              gateway={messageGateway}
+              canLoadMore={state.room.history?.canLoadMore === true}
+              missing={selectedMessageId !== null && selectedMessage === null}
+            />
+          ) : null}
           {state.kind === 'loading' ? null : (
             <SignalDock
               defaultExpanded
@@ -146,7 +155,7 @@ export function MessageLayer({
         </section>
       </div>
       <AnimatePresence>
-        {selectedMessage === null ? null : (
+        {selectedMessage === null || selectedMessage.preview?.conversation !== undefined ? null : (
           <ContentInspector
             catalogId={catalogId}
             contentGateway={content}
@@ -164,6 +173,51 @@ export function MessageLayer({
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+function ResourceHistory({
+  roomId,
+  gateway,
+  canLoadMore,
+  missing,
+}: {
+  readonly roomId: string;
+  readonly gateway: MessageGateway;
+  readonly canLoadMore: boolean;
+  readonly missing: boolean;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!canLoadMore && !missing && !failed) return null;
+  return (
+    <div className="conversation-history">
+      {missing ? <p role="status">{t('history.positionMissing')}</p> : null}
+      {failed ? <p role="alert">{t('history.failed')}</p> : null}
+      {canLoadMore && gateway.loadOlder ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setFailed(false);
+            void gateway.loadOlder?.(roomId).then(
+              (result) => {
+                setBusy(false);
+                setFailed(!result.ok);
+              },
+              () => {
+                setBusy(false);
+                setFailed(true);
+              },
+            );
+          }}
+        >
+          {t(busy ? 'history.loading' : 'history.older')}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

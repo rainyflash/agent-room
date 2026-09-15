@@ -89,6 +89,15 @@ export const receiverViewSchema = z
           })
           .strict(),
         bridgeService: z.string(),
+        execution: z
+          .object({
+            runId: z.uuidv7(),
+            revision: z.number().int().nonnegative(),
+            releasing: z.boolean(),
+          })
+          .strict()
+          .nullable()
+          .optional(),
         agentId: z.uuid().nullable(),
         roomCatalogId: z.uuid().nullable(),
         instanceId: z.uuid().nullable(),

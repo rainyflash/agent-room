@@ -18,6 +18,11 @@ pub enum IpcMethod {
     },
     GetSelf,
     RegisterReception(crate::IpcRegisterReceptionRequest),
+    ReceptionControl(crate::ReceptionRequest),
+    SendReceptionMessage {
+        run_id: Uuid,
+        request: IpcSendMessageRequest,
+    },
     MatrixSecurity(crate::IpcMatrixSecurityRequest),
     ListRecoverySessions,
     MatrixRecovery(crate::IpcMatrixRecoveryRequest),
@@ -44,6 +49,8 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::RegisterReception(_) => "register_reception",
+            Self::ReceptionControl(_) => "reception_control",
+            Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
             Self::MatrixSecurity(_) => "matrix_security",
             Self::ListRecoverySessions => "list_recovery_sessions",
             Self::MatrixRecovery(_) => "matrix_recovery",
@@ -53,7 +60,6 @@ impl IpcMethod {
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
-            Self::SendMessage(_) => "send_message",
             Self::ApproveHandoff(_) => "approve_handoff",
             Self::ListHandoffs(_) => "list_handoffs",
             Self::ConsumeHandoff(_) => "consume_handoff",
@@ -64,9 +70,10 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
-            Self::OpenHostSession(_) | Self::CloseHostSession(_) | Self::RegisterReception(_) => {
-                IpcScope::HostSessionsManage
-            }
+            Self::OpenHostSession(_)
+            | Self::CloseHostSession(_)
+            | Self::RegisterReception(_)
+            | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
@@ -76,7 +83,7 @@ impl IpcMethod {
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
-            Self::SendMessage(_) => IpcScope::MessageSend,
+            Self::SendMessage(_) | Self::SendReceptionMessage { .. } => IpcScope::MessageSend,
             Self::ApproveHandoff(_) => IpcScope::HandoffApprove,
             Self::ListHandoffs(_) => IpcScope::HandoffList,
             Self::ConsumeHandoff(_) => IpcScope::HandoffConsume,
@@ -100,6 +107,17 @@ impl IpcMethod {
             Self::OpenHostSession(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
             Self::RegisterReception(request) => request.validate(),
+            Self::ReceptionControl(request) => {
+                if request.valid() {
+                    Ok(())
+                } else {
+                    Err(failure("bridge.ipc.reception_invalid"))
+                }
+            }
+            Self::SendReceptionMessage { run_id, request } => {
+                validate_uuid_v7(&run_id.to_string(), "bridge.ipc.reception_invalid")?;
+                request.validate()
+            }
             Self::WithSession { session_id, method } => {
                 crate::host_sessions::validate_session_id(session_id)?;
                 if matches!(
@@ -419,6 +437,9 @@ impl IpcApproveHandoffRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    Reception {
+        record: crate::ReceptionRecord,
+    },
     HostSessionDiagnostics {
         sessions: Vec<crate::IpcHostSessionDiagnostics>,
     },

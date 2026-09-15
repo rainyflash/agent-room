@@ -51,6 +51,15 @@ import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
 import { SessionRequestScope } from '@/shared/http/session-request-scope';
+import { MatrixWorkspaceGateway } from '@/features/personal-workspace/adapters/matrix-workspace-gateway';
+import { BrowserWorkspaceCache } from '@/features/personal-workspace/adapters/browser-workspace-cache';
+import { PersonalWorkspaceStore } from '@/features/personal-workspace/application/personal-workspace-store';
+import { PersonalWorkspaceProvider } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import { ControlPlaneInboxGateway } from '@/features/inbox/adapters/control-plane-inbox-gateway';
+import { MatrixInboxSource } from '@/features/inbox/adapters/matrix-inbox-source';
+import { InboxStore } from '@/features/inbox/application/inbox-store';
+import { InboxProvider } from '@/features/inbox/ui/inbox-provider';
+import { ReceptionOwnershipClient } from '@/features/desktop/adapters/reception-ownership-client';
 
 export type CloudAppProvidersProps = {
   readonly config: RuntimeConfig;
@@ -64,7 +73,11 @@ export function CloudAppProviders({ config, localRuntime }: CloudAppProvidersPro
     <QueryClientProvider client={runtime.queryClient}>
       <AppServicesProvider services={runtime.services}>
         <AccountPreferencesProvider store={runtime.accountPreferences}>
-          <RouterProvider router={router} />
+          <PersonalWorkspaceProvider store={runtime.personalWorkspace}>
+            <InboxProvider store={runtime.inbox}>
+              <RouterProvider router={router} />
+            </InboxProvider>
+          </PersonalWorkspaceProvider>
         </AccountPreferencesProvider>
       </AppServicesProvider>
     </QueryClientProvider>
@@ -116,12 +129,22 @@ export function createCloudRuntime(
     new MatrixAccountPreferencesGateway(matrixClients),
     { language: readLanguagePreference(window.localStorage), lobbyView: 'scene' },
   );
+  const personalWorkspace = new PersonalWorkspaceStore(
+    new MatrixWorkspaceGateway(matrixClients),
+    new BrowserWorkspaceCache(window.localStorage),
+  );
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
   const lobbyEntry = new PublicLobbyEntryCoordinator(
     new ControlPlanePublicLobbyEntryClient(businessApi),
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
   );
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
+  const inbox = new InboxStore(
+    new ControlPlaneInboxGateway(businessApi),
+    new MatrixInboxSource(matrixClients),
+    messages,
+    personalWorkspace,
+  );
   const messagePublisher = new HumanMessagePublisher({
     bodyPreparer: new BrowserMessageBodyPreparer(),
     content: new ControlPlaneMessagePublicationContentGateway(businessApi),
@@ -136,6 +159,7 @@ export function createCloudRuntime(
     new BrowserDirectBlockRegistry(window.localStorage),
   );
   const services: AppServices = {
+    receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
     automation: new ControlPlaneAutomationGrantClient(businessApi),
@@ -173,6 +197,8 @@ export function createCloudRuntime(
   };
   return {
     accountPreferences,
+    personalWorkspace,
+    inbox,
     matrixClients,
     queryClient,
     services,
@@ -181,6 +207,8 @@ export function createCloudRuntime(
 
 export type CloudRuntimeComposition = {
   readonly accountPreferences: AccountPreferencesStore;
+  readonly personalWorkspace: PersonalWorkspaceStore;
+  readonly inbox: InboxStore;
   readonly matrixClients: MatrixClientRegistry;
   readonly queryClient: QueryClient;
   readonly services: AppServices;

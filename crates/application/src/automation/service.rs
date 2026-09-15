@@ -176,6 +176,7 @@ impl AutomationService {
             return Ok(preparation.denied_outcome());
         };
         let consumption = AutomationConsumptionRequest {
+            reception_run_id: request.reception_run_id,
             grant_id: request.grant_id,
             submission_id: request.submission_id,
             matrix_room_id: request.matrix_room_id.clone(),
@@ -241,8 +242,7 @@ impl AutomationService {
             AutomationRiskScanOutcome::Passed,
             now,
         );
-        if let AutomationGrantDecision::Denied(reason) =
-            record.grant.evaluate(&preliminary, record.usage)
+        if let AutomationGrantDecision::Denied(reason) = record.grant.evaluate_policy(&preliminary)
         {
             return self
                 .deny_preparation(
@@ -290,7 +290,7 @@ impl AutomationService {
             now,
         );
         if let AutomationGrantDecision::Denied(reason) =
-            context.record.grant.evaluate(&scoped, context.record.usage)
+            context.record.grant.evaluate_policy(&scoped)
         {
             return self
                 .deny_preparation(
@@ -340,10 +340,8 @@ impl AutomationService {
             risk_scan,
             now,
         );
-        if let AutomationGrantDecision::Denied(reason) = context
-            .record
-            .grant
-            .evaluate(&final_attempt, context.record.usage)
+        if let AutomationGrantDecision::Denied(reason) =
+            context.record.grant.evaluate_policy(&final_attempt)
         {
             return self
                 .deny_preparation(

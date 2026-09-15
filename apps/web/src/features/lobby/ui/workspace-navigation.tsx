@@ -1,4 +1,13 @@
-import { ArrowUpRight, ChevronDown, Compass, Hash, Settings2, UserRound } from 'lucide-react';
+import {
+  ArrowUpRight,
+  ChevronDown,
+  Compass,
+  Hash,
+  Inbox,
+  Settings2,
+  UserRound,
+} from 'lucide-react';
+import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
@@ -53,6 +62,10 @@ export function WorkspaceNavigation({
         onActivate={onActivateDirect}
       />
       <div className="workspace-navigation__footer">
+        <Link className="workspace-navigation__link" to="/inbox">
+          <Inbox aria-hidden="true" />
+          {t('navigation.inbox')}
+        </Link>
         <a className="workspace-navigation__link" href="/rooms">
           <Compass aria-hidden="true" />
           {t('roomWorkspace.explore')}

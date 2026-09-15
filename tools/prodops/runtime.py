@@ -193,8 +193,9 @@ class ProductionRuntime:
         self._run([*self.compose_command(), "run", "--rm", "--no-deps", "backup-permissions"])
         return repository
 
-    def backup(self) -> BackupManifest:
-        self.prepare(generate_signing_key=True)
+    def backup(self, *, preserve_configuration: bool = False) -> BackupManifest:
+        if not preserve_configuration:
+            self.prepare(generate_signing_key=True)
         self.validate_compose()
         repository = self.prepare_backup_repository()
         repository.prune(

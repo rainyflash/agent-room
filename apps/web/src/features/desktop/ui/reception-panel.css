@@ -58,6 +58,21 @@
   border: 1px solid var(--border-subtle, #d7dedb);
   border-radius: 8px;
 }
+.reception-actions > button,
+.reception-card > button {
+  white-space: normal;
+  height: auto;
+  min-height: 2.5rem;
+  overflow-wrap: anywhere;
+}
+.reception-card strong {
+  overflow-wrap: anywhere;
+}
+.reception-panel summary:focus-visible,
+.reception-panel button:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 3px;
+}
 .reception-card > span {
   font-size: 12px;
 }

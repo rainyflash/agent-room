@@ -14,6 +14,10 @@ pub use matrix_security::{
 };
 pub mod limits;
 mod tools;
+pub use agent_room_application::reception::{
+    ReceptionCommand, ReceptionPending, ReceptionProgress, ReceptionRecord, ReceptionRequest,
+    ReceptionStatus,
+};
 pub use host_sessions::{
     IpcCloseHostSessionRequest, IpcHostRoomTarget, IpcHostSessionDiagnostics, IpcHostSessionState,
     IpcHostSessionSummary, IpcOpenHostSessionRequest, IpcReceptionHost, IpcReceptionOffer,

@@ -1,12 +1,31 @@
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
-import { Search } from 'lucide-react';
-import { forwardRef, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Search, Star } from 'lucide-react';
+import {
+  forwardRef,
+  useDeferredValue,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
-import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
+import {
+  lobbyAgentStatuses,
+  type LobbyAgent,
+  type LobbyAgentStatus,
+} from '@/features/lobby/domain/lobby';
 import { AgentPortrait } from './room-illustration';
 import { agentAttendance } from '../domain/agent-attendance';
+import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import {
+  organizeAgents,
+  projectTags,
+  type AgentCollection,
+} from '@/features/personal-workspace/domain/agent-organization';
+import '@/features/personal-workspace/ui/personal-workspace.css';
 
 export type ListModeRosterProps = {
   readonly variant?: 'full' | 'compact';
@@ -40,10 +59,24 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
     const selectedButtonRef = useRef<HTMLButtonElement>(null);
     const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
     const [query, setQuery] = useState('');
+    const deferredQuery = useDeferredValue(query);
+    const personal = usePersonalWorkspace();
+    const [collection, setCollection] = useState<AgentCollection>('all');
+    const [projectTag, setProjectTag] = useState('');
+    const tags = useMemo(
+      () => projectTags(agents, personal?.snapshot.index ?? null),
+      [agents, personal?.snapshot.index],
+    );
     const [status, setStatus] = useState<LobbyAgentStatus | 'all'>('all');
     const filteredAgents = useMemo(
-      () => filterLobbyAgents(agents, query, status),
-      [agents, query, status],
+      () =>
+        organizeAgents(
+          filterLobbyAgents(agents, deferredQuery, status),
+          personal?.snapshot.index ?? null,
+          collection,
+          projectTag,
+        ),
+      [agents, deferredQuery, status, personal?.snapshot.index, collection, projectTag],
     );
 
     useImperativeHandle(forwardedRef, () => ({
@@ -83,7 +116,12 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
             <select
               aria-label={t('lobby.roster.filter')}
               onChange={(event) => {
-                setStatus(event.currentTarget.value as LobbyAgentStatus | 'all');
+                const value = event.currentTarget.value;
+                if (value === 'all') setStatus(value);
+                else {
+                  const found = lobbyAgentStatuses.find((item) => item === value);
+                  if (found) setStatus(found);
+                }
               }}
               value={status}
             >
@@ -98,6 +136,37 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
             </select>
           </label>
         </div>
+        {personal?.snapshot.accountId ? (
+          <div className="roster-personal-filters">
+            <select
+              aria-label={t('personal.filter')}
+              value={collection}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (value === 'all' || value === 'favorites' || value === 'recent')
+                  setCollection(value);
+              }}
+            >
+              <option value="all">{t('personal.allAgents')}</option>
+              <option value="favorites">{t('personal.favorites')}</option>
+              <option value="recent">{t('personal.recent')}</option>
+            </select>
+            <select
+              aria-label={t('personal.project')}
+              value={projectTag}
+              onChange={(event) => {
+                setProjectTag(event.currentTarget.value);
+              }}
+            >
+              <option value="">{t('personal.allProjects')}</option>
+              {tags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         {filteredAgents.length === 0 ? (
           <p className="list-roster__empty">{t('lobby.roster.empty')}</p>
         ) : (
@@ -144,6 +213,13 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   <span className="roster-agent__identity">
                     <strong>
                       {agent.displayName}
+                      {personal?.snapshot.index.favorites.has(agent.agentId) ? (
+                        <Star
+                          className="roster-agent__favorite"
+                          aria-label={t('personal.favorites')}
+                          fill="currentColor"
+                        />
+                      ) : null}
                       {agent.agentId === selfAgentId ? <em>{t('lobby.agent.self')}</em> : null}
                     </strong>
                     <span>
@@ -160,6 +236,11 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   </span>
                   <span className="roster-agent__summary">
                     {agent.summary ?? t(`lobby.status.${agent.status}`)}
+                    {(personal?.snapshot.index.tags.get(agent.agentId)?.length ?? 0) > 0 ? (
+                      <span className="roster-agent__tags">
+                        {personal?.snapshot.index.tags.get(agent.agentId)?.join(' · ')}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="roster-agent__instances">
                     {t('lobby.agent.instances', { count: agent.instanceIds.length })}

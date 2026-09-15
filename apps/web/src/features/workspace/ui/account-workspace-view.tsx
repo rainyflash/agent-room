@@ -23,6 +23,7 @@ export type AccountWorkspaceViewProps = {
   readonly onSignOut?: () => void;
   readonly principalDisplayName: string;
   readonly selectedAgentId: string | null;
+  readonly reception?: ReactNode;
 };
 
 export function AccountWorkspaceView({
@@ -35,6 +36,7 @@ export function AccountWorkspaceView({
   onSignOut,
   principalDisplayName,
   selectedAgentId,
+  reception,
 }: AccountWorkspaceViewProps) {
   const { t } = useTranslation();
   const selected = selectedFleetAgent(fleet, selectedAgentId);
@@ -113,6 +115,7 @@ export function AccountWorkspaceView({
           <AgentInspector agent={selected} />
         </section>
       ) : null}
+      {reception}
       <ConnectionStatusStrip health={connectionHealth} />
       <WorkspaceDiagnostics health={connectionHealth} orphanCount={fleet.orphanInstances.length} />
     </main>

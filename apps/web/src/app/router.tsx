@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 import { lazy, Suspense, useCallback } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
+import { InboxPage } from '@/features/inbox/ui/inbox-page';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
@@ -70,6 +71,11 @@ const roomDirectoryRoute = createRoute({
   path: '/rooms',
   component: RoomDirectoryBoundary,
 });
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/inbox',
+  component: InboxBoundary,
+});
 
 const lobbyInstanceRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -96,6 +102,7 @@ const routeTree = rootRoute.addChildren([
   onboardingRoute,
   workspaceRoute,
   roomDirectoryRoute,
+  inboxRoute,
   lobbyRoute,
   lobbyInstanceRoute,
   settingsRoute,
@@ -228,6 +235,15 @@ function RoomDirectoryBoundary() {
     return <ConnectionPage />;
   }
   return <RoomDirectoryPage />;
+}
+
+function InboxBoundary() {
+  const { snapshot } = useSession();
+  return snapshot.context.controlStatus === 'ready' && snapshot.context.principal !== null ? (
+    <InboxPage />
+  ) : (
+    <ConnectionPage />
+  );
 }
 
 function SettingsBoundary() {

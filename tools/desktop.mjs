@@ -50,6 +50,7 @@ const webChecks = [
     'reception.e2e.ts',
     'matrix-session-vault.e2e.ts',
     'usability-core.e2e.ts',
+    'daily-usability.e2e.ts',
     'conversation-lifecycle.e2e.ts',
   ),
 ];

@@ -6,6 +6,7 @@ use agent_room_domain::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomationAuthorizationRequest {
+    pub reception_run_id: Option<uuid::Uuid>,
     pub grant_id: AutomationGrantId,
     pub submission_id: MessageSubmissionId,
     pub agent_id: AgentId,

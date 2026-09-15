@@ -91,6 +91,7 @@ impl ReceiverStore {
                 state
             }
             None => ReceiverState {
+                execution: None,
                 binding: binding.clone(),
                 bridge_service: service.into(),
                 agent_id: None,

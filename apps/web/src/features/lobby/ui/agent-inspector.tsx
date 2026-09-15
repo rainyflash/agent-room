@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 import { agentAttendance, agentReception } from '../domain/agent-attendance';
+import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
 
 const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
   blocked: 'alert',
@@ -98,6 +99,7 @@ export function AgentInspector({
           </section>
         )}
         {receptionControls}
+        <AgentOrganizationControls key={agent.agentId} agentId={agent.agentId} />
         <section className="agent-inspector__summary">
           <h3>{t('lobby.inspector.summary')}</h3>
           <p>{agent.summary ?? t('lobby.inspector.noSummary')}</p>

@@ -220,6 +220,16 @@ async function bootstrapFixture() {
   );
   const services = {
     ...runtime.services,
+    receptionOwnership: {
+      list: () => ready({ receptions: [], limited: false }),
+      transfer: unavailable,
+    },
+    accessManagement: {
+      listProductDevices: () => ready([]),
+      listAgentInstances: unavailable,
+      revokeAgentInstance: unavailable,
+      revokeProductDevice: unavailable,
+    },
     automation: { ...runtime.services.automation, list: () => ready([reception.grant]) },
     onboarding: new OnboardingCoordinator(
       { listAgents: () => ready([agent]), ensureDefaultAgent: () => ready(agent) },

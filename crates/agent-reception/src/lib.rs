@@ -2,6 +2,7 @@
 mod claude;
 mod codex;
 mod error;
+mod execution;
 mod host;
 mod model;
 mod receipt;

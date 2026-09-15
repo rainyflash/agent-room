@@ -11,6 +11,7 @@ import {
   useProductDevices,
 } from '@/features/security/data/access-management-queries';
 import type { MatrixSecuritySnapshot } from '@/features/security/domain/matrix-security';
+import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
 import type { WebSession } from '@/features/session/domain/session';
 import { useSession } from '@/features/session/ui/session-provider';
 import {
@@ -133,6 +134,7 @@ export function AccountWorkspacePage({
       }}
       principalDisplayName={principal.displayName}
       selectedAgentId={selectedAgentId}
+      reception={<ReceptionOwnershipPanel />}
     />
   );
 }

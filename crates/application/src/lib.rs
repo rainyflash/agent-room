@@ -18,6 +18,7 @@ pub mod persistence;
 pub mod ports;
 pub mod private_rooms;
 pub mod public_lobby_entry;
+pub mod reception;
 pub mod rooms;
 
 mod matrix_device_cleanup;

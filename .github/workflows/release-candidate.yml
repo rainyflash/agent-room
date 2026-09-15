@@ -1,8 +1,17 @@
 name: 签名发布候选
+run-name: ${{ inputs.operation_id && format('release-flow:{0}', inputs.operation_id) || github.workflow }}
 
 on:
   workflow_dispatch:
     inputs:
+      operation_id:
+        description: 发布调度续跑标识
+        required: false
+        type: string
+      expected_revision:
+        description: 发布调度锁定的提交
+        required: false
+        type: string
       tag:
         description: 与 Cargo workspace 版本一致的 SemVer 标签（例如 v0.2.0）
         required: true
@@ -81,7 +90,9 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           ROLLBACK_FROM: ${{ inputs.rollback_from }}
           REUSE_RUN_ID: ${{ inputs.reuse_run_id }}
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
+          if [ -n "$EXPECTED_REVISION" ]; then test "$EXPECTED_REVISION" = "$GITHUB_SHA"; fi
           if [ -n "$REUSE_RUN_ID" ]; then
             python tools/release_recovery.py --run-id "$REUSE_RUN_ID" --repository "$GITHUB_REPOSITORY" --tag "$TAG" --channel "$CHANNEL" --sequence "$SEQUENCE" --profile "$PROFILE" --rollback-from "$ROLLBACK_FROM" --metadata candidate/release-metadata.json --promotion candidate/release-promotion.json --github-output "$GITHUB_OUTPUT"
           else
@@ -495,8 +506,11 @@ jobs:
           SEQUENCE: ${{ needs.metadata.outputs.sequence }}
           ROLLBACK_FROM: ${{ needs.metadata.outputs.rollback_from }}
           CERTIFICATE_IDENTITY: ^https://github.com/${{ github.repository }}/\.github/workflows/release-candidate\.yml@refs/heads/main$
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
-          python tools/release.py verify --root candidate --inventory candidate/release-inventory.json --manifest candidate/release.json --evidence candidate/release-evidence.json --signed-manifest candidate/release.signed.json --public-key candidate/release-public-key.json --release-tool target/release/agent-room-release-tool --installed-version "${ROLLBACK_FROM:-0.0.0}" --highest-sequence "$((SEQUENCE - 1))" --now-unix-seconds "$(date +%s)" --certificate-identity-regexp "$CERTIFICATE_IDENTITY"
+          REVISION_ARGS=()
+          if [ -n "$EXPECTED_REVISION" ]; then REVISION_ARGS=(--expected-revision "$EXPECTED_REVISION"); fi
+          python tools/release.py verify --root candidate --inventory candidate/release-inventory.json --manifest candidate/release.json --evidence candidate/release-evidence.json --signed-manifest candidate/release.signed.json --public-key candidate/release-public-key.json --release-tool target/release/agent-room-release-tool --installed-version "${ROLLBACK_FROM:-0.0.0}" --highest-sequence "$((SEQUENCE - 1))" --now-unix-seconds "$(date +%s)" --certificate-identity-regexp "$CERTIFICATE_IDENTITY" "${REVISION_ARGS[@]}"
       - name: 保存完整候选用于发布审查
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
         with:
