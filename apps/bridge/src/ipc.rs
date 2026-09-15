@@ -927,7 +927,7 @@ mod tests {
         IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
         IpcListHandoffsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMethod,
         IpcOpenContentRequest, IpcPublishStatusRequest, IpcResponse, IpcScopeName,
-        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcVersion, IpcWorkStatus,
+        IpcSendMessageRequest, IpcSharedSecret, IpcSubmissionState, IpcWorkStatus,
         create_challenge_proof,
     };
     use agent_room_bridge_storage_adapter::SqliteMessageSubmissionRepository;
@@ -2360,7 +2360,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::DiagnosticCli,
-                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
+                supported_versions: vec![IpcProtocolVersion::V4_0.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
@@ -2594,7 +2594,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::McpServer,
-                supported_versions: vec![IpcVersion { major: 3, minor: 0 }],
+                supported_versions: vec![IpcProtocolVersion::V4_0.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )

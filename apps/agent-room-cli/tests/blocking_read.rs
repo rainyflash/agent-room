@@ -1,5 +1,5 @@
-use agent_room_bridge_core::ipc::IpcInstallationId;
-use agent_room_bridge_ipc::{IpcFrame, IpcFrameCodec, IpcMethod, IpcResponse, IpcVersion};
+use agent_room_bridge_core::ipc::{IpcInstallationId, IpcProtocolVersion};
+use agent_room_bridge_ipc::{IpcFrame, IpcFrameCodec, IpcMethod, IpcResponse};
 use agent_room_bridge_local_adapter::{
     IPC_INSTALLATION_ID_ACCOUNT, IPC_SHARED_SECRET_ACCOUNT, LocalIpcEndpoint, LocalSecretStore,
     bridge_runtime_root,
@@ -111,7 +111,7 @@ async fn serve(listener: Listener, message_available: Arc<AtomicBool>, reads: Ar
             &IpcFrame::ServerChallenge {
                 challenge_id: SESSION.parse().unwrap(),
                 challenge: URL_SAFE_NO_PAD.encode([9; 32]),
-                selected_version: IpcVersion { major: 3, minor: 0 },
+                selected_version: IpcProtocolVersion::V4_0.into(),
                 granted_scopes: requested_scopes.clone(),
             },
         )
@@ -125,7 +125,7 @@ async fn serve(listener: Listener, message_available: Arc<AtomicBool>, reads: Ar
             &mut stream,
             &IpcFrame::ServerReady {
                 server_instance_id: SESSION.parse().unwrap(),
-                selected_version: IpcVersion { major: 3, minor: 0 },
+                selected_version: IpcProtocolVersion::V4_0.into(),
                 granted_scopes: requested_scopes,
             },
         )
