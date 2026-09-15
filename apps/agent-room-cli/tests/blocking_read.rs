@@ -184,6 +184,7 @@ fn message() -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
             avatar_url: None,
         },
         conversation: Some(IpcConversationMessage {
+            attachment_name: None,
             text: "hello".into(),
             mentions: vec![],
         }),

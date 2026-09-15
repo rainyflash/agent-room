@@ -365,6 +365,7 @@ fn decode_preview(value: &str) -> Result<MessagePreview, MessageTimelineQueryFai
     if let Some(chat) = stored.conversation {
         result = result.with_conversation(
             agent_room_domain::messages::ConversationMessage::new(chat.text, chat.mentions)
+                .and_then(|value| value.with_attachment_name(chat.attachment_name))
                 .map_err(|_| corrupt_query())?,
         );
     }
@@ -925,7 +926,7 @@ fn encode_actor(actor: &ProjectedMessageActor) -> String {
 
 fn encode_preview(preview: &MessagePreview) -> String {
     json!({
-        "conversation": preview.conversation().map(|chat| json!({"text": chat.text(), "mentions": chat.mentions()})),
+        "conversation": preview.conversation().map(|chat| json!({"text": chat.text(), "mentions": chat.mentions(), "attachmentName": chat.attachment_name()})),
         "title": preview.title().as_str(),
         "summary": preview.summary().as_str(),
         "contentType": preview.content_type().as_str(),
@@ -1016,8 +1017,9 @@ const fn unavailable_projection_failure() -> MessageProjectionStoreFailure {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredConversation {
+    attachment_name: Option<String>,
     text: String,
     mentions: Vec<String>,
 }

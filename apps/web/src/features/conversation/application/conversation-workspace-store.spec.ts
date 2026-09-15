@@ -5,7 +5,8 @@ import type {
   MessagePublicationResult,
   MessagePublisher,
 } from '@/features/messages/domain/publication';
-import { ok } from '@/shared/result';
+import { err, ok } from '@/shared/result';
+import type { ConversationAttachmentStorage } from '../domain/conversation-attachment';
 import {
   BrowserConversationStorage,
   type ConversationStorage,
@@ -18,7 +19,7 @@ afterEach(async () => {
   await Promise.resolve();
 });
 
-function fixture(storage?: ConversationStorage) {
+function fixture(storage?: ConversationStorage, attachments?: ConversationAttachmentStorage) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(published(request.submissionId)),
   );
@@ -40,7 +41,7 @@ function fixture(storage?: ConversationStorage) {
       ),
   };
   const ids = { next: vi.fn(() => submissionId) };
-  const workspace = new ConversationWorkspaceStore(publisher, ids, storage);
+  const workspace = new ConversationWorkspaceStore(publisher, ids, storage, attachments);
   const release = workspace.retain();
   releases.push(release);
   return { workspace, publish, reconcile, ids, release, publisher };
@@ -61,6 +62,87 @@ async function open(workspace: ConversationWorkspaceStore, roomId: string) {
 }
 
 describe('工作区对话生命周期', () => {
+  it('取消尚未保存的附件后，迟到的写入不能留下文件或重新出现', async () => {
+    const writing = Promise.withResolvers<undefined>();
+    const files = new Map<string, unknown>();
+    const storage: ConversationStorage = { read: () => ok(null), write: () => ok(undefined) };
+    const attachments: ConversationAttachmentStorage = {
+      read: () => Promise.resolve(ok(null)),
+      write: async (key, file) => {
+        await writing.promise;
+        files.set(key, file);
+        return ok(undefined);
+      },
+      remove: (key) => {
+        files.delete(key);
+        return Promise.resolve(ok(undefined));
+      },
+    };
+    const runtime = fixture(storage, attachments);
+    const { session } = await open(runtime.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(session.editable).toBe(true);
+    });
+    const pending = session.attach({
+      name: 'cancel.pdf',
+      mediaType: 'application/pdf',
+      bytes: new Uint8Array([1]),
+    });
+    session.removeAttachment();
+    writing.resolve(undefined);
+    await pending;
+    expect(session.getSnapshot().attachment.kind).toBe('none');
+    expect(files.size).toBe(0);
+  });
+  it('文件保存前禁止发送和升级，保存失败后保留原有文字草稿', async () => {
+    const writing =
+      Promise.withResolvers<Awaited<ReturnType<ConversationAttachmentStorage['write']>>>();
+    const attachments: ConversationAttachmentStorage = {
+      read: () => Promise.resolve(ok(null)),
+      write: () => writing.promise,
+      remove: () => Promise.resolve(ok(undefined)),
+    };
+    const runtime = fixture(undefined, attachments);
+    const { session } = await open(runtime.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(session.editable).toBe(true);
+    });
+    session.changeText('Keep this caption');
+    const pending = session.attach({
+      name: 'file.pdf',
+      mediaType: 'application/pdf',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    expect(session.valid).toBe(false);
+    expect(session.safeToReload).toBe(false);
+    session.submit();
+    expect(runtime.publish).not.toHaveBeenCalled();
+    writing.resolve(err('storageFailed'));
+    await pending;
+    expect(session.getSnapshot().attachmentFailure).toBe('storageFailed');
+    expect(session.getSnapshot().text).toBe('Keep this caption');
+  });
+  it('保存了文件但未保存房间草稿索引时也不能重启升级', async () => {
+    const storage: ConversationStorage = { read: () => ok(null), write: () => err('unavailable') };
+    const attachments: ConversationAttachmentStorage = {
+      read: () => Promise.resolve(ok(null)),
+      write: () => Promise.resolve(ok(undefined)),
+      remove: () => Promise.resolve(ok(undefined)),
+    };
+    const runtime = fixture(storage, attachments);
+    const { session } = await open(runtime.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(session.editable).toBe(true);
+    });
+    await session.attach({
+      name: 'file.pdf',
+      mediaType: 'application/pdf',
+      bytes: new Uint8Array([1]),
+    });
+    expect(session.valid).toBe(true);
+    expect(session.safeToReload).toBe(false);
+    expect(session.getSnapshot().draftPersistence).toBe('unavailable');
+  });
   it('刷新中断发送后核对原提交，不再次发送，也不丢草稿', async () => {
     const values = new Map<string, string>();
     const storage = new BrowserConversationStorage(
@@ -92,7 +174,10 @@ describe('工作区对话生命周期', () => {
     restored.reconcile.mockReturnValueOnce(verify.promise);
     const b = await open(restored.workspace, '!a:room.test');
     await vi.waitFor(() => {
-      expect(restored.reconcile).toHaveBeenCalledExactlyOnceWith(submissionId);
+      expect(restored.reconcile).toHaveBeenCalledExactlyOnceWith(
+        submissionId,
+        first.publish.mock.calls[0]?.[0],
+      );
     });
     expect(b.session.getSnapshot().text).toBe('Send once after restart');
     expect(b.session.editable).toBe(false);
@@ -179,7 +264,7 @@ describe('工作区对话生命周期', () => {
     await vi.waitFor(() => {
       expect(reopened.session.getSnapshot().publication.matches('published')).toBe(true);
     });
-    expect(reconcile).toHaveBeenCalledExactlyOnceWith(submissionId);
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith(submissionId, publish.mock.calls[0]?.[0]);
     expect(reopened.session.getSnapshot().text).toBe('');
   });
 

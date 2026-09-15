@@ -22,6 +22,7 @@ import { usePublicRoomDirectory } from '@/features/room-directory/data/public-ro
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 
 import './room-directory-page.css';
+import { HallActions, HallDirectorySection } from './hall-actions';
 
 export function RoomDirectoryPage() {
   const { roomDirectory } = useAppServices();
@@ -30,6 +31,8 @@ export function RoomDirectoryPage() {
 
   return (
     <RoomDirectoryView
+      hallActions={<HallActions />}
+      personalHalls={<HallDirectorySection />}
       failureCode={result?.ok === false ? result.error.code : null}
       loading={query.isPending}
       onRefresh={() => void query.refetch()}
@@ -39,6 +42,8 @@ export function RoomDirectoryPage() {
 }
 
 export type RoomDirectoryViewProps = {
+  readonly hallActions?: ReactNode;
+  readonly personalHalls?: ReactNode;
   readonly failureCode: string | null;
   readonly loading: boolean;
   readonly onRefresh: () => void;
@@ -46,6 +51,8 @@ export type RoomDirectoryViewProps = {
 };
 
 export function RoomDirectoryView({
+  hallActions,
+  personalHalls,
   failureCode,
   loading,
   onRefresh,
@@ -71,6 +78,7 @@ export function RoomDirectoryView({
           <p>{t('roomDirectory.description')}</p>
         </div>
         <div className="room-directory__tools">
+          {hallActions}
           <label className="room-directory__search">
             <Search aria-hidden="true" />
             <input
@@ -88,6 +96,8 @@ export function RoomDirectoryView({
           </Button>
         </div>
       </section>
+
+      {personalHalls}
 
       {loading ? (
         <DirectoryBoundary

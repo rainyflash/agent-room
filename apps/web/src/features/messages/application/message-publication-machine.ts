@@ -88,7 +88,7 @@ export function createMessagePublicationMachine(publisher: MessagePublisher) {
   >(async ({ input }) => {
     return input.request === null
       ? err(unexpectedFailure)
-      : await publisher.reconcile(input.request.submissionId);
+      : await publisher.reconcile(input.request.submissionId, input.request);
   });
 
   return setup({

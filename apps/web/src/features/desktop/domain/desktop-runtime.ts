@@ -172,6 +172,7 @@ export const desktopRuntimeSnapshotSchema = z
     platform: z.enum(['windows', 'macos', 'linux', 'unknown']),
     deepLink: desktopDeepLinkSchema.nullable(),
     updatesConfigured: z.boolean(),
+    currentVersion: z.string().min(1).max(64).optional(),
     agentTarget: desktopAgentTargetSchema.nullable(),
     cliConfiguration: z
       .object({

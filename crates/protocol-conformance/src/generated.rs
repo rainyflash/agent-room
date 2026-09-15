@@ -139,6 +139,8 @@ pub struct ContentRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_name: Option<String>,
     pub mentions: Vec<String>,
     pub text: String,
 }

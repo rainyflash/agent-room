@@ -1,8 +1,11 @@
 import { defineConfig } from 'vitest/config';
-import { writeContract } from './apps/web/build/runtime-manifest.js';
+import { writeContract, applicationVersion } from './apps/web/build/runtime-manifest.js';
 
 export default defineConfig({
-  define: { __AGENT_ROOM_WRITE_CONTRACT__: JSON.stringify(writeContract) },
+  define: {
+    __AGENT_ROOM_WRITE_CONTRACT__: JSON.stringify(writeContract),
+    __AGENT_ROOM_VERSION__: JSON.stringify(applicationVersion),
+  },
   resolve: {
     alias: {
       '@': new URL('./apps/web/src', import.meta.url).pathname,

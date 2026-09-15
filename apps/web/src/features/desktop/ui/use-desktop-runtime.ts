@@ -43,6 +43,8 @@ export type DesktopRuntimeController = {
   readonly failure: DesktopRuntimeFailure | null;
   readonly snapshot: DesktopRuntimeSnapshot | null;
   readonly update: ReleaseUpdateCheck | null;
+  readonly updateBusy?: 'checking' | 'installing' | null;
+  readonly updateFailure?: DesktopRuntimeFailure | null;
   readonly hosts: readonly AgentHostDetection[];
   readonly configuredHost: AgentHostKind | null;
   readonly hostSetup: Readonly<Partial<Record<AgentHostKind, HostSetupState>>>;
@@ -87,6 +89,9 @@ export function useDesktopRuntime(
   }, [available, gateway, i18n.resolvedLanguage]);
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
+  const [updateBusy, setUpdateBusy] = useState<'checking' | 'installing' | null>(null);
+  const [updateFailure, setUpdateFailure] = useState<DesktopRuntimeFailure | null>(null);
+  const updateInFlight = useRef(false);
   const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
   const [configuredHost, setConfiguredHost] = useState<AgentHostKind | null>(null);
   const [hostSetup, setHostSetup] = useState<Partial<Record<AgentHostKind, HostSetupState>>>({});
@@ -275,32 +280,64 @@ export function useDesktopRuntime(
 
   const checkUpdate = useCallback(
     async (channel: ReleaseUpdateChannel): Promise<void> => {
+      if (updateInFlight.current) return;
+      updateInFlight.current = true;
+      setUpdateBusy('checking');
       setBusy('update-check');
-      const result = await gateway.checkUpdate(channel);
-      if (result.ok) {
-        setUpdate(result.value);
-        setFailure(null);
-      } else {
+      setUpdateFailure(null);
+      try {
+        const result = await gateway.checkUpdate(channel);
+        setUpdate(result.ok ? result.value : null);
+        setUpdateFailure(result.ok ? null : result.error);
+        setFailure(result.ok ? null : result.error);
+      } catch {
+        const error: DesktopRuntimeFailure = {
+          code: 'desktop.update.check_failed',
+          retryable: true,
+        };
         setUpdate(null);
-        setFailure(result.error);
+        setUpdateFailure(error);
+        setFailure(error);
+      } finally {
+        updateInFlight.current = false;
+        setUpdateBusy(null);
+        setBusy(null);
       }
-      setBusy(null);
     },
     [gateway],
   );
 
   const installUpdate = useCallback(async (): Promise<void> => {
-    if (!update?.available) {
-      return;
-    }
+    if (!update?.available || updateInFlight.current) return;
     if (!prepareForUpdate()) {
-      setFailure({ code: 'desktop.update.draft_unsaved', retryable: true });
+      const error: DesktopRuntimeFailure = {
+        code: 'desktop.update.draft_unsaved',
+        retryable: true,
+      };
+      setUpdateFailure(error);
+      setFailure(error);
       return;
     }
+    updateInFlight.current = true;
+    setUpdateBusy('installing');
     setBusy('update-install');
-    const result = await gateway.installUpdate(update.channel, update.sequence);
-    setFailure(result.ok ? null : result.error);
-    setBusy(null);
+    setUpdateFailure(null);
+    try {
+      const result = await gateway.installUpdate(update.channel, update.sequence);
+      setUpdateFailure(result.ok ? null : result.error);
+      setFailure(result.ok ? null : result.error);
+    } catch {
+      const error: DesktopRuntimeFailure = {
+        code: 'desktop.update.install_failed',
+        retryable: true,
+      };
+      setUpdateFailure(error);
+      setFailure(error);
+    } finally {
+      updateInFlight.current = false;
+      setUpdateBusy(null);
+      setBusy(null);
+    }
   }, [gateway, update]);
 
   const configureHost = useCallback(
@@ -388,6 +425,8 @@ export function useDesktopRuntime(
     failure,
     snapshot,
     update,
+    updateBusy,
+    updateFailure,
     hosts,
     configuredHost,
     hostSetup,

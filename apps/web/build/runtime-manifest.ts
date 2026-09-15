@@ -4,6 +4,17 @@ import { loadEnv, type Plugin } from 'vite';
 
 // Bump for incompatible HTTP/client behavior that is not described by the event schema.
 const writeEpoch = 1;
+const packageMetadata: unknown = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+);
+if (
+  typeof packageMetadata !== 'object' ||
+  packageMetadata === null ||
+  !('version' in packageMetadata) ||
+  typeof packageMetadata.version !== 'string'
+)
+  throw new Error('Application version is missing.');
+export const applicationVersion = packageMetadata.version;
 export const writeContract = createHash('sha256')
   .update(String(writeEpoch))
   .update(
@@ -17,6 +28,7 @@ export function runtimeManifest(mode: string): Plugin {
   const env = loadEnv(mode, process.cwd(), 'VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL');
   const body = JSON.stringify({
     schema: 1,
+    version: applicationVersion,
     writeContract,
     windowsDownloadUrl:
       process.env.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL ??

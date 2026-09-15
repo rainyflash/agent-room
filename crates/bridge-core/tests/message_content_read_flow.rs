@@ -8,15 +8,16 @@ use agent_room_bridge_core::{
         MessageContentReadRequest, MessageContentSourceQuery, MessagePreviewPage,
         MessagePreviewQuery, MessageTimelineQueryFailure, MessageTimelineQueryRepository,
         OpenMessageContentDependencies, OpenMessageContentFailureKind, OpenMessageContentRequest,
-        OpenMessageContentService, ProjectedMessageActor, ProjectedMessagePreview,
+        OpenMessageContentService, OpenedMessageBody, ProjectedMessageActor,
+        ProjectedMessagePreview,
     },
 };
 use agent_room_domain::{
     content::{ContentByteLength, ContentMediaType, Sha256Digest},
     ids::{AgentId, AgentInstanceId, ContentId, MessageId},
     messages::{
-        MessageContentReference, MessagePreview, MessageProvenance, MessageRiskFlags,
-        MessageSensitivity, MessageSummary, MessageTitle,
+        ConversationMessage, MessageContentReference, MessagePreview, MessageProvenance,
+        MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
     },
     time::UtcMillis,
 };
@@ -46,7 +47,10 @@ async fn 正文只在本地验签来源存在后下载并逐项校验完整性()
         .expect("完整性一致的文本正文可打开");
 
     assert_eq!(opened.source(), &source);
-    assert_eq!(opened.body(), "经过校验的远端正文");
+    assert_eq!(
+        opened.body(),
+        &OpenedMessageBody::Text("经过校验的远端正文".into())
+    );
     let requests = gateway.requests.lock().expect("请求记录锁可用");
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].content_id(), source.content.content_id());
@@ -104,6 +108,101 @@ async fn 摘要不一致和缺失来源都不能把远端字节交给宿主() {
             .expect("请求记录锁可用")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn 图片附件可读取超过文本上限的原始字节且篡改仍被拒绝() {
+    let body = Arc::<[u8]>::from(vec![0xff; 100 * 1024]);
+    let mut expected = source(&body, "image/png");
+    expected.preview = expected.preview.with_conversation(
+        ConversationMessage::new("请查看附件".into(), Vec::new())
+            .expect("对话有效")
+            .with_attachment_name(Some("设计.png".into()))
+            .expect("附件名有效"),
+    );
+    for tampered in [false, true] {
+        let bytes = if tampered {
+            Arc::from(vec![0x00; body.len()])
+        } else {
+            body.clone()
+        };
+        let gateway = Arc::new(固定正文网关 {
+            opened: downloaded(bytes, "image/png"),
+            requests: Mutex::new(Vec::new()),
+        });
+        let service = OpenMessageContentService::new(OpenMessageContentDependencies {
+            projections: Arc::new(固定来源仓储(Some(expected.clone()))),
+            content: gateway,
+            cryptography: None,
+        });
+        let result = service
+            .open(&OpenMessageContentRequest::new(
+                room_id(),
+                expected.content.content_id(),
+            ))
+            .await;
+        if tampered {
+            assert_eq!(
+                result.expect_err("篡改附件必须拒绝").kind(),
+                OpenMessageContentFailureKind::IntegrityMismatch
+            );
+        } else {
+            assert_eq!(
+                result.expect("附件可读取").body(),
+                &OpenedMessageBody::Attachment {
+                    name: "设计.png".into(),
+                    bytes: body.clone()
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn 超出附件上限或未声明附件的二进制消息不触发下载() {
+    for attachment in [false, true] {
+        let body = Arc::<[u8]>::from([0xff]);
+        let mut expected = source(&body, "image/png");
+        if attachment {
+            expected.preview = expected.preview.with_conversation(
+                ConversationMessage::new("大文件".into(), Vec::new())
+                    .expect("对话有效")
+                    .with_attachment_name(Some("large.png".into()))
+                    .expect("附件名有效"),
+            );
+            expected.content = MessageContentReference::new(
+                expected.content.content_id(),
+                expected.content.digest(),
+                21 * 1024 * 1024,
+            )
+            .expect("协议大小有效");
+        }
+        let gateway = Arc::new(固定正文网关 {
+            opened: downloaded(body, "image/png"),
+            requests: Mutex::new(Vec::new()),
+        });
+        let service = OpenMessageContentService::new(OpenMessageContentDependencies {
+            projections: Arc::new(固定来源仓储(Some(expected.clone()))),
+            content: gateway.clone(),
+            cryptography: None,
+        });
+        let failure = service
+            .open(&OpenMessageContentRequest::new(
+                room_id(),
+                expected.content.content_id(),
+            ))
+            .await
+            .expect_err("不能下载");
+        assert_eq!(
+            failure.kind(),
+            if attachment {
+                OpenMessageContentFailureKind::TooLarge
+            } else {
+                OpenMessageContentFailureKind::UnsupportedMediaType
+            }
+        );
+        assert!(gateway.requests.lock().expect("请求锁").is_empty());
+    }
 }
 
 struct 固定来源仓储(Option<ProjectedMessagePreview>);

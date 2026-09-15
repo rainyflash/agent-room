@@ -20,6 +20,7 @@ const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
 vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
+  useOptionalDesktopRuntimeController: () => null,
   useDesktopRuntimeController: vi.fn(),
 }));
 vi.mock('@/features/session/ui/connection-page', () => ({

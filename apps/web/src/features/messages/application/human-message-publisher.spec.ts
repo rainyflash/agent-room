@@ -17,6 +17,33 @@ const contentId = '01990d9e-8400-7000-8000-000000000004';
 const roomId = '!public:agent-room.test';
 
 describe('HumanMessagePublisher', () => {
+  it('上传中断后凭原始附件和提交标识恢复，已上传附件重试不会再次上传', async () => {
+    const runtime = dependencies();
+    runtime.content.upload.mockResolvedValueOnce(
+      err({ code: 'publication.content_rejected', retryable: true }),
+    );
+    const publisher = new HumanMessagePublisher(runtime.value);
+    const intent: MessagePublicationRequest = {
+      ...request(),
+      body: new Uint8Array([0, 1, 128, 255]),
+      mediaType: 'image/png',
+      conversation: { text: '检查这张图', mentions: [], attachmentName: 'design.png' },
+    };
+    expect((await publisher.publish(intent, vi.fn())).ok).toBe(false);
+    expect(runtime.matrix.publish).not.toHaveBeenCalled();
+    expect((await publisher.reconcile(submissionId, intent)).ok).toBe(true);
+    expect(runtime.content.upload).toHaveBeenCalledTimes(2);
+    expect(runtime.content.upload.mock.calls[0]?.[0].body).toEqual(
+      runtime.content.upload.mock.calls[1]?.[0].body,
+    );
+    expect(
+      runtime.matrix.publish.mock.calls[0]?.[0].event.preview.conversation?.attachmentName,
+    ).toBe('design.png');
+    runtime.content.bind.mockResolvedValueOnce(ok(undefined));
+    expect((await publisher.reconcile(submissionId, intent)).ok).toBe(true);
+    expect(runtime.content.upload).toHaveBeenCalledTimes(2);
+    expect(runtime.matrix.publish).toHaveBeenCalledOnce();
+  });
   it.each(['encryption_not_ready', 'peer_verification_required'] as const)(
     '加密前的明确拒绝 %s 保留可重试原因，不误报为待确认或已发送',
     async (kind) => {
@@ -166,10 +193,15 @@ function dependencies(
 ) {
   const bodyPreparer: MessageBodyPreparer = {
     prepare: (body) => {
-      const encoded = new TextEncoder().encode(body);
+      const encoded = typeof body === 'string' ? new TextEncoder().encode(body) : body;
       const bytes = new Uint8Array(encoded.byteLength);
       bytes.set(encoded);
-      return Promise.resolve(ok({ bytes, digestSha256: digest(body) }));
+      return Promise.resolve(
+        ok({
+          bytes,
+          digestSha256: digest(typeof body === 'string' ? body : Array.from(body).join(',')),
+        }),
+      );
     },
   };
   const upload = vi.fn<MessagePublicationContentGateway['upload']>((uploadRequest) =>

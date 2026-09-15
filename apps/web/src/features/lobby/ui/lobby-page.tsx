@@ -188,6 +188,7 @@ function ReadyLobby({
   };
   const navigation = (
     <WorkspaceNavigation
+      currentCatalogId={catalogId}
       activeDirectId={selectedDirectSessionId}
       controller={directSessions}
       onActivateRoom={() => {

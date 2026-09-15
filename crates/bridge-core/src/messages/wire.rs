@@ -232,6 +232,7 @@ fn actor<'a>(identity: &'a BridgeAgentIdentity, provenance: &'a str) -> WireActo
 fn preview(value: &MessagePreview) -> WirePreview<'_> {
     WirePreview {
         conversation: value.conversation().map(|chat| WireConversation {
+            attachment_name: chat.attachment_name(),
             text: chat.text(),
             mentions: chat.mentions(),
         }),
@@ -458,7 +459,10 @@ struct RedactEvent<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WireConversation<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attachment_name: Option<&'a str>,
     text: &'a str,
     mentions: &'a [String],
 }

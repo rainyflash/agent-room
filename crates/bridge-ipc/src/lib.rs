@@ -39,9 +39,9 @@ pub use tools::{
     IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission, IpcHumanHandoffSource,
     IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance,
     IpcMessageSensitivity, IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest,
-    IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest,
-    IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage,
-    IpcSubmissionState, IpcWorkStatus,
+    IpcOpenedAttachment, IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary,
+    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
 };
 pub use wire::{
     IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,

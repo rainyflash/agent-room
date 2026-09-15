@@ -25,6 +25,17 @@
   letter-spacing: -0.04em;
   margin-right: auto;
 }
+.landing__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-right: auto;
+}
+.landing__identity .application-version-link {
+  padding: 2px 5px;
+  font-size: 10px;
+}
 .landing__brand img {
   width: 32px;
   height: 32px;

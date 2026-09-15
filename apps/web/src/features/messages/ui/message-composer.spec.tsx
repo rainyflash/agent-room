@@ -125,7 +125,10 @@ describe('MessageComposer', () => {
     });
     expect(runtime.publish).toHaveBeenCalledOnce();
     expect(runtime.reconcile).toHaveBeenCalledOnce();
-    expect(runtime.reconcile).toHaveBeenCalledWith(submissionId);
+    expect(runtime.reconcile).toHaveBeenCalledWith(
+      submissionId,
+      runtime.publish.mock.calls[0]?.[0],
+    );
   });
 
   it('旧协议等待更新时进入只读且不创建发送意图', async () => {

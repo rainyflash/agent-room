@@ -445,6 +445,7 @@ fn message_page(event: &str) -> IpcResponse {
                 avatar_url: None,
             },
             conversation: Some(IpcConversationMessage {
+                attachment_name: None,
                 text: "hello".into(),
                 mentions: vec![],
             }),

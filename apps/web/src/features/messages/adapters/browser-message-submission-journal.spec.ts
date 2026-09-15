@@ -8,6 +8,39 @@ import type { MessageSubmissionRecord } from '@/features/messages/domain/publica
 const submissionId = '01990d9e-8400-7000-8000-000000000003';
 
 describe('BrowserMessageSubmissionJournal', () => {
+  it('迁移旧窗口的提交记录，关闭窗口后仍按原事务恢复', () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const old = new BrowserMessageSubmissionJournal(window.sessionStorage);
+    expect(old.write(record()).ok).toBe(true);
+    const upgraded = new BrowserMessageSubmissionJournal(
+      window.localStorage,
+      window.sessionStorage,
+    );
+    expect(upgraded.read(submissionId)).toEqual({ ok: true, value: record() });
+    window.sessionStorage.clear();
+    const restarted = new BrowserMessageSubmissionJournal(window.localStorage);
+    expect(restarted.read(submissionId)).toEqual({ ok: true, value: record() });
+  });
+
+  it('提交日志无法落盘时明确失败，不假装已经保存', () => {
+    const storage: Storage = {
+      length: 0,
+      clear: () => undefined,
+      key: () => null,
+      getItem: () => null,
+      removeItem: () => undefined,
+      setItem: () => {
+        throw new Error('quota exceeded');
+      },
+    };
+    const journal = new BrowserMessageSubmissionJournal(storage);
+    expect(journal.write(record())).toEqual({
+      ok: false,
+      error: { code: 'publication.persistence_failed', retryable: true },
+    });
+    expect(journal.read(submissionId)).toEqual({ ok: true, value: null });
+  });
   it('跨适配器实例恢复不含正文的幂等提交记录', () => {
     window.sessionStorage.clear();
     const first = new BrowserMessageSubmissionJournal(window.sessionStorage);
@@ -73,7 +106,7 @@ function record(): MessageSubmissionRecord {
   };
 }
 
-it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志丢弃', () => {
+it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志丢弃', async () => {
   window.sessionStorage.clear();
   const encryption = {
     algorithm: 'io.github.rainyflash.agentroom.content.aes-256-gcm.v1' as const,
@@ -87,7 +120,7 @@ it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志�
     encryption,
   };
   const journal = new BrowserMessageSubmissionJournal(window.sessionStorage);
-  expect(journal.writeBody('scope', prepared).ok).toBe(true);
+  expect((await journal.writeBody('scope', prepared)).ok).toBe(true);
   const reference = { ...record().content, encryption, sizeBytes: 16016, mediaType: 'text/plain' };
   const value = {
     ...record(),
@@ -109,7 +142,7 @@ it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志�
   const restored = new BrowserMessageSubmissionJournal(window.sessionStorage);
   expect(restored.readBody('scope')).toEqual({ ok: true, value: prepared });
   expect(restored.read(submissionId)).toEqual({ ok: true, value });
-  restored.releaseBody('scope', submissionId);
+  await restored.releaseBody('scope', submissionId);
   expect(new BrowserMessageSubmissionJournal(window.sessionStorage).readBody('scope')).toEqual({
     ok: true,
     value: null,

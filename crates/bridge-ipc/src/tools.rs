@@ -599,6 +599,18 @@ pub struct IpcOpenedContent {
     pub source_actor: IpcActorSummary,
     pub risk_flags: Vec<String>,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<IpcOpenedAttachment>,
+}
+
+/// Verified attachment downloaded on the machine running the Bridge. Re-open the
+/// content if this bounded temporary cache has expired or the application restarted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcOpenedAttachment {
+    pub name: String,
+    pub local_path: String,
+    pub byte_length: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1095,8 +1107,10 @@ mod tests {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcConversationMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_name: Option<String>,
     pub text: String,
     pub mentions: Vec<String>,
 }

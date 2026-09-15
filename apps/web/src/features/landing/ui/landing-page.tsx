@@ -7,6 +7,7 @@ import { useAppServices } from '@/app/app-services';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
+import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
 
 export function LandingPage() {
   const { t } = useTranslation();
@@ -17,10 +18,13 @@ export function LandingPage() {
   return (
     <main className="landing" id="main-content">
       <header className="landing__topbar">
-        <Link aria-label={t('app.name')} className="landing__brand" to="/">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </Link>
+        <div className="landing__identity">
+          <Link aria-label={t('app.name')} className="landing__brand" to="/">
+            <img alt="" src="/agent-room-mark.svg" />
+            <span>{t('app.name')}</span>
+          </Link>
+          <ApplicationVersionLink />
+        </div>
         <LanguageControl />
         <div className="landing__account-actions">
           <button

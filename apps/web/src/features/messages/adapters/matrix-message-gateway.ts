@@ -513,6 +513,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
           parsed.data.content.encryption.plaintextSizeBytes + 16)) ||
     parsed.data.preview.contentType !== parsed.data.content.mediaType ||
     (parsed.data.preview.conversation !== undefined &&
+      parsed.data.preview.conversation.attachmentName === undefined &&
       parsed.data.preview.contentType !== 'text/plain') ||
     event.eventId === undefined ||
     !validServerTimestamp(event.serverTimestamp)
@@ -640,6 +641,9 @@ function toPreview(preview: z.output<typeof previewSchema>): MessagePreview {
       ? {}
       : {
           conversation: Object.freeze({
+            ...(preview.conversation.attachmentName === undefined
+              ? {}
+              : { attachmentName: preview.conversation.attachmentName }),
             text: preview.conversation.text,
             mentions: Object.freeze([...preview.conversation.mentions]),
           }),

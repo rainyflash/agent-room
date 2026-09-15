@@ -877,6 +877,12 @@
       "additionalProperties": false,
       "required": ["text", "mentions"],
       "properties": {
+        "attachmentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f/\\\\]+$"
+        },
         "text": {
           "type": "string",
           "minLength": 1,

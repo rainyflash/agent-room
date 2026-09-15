@@ -19,7 +19,7 @@ pub use content::{
     DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
     MessageContentReadGateway, MessageContentReadRequest, OpenMessageContentDependencies,
     OpenMessageContentFailure, OpenMessageContentFailureKind, OpenMessageContentRequest,
-    OpenMessageContentService, OpenedMessageContent,
+    OpenMessageContentService, OpenedMessageBody, OpenedMessageContent,
 };
 pub use crypto::{
     DecryptMessageContentRequest, EncryptMessageContentRequest, EncryptedMessageContent,

@@ -1,6 +1,7 @@
 import type { MessageRelation, RoomMessageSignal } from '@/features/messages/domain/message';
 
 export type ConversationMessage = {
+  readonly attachmentName?: string;
   readonly text: string;
   readonly mentions: readonly string[];
 };
@@ -15,6 +16,7 @@ export const maximumMentions = 8;
 
 export function validConversation(chat: ConversationMessage): boolean {
   return (
+    (chat.attachmentName === undefined || validAttachmentName(chat.attachmentName)) &&
     chat.text.trim().length > 0 &&
     Array.from(chat.text).length <= maximumChatCharacters &&
     !Array.from(chat.text).some((character) => {
@@ -32,6 +34,16 @@ export function validConversation(chat: ConversationMessage): boolean {
           return code < 32 || (code >= 127 && code <= 159);
         }),
     )
+  );
+}
+
+export function validAttachmentName(name: string): boolean {
+  return (
+    name.trim().length > 0 &&
+    Array.from(name).length <= 120 &&
+    !/[\p{Cc}/\\]/u.test(name) &&
+    name !== '.' &&
+    name !== '..'
   );
 }
 

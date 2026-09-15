@@ -5,7 +5,8 @@ import { useAppServices } from '@/app/app-services';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { MatrixVerificationInbox } from '@/features/security/ui/matrix-verification-inbox';
-import { SessionProvider } from '@/features/session/ui/session-provider';
+import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
+import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
 import { RuntimeCompatibilityProvider } from '@/features/updates/ui/runtime-compatibility-provider';
 import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
@@ -46,7 +47,7 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
   return (
     <SessionProvider dependencies={session}>
       <FrontendTelemetryObserver gateway={telemetry} />
-      <Outlet />
+      <ConversationSessionOutlet />
       <MatrixVerificationInbox />
       <InboxNotice />
       {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
@@ -55,5 +56,18 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
         />
       )}
     </SessionProvider>
+  );
+}
+
+function ConversationSessionOutlet() {
+  const { snapshot } = useSession();
+  const { messagePublisher } = useAppServices();
+  return (
+    <ConversationWorkspaceProvider
+      publisher={messagePublisher}
+      scope={snapshot.context.principal?.matrixUserId ?? null}
+    >
+      <Outlet />
+    </ConversationWorkspaceProvider>
   );
 }

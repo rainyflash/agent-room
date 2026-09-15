@@ -60,7 +60,7 @@ export function PrivateRoomHub({
   const overlayContainer = useOverlayContainer();
   const { privateRoomMatrix, privateRooms } = useAppServices();
   const queryClient = useQueryClient();
-  const list = usePrivateRoomList(privateRooms);
+  const list = usePrivateRoomList(privateRooms, principal.principalId);
   const coordinator = useMemo(
     () => new PrivateRoomCoordinator(privateRooms, privateRoomMatrix),
     [privateRoomMatrix, privateRooms],

@@ -111,14 +111,14 @@ export class HumanMessagePublisher implements MessagePublisher {
 
     // 首次上传前持久化密文，网络重试和重新加载必须复用同一密钥、随机数与幂等键。
     const scope = `${identity.value.matrixUserId}:${identity.value.principalId}:${fingerprint.value}`;
-    const cached = this.#journal.readBody(scope);
+    const cached = await this.#journal.readBody(scope);
     if (!cached.ok) return cached;
     const protectedBody =
       cached.value === null
         ? await this.#matrix.protectBody(request, prepared.value)
         : ok(cached.value);
     if (!protectedBody.ok) return protectedBody;
-    const cachedWrite = this.#journal.writeBody(scope, protectedBody.value);
+    const cachedWrite = await this.#journal.writeBody(scope, protectedBody.value);
     if (!cachedWrite.ok) return cachedWrite;
     onProgress('uploading');
     const uploaded = await this.#content.upload({
@@ -147,16 +147,21 @@ export class HumanMessagePublisher implements MessagePublisher {
     if (!written.ok) {
       return written;
     }
-    this.#journal.releaseBody(scope, request.submissionId);
+    await this.#journal.releaseBody(scope, request.submissionId);
     return await this.#submitRecord(record, false, onProgress);
   }
 
-  async reconcile(submissionId: string): Promise<MessagePublicationResult> {
+  async reconcile(
+    submissionId: string,
+    originalRequest?: MessagePublicationRequest,
+  ): Promise<MessagePublicationResult> {
     const stored = this.#journal.read(submissionId);
     if (!stored.ok) {
       return stored;
     }
     if (stored.value === null) {
+      if (originalRequest?.submissionId === submissionId)
+        return this.publish(originalRequest, noopProgress);
       return err(Object.freeze({ code: 'publication.persistence_failed', retryable: false }));
     }
     return await this.#submitRecord(stored.value, true, noopProgress);

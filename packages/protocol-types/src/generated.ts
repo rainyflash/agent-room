@@ -70,6 +70,7 @@ export type ContentRef = {
 } & Readonly<Record<string, unknown>>;
 
 export type ConversationMessage = {
+  readonly attachmentName?: string;
   readonly mentions: ReadonlyArray<string>;
   readonly text: string;
 };

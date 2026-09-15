@@ -28,6 +28,7 @@
 }
 .room-directory__tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
@@ -213,6 +214,9 @@
   }
   .room-directory__tools {
     width: 100%;
+  }
+  .room-directory__tools .hall-actions {
+    flex-basis: 100%;
   }
   .room-directory__search {
     flex: 1;

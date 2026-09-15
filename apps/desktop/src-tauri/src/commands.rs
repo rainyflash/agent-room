@@ -40,6 +40,7 @@ pub(crate) struct DesktopRuntime {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopRuntimeSnapshot {
+    current_version: String,
     bridge: BridgeRuntimeView,
     autostart_enabled: bool,
     platform: &'static str,
@@ -414,6 +415,7 @@ pub(crate) fn desktop_runtime_snapshot(
         .is_enabled()
         .map_err(|_| DesktopCommandFailure::new("desktop.autostart.read_failed", true))?;
     Ok(DesktopRuntimeSnapshot {
+        current_version: app.package_info().version.to_string(),
         bridge: runtime.bridge.snapshot(),
         autostart_enabled,
         platform: current_platform(),

@@ -22,9 +22,9 @@ use agent_room_bridge_core::{
         MessagePublicationOutcome, MessagePublicationService, MessageStoreFailureKind,
         MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
-        OpenMessageContentRequest, OpenMessageContentService, ProjectedMessageActor,
-        ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
-        ProtectMessageBodyRequest, SendMessageRequest,
+        OpenMessageContentRequest, OpenMessageContentService, OpenedMessageBody,
+        ProjectedMessageActor, ProjectedMessagePreview, ProtectMessageBodyFailure,
+        ProtectMessageBodyFailureKind, ProtectMessageBodyRequest, SendMessageRequest,
     },
     presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
     status::{
@@ -451,6 +451,7 @@ pub(super) struct AgentRuntimeIpcFacade {
     runtime_reader: Arc<dyn BridgeAgentRuntimeReader>,
     previews: Arc<dyn MessageTimelineQueryRepository>,
     content: Arc<OpenMessageContentService>,
+    attachments: Arc<super::attachment_downloads::AttachmentDownloads>,
     clock: Arc<dyn Clock>,
 }
 
@@ -469,6 +470,7 @@ impl AgentRuntimeIpcFacade {
             runtime_reader,
             previews,
             content,
+            attachments: Arc::default(),
             clock,
         }
     }
@@ -659,6 +661,27 @@ impl AgentRuntimeIpcFacade {
             .await
             .map_err(map_content_open_failure)?;
         let source = opened.source();
+        let (body, attachment) = match opened.body() {
+            OpenedMessageBody::Text(text) => (text.clone(), None),
+            OpenedMessageBody::Attachment { name, bytes } => {
+                let downloads = self.attachments.clone();
+                let name = name.clone();
+                let bytes = bytes.clone();
+                let media_type = source.preview.content_type().as_str().to_owned();
+                let saved =
+                    tokio::task::spawn_blocking(move || downloads.save(name, &media_type, &bytes))
+                        .await
+                        .map_err(|_| internal_failure("bridge.attachment_cache_unavailable"))?
+                        .map_err(|_| {
+                            BridgeIpcDispatchFailure::new(
+                                "bridge.attachment_cache_unavailable",
+                                IpcErrorCategory::DependencyUnavailable,
+                                true,
+                            )
+                        })?;
+                (String::new(), Some(saved))
+            }
+        };
         Ok(IpcResponse::OpenedContent {
             content: IpcOpenedContent {
                 content: ipc_content(&source.content, source.preview.content_type().as_str()),
@@ -671,7 +694,8 @@ impl AgentRuntimeIpcFacade {
                     .iter()
                     .map(|flag| flag.as_str().to_owned())
                     .collect(),
-                body: opened.body().to_owned(),
+                body,
+                attachment,
             },
         })
     }
@@ -1313,6 +1337,7 @@ fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
         conversation: preview.preview.conversation().map(|chat| {
             agent_room_bridge_ipc::IpcConversationMessage {
+                attachment_name: chat.attachment_name().map(str::to_owned),
                 text: chat.text().to_owned(),
                 mentions: chat.mentions().to_vec(),
             }

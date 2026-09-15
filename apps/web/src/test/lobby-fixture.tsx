@@ -88,6 +88,7 @@ import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-se
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
+import { ApplicationFeaturesFixture } from './application-features-fixture';
 
 const requestedCount = Number(new URLSearchParams(window.location.search).get('agents') ?? 24);
 const fixtureAgentCount =
@@ -883,6 +884,8 @@ function LobbyFixture({
     window.history.replaceState(null, '', url);
     setView(nextView);
   };
+  if (new URLSearchParams(window.location.search).has('features'))
+    return <ApplicationFeaturesFixture base={services} />;
   return (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
@@ -967,7 +970,9 @@ async function bootstrapFixture(): Promise<void> {
       const location = useRouterState({ select: (state) => state.location });
       return (
         <LobbyFixture
-          key={location.href}
+          key={
+            new URLSearchParams(window.location.search).has('features') ? 'features' : location.href
+          }
           search={location.searchStr}
           inboxMode={location.pathname === '/inbox'}
         />
@@ -975,6 +980,9 @@ async function bootstrapFixture(): Promise<void> {
     },
   });
   const routes = [
+    '/rooms',
+    '/about',
+    '/lobby/$catalogId',
     '/inbox',
     '/e2e/fixtures/lobby-scene.html',
     '/lobby/$catalogId/instance/$roomId',

@@ -9,7 +9,7 @@ export const publicationMediaTypes = ['text/markdown', 'text/plain'] as const;
 export const publicationProgressStages = ['uploading', 'submitting', 'binding'] as const;
 export const publicationRiskFlags = ['external_links', 'html_markup'] as const;
 
-export type PublicationMediaType = (typeof publicationMediaTypes)[number];
+export type PublicationMediaType = string;
 export type PublicationProgressStage = (typeof publicationProgressStages)[number];
 export type PublicationRiskFlag = (typeof publicationRiskFlags)[number];
 
@@ -24,7 +24,7 @@ export type MessagePublisherIdentity = {
 export type MessagePublicationDraft = {
   readonly conversation?: ConversationMessage;
   readonly relation?: MessageRelation;
-  readonly body: string;
+  readonly body: string | Uint8Array<ArrayBuffer>;
   readonly language?: string;
   readonly mediaType: PublicationMediaType;
   readonly riskFlags: readonly string[];
@@ -79,7 +79,10 @@ export type MessagePublisher = {
     request: MessagePublicationRequest,
     onProgress: (stage: PublicationProgressStage) => void,
   ): Promise<MessagePublicationResult>;
-  reconcile(submissionId: string): Promise<MessagePublicationResult>;
+  reconcile(
+    submissionId: string,
+    originalRequest?: MessagePublicationRequest,
+  ): Promise<MessagePublicationResult>;
   resolveIdentity(): Promise<Result<MessagePublisherIdentity, MessagePublicationFailure>>;
 };
 
@@ -89,7 +92,9 @@ export type PreparedMessageBody = {
 };
 
 export type MessageBodyPreparer = {
-  prepare(body: string): Promise<Result<PreparedMessageBody, MessagePublicationFailure>>;
+  prepare(
+    body: string | Uint8Array<ArrayBuffer>,
+  ): Promise<Result<PreparedMessageBody, MessagePublicationFailure>>;
 };
 
 export type ProtectedMessageBody = {
@@ -178,9 +183,16 @@ export type MessageSubmissionRecord = {
 };
 
 export type MessageSubmissionJournal = {
-  releaseBody(scope: string, submissionId: string): void;
-  readBody(scope: string): Result<ProtectedMessageBody | null, MessagePublicationFailure>;
-  writeBody(scope: string, value: ProtectedMessageBody): Result<void, MessagePublicationFailure>;
+  releaseBody(scope: string, submissionId: string): void | Promise<void>;
+  readBody(
+    scope: string,
+  ):
+    | Result<ProtectedMessageBody | null, MessagePublicationFailure>
+    | Promise<Result<ProtectedMessageBody | null, MessagePublicationFailure>>;
+  writeBody(
+    scope: string,
+    value: ProtectedMessageBody,
+  ): Result<void, MessagePublicationFailure> | Promise<Result<void, MessagePublicationFailure>>;
   read(submissionId: string): Result<MessageSubmissionRecord | null, MessagePublicationFailure>;
   write(record: MessageSubmissionRecord): Result<void, MessagePublicationFailure>;
 };
@@ -190,6 +202,7 @@ export type PublicationDraftIssue =
   | 'relation_invalid'
   | 'body_empty'
   | 'body_too_large'
+  | 'media_type_invalid'
   | 'language_invalid'
   | 'risk_flags_invalid'
   | 'summary_invalid'
@@ -216,19 +229,33 @@ export function validatePublicationDraft(
   if (
     draft.conversation !== undefined &&
     (!validConversation(draft.conversation) ||
-      draft.body !== draft.conversation.text ||
-      draft.mediaType !== 'text/plain')
+      (draft.conversation.attachmentName === undefined
+        ? draft.body !== draft.conversation.text || draft.mediaType !== 'text/plain'
+        : typeof draft.body === 'string'))
   ) {
     issues.add('conversation_invalid');
   }
   if (draft.relation !== undefined && !uuidV7Pattern.test(draft.relation.targetMessageId)) {
     issues.add('relation_invalid');
   }
-  if (draft.body.trim().length === 0) {
+  if (
+    typeof draft.body === 'string' ? draft.body.trim().length === 0 : draft.body.byteLength === 0
+  ) {
     issues.add('body_empty');
   }
-  if (new TextEncoder().encode(draft.body).byteLength > MAX_BODY_BYTES) {
+  if (
+    (typeof draft.body === 'string'
+      ? new TextEncoder().encode(draft.body).byteLength
+      : draft.body.byteLength) >
+    MAX_BODY_BYTES - 16
+  ) {
     issues.add('body_too_large');
+  }
+  if (
+    !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(draft.mediaType) ||
+    draft.mediaType.length > 128
+  ) {
+    issues.add('media_type_invalid');
   }
   if (draft.language !== undefined && !languagePattern.test(draft.language)) {
     issues.add('language_invalid');

@@ -140,7 +140,10 @@ describe('人与 Agent 直接聊天', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Check delivery' }));
     await waitFor(() => {
-      expect(runtime.reconcile).toHaveBeenCalledWith(submissionId);
+      expect(runtime.reconcile).toHaveBeenCalledWith(
+        submissionId,
+        runtime.publish.mock.calls[0]?.[0],
+      );
     });
     expect(runtime.publish).toHaveBeenCalledOnce();
   });

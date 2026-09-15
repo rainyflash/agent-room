@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import { useInbox } from '@/features/inbox/ui/inbox-provider';
+import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
 
 type Destination = 'rooms' | 'agents' | 'inbox' | 'security';
 const destinations = [
@@ -26,10 +27,13 @@ export function AppNavigation({
   const unread = inbox?.snapshot.items.filter((item) => !item.read).length ?? 0;
   return (
     <header className="app-navigation">
-      <Link aria-label={t('app.name')} className="app-navigation__brand" to="/rooms">
-        <img alt="" src="/agent-room-mark.svg" />
-        <span>{t('app.name')}</span>
-      </Link>
+      <div className="app-navigation__identity">
+        <Link aria-label={t('app.name')} className="app-navigation__brand" to="/rooms">
+          <img alt="" src="/agent-room-mark.svg" />
+          <span>{t('app.name')}</span>
+        </Link>
+        <ApplicationVersionLink />
+      </div>
       <nav aria-label={t('navigation.label')} className="app-navigation__links">
         {destinations.map(({ icon: Icon, id, ...destination }) => (
           <Link aria-current={active === id ? 'page' : undefined} {...destination} key={id}>

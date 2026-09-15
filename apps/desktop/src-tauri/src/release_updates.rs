@@ -151,7 +151,8 @@ impl ReleaseUpdateService {
         prepared
             .update
             .install(&bytes)
-            .map_err(|_| ReleaseUpdateFailure::state("desktop.update.install_failed"))
+            .map_err(|_| ReleaseUpdateFailure::state("desktop.update.install_failed"))?;
+        self.app.restart()
     }
 
     async fn prepare(

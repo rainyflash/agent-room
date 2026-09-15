@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::runtime_files::BridgeRuntimePaths;
 
 mod agent_runtime;
+mod attachment_downloads;
 
 use agent_runtime::AgentRuntimeIpcFacade;
 pub(crate) use agent_runtime::{BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot};
@@ -1768,6 +1769,75 @@ mod tests {
                         == "d661c3d96d53ebc0ca8a55aae24b5df4a4d1bf28d37337b982fe8ebf54846eeb"
                     && content.risk_flags == ["external_link"]
         ));
+    }
+
+    #[tokio::test]
+    async fn 附件打开返回可读取的本地文件而不把二进制塞进工具正文() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间有效");
+        let content_id = ContentId::from_uuid(Uuid::now_v7());
+        let bytes = Arc::<[u8]>::from([0, 0xff, 0x80, 1, 2, 3]);
+        let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+        let mut source = 测试正文投影(room_id.clone(), content_id, digest);
+        let media_type = ContentMediaType::new("image/png").expect("媒体类型有效");
+        source.preview = MessagePreview::new(
+            MessageTitle::new("附件").expect("标题有效"),
+            MessageSummary::new("查看图片").expect("摘要有效"),
+            media_type.clone(),
+            None,
+            MessageSensitivity::Normal,
+            MessageRiskFlags::new([]).expect("风险标签有效"),
+        )
+        .with_conversation(
+            agent_room_domain::messages::ConversationMessage::new("查看图片".into(), vec![])
+                .expect("聊天有效")
+                .with_attachment_name(Some("diagram.png".into()))
+                .expect("附件名有效"),
+        );
+        let projections = Arc::new(固定正文投影(source));
+        let service = Arc::new(OpenMessageContentService::new(
+            OpenMessageContentDependencies {
+                projections: projections.clone(),
+                cryptography: None,
+                content: Arc::new(固定正文网关(DownloadedMessageContent {
+                    bytes: bytes.clone(),
+                    digest,
+                    byte_length: ContentByteLength::new(6).expect("长度有效"),
+                    media_type,
+                })),
+            },
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                测试_agent_身份(),
+                "DEVICE-1",
+                room_id,
+                ["content.read"],
+            ))),
+            projections,
+            service,
+            Arc::new(固定时钟),
+        );
+        let response = handler
+            .dispatch(IpcMethod::OpenContent(IpcOpenContentRequest {
+                room_id: None,
+                content_id: content_id.to_string(),
+            }))
+            .await
+            .expect("附件可读取");
+        let IpcResponse::OpenedContent { content } = response else {
+            panic!("应返回完整内容");
+        };
+        assert!(content.body.is_empty());
+        let attachment = content.attachment.expect("返回附件元数据");
+        assert_eq!(attachment.name, "diagram.png");
+        assert_eq!(
+            std::fs::read(&attachment.local_path).expect("宿主可读取文件"),
+            bytes.as_ref()
+        );
+        drop(handler);
+        assert!(!std::path::Path::new(&attachment.local_path).exists());
     }
 
     #[tokio::test]

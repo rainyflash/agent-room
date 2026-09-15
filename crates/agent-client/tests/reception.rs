@@ -18,6 +18,7 @@ const SESSION: &str = "01990d9e-8400-7000-8000-000000000010";
 fn preview(event: &str) -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
         conversation: Some(IpcConversationMessage {
+            attachment_name: None,
             text: "hello".into(),
             mentions: vec!["@agent:test".into()],
         }),

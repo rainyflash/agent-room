@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 import { lazy, Suspense, useCallback } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
+import { ApplicationAboutPage } from '@/features/updates/ui/application-about-page';
 import { InboxPage } from '@/features/inbox/ui/inbox-page';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
@@ -32,6 +33,11 @@ const LobbyPage = lazy(async () => {
 });
 
 const rootRoute = createRootRoute({ component: RootLayout });
+const aboutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/about',
+  component: ApplicationAboutPage,
+});
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -97,6 +103,7 @@ const adminRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  aboutRoute,
   indexRoute,
   connectRoute,
   onboardingRoute,

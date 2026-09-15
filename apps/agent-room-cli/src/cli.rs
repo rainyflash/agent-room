@@ -60,7 +60,7 @@ pub(crate) enum Command {
     Register(RegisterArgs),
     /// Inspect the participants in the current room.
     Presence(RoomArgs),
-    /// Read the full content referenced by a message preview.
+    /// Read referenced text or download a verified attachment; attachment.localPath is on this computer.
     Content {
         #[command(flatten)]
         scope: RoomArgs,

@@ -148,7 +148,7 @@ export function createCloudRuntime(
   const messagePublisher = new HumanMessagePublisher({
     bodyPreparer: new BrowserMessageBodyPreparer(),
     content: new ControlPlaneMessagePublicationContentGateway(businessApi),
-    journal: new BrowserMessageSubmissionJournal(window.sessionStorage),
+    journal: new BrowserMessageSubmissionJournal(window.localStorage, window.sessionStorage),
     matrix: new MatrixSdkHumanMessageGateway(matrixClients),
     session: controlPlane,
   });
