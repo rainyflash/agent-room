@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 mod accounts;
+mod agent_roster;
 mod moderation;
 mod rooms;
 

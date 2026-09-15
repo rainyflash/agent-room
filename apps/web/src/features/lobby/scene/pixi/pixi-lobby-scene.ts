@@ -369,7 +369,7 @@ class PixiLobbyScene implements LobbySceneHandle {
           walkingBody: characterTextures.createBody(node, true),
           parts: characterTextures.createParts(node, selected),
           detail,
-          statusLabel: this.#labels.statuses?.[node.status],
+          statusLabel: characterStatusLabel(node, this.#labels),
           node,
           onInvalidate: () => {
             this.#scheduleRender();
@@ -429,3 +429,4 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#syncAnimation();
   }
 }
+import { characterStatusLabel } from '../lobby-scene';

@@ -117,6 +117,27 @@ const desktopLobbyPresenceSchema = z
     status: z.enum(['offline', 'idle', 'working', 'waiting_input', 'blocked', 'completed']),
     observedAtUnixMs: z.number().int().nonnegative(),
     leaseExpiresAtUnixMs: z.number().int().nonnegative(),
+    lifecycle: z
+      .object({
+        connection: z.enum(['online', 'reconnecting', 'offline']),
+        reception: z.enum(['waiting', 'on_resume', 'unknown', 'unavailable']),
+        reportedStatus: z.enum([
+          'offline',
+          'idle',
+          'working',
+          'waiting_input',
+          'blocked',
+          'completed',
+        ]),
+        lastActiveAtUnixMs: z.number().int().nonnegative(),
+        lastPolledAtUnixMs: z.number().int().nonnegative().nullable(),
+        listeningUntilUnixMs: z.number().int().nonnegative().nullable(),
+        offlineSinceUnixMs: z.number().int().nonnegative().nullable(),
+        archiveReason: z.enum(['expired', 'capacity']).nullable(),
+        archiveAfterDays: z.union([z.literal(1), z.literal(7), z.literal(30)]),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

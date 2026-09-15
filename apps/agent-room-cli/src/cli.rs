@@ -59,7 +59,7 @@ pub(crate) enum Command {
     /// Register this exact task for desktop background replies. Does not enable replies.
     Register(RegisterArgs),
     /// Inspect the participants in the current room.
-    Presence(RoomArgs),
+    Presence(PresenceArgs),
     /// Read referenced text or download a verified attachment; attachment.localPath is on this computer.
     Content {
         #[command(flatten)]
@@ -94,6 +94,20 @@ pub(crate) enum SessionCommand {
 pub(crate) struct SessionArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PresenceArgs {
+    #[command(flatten)]
+    pub(crate) scope: RoomArgs,
+    /// Include archived identities. They return automatically when they reconnect.
+    #[arg(long)]
+    pub(crate) include_archived: bool,
+    /// nextCursor from the previous presence page.
+    #[arg(long)]
+    pub(crate) after: Option<String>,
+    #[arg(long, default_value_t = 100)]
+    pub(crate) limit: u16,
 }
 
 #[derive(Debug, Args)]

@@ -15,6 +15,11 @@ export type LobbyFixtureControls = {
   joinAgent(): string;
   leaveAgent(agentId: string): void;
   setAgentStatus(agentId: string, status: LobbyAgentStatus): void;
+  setAgentReception(
+    agentId: string,
+    mode: 'waiting' | 'on_resume' | 'offline',
+    offlineForMs?: number,
+  ): void;
   advancePresenceClock(elapsedMs: number): void;
 };
 export type LobbyFixtureWindow = Window &

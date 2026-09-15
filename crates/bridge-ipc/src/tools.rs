@@ -29,6 +29,7 @@ pub enum IpcMethod {
     BootstrapDefaultAgent(IpcBootstrapDefaultAgentRequest),
     ListPreviews(IpcListPreviewsRequest),
     ReadInbox(IpcListPreviewsRequest),
+    WaitInbox(IpcListPreviewsRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
@@ -57,6 +58,7 @@ impl IpcMethod {
             Self::BootstrapDefaultAgent(_) => "bootstrap_default_agent",
             Self::ListPreviews(_) => "list_previews",
             Self::ReadInbox(_) => "read_inbox",
+            Self::WaitInbox(_) => "wait_inbox",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -79,7 +81,9 @@ impl IpcMethod {
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
-            Self::ListPreviews(_) | Self::ReadInbox(_) => IpcScope::PreviewsRead,
+            Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) => {
+                IpcScope::PreviewsRead
+            }
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
@@ -136,7 +140,7 @@ impl IpcMethod {
             }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => request.validate(),
-            Self::ReadInbox(request) => {
+            Self::ReadInbox(request) | Self::WaitInbox(request) => {
                 if request.before_event_id.is_some() {
                     return Err(failure("bridge.ipc.event_cursor_invalid"));
                 }
@@ -213,6 +217,16 @@ pub struct IpcGetPresenceRequest {
     pub room_id: String,
     #[serde(default)]
     pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub after_agent_id: Option<String>,
+    #[serde(default = "default_presence_limit")]
+    pub limit: u16,
+}
+
+const fn default_presence_limit() -> u16 {
+    100
 }
 
 impl IpcGetPresenceRequest {
@@ -224,6 +238,12 @@ impl IpcGetPresenceRequest {
         )?;
         if self.agent_ids.len() > limits::PRESENCE_TARGETS {
             return Err(failure("bridge.ipc.presence_targets_invalid"));
+        }
+        if self.limit == 0 || self.limit > 100 {
+            return Err(failure("bridge.ipc.presence_limit_invalid"));
+        }
+        if let Some(after) = &self.after_agent_id {
+            validate_uuid_v7(after, "bridge.ipc.agent_id_invalid")?;
         }
         self.agent_ids
             .iter()
@@ -473,6 +493,12 @@ pub enum IpcResponse {
     },
     Presence {
         entries: Vec<IpcPresenceSummary>,
+        #[serde(
+            rename = "nextCursor",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        next_cursor: Option<String>,
     },
     OpenedContent {
         content: IpcOpenedContent,
@@ -588,6 +614,83 @@ pub struct IpcPresenceSummary {
     pub status: IpcWorkStatus,
     pub observed_at_unix_ms: i64,
     pub lease_expires_at_unix_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<IpcAgentLifecycle>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcAgentLifecycle {
+    pub connection: IpcAgentConnection,
+    pub reception: IpcAgentReception,
+    pub reported_status: IpcWorkStatus,
+    pub last_active_at_unix_ms: i64,
+    pub last_polled_at_unix_ms: Option<i64>,
+    pub listening_until_unix_ms: Option<i64>,
+    pub offline_since_unix_ms: Option<i64>,
+    pub archive_reason: Option<IpcAgentArchiveReason>,
+    pub archive_after_days: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentConnection {
+    Online,
+    Reconnecting,
+    Offline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentReception {
+    Waiting,
+    OnResume,
+    Unknown,
+    Unavailable,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcAgentArchiveReason {
+    Expired,
+    Capacity,
+}
+
+impl From<&agent_room_bridge_core::presence::PresenceObservation> for IpcAgentLifecycle {
+    fn from(entry: &agent_room_bridge_core::presence::PresenceObservation) -> Self {
+        use agent_room_domain::agent_lifecycle::{
+            AgentArchiveReason, AgentConnection, AgentReception,
+        };
+        use agent_room_domain::agent_status::AgentWorkStatus;
+        Self {
+            connection: match entry.lifecycle.connection {
+                AgentConnection::Online => IpcAgentConnection::Online,
+                AgentConnection::Reconnecting => IpcAgentConnection::Reconnecting,
+                AgentConnection::Offline => IpcAgentConnection::Offline,
+            },
+            reception: match entry.lifecycle.reception {
+                AgentReception::Waiting => IpcAgentReception::Waiting,
+                AgentReception::OnResume => IpcAgentReception::OnResume,
+                AgentReception::Unknown => IpcAgentReception::Unknown,
+                AgentReception::Unavailable => IpcAgentReception::Unavailable,
+            },
+            reported_status: match entry.presence().status() {
+                AgentWorkStatus::Offline => IpcWorkStatus::Offline,
+                AgentWorkStatus::Idle => IpcWorkStatus::Idle,
+                AgentWorkStatus::Working => IpcWorkStatus::Working,
+                AgentWorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
+                AgentWorkStatus::Blocked => IpcWorkStatus::Blocked,
+                AgentWorkStatus::Completed => IpcWorkStatus::Completed,
+            },
+            last_active_at_unix_ms: entry.last_active_at,
+            last_polled_at_unix_ms: entry.last_polled_at,
+            listening_until_unix_ms: entry.listening_until,
+            offline_since_unix_ms: entry.lifecycle.offline_since,
+            archive_reason: entry.lifecycle.archive_reason.map(|reason| match reason {
+                AgentArchiveReason::Expired => IpcAgentArchiveReason::Expired,
+                AgentArchiveReason::Capacity => IpcAgentArchiveReason::Capacity,
+            }),
+            archive_after_days: entry.archive_after_days,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

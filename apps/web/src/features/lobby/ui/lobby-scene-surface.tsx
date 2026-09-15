@@ -255,6 +255,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
           <SceneSemanticRoster
             activeAgentId={normalizedActiveAgentId}
             nodes={projection.nodes}
+            now={projection.observedAtUnixMs}
             optionId={optionId}
           />
         </div>
@@ -283,6 +284,7 @@ export const LobbySceneSurface = forwardRef<LobbySceneSurfaceHandle, LobbySceneS
           activeAgentId={normalizedActiveAgentId}
           instructionsId={instructionsId}
           nodes={projection.nodes}
+          now={projection.observedAtUnixMs}
         />
       </div>
     );

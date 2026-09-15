@@ -12,3 +12,4 @@ export {
   type ProtocolValidator,
 } from './validator.js';
 export { projectCompatibleActor, type CompatibleActor } from './actor-compatibility.js';
+export * from './agent-lifecycle.js';

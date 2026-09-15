@@ -32,7 +32,8 @@ pub use authentication::{
 pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, IpcClientSession};
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
-    IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
+    IpcActorSummary, IpcAgentArchiveReason, IpcAgentConnection, IpcAgentLifecycle,
+    IpcAgentReception, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
     IpcBridgeState, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
     IpcConversationMessage, IpcDeclinedHandoff, IpcDeclinedTargetedHandoff,
     IpcDefaultAgentBootstrap, IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose,

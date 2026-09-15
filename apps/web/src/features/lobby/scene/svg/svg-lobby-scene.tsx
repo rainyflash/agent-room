@@ -200,7 +200,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
               showName={names.has(node.characterId)}
               statusLabel={
                 names.has(node.characterId) && sceneDetailForZoom(camera.scale) === 'near'
-                  ? labels.statuses?.[node.status]
+                  ? characterStatusLabel(node, labels)
                   : undefined
               }
             />
@@ -346,3 +346,4 @@ function SvgCharacter({
     </>
   );
 }
+import { characterStatusLabel } from '../lobby-scene';

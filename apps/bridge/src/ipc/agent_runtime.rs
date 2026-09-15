@@ -533,20 +533,28 @@ impl AgentRuntimeIpcFacade {
         &self,
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
-        self.read_previews(request, false).await
+        self.read_previews(request, false, false).await
     }
 
     pub(super) async fn read_inbox(
         &self,
         request: IpcListPreviewsRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
-        self.read_previews(request, true).await
+        self.read_previews(request, true, false).await
+    }
+
+    pub(super) async fn wait_inbox(
+        &self,
+        request: IpcListPreviewsRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.read_previews(request, true, true).await
     }
 
     async fn read_previews(
         &self,
         request: IpcListPreviewsRequest,
         oldest_first: bool,
+        waiting: bool,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
         let (room_id, _) = runtime.message_room(request.room_id).await?;
@@ -578,7 +586,13 @@ impl AgentRuntimeIpcFacade {
         // The desktop reads the same projection, but only the host can attest to receiving it.
         if self.consumer == AgentRuntimeConsumer::HostSession
             && let Some(status) = runtime.status
-            && let Err(failure) = status.note_inbox_read(&room_id, self.clock.now()).await
+            && let Err(failure) = status
+                .note_inbox_wait(
+                    &room_id,
+                    self.clock.now(),
+                    waiting && page.previews().is_empty(),
+                )
+                .await
         {
             tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
@@ -600,12 +614,27 @@ impl AgentRuntimeIpcFacade {
             .collect::<Result<Vec<_>, _>>()?;
         let query = PresenceQuery::new(room_id, agent_ids, self.clock.now())
             .map_err(|_| invalid_request("bridge.ipc.presence_targets_invalid"))?;
-        let entries = runtime
+        let observations = runtime
             .presence
             .ok_or_else(agent_runtime_unavailable)?
             .list(&query)
             .await
-            .map_err(map_presence_projection_failure)?
+            .map_err(map_presence_projection_failure)?;
+        let after = request
+            .after_agent_id
+            .as_deref()
+            .map(|id| parse_uuid_v7(id, "bridge.ipc.agent_id_invalid").map(AgentId::from_uuid))
+            .transpose()?;
+        let page = agent_room_bridge_core::presence_roster::paginate_roster(
+            observations,
+            request.include_archived,
+            after,
+            request.limit,
+        )
+        .map_err(|_| invalid_request("bridge.ipc.presence_limit_invalid"))?;
+        let next_cursor = page.next_cursor.map(|id| id.to_string());
+        let entries = page
+            .entries
             .iter()
             .map(|observation| {
                 let presence = observation.presence();
@@ -616,10 +645,14 @@ impl AgentRuntimeIpcFacade {
                     status: ipc_work_status(observation.status()),
                     observed_at_unix_ms: observation.observed_at().value(),
                     lease_expires_at_unix_ms: presence.lease_expires_at().value(),
+                    lifecycle: Some(observation.into()),
                 }
             })
             .collect();
-        Ok(IpcResponse::Presence { entries })
+        Ok(IpcResponse::Presence {
+            entries,
+            next_cursor,
+        })
     }
 
     pub(super) async fn publish_status(

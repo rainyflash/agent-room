@@ -21,5 +21,6 @@ pub mod public_lobby_entry;
 pub mod reception;
 pub mod rooms;
 
+pub mod agent_roster;
 mod matrix_device_cleanup;
 mod principal_projection;

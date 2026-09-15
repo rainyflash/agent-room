@@ -10,9 +10,8 @@ use agent_room_bridge_core::presence::{
     PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery,
     PresenceRoomProjectionMode, ProjectedAgentPresence,
 };
-use agent_room_domain::{agent_status::AgentWorkStatus, ids::AgentInstanceId};
-
-const MAXIMUM_PRESENCE_RESULTS: usize = 250;
+use agent_room_bridge_core::presence_roster::project_roster;
+use agent_room_domain::{agent_lifecycle::AgentRosterPolicy, ids::AgentInstanceId};
 
 #[derive(Default)]
 pub struct InMemoryPresenceProjectionRepository {
@@ -28,6 +27,7 @@ struct PresenceProjectionState {
 struct RoomPresenceState {
     joined_members: BTreeSet<MatrixUserId>,
     instances: BTreeMap<AgentInstanceId, ProjectedAgentPresence>,
+    policy: AgentRosterPolicy,
 }
 
 impl PresenceProjectionRepository for InMemoryPresenceProjectionRepository {
@@ -60,6 +60,10 @@ impl InMemoryPresenceProjectionRepository {
             if update.mode() == PresenceRoomProjectionMode::Replace {
                 room.joined_members.clear();
                 room.instances.clear();
+                room.policy = AgentRosterPolicy::default();
+            }
+            if let Some(policy) = update.policy() {
+                room.policy = policy;
             }
             for membership in update.memberships() {
                 if membership.joined() {
@@ -89,6 +93,7 @@ impl InMemoryPresenceProjectionRepository {
                     room.instances.insert(instance_id, presence.clone());
                 }
             }
+            compact_disconnected_instances(room);
         }
         Ok(())
     }
@@ -101,36 +106,65 @@ impl InMemoryPresenceProjectionRepository {
         let Some(room) = state.rooms.get(query.room_id()) else {
             return Ok(Vec::new());
         };
-        let mut presences = room
-            .instances
-            .values()
-            .filter(|presence| {
-                query.agent_ids().is_empty()
-                    || query.agent_ids().contains(&presence.identity().agent_id())
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        presences.sort_by_key(|presence| {
-            (
-                presence.identity().agent_id(),
-                presence.identity().agent_instance_id(),
-            )
-        });
-        presences.truncate(MAXIMUM_PRESENCE_RESULTS);
-        Ok(presences
-            .into_iter()
-            .map(|presence| {
-                let status = if presence.status() == AgentWorkStatus::Offline
-                    || query.observed_at() >= presence.lease_expires_at()
-                {
-                    AgentWorkStatus::Offline
-                } else {
-                    presence.status()
-                };
-                PresenceObservation::new(presence, status, query.observed_at())
-            })
-            .collect())
+        Ok(
+            project_roster(room.instances.values(), query.observed_at(), room.policy)
+                .into_iter()
+                .filter(|entry| {
+                    query.agent_ids().is_empty()
+                        || query
+                            .agent_ids()
+                            .contains(&entry.presence().identity().agent_id())
+                })
+                .collect(),
+        )
     }
+}
+
+/// Preserve current sessions and one historical identity record, not every past process.
+fn compact_disconnected_instances(room: &mut RoomPresenceState) {
+    use agent_room_domain::agent_lifecycle::AgentConnection;
+    let Some(now) = room
+        .instances
+        .values()
+        .map(ProjectedAgentPresence::observed_at)
+        .max()
+    else {
+        return;
+    };
+    let mut latest = BTreeMap::new();
+    for presence in room.instances.values() {
+        if presence
+            .evidence()
+            .lifecycle(now.value(), room.policy.archive_after_days())
+            .connection
+            != AgentConnection::Offline
+        {
+            continue;
+        }
+        let key = presence.identity().agent_id();
+        let candidate = (
+            presence.published_at(),
+            presence.identity().agent_instance_id(),
+        );
+        latest
+            .entry(key)
+            .and_modify(|current| {
+                if candidate > *current {
+                    *current = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+    room.instances.retain(|instance, presence| {
+        presence
+            .evidence()
+            .lifecycle(now.value(), room.policy.archive_after_days())
+            .connection
+            != AgentConnection::Offline
+            || latest
+                .get(&presence.identity().agent_id())
+                .is_some_and(|(_, keep)| instance == keep)
+    });
 }
 
 fn status_is_newer(candidate: &ProjectedAgentPresence, current: &ProjectedAgentPresence) -> bool {
@@ -166,6 +200,102 @@ mod tests {
     const AGENT_ID: &str = "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3";
     const INSTANCE_ID: &str = "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4";
     const MATRIX_USER_ID: &str = "@agent:matrix.test";
+
+    #[test]
+    fn 历次离线实例合并但保留正在连接的会话和同一身份() {
+        let repository = InMemoryPresenceProjectionRepository::default();
+        let mut presences = (1..=1_000)
+            .map(|index| {
+                presence_for_instance(
+                    &format!("$old-{index}:matrix.test"),
+                    AgentWorkStatus::Offline,
+                    index,
+                    2_000,
+                    &format!("01945c1e-7b5a-7c7f-8a28-{index:012x}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        presences.push(presence(
+            "$current:matrix.test",
+            AgentWorkStatus::Idle,
+            1_001,
+            60_000,
+        ));
+        repository
+            .apply_sync(&PresenceProjectionBatch::new(vec![
+                PresenceRoomProjection::new(
+                    room_id(),
+                    PresenceRoomProjectionMode::Replace,
+                    vec![PresenceMembershipChange::new(matrix_user_id(), true)],
+                    presences,
+                ),
+            ]))
+            .expect("批次可应用");
+        assert_eq!(
+            repository.state.read().expect("状态锁").rooms[&room_id()]
+                .instances
+                .len(),
+            2
+        );
+        let observations = repository.list_sync(&query(1_500)).expect("可查询");
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].presence().event_id().as_str(),
+            "$current:matrix.test"
+        );
+        assert_eq!(
+            observations[0].lifecycle.connection,
+            agent_room_domain::agent_lifecycle::AgentConnection::Online
+        );
+        assert_eq!(observations[0].lifecycle.archive_reason, None);
+    }
+
+    #[test]
+    fn 归档策略增量同步并在完整状态缺失时恢复默认值() {
+        let repository = InMemoryPresenceProjectionRepository::default();
+        repository
+            .apply_sync(&replace_batch(presence(
+                "$offline:matrix.test",
+                AgentWorkStatus::Offline,
+                10,
+                2_000,
+            )))
+            .expect("初始状态");
+        repository
+            .apply_sync(&PresenceProjectionBatch::new(vec![
+                PresenceRoomProjection::new(
+                    room_id(),
+                    PresenceRoomProjectionMode::Delta,
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .with_policy(
+                    agent_room_domain::agent_lifecycle::AgentRosterPolicy::new(30),
+                ),
+            ]))
+            .expect("共享规则");
+        let now = 8 * 86_400_000;
+        assert_eq!(
+            repository.list_sync(&query(now)).expect("可查询")[0]
+                .lifecycle
+                .archive_reason,
+            None
+        );
+        repository
+            .apply_sync(&replace_batch(presence(
+                "$offline:matrix.test",
+                AgentWorkStatus::Offline,
+                10,
+                2_000,
+            )))
+            .expect("完整状态");
+        assert_eq!(
+            repository.list_sync(&query(now)).expect("可查询")[0]
+                .lifecycle
+                .archive_reason,
+            Some(agent_room_domain::agent_lifecycle::AgentArchiveReason::Expired)
+        );
+    }
 
     #[test]
     fn 成员离房会立即清除该用户全部状态() {
@@ -271,6 +401,22 @@ mod tests {
         origin_server_timestamp: u64,
         lease_expires_at: i64,
     ) -> ProjectedAgentPresence {
+        presence_for_instance(
+            event_id,
+            status,
+            origin_server_timestamp,
+            lease_expires_at,
+            INSTANCE_ID,
+        )
+    }
+
+    fn presence_for_instance(
+        event_id: &str,
+        status: AgentWorkStatus,
+        origin_server_timestamp: u64,
+        lease_expires_at: i64,
+        instance_id: &str,
+    ) -> ProjectedAgentPresence {
         ProjectedAgentPresence::from_verified_fields(ProjectedAgentPresenceFields {
             event_id: MatrixEventId::new(event_id).expect("事件标识有效"),
             room_id: room_id(),
@@ -278,13 +424,17 @@ mod tests {
                 AgentId::from_uuid(Uuid::parse_str(AGENT_ID).expect("Agent ID 有效")),
                 "Presence Agent",
                 MATRIX_USER_ID,
-                AgentInstanceId::from_uuid(Uuid::parse_str(INSTANCE_ID).expect("实例 ID 有效")),
+                AgentInstanceId::from_uuid(Uuid::parse_str(instance_id).expect("实例 ID 有效")),
             )
             .expect("公开身份有效"),
             status,
             observed_at: UtcMillis::new(1_000).expect("观察时间有效"),
             lease_expires_at: UtcMillis::new(lease_expires_at).expect("租约时间有效"),
             origin_server_timestamp,
+            published_at: UtcMillis::new(1_000).expect("发布时间有效"),
+            last_polled_at: None,
+            listening_until: None,
+            reception_known: false,
         })
     }
 

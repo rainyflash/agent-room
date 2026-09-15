@@ -110,10 +110,16 @@ pub(crate) async fn read_desktop_lobby(
         ));
     };
     let room_id = identity.room_id.clone();
-    let IpcResponse::Presence { entries: agents } = gateway
+    let IpcResponse::Presence {
+        entries: mut agents,
+        mut next_cursor,
+    } = gateway
         .invoke(IpcMethod::GetPresence(IpcGetPresenceRequest {
             room_id: room_id.clone(),
             agent_ids: Vec::new(),
+            include_archived: false,
+            after_agent_id: None,
+            limit: 100,
         }))
         .await?
     else {
@@ -122,6 +128,36 @@ pub(crate) async fn read_desktop_lobby(
             false,
         ));
     };
+    while let Some(after) = next_cursor {
+        let IpcResponse::Presence {
+            entries,
+            next_cursor: next,
+        } = gateway
+            .invoke(IpcMethod::GetPresence(IpcGetPresenceRequest {
+                room_id: room_id.clone(),
+                agent_ids: Vec::new(),
+                include_archived: false,
+                after_agent_id: Some(after.clone()),
+                limit: 100,
+            }))
+            .await?
+        else {
+            return Err(DesktopLobbyProjectionFailure::new(
+                "desktop.lobby.presence_response_invalid",
+                false,
+            ));
+        };
+        if agents.len() + entries.len() > 20_000
+            || next.as_ref().is_some_and(|value| value <= &after)
+        {
+            return Err(DesktopLobbyProjectionFailure::new(
+                "desktop.lobby.presence_response_invalid",
+                false,
+            ));
+        }
+        agents.extend(entries);
+        next_cursor = next;
+    }
     let IpcResponse::MessagePreviews {
         previews: messages,
         next_cursor,
@@ -414,6 +450,7 @@ mod tests {
                     },
                 },
                 IpcResponse::Presence {
+                    next_cursor: None,
                     entries: vec![IpcPresenceSummary {
                         room_id: "!public:matrix.test".to_owned(),
                         agent,
@@ -421,6 +458,7 @@ mod tests {
                         status: IpcWorkStatus::Idle,
                         observed_at_unix_ms: 1_000,
                         lease_expires_at_unix_ms: 2_000,
+                        lifecycle: None,
                     }],
                 },
                 IpcResponse::MessagePreviews {

@@ -3,6 +3,7 @@ import { receptionResources } from '@/features/desktop/i18n/reception-resources'
 import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
 import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
+import { agentStateResources } from '@/features/lobby/i18n/agent-state-resources';
 import { conversationResources } from '@/features/conversation/i18n/conversation-resources';
 import { attachmentResources } from '@/features/conversation/i18n/attachment-resources';
 import { historyResources } from '@/features/conversation/i18n/history-resources';
@@ -789,6 +790,7 @@ export const resources = {
       ...historyResources.en,
       ...inboxResources.en,
       ...roomWorkspaceResources.en,
+      ...agentStateResources.en,
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
       ...onboardingResources.en,
@@ -1488,6 +1490,7 @@ export const resources = {
       ...historyResources['zh-CN'],
       ...inboxResources['zh-CN'],
       ...roomWorkspaceResources['zh-CN'],
+      ...agentStateResources['zh-CN'],
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
       ...onboardingResources['zh-CN'],

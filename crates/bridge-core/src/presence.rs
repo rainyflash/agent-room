@@ -5,6 +5,7 @@ use agent_room_application::ports::{
     MatrixRoomSyncKind, MatrixSyncBatch, MatrixTimelineEvent, MatrixUserId, PortFuture,
 };
 use agent_room_domain::{
+    agent_lifecycle::{AgentLifecycle, AgentPresenceEvidence, AgentRosterPolicy},
     agent_status::{AgentTaskSummary, AgentWorkStatus},
     ids::{AgentId, AgentInstanceId},
     time::{DurationMillis, UtcMillis},
@@ -27,9 +28,10 @@ use crate::{
 };
 
 pub const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
+pub use agent_room_application::agent_roster::AGENT_ROSTER_POLICY_EVENT_TYPE;
 const ROOM_MEMBER_EVENT_TYPE: &str = "m.room.member";
 const MAXIMUM_PRESENCE_TARGETS: usize = 50;
-const MAXIMUM_STATUS_EVENTS_PER_ROOM: usize = 512;
+const MAXIMUM_STATUS_EVENTS_PER_ROOM: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresenceLeasePolicyError {
@@ -79,6 +81,10 @@ pub struct ProjectedAgentPresence {
     observed_at: UtcMillis,
     lease_expires_at: UtcMillis,
     origin_server_timestamp: u64,
+    published_at: UtcMillis,
+    last_polled_at: Option<UtcMillis>,
+    listening_until: Option<UtcMillis>,
+    reception_known: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +96,10 @@ pub struct ProjectedAgentPresenceFields {
     pub observed_at: UtcMillis,
     pub lease_expires_at: UtcMillis,
     pub origin_server_timestamp: u64,
+    pub published_at: UtcMillis,
+    pub last_polled_at: Option<UtcMillis>,
+    pub listening_until: Option<UtcMillis>,
+    pub reception_known: bool,
 }
 
 impl ProjectedAgentPresence {
@@ -103,6 +113,10 @@ impl ProjectedAgentPresence {
             observed_at: fields.observed_at,
             lease_expires_at: fields.lease_expires_at,
             origin_server_timestamp: fields.origin_server_timestamp,
+            published_at: fields.published_at,
+            last_polled_at: fields.last_polled_at,
+            listening_until: fields.listening_until,
+            reception_known: fields.reception_known,
         }
     }
 
@@ -134,6 +148,26 @@ impl ProjectedAgentPresence {
         self.origin_server_timestamp
     }
 
+    pub const fn published_at(&self) -> UtcMillis {
+        self.published_at
+    }
+    pub const fn last_polled_at(&self) -> Option<UtcMillis> {
+        self.last_polled_at
+    }
+    pub const fn listening_until(&self) -> Option<UtcMillis> {
+        self.listening_until
+    }
+    pub fn evidence(&self) -> AgentPresenceEvidence {
+        AgentPresenceEvidence {
+            reported_status: self.status,
+            lease_expires_at: self.lease_expires_at.value(),
+            last_active_at: self.published_at.value(),
+            last_polled_at: self.last_polled_at.map(UtcMillis::value),
+            listening_until: self.listening_until.map(UtcMillis::value),
+            reception_known: self.reception_known,
+        }
+    }
+
     #[must_use]
     fn revoked(mut self) -> Self {
         self.status = AgentWorkStatus::Offline;
@@ -147,18 +181,32 @@ pub struct PresenceObservation {
     presence: ProjectedAgentPresence,
     status: AgentWorkStatus,
     observed_at: UtcMillis,
+    pub lifecycle: AgentLifecycle,
+    pub last_active_at: i64,
+    pub last_polled_at: Option<i64>,
+    pub listening_until: Option<i64>,
+    pub archive_after_days: u16,
 }
 
 impl PresenceObservation {
-    pub const fn new(
+    pub fn new(
         presence: ProjectedAgentPresence,
         status: AgentWorkStatus,
         observed_at: UtcMillis,
     ) -> Self {
+        let evidence = presence.evidence();
         Self {
             presence,
             status,
             observed_at,
+            lifecycle: evidence.lifecycle(
+                observed_at.value(),
+                AgentRosterPolicy::default().archive_after_days(),
+            ),
+            last_active_at: evidence.last_active_at,
+            last_polled_at: evidence.last_polled_at,
+            listening_until: evidence.listening_until,
+            archive_after_days: AgentRosterPolicy::default().archive_after_days(),
         }
     }
 
@@ -211,6 +259,7 @@ pub struct PresenceRoomProjection {
     mode: PresenceRoomProjectionMode,
     memberships: Vec<PresenceMembershipChange>,
     presences: Vec<ProjectedAgentPresence>,
+    policy: Option<AgentRosterPolicy>,
 }
 
 impl PresenceRoomProjection {
@@ -225,6 +274,7 @@ impl PresenceRoomProjection {
             mode,
             memberships,
             presences,
+            policy: None,
         }
     }
 
@@ -242,6 +292,15 @@ impl PresenceRoomProjection {
 
     pub fn presences(&self) -> &[ProjectedAgentPresence] {
         &self.presences
+    }
+
+    #[must_use]
+    pub const fn with_policy(mut self, policy: Option<AgentRosterPolicy>) -> Self {
+        self.policy = policy;
+        self
+    }
+    pub const fn policy(&self) -> Option<AgentRosterPolicy> {
+        self.policy
     }
 }
 
@@ -305,6 +364,7 @@ impl PresenceQuery {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresenceQueryError {
     TooManyTargets,
+    InvalidPageSize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +406,7 @@ pub enum PresenceSyncIssueReason {
     InvalidEnvelope,
     SenderMismatch,
     InvalidMembership,
+    InvalidRosterPolicy,
     TooManyStatusEvents,
     InvalidLease,
     FutureEvent,
@@ -483,7 +544,20 @@ impl PresenceSyncService {
             let mut memberships = Vec::new();
             let mut presences = Vec::new();
             let mut status_events = 0;
+            let mut roster_policy = None;
             for event in events {
+                if event.event_type().as_str() == AGENT_ROSTER_POLICY_EVENT_TYPE {
+                    // Matrix enforces the state-event ACL; only the control plane writes this policy.
+                    match parse_roster_policy(event) {
+                        Some(policy) => roster_policy = Some(policy),
+                        None => issues.push(issue(
+                            room.room_id(),
+                            event,
+                            PresenceSyncIssueReason::InvalidRosterPolicy,
+                        )),
+                    }
+                    continue;
+                }
                 if event.event_type().as_str() == ROOM_MEMBER_EVENT_TYPE {
                     match parse_membership(event) {
                         Ok(change) => memberships.push(change),
@@ -510,17 +584,7 @@ impl PresenceSyncService {
                         continue;
                     }
                 };
-                let decision = self
-                    .authenticator
-                    .authenticate(
-                        pending.presence.identity.agent_id(),
-                        pending.presence.identity.agent_instance_id(),
-                        pending.origin_server_timestamp,
-                        &pending.canonical_event,
-                        &pending.signature,
-                    )
-                    .await
-                    .map_err(PresenceSyncFailure::authentication)?;
+                let decision = self.authenticate(&pending).await?;
                 match decision {
                     AgentEventAuthenticationDecision::Trusted => {
                         presences.push(pending.presence);
@@ -534,16 +598,19 @@ impl PresenceSyncService {
                 }
             }
             membership_changes += memberships.len();
-            room_updates.push(PresenceRoomProjection::new(
-                room.room_id().clone(),
-                if full_state {
-                    PresenceRoomProjectionMode::Replace
-                } else {
-                    PresenceRoomProjectionMode::Delta
-                },
-                memberships,
-                presences,
-            ));
+            room_updates.push(
+                PresenceRoomProjection::new(
+                    room.room_id().clone(),
+                    if full_state {
+                        PresenceRoomProjectionMode::Replace
+                    } else {
+                        PresenceRoomProjectionMode::Delta
+                    },
+                    memberships,
+                    presences,
+                )
+                .with_policy(roster_policy),
+            );
         }
 
         self.projections
@@ -555,6 +622,22 @@ impl PresenceSyncService {
             membership_changes,
             issues,
         })
+    }
+
+    async fn authenticate(
+        &self,
+        pending: &PendingPresence,
+    ) -> Result<AgentEventAuthenticationDecision, PresenceSyncFailure> {
+        self.authenticator
+            .authenticate(
+                pending.presence.identity.agent_id(),
+                pending.presence.identity.agent_instance_id(),
+                pending.origin_server_timestamp,
+                &pending.canonical_event,
+                &pending.signature,
+            )
+            .await
+            .map_err(PresenceSyncFailure::authentication)
     }
 }
 
@@ -657,6 +740,36 @@ fn parse_status(
             .map_err(|_| PresenceSyncIssueReason::InvalidEnvelope)?;
     }
     let created_at = parse_time(&wire.created_at)?;
+    let last_polled_at = wire
+        .extensions
+        .get("lastPolledAt")
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or(PresenceSyncIssueReason::InvalidEnvelope)
+                .and_then(parse_time)
+        })
+        .transpose()?
+        .filter(|polled| *polled <= created_at);
+    let listening_until = wire
+        .extensions
+        .get("listeningUntil")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or(PresenceSyncIssueReason::InvalidEnvelope)
+                .and_then(parse_time)
+        })
+        .transpose()?;
+    if listening_until.is_some_and(|until| {
+        until.value()
+            > created_at
+                .value()
+                .saturating_add(agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS)
+    }) {
+        return Err(PresenceSyncIssueReason::InvalidEnvelope);
+    }
     let claimed_expiry = parse_time(&wire.lease_expires_at)?;
     let effective_expiry = evaluate_lease(created_at, claimed_expiry, observed_at, policy)?;
     let status = wire_status(&wire.status);
@@ -669,11 +782,22 @@ fn parse_status(
             observed_at,
             lease_expires_at: effective_expiry,
             origin_server_timestamp: event.origin_server_timestamp().expect("已检查服务端时间戳"),
+            published_at: created_at,
+            last_polled_at,
+            listening_until,
+            reception_known: wire.extensions.contains_key("listeningUntil"),
         }),
         origin_server_timestamp,
         canonical_event,
         signature,
     })
+}
+
+fn parse_roster_policy(event: &MatrixTimelineEvent) -> Option<AgentRosterPolicy> {
+    if event.state_key() != Some("") || event.content().get("schemaVersion")?.as_u64()? != 1 {
+        return None;
+    }
+    AgentRosterPolicy::new(u16::try_from(event.content().get("archiveAfterDays")?.as_u64()?).ok()?)
 }
 
 fn validate_wire_status(wire: &AgentStatusEvent) -> Result<(), PresenceSyncIssueReason> {

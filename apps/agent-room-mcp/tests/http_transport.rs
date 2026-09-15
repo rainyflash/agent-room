@@ -39,12 +39,14 @@ impl BridgeToolClient for RecordingBridge {
                 }),
                 IpcMethod::WithSession { session_id, method } if session_id == SESSION => {
                     match *method {
-                        IpcMethod::ReadInbox(_) => Ok(self.next.lock().unwrap().take().unwrap_or(
-                            IpcResponse::MessagePreviews {
-                                previews: vec![],
-                                next_cursor: None,
-                            },
-                        )),
+                        IpcMethod::ReadInbox(_) | IpcMethod::WaitInbox(_) => {
+                            Ok(self.next.lock().unwrap().take().unwrap_or(
+                                IpcResponse::MessagePreviews {
+                                    previews: vec![],
+                                    next_cursor: None,
+                                },
+                            ))
+                        }
                         _ => Err(BridgeToolFailure::new(
                             "test.unexpected",
                             IpcErrorCategory::Validation,
@@ -218,7 +220,7 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
     let text = std::str::from_utf8(&bytes).unwrap();
     assert!(text.contains("$next"));
     assert!(!text.contains("notifications/progress"));
-    assert!(bridge.calls.lock().unwrap().iter().all(|method| matches!(method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$last")))));
+    assert!(bridge.calls.lock().unwrap().iter().all(|method| matches!(method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$last")))));
 }
 
 #[tokio::test(start_paused = true)]

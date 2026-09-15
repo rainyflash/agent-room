@@ -42,7 +42,13 @@ impl AgentStatusPublicationHandle {
         } else {
             state.intent.last_polled_at()
         };
-        let intent = AgentStatusIntent::new(host_state, None).with_last_polled_at(last_polled_at);
+        let intent = AgentStatusIntent::new(host_state, None)
+            .with_last_polled_at(last_polled_at)
+            .with_listening_until(if host_state == HostAgentState::Disconnected {
+                None
+            } else {
+                state.intent.listening_until()
+            });
         let outcome = state
             .service
             .publish_if_due(&self.target, &intent, status_entropy())
@@ -60,17 +66,29 @@ impl AgentStatusPublicationHandle {
             .await
     }
 
-    pub(crate) async fn note_inbox_read(
+    pub(crate) async fn note_inbox_wait(
         &self,
         room_id: &MatrixRoomId,
         at: UtcMillis,
+        waiting: bool,
     ) -> StatusPublicationResult<()> {
         // A private-room fetch cannot advertise reception in the public lobby.
         if room_id != self.target.room_id() {
             return Ok(());
         }
         let mut state = self.state.lock().await;
-        state.intent = state.intent.clone().with_last_polled_at(Some(at));
+        let until = waiting.then(|| {
+            UtcMillis::new(
+                at.value()
+                    .saturating_add(agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS),
+            )
+            .expect("非负时间加饱和期限仍为非负时间")
+        });
+        state.intent = state
+            .intent
+            .clone()
+            .with_last_polled_at(Some(at))
+            .with_listening_until(until);
         let intent = state.intent.clone();
         state
             .service

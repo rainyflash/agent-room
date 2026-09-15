@@ -1,0 +1,141 @@
+{
+  "policy": {
+    "archiveAfterDays": 7,
+    "recentOfflineLimit": 100,
+    "reconnectGraceMs": 30000,
+    "receptionFreshnessMs": 15000
+  },
+  "cases": [
+    {
+      "name": "an active wait",
+      "now": 12000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": 10000,
+      "listeningUntil": 25000,
+      "connection": "online",
+      "reception": "waiting",
+      "offlineSince": null,
+      "archived": false
+    },
+    {
+      "name": "a read is not a wait",
+      "now": 12000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": 11000,
+      "listeningUntil": null,
+      "connection": "online",
+      "reception": "on_resume",
+      "offlineSince": null,
+      "archived": false
+    },
+    {
+      "name": "killed wait expires",
+      "now": 25000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": 10000,
+      "listeningUntil": 25000,
+      "connection": "online",
+      "reception": "on_resume",
+      "offlineSince": null,
+      "archived": false
+    },
+    {
+      "name": "completed is still connected",
+      "legacy": true,
+      "now": 12000,
+      "status": "completed",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": null,
+      "listeningUntil": null,
+      "connection": "online",
+      "reception": "unknown",
+      "offlineSince": null,
+      "archived": false
+    },
+    {
+      "name": "lease boundary reconnects",
+      "now": 60000,
+      "status": "working",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": 59000,
+      "listeningUntil": 70000,
+      "connection": "reconnecting",
+      "reception": "unavailable",
+      "offlineSince": null,
+      "archived": false
+    },
+    {
+      "name": "grace boundary is offline",
+      "now": 90000,
+      "status": "working",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": null,
+      "listeningUntil": null,
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 90000,
+      "archived": false
+    },
+    {
+      "name": "explicit disconnect is immediate",
+      "now": 10000,
+      "status": "offline",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": 9000,
+      "listeningUntil": 20000,
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 10000,
+      "archived": false
+    },
+    {
+      "name": "before seven day archive",
+      "now": 604889999,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": null,
+      "listeningUntil": null,
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 90000,
+      "archived": false
+    },
+    {
+      "name": "seven day archive boundary",
+      "now": 604890000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 60000,
+      "polled": null,
+      "listeningUntil": null,
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 90000,
+      "archived": true
+    },
+    {
+      "name": "verified return restores identity",
+      "now": 700000000,
+      "status": "idle",
+      "lastActive": 700000000,
+      "expires": 700060000,
+      "polled": 700000000,
+      "listeningUntil": 700015000,
+      "connection": "online",
+      "reception": "waiting",
+      "offlineSince": null,
+      "archived": false
+    }
+  ]
+}

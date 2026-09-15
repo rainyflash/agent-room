@@ -1,4 +1,5 @@
 import type { Result } from '@/shared/result';
+import type { AgentLifecycle } from '@agent-room/protocol';
 
 export const lobbyAgentStatuses = [
   'offline',
@@ -24,6 +25,8 @@ export type LobbyAgent = {
   readonly reportedStatus?: LobbyAgentStatus;
   readonly lastActiveAtUnixMs?: number;
   readonly lastPolledAtUnixMs?: number;
+  readonly listeningUntilUnixMs?: number | null;
+  readonly lifecycle?: AgentLifecycle;
   readonly summary?: string;
   readonly trust: LobbyAgentTrust;
   readonly visibility: LobbyAgentVisibility;
@@ -35,6 +38,7 @@ export type LobbyRoom = {
   readonly name: string;
   readonly observedAtUnixMs: number;
   readonly roomId: string;
+  readonly archiveAfterDays?: number;
   readonly topic?: string;
 };
 

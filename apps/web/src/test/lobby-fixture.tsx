@@ -370,12 +370,46 @@ const fixtureControls: LobbyFixtureControls = {
     updateFixtureScene();
     for (const listener of lobbyListeners) listener();
   },
+  setAgentReception: (agentId, mode, offlineForMs = 0) => {
+    const now = room.observedAtUnixMs;
+    room = {
+      ...room,
+      agents: room.agents.map((agent): LobbyAgent =>
+        agent.agentId !== agentId
+          ? agent
+          : {
+              ...agent,
+              status: mode === 'offline' ? 'offline' : 'idle',
+              reportedStatus: mode === 'offline' ? 'offline' : 'idle',
+              lastActiveAtUnixMs: now - offlineForMs,
+              statusExpiresAtUnixMs: now + 300_000,
+              lastPolledAtUnixMs: now - offlineForMs,
+              listeningUntilUnixMs: mode === 'waiting' ? now + 15_000 : now,
+            },
+      ),
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  },
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,
   value: fixtureControls,
 });
 function updateFixtureScene(): void {
+  const lifecycles = projectAgentLifecycles(
+    room.agents.map(presenceEvidence),
+    room.observedAtUnixMs,
+    room.archiveAfterDays ?? 7,
+  );
+  room = {
+    ...room,
+    agents: room.agents.map((agent) => {
+      const lifecycle = lifecycles.get(agent.agentId);
+      if (!lifecycle) throw new Error('Fixture lifecycle missing');
+      return { ...agent, lifecycle };
+    }),
+  };
   fixtureScene = projectLobbyScene(room, null, {
     previous: fixtureScene.layout,
     humans: roomHumans(room, publishedConversations, fixtureIdentity),
@@ -807,6 +841,16 @@ const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent
 
 const services: AppServices = {
   accessManagement,
+  agentRosterPolicy: {
+    update: (_catalogId, policy) => {
+      room = { ...room, archiveAfterDays: policy.archiveAfterDays };
+      updateFixtureScene();
+      lobbyListeners.forEach((listener) => {
+        listener();
+      });
+      return Promise.resolve(ok(policy));
+    },
+  },
   agentDirectory: {
     listOwnedAgents: () => Promise.resolve(ok([])),
   },
@@ -1049,7 +1093,9 @@ function testAgent(index: number, agentCount = fixtureAgentCount): LobbyAgent {
     matrixUserId: `@build-agent-${suffix}:agent-room.test`,
     status,
     lastActiveAtUnixMs: Date.now() - (status === 'offline' ? 600_000 : 0),
-    ...(status === 'idle' ? { lastPolledAtUnixMs: Date.now() } : {}),
+    ...(status === 'idle'
+      ? { lastPolledAtUnixMs: Date.now(), listeningUntilUnixMs: Date.now() + 15_000 }
+      : {}),
     statusExpiresAtUnixMs: Date.now() + 300_000,
     ...(detailed ? { summary: `Validating workspace slice ${suffix}` } : {}),
     trust: index % 5 === 0 ? 'verified' : 'unknown',
@@ -1175,3 +1221,5 @@ if (import.meta.hot !== undefined) {
 }
 
 void bootstrapFixture();
+import { projectAgentLifecycles } from '@agent-room/protocol';
+import { presenceEvidence } from '@/features/lobby/domain/agent-attendance';

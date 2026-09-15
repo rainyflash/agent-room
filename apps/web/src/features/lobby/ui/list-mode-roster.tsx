@@ -1,4 +1,3 @@
-import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { Search, Star } from 'lucide-react';
 import {
   forwardRef,
@@ -18,7 +17,9 @@ import {
   type LobbyAgentStatus,
 } from '@/features/lobby/domain/lobby';
 import { AgentPortrait } from './room-illustration';
-import { agentAttendance } from '../domain/agent-attendance';
+import { agentLifecycle, agentRosterGroup, agentRosterGroups } from '../domain/agent-attendance';
+import { AgentStateLabel } from './agent-state-label';
+import './agent-roster.css';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import {
   organizeAgents,
@@ -40,15 +41,6 @@ export type ListModeRosterHandle = {
   focusSelected(): boolean;
 };
 
-const STATUS_TONE: Readonly<Record<LobbyAgentStatus, StatusTone>> = Object.freeze({
-  blocked: 'alert',
-  completed: 'active',
-  idle: 'network',
-  offline: 'offline',
-  waiting_input: 'alert',
-  working: 'active',
-});
-
 export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterProps>(
   function ListModeRoster(
     { agents, observedAtUnixMs, onSelectAgent, selectedAgentId, selfAgentId, variant = 'full' },
@@ -68,16 +60,46 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
       [agents, personal?.snapshot.index],
     );
     const [status, setStatus] = useState<LobbyAgentStatus | 'all'>('all');
+    const [archiveView, setArchiveView] = useState(false);
+    const [page, setPage] = useState(0);
+    const archivedCount = agents.filter(
+      (agent) => agentLifecycle(agent, observedAtUnixMs).archived,
+    ).length;
     const filteredAgents = useMemo(
       () =>
         organizeAgents(
-          filterLobbyAgents(agents, deferredQuery, status),
+          filterLobbyAgents(
+            agents.filter(
+              (agent) => agentLifecycle(agent, observedAtUnixMs).archived === archiveView,
+            ),
+            deferredQuery,
+            status,
+          ),
           personal?.snapshot.index ?? null,
           collection,
           projectTag,
+        ).toSorted(
+          (a, b) =>
+            agentRosterGroups.indexOf(agentRosterGroup(a, observedAtUnixMs)) -
+              agentRosterGroups.indexOf(agentRosterGroup(b, observedAtUnixMs)) ||
+            (agentLifecycle(a, observedAtUnixMs).connection === 'offline'
+              ? (b.lastActiveAtUnixMs ?? 0) - (a.lastActiveAtUnixMs ?? 0)
+              : 0),
         ),
-      [agents, deferredQuery, status, personal?.snapshot.index, collection, projectTag],
+      [
+        agents,
+        deferredQuery,
+        status,
+        personal?.snapshot.index,
+        collection,
+        projectTag,
+        archiveView,
+        observedAtUnixMs,
+      ],
     );
+    const pageCount = Math.max(1, Math.ceil(filteredAgents.length / 100));
+    const currentPage = Math.min(page, pageCount - 1);
+    const visibleAgents = filteredAgents.slice(currentPage * 100, (currentPage + 1) * 100);
 
     useImperativeHandle(forwardedRef, () => ({
       focusSelected: () => {
@@ -98,6 +120,29 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
           </div>
           <span>{t('lobby.roster.count', { count: filteredAgents.length })}</span>
         </header>
+        <div className="roster-views" aria-label={t('agentState.rosterView')}>
+          <button
+            type="button"
+            aria-pressed={!archiveView}
+            onClick={() => {
+              setArchiveView(false);
+              setPage(0);
+            }}
+          >
+            {t('agentState.members', { count: agents.length - archivedCount })}
+          </button>
+          <button
+            type="button"
+            aria-pressed={archiveView}
+            onClick={() => {
+              setArchiveView(true);
+              setPage(0);
+            }}
+          >
+            {t('agentState.archived', { count: archivedCount })}
+          </button>
+        </div>
+        {archiveView ? <p className="roster-archive-note">{t('agentState.archiveHint')}</p> : null}
         <div className="list-roster__filters">
           <label className="roster-search">
             <Search aria-hidden="true" />
@@ -105,6 +150,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
             <input
               onChange={(event) => {
                 setQuery(event.currentTarget.value);
+                setPage(0);
               }}
               placeholder={t('lobby.roster.searchPlaceholder')}
               type="search"
@@ -117,6 +163,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
               aria-label={t('lobby.roster.filter')}
               onChange={(event) => {
                 const value = event.currentTarget.value;
+                setPage(0);
                 if (value === 'all') setStatus(value);
                 else {
                   const found = lobbyAgentStatuses.find((item) => item === value);
@@ -143,6 +190,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
               value={collection}
               onChange={(event) => {
                 const value = event.currentTarget.value;
+                setPage(0);
                 if (value === 'all' || value === 'favorites' || value === 'recent')
                   setCollection(value);
               }}
@@ -155,6 +203,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
               aria-label={t('personal.project')}
               value={projectTag}
               onChange={(event) => {
+                setPage(0);
                 setProjectTag(event.currentTarget.value);
               }}
             >
@@ -171,8 +220,15 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
           <p className="list-roster__empty">{t('lobby.roster.empty')}</p>
         ) : (
           <ul className="list-roster__list">
-            {filteredAgents.map((agent) => (
+            {visibleAgents.map((agent, index) => (
               <li key={agent.agentId}>
+                {index === 0 ||
+                agentRosterGroup(visibleAgents[index - 1] ?? agent, observedAtUnixMs) !==
+                  agentRosterGroup(agent, observedAtUnixMs) ? (
+                  <h3 className="roster-group-heading">
+                    {t(`agentState.group.${agentRosterGroup(agent, observedAtUnixMs)}`)}
+                  </h3>
+                ) : null}
                 <button
                   aria-pressed={agent.agentId === selectedAgentId}
                   className="roster-agent"
@@ -181,7 +237,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   }}
                   onKeyDown={(event) => {
                     const targetAgentId = targetAgentForKey(
-                      filteredAgents,
+                      visibleAgents,
                       agent.agentId,
                       event.key,
                     );
@@ -205,10 +261,6 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                 >
                   <span className={`roster-agent__signal roster-agent__signal--${agent.status}`}>
                     <AgentPortrait id={agent.agentId} />
-                    <StatusMark
-                      label={t(`lobby.status.${agent.status}`)}
-                      tone={STATUS_TONE[agent.status]}
-                    />
                   </span>
                   <span className="roster-agent__identity">
                     <strong>
@@ -222,17 +274,8 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                       ) : null}
                       {agent.agentId === selfAgentId ? <em>{t('lobby.agent.self')}</em> : null}
                     </strong>
-                    <span>
-                      {variant === 'compact'
-                        ? t(
-                            agentAttendance(agent, observedAtUnixMs) === 'away'
-                              ? 'studio.awayMember'
-                              : agentAttendance(agent, observedAtUnixMs) === 'reconnecting'
-                                ? 'studio.reception.reconnecting'
-                                : `lobby.status.${agent.status}`,
-                          )
-                        : agent.matrixUserId}
-                    </span>
+                    <AgentStateLabel agent={agent} now={observedAtUnixMs} />
+                    <span className="roster-agent__work">{t(`lobby.status.${agent.status}`)}</span>
                   </span>
                   <span className="roster-agent__summary">
                     {agent.summary ?? t(`lobby.status.${agent.status}`)}
@@ -250,6 +293,31 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
             ))}
           </ul>
         )}
+        {pageCount > 1 ? (
+          <nav className="roster-pagination" aria-label={t('agentState.pages')}>
+            <button
+              type="button"
+              disabled={currentPage === 0}
+              onClick={() => {
+                setPage(currentPage - 1);
+              }}
+            >
+              {t('agentState.previous')}
+            </button>
+            <span aria-live="polite">
+              {t('agentState.page', { current: currentPage + 1, total: pageCount })}
+            </span>
+            <button
+              type="button"
+              disabled={currentPage + 1 >= pageCount}
+              onClick={() => {
+                setPage(currentPage + 1);
+              }}
+            >
+              {t('agentState.next')}
+            </button>
+          </nav>
+        ) : null}
       </section>
     );
   },

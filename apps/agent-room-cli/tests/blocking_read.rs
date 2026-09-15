@@ -142,7 +142,7 @@ async fn serve(listener: Listener, message_available: Arc<AtomicBool>, reads: Ar
             panic!("session required")
         };
         assert_eq!(session_id, SESSION);
-        let IpcMethod::ReadInbox(request) = *method else {
+        let (IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request)) = *method else {
             panic!("read must not acknowledge or send")
         };
         reads.fetch_add(1, Ordering::SeqCst);

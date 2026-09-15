@@ -140,7 +140,7 @@ impl BridgeToolClient for WaitingBridge {
         assert_eq!(session_id, SESSION_A);
         let response = match *method {
             IpcMethod::GetSelf => Ok(self_summary(&session_id)),
-            IpcMethod::ReadInbox(request) => {
+            IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                 assert_eq!(request.after_event_id.as_deref(), Some("$last"));
                 self.reads.fetch_add(1, Ordering::SeqCst);
                 if self.fail.load(Ordering::SeqCst) {

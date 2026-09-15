@@ -1,6 +1,7 @@
 pub(crate) mod accounts;
 pub(crate) mod agent_cards;
 pub(crate) mod agent_instances;
+pub(crate) mod agent_roster;
 pub(crate) mod agents;
 pub(crate) mod authentication;
 pub(crate) mod automation;

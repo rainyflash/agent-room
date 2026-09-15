@@ -1,7 +1,8 @@
 import type { LobbyAgentStatus } from '../domain/lobby';
 import type { FloorPoint, RoomFloor } from '../domain/room-floor';
 import type { LobbySceneProjection, LobbyViewport } from '../domain/scene-projection';
-import { agentReception, type AgentReception } from '../domain/agent-attendance';
+import { agentReception, agentLifecycle, type AgentReception } from '../domain/agent-attendance';
+import type { AgentReceptionState } from '@agent-room/protocol';
 
 export type SceneCharacter = {
   readonly characterId: string;
@@ -11,6 +12,7 @@ export type SceneCharacter = {
   readonly isSelf: boolean;
   readonly status: LobbyAgentStatus | 'present';
   readonly reception?: AgentReception;
+  readonly availability?: AgentReceptionState | 'reconnecting' | 'offline';
   readonly radius: number;
   readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;
@@ -30,6 +32,12 @@ export function sceneCharacters(
       kind: 'agent',
       isSelf: false,
       reception: agentReception(node, scene.observedAtUnixMs),
+      availability:
+        agentLifecycle(node, scene.observedAtUnixMs).connection === 'online'
+          ? agentLifecycle(node, scene.observedAtUnixMs).reception
+          : agentLifecycle(node, scene.observedAtUnixMs).connection === 'reconnecting'
+            ? 'reconnecting'
+            : 'offline',
       floor: { width: scene.world.width, depth: scene.world.height },
     })),
     ...(scene.humans ?? []).map((human): SceneCharacter => ({

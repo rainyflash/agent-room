@@ -111,6 +111,7 @@ struct IdentityRuntime {
 }
 
 struct AgentFeatureHttpStates {
+    roster: features::agent_roster::AgentRosterHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -129,6 +130,7 @@ struct AgentIdentityHttpStates {
 }
 
 struct AgentCollaborationHttpStates {
+    roster: features::agent_roster::AgentRosterHttpState,
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
@@ -448,6 +450,7 @@ fn compose_identity_routes(
         .merge(features::agent_cards::router(agents.cards))
         .merge(features::automation::router(agents.automation))
         .merge(features::moderation::router(agents.moderation))
+        .merge(features::agent_roster::router(agents.roster))
         .merge(content)
 }
 
@@ -581,6 +584,7 @@ fn build_agent_feature_states(
         cards,
     } = build_agent_identity_http_states(config, request_timeout, dependencies);
     let AgentCollaborationHttpStates {
+        roster,
         handoffs,
         lobbies,
         private_rooms,
@@ -589,6 +593,7 @@ fn build_agent_feature_states(
         moderation,
     } = build_agent_collaboration_http_states(config, dependencies)?;
     Ok(AgentFeatureHttpStates {
+        roster,
         agents,
         instances,
         cards,
@@ -724,6 +729,20 @@ fn build_agent_collaboration_http_states(
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origin,
         ),
+        roster: features::agent_roster::AgentRosterHttpState {
+            service: Arc::new(
+                agent_room_application::agent_roster::AgentRosterService::new(
+                    dependencies.repositories.clone(),
+                    dependencies.matrix_identities.clone(),
+                    dependencies.system_runtime.clone(),
+                ),
+            ),
+            authentication: dependencies.authentication.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.authentication.frontend_origin,
+                &config.authentication.desktop_origin,
+            ),
+        },
     })
 }
 

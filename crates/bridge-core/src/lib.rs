@@ -11,6 +11,7 @@ pub mod messages;
 pub mod onboarding;
 pub mod ports;
 pub mod presence;
+pub mod presence_roster;
 pub mod reconnect;
 pub mod session;
 pub mod status;

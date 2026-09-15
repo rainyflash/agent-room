@@ -235,6 +235,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     self.agent_runtime()?.list_previews(request).await
                 }
                 IpcMethod::ReadInbox(request) => self.agent_runtime()?.read_inbox(request).await,
+                IpcMethod::WaitInbox(request) => self.agent_runtime()?.wait_inbox(request).await,
                 IpcMethod::PublishStatus(request) => {
                     self.agent_runtime()?.publish_status(request).await
                 }
@@ -1527,6 +1528,10 @@ mod tests {
                 observed_at: UtcMillis::new(900).expect("观察时间有效"),
                 lease_expires_at: UtcMillis::new(2_000).expect("租约时间有效"),
                 origin_server_timestamp: 900,
+                published_at: UtcMillis::new(900).expect("发布时间有效"),
+                last_polled_at: None,
+                listening_until: None,
+                reception_known: false,
             }),
             queries: Mutex::new(Vec::new()),
         });
@@ -1552,13 +1557,16 @@ mod tests {
             .dispatch(IpcMethod::GetPresence(IpcGetPresenceRequest {
                 room_id: room_id.as_str().to_owned(),
                 agent_ids: vec![identity.agent_id().to_string()],
+                include_archived: false,
+                after_agent_id: None,
+                limit: 100,
             }))
             .await
             .expect("当前大厅 Presence 可读");
 
         assert!(matches!(
             response,
-            IpcResponse::Presence { entries }
+            IpcResponse::Presence { entries, .. }
                 if entries.len() == 1
                     && entries[0].room_id == room_id.as_str()
                     && entries[0].agent.agent_id == identity.agent_id().to_string()
@@ -1612,9 +1620,10 @@ mod tests {
 
         // Reading a private conversation is not evidence of receiving public lobby messages.
         status
-            .note_inbox_read(
+            .note_inbox_wait(
                 &MatrixRoomId::new("!private:matrix.test").expect("私聊标识有效"),
                 固定时钟.now(),
+                false,
             )
             .await
             .expect("私聊读取不发布状态");

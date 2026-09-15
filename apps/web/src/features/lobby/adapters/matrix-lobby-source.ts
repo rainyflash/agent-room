@@ -3,6 +3,7 @@ import type { Direction, RoomState } from 'matrix-js-sdk';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
 export const matrixAgentStatusEventType = 'io.github.rainyflash.agentroom.agent.status.v1';
+export const matrixRosterPolicyEventType = 'io.github.rainyflash.agentroom.roster.policy.v1';
 const forwardTimelineDirection = 'f' as Direction;
 
 export type MatrixLobbyStateEvent = {
@@ -16,6 +17,7 @@ export type MatrixLobbyRoomSnapshot = {
   readonly name: string;
   readonly roomId: string;
   readonly statusEvents: readonly MatrixLobbyStateEvent[];
+  readonly rosterPolicy?: unknown;
   readonly topic?: string;
 };
 
@@ -50,6 +52,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
       return { kind: 'room-not-joined' };
     }
     const topic = readRoomTopic(state);
+    const rosterPolicy = state.getStateEvents(matrixRosterPolicyEventType, '');
     return {
       kind: 'ready',
       room: Object.freeze({
@@ -61,6 +64,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
         ),
         name: room.name.trim() || roomId,
         roomId,
+        ...(rosterPolicy === null ? {} : { rosterPolicy: rosterPolicy.getContent() }),
         statusEvents: Object.freeze(
           state.getStateEvents(matrixAgentStatusEventType).map((event) =>
             Object.freeze({

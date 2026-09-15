@@ -15,6 +15,7 @@ import { ControlPlanePublicLobbyEntryClient } from '@/features/lobby-entry/adapt
 import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapters/matrix-public-lobby-entry-gateway';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
+import { ControlPlaneAgentRosterPolicy } from '@/features/lobby/adapters/control-plane-agent-roster-policy';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
 import { BrowserMachineTranslationGateway } from '@/features/messages/adapters/browser-machine-translation-gateway';
@@ -162,6 +163,7 @@ export function createCloudRuntime(
     receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
+    agentRosterPolicy: new ControlPlaneAgentRosterPolicy(businessApi.baseUrl, businessApi.fetch),
     automation: new ControlPlaneAutomationGrantClient(businessApi),
     config,
     content: new ControlPlaneContentClient(businessApi),

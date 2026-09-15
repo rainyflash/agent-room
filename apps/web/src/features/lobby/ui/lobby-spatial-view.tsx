@@ -49,6 +49,13 @@ export function LobbySpatialView({
     () => ({
       canvas: t('lobby.scene.canvasLabel'),
       self: t('roomGame.self'),
+      availability: {
+        waiting: t('agentState.waiting'),
+        on_resume: t('agentState.on_resume'),
+        unknown: t('agentState.unknown'),
+        reconnecting: t('agentState.reconnecting'),
+        offline: t('agentState.offline'),
+      },
       statuses: {
         idle: t('lobby.status.idle'),
         working: t('lobby.status.working'),

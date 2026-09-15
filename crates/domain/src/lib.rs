@@ -1,4 +1,5 @@
 pub mod agent_cards;
+pub mod agent_lifecycle;
 pub mod agent_status;
 pub mod agents;
 pub mod content;

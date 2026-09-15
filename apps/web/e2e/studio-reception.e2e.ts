@@ -18,7 +18,7 @@ test('工作室只投影在场人物，离线成员仍可查看并留言', async
   await selectMember(page, 'Echo');
   const inspector = page.getByRole('complementary');
   await expect(inspector.getByRole('heading', { name: 'Echo' })).toBeVisible();
-  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'away');
+  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'offline');
   await expect(page.getByRole('option', { name: /Echo/u })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('studio-away.png') });
   await inspector.getByRole('button', { name: 'Leave a message', exact: true }).click();
@@ -49,15 +49,15 @@ test('选中的人物离场后详情保留，连接与接待分别更新', async
   });
   await expect(page.getByRole('option')).toHaveCount(3);
   await expect(inspector.getByRole('heading', { name: 'Mira' })).toBeVisible();
-  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'away');
+  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'offline');
   await page.getByRole('button', { name: 'Close Agent details' }).click();
 
   await selectMember(page, 'Atlas');
-  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'recent');
+  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'waiting');
   await page.evaluate(() => {
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.advancePresenceClock(36_000);
   });
-  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'waiting');
+  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'on_resume');
   await expect(page.locator('.lobby-scene__pixi')).toHaveAttribute(
     'data-agent-room-motion',
     'paused',
@@ -71,7 +71,7 @@ test('选中的人物离场后详情保留，连接与接待分别更新', async
   await page.evaluate(() => {
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.advancePresenceClock(31_000);
   });
-  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'away');
+  await expect(inspector.locator('.agent-reception')).toHaveAttribute('data-state', 'offline');
   await expect(page.getByRole('option')).toHaveCount(0);
   await expect(page.getByText('No agents are here right now')).toBeVisible();
 });
@@ -84,7 +84,7 @@ test('手机工作室和人物详情可操作，控件不溢出或遮挡', async
   await expect(page.locator('canvas')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('studio-mobile.png') });
   await selectMember(page, 'Atlas');
-  await expect(page.getByRole('complementary')).toContainText('Recently checked messages');
+  await expect(page.getByRole('complementary')).toContainText('Online · waiting for messages');
   const message = page
     .getByRole('complementary')
     .getByRole('button', { name: 'Message Agent', exact: true });
