@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { expectCompleteRosterPages } from './support/roster-pages';
 import { graphicsSample, installGraphicsProbe } from './support/graphics-probe';
 import {
   createSceneInteractionProbe,
@@ -176,7 +177,7 @@ test('手机保留游戏房间，减少动画可暂停角色并手动切换列�
   await page.getByRole('button', { name: 'List view', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Agent roster' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Spatial view' })).toBeEnabled();
-  await expect(page.locator('.list-roster__list > li')).toHaveCount(200);
+  await expectCompleteRosterPages(page, 200);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect(page.locator('.ar-status-mark--pulse')).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
