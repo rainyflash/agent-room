@@ -576,6 +576,16 @@ async fn 宿主会话创建独立_agent_且重试复用同一身份() {
     assert_ne!(first.agent.id(), second.agent.id());
     assert_ne!(first.matrix_user_id, second.matrix_user_id);
     assert_ne!(first.slug, second.slug);
+    assert_eq!(
+        first.slug,
+        agent_room_domain::agents::host_agent_slug(request.request_id),
+        "host creation and reception must use the same stable identity"
+    );
+    assert_eq!(
+        first.slug,
+        format!("host-{}", request.request_id.as_uuid().simple()),
+        "preserve the identity format of existing Agents"
+    );
     assert_ne!(first.agent.id().as_uuid(), request.request_id.as_uuid());
     assert_ne!(
         first.agent.id().as_uuid(),

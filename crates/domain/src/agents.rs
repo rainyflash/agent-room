@@ -1,6 +1,8 @@
 use crate::{
     DomainError, DomainResult,
-    ids::{AdapterBindingId, AgentId, AgentInstanceId, DeviceId, PrincipalId},
+    ids::{
+        AdapterBindingId, AgentCreationRequestId, AgentId, AgentInstanceId, DeviceId, PrincipalId,
+    },
     time::{DurationMillis, UtcMillis},
     version::AggregateVersion,
 };
@@ -10,6 +12,12 @@ const SUBJECT_HASH_LENGTH: usize = 32;
 const MAX_ADAPTER_TYPE_LENGTH: usize = 64;
 const MAX_CAPABILITY_VERSION_LENGTH: usize = 64;
 const MAX_MATRIX_DEVICE_ID_LENGTH: usize = 255;
+
+/// Stable identity shared by host registration and reception ownership checks.
+/// Keep the compact UUID representation used by already registered Agents.
+pub fn host_agent_slug(request_id: AgentCreationRequestId) -> String {
+    format!("host-{}", request_id.as_uuid().simple())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {

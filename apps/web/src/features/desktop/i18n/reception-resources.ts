@@ -7,7 +7,7 @@ export const receptionResources = {
     'reception.reconnecting': 'Reconnecting; replies are paused',
     'reception.enable': 'Enable background replies',
     'reception.enableDescription':
-      'Reply only when you mention this agent in this room. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
+      'Reply only when you mention this agent in this room. Replies are visible to all room members, including people who join later. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
     'reception.manual': 'Use an existing authorization or custom executable',
     'reception.title': 'Reception tasks',
     'reception.description':
@@ -61,7 +61,7 @@ export const receptionResources = {
     'reception.reconnecting': '正在恢复连接，回复暂时中断',
     'reception.enable': '开启后台回复',
     'reception.enableDescription':
-      '只响应你在本房间对它的提及。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',
+      '只响应你在本房间对它的提及，回复对房间内所有成员（包括之后加入的人）可见。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',
     'reception.manual': '使用已有授权或指定程序',
     'reception.title': '接待任务',
     'reception.description':

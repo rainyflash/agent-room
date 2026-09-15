@@ -29,7 +29,7 @@ const grant: AutomationGrant = {
   agentInstanceId: instanceId,
   roomCatalogId,
   grantId,
-  audience: 'known_room_members',
+  audience: 'any_room_member',
   messageKinds: ['reply'],
   startsAtUnixMs: 100,
   expiresAtUnixMs: 100000,
@@ -76,6 +76,7 @@ describe('enable background replies', () => {
         agentId,
         agentInstanceId: instanceId,
         roomCatalogId,
+        audience: 'any_room_member',
         messageKinds: ['reply'],
         impactAcknowledged: true,
       }),
@@ -86,6 +87,24 @@ describe('enable background replies', () => {
     const ports = dependencies();
     expect(await enableReception({ ...input, grants: [grant] }, ports)).toEqual(ok(undefined));
     expect(ports.calls).toEqual(['configure', 'start']);
+  });
+  it('公共房间不能复用仅已知成员授权，必须取得可覆盖房间可见范围的回复授权', async () => {
+    const ports = dependencies();
+    expect(
+      await enableReception(
+        { ...input, grants: [{ ...grant, audience: 'known_room_members' }] },
+        ports,
+      ),
+    ).toEqual(ok(undefined));
+    expect(ports.calls).toEqual(['authorize', 'configure', 'start']);
+    ports.automation.create.mockResolvedValueOnce(ok({ ...grant, audience: 'known_room_members' }));
+    ports.runtime.configureReceiver.mockClear();
+    ports.runtime.receiverAction.mockClear();
+    expect(await enableReception(input, ports)).toEqual(
+      err({ code: 'receiver.authorization_mismatch', retryable: false }),
+    );
+    expect(ports.runtime.configureReceiver).not.toHaveBeenCalled();
+    expect(ports.runtime.receiverAction).not.toHaveBeenCalled();
   });
   it('创建授权使用服务器返回的起始时间，网络耗时不误判为未生效', async () => {
     const ports = dependencies();
