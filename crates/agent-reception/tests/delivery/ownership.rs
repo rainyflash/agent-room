@@ -28,7 +28,7 @@ impl BridgeToolClient for ControlledBridge {
                 IpcMethod::WithSession { method, .. } => method.as_ref(),
                 method => method,
             };
-            if matches!(plain, IpcMethod::ReadInbox(_)) && self.quiet {
+            if matches!(plain, IpcMethod::ReadInbox(_) | IpcMethod::WaitInbox(_)) && self.quiet {
                 return Ok(IpcResponse::MessagePreviews {
                     previews: vec![],
                     next_cursor: None,

@@ -108,7 +108,7 @@ impl BridgeToolClient for Bridge {
                         granted_capabilities: vec![],
                     },
                 },
-                IpcMethod::ReadInbox(request) => {
+                IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                     let previews = if request.after_event_id.is_none() {
                         vec![self.source.clone()]
                     } else if request.after_event_id.as_deref() == Some("$input") {
@@ -353,7 +353,7 @@ async fn prolonged_network_outage_recovers_without_manual_restart() {
 impl BridgeToolClient for InterruptedBridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
         let verifying = matches!(&method, IpcMethod::WithSession { method, .. }
-            if matches!(method.as_ref(), IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$input")));
+            if matches!(method.as_ref(), IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$input")));
         if verifying && self.failures.fetch_add(1, Ordering::Relaxed) == 0 {
             return Box::pin(async {
                 Err(agent_room_agent_client::BridgeToolFailure::new(
