@@ -26,7 +26,7 @@ export function receptionFixture(
     maxTotalMessages: 100,
     messageKinds: ['reply'],
     messagesInCurrentMinute: 0,
-    requiresRiskScan: false,
+    requiresRiskScan: true,
     revokedAtUnixMs: null,
     status: 'active',
     totalMessages: 0,
