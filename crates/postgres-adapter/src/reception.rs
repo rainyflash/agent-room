@@ -11,6 +11,7 @@ use agent_room_domain::{
     agents::host_agent_slug,
     ids::{AgentCreationRequestId, AgentId, DeviceId, PrincipalId, RoomCatalogId},
     reception::{ReceptionExecution, ReceptionMode, ReceptionOwner, ReceptionTransition},
+    time::UtcMillis,
 };
 use sqlx::{Postgres, Transaction, postgres::PgRow};
 use uuid::Uuid;
@@ -41,6 +42,20 @@ impl ReceptionRepository for PostgresRepositories {
                     matrix_room_id: MatrixRoomId::new(request.room_id.clone())
                         .map_err(|_| failure(RepositoryErrorKind::Constraint))?,
                 };
+                // A signed control request is activity from this instance, including
+                // its first request before any presence event has been published.
+                // Keep the same ownership/revocation checks as automated replies.
+                let now = sqlx::query_scalar::<_, i64>(
+                    "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint",
+                )
+                .fetch_one(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(OP, &error))?;
+                self.refresh_sender_lease(
+                    &authority,
+                    UtcMillis::new(now).map_err(|_| failure(RepositoryErrorKind::CorruptData))?,
+                )
+                .await?;
                 if self.inspect_send(&authority).await?.is_none() {
                     return Err(failure(RepositoryErrorKind::Forbidden));
                 }

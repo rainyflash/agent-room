@@ -64,6 +64,66 @@ async fn registered_host_identity_accepts_its_session_and_rejects_another() {
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn authenticated_reception_starts_connecting_instances_and_renews_expired_activity() {
+    let database = TestDatabase::connect().await;
+    let (fixture, request) = setup(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    sqlx::query("UPDATE agent_room.agent_instance SET status='connecting', last_seen_at=NULL, lease_expires_at=NULL WHERE id=$1")
+        .bind(fixture.instance.as_uuid()).execute(&database.runtime).await.expect("match a freshly registered instance");
+    assert_eq!(
+        repositories
+            .execute(fixture.principal, fixture.device, &request)
+            .await
+            .expect("a signed request from the registered device is its first activity")
+            .status,
+        ReceptionStatus::Active
+    );
+    sqlx::query("UPDATE agent_room.agent_instance SET status='offline', last_seen_at=clock_timestamp()-interval '10 minutes', lease_expires_at=clock_timestamp()-interval '5 minutes' WHERE id=$1")
+        .bind(fixture.instance.as_uuid()).execute(&database.runtime).await.expect("expire activity during a connection gap");
+    let heartbeat = ReceptionRequest {
+        command: ReceptionCommand::Heartbeat,
+        ..request
+    };
+    assert_eq!(
+        repositories
+            .execute(fixture.principal, fixture.device, &heartbeat)
+            .await
+            .expect("the authenticated owner can resume its existing execution")
+            .status,
+        ReceptionStatus::Active
+    );
+    let online: bool = sqlx::query_scalar("SELECT status='online' AND last_seen_at IS NOT NULL AND lease_expires_at > clock_timestamp() FROM agent_room.agent_instance WHERE id=$1")
+        .bind(fixture.instance.as_uuid()).fetch_one(&database.runtime).await.expect("read renewed activity");
+    assert!(online);
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn reception_cannot_reactivate_an_instance_after_device_revocation() {
+    let database = TestDatabase::connect().await;
+    let (fixture, request) = setup(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    sqlx::query("UPDATE agent_room.agent_instance SET status='connecting', last_seen_at=NULL, lease_expires_at=NULL WHERE id=$1")
+        .bind(fixture.instance.as_uuid()).execute(&database.runtime).await.expect("new instance");
+    sqlx::query("UPDATE agent_room.device SET trust_state='revoked', revoked_at=clock_timestamp() WHERE id=$1")
+        .bind(fixture.device.as_uuid()).execute(&database.runtime).await.expect("revoke device");
+    assert_eq!(
+        repositories
+            .execute(fixture.principal, fixture.device, &request)
+            .await
+            .expect_err("revoked device cannot establish a reception lease")
+            .kind(),
+        RepositoryErrorKind::Forbidden
+    );
+    let unchanged: bool = sqlx::query_scalar("SELECT status='connecting' AND last_seen_at IS NULL AND lease_expires_at IS NULL FROM agent_room.agent_instance WHERE id=$1")
+        .bind(fixture.instance.as_uuid()).fetch_one(&database.runtime).await.expect("read rejected activity");
+    assert!(unchanged);
+    database.close().await;
+}
+
 async fn second_device(pool: &PgPool, fixture: &AutomationFixture) -> (DeviceId, AgentInstanceId) {
     let device = DeviceId::from_uuid(Uuid::now_v7());
     let instance = AgentInstanceId::from_uuid(Uuid::now_v7());
