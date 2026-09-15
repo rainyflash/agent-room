@@ -285,11 +285,27 @@ async fn deliver(
             data_root: context.data_root,
             service: context.service,
             session_id,
-            automation_grant_id: &binding.automation_grant_id,
             submission_id: &record.submission_id,
             message,
         })
         .await;
+    let host = match host {
+        Ok(reply) => match call(
+            context.backend,
+            scoped(session_id, reply.into_request(state, &record)?),
+        )
+        .await
+        {
+            Ok(IpcResponse::SentMessage { message })
+                if message.submission_id == record.submission_id =>
+            {
+                Ok(())
+            }
+            Ok(_) => Err(Failure::local("receiver.response_invalid")),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    };
     change_stage(state, store, DeliveryStage::Verifying)?;
     emit_delivery(context, state)?;
     let receipt = reconcile(context, store, state, session_id, &summary.agent.agent_id).await;

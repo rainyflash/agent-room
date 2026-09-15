@@ -6,11 +6,13 @@ mod execution;
 mod host;
 mod model;
 mod receipt;
+mod reply;
 mod runtime;
 mod store;
 pub use error::{ReceptionFailure, ReceptionResult};
 pub use host::HostBinding;
 pub use model::*;
+pub use reply::HostReply;
 pub use runtime::{ReceiverContext, ReceiverMode, run};
 pub use store::{ReceiverStore, load_binding};
 
@@ -30,7 +32,8 @@ async fn call(backend: &dyn BridgeToolClient, method: IpcMethod) -> ReceptionRes
 }
 
 /// An explicit host boundary keeps delivery and cursor decisions testable without a model.
-pub type HostFuture<'a> = std::pin::Pin<Box<dyn Future<Output = ReceptionResult<()>> + Send + 'a>>;
+pub type HostFuture<'a> =
+    std::pin::Pin<Box<dyn Future<Output = ReceptionResult<HostReply>> + Send + 'a>>;
 pub trait HostRunner: Send + Sync {
     fn resume<'a>(&'a self, delivery: HostDelivery<'a>) -> HostFuture<'a>;
 }
@@ -39,7 +42,6 @@ pub struct HostDelivery<'a> {
     pub data_root: &'a std::path::Path,
     pub service: &'a str,
     pub session_id: &'a str,
-    pub automation_grant_id: &'a str,
     pub submission_id: &'a str,
     pub message: &'a agent_room_bridge_ipc::IpcMessagePreviewSummary,
 }

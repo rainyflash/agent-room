@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 agent-room-agent-client.workspace = true
+agent-room-bridge-core.workspace = true
 agent-room-bridge-ipc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
