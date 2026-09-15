@@ -44,6 +44,7 @@ impl IpcProtocolVersion {
     pub const V1_0: Self = Self { major: 1, minor: 0 };
     pub const V2_0: Self = Self { major: 2, minor: 0 };
     pub const V3_0: Self = Self { major: 3, minor: 0 };
+    pub const V4_0: Self = Self { major: 4, minor: 0 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -418,6 +419,31 @@ mod tests {
                 .kind(),
             IpcHandshakeFailureKind::InvalidOffer
         );
+    }
+
+    #[test]
+    fn 附件与接收状态协议不能与旧安装版混用() {
+        for (server_version, client_version) in [
+            (IpcProtocolVersion::V4_0, IpcProtocolVersion::V3_0),
+            (IpcProtocolVersion::V3_0, IpcProtocolVersion::V4_0),
+        ] {
+            let negotiator =
+                IpcHandshakeNegotiator::new([server_version], FoundationIpcScopePolicy)
+                    .expect("协商器配置有效");
+            let offer = IpcHandshakeOffer::new(
+                IpcCallerKind::McpServer,
+                [client_version],
+                [IpcScope::PresenceRead],
+            )
+            .expect("握手提议有效");
+            assert_eq!(
+                negotiator
+                    .negotiate(&offer)
+                    .expect_err("混装必须在握手时失败")
+                    .kind(),
+                IpcHandshakeFailureKind::IncompatibleVersion
+            );
+        }
     }
 
     struct 拒绝全部作用域;

@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-a2a-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-agent-client"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-bridge-ipc",
  "agent-room-bridge-local-adapter",
@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-agent-reception"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-agent-client",
  "agent-room-bridge-ipc",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-application"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-domain",
  "base64 0.22.1",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-bridge"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-bridge-core"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-bridge-ipc"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-bridge-local-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-bridge-core",
  "agent-room-bridge-ipc",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-bridge-storage-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-cli"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-agent-client",
  "agent-room-agent-reception",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-content-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-control-plane"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-a2a-adapter",
  "agent-room-application",
@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-desktop"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-agent-client",
  "agent-room-agent-reception",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-domain"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "proptest",
  "thiserror 2.0.20",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-host-adapters"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "serde",
  "serde_json",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-identity-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-matrix-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-bridge-core",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-matrix-provisioning-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-mcp"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-agent-client",
  "agent-room-bridge-ipc",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-message-crypto-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "aes-gcm",
  "agent-room-application",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-postgres-adapter"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-application",
  "agent-room-domain",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-protocol-conformance"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "jsonschema",
  "serde",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-release-manifest"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "agent-room-release-tool"
-version = "0.1.0-alpha.32"
+version = "0.1.0-alpha.33"
 dependencies = [
  "agent-room-release-manifest",
  "base64 0.22.1",

@@ -486,7 +486,7 @@ where
     }
 
     let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
@@ -2351,7 +2351,7 @@ mod tests {
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DiagnosticCli,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试提议有效");
@@ -2368,7 +2368,7 @@ mod tests {
         .expect("客户端问候可发送");
         let (challenge_id, challenge) = read_challenge(&mut client).await;
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .expect("测试协商器有效")
                 .negotiate(&offer)
                 .expect("测试提议可协商");
@@ -2432,12 +2432,12 @@ mod tests {
     fn 已认证的_mcp_调用仍必须携带会话且不能借包装扩大权限() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::McpServer,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -2478,11 +2478,11 @@ mod tests {
         let negotiate = |scope| {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::AgentCli,
-                [IpcProtocolVersion::V3_0],
+                [IpcProtocolVersion::V4_0],
                 [scope],
             )
             .unwrap();
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
         };
@@ -2516,12 +2516,12 @@ mod tests {
     fn 桌面读取默认人物的既有调用仍由桌面权限约束() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DesktopShell,
-            [IpcProtocolVersion::V3_0],
+            [IpcProtocolVersion::V4_0],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -2538,12 +2538,12 @@ mod tests {
         ] {
             let offer = IpcHandshakeOffer::new(
                 caller,
-                [IpcProtocolVersion::V3_0],
+                [IpcProtocolVersion::V4_0],
                 [IpcScope::BridgeStatusRead],
             )
             .unwrap();
             let agreement =
-                IpcHandshakeNegotiator::new([IpcProtocolVersion::V3_0], FoundationIpcScopePolicy)
+                IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
                     .unwrap()
                     .negotiate(&offer)
                     .unwrap();

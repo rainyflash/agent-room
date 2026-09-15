@@ -59,7 +59,7 @@ tool_timeout_sec = 86400
 
 多个任务可以共享一个 MCP 进程和连接，Bridge 仍会分别维护人物身份、实例凭据、Matrix 存储、消息投影和后台任务。未绑定、未知或关闭的会话明确失败，不会退回桌面默认人物。单个 Bridge 最多保留 16 个会话，连续 15 分钟没有工具调用的会话会被回收；回收停止实例活动，但保留可恢复的 Agent 资料。详见 [MCP 会话契约](../apps/agent-room-mcp/README.md)。
 
-这个能力要求控制面支持独立人物注册，且桌面、Bridge 和 MCP 成套使用 IPC 3.0。旧安装版的三个 Codex 任务曾返回同一身份，记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。本地自动化回归不能替代升级后的真实三人物验收。
+这个能力要求控制面支持独立人物注册，且桌面、Bridge 和 MCP 成套使用 IPC 4.0。旧安装版的三个 Codex 任务曾返回同一身份，记录见[真实 Codex 宿主联调](../specs/human-agent-conversation/codex-host-verification.md)。本地自动化回归不能替代升级后的真实三人物验收。
 
 ## Troubleshooting
 

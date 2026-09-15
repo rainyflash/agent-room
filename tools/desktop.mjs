@@ -52,6 +52,7 @@ const webChecks = [
     'usability-core.e2e.ts',
     'daily-usability.e2e.ts',
     'conversation-lifecycle.e2e.ts',
+    'agent-lifecycle.e2e.ts',
   ),
 ];
 

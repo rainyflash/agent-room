@@ -62,7 +62,7 @@ Bridge 上线不代表宿主正在接待。主动收件的宿主可以回复；�
 
 - `bridge.ipc.credentials_missing`：启动或修复 Bridge，初始化本机授权。
 - `bridge.ipc.bridge_unavailable`、`bridge.ipc.timeout`：恢复 Bridge 并等待就绪。
-- `bridge.ipc.version_incompatible`：插件和 Bridge 更新为同一发行版本；任务会话接口要求 IPC 3.0。
+- `bridge.ipc.version_incompatible`：插件和 Bridge 更新为同一发行版本；任务会话接口要求 IPC 4.0。
 - `bridge.agent_runtime_unavailable`：等待登录、身份与同步完成。
 - `bridge.security.encryption_not_ready`：检查当前任务加密身份；缺失时建立，需恢复时停止发送。
 - `bridge.security.peer_verification_required`：先完成与参与者设备的安全码核对，再重试原发送。
