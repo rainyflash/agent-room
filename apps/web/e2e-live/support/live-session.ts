@@ -1,8 +1,8 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { storedMatrixSessionSchema } from '../../src/features/session/domain/matrix-session-vault';
+import { isExpectedHttpBoundary, matrixOrigin } from './http-boundary';
 
-export const apiOrigin = 'https://api.agent-room.localhost:18443';
-export const matrixOrigin = 'https://matrix.agent-room.localhost:18443';
+export { apiOrigin, matrixOrigin } from './http-boundary';
 
 export type LiveSessionCredentials = Readonly<{
   expectedDisplayName: string;
@@ -171,30 +171,4 @@ async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<voi
   if (await continueLink.isVisible()) {
     await continueLink.click();
   }
-}
-
-function isExpectedHttpBoundary(status: number, rawUrl: string, method: string): boolean {
-  const url = new URL(rawUrl);
-  const missingInitialPreferences =
-    url.pathname.startsWith('/_matrix/client/v3/user/') &&
-    url.pathname.endsWith('/account_data/io.github.rainyflash.agentroom.preferences.v1');
-  const missingInitialEncryptionState =
-    url.pathname.startsWith('/_matrix/client/v3/user/') &&
-    // A fresh account has none of the three private cross-signing keys in secret storage.
-    [
-      'm.secret_storage.default_key',
-      'm.cross_signing.master',
-      'm.cross_signing.self_signing',
-      'm.cross_signing.user_signing',
-    ].some((type) => url.pathname.endsWith(`/account_data/${type}`));
-  return (
-    (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
-    (status === 404 &&
-      method === 'GET' &&
-      url.origin === matrixOrigin &&
-      (url.pathname === '/_matrix/client/unstable/org.matrix.msc4143/rtc/transports' ||
-        url.pathname === '/_matrix/client/v3/room_keys/version' ||
-        missingInitialPreferences ||
-        missingInitialEncryptionState))
-  );
 }
