@@ -1,9 +1,9 @@
-use crate::{HostBinding, ReceptionFailure as Failure, ReceptionResult as Result};
+use crate::{HostBinding, HostReply, ReceptionFailure as Failure, ReceptionResult as Result};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 use tokio::process::Command;
 
-const ALLOWED: &str = "mcp__agent_room__agent_room_get_self,mcp__agent_room__agent_room_list_previews,mcp__agent_room__agent_room_wait_for_messages,mcp__agent_room__agent_room_send_message,mcp__agent_room__agent_room_publish_status";
+const ALLOWED: &str = "Read,mcp__agent_room__agent_room_get_self,mcp__agent_room__agent_room_list_previews,mcp__agent_room__agent_room_get_presence,mcp__agent_room__agent_room_open_content";
 
 pub(crate) async fn preflight(binding: &HostBinding) -> Result<()> {
     let mut command = Command::new(&binding.executable);
@@ -50,7 +50,7 @@ pub(crate) fn command(binding: &HostBinding, data_root: &Path, service: &str) ->
             "--verbose",
             "--restricted",
             "--tools",
-            "",
+            "Read",
             "--permission-mode",
             "dontAsk",
             "--strict-mcp-config",
@@ -66,11 +66,12 @@ pub(crate) fn command(binding: &HostBinding, data_root: &Path, service: &str) ->
         .current_dir(&binding.workspace);
     Ok(command)
 }
-pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> Result<()> {
+pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> Result<HostReply> {
     let text =
         std::str::from_utf8(stdout).map_err(|_| Failure::local("receiver.host_output_invalid"))?;
     let mut bound = false;
     let mut completed = false;
+    let mut reply = None;
     for line in text.lines().filter(|line| !line.is_empty()) {
         let event: Value = serde_json::from_str(line)
             .map_err(|_| Failure::local("receiver.host_output_invalid"))?;
@@ -94,6 +95,10 @@ pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> Result<()> {
                     return Err(Failure::local("receiver.host_turn_failed"));
                 }
                 completed = true;
+                reply = event
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
             }
             Some("error") => return Err(Failure::local("receiver.host_turn_failed")),
             Some(_) => {}
@@ -101,7 +106,11 @@ pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> Result<()> {
         }
     }
     if bound && completed {
-        Ok(())
+        HostReply::parse(
+            reply
+                .as_deref()
+                .ok_or_else(|| Failure::local("receiver.host_reply_missing"))?,
+        )
     } else {
         Err(Failure::local("receiver.host_completion_missing"))
     }
@@ -121,8 +130,7 @@ mod tests {
     #[test]
     fn 完成事件必须属于同一任务且没有拒绝的权限() {
         let init = json!({"type":"system","subtype":"init","session_id":"task-a"});
-        let mut result =
-            json!({"type":"result","subtype":"success","is_error":false,"session_id":"task-a"});
+        let mut result = json!({"type":"result","subtype":"success","is_error":false,"session_id":"task-a","result":"{\"body\":\"hello\"}"});
         assert!(confirm_turn(format!("{init}\n{result}").as_bytes(), "task-a").is_ok());
         assert!(confirm_turn(result.to_string().as_bytes(), "task-a").is_err());
         assert!(confirm_turn(format!("{init}\n{result}").as_bytes(), "task-b").is_err());
@@ -149,7 +157,8 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--resume", &binding.task_id])
         );
-        assert!(args.windows(2).any(|pair| pair == ["--tools", ""]));
+        assert!(args.windows(2).any(|pair| pair == ["--tools", "Read"]));
+        assert!(!ALLOWED.contains("send_message") && !ALLOWED.contains("publish_status"));
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["--permission-mode", "dontAsk"])

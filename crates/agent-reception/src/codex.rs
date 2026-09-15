@@ -1,4 +1,4 @@
-use crate::{HostBinding, ReceptionFailure as CliFailure, ReceptionResult as CliResult};
+use crate::{HostBinding, HostReply, ReceptionFailure as CliFailure, ReceptionResult as CliResult};
 use serde_json::Value;
 use std::{ffi::OsString, path::Path};
 use tokio::process::Command;
@@ -7,6 +7,7 @@ pub(crate) fn command(
     binding: &HostBinding,
     data_root: &Path,
     service: &str,
+    schema: &Path,
 ) -> CliResult<Command> {
     let mut command = Command::new(&binding.executable);
     let mcp = serde_json::to_string(&binding.mcp_executable)
@@ -28,10 +29,14 @@ pub(crate) fn command(
             "mcp_servers.agent_room.required=true",
             "-c",
             "mcp_servers.agent_room.tool_timeout_sec=150",
+            "-c",
+            "mcp_servers.agent_room.enabled_tools=[\"agent_room_get_self\",\"agent_room_list_previews\",\"agent_room_get_presence\",\"agent_room_open_content\"]",
         ])
         .arg("-c")
         .arg(format!("mcp_servers.agent_room.env={environment}"))
-        .args(["resume", &binding.task_id, "--json", "-"])
+        .args(["resume", "--output-schema"])
+        .arg(schema)
+        .args([&binding.task_id, "--json", "-"])
         .current_dir(&binding.workspace);
     Ok(command)
 }
@@ -53,11 +58,12 @@ fn mcp_environment(
     Ok(format!("{{{}}}", entries.join(",")))
 }
 
-pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> CliResult<()> {
+pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> CliResult<HostReply> {
     let text = std::str::from_utf8(stdout)
         .map_err(|_| CliFailure::local("receiver.host_output_invalid"))?;
     let mut bound = false;
     let mut completed = false;
+    let mut reply = None;
     for line in text.lines().filter(|line| !line.is_empty()) {
         let event: Value = serde_json::from_str(line)
             .map_err(|_| CliFailure::local("receiver.host_output_invalid"))?;
@@ -68,6 +74,13 @@ pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> CliResult<()> 
                 }
                 bound = true;
             }
+            Some("item.completed") if !completed => {
+                if let Some(item) = event.get("item")
+                    && item.get("type").and_then(Value::as_str) == Some("agent_message")
+                {
+                    reply = item.get("text").and_then(Value::as_str).map(str::to_owned);
+                }
+            }
             Some("turn.completed") => completed = true,
             Some("turn.failed" | "error") => {
                 return Err(CliFailure::local("receiver.host_turn_failed"));
@@ -77,7 +90,11 @@ pub(crate) fn confirm_turn(stdout: &[u8], expected_task: &str) -> CliResult<()> 
         }
     }
     if bound && completed {
-        Ok(())
+        HostReply::parse(
+            reply
+                .as_deref()
+                .ok_or_else(|| CliFailure::local("receiver.host_reply_missing"))?,
+        )
     } else {
         Err(CliFailure::local("receiver.host_completion_missing"))
     }
@@ -103,10 +120,26 @@ mod tests {
     }
     #[test]
     fn 必须绑定指定任务且收到明确完成事件() {
-        assert!(confirm_turn(b"{\"type\":\"thread.started\",\"thread_id\":\"task-a\"}\n{\"type\":\"turn.completed\"}\n", "task-a").is_ok());
+        assert!(confirm_turn(b"{\"type\":\"thread.started\",\"thread_id\":\"task-a\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"body\\\":\\\"hello\\\"}\"}}\n{\"type\":\"turn.completed\"}\n", "task-a").is_ok());
+        assert!(confirm_turn(b"{\"type\":\"thread.started\",\"thread_id\":\"task-a\"}\n{\"type\":\"turn.completed\"}\n", "task-a").is_err());
         assert!(confirm_turn(b"{\"type\":\"thread.started\",\"thread_id\":\"task-b\"}\n{\"type\":\"turn.completed\"}\n", "task-a").is_err());
         assert!(confirm_turn(b"{\"type\":\"turn.completed\"}\n", "task-a").is_err());
         assert!(confirm_turn(b"{\"type\":\"thread.started\",\"thread_id\":\"task-a\"}\n{\"type\":\"turn.failed\"}\n", "task-a").is_err());
+    }
+    #[test]
+    fn tool_results_and_unstructured_final_text_cannot_become_replies() {
+        let start = serde_json::json!({"type":"thread.started","thread_id":"task-a"});
+        let done = serde_json::json!({"type":"turn.completed"});
+        for item in [
+            serde_json::json!({"type":"mcp_tool_call","text":"{\"body\":\"not an assistant reply\"}"}),
+            serde_json::json!({"type":"agent_message","text":"A tool was denied; nothing was sent."}),
+            serde_json::json!({"type":"agent_message","text":"{\"body\":\"hello\",\"provenance\":\"human\"}"}),
+        ] {
+            let output = serde_json::json!({"type":"item.completed","item":item});
+            assert!(
+                confirm_turn(format!("{start}\n{output}\n{done}").as_bytes(), "task-a").is_err()
+            );
+        }
     }
     #[test]
     fn 不使用最近任务或取消权限边界且路径按单个参数传递() {
@@ -118,7 +151,13 @@ mod tests {
             mcp_executable: executable,
             workspace: std::env::current_dir().unwrap(),
         };
-        let command = command(&binding, &binding.workspace, "test.receiver").unwrap();
+        let command = command(
+            &binding,
+            &binding.workspace,
+            "test.receiver",
+            &binding.workspace.join("reply-schema.json"),
+        )
+        .unwrap();
         let args: Vec<_> = command
             .as_std()
             .get_args()
@@ -129,10 +168,18 @@ mod tests {
                 .iter()
                 .any(|arg| arg == "--last" || arg.contains("dangerously"))
         );
-        assert_eq!(
-            &args[args.len() - 4..],
-            ["resume", &binding.task_id, "--json", "-"]
-        );
+        assert_eq!(&args[args.len() - 3..], [&binding.task_id, "--json", "-"]);
         assert!(args.contains(&"read-only".to_owned()));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["resume", "--output-schema"])
+        );
+        let tools = args
+            .iter()
+            .find(|arg| arg.starts_with("mcp_servers.agent_room.enabled_tools="))
+            .unwrap();
+        assert!(tools.contains("agent_room_open_content"));
+        assert!(!tools.contains("send_message") && !tools.contains("publish_status"));
+        assert!(!args.iter().any(|arg| arg.contains("approval_mode")));
     }
 }

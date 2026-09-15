@@ -648,6 +648,16 @@ fn authorize_method(
     method: &IpcMethod,
     agreement: &IpcHandshakeAgreement,
 ) -> Result<(), BridgeIpcDispatchFailure> {
+    // A CLI receiver closes and drains its host session before releasing the run.
+    // Only release may use the device transport; the server still checks its exact owner and run.
+    let drained_cli_release = agreement.caller() == IpcCallerKind::AgentCli
+        && matches!(
+            method,
+            IpcMethod::ReceptionControl(agent_room_bridge_ipc::ReceptionRequest {
+                command: agent_room_bridge_ipc::ReceptionCommand::Release,
+                ..
+            })
+        );
     if matches!(method, IpcMethod::HostSessionDiagnostics)
         && agreement.caller() != IpcCallerKind::DesktopShell
     {
@@ -666,7 +676,8 @@ fn authorize_method(
             | IpcMethod::OpenHostSession(_)
             | IpcMethod::CloseHostSession(_)
             | IpcMethod::WithSession { .. }
-    ) {
+    ) && !drained_cli_release
+    {
         return Err(BridgeIpcDispatchFailure::new(
             "bridge.host_session.required",
             IpcErrorCategory::Validation,
@@ -2467,6 +2478,65 @@ mod tests {
         };
         assert_eq!(
             authorize_method(&forbidden, &agreement)
+                .unwrap_err()
+                .category,
+            IpcErrorCategory::Authorization
+        );
+    }
+
+    #[test]
+    fn cli_can_release_a_drained_run_without_reopening_a_host_session() {
+        use agent_room_bridge_ipc::{ReceptionCommand, ReceptionProgress, ReceptionRequest};
+        let id = Uuid::now_v7();
+        let request = ReceptionRequest {
+            agent_id: id,
+            instance_id: id,
+            catalog_id: id,
+            run_id: id,
+            room_id: "!room:test".into(),
+            command: ReceptionCommand::Release,
+        };
+        let negotiate = |caller, scope| {
+            let offer =
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_0], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+                .unwrap()
+        };
+        let cli = negotiate(IpcCallerKind::AgentCli, IpcScope::HostSessionsManage);
+        assert!(authorize_method(&IpcMethod::ReceptionControl(request.clone()), &cli).is_ok());
+        for command in [
+            ReceptionCommand::Claim {
+                session_key: id,
+                display_name: "Receiver".into(),
+                initial: ReceptionProgress::default(),
+            },
+            ReceptionCommand::Save {
+                revision: 0,
+                progress: ReceptionProgress::default(),
+            },
+            ReceptionCommand::Heartbeat,
+        ] {
+            let method = IpcMethod::ReceptionControl(ReceptionRequest {
+                command,
+                ..request.clone()
+            });
+            assert_eq!(
+                authorize_method(&method, &cli).unwrap_err().code(),
+                "bridge.host_session.required"
+            );
+        }
+        let mcp = negotiate(IpcCallerKind::McpServer, IpcScope::HostSessionsManage);
+        assert_eq!(
+            authorize_method(&IpcMethod::ReceptionControl(request.clone()), &mcp)
+                .unwrap_err()
+                .code(),
+            "bridge.host_session.required"
+        );
+        let cli_without_scope = negotiate(IpcCallerKind::AgentCli, IpcScope::PresenceRead);
+        assert_eq!(
+            authorize_method(&IpcMethod::ReceptionControl(request), &cli_without_scope)
                 .unwrap_err()
                 .category,
             IpcErrorCategory::Authorization
