@@ -21,6 +21,11 @@ class RestoreDrillError(RuntimeError):
     """表示隔离恢复没有达到可用性或完整性门禁。"""
 
 
+# 每次演练留下一份完整的隔离恢复副本，体积与一次备份相当。报告摘要已写入备份摘要与发行记录，
+# 旧目录本身没有留存价值；不清理会持续占用与备份同量级的磁盘，最终触发生产安装的余量门禁。
+RETAINED_RESTORE_DRILLS = 5
+
+
 @dataclass(frozen=True, slots=True)
 class DatabaseRestoreEvidence:
     restore_point_name: str
@@ -86,6 +91,32 @@ class RestoreDrillReport:
                 "deletionReplaysQueued": self.database.deletion_replays_queued,
             },
         }
+
+
+def _prune_restore_drills(root: Path, *, keep: Path) -> tuple[str, ...]:
+    """只保留最近若干次演练目录；当前这次始终保留。
+
+    目录名以备份编号和演练时间开头，按名称排序即按时间排序。删除失败按尽力而为跳过：
+    磁盘清理不应让一次已经成功的恢复演练失败。
+    """
+
+    directories = sorted(
+        (path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name
+    )
+    surplus = len(directories) - RETAINED_RESTORE_DRILLS
+    removed: list[str] = []
+    for path in directories:
+        if surplus <= 0:
+            break
+        if path == keep:
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            continue
+        removed.append(path.name)
+        surplus -= 1
+    return tuple(removed)
 
 
 @dataclass(slots=True)
@@ -168,6 +199,7 @@ class RestoreDrillCoordinator:
             path.mkdir(mode=0o700)
         except FileExistsError as error:
             raise RestoreDrillError("同一备份与时间的恢复演练目录已存在。") from error
+        _prune_restore_drills(root, keep=path)
         return path
 
     @staticmethod
