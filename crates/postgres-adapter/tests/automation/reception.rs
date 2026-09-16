@@ -127,7 +127,7 @@ async fn reception_cannot_reactivate_an_instance_after_device_revocation() {
 async fn second_device(pool: &PgPool, fixture: &AutomationFixture) -> (DeviceId, AgentInstanceId) {
     let device = DeviceId::from_uuid(Uuid::now_v7());
     let instance = AgentInstanceId::from_uuid(Uuid::now_v7());
-    sqlx::query("INSERT INTO agent_room.device (id,principal_id,label,platform,public_signing_key,matrix_device_id,trust_state,last_seen_at,created_at,verified_at) VALUES($1,$2,'Second computer','windows',$3,'SECOND','verified',clock_timestamp(),clock_timestamp(),clock_timestamp())")
+    sqlx::query("INSERT INTO agent_room.device (id,principal_id,label,platform,public_signing_key,matrix_device_id,trust_state,last_seen_at,created_at,verified_at) VALUES($1,$2,'Second computer','windows',$3,'SECOND','verified',statement_timestamp(),statement_timestamp(),statement_timestamp())")
         .bind(device.as_uuid()).bind(fixture.principal.as_uuid()).bind(signing_key(device.as_uuid()))
         .execute(pool).await.expect("create second device");
     sqlx::query("INSERT INTO agent_room.agent_instance (id,agent_id,device_id,adapter_binding_id,public_signing_key,matrix_device_id,status,lease_expires_at,last_seen_at,created_at) SELECT $1,agent_id,$2,adapter_binding_id,$3,'SECOND-AGENT','online',clock_timestamp()+interval '5 minutes',clock_timestamp(),clock_timestamp() FROM agent_room.agent_instance WHERE id=$4")
