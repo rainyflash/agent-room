@@ -134,6 +134,8 @@ sudo python3 tools/self_host.py backup-verify \
 
 Use `restore-drill` with the same arguments to prove an isolated recovery. A backup stored only on the application host is not disaster recovery.
 
+Size the backup volume before enabling the timer. Every backup within `recentRetentionHours` is kept in full, so the recent set alone costs roughly `recentRetentionHours * 60 / rpoMinutes` backups; older ones are thinned to one per day up to `retentionDays`. With the defaults, a 15-minute RPO keeps 96 full backups for the first day. Lower `recentRetentionHours` when the host has limited disk: the RPO is unchanged, only the window of fine-grained restore points shrinks. Restore drills are kept for the five most recent runs; each one stores a complete isolated copy, so treat their space as comparable to a backup.
+
 ## Upgrade and stop
 
 Back up and verify before every upgrade. Check out a signed compatible release, review its migration and rollback notes, then run:

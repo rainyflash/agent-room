@@ -10,9 +10,11 @@ from tools.prodops.backup import BackupCoordinator, BackupRepository
 from tools.prodops.config import load_deployment_config
 from tools.prodops.render import DeploymentPaths, render_deployment
 from tools.prodops.restore import (
+    RETAINED_RESTORE_DRILLS,
     DatabaseRestoreEvidence,
     RestoreDrillCoordinator,
     RestoreDrillError,
+    _prune_restore_drills,
 )
 from tools.prodops.secrets import SecretStore
 
@@ -128,6 +130,52 @@ class RestoreDrillTests(unittest.TestCase):
                 self.repository,
                 FakeRestoreBackend(),
             ).run(self.manifest.backup_id)
+
+
+class RestoreDrillRetentionTests(unittest.TestCase):
+    """演练目录与一次备份同量级，必须自动收敛，否则生产磁盘余量门禁最终会拒绝安装。"""
+
+    @staticmethod
+    def _drills(root: Path, count: int) -> list[Path]:
+        created = []
+        for index in range(count):
+            path = root / f"20260916T{index:02d}0000000000Z-abcdef12-20260916T{index:02d}0100Z"
+            path.mkdir()
+            (path / "payload").write_bytes(b"x")
+            created.append(path)
+        return created
+
+    def test_保留最近若干次且当前演练不会被删除(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            drills = self._drills(root, RETAINED_RESTORE_DRILLS + 4)
+            current = drills[-1]
+
+            removed = _prune_restore_drills(root, keep=current)
+
+            remaining = sorted(path.name for path in root.iterdir() if path.is_dir())
+            self.assertEqual(len(remaining), RETAINED_RESTORE_DRILLS)
+            self.assertIn(current.name, remaining)
+            self.assertEqual(sorted(removed), sorted(path.name for path in drills[:4]))
+
+    def test_未超出保留数量时不删除任何演练(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            drills = self._drills(root, RETAINED_RESTORE_DRILLS)
+
+            self.assertEqual(_prune_restore_drills(root, keep=drills[-1]), ())
+            self.assertEqual(len(list(root.iterdir())), RETAINED_RESTORE_DRILLS)
+
+    def test_不触碰演练目录以外的文件(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            drills = self._drills(root, RETAINED_RESTORE_DRILLS + 1)
+            unrelated = root / "notes.txt"
+            unrelated.write_text("keep", encoding="utf-8")
+
+            _prune_restore_drills(root, keep=drills[-1])
+
+            self.assertTrue(unrelated.is_file())
 
 
 def write(path: Path, content: bytes) -> None:
