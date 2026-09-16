@@ -475,6 +475,13 @@ impl AgentRuntimeIpcFacade {
         }
     }
 
+    /// 把已校验的附件下载固定到 Bridge 私有目录，受限宿主只按该目录获得读取权限。
+    pub(super) fn set_attachment_directory(&mut self, directory: std::path::PathBuf) {
+        self.attachments = Arc::new(super::attachment_downloads::AttachmentDownloads::new(
+            directory,
+        ));
+    }
+
     pub(super) fn get_self(&self) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
         Ok(IpcResponse::SelfSummary {

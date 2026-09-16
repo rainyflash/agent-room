@@ -13,6 +13,8 @@ pub use matrix_security::{
     IpcMatrixSecurityResult, IpcMatrixVerificationStage, IpcMatrixVerificationStep,
 };
 pub mod limits;
+mod paths;
+pub use paths::attachment_directory;
 mod tools;
 pub use agent_room_application::reception::{
     ReceptionCommand, ReceptionPending, ReceptionProgress, ReceptionRecord, ReceptionRequest,

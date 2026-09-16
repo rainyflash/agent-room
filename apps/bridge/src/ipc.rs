@@ -126,6 +126,14 @@ impl FoundationBridgeIpcRequestHandler {
             .as_ref()
             .ok_or_else(agent_runtime_unavailable)
     }
+    /// 附件下载目录必须与接待端授予宿主读取权限的目录一致。
+    pub(crate) fn with_attachment_directory(mut self, directory: std::path::PathBuf) -> Self {
+        if let Some(runtime) = self.agent_runtime.as_mut() {
+            runtime.set_attachment_directory(directory);
+        }
+        self
+    }
+
     pub(crate) fn with_reception(
         mut self,
         gateway: Arc<dyn agent_room_application::reception::ReceptionControlGateway>,
