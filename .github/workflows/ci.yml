@@ -126,7 +126,7 @@ jobs:
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.room.the-zeroth.com/_agent-room/api
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
-            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.35/agent-room-installer-v0.1.0-alpha.35-windows-x86_64.exe
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.36/agent-room-installer-v0.1.0-alpha.36-windows-x86_64.exe
       - name: 保存不可变镜像摘要
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -161,7 +161,8 @@ jobs:
         with:
           shared-key: linux-quality
           add-job-id-key: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # 发布派发会取消同一提交的 push 运行，只按 push 保存会让 main 缓存长期停留在旧锁文件上。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装 Linux 桌面编译依赖
         run: bash tools/install-linux-desktop-deps.sh
       - name: 安装 Node 依赖
@@ -210,7 +211,7 @@ jobs:
         with:
           shared-key: windows-runtime
           add-job-id-key: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装 Node 依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       - name: 检查 Bridge、MCP 与平台安全存储适配器
@@ -224,7 +225,8 @@ jobs:
 
   web-browser:
     name: Web 真实浏览器验收
-    needs: quality
+    # 浏览器验收不依赖 Rust 检查的产物；不再串行等待 quality，PR 反馈可提前约 11 分钟。
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -243,7 +245,7 @@ jobs:
       - name: 验收已发布 Alpha 的版本化下载入口
         env:
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
-          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.35/agent-room-installer-v0.1.0-alpha.35-windows-x86_64.exe
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.36/agent-room-installer-v0.1.0-alpha.36-windows-x86_64.exe
         run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright test e2e/public-alpha-landing.e2e.ts
       - name: 上传浏览器验收产物
         if: ${{ !cancelled() }}
@@ -277,8 +279,12 @@ jobs:
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       - name: 审计 Node 依赖
         run: corepack pnpm@10.28.0 audit:node
+      - name: 安装预编译的 cargo-deny
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # 版本 2.87.13
+        with:
+          tool: cargo-deny@0.20.2
       - name: 审计 Rust 依赖与许可证
-        run: cargo install cargo-deny --locked --version 0.20.2 && cargo deny check
+        run: cargo deny check
       - name: 验证开源文档与许可证清单
         run: python tools/license_inventory.py check && python tools/open_source.py
       - name: 生成物料清单
@@ -293,8 +299,7 @@ jobs:
 
   live-session:
     name: 真实网页登录与会话恢复
-    needs: quality
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && (inputs.suite == 'session' || needs.quality.result == 'success') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.suite == 'session' || inputs.suite == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -343,7 +348,7 @@ jobs:
 
   integration:
     name: PostgreSQL、Matrix、对象存储与协议集成
-    needs: quality
+    # 这是完整 CI 的最长作业；不再等待 quality，与其并行可缩短整轮约 12 分钟。
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -356,6 +361,17 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 恢复覆盖率插桩编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          # 插桩产物与普通编译产物不能混用，使用独立缓存键。
+          shared-key: linux-coverage
+          add-job-id-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: 安装预编译的 cargo-llvm-cov
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # 版本 2.87.13
+        with:
+          tool: cargo-llvm-cov@0.9.0
       - name: 安装 Linux 桌面编译依赖
         run: bash tools/install-linux-desktop-deps.sh
       - name: 从干净检出引导贡献者环境
@@ -369,7 +385,7 @@ jobs:
       - name: 验证数据库与 Matrix 并合并 Rust 覆盖率
         run: |
           rustup component add llvm-tools-preview --toolchain 1.97.1
-          cargo install cargo-llvm-cov --locked --version 0.9.0
+          cargo llvm-cov --version
           python tools/database.py coverage
       - name: 确认覆盖率未改写源码并清理平台生成 Schema
         run: python tools/build_hygiene.py

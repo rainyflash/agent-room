@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
-import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 
@@ -128,7 +127,6 @@ function run(command) {
     windowsHide: true,
     env: {
       ...process.env,
-      CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? String(Math.min(4, availableParallelism())),
       ...(command.includes('playwright')
         ? {
             AGENT_ROOM_E2E_REUSE_SERVER: '0',

@@ -1,6 +1,6 @@
 # 日常开发与可续跑发布
 
-日常开发使用 `corepack pnpm@10.28.0 desktop:dev`。它启动真实桌面壳及开发前端，修改界面无需生成安装包。提交前运行 `desktop:check`；`desktop:package` 复用同一套原生和浏览器检查，检查失败不会继续生成安装器。`daily-usability.e2e.ts` 已纳入这两个入口。
+日常开发使用 `corepack pnpm@10.28.0 desktop:dev`。它启动真实桌面壳及开发前端，修改界面无需生成安装包。提交前运行 `desktop:check`；`desktop:package` 复用同一套原生和浏览器检查，检查失败不会继续生成安装器。只需要安装包做本机试装时，可直接运行 `corepack pnpm@10.28.0 build:desktop`，它不重复这些检查；提交前仍以 `desktop:check` 为准。`daily-usability.e2e.ts` 已纳入这两个入口。
 
 ## 发布入口
 

@@ -16,8 +16,39 @@ struct Bridge {
     source: IpcMessagePreviewSummary,
     replies: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
     reception: Arc<Mutex<Option<ReceptionRecord>>>,
+    outcome: Arc<Mutex<Reply>>,
+    sent: Arc<Mutex<Vec<IpcSendMessageRequest>>>,
 }
 impl Bridge {
+    fn publish(&self, request: &IpcSendMessageRequest, outcome: Reply) {
+        if matches!(outcome, Reply::Missing) {
+            return;
+        }
+        let mut message = self.source.clone();
+        message.message_id = request.submission_id.clone().unwrap();
+        message.event_id = "$reply".into();
+        message.reply_to_message_id = Some(if matches!(outcome, Reply::WrongRelation) {
+            uuid::Uuid::now_v7().to_string()
+        } else {
+            self.source.message_id.clone()
+        });
+        message.actor = IpcActorSummary::Agent {
+            agent: IpcAgentSummary {
+                agent_id: if matches!(outcome, Reply::WrongAgent) {
+                    uuid::Uuid::now_v7().to_string()
+                } else {
+                    self.identity.clone()
+                },
+                display_name: "Receiver".into(),
+                matrix_user_id: "@agent:test".into(),
+                avatar_url: None,
+            },
+            instance_id: self.identity.clone(),
+            provenance: IpcMessageProvenance::AutonomousAgent,
+        };
+        self.replies.lock().unwrap().push(message);
+    }
+
     fn control(&self, request: ReceptionRequest) -> IpcResponse {
         let mut reception = self.reception.lock().unwrap();
         match request.command {
@@ -76,6 +107,37 @@ impl BridgeToolClient for Bridge {
             };
             Ok(match method {
                 IpcMethod::ReceptionControl(request) => self.control(request),
+                IpcMethod::SendReceptionMessage { run_id, request } => {
+                    assert_eq!(
+                        run_id,
+                        self.reception.lock().unwrap().as_ref().unwrap().run_id
+                    );
+                    assert_eq!(request.room_id, self.source.room_id);
+                    assert_eq!(
+                        request.reply_to_message_id.as_deref(),
+                        Some(self.source.message_id.as_str())
+                    );
+                    assert_eq!(request.provenance, IpcMessageProvenance::AutonomousAgent);
+                    assert!(request.automation_grant_id.is_some() && request.chat);
+                    self.sent.lock().unwrap().push(request.clone());
+                    let outcome = *self.outcome.lock().unwrap();
+                    self.publish(&request, outcome);
+                    if matches!(outcome, Reply::ValidButSendFails) {
+                        return Err(agent_room_agent_client::BridgeToolFailure::new(
+                            "test.send_response_lost",
+                            IpcErrorCategory::DependencyUnavailable,
+                            true,
+                            std::collections::BTreeMap::new(),
+                        ));
+                    }
+                    IpcResponse::SentMessage {
+                        message: IpcSentMessage {
+                            submission_id: request.submission_id.unwrap(),
+                            state: IpcSubmissionState::Submitted,
+                            event_id: Some("$reply".into()),
+                        },
+                    }
+                }
                 IpcMethod::OpenHostSession(_) => IpcResponse::HostSession {
                     session: IpcHostSessionSummary {
                         session_id: self.identity.clone(),
@@ -130,10 +192,11 @@ impl BridgeToolClient for Bridge {
 #[derive(Clone, Copy)]
 enum Reply {
     Valid,
-    ValidButHostFails,
+    ValidButSendFails,
     Missing,
     WrongRelation,
     WrongAgent,
+    HostFails,
 }
 struct Host {
     bridge: Bridge,
@@ -155,36 +218,11 @@ impl HostRunner for Host {
                 state.last_delivery.unwrap().submission_id,
                 delivery.submission_id
             );
-            if !matches!(self.outcome, Reply::Missing) {
-                let mut message = self.bridge.source.clone();
-                message.message_id = delivery.submission_id.into();
-                message.event_id = "$reply".into();
-                message.reply_to_message_id =
-                    Some(if matches!(self.outcome, Reply::WrongRelation) {
-                        uuid::Uuid::now_v7().to_string()
-                    } else {
-                        delivery.message.message_id.clone()
-                    });
-                message.actor = IpcActorSummary::Agent {
-                    agent: IpcAgentSummary {
-                        agent_id: if matches!(self.outcome, Reply::WrongAgent) {
-                            uuid::Uuid::now_v7().to_string()
-                        } else {
-                            self.bridge.identity.clone()
-                        },
-                        display_name: "Receiver".into(),
-                        matrix_user_id: "@agent:test".into(),
-                        avatar_url: None,
-                    },
-                    instance_id: self.bridge.identity.clone(),
-                    provenance: IpcMessageProvenance::AutonomousAgent,
-                };
-                self.bridge.replies.lock().unwrap().push(message);
-            }
-            if matches!(self.outcome, Reply::ValidButHostFails) {
+            *self.bridge.outcome.lock().unwrap() = self.outcome;
+            if matches!(self.outcome, Reply::HostFails) {
                 return Err(ReceptionFailure::local("receiver.host_failed"));
             }
-            Ok(()) // A host can complete successfully without ever sending a valid reply.
+            HostReply::new("reply content from the host".into())
         })
     }
 }
@@ -215,6 +253,8 @@ fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
             source,
             replies: Arc::default(),
             reception: Arc::default(),
+            outcome: Arc::new(Mutex::new(Reply::Valid)),
+            sent: Arc::default(),
         },
     )
 }
@@ -257,7 +297,7 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
         Reply::WrongRelation,
         Reply::WrongAgent,
         Reply::Valid,
-        Reply::ValidButHostFails,
+        Reply::ValidButSendFails,
     ] {
         let (root, binding, bridge) = setup();
         let host = Host {
@@ -270,7 +310,7 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
             .unwrap()
             .unwrap();
         assert_eq!(host.calls.load(Ordering::Relaxed), 1);
-        if matches!(outcome, Reply::Valid | Reply::ValidButHostFails) {
+        if matches!(outcome, Reply::Valid | Reply::ValidButSendFails) {
             result.unwrap();
             assert_eq!(saved.checkpoint.cursor(), Some("$input"));
             assert_eq!(
@@ -557,24 +597,14 @@ async fn recovered_receipt_never_starts_another_host_turn() {
     let saved = ReceiverStore::inspect(root.path(), &binding.host.task_id)
         .unwrap()
         .unwrap();
-    let reply_host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
     let submission_id = saved.last_delivery.unwrap().submission_id;
-    reply_host
-        .resume(HostDelivery {
-            binding: &binding.host,
-            data_root: root.path(),
-            service: "test.receiver",
-            session_id: &bridge.identity,
-            automation_grant_id: &binding.automation_grant_id,
-            submission_id: &submission_id,
-            message: &bridge.source,
-        })
-        .await
-        .unwrap();
+    let request = bridge.sent.lock().unwrap()[0].clone();
+    assert_eq!(
+        request.submission_id.as_deref(),
+        Some(submission_id.as_str())
+    );
+    // The delayed original publication becomes visible; no model is run to manufacture it.
+    bridge.publish(&request, Reply::Valid);
     // Receipt recovery must work even after the host executable was removed or upgraded.
     let store = ReceiverStore::open(root.path(), &binding.host.task_id).unwrap();
     let mut state = store.load().unwrap().unwrap();
@@ -595,4 +625,53 @@ async fn recovered_receipt_never_starts_another_host_turn() {
         .unwrap()
         .unwrap();
     assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::Replied);
+}
+
+#[tokio::test(start_paused = true)]
+async fn model_content_is_sent_under_the_exact_bound_authority() {
+    let (root, binding, bridge) = setup();
+    let host = Host {
+        bridge: bridge.clone(),
+        outcome: Reply::Valid,
+        calls: AtomicUsize::new(0),
+    };
+    receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
+        .await
+        .unwrap();
+    let sent = bridge.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].automation_grant_id.as_deref(),
+        Some(binding.automation_grant_id.as_str())
+    );
+    assert_eq!(sent[0].body, "reply content from the host");
+    assert_eq!(sent[0].provenance, IpcMessageProvenance::AutonomousAgent);
+    assert_eq!(sent[0].room_id, binding.policy.room_id);
+    assert_eq!(
+        sent[0].reply_to_message_id.as_deref(),
+        Some(bridge.source.message_id.as_str())
+    );
+    assert!(sent[0].mentions.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_host_does_not_send_or_advance_the_pending_delivery() {
+    let (root, binding, bridge) = setup();
+    let host = Host {
+        bridge: bridge.clone(),
+        outcome: Reply::HostFails,
+        calls: AtomicUsize::new(0),
+    };
+    let error = receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "receiver.host_failed");
+    assert!(bridge.sent.lock().unwrap().is_empty());
+    let state = ReceiverStore::inspect(root.path(), &binding.host.task_id)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        state.checkpoint,
+        ReceptionCheckpoint::Pending { .. }
+    ));
 }
