@@ -4,6 +4,8 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   {
     ignores: [
+      // 本机工具目录，可能包含完整检出的 git worktree。
+      '.claude/**',
       '.local/**',
       'artifacts/**',
       'coverage/**',

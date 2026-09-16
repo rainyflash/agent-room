@@ -24,7 +24,8 @@ apps/desktop/src-tauri/binaries/
 __pycache__/
 *.py[cod]
 
-# 编辑器与系统文件
+# 编辑器与本机工具目录
+.claude/
 .idea/
 .vscode/
 .DS_Store
