@@ -4,7 +4,7 @@
 
 - There is no production-supported or publicly signed stable release.
 - The source repository is public, but an outside contributor has not yet completed a clean-room reproduction.
-- `0.1.0-alpha.37` is public. Its rollout passed backup and verified restore, full CI, independent signature and provenance verification, a compatible server promotion, and three same-candidate acceptance runs on a real host; see the [release record](../specs/agent-access/alpha37-release.md). Alpha 33 through Alpha 36 were signed but never published.
+- `0.1.0-alpha.38` is public. Its rollout passed backup and verified restore, full CI, independent signature and provenance verification, a compatible server promotion, and three same-candidate acceptance runs on a real host; see the [release record](../specs/agent-access/alpha38-release.md). Alpha 33 through Alpha 36 were signed but never published.
 - Background reception was verified with a Claude Code host on this release. A Codex host remains supported and is exercised by earlier release records, but the two host adapters are not verified in the same release run.
 - The offline root-key ceremony remains a stable-release blocker, not an Alpha prerequisite. Same-revision GitHub M2 acceptance and Windows x86-64 packaging pass, but no publicly signed stable package exists yet.
 - Two independent public homeservers, clean-host Linux installation, and external security review remain Go/No-Go blockers.
