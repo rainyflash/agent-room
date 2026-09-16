@@ -23,6 +23,7 @@ pub(crate) struct BridgeRuntimePaths {
     handoff_database: PathBuf,
     instance_lock: PathBuf,
     matrix_store_lock: PathBuf,
+    attachment_root: PathBuf,
 }
 
 impl BridgeRuntimePaths {
@@ -45,6 +46,7 @@ impl BridgeRuntimePaths {
             handoff_root,
             instance_lock: data_root.join("bridge.lock"),
             matrix_store_lock: data_root.join("matrix-store.lock"),
+            attachment_root: agent_room_bridge_ipc::attachment_directory(&data_root),
             data_root,
         }
     }
@@ -59,6 +61,8 @@ impl BridgeRuntimePaths {
         create_private_directory(&self.runtime_root)?;
         create_private_directory(&self.matrix_store_root)?;
         create_private_directory(&self.message_root)?;
+        create_private_directory(&self.attachment_root)?;
+        discard_stale_attachments(&self.attachment_root);
         create_private_directory(&self.handoff_root)
     }
 
@@ -84,6 +88,11 @@ impl BridgeRuntimePaths {
 
     pub(crate) fn runtime_root(&self) -> &Path {
         &self.runtime_root
+    }
+
+    /// 已校验附件的私有下载目录；受限宿主只被授予这一个目录的读取权限。
+    pub(crate) fn attachment_root(&self) -> &Path {
+        &self.attachment_root
     }
 }
 
@@ -129,6 +138,26 @@ impl Drop for BridgeExclusiveLock {
         // Unix 的 fork 会短暂继承文件描述符；只关闭当前句柄可能让锁残留到子进程 exec。
         // 显式解锁作用于底层锁，确保守卫结束后可以同步重新获取。
         let _ = self.file.unlock();
+    }
+}
+
+/// 丢弃上次异常退出遗留的附件下载。
+///
+/// 正常退出由临时文件句柄删除自身；进程被杀死时文件会留在私有目录里。实例锁保证同一数据根只有
+/// 一个 Bridge，因此启动时清理是安全的。仍在使用或无法删除的文件按尽力而为跳过。
+fn discard_stale_attachments(directory: &Path) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("agent-room-attachment-"))
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -215,6 +244,24 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{BridgeExclusiveLock, BridgeRuntimeFileFailureKind, BridgeRuntimePaths};
+
+    #[test]
+    fn 准备运行目录会清理上次残留的附件下载() {
+        let temporary = tempdir().expect("测试目录可创建");
+        let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
+        paths.prepare().expect("运行目录可准备");
+        let attachments = paths.attachment_root().to_path_buf();
+        assert!(attachments.starts_with(temporary.path().join("bridge")));
+        let stale = attachments.join("agent-room-attachment-stale.txt");
+        let unrelated = attachments.join("keep.txt");
+        fs::write(&stale, b"stale").expect("可写入残留附件");
+        fs::write(&unrelated, b"keep").expect("可写入无关文件");
+
+        paths.prepare().expect("重复准备仍可成功");
+
+        assert!(!stale.exists(), "残留附件必须在启动时清理");
+        assert!(unrelated.exists(), "只清理本工具写入的附件文件");
+    }
 
     #[test]
     fn 同一进程内重复锁不能依赖_pid_文本抢占() {

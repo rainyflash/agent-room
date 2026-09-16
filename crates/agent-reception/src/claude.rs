@@ -21,6 +21,7 @@ fn validate_help(output: &[u8]) -> Result<()> {
         "--tools",
         "--strict-mcp-config",
         "--setting-sources",
+        "--add-dir",
         "dontAsk",
     ]
     .iter()
@@ -39,6 +40,16 @@ pub(crate) fn command(binding: &HostBinding, data_root: &Path, service: &str) ->
         std::env::var_os("AGENT_ROOM_BRIDGE_VAULT_KEY_FILE"),
     )?;
     let config = json!({"mcpServers":{"agent_room":{"command":binding.mcp_executable,"args":[],"env":environment}}});
+    // `--restricted` confines the read tool to the working directories. Verified attachments are
+    // downloaded outside the workspace, so grant exactly that one directory and nothing else;
+    // without it the host cannot open any attachment and the refused read fails the whole turn.
+    let attachments = agent_room_bridge_ipc::attachment_directory(data_root);
+    std::fs::create_dir_all(&attachments)
+        .map_err(|_| Failure::local("receiver.attachment_directory_failed"))?;
+    let attachments = attachments
+        .to_str()
+        .ok_or_else(|| Failure::validation("receiver.attachment_directory_invalid"))?
+        .to_owned();
     let mut command = Command::new(&binding.executable);
     command
         .args([
@@ -60,6 +71,8 @@ pub(crate) fn command(binding: &HostBinding, data_root: &Path, service: &str) ->
             "{\"disableAllHooks\":true}",
             "--allowedTools",
             ALLOWED,
+            "--add-dir",
+            &attachments,
             "--mcp-config",
         ])
         .arg(config.to_string())
@@ -124,7 +137,13 @@ mod tests {
         assert!(validate_help(b"--resume --print --mcp-config").is_err());
         assert!(
             validate_help(b"--restricted --tools --strict-mcp-config --setting-sources dontAsk")
-                .is_ok()
+                .is_err()
+        );
+        assert!(
+            validate_help(
+                b"--restricted --tools --strict-mcp-config --setting-sources --add-dir dontAsk"
+            )
+            .is_ok()
         );
     }
     #[test]
@@ -147,7 +166,8 @@ mod tests {
             mcp_executable: std::env::current_exe().unwrap(),
             workspace: std::env::current_dir().unwrap(),
         };
-        let command = command(&binding, &binding.workspace, "test.receiver").unwrap();
+        let data_root = tempfile::tempdir().unwrap();
+        let command = command(&binding, data_root.path(), "test.receiver").unwrap();
         let args: Vec<_> = command
             .as_std()
             .get_args()
@@ -167,6 +187,12 @@ mod tests {
             !args
                 .iter()
                 .any(|arg| arg.contains("bypass") || arg == "--continue")
+        );
+        let attachments = agent_room_bridge_ipc::attachment_directory(data_root.path());
+        assert!(attachments.is_dir(), "附件目录必须在启动宿主前存在");
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--add-dir" && pair[1] == attachments.to_string_lossy())
         );
         let config: Value = serde_json::from_str(args.last().unwrap()).unwrap();
         assert_eq!(

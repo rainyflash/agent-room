@@ -196,6 +196,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
                 runtime.content.clone(),
                 Arc::new(SystemClock),
             )
+            .with_attachment_directory(paths.attachment_root().to_path_buf())
             .with_reception(reception.clone()),
         ),
         None => Arc::new(

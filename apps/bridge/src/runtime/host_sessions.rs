@@ -164,6 +164,7 @@ impl HostAgentRuntimeFactory {
                 runtime.content.clone(),
                 Arc::new(SystemClock),
             )
+            .with_attachment_directory(self.paths.attachment_root().to_path_buf())
             .with_reception(self.reception_gateway()?),
         );
         Ok(PreparedHostSession {
