@@ -24,6 +24,10 @@ const lifetimeOptions = [
   { label: 'month', seconds: 30 * 24 * 60 * 60 },
 ] as const;
 
+// 服务端上限同样是 30 天；授权仍可随时撤销，且受房间、消息类型、受众、速率和总量限制。
+const defaultLifetimeSeconds = 30 * 24 * 60 * 60;
+const defaultLifetimeLabel = 'month';
+
 export type AutomationGrantFormProps = {
   readonly catalogId: string;
   readonly instances: readonly AgentInstance[];
@@ -67,7 +71,7 @@ export function AutomationGrantForm({
         : String(initialDraft.maxTotalMessages),
   );
   const [lifetimeSeconds, setLifetimeSeconds] = useState(
-    initialDraft?.lifetimeSeconds ?? 8 * 60 * 60,
+    initialDraft?.lifetimeSeconds ?? defaultLifetimeSeconds,
   );
   const [requiresRiskScan, setRequiresRiskScan] = useState(initialDraft?.requiresRiskScan ?? true);
   const [impactAcknowledged, setImpactAcknowledged] = useState(false);
@@ -75,7 +79,8 @@ export function AutomationGrantForm({
   const instance = instances.find((candidate) => candidate.agentInstanceId === instanceId) ?? null;
   const kindSummary = messageKinds.map((kind) => t(`automation.kind.${kind}`)).join(', ');
   const lifetimeLabel =
-    lifetimeOptions.find((option) => option.seconds === lifetimeSeconds)?.label ?? 'workday';
+    lifetimeOptions.find((option) => option.seconds === lifetimeSeconds)?.label ??
+    defaultLifetimeLabel;
   const impact = useMemo(
     () => ({
       agent: instance?.agentDisplayName ?? '—',

@@ -116,12 +116,17 @@ describe('AutomationGrantHub', () => {
       agentInstanceId: INSTANCE_ID,
       audience: 'known_room_members',
       impactAcknowledged: true,
+      // 默认有效期为服务端允许的上限 30 天；授权仍可随时撤销。
+      lifetimeSeconds: 30 * 24 * 60 * 60,
       maxMessagesPerMinute: 6,
       maxTotalMessages: 100,
       messageKinds: ['room_message'],
       requiresRiskScan: true,
       roomCatalogId: ROOM_ID,
     });
+    expect(screen.getByRole('combobox', { name: 'Lifetime' })).toHaveValue(
+      String(30 * 24 * 60 * 60),
+    );
     expect(await screen.findByText('Local Agent')).toBeInTheDocument();
   });
 
