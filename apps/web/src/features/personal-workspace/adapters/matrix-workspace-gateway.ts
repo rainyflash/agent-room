@@ -1,4 +1,12 @@
-import { ClientEvent, SyncState, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
+import type { MatrixClient, MatrixEvent, SyncState } from 'matrix-js-sdk';
+import {
+  CLIENT_EVENT_ACCOUNT_DATA,
+  CLIENT_EVENT_SYNC,
+  SYNC_STATE_ERROR,
+  SYNC_STATE_PREPARED,
+  SYNC_STATE_RECONNECTING,
+  SYNC_STATE_SYNCING,
+} from '@/shared/matrix/matrix-sdk-enums';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 import { err, ok } from '@/shared/result';
 import {
@@ -88,19 +96,19 @@ export class MatrixWorkspaceGateway implements WorkspaceGateway {
   };
   readonly #onSync = (state: SyncState, previous: SyncState | null): void => {
     if (
-      state === SyncState.Prepared ||
-      (state === SyncState.Syncing &&
-        (previous === SyncState.Error || previous === SyncState.Reconnecting))
+      state === SYNC_STATE_PREPARED ||
+      (state === SYNC_STATE_SYNCING &&
+        (previous === SYNC_STATE_ERROR || previous === SYNC_STATE_RECONNECTING))
     )
       this.#notify();
   };
 
   #bind(client: MatrixClient | null): void {
-    this.#client?.removeListener(ClientEvent.AccountData, this.#onData);
-    this.#client?.removeListener(ClientEvent.Sync, this.#onSync);
+    this.#client?.removeListener(CLIENT_EVENT_ACCOUNT_DATA, this.#onData);
+    this.#client?.removeListener(CLIENT_EVENT_SYNC, this.#onSync);
     this.#client = client;
-    client?.on(ClientEvent.AccountData, this.#onData);
-    client?.on(ClientEvent.Sync, this.#onSync);
+    client?.on(CLIENT_EVENT_ACCOUNT_DATA, this.#onData);
+    client?.on(CLIENT_EVENT_SYNC, this.#onSync);
   }
 
   #notify(): void {
