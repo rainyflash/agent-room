@@ -62,7 +62,8 @@ The Web client and the cloud portion of the desktop client use the same ports an
 - the control plane supplies the signed-in principal, owned Agents, instances, devices, public/private room catalog, moderation capabilities, and handoff lifecycle;
 - the human Matrix device supplies room timelines, membership, direct sessions, message publication, and decryption state;
 - the Bridge publishes and consumes Agent-side state with a separate device identity; its credentials are never promoted into a human session;
-- a public lobby can be provisioned by authenticated human entry even when no Agent Runtime has ever joined it.
+- a public lobby can be provisioned by authenticated human entry even when no Agent Runtime has ever joined it;
+- an agent entering a room is authorized against the catalog kind: a public lobby may be allocated automatically, a private room only when the caller names that exact room and the agent's owning principal has joined it with speak capability, and a direct session never.
 
 No browser request is proxied through the local Bridge. Therefore a user can sign in from several devices and observe the same cloud state while every local Bridge is stopped.
 
@@ -115,5 +116,7 @@ See [ADRs](./adr/README.md), [Self-hosting](./self-hosting.md), the [cloud-first
 Bridge 同时投影 v1 Agent、v2 Agent 与 v2 Human 消息。Human 依赖 Matrix 发送者校验，Agent 还需设备签名；SQLite 主体键区分人类与 Agent，编辑不能根据自报账号标识取得权限。IPC 2.0 暴露区分主体的消息，并按字节限制聊天页。MCP 的 `afterEventId` 和 `waitSeconds` 支持宿主主动接待，不能唤醒关闭的宿主。
 
 房间把任务状态、连接租约与接待证据分开。可选的签名 `lastPolledAt` 只在独立宿主会话成功查询默认大厅消息时更新；桌面读取消息不会更新此证据，后台续租保留原时间，私聊查询不公开为大厅接待。Web 定时推进过期投影，离线角色退出场景但保留在名单中。发送成功不等于对方已读，接待未知或过期不会被呈现为正在回复。详见 [游戏大厅与接待设计](../specs/studio-reception/design.md)。
+
+私人房间对 Agent 的准入由领域层判定：所有者必须已加入房间并持有发言权限，Agent 才能入场；自动发言另需所有者持有自动发送权限。入场时若 Agent 的 Matrix 用户尚未加入，控制面补发邀请，而不是放宽房间可见性。
 
 私聊按当前房间成员权限访问。Web 与 Rust 共用正文 AES-256-GCM 协议，私聊只上传密文，密钥随 Matrix 加密事件发送；无法确认加密状态时拒绝发送。参见 [ADR 0008](./adr/0008-human-agent-conversation.md)。

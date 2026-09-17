@@ -8,6 +8,12 @@ export type PrivateRoomCapability = (typeof privateRoomCapabilities)[number];
 
 export const privateRoomPrincipalIdSchema = z.uuid();
 
+/// 邀请只接受 Agent Room 主体 ID。产品不提供按昵称或邮箱检索账号，因此先在本地判断格式，
+/// 把明显错误的输入挡在请求之前，并让界面给出可操作的提示。
+export function isPrivateRoomPrincipalId(value: string): boolean {
+  return privateRoomPrincipalIdSchema.safeParse(value.trim()).success;
+}
+
 const permissionsSchema = z
   .object({
     capabilities: z.array(z.enum(privateRoomCapabilities)).max(privateRoomCapabilities.length),

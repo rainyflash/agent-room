@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, RoomCatalogId, RoomInstanceId},
     rooms::{MatrixRoomReference, RoomLanguage, RoomRegion},
 };
 
@@ -9,8 +9,9 @@ use crate::{
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock, MatrixFailure,
-        MatrixFailureKind, PortFuture, RoomAllocationEvidence, RoomAllocationMode,
+        AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
+        MatrixFailure, MatrixFailureKind, MatrixRoomId, PortFuture, PrivateMatrixMembership,
+        PrivateRoomMatrixGateway, PrivateRoomStore, RoomAllocationEvidence, RoomAllocationMode,
         RoomAllocationStore,
     },
     rooms::{
@@ -75,6 +76,8 @@ pub trait AgentLobbyEntryUseCases: Send + Sync {
 pub struct AgentLobbyEntryDependencies {
     pub access: Arc<dyn AgentLobbyAccessRepository>,
     pub allocations: Arc<dyn RoomAllocationStore>,
+    pub private_rooms: Arc<dyn PrivateRoomStore>,
+    pub private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub memberships: Arc<dyn AgentRoomMembershipFactory>,
     pub provisioning: Arc<dyn LobbyProvisioningOperation>,
     pub identifiers: Arc<dyn RoomReservationIdentifierFactory>,
@@ -85,6 +88,8 @@ pub struct AgentLobbyEntryDependencies {
 pub struct AgentLobbyEntryService {
     access: Arc<dyn AgentLobbyAccessRepository>,
     allocations: Arc<dyn RoomAllocationStore>,
+    private_rooms: Arc<dyn PrivateRoomStore>,
+    private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     memberships: Arc<dyn AgentRoomMembershipFactory>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
     identifiers: Arc<dyn RoomReservationIdentifierFactory>,
@@ -97,6 +102,8 @@ impl AgentLobbyEntryService {
         Self {
             access: dependencies.access,
             allocations: dependencies.allocations,
+            private_rooms: dependencies.private_rooms,
+            private_matrix: dependencies.private_matrix,
             memberships: dependencies.memberships,
             provisioning: dependencies.provisioning,
             identifiers: dependencies.identifiers,
@@ -126,13 +133,7 @@ impl AgentLobbyEntryService {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
         let mode = if let Some(room) = &request.target_room {
-            let target = self
-                .access
-                .find_public_lobby_room(request.catalog_id, room)
-                .await
-                .map_err(AgentLobbyEntryFailure::Access)?
-                .ok_or(AgentLobbyEntryFailure::NotFound)?;
-            RoomAllocationMode::Manual(target)
+            RoomAllocationMode::Manual(self.resolve_target(&request, &access, room).await?)
         } else {
             RoomAllocationMode::Automatic
         };
@@ -164,6 +165,64 @@ impl AgentLobbyEntryService {
         })
         .await
         .map_err(AgentLobbyEntryFailure::Lobby)
+    }
+
+    /// 解析指名房间。公共大厅按目录可见性放行，其余交给私人房间的成员事实裁决。
+    async fn resolve_target(
+        &self,
+        request: &EnterAgentLobby,
+        access: &AgentLobbyAccessRecord,
+        room: &MatrixRoomReference,
+    ) -> AgentLobbyEntryResult<RoomInstanceId> {
+        if let Some(target) = self
+            .access
+            .find_public_lobby_room(request.catalog_id, room)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?
+        {
+            return Ok(target);
+        }
+        self.resolve_private_target(request, access, room).await
+    }
+
+    /// 私人房间不在公共目录里，Agent 随它此次代表的主体入场。
+    ///
+    /// 能力不超过该主体：只有已加入且可发言的成员才能带 Agent 进来，移除或封禁该成员会立即
+    /// 让其 Agent 失去房间。目录必须与请求一致，避免用另一个房间的成员资格换取本房间的入场。
+    async fn resolve_private_target(
+        &self,
+        request: &EnterAgentLobby,
+        access: &AgentLobbyAccessRecord,
+        room: &MatrixRoomReference,
+    ) -> AgentLobbyEntryResult<RoomInstanceId> {
+        let snapshot = self
+            .private_rooms
+            .find_by_matrix_room(room)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?
+            .ok_or(AgentLobbyEntryFailure::NotFound)?;
+        if snapshot.catalog().id() != request.catalog_id {
+            return Err(AgentLobbyEntryFailure::NotFound);
+        }
+        if !snapshot.room().admits_agent_of(access.principal_id) {
+            return Err(AgentLobbyEntryFailure::Unauthorized);
+        }
+        let matrix_room =
+            MatrixRoomId::new(snapshot.instance().matrix_room_id().as_str().to_owned())
+                .map_err(|_| AgentLobbyEntryFailure::NotFound)?;
+        // 私有 Matrix 房间只能受邀加入。重连是常态，已在房间时不再重复邀请。
+        let membership = self
+            .private_matrix
+            .membership(&matrix_room, &access.matrix_user_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::Membership)?;
+        if !membership.is_some_and(PrivateMatrixMembership::is_joined) {
+            self.private_matrix
+                .invite(&matrix_room, &access.matrix_user_id)
+                .await
+                .map_err(AgentLobbyEntryFailure::Membership)?;
+        }
+        Ok(snapshot.instance().id())
     }
 }
 
