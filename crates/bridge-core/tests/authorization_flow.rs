@@ -47,7 +47,7 @@ impl OidcDeviceGrantGateway for 测试Oidc {
                     expires_in: DurationMillis::new(60_000).expect("时长有效"),
                     polling_interval: DurationMillis::new(5_000).expect("时长有效"),
                 })
-                .map_err(|_| OidcFailure::new(OidcFailureKind::ProviderRejected))?;
+                .map_err(|_| OidcFailure::new(OidcFailureKind::PromptUnavailable))?;
             Ok(SecretValue::new(ASSERTION).expect("测试断言有效"))
         })
     }
@@ -220,11 +220,15 @@ async fn 控制平面已注册但安全存储失败时不得伪装授权成功()
 }
 
 #[tokio::test]
-async fn 设备码过期与拒绝授权保持不同失败且都不注册设备() {
+async fn 设备授权失败按原因区分且都不注册设备() {
     for (oidc_failure, expected) in [
         (
             OidcFailureKind::AuthorizationExpired,
             BridgeAuthorizationFailureKind::AuthorizationExpired,
+        ),
+        (
+            OidcFailureKind::PromptUnavailable,
+            BridgeAuthorizationFailureKind::AuthorizationPromptUnavailable,
         ),
         (
             OidcFailureKind::ProviderRejected,

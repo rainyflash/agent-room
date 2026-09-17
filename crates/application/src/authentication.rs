@@ -739,7 +739,9 @@ const fn map_oidc_failure(operation: &'static str, kind: OidcFailureKind) -> Aut
         // 浏览器登录不经过设备码；即便出现到期，也应引导重新开始登录而不是提示被拒绝。
         OidcFailureKind::AuthorizationExpired => AuthenticationFailureKind::InvalidLoginState,
         OidcFailureKind::InvalidIdentityToken => AuthenticationFailureKind::InvalidIdentityToken,
-        OidcFailureKind::InvalidConfiguration => AuthenticationFailureKind::Internal,
+        OidcFailureKind::PromptUnavailable | OidcFailureKind::InvalidConfiguration => {
+            AuthenticationFailureKind::Internal
+        }
     };
     AuthenticationFailure::new(operation, mapped)
 }

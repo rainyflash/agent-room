@@ -62,6 +62,7 @@ struct 提供者状态 {
 
 struct 假设备授权提供者 {
     issuer: String,
+    poll_count: Arc<Mutex<usize>>,
     task: JoinHandle<()>,
 }
 
@@ -75,11 +76,12 @@ impl 假设备授权提供者 {
             .await
             .expect("应能绑定本地测试端口");
         let issuer = format!("http://{}", listener.local_addr().expect("测试地址可读"));
+        let poll_count = Arc::new(Mutex::new(0));
         let state = 提供者状态 {
             issuer: issuer.clone(),
             assertion_variant,
             poll_outcome,
-            poll_count: Arc::new(Mutex::new(0)),
+            poll_count: poll_count.clone(),
             signing_key_pem: Arc::from(生成测试签名密钥()),
         };
         let router = Router::new()
@@ -93,7 +95,11 @@ impl 假设备授权提供者 {
                 .await
                 .expect("假 OIDC 提供者不应异常退出");
         });
-        Self { issuer, task }
+        Self {
+            issuer,
+            poll_count,
+            task,
+        }
     }
 
     fn 网关(&self) -> DiscoveredOidcDeviceGrant {
@@ -123,6 +129,17 @@ impl OidcDeviceAuthorizationPromptSink for 记录提示 {
     ) -> Result<(), OidcDevicePromptFailure> {
         *self.0.lock().expect("提示锁未中毒") = Some(prompt.clone());
         Ok(())
+    }
+}
+
+struct 无法展示提示;
+
+impl OidcDeviceAuthorizationPromptSink for 无法展示提示 {
+    fn present(
+        &self,
+        _prompt: &OidcDeviceAuthorizationPrompt,
+    ) -> Result<(), OidcDevicePromptFailure> {
+        Err(OidcDevicePromptFailure)
     }
 }
 
@@ -398,4 +415,18 @@ async fn 无人批准直到轮询期限耗尽时报告设备码过期() {
         .expect_err("设备码到期后必须停止轮询");
 
     assert_eq!(failure.kind(), OidcFailureKind::AuthorizationExpired);
+}
+
+#[tokio::test]
+async fn 验证码无法展示时报告本地故障且不开始轮询() {
+    let provider = 假设备授权提供者::启动(断言变体::有效).await;
+    let gateway = provider.网关();
+
+    let failure = gateway
+        .authorize(&无法展示提示)
+        .await
+        .expect_err("无法展示验证码时必须失败");
+
+    assert_eq!(failure.kind(), OidcFailureKind::PromptUnavailable);
+    assert_eq!(*provider.poll_count.lock().await, 0);
 }

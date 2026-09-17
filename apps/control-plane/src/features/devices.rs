@@ -448,7 +448,7 @@ fn oidc_assertion_error(failure: OidcFailure, correlation_id: CorrelationId) -> 
             ErrorCategory::Authentication,
             "设备授权断言无效或已过期。",
         ),
-        OidcFailureKind::InvalidConfiguration => (
+        OidcFailureKind::PromptUnavailable | OidcFailureKind::InvalidConfiguration => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "device.identity_configuration_invalid",
             ErrorCategory::Transient,

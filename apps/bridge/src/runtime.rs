@@ -2320,6 +2320,10 @@ impl BridgeRuntimeError {
                 "bridge.authorization_expired",
                 "设备验证码已过期；请重新启动 Bridge 获取新的验证码",
             ),
+            // 授权指引只经标准输出交给用户或桌面监督进程，展示失败就是终端不可写。
+            BridgeAuthorizationFailureKind::AuthorizationPromptUnavailable => {
+                ("bridge.terminal_unavailable", "无法写入当前终端")
+            }
             BridgeAuthorizationFailureKind::IdentityProviderUnavailable => (
                 "bridge.identity_provider_unavailable",
                 "身份提供方暂时不可用",

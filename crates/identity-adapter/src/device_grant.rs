@@ -139,7 +139,7 @@ impl DiscoveredOidcDeviceGrant {
         let prompt = prompt(&authorization)?;
         prompt_sink
             .present(&prompt)
-            .map_err(|_| OidcFailure::new(OidcFailureKind::ProviderRejected))?;
+            .map_err(|_| OidcFailure::new(OidcFailureKind::PromptUnavailable))?;
 
         let token = client
             .exchange_device_access_token(&authorization)
