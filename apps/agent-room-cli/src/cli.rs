@@ -226,6 +226,11 @@ pub(crate) enum ReceiverCommand {
         #[arg(long)]
         binding: PathBuf,
     },
+    /// Check the bound host against the reception contract without the Bridge or a room.
+    Doctor {
+        #[arg(long)]
+        binding: PathBuf,
+    },
     Resolve {
         #[arg(long)]
         binding: PathBuf,

@@ -52,13 +52,21 @@ pub(crate) async fn run(
     result.map_err(Into::into)
 }
 
+/// 用真实宿主验证接待契约。不连接 Bridge，可在提交之前运行。
+pub(crate) async fn doctor(data_root: &Path, service: &str, path: &Path) -> CliResult<()> {
+    let binding = load_binding(path)?;
+    success(
+        agent_room_agent_reception::verify_host_contract(&binding.host, data_root, service).await?,
+    )
+}
+
 pub(crate) fn manage(data_root: &Path, action: ReceiverCommand) -> CliResult<()> {
     let path = match &action {
         ReceiverCommand::Inspect { binding }
         | ReceiverCommand::Resolve { binding, .. }
         | ReceiverCommand::Update { binding } => binding,
         ReceiverCommand::List => return success(ReceiverStore::list(data_root)?),
-        ReceiverCommand::Verify { .. } => {
+        ReceiverCommand::Verify { .. } | ReceiverCommand::Doctor { .. } => {
             return Err(CliFailure::local("receiver.verification_requires_runtime"));
         }
     };
@@ -83,6 +91,7 @@ pub(crate) fn manage(data_root: &Path, action: ReceiverCommand) -> CliResult<()>
         }
         ReceiverCommand::Inspect { .. }
         | ReceiverCommand::List
-        | ReceiverCommand::Verify { .. } => unreachable!(),
+        | ReceiverCommand::Verify { .. }
+        | ReceiverCommand::Doctor { .. } => unreachable!(),
     }
 }

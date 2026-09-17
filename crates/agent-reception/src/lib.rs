@@ -10,7 +10,7 @@ mod reply;
 mod runtime;
 mod store;
 pub use error::{ReceptionFailure, ReceptionResult};
-pub use host::HostBinding;
+pub use host::{HostBinding, HostContractReport, verify_host_contract};
 pub use model::*;
 pub use reply::HostReply;
 pub use runtime::{ReceiverContext, ReceiverMode, run};

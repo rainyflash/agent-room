@@ -67,6 +67,13 @@ async fn run(cli: Cli) -> CliResult<()> {
         None => secure_storage_service_from_environment(),
     }
     .map_err(|_| CliFailure::validation("cli.secure_storage_service_invalid"))?;
+    // 宿主契约检查只涉及本机宿主进程，不经过 Bridge；Bridge 未运行时也应当能诊断。
+    if let Command::Receiver {
+        action: cli::ReceiverCommand::Doctor { binding },
+    } = &cli.command
+    {
+        return receiver::doctor(&data_root, service.as_str(), binding).await;
+    }
     let backend =
         LocalBridgeToolClient::agent_cli(bridge_runtime_root(&data_root), service.clone());
     if matches!(&cli.command, Command::Doctor) {

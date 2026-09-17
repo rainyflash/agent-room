@@ -2,6 +2,18 @@
 
 日常开发使用 `corepack pnpm@10.28.0 desktop:dev`。它启动真实桌面壳及开发前端，修改界面无需生成安装包。提交前运行 `desktop:check`；`desktop:package` 复用同一套原生和浏览器检查，检查失败不会继续生成安装器。只需要安装包做本机试装时，可直接运行 `corepack pnpm@10.28.0 build:desktop`，它不重复这些检查；提交前仍以 `desktop:check` 为准。`daily-usability.e2e.ts` 已纳入这两个入口。
 
+## 发布前的宿主契约检查
+
+接待宿主这条路径此前只有签名候选之后的实机验收才会执行，宿主侧缺陷因此连续多个版本都拖到发布流程末尾才暴露，每次代价是一个新版本号和一整轮流水线。合并发布准备 PR 之前，先用真实宿主跑一次契约检查：
+
+```bash
+agent-room --data-root <Bridge 数据目录> --connection <凭据命名空间>   receiver doctor --binding <binding.json>
+```
+
+它用接待实际使用的同一套命令构造启动宿主，因此参数不会在两条路径之间漂移；检查参数面、Bridge 附件目录的读取授权和回复格式。不连接 Bridge、不经过 Matrix，十几秒返回。会在绑定的宿主任务里追加一轮对话，请使用专用验收任务而不是正在工作的任务。
+
+`attachmentReadable` 为假或返回 `receiver.host_turn_failed`，说明宿主沙箱没有授予附件目录，带附件的消息会整轮失败；这正是 Alpha 36 拖到实机验收才发现的缺陷。
+
 ## 发布入口
 
 `tools/release_flow.py` 组织已有 CI、候选签名、兼容部署、人工/真实宿主验收和公开发行。首次填写参数，此后只需要同一个状态文件。它不自行修改版本、合并代码或延长签名有效期。版本准备、保护分支合并、独立信任公钥和环境审批仍按 [签名发布 Runbook](operations/signed-releases.md) 执行。
