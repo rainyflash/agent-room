@@ -46,7 +46,12 @@ export function RoomBeacon({
         onClick={onOpenMembers}
       >
         <UsersRound aria-hidden="true" />
-        <span>{t('studio.presentCount', { count: agentCount })}</span>
+        <span className="workspace-header__members-label">
+          {t('studio.presentCount', { count: agentCount })}
+        </span>
+        <span className="workspace-header__members-count" aria-hidden="true">
+          {agentCount}
+        </span>
       </button>
     </header>
   );

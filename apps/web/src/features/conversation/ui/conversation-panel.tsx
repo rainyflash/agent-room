@@ -247,6 +247,8 @@ export function ConversationPanel({
             position.record();
           }}
           role="log"
+          // 面板矮时时间线会滚动；可滚动区域必须能用键盘聚焦，否则只用键盘的人翻不到旧消息。
+          tabIndex={0}
           aria-label={t('conversation.title')}
           aria-live="polite"
           aria-relevant="additions text"
