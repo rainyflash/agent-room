@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defaultExclude, defineConfig } from 'vitest/config';
 import { writeContract, applicationVersion } from './apps/web/build/runtime-manifest.js';
 
 export default defineConfig({
@@ -16,6 +16,9 @@ export default defineConfig({
     },
   },
   test: {
+    // 本机工具目录可能包含完整检出的 git worktree。它不安装依赖，被收集进用例会让
+    // 整套本地测试失败；CI 的干净检出没有该目录，因此这类失败只在本机出现。
+    exclude: [...defaultExclude, '.claude/**'],
     coverage: {
       include: ['packages/protocol/src/validator.ts'],
       provider: 'v8',

@@ -7,7 +7,8 @@ import type {
   ProtectedMessageBody,
 } from '../domain/publication';
 import type { Result } from '@/shared/result';
-import { EventStatus, type IContent } from 'matrix-js-sdk';
+import type { IContent } from 'matrix-js-sdk';
+import { EVENT_STATUS_NOT_SENT, EVENT_STATUS_SENT } from '@/shared/matrix/matrix-sdk-enums';
 
 import type {
   HumanMatrixPublicationGateway,
@@ -83,7 +84,7 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         (candidate) =>
           candidate.getTxnId() === transactionId &&
           candidate.getSender() === currentUserId &&
-          (candidate.status === null || candidate.status === EventStatus.SENT) &&
+          (candidate.status === null || candidate.status === EVENT_STATUS_SENT) &&
           validMatrixEventId(candidate.getId() ?? '') &&
           candidate.getType() === 'io.github.rainyflash.agentroom.message.preview.v2',
       );
@@ -132,7 +133,7 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
         );
       // SDK 在加密成功后才发送 HTTP。未加密的失败本地回显不代表未知网络提交，
       // 必须清除其待发送占位，避免后续重试被同一事务或失败队列阻塞。
-      if (encrypted && local?.status === EventStatus.NOT_SENT && !local.isEncrypted()) {
+      if (encrypted && local?.status === EVENT_STATUS_NOT_SENT && !local.isEncrypted()) {
         client.cancelPendingEvent(local);
         return err({ kind: 'encryption_not_ready', retryable: true });
       }

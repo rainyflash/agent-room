@@ -1,4 +1,5 @@
-import { Direction, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
+import type { MatrixClient, MatrixEvent } from 'matrix-js-sdk';
+import { DIRECTION_BACKWARD, DIRECTION_FORWARD } from '@/shared/matrix/matrix-sdk-enums';
 import { err, ok, type Result } from '@/shared/result';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
@@ -75,7 +76,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
     if (room?.getMyMembership() !== 'join') {
       return { kind: 'room-not-joined' };
     }
-    const state = room.getLiveTimeline().getState(Direction.Forward);
+    const state = room.getLiveTimeline().getState(DIRECTION_FORWARD);
     if (state === undefined) {
       return { kind: 'room-not-joined' };
     }
@@ -85,7 +86,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
       room: Object.freeze({
         roomId,
         windowSize: this.#windows.get(roomId) ?? historyPageSize,
-        hasOlder: room.getLiveTimeline().getPaginationToken(Direction.Backward) !== null,
+        hasOlder: room.getLiveTimeline().getPaginationToken(DIRECTION_BACKWARD) !== null,
         timelineEvents: Object.freeze([
           ...room
             .getLiveTimeline()
@@ -146,7 +147,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
     try {
       if (
         loadedPreviews <= currentWindow &&
-        timeline.getPaginationToken(Direction.Backward) !== null
+        timeline.getPaginationToken(DIRECTION_BACKWARD) !== null
       )
         await client.scrollback(room, historyPageSize);
       if (this.#current() !== client || room.getMyMembership() !== 'join')
