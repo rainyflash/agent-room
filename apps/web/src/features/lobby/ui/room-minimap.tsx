@@ -1,4 +1,5 @@
 import { forwardRef, memo, useImperativeHandle, useRef, useState } from 'react';
+import { sceneFloor, sceneInk } from '@/features/lobby/scene/scene-style';
 import { ChevronDown, LocateFixed, Map } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { roomMapDestination, roomMapViewport } from '../domain/room-map';
@@ -97,7 +98,7 @@ export const RoomMinimap = forwardRef<RoomMinimapHandle, RoomMinimapProps>(funct
         }}
       >
         <svg aria-hidden="true" viewBox={`0 0 ${String(width)} ${String(height)}`}>
-          <rect width={width} height={height} fill="#f8fafb" />
+          <rect width={width} height={height} fill={sceneFloor.light} />
           <MapCharacters projection={projection} />
           <rect
             ref={boundsRef}
@@ -143,7 +144,7 @@ const MapCharacters = memo(function MapCharacters({
           cx={node.x}
           cy={node.y}
           r={node.agentId === projection.selectedAgentId ? radius * 1.7 : radius}
-          fill={node.agentId === projection.selectedAgentId ? '#247a77' : '#9babad'}
+          fill={node.agentId === projection.selectedAgentId ? '#247a77' : '#8a8494'}
         />
       ))}
       {projection.humans?.map((human) => (
@@ -153,7 +154,7 @@ const MapCharacters = memo(function MapCharacters({
           cx={human.x}
           cy={human.y}
           r={radius * 2.4}
-          fill="#173544"
+          fill={sceneInk}
           stroke="white"
           strokeWidth={radius * 0.8}
         />

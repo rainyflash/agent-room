@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "67061a8d4ff6a1fb8140cb66fb67729dfa4f402c1bc641df456e6ccd672b8a80",
-    "pnpm-lock.yaml": "1032148c1337581875a4d2a01999a1426ac89016962dc118e775dc88f0b6920c"
+    "pnpm-lock.yaml": "5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff"
   },
   "dependencies": [
     {
@@ -7144,13 +7144,6 @@
       "version": "5.3.0",
       "license": "OFL-1.1",
       "source": "https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@fontsource-variable/instrument-sans",
-      "version": "5.3.0",
-      "license": "OFL-1.1",
-      "source": "https://www.npmjs.com/package/@fontsource-variable/instrument-sans/v/5.3.0"
     },
     {
       "ecosystem": "npm",

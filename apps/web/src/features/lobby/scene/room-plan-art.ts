@@ -1,7 +1,16 @@
 import { furnishingsForFloor } from '../domain/room-floor';
 import type { LobbyWorld } from '../domain/scene-projection';
+import { sceneInk, sceneStrokeWidth } from './scene-style';
 
 export type RoomPlanShape =
+  | {
+      /** 地砖棋盘格：由各渲染器用平铺纹理或 SVG 图案绘制，房间再大也只占一个图元。 */
+      readonly kind: 'floor';
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
   | {
       readonly kind: 'rect';
       readonly x: number;
@@ -11,6 +20,7 @@ export type RoomPlanShape =
       readonly radius: number;
       readonly fill: string;
       readonly stroke: string;
+      readonly strokeWidth: number;
     }
   | {
       readonly kind: 'ellipse';
@@ -20,6 +30,7 @@ export type RoomPlanShape =
       readonly ry: number;
       readonly fill: string;
       readonly stroke: string;
+      readonly strokeWidth: number;
     }
   | {
       readonly kind: 'line';
@@ -28,7 +39,20 @@ export type RoomPlanShape =
       readonly toX: number;
       readonly toY: number;
       readonly stroke: string;
+      readonly strokeWidth: number;
     };
+
+const furniture = {
+  wood: '#e9b27a',
+  seat: '#ffc53d',
+  chair: '#8ec5f5',
+  screen: '#e7e9ee',
+  sofa: '#7fc4a8',
+  cushion: '#a5dcc5',
+  leaf: '#6cc08b',
+  pot: '#f28b6e',
+  wall: '#f28b6e',
+} as const;
 
 /** Shared, scalable floor-plan geometry for both renderers; characters remain separate sprites. */
 export function roomPlanShapes(world: LobbyWorld): readonly RoomPlanShape[] {
@@ -38,51 +62,71 @@ export function roomPlanShapes(world: LobbyWorld): readonly RoomPlanShape[] {
     y: number,
     width: number,
     height: number,
-    radius = 8,
-    fill = '#fafbf9',
-    stroke = '#c9d0d1',
+    radius: number,
+    fill: string,
   ): void => {
-    shapes.push({ kind: 'rect', x, y, width, height, radius, fill, stroke });
+    shapes.push({
+      kind: 'rect',
+      x,
+      y,
+      width,
+      height,
+      radius,
+      fill,
+      stroke: sceneInk,
+      strokeWidth: sceneStrokeWidth.furniture,
+    });
   };
-  const ellipse = (
-    x: number,
-    y: number,
-    rx: number,
-    ry: number,
-    fill = '#fafbf9',
-    stroke = '#c9d0d1',
-  ): void => {
-    shapes.push({ kind: 'ellipse', x, y, rx, ry, fill, stroke });
+  const ellipse = (x: number, y: number, rx: number, ry: number, fill: string): void => {
+    shapes.push({
+      kind: 'ellipse',
+      x,
+      y,
+      rx,
+      ry,
+      fill,
+      stroke: sceneInk,
+      strokeWidth: sceneStrokeWidth.furniture,
+    });
   };
-  const line = (x: number, y: number, toX: number, toY: number): void => {
-    shapes.push({ kind: 'line', x, y, toX, toY, stroke: '#aab5b7' });
+  const wall = (x: number, y: number, toX: number, toY: number): void => {
+    shapes.push({
+      kind: 'line',
+      x,
+      y,
+      toX,
+      toY,
+      stroke: sceneInk,
+      strokeWidth: sceneStrokeWidth.wall,
+    });
   };
-  rect(22, 22, world.width - 44, world.height - 44, 0, '#fff', 'transparent');
-  line(22, 22, world.width - 22, 22);
-  line(22, 22, 22, world.height - 22);
-  line(world.width - 22, 22, world.width - 22, world.height - 22);
-  line(22, world.height - 22, world.width / 2 - 120, world.height - 22);
-  line(world.width / 2 + 120, world.height - 22, world.width - 22, world.height - 22);
+  shapes.push({ kind: 'floor', x: 22, y: 22, width: world.width - 44, height: world.height - 44 });
+  rect(22, 22, world.width - 44, 26, 0, furniture.wall);
+  wall(22, 22, world.width - 22, 22);
+  wall(22, 22, 22, world.height - 22);
+  wall(world.width - 22, 22, world.width - 22, world.height - 22);
+  wall(22, world.height - 22, world.width / 2 - 120, world.height - 22);
+  wall(world.width / 2 + 120, world.height - 22, world.width - 22, world.height - 22);
   for (const item of furnishingsForFloor({ width: world.width, depth: world.height })) {
     if (item.kind === 'desk') {
-      rect(item.x + 62, item.y + 50, 40, 32, 10);
-      rect(item.x, item.y, item.width, 54, 16);
-      rect(item.x + 58, item.y + 12, 48, 26, 3, '#eff3f2');
-      ellipse(item.x + 25, item.y + 30, 7, 7, '#d5e6df', '#799b91');
+      rect(item.x + 62, item.y + 50, 40, 32, 10, furniture.chair);
+      rect(item.x, item.y, item.width, 54, 16, furniture.wood);
+      rect(item.x + 58, item.y + 12, 48, 26, 5, furniture.screen);
+      ellipse(item.x + 25, item.y + 30, 8, 8, furniture.leaf);
     } else if (item.kind === 'table') {
-      rect(item.x + 24, item.y, 62, 35, 14);
-      rect(item.x + 24, item.y + 112, 62, 35, 14);
-      ellipse(item.x + 56, item.y + 74, 54, 54);
-      ellipse(item.x + 56, item.y + 74, 9, 9, '#d5e6df', '#799b91');
+      rect(item.x + 24, item.y, 62, 35, 14, furniture.seat);
+      rect(item.x + 24, item.y + 112, 62, 35, 14, furniture.seat);
+      ellipse(item.x + 56, item.y + 74, 54, 54, furniture.wood);
+      ellipse(item.x + 56, item.y + 74, 11, 11, furniture.leaf);
     } else if (item.kind === 'sofa') {
-      rect(item.x, item.y, item.width, item.depth, 16);
+      rect(item.x, item.y, item.width, item.depth, 18, furniture.sofa);
       if (item.width > item.depth)
-        rect(item.x + 8, item.y + item.depth - 14, item.width - 16, 10, 4, '#f3f6f4');
-      else rect(item.x + 4, item.y + 8, 10, item.depth - 16, 4, '#f3f6f4');
+        rect(item.x + 8, item.y + item.depth - 16, item.width - 16, 10, 5, furniture.cushion);
+      else rect(item.x + 6, item.y + 8, 12, item.depth - 16, 5, furniture.cushion);
     } else {
-      ellipse(item.x + 20, item.y + 24, 18, 16);
-      ellipse(item.x + 14, item.y + 13, 7, 13, '#a9c8ba', '#799b91');
-      ellipse(item.x + 27, item.y + 12, 6, 11, '#a9c8ba', '#799b91');
+      ellipse(item.x + 20, item.y + 26, 16, 14, furniture.pot);
+      ellipse(item.x + 13, item.y + 12, 8, 14, furniture.leaf);
+      ellipse(item.x + 28, item.y + 11, 7, 12, furniture.leaf);
     }
   }
   return shapes;

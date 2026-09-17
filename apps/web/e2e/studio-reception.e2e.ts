@@ -126,7 +126,7 @@ test('无 WebGL 时沿用同一套房间和人物素材', async ({ page }, testI
   await page.goto(studio);
   await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
   await expect(page.locator('[data-renderer="svg"] image[data-character-sprite]')).toHaveCount(4);
-  await expect(page.locator('[data-renderer="svg"] polygon[fill="#173544"]')).toHaveCount(1);
+  await expect(page.locator('[data-renderer="svg"] polygon[fill="#2a2733"]')).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath('studio-svg.png') });
   const scene = page.getByRole('listbox');
   await scene.focus();

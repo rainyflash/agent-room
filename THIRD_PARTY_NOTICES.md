@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 890
-- npm packages: 714
-- Total locked package versions: 1604
+- npm packages: 713
+- Total locked package versions: 1603
 - `Cargo.lock` SHA-256: `67061a8d4ff6a1fb8140cb66fb67729dfa4f402c1bc641df456e6ccd672b8a80`
-- `pnpm-lock.yaml` SHA-256: `1032148c1337581875a4d2a01999a1426ac89016962dc118e775dc88f0b6920c`
+- `pnpm-lock.yaml` SHA-256: `5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff`
 
 ## License expressions
 
@@ -62,7 +62,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `MIT/Apache-2.0` | 42 |
 | `MPL-2.0` | 14 |
 | `MPL-2.0+` | 3 |
-| `OFL-1.1` | 5 |
+| `OFL-1.1` | 4 |
 | `Unicode-3.0` | 18 |
 | `Unlicense` | 1 |
 | `Unlicense OR MIT` | 9 |
@@ -1094,7 +1094,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@eslint/plugin-kit](https://www.npmjs.com/package/@eslint/plugin-kit/v/0.7.2) | 0.7.2 | `Apache-2.0` |
 | npm | [@exodus/bytes](https://www.npmjs.com/package/@exodus/bytes/v/1.15.1) | 1.15.1 | `MIT` |
 | npm | [@fontsource-variable/fredoka](https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0) | 5.3.0 | `OFL-1.1` |
-| npm | [@fontsource-variable/instrument-sans](https://www.npmjs.com/package/@fontsource-variable/instrument-sans/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource-variable/noto-sans-sc](https://www.npmjs.com/package/@fontsource-variable/noto-sans-sc/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource/ibm-plex-mono](https://www.npmjs.com/package/@fontsource/ibm-plex-mono/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource/zcool-kuaile](https://www.npmjs.com/package/@fontsource/zcool-kuaile/v/5.3.0) | 5.3.0 | `OFL-1.1` |

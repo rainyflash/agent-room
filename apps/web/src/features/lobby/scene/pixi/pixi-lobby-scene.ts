@@ -2,13 +2,22 @@ import { visibleCharacterLabels } from '../character-labels';
 // 使用静态着色器同步实现，确保发布环境禁止动态代码求值时也能保留 Pixi 场景。
 import 'pixi.js/unsafe-eval';
 import { sceneCharacters, type SceneFrame } from '../scene-character';
-import type { Application, Container, Graphics, FederatedPointerEvent } from 'pixi.js';
+import type {
+  Application,
+  Container,
+  FederatedPointerEvent,
+  Graphics,
+  Texture,
+  TilingSprite,
+} from 'pixi.js';
 import { createAgentNodeView, type AgentCharacterView } from './agent-node-view';
 import { CharacterTextureCache } from './character-texture-cache';
 import { SceneDepthOrder } from '../scene-depth-order';
 import { SceneFrameScheduler, type SceneRenderFrame } from '../scene-frame-scheduler';
 import { loadStudioCharacters } from '../studio-assets';
 import { drawRoomPlan } from './room-plan-view';
+import { roomPlanShapes } from '../room-plan-art';
+import { sceneFloor } from '../scene-style';
 import { roomHome } from '../../domain/room-map';
 import {
   sceneDetailForZoom,
@@ -63,6 +72,10 @@ class PixiLobbyScene implements LobbySceneHandle {
   #background: Graphics | null = null;
   #characterTextures: CharacterTextureCache | null = null;
   #destroyed = false;
+  #floor: TilingSprite | null = null;
+  #floorTexture: Texture | null = null;
+  /** 网页字体加载完成后递增；画布文字按加载前的字体测过宽度，需要整体重建名牌。 */
+  #fontGeneration = 0;
   #gestureMoved = false;
   #objectsLayer: Container | null = null;
   #projection: LobbySceneProjection;
@@ -134,11 +147,30 @@ class PixiLobbyScene implements LobbySceneHandle {
     const world = new this.#pixi.Container();
     const objects = new this.#pixi.Container();
     objects.sortableChildren = true;
+    const tile = sceneFloor.tile;
+    const floorPattern = new this.#pixi.Graphics()
+      .rect(0, 0, tile * 2, tile * 2)
+      .fill(sceneFloor.light)
+      .rect(0, 0, tile, tile)
+      .fill(sceneFloor.dark)
+      .rect(tile, tile, tile, tile)
+      .fill(sceneFloor.dark);
+    this.#floorTexture = app.renderer.generateTexture(floorPattern);
+    floorPattern.destroy();
+    // 整个地面只用一个平铺精灵；千人房间也不会因为地砖多出几何体。
+    const floor = new this.#pixi.TilingSprite({ texture: this.#floorTexture });
+    floor.eventMode = 'none';
+    this.#floor = floor;
+    this.#layoutFloor(this.#projection.world);
     const background = new this.#pixi.Graphics();
     drawRoomPlan(background, this.#projection.world);
     this.#background = background;
     background.eventMode = 'none';
-    world.addChild(background, objects);
+    world.addChild(floor, background, objects);
+    if ('fonts' in document) {
+      document.fonts.addEventListener('loadingdone', this.#handleFontsLoaded);
+      void document.fonts.ready.then(this.#handleFontsLoaded);
+    }
     app.stage.addChild(world);
     this.#worldLayer = world;
     this.#objectsLayer = objects;
@@ -173,6 +205,8 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#scheduler.destroy();
     this.#resizeObserver?.disconnect();
     document.removeEventListener('visibilitychange', this.#syncAnimation);
+    if ('fonts' in document)
+      document.fonts.removeEventListener('loadingdone', this.#handleFontsLoaded);
     this.#motion.removeEventListener('change', this.#syncAnimation);
     for (const { view } of this.#views.values()) view.destroy();
     this.#views.clear();
@@ -182,6 +216,9 @@ class PixiLobbyScene implements LobbySceneHandle {
     app?.canvas.removeEventListener('wheel', this.#handleWheel);
     this.#characterTextures?.destroy();
     this.#characterTextures = null;
+    this.#floor = null;
+    this.#floorTexture?.destroy(true);
+    this.#floorTexture = null;
     this.#app = null;
     this.#worldLayer = null;
     this.#objectsLayer = null;
@@ -232,8 +269,10 @@ class PixiLobbyScene implements LobbySceneHandle {
       this.#background !== null &&
       (projection.world.width !== this.#projection.world.width ||
         projection.world.height !== this.#projection.world.height)
-    )
+    ) {
       drawRoomPlan(this.#background, projection.world);
+      this.#layoutFloor(projection.world);
+    }
     this.#projection = projection;
     this.#camera.updateWorld(projection.world);
     this.#syncAnimation();
@@ -241,6 +280,20 @@ class PixiLobbyScene implements LobbySceneHandle {
   zoomBy(factor: number): void {
     this.#callbacks.onZoomChange(this.#camera.zoomBy(factor).scale);
     this.#scheduleRender();
+  }
+
+  readonly #handleFontsLoaded = (): void => {
+    if (this.#destroyed) return;
+    this.#fontGeneration += 1;
+    this.#scheduleRender();
+  };
+
+  #layoutFloor(world: LobbySceneProjection['world']): void {
+    const shape = roomPlanShapes(world).find((candidate) => candidate.kind === 'floor');
+    if (this.#floor === null || shape?.kind !== 'floor') return;
+    this.#floor.position.set(shape.x, shape.y);
+    this.#floor.width = shape.width;
+    this.#floor.height = shape.height;
   }
 
   readonly #syncAnimation = (): void => {
@@ -359,6 +412,7 @@ class PixiLobbyScene implements LobbySceneHandle {
         detail,
         selected,
         names.has(node.characterId),
+        this.#fontGeneration,
       ].join(':');
       let stored = this.#views.get(node.characterId);
       if (stored?.signature !== signature) {

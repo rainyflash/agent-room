@@ -49,12 +49,12 @@ export function LobbySpatialView({
     () => ({
       canvas: t('lobby.scene.canvasLabel'),
       self: t('roomGame.self'),
+      // 名牌空间有限，用短词；详情和名单仍用完整的接待说明。
       availability: {
-        waiting: t('agentState.waiting'),
-        on_resume: t('agentState.on_resume'),
-        unknown: t('agentState.unknown'),
-        reconnecting: t('agentState.reconnecting'),
-        offline: t('agentState.offline'),
+        waiting: t('lobby.nameplate.waiting'),
+        on_resume: t('lobby.nameplate.on_resume'),
+        reconnecting: t('lobby.nameplate.reconnecting'),
+        offline: t('lobby.nameplate.offline'),
       },
       statuses: {
         idle: t('lobby.status.idle'),

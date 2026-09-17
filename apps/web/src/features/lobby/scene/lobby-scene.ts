@@ -12,13 +12,22 @@ export type LobbySceneLabels = {
   readonly zones: Readonly<Record<LobbyZoneId, string>>;
 };
 
+/**
+ * 名牌只放一行大白话：任务状态在前，接待能力确定时再补一句。接待未知时不写，
+ * 免得把「还不知道」说成一种状态；离线和重连本身就是状态，直接替换。
+ */
 export function characterStatusLabel(
   node: SceneCharacter,
   labels: LobbySceneLabels,
 ): string | undefined {
-  return node.availability === undefined
-    ? labels.statuses?.[node.status]
-    : (labels.availability?.[node.availability] ?? labels.statuses?.[node.status]);
+  const status = labels.statuses?.[node.status];
+  const availability = node.availability;
+  if (availability === undefined || availability === 'unknown') return status;
+  const reception = labels.availability?.[availability];
+  if (reception === undefined) return status;
+  if (availability === 'offline' || availability === 'reconnecting' || status === undefined)
+    return reception;
+  return `${status} · ${reception}`;
 }
 
 export type LobbySceneCallbacks = {

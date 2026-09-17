@@ -563,27 +563,24 @@
   z-index: 20;
 }
 
-/* 场景上的人物文字（无 WebGL 回退），场景重做时再换成贴纸样式 */
+/* 场景上的名牌与状态贴纸（无 WebGL 回退）；胶囊底色与几何在 scene-style.ts */
 .lobby-game .room-character-name {
   fill: var(--color-ink);
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
-  stroke: #fff;
-  stroke-width: 3px;
-  paint-order: stroke;
 }
-.lobby-game .room-character-name[data-visible='false'] {
+.lobby-game .room-character-name[data-visible='false'],
+.lobby-game .room-character-plate[data-visible='false'] {
   visibility: hidden;
 }
-.lobby-game .lobby-scene__svg-agent:hover .room-character-name {
+.lobby-game .lobby-scene__svg-agent:hover .room-character-name,
+.lobby-game .lobby-scene__svg-agent:hover .room-character-plate {
   visibility: visible;
 }
 .room-character-status {
+  fill: var(--color-ink);
   font-size: 13px;
-  fill: var(--ar-muted);
-  paint-order: stroke;
-  stroke: #fff;
-  stroke-width: 3px;
+  font-weight: 600;
 }
 
 /* 说话气泡 */

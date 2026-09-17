@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { sceneInk } from '@/features/lobby/scene/scene-style';
 import { RoomPlan } from '../scene/svg/room-plan';
 import { StudioSprite } from '../scene/svg/studio-sprite';
 
@@ -29,7 +30,7 @@ export const RoomIllustration = memo(function RoomIllustration({
           <g transform="translate(1100 990) scale(2.1)">
             <StudioSprite id="welcome-3" portrait />
           </g>
-          <path d="M 764 644 L 813 672 L 813 728 L 764 756 L 715 728 L 715 672 Z" fill="#233039" />
+          <path d="M 764 644 L 813 672 L 813 728 L 764 756 L 715 728 L 715 672 Z" fill={sceneInk} />
           <circle cx="764" cy="700" r="18" fill="white" />
         </g>
       ) : null}
