@@ -321,7 +321,10 @@ function ReadyLobby({
           }}
         >
           <MessageCircle aria-hidden="true" />
-          {t('roomGame.chat')}
+          <span className="room-toolbelt__label">{t('roomGame.chat')}</span>
+          <span className="room-toolbelt__short" aria-hidden="true">
+            {t('roomGame.chatShort')}
+          </span>
           {activity.unread === 0 ? null : (
             <span
               className="room-unread"
@@ -339,7 +342,10 @@ function ReadyLobby({
           }}
         >
           <Files aria-hidden="true" />
-          {t('roomGame.resources')}
+          <span className="room-toolbelt__label">{t('roomGame.resources')}</span>
+          <span className="room-toolbelt__short" aria-hidden="true">
+            {t('roomGame.resourcesShort')}
+          </span>
         </button>
         <button
           type="button"
@@ -348,7 +354,10 @@ function ReadyLobby({
           }}
         >
           <UsersRound aria-hidden="true" />
-          {t('roomGame.characters')}
+          <span className="room-toolbelt__label">{t('roomGame.characters')}</span>
+          <span className="room-toolbelt__short" aria-hidden="true">
+            {t('roomGame.charactersShort')}
+          </span>
         </button>
         <button
           type="button"
@@ -359,7 +368,10 @@ function ReadyLobby({
           }}
         >
           <Bot aria-hidden="true" />
-          {t('agentInvite.open')}
+          <span className="room-toolbelt__label">{t('agentInvite.open')}</span>
+          <span className="room-toolbelt__short" aria-hidden="true">
+            {t('roomGame.inviteShort')}
+          </span>
         </button>
       </nav>
       {inviteOpen ? (

@@ -6,7 +6,7 @@
   padding: 0.5rem 0;
 }
 .conversation-attachment-picker > small {
-  color: var(--text-muted, #637176);
+  color: var(--ar-muted);
   font-size: 0.75rem;
 }
 .conversation-attachment-picker button,
@@ -15,15 +15,23 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.45rem 0.65rem;
-  border: 1px solid var(--border-subtle, #dbe4e4);
-  border-radius: 0.5rem;
-  background: var(--surface, #fff);
-  color: var(--accent, #267d79);
+  padding: 0.4rem 0.85rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
+  color: var(--color-ink);
   cursor: pointer;
   font: inherit;
   font-size: 0.8rem;
+  font-weight: 600;
   text-decoration: none;
+}
+.conversation-attachment-picker button:not(:disabled):active,
+.conversation-attachment button:not(:disabled):active,
+.conversation-attachment a:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
 }
 .conversation-attachment-picker svg,
 .conversation-attachment svg {

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "67061a8d4ff6a1fb8140cb66fb67729dfa4f402c1bc641df456e6ccd672b8a80",
-    "pnpm-lock.yaml": "12647936b9961787fd09ef273037665793d75670dc7c1224229ade5650cf1681"
+    "pnpm-lock.yaml": "1032148c1337581875a4d2a01999a1426ac89016962dc118e775dc88f0b6920c"
   },
   "dependencies": [
     {
@@ -7140,6 +7140,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@fontsource-variable/fredoka",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "source": "https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@fontsource-variable/instrument-sans",
       "version": "5.3.0",
       "license": "OFL-1.1",
@@ -7158,6 +7165,13 @@
       "version": "5.3.0",
       "license": "OFL-1.1",
       "source": "https://www.npmjs.com/package/@fontsource/ibm-plex-mono/v/5.3.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fontsource/zcool-kuaile",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "source": "https://www.npmjs.com/package/@fontsource/zcool-kuaile/v/5.3.0"
     },
     {
       "ecosystem": "npm",

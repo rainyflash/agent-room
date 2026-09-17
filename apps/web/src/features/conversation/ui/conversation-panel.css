@@ -95,7 +95,7 @@
   border-radius: 6px;
 }
 .conversation-panel :focus-visible {
-  outline: 2px solid var(--ar-accent);
+  outline: 3px solid var(--ar-accent);
   outline-offset: 2px;
 }
 .conversation-panel__context {

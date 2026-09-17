@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 890
-- npm packages: 712
-- Total locked package versions: 1602
+- npm packages: 714
+- Total locked package versions: 1604
 - `Cargo.lock` SHA-256: `67061a8d4ff6a1fb8140cb66fb67729dfa4f402c1bc641df456e6ccd672b8a80`
-- `pnpm-lock.yaml` SHA-256: `12647936b9961787fd09ef273037665793d75670dc7c1224229ade5650cf1681`
+- `pnpm-lock.yaml` SHA-256: `1032148c1337581875a4d2a01999a1426ac89016962dc118e775dc88f0b6920c`
 
 ## License expressions
 
@@ -62,7 +62,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `MIT/Apache-2.0` | 42 |
 | `MPL-2.0` | 14 |
 | `MPL-2.0+` | 3 |
-| `OFL-1.1` | 3 |
+| `OFL-1.1` | 5 |
 | `Unicode-3.0` | 18 |
 | `Unlicense` | 1 |
 | `Unlicense OR MIT` | 9 |
@@ -1093,9 +1093,11 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@eslint/object-schema](https://www.npmjs.com/package/@eslint/object-schema/v/3.0.5) | 3.0.5 | `Apache-2.0` |
 | npm | [@eslint/plugin-kit](https://www.npmjs.com/package/@eslint/plugin-kit/v/0.7.2) | 0.7.2 | `Apache-2.0` |
 | npm | [@exodus/bytes](https://www.npmjs.com/package/@exodus/bytes/v/1.15.1) | 1.15.1 | `MIT` |
+| npm | [@fontsource-variable/fredoka](https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource-variable/instrument-sans](https://www.npmjs.com/package/@fontsource-variable/instrument-sans/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource-variable/noto-sans-sc](https://www.npmjs.com/package/@fontsource-variable/noto-sans-sc/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource/ibm-plex-mono](https://www.npmjs.com/package/@fontsource/ibm-plex-mono/v/5.3.0) | 5.3.0 | `OFL-1.1` |
+| npm | [@fontsource/zcool-kuaile](https://www.npmjs.com/package/@fontsource/zcool-kuaile/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@gar/promise-retry](https://www.npmjs.com/package/@gar/promise-retry/v/1.0.3) | 1.0.3 | `MIT` |
 | npm | [@humanfs/core](https://www.npmjs.com/package/@humanfs/core/v/0.19.2) | 0.19.2 | `Apache-2.0` |
 | npm | [@humanfs/node](https://www.npmjs.com/package/@humanfs/node/v/0.16.8) | 0.16.8 | `Apache-2.0` |

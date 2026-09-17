@@ -1,3 +1,13 @@
+/*
+ * 房间工作区的「游戏大厅」外观：奶油色底、墨色粗描边、按压阴影。
+ * 几何约定（改动时要一起改）：
+ * - 桌面：顶栏 76px；场景外框 top 84 / bottom 120 / 左右 20；底部操作栏 bottom 20、高约 85；
+ *   对话面板与人物详情和场景外框上下对齐。
+ * - 手机：顶栏卡片 top 12、高 64；场景外框 top 100（人物定位验收依赖它）/ bottom 101；
+ *   底部操作栏 bottom 12、高约 81；面板与详情从 bottom 101 起。
+ * 场景尺寸由外框决定，Pixi 画布按实际尺寸测量，说话气泡也按实测尺寸摆放。
+ */
+
 .lobby-game {
   display: block;
   position: relative;
@@ -22,163 +32,252 @@
   inset: 0;
 }
 .lobby-game .lobby-stage--scene {
-  top: 76px;
-  bottom: 84px;
+  top: 84px;
+  right: 20px;
+  bottom: 120px;
+  left: 20px;
+  width: auto;
   height: auto;
+  overflow: hidden;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  background: var(--ar-surface);
+  box-shadow: 0 5px 0 var(--ar-outline);
 }
 .lobby-game .lobby-scene__pixi,
 .lobby-game .lobby-scene__svg {
   background: transparent;
 }
+
+/* 顶栏 */
 .lobby-game .workspace-header {
   position: absolute;
-  min-height: 0;
-  gap: 16px;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
   top: 0;
   left: 0;
   right: 0;
   height: 76px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--ar-line);
-  background: var(--ar-surface);
+  min-height: 0;
+  gap: 14px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
 .lobby-game .workspace-header__menu {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--ar-line);
-  border-radius: 11px;
-  background: var(--ar-surface-muted);
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
+  color: var(--color-ink);
+}
+.lobby-game .workspace-header__menu:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+}
+.lobby-game .workspace-header__symbol {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-sunny);
   color: var(--color-ink);
 }
 .lobby-game .workspace-header__identity > span {
+  margin-bottom: 2px;
+  color: var(--ar-muted);
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0;
 }
 .lobby-game .workspace-header__identity h1 {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+.lobby-game .workspace-header__topic {
+  border-left: var(--ar-outline-thin) solid var(--ar-line);
+  color: var(--ar-muted);
+  font-size: 13px;
 }
 .lobby-game .workspace-header__members {
-  background: var(--ar-surface-muted);
-  border-color: var(--ar-line);
-  border-radius: 10px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
   color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 600;
 }
+.lobby-game .workspace-header__members-count {
+  display: none;
+}
+.lobby-game .workspace-header__members:hover {
+  background: var(--ar-surface-muted);
+}
+.lobby-game .workspace-header__members:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+}
+
 .room-scene-hint {
   position: absolute;
-  top: 80px;
+  z-index: 3;
+  top: 96px;
   left: 50%;
   transform: translateX(-50%);
   margin: 0;
-  padding: 8px 18px;
-  border-radius: 30px;
-  font-size: 12px;
-  letter-spacing: 0;
+  padding: 5px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   color: var(--ar-muted);
   background: var(--ar-surface);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
   pointer-events: none;
   white-space: nowrap;
 }
+
+/* 视角与缩放 */
 .lobby-game .signal-dock {
   position: fixed;
   left: auto;
-  right: 24px;
-  bottom: 24px;
-  height: 54px;
+  right: 20px;
+  bottom: 32px;
   width: auto;
+  height: auto;
+  min-height: 0;
+  gap: 8px;
   padding: 8px;
-  border-radius: 10px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 22px;
   background: var(--ar-surface);
+  box-shadow: var(--ar-press);
   transform: none;
   z-index: 15;
-  border: 1px solid var(--ar-line);
-  box-shadow: var(--ar-panel-shadow);
   backdrop-filter: none;
 }
 .lobby-game .signal-dock__legend {
   display: none;
 }
+.lobby-game .signal-dock__modes {
+  gap: 4px;
+  padding-right: 8px;
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
+}
 .lobby-game .signal-dock__zoom {
-  border-color: var(--ar-line);
+  display: flex;
+  gap: 4px;
+  padding-right: 0;
+  border-right: 0;
 }
 .lobby-game .signal-dock__zoom output {
+  min-width: 48px;
   color: var(--ar-muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .lobby-game .signal-dock .ar-button {
-  color: var(--ar-muted);
-  background: transparent;
-  border-color: transparent;
-  min-height: 34px;
-  border-radius: 9px;
-  font-size: 12px;
-  padding: 6px 8px;
-  min-width: 32px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  box-shadow: none;
 }
-.lobby-game .signal-dock .ar-button--primary,
-.lobby-game .signal-dock .ar-button--network {
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
+.lobby-game .signal-dock .ar-button:not(:disabled):active {
+  box-shadow: none;
 }
+.lobby-game .signal-dock__zoom .ar-button {
+  width: 40px;
+  padding: 0;
+}
+
+/* 底部操作栏：图标在上、文字在下，像游戏里的快捷栏 */
 .room-toolbelt {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 24px;
+  bottom: 20px;
   z-index: 15;
   display: flex;
-  gap: 6px;
-  height: 54px;
-  padding: 7px;
-  border-radius: 10px;
+  gap: 8px;
+  padding: 8px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 22px;
   background: var(--ar-surface);
-  border: 1px solid var(--ar-line);
-  box-shadow: var(--ar-panel-shadow);
-  backdrop-filter: none;
+  box-shadow: var(--ar-press);
 }
 .room-toolbelt button {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 10px;
+  gap: 3px;
+  min-width: 76px;
+  height: 64px;
+  padding: 0 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
   color: var(--color-ink);
-  background: transparent;
-  font-size: 12px;
-  font-weight: 550;
-}
-.room-toolbelt button[aria-pressed='true'] {
-  color: #fff;
-  background: var(--ar-accent);
+  background: var(--ar-surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .room-toolbelt button:hover {
-  background: var(--ar-surface-muted);
-  color: var(--color-ink);
+  background: #ffefc2;
+}
+.room-toolbelt button[aria-pressed='true'] {
+  background: var(--ar-sunny);
+}
+.room-toolbelt button:active {
+  transform: translateY(2px);
 }
 .room-toolbelt svg {
-  width: 17px;
-  height: 17px;
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
 }
+.room-toolbelt__short {
+  display: none;
+}
+.room-toolbelt .room-unread {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+}
+
+/* 对话面板 */
 .room-panel {
   position: absolute;
   z-index: 30;
-  top: 102px;
-  right: 24px;
-  bottom: 94px;
+  top: 84px;
+  right: 20px;
+  bottom: 120px;
   width: 440px;
-  max-width: calc(100% - 48px);
+  max-width: calc(100% - 40px);
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: var(--ar-overlay-shadow);
+  box-shadow: 0 5px 0 var(--ar-outline);
   color: var(--color-ink);
 }
 .room-panel__header {
@@ -186,26 +285,51 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--ar-line);
-  padding-right: 12px;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
+/* 基础样式里的 flex: 0 0 53px 是给纵向排布用的高度；横排时会被当成宽度，把两个标签挤成竖排。 */
 .room-panel__header .workspace-view-tabs {
-  min-height: 53px;
-  padding: 0 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  padding: 0;
   border-bottom: 0;
 }
+.room-panel__header .workspace-view-tabs > button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.room-panel__header .workspace-view-tabs > button[aria-selected='true'] {
+  color: var(--ar-surface);
+  background: var(--ar-outline);
+}
+.room-panel__header .workspace-view-tabs__indicator {
+  display: none;
+}
 .room-panel__header > button {
-  width: 40px;
-  height: 40px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
   background: var(--ar-surface);
-  border: 1px solid var(--ar-line);
-  color: var(--ar-muted);
+  color: var(--color-ink);
 }
 .room-panel__header > button > svg {
   width: 16px;
+  stroke-width: 2.4;
 }
 .room-panel__content {
   flex: 1;
@@ -221,30 +345,64 @@
   max-width: none;
 }
 .room-panel .conversation-panel__empty h3 {
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1.4;
 }
 .room-panel .conversation-panel__empty > p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
 }
 .room-panel .conversation-panel__context {
   padding: 13px 16px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .room-panel .conversation-panel__room,
 .room-panel .conversation-panel__keyboard {
   display: none;
 }
+.room-panel .conversation-message {
+  padding: 10px 14px;
+  gap: 10px;
+}
+.room-panel .conversation-message__avatar {
+  width: 34px;
+  height: 34px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+}
+.room-panel .conversation-message__body header {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.room-panel .conversation-message__text {
+  margin-top: 5px;
+  padding: 8px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 16px 16px 16px 6px;
+  background: #fff;
+}
+.room-panel .conversation-message--own .conversation-message__text {
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 16px 16px 6px 16px;
+  background: var(--ar-mint);
+}
 .room-panel .conversation-panel__composer {
-  margin: 0 12px;
+  margin: 0 12px 12px;
+  padding: 10px 12px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: none;
+}
+.room-panel .conversation-panel__composer:focus-within {
+  border-color: var(--ar-outline);
+  box-shadow: 0 0 0 3px var(--ar-accent-soft);
 }
 .room-panel .conversation-panel__composer textarea {
   min-height: 76px;
-  font-size: 14px;
+  font-size: 15px;
 }
 .room-panel .conversation-panel__tools {
-  padding: 8px;
+  padding: 8px 0 0;
   gap: 8px;
 }
 .room-panel .conversation-panel__tools > label {
@@ -258,37 +416,33 @@
 .room-panel .conversation-panel__footer {
   padding: 10px 14px;
 }
-.room-panel .conversation-message {
-  padding: 12px 14px;
-  gap: 10px;
-}
-.room-panel .conversation-message__avatar {
-  width: 30px;
-  height: 30px;
-}
-.room-panel .conversation-message__body header {
-  flex-wrap: wrap;
-  gap: 5px;
-}
 .room-panel .message-workspace__resources {
   padding: 20px 14px;
 }
 .room-panel .message-workspace__intro h2 {
-  font-size: 18px;
+  font-size: 20px;
 }
+.conversation-panel__timeline [data-focused='true'] {
+  outline: 3px solid var(--ar-accent);
+  outline-offset: -3px;
+  border-radius: 16px;
+  background: var(--ar-surface-muted);
+}
+
+/* 人物详情 */
 .lobby-game .agent-inspector {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  top: 102px;
-  right: 24px;
-  bottom: 94px;
+  top: 84px;
+  right: 20px;
+  bottom: 120px;
   width: 300px;
-  max-width: calc(100% - 48px);
-  border-color: var(--ar-line);
-  border-radius: 12px;
+  max-width: calc(100% - 40px);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: 0 20px 60px #23303918;
+  box-shadow: 0 5px 0 var(--ar-outline);
 }
 .lobby-game .agent-inspector__header,
 .lobby-game .agent-inspector__actions,
@@ -303,322 +457,62 @@
 }
 .lobby-game .agent-inspector__actions {
   padding: 16px 0 0;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .lobby-game .agent-inspector .ar-button {
-  font-size: 12px;
+  font-size: 13px;
 }
-.lobby-game .lobby-stage--list {
-  top: 150px;
-  bottom: 110px;
-  height: auto;
-  overflow: auto;
-  padding: 0 28px;
-}
-.lobby-game .lobby-stage--list .list-roster {
-  max-width: 1000px;
-  padding: 20px;
-  margin: 0 auto;
-  border-radius: 10px;
-  background: var(--ar-surface-muted);
-}
-.lobby-game .workspace-space__notice {
-  display: none;
-}
-.desktop-runtime[data-placement='game'] {
-  left: 24px;
-  top: 102px;
-  right: auto;
-  bottom: auto;
-  width: 240px;
-  z-index: 20;
-}
-@media (max-width: 767px) {
-  .lobby-game .workspace-header {
-    top: 12px;
-    left: 12px;
-    right: 12px;
-    height: 64px;
-    gap: 10px;
-    padding: 10px;
-  }
-  .lobby-game .workspace-header__symbol,
-  .lobby-game .workspace-header__topic {
-    display: none;
-  }
-  .lobby-game .workspace-header__identity h1 {
-    font-size: 15px;
-  }
-  .lobby-game .workspace-header__members {
-    padding: 6px;
-    font-size: 12px;
-  }
-  .room-scene-hint {
-    top: 87px;
-    max-width: calc(100% - 26px);
-    font-size: 12px;
-    padding: 7px 10px;
-  }
-  .lobby-game .signal-dock {
-    bottom: 76px;
-    left: 12px;
-    right: 12px;
-    height: 48px;
-    width: auto;
-    padding: 5px;
-    justify-content: space-between;
-  }
-  .lobby-game .signal-dock .ar-button {
-    padding: 5px 7px;
-    gap: 4px;
-    font-size: 12px;
-  }
-  .lobby-game .signal-dock__zoom {
-    gap: 1px;
-    padding-left: 5px;
-  }
-  .room-toolbelt {
-    bottom: 12px;
-    left: 12px;
-    right: 12px;
-    height: 54px;
-  }
-  .room-toolbelt button {
-    flex: 1;
-    padding: 0 6px;
-    font-size: 12px;
-    gap: 6px;
-  }
-  .room-panel,
-  .lobby-game .agent-inspector {
-    position: absolute;
-    top: auto;
-    left: 8px;
-    right: 8px;
-    bottom: 76px;
-    width: auto;
-    max-width: none;
-    height: min(570px, 68dvh);
-    border-radius: 12px;
-  }
-  .lobby-game .agent-inspector {
-    padding: 18px;
-  }
-  .room-panel .conversation-panel__composer textarea {
-    min-height: 64px;
-    max-height: 130px;
-  }
-  .room-panel .message-workspace .message-composer {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    max-height: 100%;
-    border-radius: 0;
-  }
-  .desktop-runtime[data-placement='game'] {
-    top: 124px;
-    left: 12px;
-    width: 220px;
-  }
-}
-.lobby-game .room-floor-label {
-  fill: #526b55;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 2px;
-}
-.lobby-game .room-character-name {
-  fill: #30342b;
-  font-size: 18px;
-  font-weight: 600;
-  stroke: #f3f1eb;
-  stroke-width: 3px;
-  paint-order: stroke;
-}
-.lobby-game .room-character-name[data-visible='false'] {
-  visibility: hidden;
-}
-.lobby-game .lobby-scene__svg-agent:hover .room-character-name {
-  visibility: visible;
-}
-
-.lobby-game .signal-dock__zoom {
-  display: flex;
+/* 详情里的危险操作不用整块珊瑚色，避免抢过主操作；文字色在浅底上对比度 4.77。 */
+.lobby-game .agent-inspector .ar-button--alert {
+  background: var(--ar-danger-soft);
+  color: var(--color-alert);
 }
 .lobby-game .agent-inspector__portrait {
   display: grid;
   place-items: center;
-  height: 125px;
-  margin: 18px 0;
-  border-radius: var(--ar-radius);
+  width: 96px;
+  height: 96px;
+  margin: 20px auto;
+  overflow: hidden;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
   background: var(--ar-surface-muted);
 }
 .lobby-game .agent-inspector__portrait svg {
-  width: 105px;
-  height: 105px;
+  width: 96px;
+  height: 96px;
 }
 .lobby-game .agent-inspector__identity {
-  border-block: 1px solid var(--ar-line);
+  border-block: var(--ar-outline-thin) dashed var(--ar-line);
   margin-block: 18px;
   padding-block: 14px;
   color: var(--ar-muted);
 }
 .lobby-game .agent-inspector__identity summary {
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 .lobby-game .agent-inspector__identity .agent-inspector__facts {
   margin-block: 16px 0;
 }
-@media (max-width: 767px) {
-  .lobby-game .signal-dock__zoom output {
-    min-width: 32px;
-    font-size: 12px;
-  }
-  .lobby-game .signal-dock__zoom .ar-button {
-    min-width: 26px;
-    padding: 4px;
-  }
-  .lobby-game .agent-inspector__portrait {
-    height: 90px;
-    margin: 10px 0;
-  }
-  .lobby-game .agent-inspector__portrait svg {
-    width: 80px;
-    height: 80px;
-  }
-}
-
-.scene-speech-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 16;
-  overflow: hidden;
-}
-.scene-speech {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 208px;
-  max-width: calc(100% - 24px);
-  padding: 10px 13px;
-  border: 1px solid var(--ar-line);
-  border-radius: 14px 14px 14px 3px;
-  background: var(--ar-surface);
-  color: var(--color-ink);
-  box-shadow: 0 5px 20px #23303918;
-  pointer-events: auto;
-  text-align: left;
-}
-.scene-speech:hover {
-  background: #fff;
-  border-color: var(--ar-line);
-}
-.scene-speech strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: var(--ar-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.scene-speech > span {
-  display: block;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.room-unread {
-  display: grid;
-  place-items: center;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 5px;
-  border-radius: var(--ar-radius);
-  color: #fff;
-  background: var(--color-alert);
-  font-size: 12px;
-  font-weight: 700;
-}
-.room-human-presence {
-  position: absolute;
-  z-index: 17;
-  left: 24px;
-  top: 106px;
+.lobby-game .agent-inspector__status {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  max-width: 280px;
+  text-align: center;
+  justify-content: center;
 }
-.room-human-presence button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 130px;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
-  padding: 6px 10px;
-  color: var(--color-ink);
-  background: var(--ar-surface);
-  font-size: 12px;
+.lobby-game .agent-inspector__status > span:last-child {
+  display: block;
+  width: 100%;
+  font-size: 13px;
+  color: var(--ar-muted);
 }
-.room-human-presence svg {
-  width: 13px;
-  height: 13px;
+.lobby-game .agent-inspector__summary {
+  margin-top: 16px;
 }
-.room-human-presence span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.conversation-panel__timeline [data-focused='true'] {
-  outline: 2px solid var(--ar-accent);
-  outline-offset: -2px;
-  border-radius: 9px;
-  background: var(--ar-surface-muted);
-}
-.lobby-game .agent-inspector .ar-button--primary {
-  background: var(--ar-accent);
-  color: #fff;
-  border-color: var(--ar-accent);
-}
-.lobby-game .agent-inspector .ar-button--alert {
-  background: var(--ar-danger-soft);
-  color: var(--color-alert);
-  border-color: var(--ar-line);
-}
-.lobby-game .desktop-runtime[data-placement='game'] {
-  top: 150px;
-}
-@media (max-width: 767px) {
-  .scene-speech {
-    width: 175px;
-    padding: 8px 10px;
-  }
-  .scene-speech > span {
-    font-size: 12px;
-  }
-  .room-human-presence {
-    top: 126px;
-    left: 12px;
-    max-width: calc(100% - 24px);
-  }
-  .room-human-presence button {
-    font-size: 12px;
-  }
-  .room-unread {
-    min-width: 16px;
-    height: 16px;
-    font-size: 12px;
-    padding: 0 4px;
-  }
-}
-
 .agent-reception {
   padding: 14px 0;
-  border-bottom: 1px solid var(--ar-line);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   font-size: 13px;
 }
 .agent-reception strong {
@@ -634,6 +528,156 @@
 .agent-reception[data-state='reconnecting'] strong {
   color: var(--color-alert);
 }
+
+/* 列表视图 */
+.lobby-game .lobby-stage--list {
+  top: 84px;
+  right: 20px;
+  bottom: 120px;
+  left: 20px;
+  width: auto;
+  height: auto;
+  overflow: auto;
+  padding: 20px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  background: var(--ar-surface);
+  box-shadow: 0 5px 0 var(--ar-outline);
+}
+.lobby-game .lobby-stage--list .list-roster {
+  max-width: 1000px;
+  padding: 20px;
+  margin: 0 auto;
+  border-radius: 20px;
+  background: var(--ar-surface-muted);
+}
+.lobby-game .workspace-space__notice {
+  display: none;
+}
+.lobby-game .desktop-runtime[data-placement='game'] {
+  left: 36px;
+  top: 150px;
+  right: auto;
+  bottom: auto;
+  width: 240px;
+  z-index: 20;
+}
+
+/* 场景上的人物文字（无 WebGL 回退），场景重做时再换成贴纸样式 */
+.lobby-game .room-character-name {
+  fill: var(--color-ink);
+  font-size: 17px;
+  font-weight: 600;
+  stroke: #fff;
+  stroke-width: 3px;
+  paint-order: stroke;
+}
+.lobby-game .room-character-name[data-visible='false'] {
+  visibility: hidden;
+}
+.lobby-game .lobby-scene__svg-agent:hover .room-character-name {
+  visibility: visible;
+}
+.room-character-status {
+  font-size: 13px;
+  fill: var(--ar-muted);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+}
+
+/* 说话气泡 */
+.scene-speech-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 16;
+  overflow: hidden;
+}
+.scene-speech {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 208px;
+  max-width: calc(100% - 24px);
+  padding: 9px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 16px 16px 16px 5px;
+  background: #fff;
+  color: var(--color-ink);
+  box-shadow: var(--ar-press-small);
+  pointer-events: auto;
+  text-align: left;
+}
+.scene-speech:hover {
+  background: var(--ar-surface-muted);
+}
+.scene-speech strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ar-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scene-speech > span {
+  display: block;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.room-unread {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-coral);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* 场景里的「你」 */
+.room-human-presence {
+  position: absolute;
+  z-index: 17;
+  left: 36px;
+  top: 100px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 280px;
+}
+.room-human-presence button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 130px;
+  padding: 5px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
+  font-size: 13px;
+  font-weight: 600;
+}
+.room-human-presence svg {
+  width: 14px;
+  height: 14px;
+}
+.room-human-presence span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 空房间 */
 .room-empty-presence {
   position: absolute;
   left: 50%;
@@ -641,22 +685,22 @@
   transform: translateX(-50%);
   width: min(390px, calc(100% - 32px));
   padding: 22px 26px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
+  box-shadow: var(--ar-press);
   text-align: center;
   color: var(--color-ink);
-  box-shadow: 0 8px 32px #23303918;
 }
 .room-empty-presence p {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ar-muted);
   line-height: 1.8;
 }
 .room-empty-presence__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   justify-content: center;
   margin-top: 14px;
 }
@@ -664,25 +708,28 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 42px;
+  min-height: 44px;
   padding: 8px 18px;
-  border: 1px solid var(--ar-line);
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
   color: var(--color-ink);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 .room-empty-presence button:hover {
   background: var(--ar-surface-muted);
 }
 .room-empty-presence button[data-tone='primary'] {
-  border-color: var(--ar-accent);
-  background: var(--ar-accent);
-  color: #fff;
+  background: var(--ar-sunny);
 }
 .room-empty-presence button[data-tone='primary']:hover {
-  background: var(--ar-accent-hover);
+  background: var(--ar-sunny-hover);
+}
+.room-empty-presence button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
 }
 .room-empty-presence button svg {
   width: 16px;
@@ -702,40 +749,18 @@
   right: 0;
   bottom: 0;
 }
-.lobby-game .agent-inspector__portrait {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  margin: 20px auto;
-  overflow: hidden;
-}
-.lobby-game .agent-inspector__portrait svg {
-  width: 96px;
-  height: 96px;
-}
-.lobby-game .agent-inspector__status {
-  display: flex;
-  flex-wrap: wrap;
-  text-align: center;
-  justify-content: center;
-}
-.lobby-game .agent-inspector__status > span:last-child {
-  display: block;
-  width: 100%;
-  font-size: 12px;
-  color: var(--ar-muted);
-}
 
+/* 小地图 */
 .room-minimap {
   position: absolute;
-  right: 24px;
+  right: 20px;
   bottom: 16px;
   width: 224px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
-  background: #fff;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
+  background: var(--ar-surface);
   color: var(--ar-muted);
-  box-shadow: 0 3px 14px #23303918;
+  box-shadow: var(--ar-press-small);
   overflow: hidden;
   z-index: 2;
 }
@@ -745,7 +770,8 @@
   gap: 8px;
   padding: 10px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   list-style: none;
 }
 .room-minimap summary::-webkit-details-marker {
@@ -768,7 +794,7 @@
   margin: 0 10px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: 10px;
   background: var(--ar-surface-muted);
   overflow: hidden;
   touch-action: manipulation;
@@ -782,55 +808,41 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px 6px 12px;
+  padding: 6px 10px 8px 12px;
   gap: 8px;
   font-size: 12px;
 }
 .room-minimap footer button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 28px;
-  border: 0;
-  border-radius: 5px;
-  background: var(--ar-surface-muted);
+  width: 32px;
+  height: 30px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
 }
 .room-minimap button:focus-visible,
 .room-minimap summary:focus-visible {
-  outline: 2px solid #247a77;
-  outline-offset: -2px;
+  outline: 3px solid var(--ar-accent);
+  outline-offset: -3px;
 }
 .lobby-game:has(.agent-inspector) .room-minimap,
 .lobby-game:has(.room-panel:not([hidden])) .room-minimap {
   display: none;
 }
-.lobby-game .room-character-name {
-  font-size: 17px;
-  font-weight: 600;
-  fill: #233039;
-  stroke: #fff;
-}
-.room-character-status {
-  font-size: 13px;
-  fill: #526667;
-  paint-order: stroke;
-  stroke: #fff;
-  stroke-width: 3px;
-}
-.lobby-game .agent-inspector__summary {
-  margin-top: 16px;
-}
+
+/* 桌面宽屏：打开面板或详情时场景让出位置，外框和面板之间留 20px */
 @media (min-width: 1100px) {
   .lobby-game:has(.agent-inspector) .room-scene {
-    right: 310px;
+    right: 320px;
   }
   .lobby-game:has(.room-panel:not([hidden])) .room-scene {
-    right: 440px;
+    right: 460px;
   }
 }
 @media (min-width: 768px) and (max-width: 1300px) {
   .lobby-game .room-toolbelt {
-    left: 24px;
+    left: 20px;
     transform: none;
   }
 }
@@ -839,38 +851,199 @@
     display: none;
   }
 }
+
+/* 手机：一层底部操作栏；视角与缩放收成场景右侧的一列圆按钮 */
 @media (max-width: 767px) {
-  .room-minimap {
-    width: 152px;
+  .lobby-game .workspace-header {
+    top: 12px;
+    left: 12px;
     right: 12px;
-    bottom: 6px;
+    height: 64px;
+    gap: 10px;
+    padding: 0 10px;
+    border: var(--ar-outline-width) solid var(--ar-outline);
+    border-radius: 22px;
+    background: var(--ar-surface);
+    box-shadow: var(--ar-press);
   }
-  .room-minimap footer span {
+  .lobby-game .workspace-header__symbol,
+  .lobby-game .workspace-header__topic {
+    display: none;
+  }
+  .lobby-game .workspace-header__identity > span {
     font-size: 12px;
   }
-  .lobby-game:has(.agent-inspector) .room-scene-hint {
+  .lobby-game .workspace-header__identity h1 {
+    font-size: 21px;
+  }
+  .lobby-game .workspace-header__members {
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+  .lobby-game .workspace-header__members-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .lobby-game .workspace-header__members-count {
+    display: inline;
+  }
+  .lobby-game .lobby-stage--scene {
+    top: 100px;
+    right: 12px;
+    bottom: 101px;
+    left: 12px;
+    border-radius: 24px;
+  }
+  .lobby-game .lobby-stage--list {
+    top: 100px;
+    right: 12px;
+    bottom: 101px;
+    left: 12px;
+    padding: 68px 12px 12px;
+    border-radius: 24px;
+  }
+  /* 手机上拖动、双指缩放和点按都是本能操作，提示条只会遮住场景。 */
+  .room-scene-hint {
+    display: none;
+  }
+  .room-human-presence {
+    top: 112px;
+    left: 24px;
+    max-width: calc(100% - 96px);
+  }
+  .lobby-game:has(.agent-inspector) .room-human-presence,
+  .lobby-game:has(.room-panel:not([hidden])) .room-human-presence {
     visibility: hidden;
   }
-  .lobby-game .agent-inspector {
-    height: min(570px, 68dvh, calc(100dvh - 288px));
+  .lobby-game .signal-dock {
+    left: auto;
+    right: 20px;
+    bottom: 109px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border-radius: var(--ar-pill);
+  }
+  .lobby-game .signal-dock__modes {
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 0 6px;
+    border-right: 0;
+    border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  }
+  .lobby-game .signal-dock__zoom {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .lobby-game .signal-dock .ar-button,
+  .lobby-game .signal-dock__zoom .ar-button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+  .lobby-game .signal-dock__mode-label {
+    display: none;
+  }
+  /* 百分比仍留给读屏和缩放按钮的上下文，只是不占手机上的竖向空间。 */
+  .lobby-game .signal-dock__zoom output {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-width: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .lobby-game:has(.agent-inspector) .signal-dock,
   .lobby-game:has(.room-panel:not([hidden])) .signal-dock {
     visibility: hidden;
   }
-  .lobby-game .lobby-stage--scene {
-    top: 100px;
-    bottom: 142px;
+  /* 列表视图没有缩放按钮；两个视角按钮横放在列表上方，别压住名单底部的翻页。 */
+  .lobby-game:has(.lobby-stage--list) .signal-dock {
+    top: 110px;
+    bottom: auto;
+    flex-direction: row;
   }
-  .lobby-game .workspace-header {
-    left: 14px;
-    right: 14px;
-    gap: 10px;
+  .lobby-game:has(.lobby-stage--list) .signal-dock__modes {
+    flex-direction: row;
+    padding: 0;
+    border-bottom: 0;
   }
-  .lobby-game .room-toolbelt {
+  .room-toolbelt {
     left: 12px;
     right: 12px;
+    bottom: 12px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
     transform: none;
+  }
+  .room-toolbelt button {
+    min-width: 0;
+    height: 64px;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+  .room-toolbelt__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .room-toolbelt__short {
+    display: block;
+  }
+  .room-panel,
+  .lobby-game .agent-inspector {
+    position: absolute;
+    top: auto;
+    left: 12px;
+    right: 12px;
+    bottom: 101px;
+    width: auto;
+    max-width: none;
+    height: min(570px, 68dvh);
+    border-radius: 24px;
+  }
+  /* 详情顶边保持在 100dvh - 632px：手机上选中人物的镜头落点依赖它，名牌不能被详情盖住。 */
+  .lobby-game .agent-inspector {
+    height: min(570px, 68dvh, calc(100dvh - 313px));
+    padding: 18px;
+  }
+  /* 手机面板高度有限：收紧标签栏和输入框，把空间留给消息，避免空对话也出现滚动区。 */
+  .room-panel__header {
+    padding: 6px 8px 6px 10px;
+  }
+  .room-panel__header .workspace-view-tabs > button {
+    min-height: 36px;
+    padding: 0 12px;
+  }
+  .room-panel .conversation-panel__composer {
+    margin: 0 10px 10px;
+    padding: 8px 10px;
+  }
+  .room-panel .conversation-panel__composer textarea {
+    min-height: 48px;
+    max-height: 130px;
+  }
+  .room-panel .conversation-attachment-picker {
+    padding: 0.25rem 0;
+  }
+  .room-panel .message-workspace .message-composer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-height: 100%;
+    border-radius: 0;
   }
   .lobby-game .agent-inspector__portrait {
     width: 68px;
@@ -880,10 +1053,19 @@
     width: 68px;
     height: 68px;
   }
-  .room-scene-hint {
-    white-space: normal;
-    text-align: center;
-    width: max-content;
+  .lobby-game .desktop-runtime[data-placement='game'] {
+    left: 24px;
+    width: 220px;
+  }
+  .scene-speech {
+    width: 175px;
+    padding: 8px 10px;
+  }
+  .room-minimap {
+    width: 152px;
+    right: auto;
+    left: 12px;
+    bottom: 12px;
   }
   .room-empty-presence {
     top: 30%;
