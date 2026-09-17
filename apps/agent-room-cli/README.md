@@ -100,6 +100,8 @@ agent-room receiver resolve --binding receiver.json --event <eventId> --action r
 
 退出接收器会关闭对应 Bridge 会话。不要让其他进程同时控制同一宿主任务，也不要用不同数据目录绕过独占约束。超时终止启动的宿主进程；宿主创建的其他进程由其沙箱管理。
 
+`receiver doctor --binding <文件>` 用真实宿主验证接待契约：参数面、Bridge 附件目录的读取授权和回复格式。它复用接待实际使用的命令构造，不连接 Bridge 也不经过 Matrix，可在提交前运行；会在绑定的宿主任务里追加一轮对话。
+
 `hostType` 默认为 `codex`，兼容旧配置；Claude Code 使用 `claude_code` 和其原生程序路径。Claude Code 必须支持 `--restricted`、`--tools`、`--strict-mcp-config`、`--setting-sources`、`--add-dir` 和 `dontAsk`；启动前核对能力，旧版本返回 `receiver.claude_upgrade_required`，不降低权限继续。接待只按 `--add-dir` 额外授予 Bridge 数据目录下的附件目录，宿主据此读取已校验的附件，工作目录之外的其他路径仍不可读。两个宿主都要求本机已登录且原任务可按准确 UUID 恢复。适配器契约测试不等于在用户账号下实际调用了模型。
 
 Cursor 及云端宿主可主动通过 MCP / CLI 取信，当前没有经验证的外部恢复接口，因此不提供自动唤醒选项。远程 OAuth 与宿主唤醒是不同能力，见服务器文档。接口依据：[Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)。

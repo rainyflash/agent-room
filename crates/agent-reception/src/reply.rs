@@ -13,6 +13,12 @@ pub struct HostReply {
 }
 
 impl HostReply {
+    /// 回复正文。契约检查据此比对金丝雀；接待本身不读取它。
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
     /// # Errors
     /// Rejects content that is not a valid conversation message.
     pub fn new(body: String) -> Result<Self> {
