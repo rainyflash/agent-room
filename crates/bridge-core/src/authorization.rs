@@ -36,6 +36,8 @@ pub struct AuthorizedBridgeDevice {
 pub enum BridgeAuthorizationFailureKind {
     InvalidRequest,
     AuthorizationDenied,
+    AuthorizationExpired,
+    AuthorizationPromptUnavailable,
     IdentityProviderUnavailable,
     InvalidIdentityAssertion,
     SecureStorageUnavailable,
@@ -120,6 +122,12 @@ impl BridgeAuthorizationService {
                 }
                 OidcFailureKind::ProviderRejected => {
                     BridgeAuthorizationFailureKind::AuthorizationDenied
+                }
+                OidcFailureKind::AuthorizationExpired => {
+                    BridgeAuthorizationFailureKind::AuthorizationExpired
+                }
+                OidcFailureKind::PromptUnavailable => {
+                    BridgeAuthorizationFailureKind::AuthorizationPromptUnavailable
                 }
                 OidcFailureKind::InvalidIdentityToken => {
                     BridgeAuthorizationFailureKind::InvalidIdentityAssertion

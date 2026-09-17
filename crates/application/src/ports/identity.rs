@@ -260,6 +260,10 @@ impl VerifiedOidcIdentity {
 pub enum OidcFailureKind {
     DependencyUnavailable,
     ProviderRejected,
+    /// 设备码在用户批准前已到期；需要重新申请设备码，不代表授权被拒绝。
+    AuthorizationExpired,
+    /// 交互层无法把设备授权指引交给用户，属于本地故障，不代表身份提供方拒绝。
+    PromptUnavailable,
     InvalidIdentityToken,
     InvalidConfiguration,
 }

@@ -29,6 +29,15 @@ export const localConnectionNotice: Readonly<
   stopped: 'agentInvite.runtime.stopped',
 };
 
+// 设备码过期只需重试获取新代码，不应与其他授权失败共用笼统说明。
+export function authorizationFailureMessage(
+  lastFailureCode: string | null | undefined,
+): TranslationKey {
+  return lastFailureCode === 'bridge.authorization_expired'
+    ? 'desktop.authorization.expiredDescription'
+    : 'desktop.authorization.failedDescription';
+}
+
 export function hostFailureMessage(code: string): TranslationKey {
   switch (code) {
     case 'codex.config_incompatible':

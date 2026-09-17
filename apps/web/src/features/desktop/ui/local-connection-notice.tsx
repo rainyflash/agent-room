@@ -2,7 +2,7 @@ import { Button } from '@agent-room/ui-system';
 import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { localConnectionNotice } from '../domain/desktop-connection';
+import { authorizationFailureMessage, localConnectionNotice } from '../domain/desktop-connection';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 
 export function LocalConnectionNotice() {
@@ -13,17 +13,14 @@ export function LocalConnectionNotice() {
   const lifecycle = controller.snapshot?.bridge.lifecycle;
   const authorizationFailed =
     phase === 'halted' && lifecycle?.diagnosticCode === 'desktop.authorization.failed';
+  const authorizationFailureDescription = authorizationFailureMessage(lifecycle?.lastFailureCode);
   if (phase === 'ready' || phase === 'authorized') return null;
   return (
     <section className="agent-invite__notice" data-phase={phase} role="status">
       <AlertTriangle aria-hidden="true" />
       <div>
         <p>
-          {t(
-            authorizationFailed
-              ? 'desktop.authorization.failedDescription'
-              : localConnectionNotice[phase],
-          )}
+          {t(authorizationFailed ? authorizationFailureDescription : localConnectionNotice[phase])}
         </p>
         {phase === 'halted' && lifecycle?.lastFailureCode != null ? (
           <details>

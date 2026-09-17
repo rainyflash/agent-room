@@ -4,8 +4,8 @@ use agent_room_application::{
     devices::{AuthenticatedDevice, DeviceCredentials, canonical_device_registration_message},
     ports::{
         DeviceSignature, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
-        OidcDeviceGrantGateway, OidcDevicePromptFailure, OidcResult, PortFuture, PrincipalAccount,
-        ProfileImportConsent, SecretFactory, SecretValue,
+        OidcDeviceGrantGateway, OidcDevicePromptFailure, OidcFailure, OidcFailureKind, OidcResult,
+        PortFuture, PrincipalAccount, ProfileImportConsent, SecretFactory, SecretValue,
     },
 };
 use agent_room_bridge_core::{
@@ -47,13 +47,21 @@ impl OidcDeviceGrantGateway for 测试Oidc {
                     expires_in: DurationMillis::new(60_000).expect("时长有效"),
                     polling_interval: DurationMillis::new(5_000).expect("时长有效"),
                 })
-                .map_err(|_| {
-                    agent_room_application::ports::OidcFailure::new(
-                        agent_room_application::ports::OidcFailureKind::ProviderRejected,
-                    )
-                })?;
+                .map_err(|_| OidcFailure::new(OidcFailureKind::PromptUnavailable))?;
             Ok(SecretValue::new(ASSERTION).expect("测试断言有效"))
         })
+    }
+}
+
+struct 失败Oidc(OidcFailureKind);
+
+impl OidcDeviceGrantGateway for 失败Oidc {
+    fn authorize<'a>(
+        &'a self,
+        _prompt_sink: &'a dyn OidcDeviceAuthorizationPromptSink,
+    ) -> PortFuture<'a, OidcResult<SecretValue>> {
+        let kind = self.0;
+        Box::pin(async move { Err(OidcFailure::new(kind)) })
     }
 }
 
@@ -211,13 +219,79 @@ async fn 控制平面已注册但安全存储失败时不得伪装授权成功()
     assert_eq!(failure.operation(), "bridge.authorize.persist_credentials");
 }
 
+#[tokio::test]
+async fn 设备授权失败按原因区分且都不注册设备() {
+    for (oidc_failure, expected) in [
+        (
+            OidcFailureKind::AuthorizationExpired,
+            BridgeAuthorizationFailureKind::AuthorizationExpired,
+        ),
+        (
+            OidcFailureKind::PromptUnavailable,
+            BridgeAuthorizationFailureKind::AuthorizationPromptUnavailable,
+        ),
+        (
+            OidcFailureKind::ProviderRejected,
+            BridgeAuthorizationFailureKind::AuthorizationDenied,
+        ),
+        (
+            OidcFailureKind::DependencyUnavailable,
+            BridgeAuthorizationFailureKind::IdentityProviderUnavailable,
+        ),
+        (
+            OidcFailureKind::InvalidIdentityToken,
+            BridgeAuthorizationFailureKind::InvalidIdentityAssertion,
+        ),
+        (
+            OidcFailureKind::InvalidConfiguration,
+            BridgeAuthorizationFailureKind::Internal,
+        ),
+    ] {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let control_plane = Arc::new(测试控制平面::default());
+        let vault = Arc::new(内存凭据库::default());
+        let service = service_with_oidc(
+            Arc::new(失败Oidc(oidc_failure)),
+            messages.clone(),
+            control_plane.clone(),
+            vault.clone(),
+        );
+
+        let failure = service
+            .authorize(request(), &接受提示)
+            .await
+            .expect_err("OIDC 失败必须向上返回");
+
+        assert_eq!(failure.kind(), expected, "{oidc_failure:?}");
+        assert_eq!(failure.operation(), "bridge.authorize.oidc");
+        assert!(messages.lock().expect("签名消息锁未中毒").is_empty());
+        assert!(
+            control_plane
+                .registrations
+                .lock()
+                .expect("注册锁未中毒")
+                .is_empty()
+        );
+        assert!(vault.value.lock().expect("凭据锁未中毒").is_none());
+    }
+}
+
 fn service(
     messages: Arc<Mutex<Vec<Vec<u8>>>>,
     control_plane: Arc<测试控制平面>,
     vault: Arc<内存凭据库>,
 ) -> BridgeAuthorizationService {
+    service_with_oidc(Arc::new(测试Oidc), messages, control_plane, vault)
+}
+
+fn service_with_oidc(
+    oidc: Arc<dyn OidcDeviceGrantGateway>,
+    messages: Arc<Mutex<Vec<Vec<u8>>>>,
+    control_plane: Arc<测试控制平面>,
+    vault: Arc<内存凭据库>,
+) -> BridgeAuthorizationService {
     BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
-        oidc: Arc::new(测试Oidc),
+        oidc,
         signing_identities: Arc::new(测试签名存储 {
             identity: Arc::new(测试签名身份 { messages }),
         }),

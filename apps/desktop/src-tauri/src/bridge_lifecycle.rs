@@ -391,6 +391,7 @@ mod tests {
         for code in [
             "bridge.identity_assertion_invalid",
             "bridge.authorization_denied",
+            "bridge.authorization_expired",
             "bridge.secure_storage_unavailable",
             "bridge.registration_outcome_unknown",
         ] {

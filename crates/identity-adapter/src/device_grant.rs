@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::{error::Error, str::FromStr, time::Duration};
 
 use agent_room_application::ports::{
     OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
@@ -7,8 +7,9 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::time::{DurationMillis, UtcMillis};
 use openidconnect::{
-    AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationUrl, IssuerUrl, Nonce,
-    ProviderMetadata, Scope,
+    AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationUrl,
+    DeviceCodeErrorResponse, DeviceCodeErrorResponseType, IssuerUrl, Nonce, ProviderMetadata,
+    RequestTokenError, Scope,
     core::{
         CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
         CoreDeviceAuthorizationResponse, CoreGrantType, CoreIdToken, CoreJsonWebKey,
@@ -138,7 +139,7 @@ impl DiscoveredOidcDeviceGrant {
         let prompt = prompt(&authorization)?;
         prompt_sink
             .present(&prompt)
-            .map_err(|_| OidcFailure::new(OidcFailureKind::ProviderRejected))?;
+            .map_err(|_| OidcFailure::new(OidcFailureKind::PromptUnavailable))?;
 
         let token = client
             .exchange_device_access_token(&authorization)
@@ -153,7 +154,7 @@ impl DiscoveredOidcDeviceGrant {
                 ),
             )
             .await
-            .map_err(|error| map_token_request_error(&error))?;
+            .map_err(|error| map_device_access_token_error(&error))?;
         let id_token = token
             .extra_fields()
             .id_token()
@@ -241,6 +242,25 @@ fn prompt(
         expires_in: duration(authorization.expires_in())?,
         polling_interval: duration(authorization.interval())?,
     })
+}
+
+/// 设备码到期只需重新申请设备码，不能与拒绝授权混为一谈。本地轮询期限耗尽时
+/// oauth2 同样合成 `expired_token`，因此提供方返回与本地超时都归为到期；
+/// `access_denied` 等其余提供方响应仍归为拒绝。
+fn map_device_access_token_error<E>(
+    error: &RequestTokenError<E, DeviceCodeErrorResponse>,
+) -> OidcFailure
+where
+    E: Error + 'static,
+{
+    match error {
+        RequestTokenError::ServerResponse(response)
+            if matches!(response.error(), DeviceCodeErrorResponseType::ExpiredToken) =>
+        {
+            OidcFailure::new(OidcFailureKind::AuthorizationExpired)
+        }
+        _ => map_token_request_error(error),
+    }
 }
 
 fn duration(value: Duration) -> OidcResult<DurationMillis> {

@@ -44,29 +44,44 @@ enum 断言变体 {
     已过期,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum 轮询结局 {
+    批准,
+    提供方错误(&'static str),
+    无人批准,
+}
+
 #[derive(Clone)]
 struct 提供者状态 {
     issuer: String,
     assertion_variant: 断言变体,
+    poll_outcome: 轮询结局,
     poll_count: Arc<Mutex<usize>>,
     signing_key_pem: Arc<str>,
 }
 
 struct 假设备授权提供者 {
     issuer: String,
+    poll_count: Arc<Mutex<usize>>,
     task: JoinHandle<()>,
 }
 
 impl 假设备授权提供者 {
     async fn 启动(assertion_variant: 断言变体) -> Self {
+        Self::启动场景(assertion_variant, 轮询结局::批准).await
+    }
+
+    async fn 启动场景(assertion_variant: 断言变体, poll_outcome: 轮询结局) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("应能绑定本地测试端口");
         let issuer = format!("http://{}", listener.local_addr().expect("测试地址可读"));
+        let poll_count = Arc::new(Mutex::new(0));
         let state = 提供者状态 {
             issuer: issuer.clone(),
             assertion_variant,
-            poll_count: Arc::new(Mutex::new(0)),
+            poll_outcome,
+            poll_count: poll_count.clone(),
             signing_key_pem: Arc::from(生成测试签名密钥()),
         };
         let router = Router::new()
@@ -80,7 +95,11 @@ impl 假设备授权提供者 {
                 .await
                 .expect("假 OIDC 提供者不应异常退出");
         });
-        Self { issuer, task }
+        Self {
+            issuer,
+            poll_count,
+            task,
+        }
     }
 
     fn 网关(&self) -> DiscoveredOidcDeviceGrant {
@@ -113,6 +132,17 @@ impl OidcDeviceAuthorizationPromptSink for 记录提示 {
     }
 }
 
+struct 无法展示提示;
+
+impl OidcDeviceAuthorizationPromptSink for 无法展示提示 {
+    fn present(
+        &self,
+        _prompt: &OidcDeviceAuthorizationPrompt,
+    ) -> Result<(), OidcDevicePromptFailure> {
+        Err(OidcDevicePromptFailure)
+    }
+}
+
 async fn 发现文档(State(state): State<提供者状态>) -> Json<serde_json::Value> {
     Json(json!({
         "issuer": state.issuer,
@@ -136,7 +166,7 @@ async fn 公钥集(State(state): State<提供者状态>) -> Json<CoreJsonWebKeyS
     ]))
 }
 
-async fn 创建设备码(body: Bytes) -> Response {
+async fn 创建设备码(State(state): State<提供者状态>, body: Bytes) -> Response {
     let form = 表单(&body);
     let scopes = form.get("scope").map(String::as_str).unwrap_or_default();
     if form.get("client_id").map(String::as_str) != Some(CLIENT_ID)
@@ -146,12 +176,18 @@ async fn 创建设备码(body: Bytes) -> Response {
     {
         return oauth_错误("invalid_request", "缺少公开客户端或 openid scope");
     }
+    // 无人批准时让客户端轮询期限在一次轮询间隔后耗尽，避免测试等待完整有效期。
+    let expires_in = if matches!(state.poll_outcome, 轮询结局::无人批准) {
+        1
+    } else {
+        60
+    };
     Json(json!({
         "device_code": DEVICE_CODE,
         "user_code": USER_CODE,
         "verification_uri": "https://login.agent-room.test/device",
         "verification_uri_complete": format!("https://login.agent-room.test/device?user_code={USER_CODE}"),
-        "expires_in": 60,
+        "expires_in": expires_in,
         "interval": 1
     }))
     .into_response()
@@ -168,8 +204,11 @@ async fn 轮询令牌(State(state): State<提供者状态>, body: Bytes) -> Resp
     }
     let mut poll_count = state.poll_count.lock().await;
     *poll_count += 1;
-    if *poll_count == 1 {
+    if *poll_count == 1 || matches!(state.poll_outcome, 轮询结局::无人批准) {
         return oauth_错误("authorization_pending", "用户尚未完成授权");
+    }
+    if let 轮询结局::提供方错误(code) = state.poll_outcome {
+        return oauth_错误(code, "设备授权未完成");
     }
     Json(创建令牌响应(&state)).into_response()
 }
@@ -339,4 +378,55 @@ async fn 设备断言的受众不是_bridge_客户端时必须拒绝() {
         .expect_err("错误受众必须失败");
 
     assert_eq!(failure.kind(), OidcFailureKind::InvalidIdentityToken);
+}
+
+#[tokio::test]
+async fn 提供方报告设备码过期时不得误报为拒绝授权() {
+    for (code, expected) in [
+        ("expired_token", OidcFailureKind::AuthorizationExpired),
+        ("access_denied", OidcFailureKind::ProviderRejected),
+    ] {
+        let provider =
+            假设备授权提供者::启动场景(断言变体::有效, 轮询结局::提供方错误(code)).await;
+        let gateway = provider.网关();
+        let prompt_sink = 记录提示::default();
+
+        let failure = gateway
+            .authorize(&prompt_sink)
+            .await
+            .expect_err("未获批准的设备授权必须失败");
+
+        assert_eq!(failure.kind(), expected, "{code}");
+        assert!(
+            prompt_sink.0.lock().expect("提示锁未中毒").is_some(),
+            "{code}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn 无人批准直到轮询期限耗尽时报告设备码过期() {
+    let provider = 假设备授权提供者::启动场景(断言变体::有效, 轮询结局::无人批准).await;
+    let gateway = provider.网关();
+
+    let failure = gateway
+        .authorize(&记录提示::default())
+        .await
+        .expect_err("设备码到期后必须停止轮询");
+
+    assert_eq!(failure.kind(), OidcFailureKind::AuthorizationExpired);
+}
+
+#[tokio::test]
+async fn 验证码无法展示时报告本地故障且不开始轮询() {
+    let provider = 假设备授权提供者::启动(断言变体::有效).await;
+    let gateway = provider.网关();
+
+    let failure = gateway
+        .authorize(&无法展示提示)
+        .await
+        .expect_err("无法展示验证码时必须失败");
+
+    assert_eq!(failure.kind(), OidcFailureKind::PromptUnavailable);
+    assert_eq!(*provider.poll_count.lock().await, 0);
 }
