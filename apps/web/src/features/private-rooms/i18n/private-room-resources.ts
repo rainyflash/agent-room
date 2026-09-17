@@ -77,13 +77,15 @@ const en = {
   'privateRooms.capability.view.label': 'View',
   'privateRooms.capability.view.detail': 'Read room metadata and protected content.',
   'privateRooms.capability.speak.label': 'Speak',
-  'privateRooms.capability.speak.detail': 'Publish messages to the room.',
+  'privateRooms.capability.speak.detail':
+    'Publish messages to the room, and let this member’s agents enter it.',
   'privateRooms.capability.invite.label': 'Invite',
   'privateRooms.capability.invite.detail': 'Invite additional principals.',
   'privateRooms.capability.manage.label': 'Manage',
   'privateRooms.capability.manage.detail': 'Change memberships and permissions.',
   'privateRooms.capability.automate.label': 'Automate',
-  'privateRooms.capability.automate.detail': 'Allow an authorized Agent to send automatically.',
+  'privateRooms.capability.automate.detail':
+    'Beyond speaking, let this member’s agents reply automatically here.',
   'privateRooms.failure.title': 'The operation stopped at a trusted boundary',
   'privateRooms.governance.eyebrow': 'AUTHORITATIVE ROOM POLICY',
   'privateRooms.governance.title': 'Room governance',
@@ -97,6 +99,13 @@ const en = {
     'The Control Plane resolves the trusted Matrix identity; do not paste a Matrix user ID here.',
   'privateRooms.governance.invite.principal': 'Principal UUIDv7',
   'privateRooms.governance.invite.principalPlaceholder': '0198b601-…',
+  'privateRooms.governance.invite.principalInvalid':
+    'That is not a principal ID. Ask the person for the ID shown in their own room panel.',
+  'privateRooms.governance.selfId.title': 'Your principal ID',
+  'privateRooms.governance.selfId.detail':
+    'Send this to a room owner so they can invite you. Agent Room never lists accounts by name or email.',
+  'privateRooms.governance.selfId.copy': 'Copy my ID',
+  'privateRooms.governance.selfId.copied': 'Copied',
   'privateRooms.governance.invite.permissions': 'Invitation permissions',
   'privateRooms.governance.members.title': 'Membership ledger',
   'privateRooms.governance.members.detail':
@@ -189,13 +198,13 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.capability.view.label': '查看',
   'privateRooms.capability.view.detail': '读取房间元数据与受保护内容。',
   'privateRooms.capability.speak.label': '发言',
-  'privateRooms.capability.speak.detail': '向房间发布消息。',
+  'privateRooms.capability.speak.detail': '向房间发布消息，并允许该成员的 Agent 入场。',
   'privateRooms.capability.invite.label': '邀请',
   'privateRooms.capability.invite.detail': '邀请其他主体。',
   'privateRooms.capability.manage.label': '管理',
   'privateRooms.capability.manage.detail': '修改成员关系与权限。',
   'privateRooms.capability.automate.label': '自动发送',
-  'privateRooms.capability.automate.detail': '允许获权 Agent 自动发送消息。',
+  'privateRooms.capability.automate.detail': '在发言之外，允许该成员的 Agent 在此房间自动回复。',
   'privateRooms.failure.title': '操作已在可信边界停止',
   'privateRooms.governance.eyebrow': '权威房间策略',
   'privateRooms.governance.title': '房间治理',
@@ -209,6 +218,13 @@ const zhCN: Record<keyof typeof en, string> = {
     'Control Plane 会解析可信 Matrix 身份；这里不要粘贴 Matrix 用户 ID。',
   'privateRooms.governance.invite.principal': '主体 UUIDv7',
   'privateRooms.governance.invite.principalPlaceholder': '0198b601-…',
+  'privateRooms.governance.invite.principalInvalid':
+    '这不是主体 ID。让对方在自己的房间面板里复制 ID 发给你。',
+  'privateRooms.governance.selfId.title': '我的 ID',
+  'privateRooms.governance.selfId.detail':
+    '把它发给房主，对方就能邀请你。Agent Room 不提供按昵称或邮箱检索账号。',
+  'privateRooms.governance.selfId.copy': '复制我的 ID',
+  'privateRooms.governance.selfId.copied': '已复制',
   'privateRooms.governance.invite.permissions': '邀请权限',
   'privateRooms.governance.members.title': '成员账本',
   'privateRooms.governance.members.detail':

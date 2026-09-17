@@ -873,7 +873,10 @@ fn build_agent_lobby_entry(
     Ok(Arc::new(AgentLobbyEntryService::new(
         AgentLobbyEntryDependencies {
             access: repositories.clone(),
-            allocations: repositories,
+            allocations: repositories.clone(),
+            // 私人房间的入场资格由成员事实裁决，Matrix 侧按同一网关补发受邀。
+            private_rooms: repositories,
+            private_matrix: matrix.clone(),
             memberships: matrix,
             provisioning,
             identifiers: system_runtime.clone(),

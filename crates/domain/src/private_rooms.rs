@@ -355,6 +355,31 @@ impl PrivateRoom {
             .is_some_and(|member| member.allows(capability))
     }
 
+    /// 判断代表某个主体行动的 Agent 能否进入这个私人房间。
+    ///
+    /// 参数是 Agent 此次代表的主体，即驱动该实例的设备所属账号，而不是 Agent 的任一共同所有者。
+    /// Agent 不是房间成员，它随该主体入场且能力不超过它：该主体必须处于已加入状态并具备发言能力，
+    /// 仅被邀请、已拒绝、已离开、已移除和被封禁都不满足，归档房间关闭发言因此也不再接纳 Agent。
+    ///
+    /// 由成员资格单点裁决，移除或封禁一个成员会立即让其全部 Agent 失去房间，不需要另一套级联
+    /// 清理，也不会出现 Agent 仍在而其主体已离开的矛盾状态。
+    #[must_use]
+    pub fn admits_agent_of(&self, principal_id: PrincipalId) -> bool {
+        self.member(principal_id)
+            .is_some_and(PrivateRoomMember::has_joined)
+            && self.allows(principal_id, PrivateRoomCapability::Speak)
+    }
+
+    /// 判断代表某个主体行动的 Agent 能否在这个私人房间自主发送。
+    ///
+    /// 在入场条件之上还要求该主体具备自动发送能力。这只是房间侧的上限，接待仍然另外要求一份
+    /// 范围受限且会过期的自动发言授权，两者都满足才会真正发送。
+    #[must_use]
+    pub fn admits_autonomous_agent_of(&self, principal_id: PrincipalId) -> bool {
+        self.admits_agent_of(principal_id)
+            && self.allows(principal_id, PrivateRoomCapability::Automate)
+    }
+
     /// 邀请成员进入活跃房间。
     ///
     /// # Errors
@@ -978,6 +1003,101 @@ mod tests {
         );
         assert!(room.member(principal(2)).is_none());
         assert_eq!(room.version().value(), i64::MAX);
+    }
+
+    #[test]
+    fn agent_随已加入且可发言的所有者入场() {
+        let mut room = room();
+        join(&mut room, principal(2));
+
+        assert!(room.admits_agent_of(principal(1)), "房主可以带 Agent 进来");
+        assert!(
+            room.admits_agent_of(principal(2)),
+            "已加入的发言成员可以带 Agent 进来"
+        );
+        assert!(
+            !room.admits_agent_of(principal(9)),
+            "非成员不能带 Agent 进来"
+        );
+    }
+
+    #[test]
+    fn 仅被邀请或已离场的所有者不能带_agent_进来() {
+        let mut room = room();
+        room.invite(principal(1), principal(2), ordinary_permissions())
+            .expect("邀请成功");
+
+        assert!(
+            !room.admits_agent_of(principal(2)),
+            "尚未接受邀请不算已加入"
+        );
+
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+        assert!(room.admits_agent_of(principal(2)));
+
+        room.leave(principal(2)).expect("离开成功");
+        assert!(!room.admits_agent_of(principal(2)), "离开后立即失去房间");
+    }
+
+    #[test]
+    fn 移除或封禁所有者会立即带走其_agent() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        join(&mut room, principal(3));
+
+        room.remove_member(principal(1), principal(2))
+            .expect("移除成功");
+        assert!(!room.admits_agent_of(principal(2)));
+
+        room.ban_member(principal(1), principal(3))
+            .expect("封禁成功");
+        assert!(!room.admits_agent_of(principal(3)));
+    }
+
+    #[test]
+    fn 没有发言能力的成员不能带_agent_进来() {
+        let mut room = room();
+        let view_only = PrivateRoomPermissions::from_capabilities([PrivateRoomCapability::View])
+            .expect("只读权限有效");
+        room.invite(principal(1), principal(2), view_only)
+            .expect("邀请成功");
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+
+        assert!(room.allows(principal(2), PrivateRoomCapability::View));
+        assert!(
+            !room.admits_agent_of(principal(2)),
+            "只读成员不能带 Agent 发言"
+        );
+    }
+
+    #[test]
+    fn 自主发送额外要求所有者具备自动发送能力() {
+        let mut room = room();
+        join(&mut room, principal(2));
+
+        assert!(room.admits_agent_of(principal(2)));
+        assert!(
+            !room.admits_autonomous_agent_of(principal(2)),
+            "普通发言成员不足以让 Agent 自主发送"
+        );
+        assert!(
+            room.admits_autonomous_agent_of(principal(1)),
+            "房主具备自动发送能力"
+        );
+    }
+
+    #[test]
+    fn 归档房间不再接纳_agent() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        room.archive(principal(1)).expect("归档成功");
+
+        assert!(
+            room.allows(principal(2), PrivateRoomCapability::View),
+            "仍可查看历史"
+        );
+        assert!(!room.admits_agent_of(principal(2)));
+        assert!(!room.admits_autonomous_agent_of(principal(1)));
     }
 
     fn room() -> PrivateRoom {

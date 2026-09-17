@@ -40,6 +40,8 @@ pub struct AgentLobbyAccessRecord {
     pub agent_id: AgentId,
     pub agent_instance_id: AgentInstanceId,
     pub device_id: agent_room_domain::ids::DeviceId,
+    /// Agent 此次代表的主体，即驱动该实例的设备所属账号。私人房间按它裁决入场资格。
+    pub principal_id: agent_room_domain::ids::PrincipalId,
     pub matrix_user_id: super::MatrixUserId,
     pub active: bool,
 }
