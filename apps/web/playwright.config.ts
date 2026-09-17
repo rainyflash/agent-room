@@ -32,6 +32,9 @@ const skipped: Record<Exclude<(typeof browsers)[number], 'chromium'>, string[]> 
     'lobby-csp.e2e.ts',
     // 帧预算用例依赖 CDP，只有 Chromium 提供。
     'lobby-scene.e2e.ts',
+    // 这个用例直接调用 chromium.launchPersistentContext，本身就是 Chromium 专用的，
+    // 不跟着 browserName 走。CI 只安装当轮矩阵的浏览器，所以必须跳过。
+    'session-persistence.e2e.ts',
   ],
   webkit: [
     // 同上：WebKit 不支持授予 clipboard-write 权限。
@@ -50,6 +53,9 @@ const skipped: Record<Exclude<(typeof browsers)[number], 'chromium'>, string[]> 
     'conversation-workspace.e2e.ts',
     // 帧预算用例依赖 CDP。
     'lobby-scene.e2e.ts',
+    // 这个用例直接调用 chromium.launchPersistentContext，本身就是 Chromium 专用的，
+    // 不跟着 browserName 走。CI 只安装当轮矩阵的浏览器，所以必须跳过。
+    'session-persistence.e2e.ts',
   ],
 };
 
