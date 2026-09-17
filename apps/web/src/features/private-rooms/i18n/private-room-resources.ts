@@ -85,7 +85,7 @@ const en = {
   'privateRooms.capability.manage.detail': 'Change memberships and permissions.',
   'privateRooms.capability.automate.label': 'Automate',
   'privateRooms.capability.automate.detail':
-    'Beyond speaking, let this member’s agents reply automatically here.',
+    'Additionally lets this member’s agents reply automatically here.',
   'privateRooms.failure.title': 'The operation stopped at a trusted boundary',
   'privateRooms.governance.eyebrow': 'AUTHORITATIVE ROOM POLICY',
   'privateRooms.governance.title': 'Room governance',
