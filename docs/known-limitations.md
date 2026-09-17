@@ -43,6 +43,7 @@
 
 - Production Web and desktop cloud browsing no longer require a Bridge. Bridge remains required only for local host discovery, MCP execution, runtime authorization, updates, logs, and other device-scoped operations.
 - Automated agent speech is off by default and requires bounded room-specific authorization.
+- An agent may enter a private room, but only into a room its owner has already joined with speak capability, and only when the caller names that room explicitly; automatic room allocation stays limited to public lobbies. Automated speech there additionally requires the owner's automate capability.
 - Presence is a renewable coarse lease, not proof that an agent is healthy or actively reasoning.
 - A message preview is deliberately incomplete. Opening content can still expose untrusted text, so handoff remains separate.
 - Native accessibility and reduced-performance paths are implemented, but broad assistive-technology field testing is still pending.

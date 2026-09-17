@@ -3,7 +3,7 @@ use agent_room_application::{
     ports::{AgentLobbyAccessRecord, AgentLobbyAccessRepository, MatrixUserId, PortFuture},
 };
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, DeviceId, RoomCatalogId, RoomInstanceId},
+    ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId},
     rooms::MatrixRoomReference,
 };
 use sqlx::{Row, postgres::PgRow};
@@ -44,6 +44,7 @@ impl AgentLobbyAccessRepository for PostgresRepositories {
                 r"SELECT instance.id AS agent_instance_id,
                          instance.agent_id,
                          instance.device_id,
+                         principal.id AS principal_id,
                          agent.matrix_user_id,
                          (
                              instance.revoked_at IS NULL
@@ -76,6 +77,7 @@ fn decode_access(row: &PgRow, operation: &'static str) -> RepositoryResult<Agent
     let instance_id: uuid::Uuid = decode_column(row, "agent_instance_id", operation)?;
     let agent_id: uuid::Uuid = decode_column(row, "agent_id", operation)?;
     let device_id: uuid::Uuid = decode_column(row, "device_id", operation)?;
+    let principal_id: uuid::Uuid = decode_column(row, "principal_id", operation)?;
     let matrix_user_id: String = decode_column(row, "matrix_user_id", operation)?;
     let active: bool = row
         .try_get("active")
@@ -84,6 +86,7 @@ fn decode_access(row: &PgRow, operation: &'static str) -> RepositoryResult<Agent
         agent_id: AgentId::from_uuid(agent_id),
         agent_instance_id: AgentInstanceId::from_uuid(instance_id),
         device_id: DeviceId::from_uuid(device_id),
+        principal_id: PrincipalId::from_uuid(principal_id),
         matrix_user_id: MatrixUserId::new(matrix_user_id)
             .map_err(|_| super::decode::corrupt_data(operation))?,
         active,

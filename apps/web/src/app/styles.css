@@ -2237,9 +2237,34 @@
   font-family: var(--font-sans);
 }
 
+.private-room-self-id {
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--ar-ink-18);
+}
+
+.private-room-self-id-value {
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+
+.private-room-self-id-value code {
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.35rem;
+  background: var(--ar-ink-04);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
 .private-room-invite {
   padding: 1.25rem 0;
   border-bottom: 1px solid var(--ar-ink-18);
+}
+
+.private-room-invite-hint {
+  margin: 0.5rem 0 0;
+  color: var(--color-alert);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
 }
 
 .private-room-invite > .ar-button {

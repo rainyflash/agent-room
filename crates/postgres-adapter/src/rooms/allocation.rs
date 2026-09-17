@@ -72,7 +72,7 @@ impl PostgresRepositories {
         let result = async {
             authorize_agent_instance(&mut transaction, claim).await?;
             let catalog = lock_catalog(&mut transaction, claim.catalog_id).await?;
-            ensure_allocatable_catalog(&catalog, operation)?;
+            ensure_allocatable_catalog(&catalog, claim.mode, operation)?;
 
             if let Some(stored) =
                 lock_reservation(&mut transaction, claim.reservation_id, operation).await?
@@ -295,12 +295,17 @@ async fn lock_catalog(
 
 fn ensure_allocatable_catalog(
     catalog: &RoomCatalog,
+    mode: RoomAllocationMode,
     operation: &'static str,
 ) -> RepositoryResult<()> {
-    if catalog.kind() == RoomCatalogKind::PublicLobby
-        && catalog.visibility() != RoomCatalogVisibility::Private
-        && catalog.is_joinable()
-    {
+    let admissible = match catalog.kind() {
+        RoomCatalogKind::PublicLobby => catalog.visibility() != RoomCatalogVisibility::Private,
+        // 私人房间只有一个实例，不参与容量分片，也绝不自动分配：入场资格已由应用层按房间
+        // 成员事实裁决，这里只接受指名实例，避免任何 Agent 被自动投放进受邀房间。
+        RoomCatalogKind::PrivateRoom => matches!(mode, RoomAllocationMode::Manual(_)),
+        RoomCatalogKind::Direct => false,
+    };
+    if admissible && catalog.is_joinable() {
         Ok(())
     } else {
         Err(RepositoryError::new(

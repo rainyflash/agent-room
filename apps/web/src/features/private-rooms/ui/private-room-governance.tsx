@@ -1,6 +1,16 @@
 import { Button } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Archive, Ban, Crown, LoaderCircle, LogOut, UserMinus, UserPlus } from 'lucide-react';
+import {
+  Archive,
+  Ban,
+  Check,
+  Copy,
+  Crown,
+  LoaderCircle,
+  LogOut,
+  UserMinus,
+  UserPlus,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -8,6 +18,7 @@ import type { PrivateRoomCoordinator } from '@/features/private-rooms/applicatio
 import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
 import {
   allows,
+  isPrivateRoomPrincipalId,
   memberFor,
   permissions,
   type PrivateRoom,
@@ -46,6 +57,7 @@ export function PrivateRoomGovernance({
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
   const [invitee, setInvitee] = useState('');
+  const [copied, setCopied] = useState(false);
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
     permissions('view', 'speak'),
   );
@@ -102,13 +114,49 @@ export function PrivateRoomGovernance({
         </dl>
       </div>
 
+      {/* 产品不提供按邮箱或昵称检索账号：那会让任何人枚举成员。想被邀请的人把自己的 ID
+          交出来，这个动作本身就是同意的信号。这里让每个人都能取到自己的 ID。 */}
+      <div className="private-room-self-id">
+        <div className="private-room-section-heading">
+          <div>
+            <h3>{t('privateRooms.governance.selfId.title')}</h3>
+            <p>{t('privateRooms.governance.selfId.detail')}</p>
+          </div>
+        </div>
+        <p className="private-room-self-id-value">
+          <code>{principalId}</code>
+        </p>
+        <Button
+          icon={copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          onClick={() => {
+            void navigator.clipboard.writeText(principalId).then(
+              () => {
+                setCopied(true);
+              },
+              () => {
+                setCopied(false);
+              },
+            );
+          }}
+          size="compact"
+          tone="quiet"
+          type="button"
+        >
+          {t(
+            copied
+              ? 'privateRooms.governance.selfId.copied'
+              : 'privateRooms.governance.selfId.copy',
+          )}
+        </Button>
+      </div>
+
       {canInvite ? (
         <form
           className="private-room-invite"
           onSubmit={(event) => {
             event.preventDefault();
             const targetPrincipalId = invitee.trim();
-            if (targetPrincipalId.length === 0) {
+            if (!isPrivateRoomPrincipalId(targetPrincipalId)) {
               return;
             }
             run({
@@ -146,8 +194,13 @@ export function PrivateRoomGovernance({
             onChange={setInvitePermissions}
             value={invitePermissions}
           />
+          {invitee.trim().length > 0 && !isPrivateRoomPrincipalId(invitee.trim()) ? (
+            <p className="private-room-invite-hint" role="status">
+              {t('privateRooms.governance.invite.principalInvalid')}
+            </p>
+          ) : null}
           <Button
-            disabled={mutation.isPending || invitee.trim().length === 0}
+            disabled={mutation.isPending || !isPrivateRoomPrincipalId(invitee.trim())}
             icon={<UserPlus aria-hidden="true" />}
             size="compact"
             tone="primary"
