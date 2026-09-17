@@ -1601,6 +1601,31 @@
   list-style: none;
 }
 
+.automation-grant-history {
+  margin-top: 1rem;
+  border-top: 1px solid var(--ar-ink-09);
+  padding-top: 0.75rem;
+}
+
+.automation-grant-history > summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--ar-ink-48);
+  padding: 0.25rem 0;
+}
+
+.automation-grant-history > summary:focus-visible {
+  outline: 2px solid var(--color-network);
+  outline-offset: 2px;
+  border-radius: 0.35rem;
+}
+
+.automation-grant-history__detail {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ar-ink-48);
+}
+
 .automation-grant-list > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4018,7 +4043,7 @@ p.message-dock__headline {
 .content-inspector__translation-result > p,
 .content-inspector__translation-failure {
   margin-top: 0.25rem;
-  color: var(--ar-ink-56);
+  color: var(--ar-ink-48);
   font-size: 12px;
   line-height: 1.5;
 }
