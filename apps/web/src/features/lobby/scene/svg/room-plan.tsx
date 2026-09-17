@@ -1,10 +1,34 @@
+import { useId } from 'react';
+
 import { roomPlanShapes } from '../room-plan-art';
+import { sceneFloor } from '../scene-style';
 import type { LobbyWorld } from '../../domain/scene-projection';
 
 export function RoomPlan({ world }: { readonly world: LobbyWorld }) {
+  // 同一页面可能同时有好几张房间插图，图案 id 必须各不相同。
+  const floorPattern = `room-floor-${useId().replaceAll(':', '')}`;
+  const tile = sceneFloor.tile;
   return (
-    <g data-room-art="flat-plan" strokeWidth="2">
+    <g data-room-art="flat-plan">
+      <defs>
+        <pattern id={floorPattern} width={tile * 2} height={tile * 2} patternUnits="userSpaceOnUse">
+          <rect width={tile * 2} height={tile * 2} fill={sceneFloor.light} />
+          <rect width={tile} height={tile} fill={sceneFloor.dark} />
+          <rect x={tile} y={tile} width={tile} height={tile} fill={sceneFloor.dark} />
+        </pattern>
+      </defs>
       {roomPlanShapes(world).map((shape, index) => {
+        if (shape.kind === 'floor')
+          return (
+            <rect
+              key={index}
+              x={shape.x}
+              y={shape.y}
+              width={shape.width}
+              height={shape.height}
+              fill={`url(#${floorPattern})`}
+            />
+          );
         if (shape.kind === 'line')
           return (
             <line
@@ -14,6 +38,8 @@ export function RoomPlan({ world }: { readonly world: LobbyWorld }) {
               x2={shape.toX}
               y2={shape.toY}
               stroke={shape.stroke}
+              strokeWidth={shape.strokeWidth}
+              strokeLinecap="round"
             />
           );
         if (shape.kind === 'ellipse')
@@ -26,6 +52,7 @@ export function RoomPlan({ world }: { readonly world: LobbyWorld }) {
               ry={shape.ry}
               fill={shape.fill}
               stroke={shape.stroke}
+              strokeWidth={shape.strokeWidth}
             />
           );
         return (
@@ -38,6 +65,7 @@ export function RoomPlan({ world }: { readonly world: LobbyWorld }) {
             rx={shape.radius}
             fill={shape.fill}
             stroke={shape.stroke}
+            strokeWidth={shape.strokeWidth}
           />
         );
       })}

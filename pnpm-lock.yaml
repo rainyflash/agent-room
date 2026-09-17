@@ -161,9 +161,6 @@ importers:
       '@fontsource-variable/fredoka':
         specifier: 5.3.0
         version: 5.3.0
-      '@fontsource-variable/instrument-sans':
-        specifier: 5.3.0
-        version: 5.3.0
       '@fontsource-variable/noto-sans-sc':
         specifier: 5.3.0
         version: 5.3.0
@@ -1084,9 +1081,6 @@ packages:
 
   '@fontsource-variable/fredoka@5.3.0':
     resolution: {integrity: sha512-13w98iw2RcmYfZQRZPLSu+0YJK3HHm5A2XrpU26moFIAePmfiKfvkmEJUgkc8r5GNR+pbDijOueS1KdGAMAWmQ==}
-
-  '@fontsource-variable/instrument-sans@5.3.0':
-    resolution: {integrity: sha512-u4gKbDBTNFGkg997tfQn3eHOhHuquWUFTRT/rwzuKtrxX5P2ekfs2x+LgBPP4P32+cC+vUwF1Cr+IdRoPQbrGw==}
 
   '@fontsource-variable/noto-sans-sc@5.3.0':
     resolution: {integrity: sha512-lNar1dF7Ik/lHNPo/7JWG0TolXY29LtsqYgMvEysooZ5bsO9uH4shJmRrwyJ3PjyTPljhpMJEK0jDuLSU4vJ1w==}
@@ -5073,8 +5067,6 @@ snapshots:
   '@exodus/bytes@1.15.1': {}
 
   '@fontsource-variable/fredoka@5.3.0': {}
-
-  '@fontsource-variable/instrument-sans@5.3.0': {}
 
   '@fontsource-variable/noto-sans-sc@5.3.0': {}
 

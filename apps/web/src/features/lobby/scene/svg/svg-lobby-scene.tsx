@@ -17,7 +17,17 @@ import {
   type LobbySceneProjection,
 } from '../../domain/scene-projection';
 import { ViewportController, type CameraSnapshot } from '../viewport-controller';
-import { characterStatusColor } from '../character-art';
+import {
+  characterShadow,
+  estimatedTextWidth,
+  humanMarker,
+  nameplate,
+  sceneInk,
+  selectionRing,
+  statusBadgeFill,
+  statusSticker,
+  statusStickerFill,
+} from '../scene-style';
 import { RoomPlan } from './room-plan';
 import { roomHome } from '../../domain/room-map';
 import { StudioSprite } from './studio-sprite';
@@ -292,17 +302,48 @@ function SvgCharacter({
   readonly showName: boolean;
   readonly statusLabel: string | undefined;
 }) {
+  const name = characterLabel(node.displayName);
+  const nameWidth = estimatedTextWidth(name, nameplate.fontSize) + nameplate.paddingX * 2;
+  const statusTop = nameplate.top + nameplate.height + statusSticker.gap;
+  const statusWidth =
+    statusLabel === undefined
+      ? 0
+      : estimatedTextWidth(statusLabel, statusSticker.fontSize) + statusSticker.paddingX * 2;
   return (
     <>
-      <ellipse cx="0" cy="1" rx="21" ry="8" fill="#696c4f" opacity="0.24" />
+      <ellipse
+        cx="0"
+        cy="1"
+        rx="21"
+        ry="8"
+        fill={characterShadow.color}
+        opacity={characterShadow.alpha}
+      />
       {selected ? (
-        <ellipse cx="0" cy="1" rx="28" ry="12" fill="none" stroke="#fff8da" strokeWidth="4" />
+        <g fill="none">
+          <ellipse
+            cx="0"
+            cy="1"
+            rx="30"
+            ry="13"
+            stroke={selectionRing.outer}
+            strokeWidth={selectionRing.outerWidth}
+          />
+          <ellipse
+            cx="0"
+            cy="1"
+            rx="30"
+            ry="13"
+            stroke={selectionRing.inner}
+            strokeWidth={selectionRing.innerWidth}
+          />
+        </g>
       ) : null}
       <g opacity={node.status === 'offline' ? 0.56 : 1}>
         {node.kind === 'human' ? (
           <g>
-            <polygon points="-28,-32 -14,-57 14,-57 28,-32 14,-7 -14,-7" fill="#173544" />
-            <circle cx="0" cy="-32" r="10" fill="white" />
+            <polygon points="-28,-32 -14,-57 14,-57 28,-32 14,-7 -14,-7" fill={humanMarker.fill} />
+            <circle cx="0" cy="-32" r="10" fill={humanMarker.mark} />
           </g>
         ) : (
           <StudioSprite id={node.characterId} />
@@ -310,37 +351,77 @@ function SvgCharacter({
         <circle
           cx="30"
           cy="-70"
-          r="4"
-          fill={characterStatusColor[node.status]}
-          stroke="#fff7e2"
+          r="4.5"
+          fill={statusStickerFill[node.status]}
+          stroke={sceneInk}
           strokeWidth="2"
         />
       </g>
       {node.status === 'waiting_input' || node.status === 'blocked' ? (
         <g>
-          <rect x="25" y="-106" width="23" height="23" rx="8" fill="#fff6d9" stroke="#ccbb95" />
+          <rect
+            x="25"
+            y="-106"
+            width="23"
+            height="23"
+            rx="8"
+            fill={statusBadgeFill[node.status]}
+            stroke={sceneInk}
+            strokeWidth="2"
+          />
           <text
             x="37"
             y="-90"
             textAnchor="middle"
-            style={{ fill: '#74502e', fontSize: 19, fontWeight: 700 }}
+            style={{ fill: sceneInk, fontSize: 19, fontWeight: 700 }}
           >
             {node.status === 'blocked' ? '!' : '?'}
           </text>
         </g>
       ) : null}
+      <rect
+        className="room-character-plate"
+        data-visible={selected || showName}
+        x={-nameWidth / 2}
+        y={nameplate.top}
+        width={nameWidth}
+        height={nameplate.height}
+        rx={nameplate.height / 2}
+        fill={nameplate.fill}
+        stroke={nameplate.stroke}
+        strokeWidth={nameplate.strokeWidth}
+      />
       <text
         className="room-character-name"
         textAnchor="middle"
-        y="30"
+        dominantBaseline="central"
+        y={nameplate.top + nameplate.height / 2}
         data-visible={selected || showName}
       >
-        {characterLabel(node.displayName)}
+        {name}
       </text>
       {statusLabel === undefined || node.kind === 'human' ? null : (
-        <text x="0" y="50" textAnchor="middle" className="room-character-status">
-          {statusLabel}
-        </text>
+        <g>
+          <rect
+            x={-statusWidth / 2}
+            y={statusTop}
+            width={statusWidth}
+            height={statusSticker.height}
+            rx={statusSticker.height / 2}
+            fill={statusStickerFill[node.status]}
+            stroke={statusSticker.stroke}
+            strokeWidth={statusSticker.strokeWidth}
+          />
+          <text
+            x="0"
+            y={statusTop + statusSticker.height / 2}
+            textAnchor="middle"
+            dominantBaseline="central"
+            className="room-character-status"
+          >
+            {statusLabel}
+          </text>
+        </g>
       )}
       <rect x="-38" y="-92" width="76" height="132" fill="transparent" />
     </>

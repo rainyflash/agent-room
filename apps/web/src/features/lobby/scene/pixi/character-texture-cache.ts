@@ -1,5 +1,12 @@
 import type { Container, Graphics, Renderer, Sprite, Texture } from 'pixi.js';
-import { characterStatusColor } from '../character-art';
+import {
+  characterShadow,
+  humanMarker,
+  sceneInk,
+  selectionRing,
+  statusBadgeFill,
+  statusStickerFill,
+} from '../scene-style';
 import { characterFoot, characterSize, characterVariant, spriteCell } from '../studio-assets';
 import type { SceneCharacter } from '../scene-character';
 
@@ -19,22 +26,25 @@ export type CharacterParts = {
 
 const partBuilders = {
   shadow: (pixi: PixiModule) =>
-    new pixi.Graphics().ellipse(0, 1, 21, 8).fill({ color: '#696c4f', alpha: 0.24 }),
+    new pixi.Graphics()
+      .ellipse(0, 1, 21, 8)
+      .fill({ color: characterShadow.color, alpha: characterShadow.alpha }),
   waitingBubble: (pixi: PixiModule) => statusBubble(pixi, 'waiting_input'),
   blockedBubble: (pixi: PixiModule) => statusBubble(pixi, 'blocked'),
+  // 墨色外圈垫底、晴黄内圈压上：在浅色地砖上也一眼能看出选中了谁。
   selectionRing: (pixi: PixiModule) =>
     new pixi.Graphics()
-      .ellipse(0, 1, 28, 12)
-      .stroke({ color: '#fff8da', width: 4 })
-      .ellipse(0, 1, 31, 14)
-      .stroke({ color: '#769265', width: 2 }),
+      .ellipse(0, 1, 30, 13)
+      .stroke({ color: selectionRing.outer, width: selectionRing.outerWidth })
+      .ellipse(0, 1, 30, 13)
+      .stroke({ color: selectionRing.inner, width: selectionRing.innerWidth }),
 } satisfies Readonly<Record<string, (pixi: PixiModule) => Graphics>>;
 
 function statusBubble(pixi: PixiModule, status: 'waiting_input' | 'blocked'): Graphics {
   const graphic = new pixi.Graphics()
     .roundRect(25, -106, 23, 23, 8)
-    .fill('#fff6d9')
-    .stroke({ color: '#ccbb95', width: 1.5 });
+    .fill(statusBadgeFill[status])
+    .stroke({ color: sceneInk, width: 2 });
   if (status === 'blocked') {
     graphic.moveTo(37, -101).lineTo(37, -94);
   } else {
@@ -43,7 +53,7 @@ function statusBubble(pixi: PixiModule, status: 'waiting_input' | 'blocked'): Gr
       .bezierCurveTo(33, -103, 42, -103, 42, -98)
       .bezierCurveTo(42, -96, 37, -96, 37, -93);
   }
-  return graphic.stroke({ color: '#74502e', width: 2 }).circle(37, -89, 1.2).fill('#74502e');
+  return graphic.stroke({ color: sceneInk, width: 2 }).circle(37, -89, 1.2).fill(sceneInk);
 }
 
 /** 纹理由场景统一释放；每个角色仅拥有自己的 Sprite。 */
@@ -71,9 +81,9 @@ export class CharacterTextureCache {
         if (node.kind === 'human')
           return new this.#pixi.Graphics()
             .poly([-28, -32, -14, -57, 14, -57, 28, -32, 14, -7, -14, -7])
-            .fill('#173544')
+            .fill(humanMarker.fill)
             .circle(0, -32, 10)
-            .fill('#ffffff');
+            .fill(humanMarker.mark);
         const frame = new this.#pixi.Texture({
           source: this.#atlas.source,
           frame: new this.#pixi.Rectangle(
@@ -108,9 +118,9 @@ export class CharacterTextureCache {
     const shadow = this.#partTexture('shadow');
     const marker = this.#texture(`marker:${node.status}`, () =>
       new this.#pixi.Graphics()
-        .circle(30, -70, 4)
-        .fill(characterStatusColor[node.status])
-        .stroke({ color: '#fff7e2', width: 2 }),
+        .circle(30, -70, 4.5)
+        .fill(statusStickerFill[node.status])
+        .stroke({ color: sceneInk, width: 2 }),
     );
     const bubble =
       node.status === 'waiting_input' || node.status === 'blocked'
