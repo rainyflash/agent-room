@@ -259,6 +259,40 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  cross-browser:
+    name: Firefox 与 WebKit 验收
+    # 只在 main 和发布调度上跑。PR 的反馈速度是有成本的，而跨浏览器回归不需要每个 PR 都挡一次。
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.suite == 'all') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Node 依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 安装 ${{ matrix.browser }} 与系统依赖
+        run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps ${{ matrix.browser }}
+      - name: 在 ${{ matrix.browser }} 上验收
+        env:
+          AGENT_ROOM_E2E_BROWSER: ${{ matrix.browser }}
+        run: corepack pnpm@10.28.0 --filter @agent-room/web test:browser
+      - name: 上传 ${{ matrix.browser }} 验收产物
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: cross-browser-evidence-${{ matrix.browser }}
+          path: artifacts/playwright/task-19-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   supply-chain:
     name: 供应链与物料清单
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'all' }}
