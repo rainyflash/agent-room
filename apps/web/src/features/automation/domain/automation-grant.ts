@@ -99,6 +99,24 @@ export function isAutomationGrantActive(grant: AutomationGrant, nowUnixMs: numbe
   return grant.status === 'active' && grant.expiresAtUnixMs > nowUnixMs;
 }
 
+export type AutomationGrantPartition = {
+  /// 仍然可以让 Agent 发言的授权。用户要先看到的就是这些。
+  readonly active: readonly AutomationGrant[];
+  /// 已撤销、已过期或已耗尽的授权。保留可查，但不该挤占当前状态。
+  readonly history: readonly AutomationGrant[];
+};
+
+export function partitionAutomationGrants(
+  grants: readonly AutomationGrant[],
+  nowUnixMs: number,
+): AutomationGrantPartition {
+  const ordered = orderAutomationGrants(grants);
+  return Object.freeze({
+    active: Object.freeze(ordered.filter((grant) => isAutomationGrantActive(grant, nowUnixMs))),
+    history: Object.freeze(ordered.filter((grant) => !isAutomationGrantActive(grant, nowUnixMs))),
+  });
+}
+
 function compareAutomationGrants(left: AutomationGrant, right: AutomationGrant): number {
   const stateDifference = Number(left.status !== 'active') - Number(right.status !== 'active');
   if (stateDifference !== 0) {
