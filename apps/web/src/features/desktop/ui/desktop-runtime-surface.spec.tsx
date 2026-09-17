@@ -260,6 +260,45 @@ describe('桌面运行时界面', () => {
     });
   });
 
+  it('设备验证码过期时说明原因并引导重试获取新代码，而不是笼统提示授权失败', async () => {
+    const runtime = gateway({
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        diagnosticCode: 'desktop.authorization.failed',
+        lastFailureCode: 'bridge.authorization_expired',
+        phase: 'halted',
+      },
+    });
+    const expired =
+      'The one-time code expired before it was approved. Try connecting again to get a new code.';
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <LocalConnectionNotice />
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    expect(await screen.findByText(expired)).toBeVisible();
+    expect(
+      screen.queryByText(
+        'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
+      ),
+    ).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await waitFor(() => {
+      expect(screen.getAllByText(expired)).toHaveLength(2);
+    });
+    expect(runtime.openAuthorization).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect local agents' }));
+    await waitFor(() => {
+      expect(runtime.retryBridge).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('只有签名更新已配置时才允许显式检查并安装同一序号', async () => {
     const ready: BridgeRuntime = {
       authorization: null,

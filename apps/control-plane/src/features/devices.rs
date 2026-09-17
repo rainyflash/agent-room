@@ -440,7 +440,9 @@ fn oidc_assertion_error(failure: OidcFailure, correlation_id: CorrelationId) -> 
             ErrorCategory::DependencyUnavailable,
             "身份提供方暂时不可用。",
         ),
-        OidcFailureKind::ProviderRejected | OidcFailureKind::InvalidIdentityToken => (
+        OidcFailureKind::ProviderRejected
+        | OidcFailureKind::AuthorizationExpired
+        | OidcFailureKind::InvalidIdentityToken => (
             StatusCode::UNAUTHORIZED,
             "device.invalid_oidc_assertion",
             ErrorCategory::Authentication,

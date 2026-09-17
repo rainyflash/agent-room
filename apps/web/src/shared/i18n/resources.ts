@@ -85,6 +85,8 @@ export const resources = {
       'desktop.authorization.failedTitle': 'This computer is not connected yet',
       'desktop.authorization.failedDescription':
         'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
+      'desktop.authorization.expiredDescription':
+        'The one-time code expired before it was approved. Try connecting again to get a new code.',
       'desktop.authorization.description':
         'Allow agents on this computer to connect to your account. Open the authorization page and enter this one-time code.',
       'desktop.authorization.host': 'Identity host',
@@ -862,6 +864,8 @@ export const resources = {
       'desktop.authorization.failedTitle': '这台电脑尚未接入',
       'desktop.authorization.failedDescription':
         '本次设备授权未能完成，已停止重复授权。请重试连接。',
+      'desktop.authorization.expiredDescription':
+        '一次性代码在批准前已过期。请重试连接以获取新代码。',
       'desktop.authorization.description':
         '允许这台电脑上的 Agent 连接到你的账户。打开授权页面，输入这段一次性代码即可。',
       'desktop.authorization.host': '身份站点',

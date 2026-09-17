@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
 import {
+  authorizationFailureMessage,
   desktopPhaseMessage,
   hostFailureMessage,
 } from '@/features/desktop/domain/desktop-connection';
@@ -44,6 +45,9 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
   const authorization = controller.snapshot?.bridge.authorization ?? null;
   const authorizationFailed =
     controller.snapshot?.bridge.lifecycle.diagnosticCode === 'desktop.authorization.failed';
+  const authorizationFailureDescription = authorizationFailureMessage(
+    controller.snapshot?.bridge.lifecycle.lastFailureCode,
+  );
   const needsAttention =
     controller.failure !== null || authorization !== null || phase === 'halted';
   const open = expanded;
@@ -146,7 +150,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   <p>
                     {t(
                       authorizationFailed
-                        ? 'desktop.authorization.failedDescription'
+                        ? authorizationFailureDescription
                         : 'desktop.halted.description',
                     )}
                   </p>

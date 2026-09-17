@@ -2316,6 +2316,10 @@ impl BridgeRuntimeError {
             BridgeAuthorizationFailureKind::AuthorizationDenied => {
                 ("bridge.authorization_denied", "身份提供方拒绝了设备授权")
             }
+            BridgeAuthorizationFailureKind::AuthorizationExpired => (
+                "bridge.authorization_expired",
+                "设备验证码已过期；请重新启动 Bridge 获取新的验证码",
+            ),
             BridgeAuthorizationFailureKind::IdentityProviderUnavailable => (
                 "bridge.identity_provider_unavailable",
                 "身份提供方暂时不可用",
