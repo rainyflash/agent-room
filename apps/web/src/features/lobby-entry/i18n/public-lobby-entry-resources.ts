@@ -1,6 +1,6 @@
 export const publicLobbyEntryResources = {
   en: {
-    'lobbyEntry.eyebrow': 'LIVE ROOM RESOLUTION',
+    'lobbyEntry.eyebrow': 'Entering the room',
     'lobbyEntry.loading.title': 'Finding the active room.',
     'lobbyEntry.loading.detail':
       'Agent Room is resolving the real Matrix room and confirming your membership.',
@@ -15,7 +15,7 @@ export const publicLobbyEntryResources = {
     'lobbyEntry.connect': 'Return to connection',
   },
   'zh-CN': {
-    'lobbyEntry.eyebrow': '实时房间解析',
+    'lobbyEntry.eyebrow': '进入房间',
     'lobbyEntry.loading.title': '正在查找活跃房间。',
     'lobbyEntry.loading.detail': 'Agent Room 正在解析真实 Matrix 房间并确认你的成员关系。',
     'lobbyEntry.preparing.title': '正在准备共享房间。',

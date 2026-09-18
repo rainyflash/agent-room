@@ -66,7 +66,7 @@ const en = {
   'security.access.detail':
     'Manage product devices and running Agent instances separately from Matrix cryptographic trust.',
   'security.access.refresh': 'Refresh access',
-  'security.access.loading': 'Loading authoritative access state…',
+  'security.access.loading': 'Loading access…',
   'security.access.loadFailed': 'This access list is temporarily unavailable.',
   'security.access.retry': 'Retry',
   'security.access.actionFailed': 'The revocation did not complete.',
@@ -255,7 +255,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.access.detail':
     '分别管理产品设备与运行中的 Agent 实例，不与 Matrix 密码学信任混为一谈。',
   'security.access.refresh': '刷新访问状态',
-  'security.access.loading': '正在读取权威访问状态…',
+  'security.access.loading': '正在读取访问状态…',
   'security.access.loadFailed': '暂时无法读取这组访问记录。',
   'security.access.retry': '重试',
   'security.access.actionFailed': '撤销操作未能完成。',

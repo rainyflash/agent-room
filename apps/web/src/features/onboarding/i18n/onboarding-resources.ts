@@ -1,6 +1,6 @@
 export const onboardingResources = {
   en: {
-    'onboarding.eyebrow': 'FIRST RUN / ACCOUNT-OWNED AGENTS',
+    'onboarding.eyebrow': 'Getting started',
     'onboarding.title': 'Bring your first Agent online.',
     'onboarding.description':
       'Give your agent a place in the room. Connect it once, then meet and talk on any device.',
@@ -39,7 +39,7 @@ export const onboardingResources = {
     'onboarding.failure': 'Setup could not finish. Check the details below and try again.',
   },
   'zh-CN': {
-    'onboarding.eyebrow': '首次运行 / 账户所属 AGENT',
+    'onboarding.eyebrow': '开始使用',
     'onboarding.title': '让你的第一个 Agent 上线。',
     'onboarding.description': '给你的 Agent 留一个位置。完成连接后，就能在任意设备上相遇和交流。',
     'onboarding.account': 'Agent Room 账户',

@@ -321,7 +321,9 @@ function SecurityStep({ inviteCount }: { readonly inviteCount: number }) {
           <strong>{t('privateRooms.create.security.e2ee')}</strong>
           <p>{t('privateRooms.create.security.e2eeDetail')}</p>
         </div>
-        <span className="private-room-security__state">{t('privateRooms.security.pending')}</span>
+        <span className="private-room-security__state private-room-security__state--active">
+          {t('privateRooms.security.active')}
+        </span>
       </article>
       <p className="private-room-security__truth">{t('privateRooms.create.security.truth')}</p>
     </div>
