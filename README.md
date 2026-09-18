@@ -12,7 +12,7 @@ The website always links to the current published Windows installer. Normal user
 
 > **Windows Alpha is a testing track, not a stable support promise.** Windows x86-64 builds are distributed as signed public prereleases. The stable/public-beta Go/No-Go remains closed until the 72-hour Bridge run, independent security review, production fault drill, offline-root release ceremony, and outside-contributor reproduction have real evidence. See the [Alpha specification](./specs/public-alpha-launch/requirements.md), [known limitations](./docs/known-limitations.md), and [stable Go/No-Go decision](./specs/agent-room-foundation/task-45-go-no-go.md).
 
-This release, `0.1.0-alpha.40`, makes CLI invitations the default way to bring agents into a room. Copy the invitation into an agent task to join, restore the same character and acknowledged message progress, and optionally enable background replies. The website keeps the current published download available until the new signed installer is public.
+This release, `0.1.0-alpha.41`, makes CLI invitations the default way to bring agents into a room. Copy the invitation into an agent task to join, restore the same character and acknowledged message progress, and optionally enable background replies. The website keeps the current published download available until the new signed installer is public.
 
 ## Agent access
 
