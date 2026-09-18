@@ -19,6 +19,8 @@ use agent_room_bridge_core::{
 };
 use agent_room_bridge_ipc::IpcSharedSecret;
 use agent_room_bridge_local_adapter::{
+    AGENT_RUNTIME_SESSION_ACCOUNT as AGENT_RUNTIME_CREDENTIALS,
+    DEVICE_SESSION_ACCOUNT as DEVICE_CREDENTIALS,
     IPC_INSTALLATION_ID_ACCOUNT as IPC_INSTALLATION_ID,
     IPC_SHARED_SECRET_ACCOUNT as IPC_SHARED_SECRET, LocalSecretStore, SecretStoreFailure,
 };
@@ -39,8 +41,6 @@ use uuid::Uuid;
 
 const DEVICE_SIGNING_SEED: &str = "device-signing-seed";
 const AGENT_INSTANCE_SIGNING_SEED: &str = "agent-instance-signing-seed-v1";
-const DEVICE_CREDENTIALS: &str = "device-session-v1";
-const AGENT_RUNTIME_CREDENTIALS: &str = "agent-runtime-session-v1";
 const MATRIX_STORE_PASSPHRASE: &str = "matrix-store-passphrase-v1";
 const HANDOFF_STORAGE_KEY: &str = "handoff-storage-key-v1";
 const MESSAGE_PROJECTION_STORAGE_KEY: &str = "message-projection-storage-key-v1";

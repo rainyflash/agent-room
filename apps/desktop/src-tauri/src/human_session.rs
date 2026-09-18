@@ -179,6 +179,13 @@ impl HumanSessionVault for KeyringHumanSessionVault {
     }
 }
 
+/// 换到另一台服务器时删除旧服务器签发的桌面登录，启动时不再把它发给新服务器。
+pub(crate) fn forget_stored_session(config: &DesktopBridgeConfig) -> HumanSessionResult<()> {
+    let vault = KeyringHumanSessionVault::new(config.human_session_storage_service());
+    vault.delete_pending()?;
+    vault.delete_session()
+}
+
 #[derive(Clone)]
 pub(crate) struct HumanSessionRuntime {
     control_plane_url: Url,

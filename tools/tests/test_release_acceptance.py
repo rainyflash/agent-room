@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest import mock
 from uuid import UUID
 
 from tools import release_acceptance as acceptance, release
@@ -108,6 +109,42 @@ class UsabilityAcceptanceTests(unittest.TestCase):
                                               "capturedAtUnixSeconds": self.now})
         with self.assertRaises(release.ReleaseFailure):
             acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+
+    MOVE = {"from": "old.example", "to": "new.example"}
+
+    def migrate_upgrade(self, **report_fields):
+        report = self.reports["upgrade"]
+        report["checks"] = {key: True for key in acceptance.MIGRATED_UPGRADE_CHECKS}
+        report["upgradeMode"] = "server-migration"
+        report["serverMigration"] = dict(self.MOVE)
+        report.update(report_fields)
+        self.reindex()
+
+    def test_server_migration_upgrade_is_accepted_only_for_the_listed_move(self):
+        self.migrate_upgrade()
+        with self.assertRaisesRegex(release.ReleaseFailure, "登记"):
+            self.verify()
+        with mock.patch.dict(acceptance.SERVER_MIGRATIONS, {self.version: self.MOVE}):
+            self.verify()
+            self.migrate_upgrade(serverMigration={"from": "old.example", "to": "elsewhere.example"})
+            with self.assertRaisesRegex(release.ReleaseFailure, "登记"):
+                self.verify()
+
+    def test_server_migration_upgrade_cannot_claim_kept_state_or_skip_checks(self):
+        with mock.patch.dict(acceptance.SERVER_MIGRATIONS, {self.version: self.MOVE}):
+            self.migrate_upgrade()
+            self.reports["upgrade"]["checks"]["identityPreserved"] = True
+            self.reindex()
+            with self.assertRaisesRegex(release.ReleaseFailure, "不能声称"):
+                self.verify()
+            self.migrate_upgrade()
+            del self.reports["upgrade"]["checks"]["signedInToNewServer"]
+            self.reindex()
+            with self.assertRaises(release.ReleaseFailure):
+                self.verify()
+            self.migrate_upgrade(upgradeMode="partial")
+            with self.assertRaisesRegex(release.ReleaseFailure, "升级模式"):
+                self.verify()
 
     def test_login_path_changes_are_read_from_history(self):
         head = acceptance.login_changes("HEAD", "HEAD")

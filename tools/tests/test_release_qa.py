@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -104,6 +105,32 @@ class ReleaseQaHelpers(unittest.TestCase):
             self.assertEqual(acceptance.baseline(), 0)
             self.assertEqual(captured, [True])
 
+    def test_server_move_requires_the_old_agent_target_to_be_retired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            data = work / "Bridge"
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work = work
+            acceptance.config = {"controlPlaneUrl": "https://api.new.example/",
+                                 "upgrade": {"bridgeDataDir": str(data)}}
+            old_target = b'{"schemaVersion":1}'
+            (work / "upgrade-baseline.json").write_text(json.dumps(
+                {"agentTargetSha256": hashlib.sha256(old_target).hexdigest()}), encoding="utf-8")
+            (data / "desktop").mkdir(parents=True)
+            (data / "desktop" / "agent-target.json").write_bytes(old_target)
+            (data / "deployment.json").write_text(json.dumps({"controlPlaneUrl": "https://api.new.example/"}),
+                                                  encoding="utf-8")
+            with self.assertRaisesRegex(release.ReleaseFailure, "retired"):
+                acceptance.previous_state_retired()
+            (data / "retired" / "1789740000").mkdir(parents=True)
+            (data / "desktop").rename(data / "retired" / "1789740000" / "desktop")
+            self.assertEqual(acceptance.previous_state_retired(),
+                             {"deploymentRecorded": True, "previousAgentTargetRetired": True})
+            (data / "deployment.json").write_text(json.dumps({"controlPlaneUrl": "https://api.old.example/"}),
+                                                  encoding="utf-8")
+            with self.assertRaisesRegex(release.ReleaseFailure, "新服务器"):
+                acceptance.previous_state_retired()
+
     def test_controls_match_either_language_exactly(self):
         self.assertEqual(release_qa.js_name("mention"), "/^(提及 Agent|Mention an agent)$/")
         self.assertEqual(release_qa.js_name("log"), "/^(房间对话|Conversation)$/")
@@ -139,6 +166,7 @@ class ReleaseQaHelpers(unittest.TestCase):
             release_qa.revoke_grant_js("https://api.example", "g"),
             release_qa.goto_room_js("http://tauri.localhost/lobby/c/instance/r?view=conversation"),
             release_qa.native_session_js("http://tauri.localhost", "https://api.example", VERSION),
+            release_qa.migrated_session_js("http://tauri.localhost", "https://api.example", VERSION),
         ]
         check = ("const s = require('fs').readFileSync(0, 'utf8');"
                  "if (typeof (0, eval)('(' + s.trim() + ')') !== 'function') process.exit(3);")
@@ -259,6 +287,30 @@ class AssembleReportsTests(unittest.TestCase):
         (self.qa / "bridge.private.jsonl").write_text(json.dumps({"event": "authorization_required"}) + "\n", encoding="utf-8")
         with self.assertRaises(release.ReleaseFailure):
             self.assemble()
+
+    MOVE = {"from": "old.example", "to": "new.example"}
+
+    def migrated_upgrade(self, **fields):
+        self.write(self.work / "usability-evidence-upgrade.json", {
+            "previousVersion": "0.1.0-alpha.40", "currentVersion": VERSION, "runtimeHashesMatched": True,
+            "upgradeMode": "server-migration", "serverMigration": self.MOVE, "previousLoginNotReused": True,
+            "previousAgentTargetRetired": True, "signedInToNewServer": True, "bridgeReady": True,
+            "observedAtUnixSeconds": self.now - 1800, **fields})
+
+    def test_server_move_upgrade_assembles_without_claiming_kept_state(self):
+        self.migrated_upgrade()
+        with mock.patch.dict(release_acceptance.SERVER_MIGRATIONS, {VERSION: self.MOVE}):
+            self.assemble()
+            release_acceptance.verify(self.candidate, VERSION, REVISION)
+        upgrade = json.loads((self.work / "release-usability-upgrade.json").read_text(encoding="utf-8"))
+        self.assertEqual(upgrade["upgradeMode"], "server-migration")
+        self.assertEqual(set(upgrade["checks"]), release_acceptance.MIGRATED_UPGRADE_CHECKS)
+
+    def test_server_move_upgrade_needs_a_new_sign_in(self):
+        self.migrated_upgrade(signedInToNewServer=False)
+        with mock.patch.dict(release_acceptance.SERVER_MIGRATIONS, {VERSION: self.MOVE}):
+            with self.assertRaisesRegex(release.ReleaseFailure, "新服务器"):
+                self.assemble()
 
 
 if __name__ == "__main__":
