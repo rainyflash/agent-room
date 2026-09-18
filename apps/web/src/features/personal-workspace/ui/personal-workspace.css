@@ -3,7 +3,7 @@
   gap: 0.65rem;
   min-width: 0;
   padding-block: 1rem;
-  border-block: 1px solid var(--ar-line);
+  border-block: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .agent-organization form {
   display: grid;
@@ -17,11 +17,12 @@
 .agent-organization input {
   width: 100%;
   min-width: 0;
-  padding: 0.65rem;
-  border: 1px solid var(--ar-line);
-  border-radius: 0.65rem;
-  background: var(--ar-surface);
+  padding: 0 1rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 22px;
+  background: var(--color-paper);
   color: inherit;
+  min-height: 44px;
 }
 .agent-organization button,
 .personal-sync button {
@@ -29,15 +30,21 @@
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.55rem 0.75rem;
-  min-height: 2.6rem;
-  border: 1px solid var(--ar-line);
-  border-radius: 0.65rem;
-  background: var(--ar-surface-muted);
+  padding: 0.45rem 1rem;
+  min-height: 40px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
   color: inherit;
   cursor: pointer;
   white-space: normal;
   overflow-wrap: anywhere;
+  font-weight: 600;
+  box-shadow: var(--ar-press-small);
+}
+.agent-organization button:not(:disabled):hover,
+.personal-sync button:not(:disabled):hover {
+  background: var(--ar-surface-muted);
 }
 .personal-favorite[aria-pressed='true'] {
   color: var(--ar-accent);
@@ -60,7 +67,7 @@
   gap: 0.5rem;
 }
 .personal-sync[role='alert'] {
-  color: var(--ar-danger, #a63b32);
+  color: var(--color-alert);
 }
 .roster-personal-filters {
   display: flex;
@@ -71,11 +78,12 @@
 .roster-personal-filters select {
   flex: 1 1 9rem;
   min-width: 0;
-  padding: 0.6rem;
-  border-radius: 0.65rem;
-  border: 1px solid var(--ar-line);
-  background: var(--ar-surface);
+  padding: 0 0.9rem;
+  border-radius: var(--ar-pill);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  background: var(--color-paper);
   color: inherit;
+  min-height: 40px;
 }
 .roster-agent__favorite {
   display: inline-block;

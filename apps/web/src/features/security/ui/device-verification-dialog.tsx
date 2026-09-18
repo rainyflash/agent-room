@@ -95,7 +95,7 @@ export function DeviceVerificationDialog({
           </div>
           <button
             aria-label={t(terminal ? 'security.action.close' : 'security.verification.cancel')}
-            className="security-icon-button"
+            className="security-icon-button ar-icon-button"
             onClick={close}
             type="button"
           >

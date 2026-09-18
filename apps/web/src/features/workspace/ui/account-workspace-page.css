@@ -86,7 +86,7 @@
   gap: 0.75rem;
   align-items: center;
   padding: 0.8rem 1rem;
-  border-right: 1px solid var(--ar-ink-18);
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
 }
 
 .workspace-status:last-child {
@@ -98,8 +98,9 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 12px;
+  background: var(--color-paper);
 }
 
 .workspace-status svg {
@@ -162,8 +163,9 @@
   width: 32px;
   height: 32px;
   place-items: center;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 12px;
+  background: var(--color-paper);
 }
 
 .workspace-diagnostics__summary-icon svg,
@@ -199,13 +201,13 @@
 .workspace-diagnostics__grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid var(--ar-ink-18);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-diagnostics__layer {
   min-width: 0;
   padding: 0.9rem 1rem;
-  border-right: 1px solid var(--ar-ink-18);
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
 }
 
 .workspace-diagnostics__layer:last-child {
@@ -261,9 +263,9 @@
   gap: 0.5rem;
   padding: 0.7rem 1rem;
   margin: 0;
-  border-top: 1px solid color-mix(in srgb, var(--color-alert) 30%, transparent);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: color-mix(in srgb, var(--color-alert) 75%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-alert) 7%, transparent);
+  background: var(--ar-danger-soft);
   font-size: 12px;
 }
 
@@ -289,7 +291,7 @@
 
 .workspace-device-rail,
 .workspace-fleet {
-  border-right: 1px solid var(--ar-ink-18);
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
 }
 
 .workspace-device-rail > header,
@@ -299,13 +301,13 @@
   align-items: center;
   gap: 0.65rem;
   padding: 0.9rem 1rem;
-  border-bottom: 1px solid var(--ar-ink-18);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-device-rail > header svg {
   width: 17px;
   height: 17px;
-  color: var(--color-network);
+  color: var(--color-ink);
 }
 
 .workspace-device-rail > header h2 {
@@ -334,7 +336,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.7rem;
   padding: 1rem;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-device-rail__empty {
@@ -361,7 +363,7 @@
 }
 
 .workspace-device-rail li[data-current='true'] {
-  background: color-mix(in srgb, var(--color-network) 8%, transparent);
+  background: var(--ar-surface-muted);
 }
 
 .workspace-device-rail li > svg {
@@ -396,12 +398,14 @@
   position: absolute;
   top: 0.8rem;
   right: 0.75rem;
-  padding: 0.2rem 0.35rem;
-  border: 1px solid color-mix(in srgb, var(--color-network) 45%, transparent);
-  border-radius: 4px;
-  color: var(--ar-muted);
+  padding: 0.15rem 0.6rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: 12px;
+  background: var(--ar-mint);
+  font-weight: 600;
 }
 
 .workspace-fleet > header {
@@ -421,7 +425,7 @@
 }
 
 .workspace-fleet__list > li {
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-fleet__list button {
@@ -561,13 +565,15 @@
 
 .workspace-agent-inspector header {
   padding-bottom: 1.2rem;
-  border-bottom: 1px solid var(--ar-line);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-agent-inspector h2 {
   margin: 0.5rem 0;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   font-size: 24px;
+  font-family: var(--font-display);
+  font-weight: 600;
 }
 
 .workspace-agent-inspector code {
@@ -586,7 +592,7 @@
 .workspace-agent-inspector__facts div {
   padding: 12px 0;
   border: 0;
-  border-bottom: 1px solid var(--ar-line);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .workspace-agent-inspector__facts dt,
@@ -612,7 +618,7 @@
 .workspace-agent-inspector li {
   padding: 14px 0;
   border: 0;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   border-radius: 0;
 }
 
@@ -665,7 +671,10 @@
   align-items: center;
   padding: 2rem;
   margin: 0 auto 3rem;
-  border: 1px solid var(--ar-ink-18);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press);
 }
 
 .workspace-boundary > svg {
@@ -713,12 +722,12 @@
 
   .workspace-status:nth-child(-n + 2),
   .workspace-diagnostics__layer:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--ar-ink-18);
+    border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   }
 
   .workspace-agent-inspector {
     grid-column: 1 / -1;
-    border-top: 1px solid var(--ar-ink-18);
+    border-top: var(--ar-outline-thin) dashed var(--ar-line);
   }
 }
 
@@ -746,7 +755,7 @@
   .workspace-device-rail,
   .workspace-fleet {
     border-right: 0;
-    border-bottom: 1px solid var(--ar-ink-18);
+    border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   }
 
   .workspace-status:last-child,

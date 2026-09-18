@@ -12,11 +12,11 @@
   border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   box-shadow: var(--ar-press);
-  color: #193b37;
-  background: #fff;
+  color: var(--color-ink);
+  background: var(--ar-surface);
 }
 .hall-dialog::backdrop {
-  background: #12353255;
+  background: var(--ar-backdrop);
   backdrop-filter: blur(4px);
 }
 .hall-dialog header {
@@ -29,18 +29,14 @@
 .hall-dialog h2 {
   margin: 0.2rem 0;
   font-size: 1.5rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0;
 }
 .hall-dialog h3 {
   font-size: 0.85rem;
-  color: #647975;
+  color: var(--ar-muted);
   margin: 1.4rem 0 0.5rem;
-}
-.hall-dialog header button {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  padding: 0.5rem;
-  cursor: pointer;
 }
 .hall-dialog form {
   display: grid;
@@ -56,17 +52,21 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  border: 1px solid #ccdcd7;
-  border-radius: 0.6rem;
-  padding: 0.75rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 22px;
+  padding: 0.7rem 1rem;
   font: inherit;
   color: inherit;
-  background: #fafcfb;
+  background: var(--color-paper);
+  min-height: 44px;
+}
+.hall-dialog textarea {
+  border-radius: 18px;
 }
 .hall-dialog__privacy {
   display: flex;
   gap: 0.5rem;
-  color: #687b75;
+  color: var(--ar-muted);
   font-size: 0.85rem;
 }
 .hall-dialog__privacy svg {
@@ -88,15 +88,20 @@
   align-items: center;
   gap: 0.8rem;
   padding: 0.85rem;
-  border: 1px solid #dce6e1;
-  border-radius: 0.7rem;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 18px;
   margin-bottom: 0.5rem;
   font: inherit;
   text-decoration: none;
   color: inherit;
-  background: #f8fbf9;
+  background: var(--color-paper);
   text-align: left;
   cursor: pointer;
+}
+.hall-dialog__row:not(:disabled):hover,
+.hall-directory-card:hover {
+  border-color: var(--ar-outline);
+  background: var(--ar-surface-muted);
 }
 .hall-dialog__row:disabled {
   opacity: 0.65;
@@ -123,11 +128,11 @@
 }
 .hall-dialog small,
 .hall-directory-card small {
-  color: #687a73;
+  color: var(--ar-muted);
   font-size: 0.75rem;
 }
 .hall-dialog__failure {
-  color: #a53232;
+  color: var(--color-alert);
   margin-top: 1rem;
   overflow-wrap: anywhere;
 }
@@ -136,10 +141,12 @@
   margin: 0 auto 2rem;
 }
 .hall-directory-section h2 {
-  font-size: 1.1rem;
+  font-size: 1.3rem;
+  font-family: var(--font-display);
+  font-weight: 600;
 }
 .hall-directory-section > p {
-  color: #647775;
+  color: var(--ar-muted);
   font-size: 0.9rem;
 }
 .hall-directory-section__rooms {

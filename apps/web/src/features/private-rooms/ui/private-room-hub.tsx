@@ -171,7 +171,7 @@ export function PrivateRoomHub({
                   </div>
                   <button
                     aria-label={t('privateRooms.action.close')}
-                    className="private-room-close"
+                    className="private-room-close ar-icon-button"
                     disabled={mutation.isPending}
                     onClick={() => {
                       setOpen(false);

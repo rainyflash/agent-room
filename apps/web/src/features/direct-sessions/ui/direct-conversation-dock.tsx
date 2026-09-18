@@ -53,7 +53,7 @@ export function DirectConversationDock({
           >
             <button
               aria-label={t('directSessions.action.close')}
-              className="direct-conversation__close"
+              className="direct-conversation__close ar-icon-button"
               onClick={() => {
                 onActiveSessionChange(null);
               }}
@@ -202,7 +202,7 @@ function Conversation({
           </Button>
           <button
             aria-label={t('directSessions.action.close')}
-            className="direct-conversation__close"
+            className="direct-conversation__close ar-icon-button"
             onClick={onClose}
             type="button"
           >
