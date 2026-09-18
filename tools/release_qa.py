@@ -17,6 +17,7 @@ WebView debugging port, which the runner opens for the run and closes again at c
 
 Usage (Windows workstation):
 
+    python tools/release_qa.py --work <release dir> baseline # before the server upgrade: pending deliveries
     python tools/release_qa.py --work <release dir> upgrade  # old install -> candidate, evidence
     python tools/release_qa.py --work <release dir> start    # isolated Bridge, prints the link
     python tools/release_qa.py --work <release dir> run      # after approval: everything else
@@ -635,6 +636,16 @@ class Acceptance:
             "pendingDeliveryPreserved": True, "previousPendingCount": len(baseline["pendingEventIds"]),
             "currentPendingCount": len(actual), "acknowledgedDuringVerification": False})
 
+    def baseline(self) -> int:
+        """Record the installed previous version before the server upgrade, so the old-client checks
+        on both sides of it and the later desktop upgrade compare against the same pending deliveries."""
+        if (self.work / "upgrade-baseline.json").exists():
+            print("升级前基线已存在，沿用。")
+            return 0
+        self.upgrade_baseline()
+        print("升级前基线已记录；服务端升级和旧客户端检查之后运行 upgrade。")
+        return 0
+
     def upgrade(self) -> int:
         for name, step, record in [
             ("baseline", self.upgrade_baseline, self.work / "upgrade-baseline.json"),
@@ -1062,10 +1073,12 @@ def assemble_reports(run: Acceptance) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--work", type=Path, required=True, help="release directory with the verified candidate")
-    parser.add_argument("command", choices=["upgrade", "start", "run", "cleanup", "status"])
+    parser.add_argument("command", choices=["baseline", "upgrade", "start", "run", "cleanup", "status"])
     options = parser.parse_args(argv)
     try:
         acceptance = Acceptance(options.work)
+        if options.command == "baseline":
+            return acceptance.baseline()
         if options.command == "upgrade":
             return acceptance.upgrade()
         if options.command == "start":

@@ -100,11 +100,13 @@ python tools/release_flow.py --state /var/lib/agent-room-release/next/flow.json 
 上面的报告不必手写。`tools/release_qa.py` 在 Windows 工作站上对已核验的候选实际执行三项验收、导出证据并完成汇总；版本、旧版本和序号都从已核验的候选读取，不再为每个版本复制和改写脚本。发布目录里放已核验的候选（`candidate/`、`verified-candidate.json`、`ci-verification.json`）、宿主说明 `qa-host.json`，以及记录服务地址、验收房间、桌面应用路径和升级验收身份的 `release-qa.json`（字段见脚本开头的说明）。
 
 ```bash
-python tools/release_qa.py --work <发布目录> upgrade   # 本机已安装的旧版本原地升级到候选
+python tools/release_qa.py --work <发布目录> baseline  # 候选核验后、服务端升级前：记录旧版本的未确认投递
+python tools/release_qa.py --work <发布目录> upgrade   # 服务端升级后：本机已安装的旧版本原地升级到候选
 python tools/release_qa.py --work <发布目录> start     # 隔离 Bridge 申请设备码，打印批准链接
 python tools/release_qa.py --work <发布目录> run       # 批准后：加入、授权、两轮真实回复、空闲、接管、交回、汇总、清理
 ```
 
+- `baseline` 要在服务端升级之前跑：服务端升级前后用已安装的旧客户端做兼容检查，和之后的原地升级，都要以同一批未确认投递为准。`upgrade` 发现基线已存在就沿用，没有时先补记。
 - `start` 返回退出码 `20` 并打印批准链接和到期时间，由维护者在浏览器里批准；工具不代为批准，也不输入任何凭据。设备码 10 分钟过期，过期后再运行一次 `start` 会保留同一份隔离资料重新申请。
 - `run` 每一步只记录一次结果，中断后重跑同一命令从断点继续；尚未批准时同样返回 `20`。
 - 桌面应用会临时以本机调试端口重启，用来驱动真实界面发消息、核对回复和接管接待；结束时撤销验收授权、让验收人物退出房间、停止隔离 Bridge 与接收端，并恢复普通启动。中途失败时先检查 `fresh-device-qa/` 里的记录，再用 `cleanup` 收尾。

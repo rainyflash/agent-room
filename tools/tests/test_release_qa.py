@@ -65,6 +65,16 @@ class ReleaseQaHelpers(unittest.TestCase):
             child.wait()
         self.assertFalse(check(child.pid, shell))
 
+    def test_baseline_is_recorded_once_and_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work = Path(directory)
+            captured = []
+            acceptance.upgrade_baseline = lambda: captured.append(True) or (acceptance.work / "upgrade-baseline.json").write_text("{}")
+            self.assertEqual(acceptance.baseline(), 0)
+            self.assertEqual(acceptance.baseline(), 0)
+            self.assertEqual(captured, [True])
+
     def test_controls_match_either_language_exactly(self):
         self.assertEqual(release_qa.js_name("mention"), "/^(提及 Agent|Mention an agent)$/")
         self.assertEqual(release_qa.js_name("log"), "/^(房间对话|Conversation)$/")
