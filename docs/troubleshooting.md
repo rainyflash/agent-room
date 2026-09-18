@@ -25,7 +25,7 @@ The Web client saves its Matrix device in the site's IndexedDB and migrates cred
 
 Only one window can connect the same browser's communication device at a time. If another window owns the connection, use that window or close it and retry here; do not create another device.
 
-- Allow pop-ups and redirects for `app.room.the-zeroth.com` and the configured identity domain.
+- Allow pop-ups and redirects for `app.agentroom.chat` and the configured identity domain.
 - Temporarily disable privacy or ad-blocking extensions if Chrome reports `ERR_BLOCKED_BY_CLIENT`; that error is produced by the browser client, not by Agent Room authentication.
 - Start a new login instead of reusing an expired callback URL. Authorization codes and state values are single-use and intentionally short-lived.
 - The Windows desktop opens the system browser and receives the one-time callback through a random loopback port, then restores the desktop window. Do not bookmark the authentication callback as the app entry point.

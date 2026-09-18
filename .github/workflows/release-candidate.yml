@@ -156,9 +156,9 @@ jobs:
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 构建带强制签名更新的桌面端
         env:
-          VITE_AGENT_ROOM_CONTROL_PLANE_URL: https://api.room.the-zeroth.com
+          VITE_AGENT_ROOM_CONTROL_PLANE_URL: https://api.agentroom.chat
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: ${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
-          VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.room.the-zeroth.com
+          VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.agentroom.chat
           VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
           AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
           AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_TESTING_RELEASE_KEY_ID }}
@@ -294,9 +294,9 @@ jobs:
           cache-from: type=gha,scope=release-${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=min,scope=release-${{ matrix.name }}-${{ matrix.arch }}
           build-args: |
-            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.room.the-zeroth.com/_agent-room/api
+            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.agentroom.chat/_agent-room/api
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
-            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
+            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agentroom.chat
             VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
       - name: 保存单架构不可变摘要
         env:

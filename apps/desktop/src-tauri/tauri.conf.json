@@ -12,7 +12,7 @@
   "app": {
     "security": {
       "capabilities": ["main-window"],
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.room.the-zeroth.com https://matrix.room.the-zeroth.com wss://matrix.room.the-zeroth.com; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: mxc:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.agentroom.chat https://matrix.agentroom.chat wss://matrix.agentroom.chat; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests",
       "headers": {
         "Cross-Origin-Opener-Policy": "same-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",

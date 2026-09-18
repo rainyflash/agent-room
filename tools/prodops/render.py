@@ -564,10 +564,16 @@ def _caddyfile(config: DeploymentConfig) -> str:
 }}
 
 {public.server_name} {{
-\theader Content-Type application/json
-\trespond /.well-known/matrix/server `{{"m.server":"{public.matrix_domain}:443"}}` 200
-\trespond /.well-known/matrix/client `{{"m.homeserver":{{"base_url":"{public.matrix_origin}"}}}}` 200
-\trespond 404
+\thandle /.well-known/matrix/* {{
+\t\theader Content-Type application/json
+\t\theader Access-Control-Allow-Origin *
+\t\trespond /.well-known/matrix/server `{{"m.server":"{public.matrix_domain}:443"}}` 200
+\t\trespond /.well-known/matrix/client `{{"m.homeserver":{{"base_url":"{public.matrix_origin}"}}}}` 200
+\t\trespond 404
+\t}}
+\thandle {{
+\t\tredir https://{public.app_domain}{{uri}} 302
+\t}}
 }}
 
 {public.app_domain} {{
