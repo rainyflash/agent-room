@@ -86,6 +86,67 @@ describe('账号工作区组件', () => {
     expect(screen.getByText('codex adapter · capability 1.0')).toBeVisible();
   });
 
+  it('删除 Agent 先确认，没有最近登录时改为重新登录', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+    const onReauthenticate = vi.fn();
+    const agent = fixtureFleet().agents[0] ?? null;
+    const control = {
+      canDelete: () => true,
+      failure: null,
+      onDelete,
+      onReauthenticate,
+      pendingAgentId: null,
+      recentlyAuthenticated: true,
+    };
+    const view = renderWithI18n(<AgentInspector agent={agent} deletion={control} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete agent' }));
+    const confirm = screen.getByRole('region', { name: 'Delete agent' });
+    expect(within(confirm).getByText('Delete Build Agent?')).toBeVisible();
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    expect(onDelete).toHaveBeenCalledWith(agent);
+
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <AgentInspector
+          agent={agent}
+          deletion={{
+            ...control,
+            failure: { agentId: AGENT_ID, code: 'agent.shared_ownership' },
+          }}
+        />
+      </I18nextProvider>,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('has other owners');
+
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <AgentInspector agent={agent} deletion={{ ...control, recentlyAuthenticated: false }} />
+      </I18nextProvider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(onReauthenticate).toHaveBeenCalledOnce();
+  });
+
+  it('默认 Agent 不显示删除入口', () => {
+    renderWithI18n(
+      <AgentInspector
+        agent={fixtureFleet().agents[0] ?? null}
+        deletion={{
+          canDelete: () => false,
+          failure: null,
+          onDelete: () => undefined,
+          onReauthenticate: () => undefined,
+          pendingAgentId: null,
+          recentlyAuthenticated: true,
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
+  });
+
   it('Agent 选择通过回调交给 URL 状态所有者', async () => {
     const user = userEvent.setup();
     const select = vi.fn();

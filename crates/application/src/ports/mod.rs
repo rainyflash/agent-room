@@ -36,8 +36,8 @@ pub use agents::{
     AgentInstanceRevocationTransaction, AgentInstanceSignatureVerifier,
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, AgentMembershipChange,
     AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration,
-    AgentRegistrationTransaction, AgentRepository, RegisteredAgent,
-    StoredAgentInstanceRegistration,
+    AgentRegistrationTransaction, AgentRepository, AgentRetirementOutcome,
+    AgentRetirementTransaction, RegisteredAgent, StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
 pub use automation::{

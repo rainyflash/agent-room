@@ -435,6 +435,24 @@ impl ApiError {
                 ErrorCategory::Conflict,
                 "Agent 状态或幂等请求发生冲突。",
             ),
+            AgentManagementFailureKind::DefaultAgent => (
+                StatusCode::CONFLICT,
+                "agent.default_agent",
+                ErrorCategory::Conflict,
+                "账户的默认 Agent 不能删除。",
+            ),
+            AgentManagementFailureKind::SharedOwnership => (
+                StatusCode::CONFLICT,
+                "agent.shared_ownership",
+                ErrorCategory::Conflict,
+                "这个 Agent 还有其他所有者，先移除他们再删除。",
+            ),
+            AgentManagementFailureKind::ActiveInstances => (
+                StatusCode::CONFLICT,
+                "agent.instances_active",
+                ErrorCategory::Conflict,
+                "先撤销这个 Agent 的所有连接，再删除它。",
+            ),
             AgentManagementFailureKind::DependencyUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent.dependency_unavailable",

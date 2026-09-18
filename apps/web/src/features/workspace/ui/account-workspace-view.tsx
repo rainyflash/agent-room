@@ -8,7 +8,7 @@ import { AppNavigation } from '@/shared/ui/app-navigation';
 import type { AgentFleet, FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import type { WorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
-import { AgentInspector } from '@/features/workspace/ui/agent-inspector';
+import { AgentInspector, type AgentDeletionControl } from '@/features/workspace/ui/agent-inspector';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
 import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
@@ -24,6 +24,7 @@ export type AccountWorkspaceViewProps = {
   readonly principalDisplayName: string;
   readonly selectedAgentId: string | null;
   readonly reception?: ReactNode;
+  readonly agentDeletion?: AgentDeletionControl;
 };
 
 export function AccountWorkspaceView({
@@ -37,6 +38,7 @@ export function AccountWorkspaceView({
   principalDisplayName,
   selectedAgentId,
   reception,
+  agentDeletion,
 }: AccountWorkspaceViewProps) {
   const { t } = useTranslation();
   const selected = selectedFleetAgent(fleet, selectedAgentId);
@@ -112,7 +114,7 @@ export function AccountWorkspaceView({
             onSelectAgent={onSelectAgent}
             selectedAgentId={selected?.agent.agentId ?? null}
           />
-          <AgentInspector agent={selected} />
+          <AgentInspector agent={selected} deletion={agentDeletion} />
         </section>
       ) : null}
       {reception}

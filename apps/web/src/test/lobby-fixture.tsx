@@ -853,6 +853,7 @@ const services: AppServices = {
   },
   agentDirectory: {
     listOwnedAgents: () => Promise.resolve(ok([])),
+    deleteAgent: () => Promise.resolve(ok(undefined)),
   },
   automation,
   config: {

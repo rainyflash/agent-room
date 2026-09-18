@@ -10,9 +10,10 @@ use agent_room_application::{
         AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
         AgentInstanceRevocationTransaction, AgentInstanceVerificationRepository,
         AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
-        AgentRegistration, AgentRepository, ClaimTargetedHandoff, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId,
-        OutboxMessage, PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
+        AgentRegistration, AgentRepository, AgentRetirementOutcome, AgentRetirementTransaction,
+        ClaimTargetedHandoff, DeviceRevocationOutcome, DeviceRevocationTransaction,
+        DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId, OutboxMessage,
+        PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
         QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SecretDigest,
         StoredAgentInstanceRegistration, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
         TargetedHandoffRequestFingerprint,
@@ -608,9 +609,13 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     )
     .await;
 
+    // Other tests share this database; count only this agent's instance events.
     let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_type = 'agent_instance'",
+        "SELECT count(*) FROM agent_room.outbox_event
+          WHERE aggregate_type = 'agent_instance'
+            AND aggregate_id IN (SELECT id FROM agent_room.agent_instance WHERE agent_id = $1)",
     )
+    .bind(agent_id.as_uuid())
     .fetch_one(&database.runtime)
     .await
     .expect("应能验证实例事件幂等性");
@@ -658,6 +663,98 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
     assert!(completed[0].matrix_device_revoked_at.is_some());
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_删除只允许唯一_owner_且须先撤销实例() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let fixture = prepare_instance_fixture(&database.runtime, &repositories, 19).await;
+    let outsider_id = PrincipalId::from_uuid(Uuid::now_v7());
+    PrincipalRepository::create(
+        &repositories,
+        &principal_registration(outsider_id, "Retire Outsider"),
+    )
+    .await
+    .expect("外部主体创建应成功");
+    let instance_id =
+        register_online_management_instance(&database.runtime, &repositories, &fixture).await;
+
+    assert_eq!(
+        retire_agent(&repositories, outsider_id, fixture.agent_id).await,
+        AgentRetirementOutcome::NotFound
+    );
+    assert_eq!(
+        retire_agent(&repositories, fixture.operator_id, fixture.agent_id).await,
+        AgentRetirementOutcome::NotOwner
+    );
+    assert_eq!(
+        retire_agent(&repositories, fixture.owner_id, fixture.agent_id).await,
+        AgentRetirementOutcome::ActiveInstances
+    );
+
+    assert_local_instance_revocation(
+        &database.runtime,
+        &repositories,
+        fixture.owner_id,
+        instance_id,
+    )
+    .await;
+    assert_eq!(
+        retire_agent(&repositories, fixture.owner_id, fixture.agent_id).await,
+        AgentRetirementOutcome::Retired
+    );
+    assert_eq!(
+        retire_agent(&repositories, fixture.owner_id, fixture.agent_id).await,
+        AgentRetirementOutcome::AlreadyRetired
+    );
+
+    let (state, name): (String, String) =
+        sqlx::query_as("SELECT lifecycle_state, display_name FROM agent_room.agent WHERE id = $1")
+            .bind(fixture.agent_id.as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .expect("可读取已删除的 Agent");
+    assert_eq!(
+        (state.as_str(), name.as_str()),
+        ("retired", "Deleted agent")
+    );
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_id = $1 AND event_type = 'agent.retired.v1'",
+    )
+    .bind(fixture.agent_id.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可读取删除事件");
+    assert_eq!(events, 1);
+
+    database.close().await;
+}
+
+async fn retire_agent(
+    repositories: &PostgresRepositories,
+    principal_id: PrincipalId,
+    agent_id: AgentId,
+) -> AgentRetirementOutcome {
+    let event = OutboxMessage::new(
+        OutboxEventId::from_uuid(Uuid::now_v7()),
+        "agent".to_owned(),
+        agent_id.as_uuid(),
+        "agent.retired.v1".to_owned(),
+        serde_json::Map::new(),
+        test_time_after(60_000),
+    )
+    .expect("删除事件有效");
+    AgentRetirementTransaction::retire(
+        repositories,
+        principal_id,
+        agent_id,
+        test_time_after(60_000),
+        &event,
+    )
+    .await
+    .expect("删除事务应完成")
 }
 
 #[tokio::test]

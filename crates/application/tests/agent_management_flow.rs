@@ -2,10 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use agent_room_application::{
     agents::{
-        AgentManagementDependencies, AgentManagementFailureKind, AgentManagementService,
-        AgentManagementUseCases, CreateAgent, CreateHostAgentForDevice, EnsureDefaultAgent,
-        EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
-        RotateAgentInstanceMatrixSession,
+        AgentManagementDependencies, AgentManagementFailure, AgentManagementFailureKind,
+        AgentManagementService, AgentManagementUseCases, CreateAgent, CreateHostAgentForDevice,
+        DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
+        RegisterAgentInstance, RotateAgentInstanceMatrixSession,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -15,7 +15,8 @@ use agent_room_application::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
-        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
+        AgentRetirementOutcome, AgentRetirementTransaction, Clock, IdentifierFactory,
+        MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
         MatrixAgentIdentityProvisioner, MatrixAgentUserRegistration, MatrixFailure,
         MatrixFailureKind, MatrixOperation, MatrixResult, MatrixSession, MatrixSessionMetadata,
         MatrixUserId, OutboxMessage, PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest,
@@ -697,6 +698,154 @@ async fn 过期设备认证或暂停主体不能创建或重放宿主_agent() {
     assert_eq!(creation.claims.lock().expect("测试锁不得中毒").len(), 1);
 }
 
+#[tokio::test]
+async fn 唯一_owner_删除_agent_时退役并写入事件() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let retirements = Arc::new(FakeRetirements::returning(AgentRetirementOutcome::Retired));
+    let service = service_with_retirements(
+        unused_creation(agent_id),
+        None,
+        None,
+        Arc::new(FakeInstances::default()),
+        test_matrix(),
+        retirements.clone(),
+    );
+
+    service
+        .delete_agent(DeleteAgent {
+            actor: authenticated_principal(principal_id),
+            agent_id,
+        })
+        .await
+        .expect("唯一 Owner 可以删除 Agent");
+
+    let calls = retirements.calls.lock().expect("测试锁不得中毒");
+    assert_eq!(
+        calls.as_slice(),
+        &[(principal_id, agent_id, "agent.retired.v1".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn 默认_agent_不能删除且不触及存储() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
+    let retirements = Arc::new(FakeRetirements::returning(AgentRetirementOutcome::Retired));
+    let service = service_with_retirements(
+        unused_creation(default_agent_id),
+        None,
+        None,
+        Arc::new(FakeInstances::default()),
+        test_matrix(),
+        retirements.clone(),
+    );
+
+    let error = service
+        .delete_agent(DeleteAgent {
+            actor: authenticated_principal(principal_id),
+            agent_id: default_agent_id,
+        })
+        .await
+        .expect_err("默认 Agent 不得删除");
+
+    assert_eq!(error.kind(), AgentManagementFailureKind::DefaultAgent);
+    assert!(retirements.calls.lock().expect("测试锁不得中毒").is_empty());
+}
+
+#[tokio::test]
+async fn 删除受阻时给出可解释的原因且重复删除视为成功() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    for (outcome, expected) in [
+        (
+            AgentRetirementOutcome::ActiveInstances,
+            Some(AgentManagementFailureKind::ActiveInstances),
+        ),
+        (
+            AgentRetirementOutcome::NotSoleOwner,
+            Some(AgentManagementFailureKind::SharedOwnership),
+        ),
+        (
+            AgentRetirementOutcome::NotOwner,
+            Some(AgentManagementFailureKind::Forbidden),
+        ),
+        (
+            AgentRetirementOutcome::NotFound,
+            Some(AgentManagementFailureKind::NotFound),
+        ),
+        (AgentRetirementOutcome::AlreadyRetired, None),
+    ] {
+        let service = service_with_retirements(
+            unused_creation(agent_id),
+            None,
+            None,
+            Arc::new(FakeInstances::default()),
+            test_matrix(),
+            Arc::new(FakeRetirements::returning(outcome)),
+        );
+        let result = service
+            .delete_agent(DeleteAgent {
+                actor: authenticated_principal(principal_id),
+                agent_id,
+            })
+            .await;
+        assert_eq!(
+            result.err().map(AgentManagementFailure::kind),
+            expected,
+            "{outcome:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn 已删除的_agent_不在列表中且不再作为默认或注册实例() {
+    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let mut retired = registered_agent(agent_id);
+    retired.agent.retire();
+    let default_agent_id = AgentId::from_uuid(principal_id.as_uuid());
+    let creation = Arc::new(FakeCreationWorkflow {
+        agent_id: Some(default_agent_id),
+        claims: Mutex::new(Vec::new()),
+        completions: Mutex::new(Vec::new()),
+    });
+    let service = service(
+        creation.clone(),
+        Some(retired),
+        Some(AgentMemberships::with_initial_owner(
+            agent_id,
+            principal_id,
+            time(NOW),
+        )),
+        Arc::new(FakeInstances::default()),
+        test_matrix(),
+    );
+
+    let listed = service
+        .list_agents(ListAgents {
+            actor: authenticated_principal(principal_id),
+        })
+        .await
+        .expect("Agent 列表应可读取");
+    assert!(listed.is_empty());
+
+    let ensured = service
+        .ensure_default_agent(EnsureDefaultAgent {
+            actor: authenticated_principal(principal_id),
+        })
+        .await
+        .expect("只有已删除的 Agent 时应建立新的默认 Agent");
+    assert_eq!(ensured.agent.id(), default_agent_id);
+    assert_eq!(creation.claims.lock().expect("测试锁不得中毒").len(), 1);
+
+    let error = service
+        .register_instance(register_request(principal_id, agent_id))
+        .await
+        .expect_err("已删除的 Agent 不得注册新实例");
+    assert_eq!(error.kind(), AgentManagementFailureKind::NotFound);
+}
+
 fn host_agent_service(creation: Arc<FakeCreationWorkflow>) -> AgentManagementService {
     service(
         creation,
@@ -824,6 +973,24 @@ fn service(
     instances: Arc<FakeInstances>,
     matrix: Arc<FakeMatrixIdentities>,
 ) -> AgentManagementService {
+    service_with_retirements(
+        creations,
+        registration,
+        memberships,
+        instances,
+        matrix,
+        Arc::new(FakeRetirements::returning(AgentRetirementOutcome::Retired)),
+    )
+}
+
+fn service_with_retirements(
+    creations: Arc<FakeCreationWorkflow>,
+    registration: Option<RegisteredAgent>,
+    memberships: Option<AgentMemberships>,
+    instances: Arc<FakeInstances>,
+    matrix: Arc<FakeMatrixIdentities>,
+    retirements: Arc<FakeRetirements>,
+) -> AgentManagementService {
     AgentManagementService::new(AgentManagementDependencies {
         creations,
         agents: Arc::new(FakeAgentRepository { registration }),
@@ -833,10 +1000,51 @@ fn service(
         managed_instances: instances,
         matrix_identities: matrix.clone(),
         matrix_sessions: matrix,
+        retirements,
         secrets: Arc::new(TestSecrets),
         identifiers: Arc::new(TestIdentifiers),
         clock: Arc::new(StaticClock),
     })
+}
+
+fn test_matrix() -> Arc<FakeMatrixIdentities> {
+    Arc::new(FakeMatrixIdentities {
+        server_name: "matrix.test".to_owned(),
+        issued_sessions: Mutex::new(0),
+        corrupt_session_identity: false,
+    })
+}
+
+struct FakeRetirements {
+    outcome: AgentRetirementOutcome,
+    calls: Mutex<Vec<(PrincipalId, AgentId, String)>>,
+}
+
+impl FakeRetirements {
+    fn returning(outcome: AgentRetirementOutcome) -> Self {
+        Self {
+            outcome,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl AgentRetirementTransaction for FakeRetirements {
+    fn retire<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
+        _retired_at: UtcMillis,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<AgentRetirementOutcome>> {
+        self.calls.lock().expect("测试锁不得中毒").push((
+            principal_id,
+            agent_id,
+            event.event_type().to_owned(),
+        ));
+        let outcome = self.outcome;
+        Box::pin(async move { Ok(outcome) })
+    }
 }
 
 fn unused_creation(agent_id: AgentId) -> Arc<FakeCreationWorkflow> {

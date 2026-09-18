@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { useAppServices } from '@/app/app-services';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
@@ -18,7 +18,7 @@ import {
   ownedAgentQueryKey,
   useOwnedAgents,
 } from '@/features/workspace/data/agent-directory-query';
-import { projectAgentFleet } from '@/features/workspace/domain/agent-fleet';
+import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
 
@@ -111,6 +111,11 @@ export function AccountWorkspacePage({
     ],
   );
 
+  const [deletion, setDeletion] = useState<{
+    readonly pendingAgentId: string | null;
+    readonly failure: { readonly agentId: string; readonly code: string } | null;
+  }>({ pendingAgentId: null, failure: null });
+
   const refresh = async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ownedAgentQueryKey }),
@@ -120,8 +125,41 @@ export function AccountWorkspacePage({
     ]);
   };
 
+  // Deletion revokes every live connection first (each also retires its Matrix device), then retires
+  // the agent itself; the server refuses while any instance is still live.
+  const deleteAgent = async (agent: FleetAgent): Promise<void> => {
+    const agentId = agent.agent.agentId;
+    setDeletion({ pendingAgentId: agentId, failure: null });
+    for (const instance of agent.instances.filter((entry) => entry.revokedAtUnixMs === null)) {
+      const revoked = await services.accessManagement.revokeAgentInstance(instance.agentInstanceId);
+      if (!revoked.ok) {
+        setDeletion({ pendingAgentId: null, failure: { agentId, code: revoked.error.code } });
+        await refresh();
+        return;
+      }
+    }
+    const deleted = await services.agentDirectory.deleteAgent(agentId);
+    setDeletion({
+      pendingAgentId: null,
+      failure: deleted.ok ? null : { agentId, code: deleted.error.code },
+    });
+    await refresh();
+  };
+
   return (
     <AccountWorkspaceView
+      agentDeletion={{
+        canDelete: (agent) => agent.agent.agentId !== principal.principalId,
+        failure: deletion.failure,
+        onDelete: (agent) => void deleteAgent(agent),
+        onReauthenticate: () => {
+          void services.controlPlane.beginAuthentication(
+            `${window.location.pathname}${window.location.search}${window.location.hash}`,
+          );
+        },
+        pendingAgentId: deletion.pendingAgentId,
+        recentlyAuthenticated: principal.recentlyAuthenticated,
+      }}
       connectionHealth={connectionHealth}
       failureCode={failureCode}
       fleet={fleet}

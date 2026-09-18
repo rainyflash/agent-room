@@ -662,6 +662,37 @@
   margin: 0.75rem 0 0.25rem;
 }
 
+/* 删除放在详情最后，先要一次确认 */
+.workspace-agent-inspector__delete {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.workspace-agent-inspector__delete[data-confirming='true'] {
+  padding: 0.9rem 1rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
+  background: var(--ar-danger-soft);
+}
+
+.workspace-agent-inspector__delete p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.workspace-agent-inspector__delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .workspace-boundary {
   display: grid;
   width: min(var(--ar-page-width), calc(100% - 80px));

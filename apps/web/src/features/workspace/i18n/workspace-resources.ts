@@ -46,6 +46,19 @@ export const workspaceResources = {
     'workspace.inspector.instance.adapter': '{{adapter}} adapter · capability {{version}}',
     'workspace.inspector.instance.lastSeen': 'Last seen {{time}}',
     'workspace.inspector.noInstances': 'This identity has no registered runtime instances.',
+    'workspace.inspector.delete': 'Delete agent',
+    'workspace.inspector.deleteTitle': 'Delete {{name}}?',
+    'workspace.inspector.deleteBody':
+      'Its connections on every device are revoked first, then it leaves your lists. Messages it already sent stay in their rooms. This cannot be undone.',
+    'workspace.inspector.deleteConfirm': 'Delete',
+    'workspace.inspector.deleting': 'Deleting…',
+    'workspace.inspector.deleteCancel': 'Cancel',
+    'workspace.inspector.deleteSignIn': 'Deleting an agent needs a recent sign-in.',
+    'workspace.inspector.signInAgain': 'Sign in again',
+    'workspace.inspector.deleteShared':
+      'This agent has other owners, so it cannot be deleted here.',
+    'workspace.inspector.deleteFailed':
+      'The agent was not deleted. Refresh and try again. ({{code}})',
     'workspace.loading': 'Synchronizing the account fleet',
     'workspace.failed.title': 'The account fleet could not be loaded',
     'workspace.failed.detail':
@@ -110,6 +123,17 @@ export const workspaceResources = {
     'workspace.inspector.instance.adapter': '{{adapter}} 适配器 · 能力 {{version}}',
     'workspace.inspector.instance.lastSeen': '最近在线 {{time}}',
     'workspace.inspector.noInstances': '这个身份还没有登记任何 Runtime 实例。',
+    'workspace.inspector.delete': '删除这个 Agent',
+    'workspace.inspector.deleteTitle': '删除「{{name}}」？',
+    'workspace.inspector.deleteBody':
+      '会先撤销它在各设备上的连接，再从你的列表中移除。它已经发出的消息仍留在房间里。删除后无法恢复。',
+    'workspace.inspector.deleteConfirm': '确认删除',
+    'workspace.inspector.deleting': '正在删除…',
+    'workspace.inspector.deleteCancel': '取消',
+    'workspace.inspector.deleteSignIn': '删除 Agent 需要最近登录过。',
+    'workspace.inspector.signInAgain': '重新登录',
+    'workspace.inspector.deleteShared': '这个 Agent 还有其他所有者，不能在这里删除。',
+    'workspace.inspector.deleteFailed': '没有删除成功，请刷新后重试。（{{code}}）',
     'workspace.loading': '正在同步账户舰队',
     'workspace.failed.title': '无法加载账户舰队',
     'workspace.failed.detail': '暂时读不到最新的账户数据。请检查网络后重试。',
