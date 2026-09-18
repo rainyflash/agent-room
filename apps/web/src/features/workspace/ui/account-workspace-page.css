@@ -16,8 +16,9 @@
 }
 .account-workspace__intro h1 {
   margin: 0 0 12px;
+  font-family: var(--font-display);
   font-weight: 650;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   line-height: 1.2;
   color: var(--color-ink);
   font-size: var(--ar-page-title);
@@ -72,9 +73,10 @@
   margin: 0 auto 1rem;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   background: color-mix(in srgb, var(--color-paper) 88%, white);
-  border-radius: var(--ar-radius);
-  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-panel-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   overflow: hidden;
+  box-shadow: var(--ar-press);
 }
 
 .workspace-status {
@@ -134,9 +136,10 @@
 .workspace-diagnostics {
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 0 auto 1rem;
-  border: 1px solid var(--ar-ink-18);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   background: color-mix(in srgb, var(--color-paper) 94%, white);
-  border-radius: var(--ar-radius);
+  border-radius: var(--ar-panel-radius);
+  box-shadow: var(--ar-press);
 }
 
 .workspace-diagnostics > summary {
@@ -269,12 +272,13 @@
   width: min(var(--ar-page-width), calc(100% - 80px));
   min-height: 420px;
   gap: 0;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
   grid-template-columns: minmax(200px, 0.65fr) minmax(0, 1.4fr) minmax(320px, 1fr);
   overflow: hidden;
   margin: 0 auto 24px;
+  box-shadow: var(--ar-press);
 }
 
 .workspace-device-rail,
@@ -441,8 +445,8 @@
 }
 
 .workspace-fleet__list button[aria-pressed='true'] {
-  background: var(--ar-accent-soft);
-  box-shadow: inset 3px 0 var(--ar-accent);
+  background: var(--ar-warning-soft);
+  box-shadow: inset 0 0 0 var(--ar-outline-thin) var(--ar-outline);
 }
 
 .workspace-fleet__avatar {
@@ -776,12 +780,13 @@
 }
 .account-workspace__body {
   gap: 0;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
   grid-template-columns: minmax(200px, 0.65fr) minmax(0, 1.4fr) minmax(320px, 1fr);
   overflow: hidden;
   margin: 0 auto 24px;
+  box-shadow: var(--ar-press);
 }
 .workspace-agent-inspector {
   background: var(--ar-surface);
@@ -790,9 +795,10 @@
 .workspace-status-strip {
   margin-top: 24px;
   margin-bottom: 12px;
-  border-radius: var(--ar-radius);
-  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-panel-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   overflow: hidden;
+  box-shadow: var(--ar-press);
 }
 .workspace-device-rail li[data-current='true'] {
   padding-top: 36px;

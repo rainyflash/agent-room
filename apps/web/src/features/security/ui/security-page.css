@@ -67,8 +67,9 @@
 .security-page-heading h1 {
   margin: 0;
   line-height: 1.2;
+  font-family: var(--font-display);
   font-size: var(--ar-page-title);
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   font-weight: 650;
 }
 
@@ -143,9 +144,10 @@
   border-right: 1px solid var(--ar-ink-18);
   min-height: 0;
   padding: 24px;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
+  box-shadow: var(--ar-press);
 }
 
 .security-posture__signal {
@@ -245,9 +247,10 @@
 .security-devices {
   min-width: 0;
   padding: 24px;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
+  box-shadow: var(--ar-press);
 }
 
 .security-section-heading {
@@ -865,10 +868,10 @@
   max-height: min(820px, calc(100svh - 3rem));
   overflow-y: auto;
   padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 10px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--color-paper);
-  box-shadow: 0 28px 90px color-mix(in srgb, black 32%, transparent);
+  box-shadow: var(--ar-press);
 }
 
 .security-dialog__header {
@@ -1235,29 +1238,35 @@
     animation: none;
   }
 }
+/* 页内跳转，不是标签页，没有当前态；做成一排可按的胶囊。 */
 .security-section-nav {
   display: flex;
   flex-wrap: wrap;
-  background: var(--ar-surface);
   padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--ar-line);
-  border-radius: 0;
-  gap: 12px;
-  margin: 0 0 20px;
+  gap: 10px;
+  margin: 0 0 24px;
 }
 .security-section-nav a {
   display: flex;
   align-items: center;
-  text-decoration: none;
+  min-height: 44px;
+  padding: 0 18px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
+  color: var(--color-ink);
   font-size: 14px;
-  color: var(--ar-muted);
-  border-radius: 0;
-  min-height: 48px;
-  padding: 0 12px;
+  font-weight: 600;
+  text-decoration: none;
 }
 .security-section-nav a:hover {
   background: var(--ar-surface-muted);
+}
+.security-section-nav a:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
 }
 .security-content,
 .security-recovery,
@@ -1284,10 +1293,11 @@
 .security-access,
 .agent-recovery {
   padding: 24px;
-  border: 1px solid var(--ar-line);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   background: var(--ar-surface);
   margin-top: 24px;
-  border-radius: var(--ar-radius);
+  border-radius: var(--ar-panel-radius);
+  box-shadow: var(--ar-press);
 }
 .security-workspace code {
   font-family: var(--font-mono);

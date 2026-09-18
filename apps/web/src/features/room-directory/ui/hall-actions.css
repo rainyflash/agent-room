@@ -9,9 +9,9 @@
   width: min(560px, calc(100vw - 2rem));
   max-height: calc(100dvh - 3rem);
   padding: 1.5rem;
-  border: 1px solid #dce5e3;
-  border-radius: 1.2rem;
-  box-shadow: 0 24px 90px #173c3930;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  box-shadow: var(--ar-press);
   color: #193b37;
   background: #fff;
 }
