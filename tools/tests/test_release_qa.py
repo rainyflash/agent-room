@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from tools import release, release_acceptance, release_qa
 
@@ -64,6 +65,34 @@ class ReleaseQaHelpers(unittest.TestCase):
             child.kill()
             child.wait()
         self.assertFalse(check(child.pid, shell))
+
+    def test_device_decision_reuses_the_record_only_when_allowed_and_holds_for_the_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work, acceptance.qa = work, work / "fresh-device-qa"
+            acceptance.qa.mkdir()
+            acceptance.metadata = {"revision": "d" * 40}
+            acceptance.host_type, acceptance.label, acceptance.slug = "claude_code", "Alpha 43", "alpha43"
+            record = {"dataDir": str(work / "device"), "service": "svc", "label": "Long-lived", "profileId": "p",
+                      "agentId": "a", "agentName": "发布验收 Claude Code",
+                      "freshAuthorization": {"version": "0.1.0", "revision": "c" * 40,
+                                             "capturedAtUnixSeconds": int(time.time())}}
+            acceptance.device_record_path = work / "acceptance-device.json"
+            acceptance.device_record_path.write_text(json.dumps(record), encoding="utf-8")
+            with mock.patch.object(release_qa.release_acceptance, "reuse_blocker", return_value="too old"):
+                self.assertEqual(acceptance.decide_device(), {"mode": "fresh", "reason": "too old"})
+            (acceptance.qa / "device-mode.json").unlink()
+            with mock.patch.object(release_qa.release_acceptance, "reuse_blocker", return_value=None):
+                decision = acceptance.decide_device()
+            self.assertEqual(decision["mode"], "reused")
+            with mock.patch.object(release_qa.release_acceptance, "reuse_blocker", return_value="changed"):
+                self.assertEqual(acceptance.decide_device()["mode"], "reused")
+            acceptance.apply_device(decision)
+            self.assertEqual((acceptance.service, acceptance.agent_name), ("svc", "发布验收 Claude Code"))
+            acceptance.apply_device({"mode": "fresh"})
+            self.assertEqual(acceptance.service, "agent-room.alpha43.acceptance.fresh-device")
+            self.assertEqual(acceptance.agent_name, "发布验收 Claude Code")
 
     def test_baseline_is_recorded_once_and_reused(self):
         with tempfile.TemporaryDirectory() as directory:

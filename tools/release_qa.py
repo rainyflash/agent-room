@@ -4,7 +4,8 @@
 release_flow.py only *verifies* acceptance reports; this runner *produces* them from real
 observations of the signed candidate:
 
-* an isolated Bridge profile that the owner authorizes with a device code (first-device);
+* an isolated Bridge profile that the owner authorizes with a device code, or the recorded long-lived
+  acceptance device restoring its saved authorization while the acceptance policy allows it (first-device);
 * the owner's real host task receiving two real messages through Agent Room, one with a
   random attachment canary it can only read from the delivered attachment, then staying
   idle, being taken over and resumed (continuous-reception);
@@ -26,6 +27,11 @@ Usage (Windows workstation):
 
 `run` resumes after interruption: every step records its result once and is skipped when
 that record exists. Exit codes: 0 done, 20 waiting for the owner, 1 failure.
+
+With `"device": {"record": "<path>"}` in `release-qa.json`, a fresh run records its authorized profile as
+the long-lived acceptance device, and later releases reuse it without a device code for up to 30 days
+unless login code changes (`release_acceptance.reuse_blocker`). `start` also creates the Claude Code host
+session named in `qa-host.json` when it does not exist yet.
 
 The release directory holds the verified candidate (`candidate/`, `verified-candidate.json`,
 `ci-verification.json`) and the host description (`qa-host.json`). `upgrade` writes
@@ -135,9 +141,9 @@ class Acceptance:
             raise ReleaseFailure(f"不支持的宿主类型：{self.host_type}")
         self.label = release_label(self.version)
         self.slug = release_slug(self.version)
-        self.agent_name = f"{self.label} 实机验收 {HOST_NAMES[self.host_type]}"
-        self.service = f"agent-room.{self.slug}.acceptance.fresh-device"
-        self.data = self.qa / "bridge-data"
+        device = self.config.get("device")
+        self.device_record_path = Path(device["record"]) if isinstance(device, dict) else None
+        self.use_fresh_device()
         self.canary_name = f"{self.slug}-attachment.txt"
         self.room_id = self.config["room"]["roomId"]
         self.catalog_id = self.config["room"]["catalogId"]
@@ -146,6 +152,8 @@ class Acceptance:
         self.desktop_executable = ntpath.normpath(desktop["executable"])
         self.origin = desktop.get("origin", "http://tauri.localhost")
         self.cdp_port = int(desktop.get("cdpPort", 14222))
+        if self.path("device-mode.json").exists():
+            self.apply_device(load(self.path("device-mode.json")))
 
     # ------------------------------------------------------------------ candidate binaries
 
@@ -176,7 +184,7 @@ class Acceptance:
             AGENT_ROOM_OIDC_DEVICE_CLIENT_ID=self.config["oidcDeviceClientId"],
             AGENT_ROOM_BRIDGE_DATA_DIR=str(self.data),
             AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE=self.service,
-            AGENT_ROOM_BRIDGE_DEVICE_LABEL=f"{self.label} fresh-device acceptance",
+            AGENT_ROOM_BRIDGE_DEVICE_LABEL=self.device_label,
             AGENT_ROOM_BRIDGE_SUPERVISED="true",
         )
 
@@ -235,10 +243,83 @@ class Acceptance:
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("{")]
 
-    # ------------------------------------------------------------------ first-device: device authorization
+    # ------------------------------------------------------------------ first-device: acceptance device
+
+    def use_fresh_device(self) -> None:
+        # With a long-lived device configured, every fresh run creates the same stable character name.
+        self.agent_name = (f"发布验收 {HOST_NAMES[self.host_type]}" if self.device_record_path is not None
+                           else f"{self.label} 实机验收 {HOST_NAMES[self.host_type]}")
+        self.service = f"agent-room.{self.slug}.acceptance.fresh-device"
+        self.data = self.qa / "bridge-data"
+        self.device_label = f"{self.label} fresh-device acceptance"
+
+    def apply_device(self, decision: dict[str, Any]) -> None:
+        if decision["mode"] != "reused":
+            self.use_fresh_device()
+            return
+        record = decision["record"]
+        self.data = Path(record["dataDir"])
+        self.service = record["service"]
+        self.device_label = record["label"]
+        self.agent_name = record["agentName"]
+
+    def device_mode(self) -> str:
+        decision = self.path("device-mode.json")
+        return str(load(decision)["mode"]) if decision.exists() else "fresh"
+
+    def decide_device(self) -> dict[str, Any]:
+        """Reuse the long-lived acceptance device when the acceptance policy allows it, else a fresh profile."""
+        if self.path("device-mode.json").exists():
+            return load(self.path("device-mode.json"))
+        decision: dict[str, Any] = {"mode": "fresh"}
+        if self.device_record_path is not None and self.device_record_path.exists():
+            record = load(self.device_record_path)
+            try:
+                blocker = release_acceptance.reuse_blocker(record.get("freshAuthorization"),
+                                                           self.metadata["revision"], int(time.time()))
+            except ReleaseFailure as failure:
+                blocker = str(failure)
+            decision = {"mode": "reused", "record": record} if blocker is None else {"mode": "fresh", "reason": blocker}
+        self.save("device-mode.json", decision)
+        return decision
+
+    def remember_device(self) -> None:
+        """After a fresh run its authorized profile becomes the long-lived acceptance device."""
+        if self.device_record_path is None or self.device_mode() != "fresh":
+            return
+        joined = self.joined()
+        first = load(self.work / "usability-evidence-first-device.json")
+        record = {"schemaVersion": 1, "dataDir": str(self.data.resolve()), "service": self.service,
+                  "label": self.device_label, "profileId": joined["profileId"],
+                  "agentId": joined["identity"]["agent"]["agentId"], "agentName": self.agent_name,
+                  "freshAuthorization": {"version": self.version, "revision": self.metadata["revision"],
+                                         "capturedAtUnixSeconds": first["observedAtUnixSeconds"]}}
+        self.device_record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + NEWLINE, encoding="utf-8")
+        print(f"本次授权的设备已记为长期验收设备：{self.device_record_path}")
+
+    def ensure_host_session(self) -> None:
+        """The receiver resumes the recorded host task, so a Claude Code session must exist before any wake."""
+        if self.host_type != "claude_code":
+            return
+        task = self.host["taskId"]
+        projects = Path.home() / ".claude" / "projects"
+        if any(projects.glob(f"*/{task}.jsonl")):
+            return
+        prompt = (f"这是 Agent Room {self.label} 发布验收专用的会话。之后会有房间消息转交给你，"
+                  "请按转交时的要求回复。现在只需回复：已就绪。")
+        command = [self.host["executable"], "-p", prompt, "--session-id", task, "--output-format", "json"]
+        if self.host.get("model"):
+            command += ["--model", self.host["model"]]
+        result = subprocess.run(command, cwd=self.host["workspace"], env=self.host_env(), capture_output=True,
+                                encoding="utf-8", timeout=300, creationflags=NO_WINDOW, check=False)
+        if result.returncode or not any(projects.glob(f"*/{task}.jsonl")):
+            raise ReleaseFailure(f"无法在验收工作区创建宿主会话：{(result.stderr or result.stdout).strip()[-300:]}")
+        print("已在验收工作区创建宿主会话。")
 
     def authorized(self) -> bool:
         names = [event.get("event") for event in self.events("bridge")]
+        if self.device_mode() == "reused":
+            return "ready" in names and "authorization_required" not in names
         return "device_authorized" in names and "ready" in names
 
     def pending_code(self) -> dict[str, Any] | None:
@@ -250,12 +331,15 @@ class Acceptance:
 
     def start(self) -> int:
         self.qa.mkdir(exist_ok=True)
-        self.data.mkdir(exist_ok=True)
+        self.ensure_host_session()
+        self.apply_device(self.decide_device())
+        self.data.mkdir(parents=True, exist_ok=True)
         if self.authorized():
             print("设备已授权，Bridge 就绪；继续运行 run。")
             return 0
+        reused = self.device_mode() == "reused"
         started = self.path("bridge-process.json")
-        if started.exists():
+        if started.exists() and not reused:
             record = load(started)
             code = self.pending_code()
             fresh = code is not None and time.time() < record["startedAtUnixSeconds"] + int(code.get("expiresInSeconds", 600)) - 30
@@ -267,8 +351,18 @@ class Acceptance:
         record = self.background([self.executable("bridge")], "bridge", self.bridge_env())
         deadline = time.time() + 45
         while time.time() < deadline:
-            events = self.events("bridge")
-            if len(events) > before and events[-1].get("event") == "authorization_required":
+            events = self.events("bridge")[before:]
+            if reused and any(event.get("event") == "ready" for event in events):
+                print("复用长期验收设备：Bridge 用已保存的授权直接就绪，这一版不需要设备码。继续运行 run。")
+                return 0
+            if events and events[-1].get("event") == "authorization_required":
+                if reused:
+                    # The saved authorization no longer works; a fresh profile keeps the evidence honest.
+                    self.stop("bridge-process.json")
+                    self.save("device-mode.json", {"mode": "fresh", "reason": "长期验收设备的授权已失效。"},
+                              overwrite=True)
+                    self.use_fresh_device()
+                    return self.start()
                 return self.announce(record, events[-1])
             time.sleep(1)
         raise ReleaseFailure("Bridge 45 秒内没有申请设备码；查看 bridge.private.stderr。")
@@ -327,6 +421,14 @@ class Acceptance:
     # ------------------------------------------------------------------ steps
 
     def join(self) -> None:
+        if self.device_mode() == "reused":
+            record = load(self.path("device-mode.json"))["record"]
+            resumed = self.cli("--profile", record["profileId"], "resume")
+            if resumed["identity"]["agent"]["agentId"] != record["agentId"]:
+                raise ReleaseFailure("长期验收设备恢复出的人物与记录不一致。")
+            self.save("joined.private.json", {"profileId": record["profileId"], "identity": resumed["identity"]})
+            print(json.dumps({"profileId": record["profileId"], "agentId": record["agentId"], "reused": True}))
+            return
         identifier = self.cli("id")
         identifier = identifier.get("submissionId", identifier.get("id")) if isinstance(identifier, dict) else None
         if not isinstance(identifier, str):
@@ -523,6 +625,7 @@ class Acceptance:
 
     def assemble(self) -> None:
         assemble_reports(self)
+        self.remember_device()
 
     # ------------------------------------------------------------------ upgrade
 
@@ -721,7 +824,7 @@ class Acceptance:
     def status(self) -> int:
         done = [name for name, _, record in self.steps() if record.exists()]
         code = self.pending_code()
-        print(json.dumps({"version": self.version, "authorized": self.authorized(),
+        print(json.dumps({"version": self.version, "deviceMode": self.device_mode(), "authorized": self.authorized(),
                           "pendingDeviceCode": code is not None, "completed": done,
                           "cleanedUp": self.path("left-room.json").exists()}, ensure_ascii=False))
         return 0
@@ -1033,22 +1136,36 @@ def assemble_reports(run: Acceptance) -> None:
 
     device = load(qa / "bridge-process.json")
     names = [entry["event"] for entry in run.events("bridge")]
-    check(all(name in names for name in ("authorization_required", "device_authorized", "ready")), "设备授权事件不完整。")
-    check(names.index("device_authorized") < names.index("ready")
-          and names[: names.index("device_authorized")].count("authorization_required") >= 1, "设备授权顺序不对。")
     check(device["startedAtUnixSeconds"] >= lower, "Bridge 早于候选生成。")
     joined = run.joined()
     check(joined["identity"]["agent"]["agentId"] == presence["entry"]["agent"]["agentId"], "在场人物与验收身份不一致。")
-    first_evidence = evidence("usability-evidence-first-device.json", {
-        "version": metadata["version"], "observedAtUnixSeconds": after["observedAtUnixSeconds"],
-        "environment": "New isolated device profile on the local Windows computer; not a second physical computer",
-        "initialProfileEmpty": True, "bridgeExecutableSha256": digest(Path(device["executable"])),
-        "deviceFlowEvents": names, "authorizationCompleted": True, "bridgeConnected": True,
-        "agentJoined": True, "actualHostRepliesVerified": 2,
-    })
-    first = report("first-device", {key: True for key in
-                                    ["authorizationCompleted", "bridgeConnected", "agentJoined", "replyVerified"]},
-                   [first_evidence], after["observedAtUnixSeconds"])
+    if run.device_mode() == "reused":
+        check("ready" in names and "authorization_required" not in names, "长期验收设备没有用已保存的授权直接就绪。")
+        fresh = load(qa / "device-mode.json")["record"]["freshAuthorization"]
+        first_evidence = evidence("usability-evidence-first-device.json", {
+            "version": metadata["version"], "observedAtUnixSeconds": after["observedAtUnixSeconds"],
+            "environment": "Long-lived acceptance device profile on the local Windows computer",
+            "deviceMode": "reused", "freshAuthorization": fresh,
+            "bridgeExecutableSha256": digest(Path(device["executable"])), "deviceFlowEvents": names,
+            "authorizationRestored": True, "bridgeConnected": True, "agentJoined": True, "actualHostRepliesVerified": 2,
+        })
+        first = report("first-device", {key: True for key in sorted(release_acceptance.REUSED_DEVICE_CHECKS)},
+                       [first_evidence], after["observedAtUnixSeconds"], deviceMode="reused", freshAuthorization=fresh)
+    else:
+        check(all(name in names for name in ("authorization_required", "device_authorized", "ready")), "设备授权事件不完整。")
+        check(names.index("device_authorized") < names.index("ready")
+              and names[: names.index("device_authorized")].count("authorization_required") >= 1, "设备授权顺序不对。")
+        first_evidence = evidence("usability-evidence-first-device.json", {
+            "version": metadata["version"], "observedAtUnixSeconds": after["observedAtUnixSeconds"],
+            "environment": "New isolated device profile on the local Windows computer; not a second physical computer",
+            "deviceMode": "fresh", "initialProfileEmpty": True,
+            "bridgeExecutableSha256": digest(Path(device["executable"])),
+            "deviceFlowEvents": names, "authorizationCompleted": True, "bridgeConnected": True,
+            "agentJoined": True, "actualHostRepliesVerified": 2,
+        })
+        first = report("first-device", {key: True for key in
+                                        ["authorizationCompleted", "bridgeConnected", "agentJoined", "replyVerified"]},
+                       [first_evidence], after["observedAtUnixSeconds"], deviceMode="fresh")
 
     upgrade = load(work / "usability-evidence-upgrade.json")
     installed = load(work / "installed-verification.json")
