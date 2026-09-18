@@ -76,6 +76,45 @@ class UsabilityAcceptanceTests(unittest.TestCase):
         (self.root / "usability-evidence-first-device.txt").write_text("tampered", encoding="utf-8")
         with self.assertRaises(release.ReleaseFailure): self.verify()
 
+    def reuse_device(self, captured_ago: int = 3600, **report_fields):
+        report = self.reports["first-device"]
+        report["checks"] = {key: True for key in acceptance.REUSED_DEVICE_CHECKS}
+        report["deviceMode"] = "reused"
+        report["freshAuthorization"] = {"version": "0.1.9", "revision": "c" * 40,
+                                        "capturedAtUnixSeconds": self.now - captured_ago}
+        report.update(report_fields)
+        self.reindex()
+
+    def test_long_lived_device_is_accepted_only_while_the_policy_allows(self):
+        self.reuse_device()
+        acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+        with self.assertRaisesRegex(release.ReleaseFailure, "登录相关代码"):
+            acceptance.verify(self.root, self.version, self.revision, now=self.now,
+                              changes=lambda base, head: ["crates/identity-adapter/src/device_grant.rs"])
+        self.reuse_device(captured_ago=acceptance.FRESH_AUTHORIZATION_MAX_AGE_SECONDS + 1)
+        with self.assertRaisesRegex(release.ReleaseFailure, "30 天"):
+            acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+
+    def test_long_lived_device_cannot_claim_a_new_authorization_or_an_unknown_mode(self):
+        self.reuse_device()
+        self.reports["first-device"]["checks"]["authorizationCompleted"] = True
+        self.reindex()
+        with self.assertRaises(release.ReleaseFailure):
+            acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+        self.reuse_device(deviceMode="borrowed")
+        with self.assertRaisesRegex(release.ReleaseFailure, "设备模式"):
+            acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+        self.reuse_device(freshAuthorization={"version": "0.1.9", "revision": "not-a-revision",
+                                              "capturedAtUnixSeconds": self.now})
+        with self.assertRaises(release.ReleaseFailure):
+            acceptance.verify(self.root, self.version, self.revision, now=self.now, changes=lambda base, head: [])
+
+    def test_login_path_changes_are_read_from_history(self):
+        head = acceptance.login_changes("HEAD", "HEAD")
+        self.assertEqual(head, [])
+        with self.assertRaises(release.ReleaseFailure):
+            acceptance.login_changes("0" * 40, "HEAD")
+
     def test_assembly_does_not_write_partial_invalid_evidence(self):
         (self.root / "release-usability-acceptance.json").unlink()
         report = self.reports["upgrade"]
