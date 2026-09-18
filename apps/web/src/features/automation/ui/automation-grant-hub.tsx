@@ -180,7 +180,7 @@ export function AutomationGrantHub({
                   </div>
                   <button
                     aria-label={t('automation.close')}
-                    className="automation-close"
+                    className="automation-close ar-icon-button"
                     disabled={mutation.isPending}
                     onClick={close}
                     ref={closeRef}

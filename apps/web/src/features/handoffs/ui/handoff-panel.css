@@ -3,7 +3,7 @@
 }
 
 .handoff-panel {
-  border-top: 1px solid var(--ar-ink-18);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: var(--color-ink);
   background: var(--color-paper);
 }
@@ -14,42 +14,17 @@
   align-items: center;
   gap: 0.75rem;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-panel__header h3 {
   margin: 0.22rem 0 0;
-  font-size: 1.08rem;
-  font-weight: 680;
-  letter-spacing: -0.035em;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-family: var(--font-display);
 }
 
-.handoff-panel__back {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  cursor: pointer;
-  place-items: center;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 50%;
-  outline: none;
-  color: inherit;
-  background: transparent;
-  transition:
-    border-color 160ms ease,
-    background-color 160ms ease;
-}
-
-.handoff-panel__back:hover {
-  background: var(--ar-ink-09);
-}
-
-.handoff-panel__back:focus-visible {
-  border-color: var(--color-network);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-network) 22%, transparent);
-}
-
-.handoff-panel__back > svg,
 .handoff-panel__cloud-badge > svg {
   width: 16px;
   height: 16px;
@@ -60,13 +35,15 @@
   display: inline-flex;
   align-items: center;
   gap: 0.38rem;
-  padding: 0.38rem 0.58rem;
-  border: 1px solid color-mix(in srgb, var(--color-network) 44%, var(--ar-ink-18));
+  padding: 0.25rem 0.7rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 999px;
-  color: color-mix(in srgb, var(--color-network) 64%, var(--color-ink));
+  color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: 12px;
   letter-spacing: 0;
+  background: var(--ar-sky);
+  font-weight: 600;
 }
 
 .handoff-panel__source {
@@ -75,14 +52,14 @@
   align-items: start;
   gap: 0.7rem;
   padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid var(--ar-ink-09);
-  background: var(--ar-ink-04);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+  background: var(--ar-surface-muted);
 }
 
 .handoff-panel__source > svg {
   width: 18px;
   height: 18px;
-  color: var(--color-network);
+  color: var(--color-ink);
   stroke-width: 1.7;
 }
 
@@ -119,8 +96,8 @@
   padding: 0;
   margin: 0;
   border: 0;
-  border-right: 1px solid var(--ar-ink-09);
-  background: color-mix(in srgb, var(--color-paper) 94%, var(--color-network));
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
+  background: var(--ar-surface-muted);
 }
 
 .handoff-targets > legend {
@@ -136,7 +113,7 @@
   display: grid;
   gap: 0.5rem;
   padding: 1rem 1.05rem 0.85rem;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-targets__header > div {
@@ -169,7 +146,7 @@
 }
 
 .handoff-agent-group {
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-agent-group > header {
@@ -185,10 +162,10 @@
   width: 30px;
   height: 30px;
   place-items: center;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 9px;
-  color: var(--color-paper);
-  background: var(--color-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 10px;
+  color: var(--color-ink);
+  background: var(--ar-sky);
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 700;
@@ -250,8 +227,8 @@
   align-items: center;
   gap: 0.55rem;
   padding: 0.55rem 0.65rem;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: 16px;
   background: transparent;
   transition:
     border-color 160ms ease,
@@ -260,28 +237,25 @@
 }
 
 .handoff-target:hover {
-  border-color: var(--ar-ink-18);
-  background: var(--ar-ink-04);
-  transform: translateX(2px);
+  border-color: var(--ar-line);
+  background: var(--ar-surface);
 }
 
 .handoff-target:has(input:checked) {
-  border-color: color-mix(in srgb, var(--color-network) 64%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-network) 10%, var(--color-paper));
-  box-shadow: inset 3px 0 0 var(--color-network);
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
 }
 
 .handoff-target:has(input:focus-visible) {
-  box-shadow:
-    inset 3px 0 0 var(--color-network),
-    0 0 0 3px color-mix(in srgb, var(--color-network) 20%, transparent);
+  outline: 3px solid var(--ar-accent);
+  outline-offset: 2px;
 }
 
 .handoff-target > input {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   margin: 0;
-  accent-color: var(--color-network);
+  accent-color: var(--ar-accent);
 }
 
 .handoff-target__availability {
@@ -289,14 +263,14 @@
   width: 25px;
   height: 25px;
   place-items: center;
-  border-radius: 7px;
-  color: var(--ar-ink-48);
-  background: var(--ar-ink-09);
+  border-radius: 9px;
+  color: var(--ar-muted);
+  background: var(--ar-surface);
 }
 
 .handoff-target[data-online='true'] .handoff-target__availability {
-  color: color-mix(in srgb, var(--color-signal) 70%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-signal) 14%, transparent);
+  color: var(--color-ink);
+  background: var(--ar-mint);
 }
 
 .handoff-target__availability > svg {
@@ -347,7 +321,7 @@
   display: grid;
   gap: 0.28rem;
   padding: 1rem 1.15rem 0.85rem;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-panel__authorization > header > span,
@@ -379,7 +353,7 @@
   padding: 0.75rem 1.15rem;
   margin: 0;
   border: 0;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-fieldset legend {
@@ -389,23 +363,25 @@
 
 .handoff-fieldset label {
   display: flex;
-  min-height: 34px;
+  min-height: 40px;
   cursor: pointer;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.55rem;
-  border: 1px solid var(--ar-ink-09);
-  border-radius: 7px;
+  padding: 0.4rem 0.75rem;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 14px;
   font-size: 12px;
+  background: var(--color-paper);
 }
 
 .handoff-fieldset label:has(input:checked) {
-  border-color: color-mix(in srgb, var(--color-network) 62%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-network) 9%, transparent);
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
 }
 
 .handoff-fieldset label:has(input:focus-visible) {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-network) 18%, transparent);
+  outline: 3px solid var(--ar-accent);
+  outline-offset: 2px;
 }
 
 .handoff-fieldset label:has(input:disabled) {
@@ -413,11 +389,11 @@
 }
 
 .handoff-fieldset input {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   margin: 0;
-  accent-color: var(--color-network);
+  accent-color: var(--ar-accent);
 }
 
 .handoff-fieldset--grid,
@@ -436,9 +412,9 @@
   align-items: start;
   gap: 0.6rem;
   padding: 0.7rem 1.15rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-alert) 20%, transparent);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   color: color-mix(in srgb, var(--color-alert) 76%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-alert) 6%, transparent);
+  background: var(--ar-danger-soft);
 }
 
 .handoff-panel__warning > svg {
@@ -457,7 +433,7 @@
 .handoff-status-facts {
   padding: 0.3rem 1.15rem;
   margin: 0;
-  border-bottom: 1px solid var(--ar-ink-09);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-panel__review > div,
@@ -510,13 +486,13 @@
 }
 
 .handoff-panel__progress > svg {
-  color: var(--color-network);
+  color: var(--color-ink);
   animation: message-progress-spin 1s steps(8, end) infinite;
 }
 
 .handoff-panel__boundary {
   color: var(--color-alert);
-  background: color-mix(in srgb, var(--color-alert) 6%, transparent);
+  background: var(--ar-danger-soft);
 }
 
 .handoff-panel__progress strong,
@@ -551,7 +527,7 @@
   align-content: start;
   gap: 0.75rem;
   padding: 1.4rem 1.25rem 1rem;
-  border-right: 1px solid var(--ar-ink-09);
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
 }
 
 .handoff-panel__status > header > div {
@@ -571,7 +547,7 @@
   position: relative;
   display: grid;
   min-height: 58px;
-  grid-template-columns: 15px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
   align-items: start;
   gap: 0.65rem;
   color: var(--ar-ink-48);
@@ -579,30 +555,30 @@
 
 .handoff-status-timeline li:not(:last-child)::after {
   position: absolute;
-  top: 13px;
+  top: 18px;
   bottom: -2px;
-  left: 6px;
-  width: 1px;
+  left: 7px;
   content: '';
-  background: var(--ar-ink-18);
+  border-left: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-status-timeline li > span {
   z-index: 1;
-  width: 13px;
-  height: 13px;
-  border: 1px solid var(--ar-ink-18);
+  width: 16px;
+  height: 16px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   background: var(--color-paper);
 }
 
 .handoff-status-timeline li[data-complete='true'] > span {
-  border-color: var(--color-network);
-  background: var(--color-network);
+  border-color: var(--ar-outline);
+  background: var(--ar-mint);
 }
 
 .handoff-status-timeline li[data-active='true'] > span {
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-network) 18%, transparent);
+  border-color: var(--ar-outline);
+  background: var(--ar-sunny);
 }
 
 .handoff-status-timeline strong {
@@ -613,7 +589,7 @@
 
 .handoff-status-facts {
   grid-column: 1 / -1;
-  border-top: 1px solid var(--ar-ink-09);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
 .handoff-status-facts code {
@@ -660,7 +636,7 @@
   .handoff-targets,
   .handoff-panel__status > header {
     border-right: 0;
-    border-bottom: 1px solid var(--ar-ink-09);
+    border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   }
 
   .handoff-targets__list {

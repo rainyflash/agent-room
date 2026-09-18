@@ -141,7 +141,7 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
                   </div>
                   <button
                     aria-label={t('moderation.report.close')}
-                    className="inspector-close"
+                    className="inspector-close ar-icon-button"
                     disabled={mutation.isPending}
                     onClick={close}
                     ref={closeRef}

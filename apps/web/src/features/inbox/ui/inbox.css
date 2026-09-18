@@ -14,6 +14,9 @@
 .personal-inbox h1 {
   margin: 0;
   font-size: clamp(26px, 4vw, 36px);
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0;
 }
 .personal-inbox p {
   line-height: 1.65;
@@ -27,14 +30,33 @@
 .personal-inbox button,
 .personal-inbox select,
 .personal-inbox__actions a {
-  min-height: 36px;
-  padding: 7px 11px;
-  border: 1px solid var(--ar-line);
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 0.4rem 1rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   background: var(--ar-surface);
-  color: var(--ar-accent);
-  font: inherit;
+  color: var(--color-ink);
   cursor: pointer;
+  font-weight: 600;
+  box-shadow: var(--ar-press-small);
+}
+.personal-inbox button,
+.personal-inbox select {
+  font: inherit;
+  font-weight: 600;
+}
+.personal-inbox select {
+  background: var(--color-paper);
+  box-shadow: none;
+}
+.personal-inbox button:not(:disabled):hover,
+.personal-inbox__actions a:hover {
+  background: var(--ar-surface-muted);
+}
+.personal-inbox button:not(:disabled):active,
+.personal-inbox__actions a:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
 }
 .personal-inbox__tools,
 .personal-inbox__actions {
@@ -61,14 +83,17 @@
 }
 .personal-inbox__list li {
   min-width: 0;
-  padding: 20px;
-  border: 1px solid var(--ar-line);
-  border-left: 3px solid var(--ar-accent);
-  border-radius: 12px;
+  padding: 20px 20px 20px 26px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 22px;
   background: var(--ar-surface);
+  box-shadow:
+    inset 8px 0 0 var(--ar-coral),
+    var(--ar-press-small);
 }
 .personal-inbox__list li[data-read='true'] {
-  border-left-color: var(--ar-line);
+  border-color: var(--ar-line);
+  box-shadow: none;
 }
 .personal-inbox__entry > div {
   min-width: 0;
@@ -77,6 +102,7 @@
 .personal-inbox__entry h2 {
   margin: 6px 0;
   font-size: 16px;
+  font-weight: 650;
 }
 .personal-inbox__entry span,
 .personal-inbox__entry time {
@@ -113,13 +139,14 @@
   gap: 12px;
   max-width: calc(100vw - 40px);
   padding: 14px 18px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 20px;
   background: var(--ar-surface);
-  box-shadow: 0 6px 24px #23303922;
+  box-shadow: var(--ar-press);
 }
 .inbox-notice a {
   color: var(--ar-accent);
+  font-weight: 600;
 }
 .inbox-notice button {
   border: 0;
@@ -128,11 +155,6 @@
   color: var(--ar-muted);
   cursor: pointer;
   white-space: nowrap;
-}
-.personal-inbox :focus-visible,
-.inbox-notice :focus-visible {
-  outline: 2px solid var(--ar-accent);
-  outline-offset: 3px;
 }
 @media (max-width: 480px) {
   .personal-inbox {
@@ -143,7 +165,7 @@
     gap: 4px;
   }
   .personal-inbox__list li {
-    padding: 14px;
+    padding: 14px 14px 14px 20px;
   }
   .personal-inbox__actions > * {
     flex: 1 1 auto;

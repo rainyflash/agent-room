@@ -106,7 +106,7 @@ export function SecurityWorkspace({
         actions={
           <button
             aria-label={t('security.action.refresh')}
-            className="security-icon-button"
+            className="security-icon-button ar-icon-button"
             disabled={inspection.isFetching}
             onClick={() => void inspection.refetch()}
             type="button"

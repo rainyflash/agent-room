@@ -130,7 +130,7 @@ export function HandoffPanel({
       <header className="handoff-panel__header">
         <button
           aria-label={t('handoff.back')}
-          className="handoff-panel__back"
+          className="handoff-panel__back ar-icon-button"
           onClick={onBack}
           type="button"
         >

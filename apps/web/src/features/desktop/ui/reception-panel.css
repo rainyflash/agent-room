@@ -2,7 +2,7 @@
   display: grid;
   gap: 12px;
   padding-top: 18px;
-  border-top: 1px solid var(--border-subtle, #d7dedb);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .reception-panel h3,
 .reception-panel p {
@@ -22,17 +22,13 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  padding: 9px;
-  border: 1px solid var(--border-subtle, #c9d3cf);
-  border-radius: 6px;
-  background: var(--surface-raised, #fff);
+  padding: 0 1rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 22px;
+  background: var(--color-paper);
   color: inherit;
   font: inherit;
-}
-.reception-panel input:focus-visible,
-.reception-panel select:focus-visible {
-  outline: 2px solid var(--accent, #28765c);
-  outline-offset: 2px;
+  min-height: 44px;
 }
 .reception-panel details {
   display: grid;
@@ -44,6 +40,7 @@
 .reception-panel summary {
   cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
 }
 .reception-actions {
   display: flex;
@@ -55,8 +52,9 @@
   gap: 10px;
   padding: 14px;
   min-width: 0;
-  border: 1px solid var(--border-subtle, #d7dedb);
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 18px;
+  background: var(--color-paper);
 }
 .reception-actions > button,
 .reception-card > button {
@@ -68,16 +66,12 @@
 .reception-card strong {
   overflow-wrap: anywhere;
 }
-.reception-panel summary:focus-visible,
-.reception-panel button:focus-visible {
-  outline: 2px solid var(--ar-accent);
-  outline-offset: 3px;
-}
 .reception-card > span {
   font-size: 12px;
 }
 .reception-card[data-status='needs_review'] {
-  border-color: #b87930;
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
 }
 .reception-copy {
   user-select: text;

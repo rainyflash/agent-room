@@ -128,7 +128,7 @@ export function ContentInspector({
           />
           <button
             aria-label={t('messages.inspector.close')}
-            className="inspector-close"
+            className="inspector-close ar-icon-button"
             onClick={onClose}
             type="button"
           >
