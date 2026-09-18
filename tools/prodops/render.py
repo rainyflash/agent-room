@@ -275,6 +275,13 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         "rememberMe": True,
         "sslRequired": "external",
         "bruteForceProtected": True,
+        # 与 keycloak-registration-reconcile.py 一致；已有 Realm 由它在每次部署时同步。
+        "loginTheme": "agent-room",
+        "emailTheme": "agent-room",
+        "internationalizationEnabled": True,
+        "supportedLocales": ["zh-Hans", "en"],
+        "defaultLocale": "zh-Hans",
+        "passwordPolicy": "length(8)",
         "clients": [
             {
                 "clientId": "agent-room-web",

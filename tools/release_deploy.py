@@ -177,6 +177,14 @@ class Deployment:
         self.evidence("database-expanded", [("candidate-migrations", self.images["control-plane"]), ("verified-backup", str(self.state["backupId"]))])
         if not self.state.get("server"):
             self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "identity", "control-plane")
+        if not self.state.get("identityReconciled"):
+            # Realm settings (theme, languages, registration) follow each release, not only fresh installs.
+            # The script closes registration first, so a failure here leaves it closed until a retry succeeds.
+            registration = self.runtime.config.identity.registration
+            service = "identity-registration-open" if registration.is_open else "identity-registration-close"
+            self.compose("run", "--rm", "--no-deps", "--pull", "never", service)
+            self.state["identityReconciled"] = True
+            self.save()
         self.verify_running(web=bool(self.state.get("web")))
         self.state["server"] = True
         self.save()

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import re
 from pathlib import Path
 import smtplib
 import ssl
@@ -20,6 +22,11 @@ WEB_CLIENT_ID: Final = "agent-room-web"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
+# 身份镜像自带的登录与邮件主题；界面简体中文优先，也提供英文。
+THEME: Final = "agent-room"
+SUPPORTED_LOCALES: Final = ("zh-Hans", "en")
+DEFAULT_LOCALE: Final = "zh-Hans"
+MINIMUM_PASSWORD_LENGTH: Final = 8
 
 
 class ReconcileError(RuntimeError):
@@ -206,6 +213,73 @@ def apply_registration_policy(
     return updated
 
 
+def password_policy(current: object) -> str:
+    """保留运营者的其他密码规则；最短长度不低于 Agent Room 的要求。"""
+    terms = [term.strip() for term in current.split(" and ")] if isinstance(current, str) else []
+    kept = [term for term in terms if term and not term.startswith("length(")]
+    lengths = [
+        int(match.group(1))
+        for term in terms
+        if (match := re.fullmatch(r"length\((\d+)\)", term))
+    ]
+    length = max([MINIMUM_PASSWORD_LENGTH, *lengths])
+    return " and ".join([f"length({length})", *kept])
+
+
+def apply_presentation_policy(realm: dict[str, object]) -> dict[str, object]:
+    updated = dict(realm)
+    updated.update(
+        {
+            "loginTheme": THEME,
+            "emailTheme": THEME,
+            "internationalizationEnabled": True,
+            "supportedLocales": list(SUPPORTED_LOCALES),
+            "defaultLocale": DEFAULT_LOCALE,
+            "passwordPolicy": password_policy(realm.get("passwordPolicy")),
+        }
+    )
+    return updated
+
+
+def apply_user_profile_policy(profile: dict[str, object]) -> dict[str, object]:
+    """注册只要昵称：昵称存在 firstName，姓氏不再必填，也不向用户展示。"""
+    updated = copy.deepcopy(profile)
+    attributes = updated.get("attributes")
+    if not isinstance(attributes, list):
+        raise ReconcileError("Keycloak 用户资料结构无效。")
+    by_name = {
+        attribute.get("name"): attribute for attribute in attributes if isinstance(attribute, dict)
+    }
+    nickname = by_name.get("firstName")
+    if nickname is None:
+        raise ReconcileError("Keycloak 用户资料缺少 firstName。")
+    nickname.setdefault("required", {"roles": ["admin", "user"]})
+    surname = by_name.get("lastName")
+    if surname is not None:
+        surname.pop("required", None)
+        surname["permissions"] = {"view": ["admin"], "edit": ["admin"]}
+    return updated
+
+
+def reconcile_user_profile(base_url: str, token: str) -> None:
+    url = f"{base_url}/admin/realms/{quote(REALM, safe='')}/users/profile"
+    try:
+        profile = json.loads(request(url, token=token))
+    except json.JSONDecodeError as error:
+        raise ReconcileError("Keycloak 用户资料响应不是有效 JSON。") from error
+    if not isinstance(profile, dict):
+        raise ReconcileError("Keycloak 用户资料结构无效。")
+    updated = apply_user_profile_policy(profile)
+    if updated != profile:
+        request(
+            url,
+            method="PUT",
+            token=token,
+            body=json.dumps(updated, ensure_ascii=False).encode("utf-8"),
+            content_type="application/json",
+        )
+
+
 def update_realm(base_url: str, token: str, realm: dict[str, object]) -> None:
     request(
         f"{base_url}/admin/realms/{quote(REALM, safe='')}",
@@ -289,8 +363,11 @@ def reconcile() -> None:
     realm = load_realm(base_url, token)
 
     # 每次同步先关闭注册，后续任一步失败都不会留下半可用的注册入口。
-    closed_realm = apply_registration_policy(realm, enabled=False, smtp=None)
+    closed_realm = apply_presentation_policy(
+        apply_registration_policy(realm, enabled=False, smtp=None)
+    )
     update_realm(base_url, token, closed_realm)
+    reconcile_user_profile(base_url, token)
     redirect_url = require_https_url("AGENT_ROOM_OIDC_REDIRECT_URL", origin_only=False)
     frontend_origin = require_https_url("AGENT_ROOM_FRONTEND_ORIGIN", origin_only=True)
     web_client = load_web_client(base_url, token)
