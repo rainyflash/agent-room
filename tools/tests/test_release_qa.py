@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -32,6 +33,37 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertEqual(release_qa.release_label(VERSION), "Alpha 41")
         self.assertEqual(release_qa.release_slug(VERSION), "alpha41")
         self.assertEqual(release_qa.release_label("1.2.3"), "1.2.3")
+
+    def test_desktop_relaunch_matches_the_installed_path_in_either_slash_style(self):
+        script = release_qa.relaunch_script("C:/Users/o'neil/AppData/Local/Agent Room/agent-room-desktop.exe", 14222)
+        self.assertIn(r"'C:\Users\o''neil\AppData\Local\Agent Room\agent-room-desktop.exe'", script)
+        self.assertIn("[IO.Path]::GetFullPath($_.Path) -eq $app", script)
+        self.assertIn("'--remote-debugging-port=14222'", script)
+        self.assertNotIn('"', script)
+        plain = release_qa.relaunch_script("C:/Agent Room/agent-room-desktop.exe", None)
+        self.assertNotIn("remote-debugging-port", plain)
+        self.assertIn("Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", plain)
+
+    def test_liveness_check_answers_for_exited_processes(self):
+        script = release_qa.liveness_script(4242, r"C:\qa\o'k.exe")
+        self.assertIn(r"'C:\qa\o''k.exe'", script)
+        self.assertTrue(script.endswith("exit 0"))
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell process checks run on the Windows release workstation")
+    def test_liveness_check_against_real_processes(self):
+        shell = shutil.which("powershell")
+
+        def check(pid: int, executable: str) -> bool:
+            script = release_qa.liveness_script(pid, executable)
+            return subprocess.check_output([shell, "-NoProfile", "-Command", script], encoding="utf-8").strip() == "yes"
+
+        child = subprocess.Popen([shell, "-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+        try:
+            self.assertTrue(check(child.pid, shell.replace("\\", "/")))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertFalse(check(child.pid, shell))
 
     def test_controls_match_either_language_exactly(self):
         self.assertEqual(release_qa.js_name("mention"), "/^(提及 Agent|Mention an agent)$/")

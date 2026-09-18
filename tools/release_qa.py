@@ -45,6 +45,7 @@ import argparse
 import base64
 import hashlib
 import json
+import ntpath
 import os
 from pathlib import Path
 import re
@@ -141,7 +142,7 @@ class Acceptance:
         self.catalog_id = self.config["room"]["catalogId"]
         self.api = self.config["controlPlaneUrl"].rstrip("/")
         desktop = self.config["desktop"]
-        self.desktop_executable = desktop["executable"]
+        self.desktop_executable = ntpath.normpath(desktop["executable"])
         self.origin = desktop.get("origin", "http://tauri.localhost")
         self.cdp_port = int(desktop.get("cdpPort", 14222))
 
@@ -215,8 +216,7 @@ class Acceptance:
         if not record_path.exists():
             return False
         record = load(record_path)
-        script = (f"$p = Get-Process -Id {int(record['pid'])} -ErrorAction SilentlyContinue; "
-                  f"if ($p -and $p.Path -eq '{record['executable'].replace(chr(39), chr(39) * 2)}') {{ 'yes' }}")
+        script = liveness_script(int(record["pid"]), record["executable"])
         return subprocess.check_output(["powershell", "-NoProfile", "-Command", script], encoding="utf-8",
                                        creationflags=NO_WINDOW).strip() == "yes"
 
@@ -300,17 +300,7 @@ class Acceptance:
             return False
 
     def relaunch_desktop(self, *, debugging: bool) -> None:
-        port = f"--remote-debugging-port={self.cdp_port}" if debugging else ""
-        exe = self.desktop_executable.replace("'", "''")
-        script = (
-            f"$app = '{exe}'; "
-            "foreach ($p in @(Get-Process -Name 'agent-room-desktop' -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Path -eq $app })) { $null = $p.CloseMainWindow(); "
-            "if (-not $p.WaitForExit(5000)) { Stop-Process -Id $p.Id; $p.WaitForExit(5000) | Out-Null } }; "
-            + (f"$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '{port}'; " if debugging else
-               "Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue; ")
-            + "Start-Process -FilePath $app | Out-Null"
-        )
+        script = relaunch_script(self.desktop_executable, self.cdp_port if debugging else None)
         subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True, creationflags=NO_WINDOW)
 
     def ensure_desktop(self) -> None:
@@ -713,6 +703,8 @@ class Acceptance:
         self.stop("bridge-process.json")
         if self.cdp_ready():
             self.relaunch_desktop(debugging=False)
+            if self.cdp_ready():
+                raise ReleaseFailure(f"桌面应用重启后调试端口 {self.cdp_port} 仍然开着；退出桌面应用后重试 cleanup。")
         print("已清理：授权撤销、人物退出房间、隔离 Bridge 与接收端停止、桌面应用恢复普通启动。")
 
     def status(self) -> int:
@@ -722,6 +714,50 @@ class Acceptance:
                           "pendingDeviceCode": code is not None, "completed": done,
                           "cleanedUp": self.path("left-room.json").exists()}, ensure_ascii=False))
         return 0
+
+
+# ---------------------------------------------------------------------- local processes
+
+
+def ps_literal(value: str) -> str:
+    """A single-quoted PowerShell string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def liveness_script(pid: int, executable: str) -> str:
+    """Print yes while the pid still runs the recorded executable.
+
+    Get-Process leaves $? false for a pid that already exited, even with SilentlyContinue, and
+    powershell -Command then exits 1; the explicit exit 0 keeps "not running" an answer, not an error.
+    """
+    return (f"$p = Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue; "
+            "if ($p -and $p.Path -and [IO.Path]::GetFullPath($p.Path) -eq "
+            f"[IO.Path]::GetFullPath({ps_literal(executable)})) {{ 'yes' }}; exit 0")
+
+
+def relaunch_script(executable: str, cdp_port: int | None) -> str:
+    """Close the installed desktop app, then start it with or without the WebView debugging port.
+
+    Paths are compared after GetFullPath because the configuration may spell them with forward slashes
+    while Get-Process reports backslashes. A missed match leaves the old instance running, and the new
+    launch only hands over to it through the single-instance guard, so the port state never changes.
+    """
+    return (
+        f"$app = [IO.Path]::GetFullPath({ps_literal(ntpath.normpath(executable))}); "
+        "foreach ($p in @(Get-Process -Name 'agent-room-desktop' -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq $app })) { $null = $p.CloseMainWindow(); "
+        "if (-not $p.WaitForExit(5000)) { Stop-Process -Id $p.Id; $p.WaitForExit(5000) | Out-Null } }; "
+        # The WebView browser process can outlive the app for a moment; let it exit so the new instance
+        # starts its own with the requested arguments.
+        "$deadline = (Get-Date).AddSeconds(20); "
+        "while ((Get-Date) -lt $deadline -and @(Get-CimInstance Win32_Process -Filter 'Name = ''msedgewebview2.exe''' | "
+        "Where-Object { $_.CommandLine -like '*--webview-exe-name=agent-room-desktop.exe*' }).Count) "
+        "{ Start-Sleep -Milliseconds 500 }; "
+        + (f"$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port={int(cdp_port)}'; "
+           if cdp_port is not None else
+           "Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue; ")
+        + "Start-Process -FilePath $app | Out-Null"
+    )
 
 
 # ---------------------------------------------------------------------- page functions
