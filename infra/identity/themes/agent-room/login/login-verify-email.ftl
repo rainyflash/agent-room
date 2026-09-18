@@ -1,5 +1,6 @@
 <#import "template.ftl" as layout>
-<@layout.registrationLayout displayInfo=!isAppInitiatedAction??; section>
+<#-- Keycloak's "verify your email" warning repeats this page's own text; other messages (e.g. resent) still show. -->
+<@layout.registrationLayout displayInfo=!isAppInitiatedAction?? displayMessage=!(message?? && message.type == 'warning'); section>
     <#if section = "header">
         ${msg("emailVerifyTitle")}
     <#elseif section = "form">

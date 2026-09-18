@@ -14,7 +14,7 @@
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
                 <tr>
                     <td align="center" style="padding:0 0 20px;font-size:21px;font-weight:700;letter-spacing:0.2px;">
-                        <span style="display:inline-block;width:28px;height:28px;margin-right:8px;vertical-align:middle;border:2px solid #2A2733;border-radius:9px;background:#247A77;"></span>
+                        <span style="display:inline-block;width:28px;height:28px;margin-right:8px;vertical-align:middle;border:2px solid #2A2733;border-radius:9px;background:#247A77;box-sizing:border-box;padding:6px;"><span style="display:block;width:12px;height:12px;border:2.5px solid #FFFDF7;border-radius:4px;"></span></span>
                         <span style="vertical-align:middle;">Agent Room</span>
                     </td>
                 </tr>
@@ -46,7 +46,7 @@
     <p style="margin:0 0 16px;color:#5C5866;font-size:14px;text-align:center;">${expiresIn}</p>
     <div style="margin:0 0 20px;padding:12px 14px;border:2px dashed #E8D9B8;border-radius:14px;background:#FFF6E3;font-size:13px;line-height:1.5;">
         <div style="margin:0 0 6px;color:#5C5866;">${msg("arEmailFallback")}</div>
-        <div style="font-family:'SFMono-Regular',Consolas,monospace;word-break:break-all;"><a href="${link}" style="color:#2A2733;">${link}</a></div>
+        <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.45;word-break:break-all;"><a href="${link}" style="color:#5C5866;">${link}</a></div>
     </div>
     <p style="margin:0;color:#5C5866;font-size:14px;">${ignore}</p>
 </#macro>

@@ -1996,19 +1996,32 @@ fn write_stdout(message: &str) -> Result<(), BridgeRuntimeError> {
 
 struct TerminalAuthorizationPrompt;
 
+/// 身份服务先重定向验证链接再渲染页面，查询参数里的码到不了批准页；片段会跟着重定向保留下来，
+/// 登录主题读它，请用户在批准前与这台电脑上显示的码核对。片段不会发给服务器。
+fn verification_destination(prompt: &OidcDeviceAuthorizationPrompt) -> String {
+    let base = prompt
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(&prompt.verification_uri);
+    match url::Url::parse(base) {
+        Ok(mut destination) if destination.fragment().is_none() => {
+            destination.set_fragment(Some(&format!("user_code={}", prompt.user_code.expose())));
+            destination.into()
+        }
+        _ => base.to_owned(),
+    }
+}
+
 impl OidcDeviceAuthorizationPromptSink for TerminalAuthorizationPrompt {
     fn present(
         &self,
         prompt: &OidcDeviceAuthorizationPrompt,
     ) -> Result<(), OidcDevicePromptFailure> {
-        let destination = prompt
-            .verification_uri_complete
-            .as_deref()
-            .unwrap_or(&prompt.verification_uri);
+        let destination = verification_destination(prompt);
         if supervisor_events_enabled() {
             return write_supervisor_event(&BridgeSupervisorEvent::AuthorizationRequired {
                 channel: "agent_room_desktop",
-                verification_uri: destination,
+                verification_uri: &destination,
                 user_code: prompt.user_code.expose(),
                 expires_in_seconds: prompt.expires_in.value() / 1_000,
             })
@@ -2617,8 +2630,37 @@ mod tests {
     use super::{
         AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
         TargetedHandoffPoller, TargetedHandoffPollingPolicy, is_reconnectable_agent_online_failure,
-        spawn_targeted_handoff_worker_with_policy,
+        spawn_targeted_handoff_worker_with_policy, verification_destination,
     };
+
+    #[test]
+    fn verification_link_carries_the_code_in_a_fragment_that_survives_the_redirect() {
+        use agent_room_application::ports::OidcDeviceAuthorizationPrompt;
+        use agent_room_domain::time::DurationMillis;
+
+        let prompt = |complete: Option<&str>| OidcDeviceAuthorizationPrompt {
+            user_code: agent_room_application::ports::SecretValue::new("ZUNG-KBGI".to_owned())
+                .expect("验证码有效"),
+            verification_uri: "https://id.example/realms/agent-room/device".to_owned(),
+            verification_uri_complete: complete.map(str::to_owned),
+            expires_in: DurationMillis::new(600_000).expect("时长有效"),
+            polling_interval: DurationMillis::new(5_000).expect("时长有效"),
+        };
+        assert_eq!(
+            verification_destination(&prompt(Some(
+                "https://id.example/realms/agent-room/device?user_code=ZUNG-KBGI"
+            ))),
+            "https://id.example/realms/agent-room/device?user_code=ZUNG-KBGI#user_code=ZUNG-KBGI"
+        );
+        assert_eq!(
+            verification_destination(&prompt(None)),
+            "https://id.example/realms/agent-room/device#user_code=ZUNG-KBGI"
+        );
+        assert_eq!(
+            verification_destination(&prompt(Some("https://id.example/device#kept"))),
+            "https://id.example/device#kept"
+        );
+    }
 
     #[test]
     fn device_status_remains_ready_when_default_character_reconnects_or_fails() {

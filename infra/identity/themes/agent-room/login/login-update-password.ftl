@@ -1,9 +1,11 @@
 <#import "template.ftl" as layout>
 <#import "password-commons.ftl" as passwordCommons>
-<@layout.registrationLayout displayMessage=!messagesPerField.existsError('password','password-confirm'); section>
+<#-- Keycloak's "update your password" warning repeats this page's own lead. -->
+<@layout.registrationLayout displayMessage=!messagesPerField.existsError('password','password-confirm') && !(message?? && message.type == 'warning'); section>
     <#if section = "header">
         ${msg("updatePasswordTitle")}
     <#elseif section = "form">
+        <p class="ar-lead">${msg("arUpdatePasswordLead")}</p>
         <form id="kc-passwd-update-form" class="ar-form" onsubmit="login.disabled = true; return true;" action="${url.loginAction}" method="post">
             <#list ["password-new", "password-confirm"] as field>
                 <div class="ar-field">

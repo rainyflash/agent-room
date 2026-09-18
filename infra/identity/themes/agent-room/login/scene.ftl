@@ -48,23 +48,23 @@
 </#macro>
 
 <#macro room page>
-    <#if page == "register.ftl">
+    <#if page == "register">
         <#assign variant = "welcome">
-    <#elseif page == "login-verify-email.ftl" || page == "login-reset-password.ftl">
+    <#elseif page == "login-verify-email" || page == "login-reset-password">
         <#assign variant = "mail">
-    <#elseif page == "login-oauth-grant.ftl" || page == "login-oauth2-device-verify-user-code.ftl">
+    <#elseif page == "login-oauth-grant" || page == "login-oauth2-device-verify-user-code">
         <#assign variant = "device">
     <#else>
         <#assign variant = "lobby">
     </#if>
     <#switch page>
-        <#case "login.ftl"><#assign bubble = msg("arBubbleLogin")><#break>
-        <#case "register.ftl"><#assign bubble = msg("arBubbleRegister")><#break>
-        <#case "login-verify-email.ftl"><#assign bubble = msg("arBubbleVerifyEmail")><#break>
-        <#case "login-reset-password.ftl"><#assign bubble = msg("arBubbleResetPassword")><#break>
-        <#case "login-update-password.ftl"><#assign bubble = msg("arBubbleUpdatePassword")><#break>
-        <#case "login-oauth-grant.ftl"><#case "login-oauth2-device-verify-user-code.ftl"><#assign bubble = msg("arBubbleDevice")><#break>
-        <#case "error.ftl"><#case "login-page-expired.ftl"><#assign bubble = msg("arBubbleError")><#break>
+        <#case "login"><#assign bubble = msg("arBubbleLogin")><#break>
+        <#case "register"><#assign bubble = msg("arBubbleRegister")><#break>
+        <#case "login-verify-email"><#assign bubble = msg("arBubbleVerifyEmail")><#break>
+        <#case "login-reset-password"><#assign bubble = msg("arBubbleResetPassword")><#break>
+        <#case "login-update-password"><#assign bubble = msg("arBubbleUpdatePassword")><#break>
+        <#case "login-oauth-grant"><#case "login-oauth2-device-verify-user-code"><#assign bubble = msg("arBubbleDevice")><#break>
+        <#case "error"><#case "login-page-expired"><#assign bubble = msg("arBubbleError")><#break>
         <#default><#assign bubble = msg("arBubbleDefault")>
     </#switch>
     <aside class="ar-scene ar-scene--${variant}" aria-hidden="true">

@@ -779,6 +779,7 @@ textarea.ar-input {
   padding: 3px 14px;
   border: 2px solid var(--ar-ink);
   border-radius: 999px;
+  color: var(--ar-ink);
   background: #fff;
   font-size: 15px;
   font-weight: 600;
@@ -865,7 +866,8 @@ textarea.ar-input {
 }
 
 .ar-scene--lobby .ar-bubble {
-  left: 40%;
+  right: 6%;
+  left: auto;
 }
 
 /* welcome: registration */
@@ -1049,17 +1051,31 @@ textarea.ar-input {
     display: none;
   }
 
+  /* On the strip the bubble sits between the pieces on either side instead of over them. */
   .ar-scene .ar-bubble {
-    top: 36px;
-    left: 50%;
-    width: min(220px, calc(100% - 196px));
+    top: 34px;
+    right: 92px;
+    left: 92px;
+    width: auto;
     padding: 8px 12px;
     border-width: 2px;
     border-radius: 16px;
     box-shadow: none;
     font-size: 14px;
     line-height: 1.4;
-    transform: translateX(-50%);
+  }
+
+  .ar-scene--mail .ar-bubble {
+    left: 124px;
+  }
+
+  .ar-scene--device .ar-bubble {
+    right: 16px;
+    left: 138px;
+  }
+
+  .ar-scene--device .ar-scene__spot--b {
+    display: none;
   }
 
   .ar-bubble::after {

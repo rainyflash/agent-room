@@ -72,11 +72,13 @@
         </script>
     </#if>
     <script>
-        // The device approval page cannot see the code a computer showed, but the link that opened this tab
-        // carries it. Keep it for this tab so the approval page can ask the user to compare the two.
+        // The device approval page cannot see the code a computer showed. The link that opened this tab
+        // carries it: Keycloak drops the query when it redirects, but the fragment the Bridge adds survives.
+        // Keep it for this tab so the approval page can ask the user to compare the two.
         (function () {
             try {
-                var code = new URLSearchParams(window.location.search).get("user_code");
+                var code = new URLSearchParams(window.location.search).get("user_code")
+                    || new URLSearchParams(window.location.hash.slice(1)).get("user_code");
                 if (code) {
                     sessionStorage.setItem("agent-room-device-code", code);
                 }
@@ -96,8 +98,9 @@
         </#if>
         <#if realm.internationalizationEnabled && locale.supported?size gt 1>
             <nav class="ar-locale" id="kc-locale" aria-label="${msg("languages")}">
+                <#-- Each language is named in itself, the way people look for it in a switch. -->
                 <#list locale.supported as l>
-                    <a class="ar-locale__item" href="${l.url}" lang="${l.languageTag}"<#if l.languageTag == locale.currentLanguageTag> aria-current="true"</#if>>${l.label}</a>
+                    <a class="ar-locale__item" href="${l.url}" lang="${l.languageTag}"<#if l.languageTag == locale.currentLanguageTag> aria-current="true"</#if>><#if l.languageTag == "zh-Hans">中文<#elseif l.languageTag == "en">English<#else>${l.label}</#if></a>
                 </#list>
             </nav>
         </#if>
