@@ -81,6 +81,9 @@
   display: grid;
   gap: 12px;
 }
+.personal-inbox > .personal-inbox__scope {
+  margin-top: 16px;
+}
 .personal-inbox__list li {
   min-width: 0;
   padding: 20px 20px 20px 26px;

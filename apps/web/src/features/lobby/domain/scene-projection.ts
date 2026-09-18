@@ -187,3 +187,9 @@ export function sceneDetailForZoom(zoom: number): LobbySceneDetail {
   }
   return zoom < 0.82 ? 'medium' : 'near';
 }
+
+/** 不超过 24 人的房间总用近景：名字和状态贴纸一直可见。更大的房间按缩放决定。
+ * Pixi 与无 WebGL 回退共用这条规则，同一房间在两种渲染器里显示同样多的名字。 */
+export function sceneDetailForRoom(nodeCount: number, zoom: number): LobbySceneDetail {
+  return nodeCount <= 24 ? 'near' : sceneDetailForZoom(zoom);
+}

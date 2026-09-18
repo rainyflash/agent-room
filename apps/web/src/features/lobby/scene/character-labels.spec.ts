@@ -19,6 +19,31 @@ describe('room character labels', () => {
     expect([...visibleCharacterLabels(people, 'b', true)]).toEqual(['b', 'c']);
     expect([...visibleCharacterLabels(people.toReversed(), 'b', true)]).toEqual(['b', 'c']);
   });
+  it('reserves the drawn width, so neighbours with short Latin names both keep their names', () => {
+    const named = (id: string, x: number): SceneCharacter => ({
+      ...person(id, x),
+      displayName: 'Build Agent 001',
+    });
+    // 旧的估算按每个字 18 px 预留，两个相隔 210 px 的英文名只能显示一个。
+    expect([...visibleCharacterLabels([named('a', 0), named('b', 210)], null, true)]).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+  it('widens the reserved box for a status sticker longer than the name', () => {
+    const short = (id: string, x: number): SceneCharacter => ({
+      ...person(id, x),
+      displayName: 'Ada',
+    });
+    const status = () => 'Waiting for input · Reads next run';
+    expect([...visibleCharacterLabels([short('a', 0), short('b', 150)], null, true)]).toEqual([
+      'a',
+      'b',
+    ]);
+    expect([
+      ...visibleCharacterLabels([short('a', 0), short('b', 150)], null, true, status),
+    ]).toEqual(['a']);
+  });
   it('shows only focused or human names at room overview scale', () => {
     expect([...visibleCharacterLabels([person('a'), person('b', 1000)], 'b', false)]).toEqual([
       'b',

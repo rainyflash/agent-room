@@ -29,6 +29,8 @@ export type AgentNodeViewOptions = {
 };
 export type AgentCharacterView = {
   readonly container: Container;
+  /** 名牌和状态贴纸单独成层，放在所有人物之上，站在下方的人物不会挡住上方人物的名字。 */
+  readonly labels: Container;
   readonly depth: number;
   animate(pose: CharacterPose): void;
   destroy(): void;
@@ -65,6 +67,11 @@ export function createAgentNodeView(
   if (parts.bubble !== null) character.addChild(parts.bubble);
   // 名牌与状态贴纸。胶囊宽度按字形估算，与 SVG 回退完全一致；
   // 字体加载完成后场景会整体重建一次，让画布文字换成真正的字体。
+  // 它们不随离线人物一起变淡：离线已经由灰色贴纸说明，名字要保持可读。
+  const labels = new pixi.Container();
+  labels.eventMode = 'none';
+  labels.scale.set(size);
+  labels.position.set(node.x, node.y);
   const label = pill(pixi, {
     text: characterLabel(node.displayName),
     fontSize: nameplate.fontSize,
@@ -78,7 +85,7 @@ export function createAgentNodeView(
   const showLabel =
     selected || (options.showName ?? (node.kind === 'human' || options.detail === 'near'));
   label.visible = showLabel;
-  character.addChild(label);
+  labels.addChild(label);
   if (
     showLabel &&
     options.detail === 'near' &&
@@ -95,7 +102,7 @@ export function createAgentNodeView(
       strokeWidth: statusSticker.strokeWidth,
     });
     status.position.set(0, nameplate.top + nameplate.height + statusSticker.gap);
-    character.addChild(status);
+    labels.addChild(status);
   }
   container.on('pointerover', () => {
     hovered = true;
@@ -115,11 +122,13 @@ export function createAgentNodeView(
   });
   return {
     container,
+    labels,
     get depth() {
       return depth;
     },
     animate: (pose) => {
       container.position.set(pose.x, pose.y);
+      labels.position.set(pose.x, pose.y);
       depth = selected || hovered ? 10000 : pose.y;
       body.position.y = -Math.abs(pose.stride) * 0.42;
       if (options.walkingBody !== undefined) {
@@ -131,6 +140,7 @@ export function createAgentNodeView(
     },
     destroy: () => {
       container.destroy({ children: true });
+      labels.destroy({ children: true });
     },
   };
 }

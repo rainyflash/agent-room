@@ -87,8 +87,8 @@
 .room-card__scene {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--ar-line);
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 18px;
   background: var(--ar-surface-muted);
   padding: 4px;
 }
@@ -148,7 +148,7 @@
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 40px auto;
   padding-top: 24px;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: var(--ar-muted);
   font-size: 13px;
   line-height: 1.6;

@@ -20,7 +20,7 @@ import { roomPlanShapes } from '../room-plan-art';
 import { sceneFloor } from '../scene-style';
 import { roomHome } from '../../domain/room-map';
 import {
-  sceneDetailForZoom,
+  sceneDetailForRoom,
   visibleLobbyNodes,
   type LobbySceneDetail,
   type LobbySceneProjection,
@@ -61,6 +61,7 @@ class PixiLobbyScene implements LobbySceneHandle {
   readonly #labels: LobbySceneMountOptions['labels'];
   readonly #pixi: PixiModule;
   readonly #depths = new SceneDepthOrder();
+  readonly #labelDepths = new SceneDepthOrder();
   readonly #scheduler: SceneFrameScheduler;
   readonly #views = new Map<
     string,
@@ -77,6 +78,7 @@ class PixiLobbyScene implements LobbySceneHandle {
   /** 网页字体加载完成后递增；画布文字按加载前的字体测过宽度，需要整体重建名牌。 */
   #fontGeneration = 0;
   #gestureMoved = false;
+  #labelsLayer: Container | null = null;
   #objectsLayer: Container | null = null;
   #projection: LobbySceneProjection;
   #resizeObserver: ResizeObserver | null = null;
@@ -147,6 +149,9 @@ class PixiLobbyScene implements LobbySceneHandle {
     const world = new this.#pixi.Container();
     const objects = new this.#pixi.Container();
     objects.sortableChildren = true;
+    const labels = new this.#pixi.Container();
+    labels.sortableChildren = true;
+    labels.eventMode = 'none';
     const tile = sceneFloor.tile;
     const floorPattern = new this.#pixi.Graphics()
       .rect(0, 0, tile * 2, tile * 2)
@@ -166,7 +171,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     drawRoomPlan(background, this.#projection.world);
     this.#background = background;
     background.eventMode = 'none';
-    world.addChild(floor, background, objects);
+    world.addChild(floor, background, objects, labels);
     if ('fonts' in document) {
       document.fonts.addEventListener('loadingdone', this.#handleFontsLoaded);
       void document.fonts.ready.then(this.#handleFontsLoaded);
@@ -174,6 +179,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     app.stage.addChild(world);
     this.#worldLayer = world;
     this.#objectsLayer = objects;
+    this.#labelsLayer = labels;
     this.#camera.resize(app.screen.width, app.screen.height);
     if (this.#projection.nodes.length > 48) {
       const home = roomHome(this.#projection);
@@ -211,6 +217,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     for (const { view } of this.#views.values()) view.destroy();
     this.#views.clear();
     this.#depths.clear();
+    this.#labelDepths.clear();
     this.#pointers.clear();
     const app = this.#app;
     app?.canvas.removeEventListener('wheel', this.#handleWheel);
@@ -222,6 +229,7 @@ class PixiLobbyScene implements LobbySceneHandle {
     this.#app = null;
     this.#worldLayer = null;
     this.#objectsLayer = null;
+    this.#labelsLayer = null;
     this.#background = null;
     for (const key of [
       'agentRoomRenderedNodes',
@@ -366,15 +374,25 @@ class PixiLobbyScene implements LobbySceneHandle {
   #renderNow(frame: SceneRenderFrame): void {
     const app = this.#app;
     const objects = this.#objectsLayer;
+    const labelsLayer = this.#labelsLayer;
     const world = this.#worldLayer;
     const characterTextures = this.#characterTextures;
-    if (app === null || objects === null || world === null || characterTextures === null) return;
+    if (
+      app === null ||
+      objects === null ||
+      labelsLayer === null ||
+      world === null ||
+      characterTextures === null
+    )
+      return;
     const started = performance.now();
     const camera = this.#camera.snapshot();
     world.position.set(camera.x, camera.y);
     world.scale.set(camera.scale);
-    const detail: LobbySceneDetail =
-      this.#projection.nodes.length <= 24 ? 'near' : sceneDetailForZoom(camera.scale);
+    const detail: LobbySceneDetail = sceneDetailForRoom(
+      this.#projection.nodes.length,
+      camera.scale,
+    );
     const viewport = this.#camera.viewport();
     const visibleAgents = new Set(
       visibleLobbyNodes(this.#projection, {
@@ -392,12 +410,14 @@ class PixiLobbyScene implements LobbySceneHandle {
       visible,
       this.#projection.selectedAgentId,
       detail === 'near',
+      (node) => characterStatusLabel(node, this.#labels),
     );
     const frameCharacters: SceneFrame['characters'][number][] = [];
     const visibleIds = new Set(visible.map((node) => node.characterId));
     for (const [id, stored] of this.#views) {
       if (!visibleIds.has(id)) {
         this.#depths.delete(stored.view.container);
+        this.#labelDepths.delete(stored.view.labels);
         stored.view.destroy();
         this.#views.delete(id);
       }
@@ -416,7 +436,10 @@ class PixiLobbyScene implements LobbySceneHandle {
       ].join(':');
       let stored = this.#views.get(node.characterId);
       if (stored?.signature !== signature) {
-        if (stored !== undefined) this.#depths.delete(stored.view.container);
+        if (stored !== undefined) {
+          this.#depths.delete(stored.view.container);
+          this.#labelDepths.delete(stored.view.labels);
+        }
         stored?.view.destroy();
         const view = createAgentNodeView(this.#pixi, {
           body: characterTextures.createBody(node),
@@ -437,12 +460,14 @@ class PixiLobbyScene implements LobbySceneHandle {
           showName: names.has(node.characterId),
         });
         objects.addChild(view.container);
+        labelsLayer.addChild(view.labels);
         stored = { signature, view };
         this.#views.set(node.characterId, stored);
       }
       const pose = characterPose(node, frame.elapsedSeconds, !this.#motion.matches && !selected);
       stored.view.animate(pose);
       this.#depths.set(stored.view.container, stored.view.depth);
+      this.#labelDepths.set(stored.view.labels, stored.view.depth);
       frameCharacters.push({
         characterId: node.characterId,
         x: camera.x + pose.x * camera.scale,
@@ -450,6 +475,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       });
     }
     this.#depths.apply();
+    this.#labelDepths.apply();
     if (frame.invalidated)
       this.#host.dataset.agentRoomUpdateMilliseconds = String(performance.now() - started);
     app.render();

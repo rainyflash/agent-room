@@ -195,6 +195,7 @@
   padding: 1.35rem 1.5rem;
   border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   grid-template-columns: minmax(220px, 0.65fr) minmax(0, 1.35fr);
+  align-items: center;
 }
 
 .onboarding__hosts h2 {
@@ -209,6 +210,33 @@
   color: var(--ar-muted);
   font-size: 0.78rem;
   line-height: 1.55;
+}
+.onboarding__hosts > .ar-button {
+  margin: 1.25rem 1.5rem 0;
+}
+.onboarding__hosts > details {
+  margin: 1rem 1.5rem 1.25rem;
+  padding-top: 0.5rem;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+.onboarding__hosts > details > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ar-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.onboarding__hosts > details > p[role='status'] {
+  margin: 0.25rem 0 0;
+  color: var(--ar-success);
+  font-size: 13px;
+}
+.onboarding__hosts > details > .onboarding__host-list,
+.onboarding__hosts > details > .onboarding__empty {
+  padding: 0.5rem 0 0;
 }
 .onboarding__host-list {
   display: flex;
@@ -283,27 +311,6 @@
   }
 }
 
-@media (max-width: 520px) {
-  .onboarding__layout {
-    width: min(100% - 1.5rem, 1180px);
-    padding-top: 2.5rem;
-  }
-  .onboarding__intro h1 {
-    font-size: 32px;
-  }
-  .onboarding-fact {
-    min-height: 0;
-    grid-template-columns: 1fr;
-  }
-  .onboarding__footer {
-    align-items: stretch;
-    flex-direction: column-reverse;
-    padding-block: 0.75rem;
-  }
-  .onboarding__footer .ar-button {
-    width: 100%;
-  }
-}
 .onboarding__portrait {
   grid-column: 2;
   grid-row: 1;
@@ -353,5 +360,27 @@
   }
   .onboarding-fact {
     min-height: 180px;
+  }
+}
+
+@media (max-width: 520px) {
+  .onboarding__layout {
+    width: min(100% - 1.5rem, 1180px);
+    padding-top: 2.5rem;
+  }
+  .onboarding__intro h1 {
+    font-size: 32px;
+  }
+  .onboarding-fact {
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+  .onboarding__footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    padding-block: 0.75rem;
+  }
+  .onboarding__footer .ar-button {
+    width: 100%;
   }
 }

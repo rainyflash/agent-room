@@ -1095,8 +1095,8 @@
   position: relative;
   flex-shrink: 0;
   padding: 12px 44px 12px 18px;
-  background: #edf6f4;
-  border-bottom: 1px solid #d6e5e2;
+  background: var(--ar-accent-soft);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   font-size: 12px;
   line-height: 1.5;
 }

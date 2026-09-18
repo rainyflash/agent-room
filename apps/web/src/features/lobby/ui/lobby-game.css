@@ -443,6 +443,21 @@
 .lobby-game .agent-inspector__actions {
   padding: 16px 0 0;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  flex-wrap: wrap;
+}
+.lobby-game .agent-inspector__actions > .ar-button {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+/* 房间面板里，资料详情铺满整个面板（盖住标签栏），像点进一条资料，而不是浮在列表上方的卡片；
+   它自带关闭按钮，关掉就回到列表。 */
+.room-panel .content-inspector {
+  inset: 0;
+  width: auto;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 .lobby-game .agent-inspector .ar-button {
   font-size: 13px;
@@ -557,10 +572,6 @@
 .lobby-game .room-character-name[data-visible='false'],
 .lobby-game .room-character-plate[data-visible='false'] {
   visibility: hidden;
-}
-.lobby-game .lobby-scene__svg-agent:hover .room-character-name,
-.lobby-game .lobby-scene__svg-agent:hover .room-character-plate {
-  visibility: visible;
 }
 .room-character-status {
   fill: var(--color-ink);

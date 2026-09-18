@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { LobbyAgent, LobbyAgentStatus, LobbyRoom } from './lobby';
-import { projectLobbyScene, sceneDetailForZoom, visibleLobbyNodes } from './scene-projection';
+import {
+  projectLobbyScene,
+  sceneDetailForRoom,
+  sceneDetailForZoom,
+  visibleLobbyNodes,
+} from './scene-projection';
 import { nextAgentInDirection } from './spatial-navigation';
 
 describe('大厅场景投影', () => {
@@ -59,6 +64,8 @@ describe('大厅场景投影', () => {
     expect(sceneDetailForZoom(0.39)).toBe('distant');
     expect(sceneDetailForZoom(0.4)).toBe('medium');
     expect(sceneDetailForZoom(1.18)).toBe('near');
+    expect(sceneDetailForRoom(24, 0.3)).toBe('near');
+    expect(sceneDetailForRoom(25, 0.3)).toBe('distant');
   });
 
   it('主题区共享同一世界坐标系且互不重叠', () => {

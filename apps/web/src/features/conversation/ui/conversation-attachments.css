@@ -45,14 +45,14 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem;
-  background: #f3f7f6;
-  border-radius: 0.65rem;
+  background: var(--ar-surface-muted);
+  border-radius: 14px;
   min-width: 0;
 }
 .conversation-attachment-picker__file img {
   width: 3rem;
   height: 3rem;
-  border-radius: 0.4rem;
+  border-radius: 10px;
   object-fit: cover;
 }
 .conversation-attachment-picker__file span,
@@ -65,7 +65,7 @@
 }
 .conversation-attachment-picker__file small,
 .conversation-attachment small {
-  color: #627473;
+  color: var(--ar-muted);
   font-size: 0.75rem;
 }
 .conversation-attachment {
@@ -74,9 +74,9 @@
   max-width: min(100%, 28rem);
   margin-top: 0.6rem;
   padding: 0.8rem;
-  border: 1px solid #d5e2e0;
-  border-radius: 0.75rem;
-  background: #f7faf9;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 16px;
+  background: var(--ar-surface-muted);
 }
 .conversation-attachment > div {
   display: flex;
