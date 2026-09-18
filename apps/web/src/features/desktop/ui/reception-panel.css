@@ -1,79 +1,257 @@
-.reception-panel {
+/* 接待任务与「由谁接待消息」：本机 Agent 面板、房间人物详情和「我的 Agent」页共用 */
+.reception-panel,
+.reception-owners {
   display: grid;
+  min-width: 0;
   gap: 12px;
-  padding-top: 18px;
+}
+.reception-panel {
+  padding-top: 16px;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
+/* 嵌在接待任务里时只是其中一个小节，不另起分隔线 */
+.reception-owners[data-embedded='true'] {
+  gap: 10px;
+  margin-top: 4px;
+}
+/* 单独出现（「我的 Agent」页、网页版人物详情）时自成一节；页面够宽就把卡片排成多列 */
+.reception-owners[data-embedded='false'] {
+  padding-top: 16px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+}
+.reception-owners[data-embedded='false'] > :not(.reception-card) {
+  grid-column: 1 / -1;
+}
 .reception-panel h3,
-.reception-panel p {
+.reception-owners h3,
+.reception-panel p,
+.reception-owners p {
   margin: 0;
 }
 .reception-panel p,
-.reception-panel code {
+.reception-owners p,
+.reception-panel code,
+.reception-owners code {
   overflow-wrap: anywhere;
 }
-.reception-panel label {
-  display: grid;
-  gap: 6px;
-  font-size: 12px;
-}
-.reception-panel input,
-.reception-panel select {
-  box-sizing: border-box;
-  width: 100%;
+
+.reception-section-head {
+  display: flex;
   min-width: 0;
-  padding: 0 1rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 22px;
-  background: var(--color-paper);
-  color: inherit;
-  font: inherit;
-  min-height: 44px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.reception-panel details {
-  display: grid;
-  min-width: 0;
+.reception-section-head h3 {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
 }
-.reception-panel details[open] > * + * {
-  margin-top: 12px;
+.reception-owners[data-embedded='true'] .reception-section-head h3 {
+  color: var(--ar-muted);
+  font-size: 13px;
 }
-.reception-panel summary {
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+.reception-refresh.ar-icon-button {
+  width: 32px;
+  height: 32px;
+}
+.reception-refresh.ar-icon-button > svg {
+  width: 15px;
+  height: 15px;
+}
+.reception-panel__intro,
+.reception-note {
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .reception-actions {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.reception-card {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
   min-width: 0;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 18px;
-  background: var(--color-paper);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
-.reception-actions > button,
-.reception-card > button {
-  white-space: normal;
+.reception-actions > .ar-button,
+.reception-card__section > .ar-button,
+.reception-field-row > .ar-button,
+.ar-disclosure__body > .ar-button {
   height: auto;
   min-height: 2.5rem;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
-.reception-card strong {
-  overflow-wrap: anywhere;
+.reception-card .ar-disclosure__body > .ar-button {
+  justify-self: start;
 }
-.reception-card > span {
-  font-size: 12px;
+
+/* 卡片：名字一行，状态贴纸与宿主或负责电脑一行，其余是说明和折起来的操作 */
+.reception-card {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
+  background: var(--color-paper);
+  box-shadow: var(--ar-press-small);
 }
 .reception-card[data-status='needs_review'] {
-  border-color: var(--ar-outline);
   background: var(--ar-warning-soft);
 }
-.reception-copy {
-  user-select: text;
+.reception-card__name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.reception-card__facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.reception-card__meta {
+  min-width: 0;
+  color: var(--ar-muted);
   font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.reception-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 10px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.reception-chip::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.reception-chip[data-tone='active'],
+.reception-chip[data-tone='waiting'] {
+  background: var(--ar-mint);
+}
+.reception-chip[data-tone='running'],
+.reception-chip[data-tone='verifying'],
+.reception-chip[data-tone='starting'] {
+  background: var(--ar-sky);
+}
+.reception-chip[data-tone='draining'],
+.reception-chip[data-tone='reconnecting'] {
+  background: var(--ar-sunny);
+}
+.reception-chip[data-tone='unreachable'],
+.reception-chip[data-tone='needs_review'] {
+  background: var(--ar-danger-soft);
+}
+.reception-card__status {
+  font-size: 13px;
+  line-height: 1.55;
+}
+.reception-card__hint {
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.reception-card__path {
+  color: var(--ar-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.reception-card__notice {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--ar-warning-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.reception-card__notice code {
+  font-family: var(--font-mono);
+}
+.reception-card__section {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+/* 卡片里的折叠项之间用虚线隔开 */
+.reception-card > .ar-disclosure,
+.ar-disclosure__body > .ar-disclosure {
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+/* 表单 */
+.reception-panel label,
+.reception-owners label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--ar-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.reception-panel input,
+.reception-panel select,
+.reception-owners select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 0.9rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 20px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+.reception-field-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.reception-field-row > label {
+  flex: 1 1 160px;
+}
+.reception-copy {
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  user-select: text;
+}
+
+@media (max-width: 767px) {
+  .reception-refresh.ar-icon-button {
+    width: 40px;
+    height: 40px;
+  }
 }

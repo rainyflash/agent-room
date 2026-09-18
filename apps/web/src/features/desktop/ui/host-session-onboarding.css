@@ -9,8 +9,14 @@
   margin: 0 0 6px;
 }
 .host-onboarding p {
+  margin: 0.32rem 0 0;
+  color: var(--ar-muted);
+  font-size: 13px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+.host-onboarding > .ar-button {
+  margin-top: 10px;
 }
 .host-onboarding ul {
   list-style: none;
@@ -20,23 +26,47 @@
   gap: 8px;
 }
 .host-onboarding li {
-  padding: 10px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 14px;
+  padding: 12px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
   background: var(--color-paper);
+  box-shadow: var(--ar-press-small);
 }
 .host-onboarding li > div {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+}
+.host-onboarding li p {
+  margin-top: 4px;
   font-size: 12px;
 }
 .host-onboarding strong {
   overflow-wrap: anywhere;
   min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
 }
-.host-onboarding span {
-  flex-shrink: 0;
+.host-onboarding li > div > span {
+  flex: 0 0 auto;
+  padding: 1px 10px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.host-onboarding li > div > span[data-state='ready'] {
+  background: var(--ar-mint);
+}
+.host-onboarding li > div > span[data-state='starting'] {
+  background: var(--ar-sky);
+}
+.host-onboarding li > div > span[data-state='failed'] {
+  background: var(--ar-danger-soft);
 }
 .host-onboarding code {
   overflow-wrap: anywhere;

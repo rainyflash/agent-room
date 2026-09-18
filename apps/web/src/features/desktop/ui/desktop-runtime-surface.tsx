@@ -71,6 +71,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
       aria-live={needsAttention ? 'assertive' : 'polite'}
       className="desktop-runtime"
       data-attention={needsAttention ? 'true' : 'false'}
+      data-expanded={open ? 'true' : 'false'}
       data-placement={placement}
     >
       <button
@@ -265,28 +266,30 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                       <ReceptionPanel />
                     )
                   ) : null}
-                  <details>
+                  <details className="ar-disclosure desktop-runtime__mcp">
                     <summary>{t('agentInvite.mode.mcp')}</summary>
-                    {controller.hosts
-                      .filter((host) => host.installed)
-                      .map((host) => (
-                        <Button
-                          disabled={controller.busy !== null || !host.configurable}
-                          icon={<PlugZap aria-hidden="true" />}
-                          key={host.host}
-                          onClick={() => void controller.configureHost(host.host)}
-                          size="compact"
-                          tone="quiet"
-                        >
-                          {t(`desktop.hosts.${host.host}`)}
-                        </Button>
-                      ))}
-                    <ManualHostConfiguration
-                      configuration={controller.snapshot.manualHostConfiguration}
-                    />
-                    {controller.configuredHost === null ? null : (
-                      <p role="status">{t('desktop.hosts.configured')}</p>
-                    )}
+                    <div className="ar-disclosure__body">
+                      {controller.hosts
+                        .filter((host) => host.installed)
+                        .map((host) => (
+                          <Button
+                            disabled={controller.busy !== null || !host.configurable}
+                            icon={<PlugZap aria-hidden="true" />}
+                            key={host.host}
+                            onClick={() => void controller.configureHost(host.host)}
+                            size="compact"
+                            tone="ghost"
+                          >
+                            {t(`desktop.hosts.${host.host}`)}
+                          </Button>
+                        ))}
+                      <ManualHostConfiguration
+                        configuration={controller.snapshot.manualHostConfiguration}
+                      />
+                      {controller.configuredHost === null ? null : (
+                        <p role="status">{t('desktop.hosts.configured')}</p>
+                      )}
+                    </div>
                   </details>
                 </div>
               </section>

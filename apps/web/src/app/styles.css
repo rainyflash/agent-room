@@ -773,7 +773,7 @@
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
-.desktop-runtime__panel section {
+.desktop-runtime__panel > section {
   padding: 16px;
 }
 
@@ -786,7 +786,7 @@
   font-size: 14px;
 }
 
-.desktop-runtime__panel section + section {
+.desktop-runtime__panel > section + section {
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
@@ -875,7 +875,7 @@
   font-size: 14px;
 }
 
-.desktop-runtime section p {
+.desktop-runtime__panel > section > div > p {
   margin-top: 0.32rem;
   color: var(--ar-muted);
   font-size: 13px;
@@ -965,6 +965,8 @@
 
 .desktop-runtime__switch {
   display: inline-flex;
+  flex: 0 0 auto;
+  white-space: nowrap;
   min-width: 76px;
   min-height: 36px;
   cursor: pointer;
@@ -4813,24 +4815,22 @@ p.message-dock__headline {
 .desktop-runtime__hosts {
   display: grid;
   gap: 0.8rem;
-  padding: 1rem;
-  border-top: 1px solid var(--ar-ink-09);
 }
 
-.desktop-runtime__hosts h2,
-.desktop-runtime__hosts p {
-  margin: 0;
-}
-.desktop-runtime__hosts p {
-  margin-top: 0.25rem;
-  color: var(--ar-ink-48);
-  font-size: 0.75rem;
-}
 .desktop-runtime__host-list {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 14px;
+}
+.desktop-runtime__mcp {
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+.desktop-runtime__mcp .ar-disclosure__body {
+  justify-items: start;
+}
+.desktop-runtime__mcp .ar-disclosure__body > p {
+  color: var(--ar-muted);
+  font-size: 13px;
 }
 
 .manual-host-config {
