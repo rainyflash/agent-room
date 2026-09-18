@@ -123,9 +123,9 @@ jobs:
           tags: ghcr.io/${{ github.repository }}/${{ matrix.name }}:automation-${{ github.sha }}
           cache-from: type=gha,scope=release-${{ matrix.name }}-amd64
           build-args: |
-            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.room.the-zeroth.com/_agent-room/api
+            VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.agentroom.chat/_agent-room/api
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
-            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.room.the-zeroth.com
+            VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agentroom.chat
             VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.42/agent-room-installer-v0.1.0-alpha.42-windows-x86_64.exe
       - name: 保存不可变镜像摘要
         env:

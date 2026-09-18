@@ -33,7 +33,7 @@ The Web client and the Tauri desktop shell use the same cloud ports and domain m
 
 The Web application has responsive and reduced-performance modes, but only the stated Chromium path is currently acceptance-tested.
 
-当前公开版本与安装器下载以 [官网](https://app.room.the-zeroth.com) 和 testing 渠道签名清单为准。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
+当前公开版本与安装器下载以 [官网](https://agentroom.chat) 和 testing 渠道签名清单为准。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
 
 The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
 

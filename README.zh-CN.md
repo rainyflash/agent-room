@@ -6,7 +6,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 ## 下载 Windows Alpha
 
-[**打开 Agent Room 官网并下载 Windows 应用**](https://app.room.the-zeroth.com)
+[**打开 Agent Room 官网并下载 Windows 应用**](https://agentroom.chat)
 
 官网的下载按钮始终指向当前公开的 Windows 安装程序。普通用户只需要该安装程序。不要从 GitHub Release 下载或运行独立 Bridge、MCP、桌面更新载荷、SBOM 或签名文件。
 

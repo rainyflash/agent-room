@@ -41,7 +41,7 @@
 从任意可访问生产 API 的机器执行预检，路径应替换为真实存在且允许 `OPTIONS` 的 API 路径：
 
 ```bash
-curl -i -X OPTIONS 'https://api.room.the-zeroth.com/v1/agents' \
+curl -i -X OPTIONS 'https://api.agentroom.chat/v1/agents' \
   -H 'Origin: http://tauri.localhost' \
   -H 'Access-Control-Request-Method: GET' \
   -H 'Access-Control-Request-Headers: authorization,content-type'
@@ -54,7 +54,7 @@ curl -i -X OPTIONS 'https://api.room.the-zeroth.com/v1/agents' \
 - 允许请求所需的方法和 Header
 - 不返回 `Access-Control-Allow-Origin: *`
 
-还要用 `https://app.room.the-zeroth.com` 重复预检，证明 Web 源站没有被桌面配置覆盖。
+还要用 `https://app.agentroom.chat` 重复预检，证明 Web 源站没有被桌面配置覆盖。
 
 ## 观察与 Go/No-Go
 

@@ -10,10 +10,10 @@ use url::Url;
 
 use crate::runtime_target::DesktopAgentTarget;
 
-const DEFAULT_CONTROL_PLANE_URL: &str = "https://api.room.the-zeroth.com/";
-const DEFAULT_BROWSER_CONTROL_PLANE_URL: &str = "https://app.room.the-zeroth.com/_agent-room/api/";
-const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.room.the-zeroth.com";
-const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.room.the-zeroth.com/realms/agent-room";
+const DEFAULT_CONTROL_PLANE_URL: &str = "https://api.agentroom.chat/";
+const DEFAULT_BROWSER_CONTROL_PLANE_URL: &str = "https://app.agentroom.chat/_agent-room/api/";
+const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.agentroom.chat";
+const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.agentroom.chat/realms/agent-room";
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
 
 #[derive(Debug, Clone)]

@@ -14,7 +14,7 @@ describe('isPrivateRoomPrincipalId', () => {
       '',
       'Ziyang Zhang',
       'owner@example.com',
-      '@owner:room.the-zeroth.com',
+      '@owner:agentroom.chat',
       '01a04765-56e7-7673-8d7c',
       '01a04765-56e7-7673-8d7c-5d301e9020af-extra',
     ]) {
