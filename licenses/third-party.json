@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "869157855cd7af4552e48adf23499058961286953ac7e58d38e04674f578b2c4",
+    "Cargo.lock": "2afbeb32e059952c0eb727f4ed85b08250075d9ae973d6d607dd0738416c2d19",
     "pnpm-lock.yaml": "5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff"
   },
   "dependencies": [
