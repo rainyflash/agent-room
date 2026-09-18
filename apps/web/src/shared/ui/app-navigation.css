@@ -153,3 +153,13 @@
     max-width: 92px;
   }
 }
+@media (max-width: 480px) {
+  .app-navigation__links a {
+    gap: 5px;
+    padding: 0 6px;
+  }
+  .app-navigation__links svg {
+    width: 15px;
+    height: 15px;
+  }
+}

@@ -787,16 +787,6 @@
     animation: none;
   }
 }
-.account-workspace__body {
-  gap: 0;
-  border: var(--ar-outline-width) solid var(--ar-outline);
-  border-radius: var(--ar-panel-radius);
-  background: var(--ar-surface);
-  grid-template-columns: minmax(200px, 0.65fr) minmax(0, 1.4fr) minmax(320px, 1fr);
-  overflow: hidden;
-  margin: 0 auto 24px;
-  box-shadow: var(--ar-press);
-}
 .workspace-agent-inspector {
   background: var(--ar-surface);
   padding: 24px;
@@ -863,9 +853,12 @@
   }
   .workspace-agent-inspector {
     order: 0;
+    border-top: 0;
+    border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   }
   .workspace-device-rail {
     order: 1;
+    border-bottom: 0;
   }
   .workspace-fleet__list button {
     gap: 6px 12px;

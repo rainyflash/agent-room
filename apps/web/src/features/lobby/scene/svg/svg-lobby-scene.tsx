@@ -12,7 +12,7 @@ import {
 } from 'react';
 import type { LobbySceneLabels } from '../lobby-scene';
 import {
-  sceneDetailForZoom,
+  sceneDetailForRoom,
   visibleLobbyNodes,
   type LobbySceneProjection,
 } from '../../domain/scene-projection';
@@ -63,6 +63,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
     projectionRef.current = projection;
     const [camera, setCamera] = useState<CameraSnapshot>({ scale: 1, x: 0, y: 0 });
     const [viewport, setViewport] = useState({ height: 1, width: 1 });
+    const [hovered, setHovered] = useState<string | null>(null);
     controllerRef.current ??= new ViewportController(projection.world, {
       padding: 22,
       minimumScale: 0.3,
@@ -181,43 +182,22 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
         })),
       });
     }, [camera, projection, viewport, onFrame, labels.self]);
-    const names = visibleCharacterLabels(
-      characters,
-      projection.selectedAgentId,
-      sceneDetailForZoom(camera.scale) === 'near',
+    const near = sceneDetailForRoom(projection.nodes.length, camera.scale) === 'near';
+    const names = visibleCharacterLabels(characters, projection.selectedAgentId, near, (node) =>
+      characterStatusLabel(node, labels),
     );
-    const objects = [
-      ...characters.map((node) => ({
-        key: node.characterId,
-        depth: node.characterId === projection.selectedAgentId ? 10000 : node.y,
-        element: (
-          <g
-            className="lobby-scene__svg-agent"
-            data-character-id={node.characterId}
-            data-selected={node.characterId === projection.selectedAgentId}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (node.kind === 'human') {
-                if (!gestureMoved.current) onSelectHuman?.(node.matrixUserId);
-                gestureMoved.current = false;
-              } else select(node.characterId);
-            }}
-            transform={`translate(${String(node.x)} ${String(node.y)}) scale(${String(Math.max(0.83, node.radius / 27))})`}
-          >
-            <SvgCharacter
-              node={node}
-              selected={node.characterId === projection.selectedAgentId}
-              showName={names.has(node.characterId)}
-              statusLabel={
-                names.has(node.characterId) && sceneDetailForZoom(camera.scale) === 'near'
-                  ? characterStatusLabel(node, labels)
-                  : undefined
-              }
-            />
-          </g>
-        ),
-      })),
-    ].sort((a, b) => a.depth - b.depth);
+    // 人物按深度排序后，名牌与状态贴纸在第二层整体画在所有人物之上，不会被站在下方的人物挡住。
+    const ordered = characters
+      .map((node) => ({
+        node,
+        selected: node.characterId === projection.selectedAgentId,
+        transform: `translate(${String(node.x)} ${String(node.y)}) scale(${String(Math.max(0.83, node.radius / 27))})`,
+      }))
+      .sort(
+        (a, b) =>
+          (a.selected || a.node.characterId === hovered ? 10000 : a.node.y) -
+          (b.selected || b.node.characterId === hovered ? 10000 : b.node.y),
+      );
 
     return (
       <svg
@@ -282,9 +262,51 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
           transform={`translate(${String(camera.x)} ${String(camera.y)}) scale(${String(camera.scale)})`}
         >
           <RoomPlan world={projection.world} />
-          {objects.map((object) => (
-            <g key={object.key}>{object.element}</g>
+          {ordered.map(({ node, selected, transform }) => (
+            <g
+              className="lobby-scene__svg-agent"
+              data-character-id={node.characterId}
+              data-selected={selected}
+              key={node.characterId}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (node.kind === 'human') {
+                  if (!gestureMoved.current) onSelectHuman?.(node.matrixUserId);
+                  gestureMoved.current = false;
+                } else select(node.characterId);
+              }}
+              onPointerEnter={() => {
+                setHovered(node.characterId);
+              }}
+              onPointerLeave={() => {
+                setHovered((current) => (current === node.characterId ? null : current));
+              }}
+              transform={transform}
+            >
+              <SvgCharacter node={node} selected={selected} />
+            </g>
           ))}
+          <g className="lobby-scene__svg-labels" pointerEvents="none">
+            {ordered.map(({ node, selected, transform }) => (
+              <g
+                className="lobby-scene__svg-label"
+                data-label-for={node.characterId}
+                data-selected={selected}
+                key={node.characterId}
+                transform={transform}
+              >
+                <SvgCharacterLabels
+                  node={node}
+                  visible={selected || names.has(node.characterId) || hovered === node.characterId}
+                  statusLabel={
+                    names.has(node.characterId) && near
+                      ? characterStatusLabel(node, labels)
+                      : undefined
+                  }
+                />
+              </g>
+            ))}
+          </g>
         </g>
       </svg>
     );
@@ -294,21 +316,10 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
 function SvgCharacter({
   node,
   selected,
-  showName,
-  statusLabel,
 }: {
   readonly node: SceneCharacter;
   readonly selected: boolean;
-  readonly showName: boolean;
-  readonly statusLabel: string | undefined;
 }) {
-  const name = characterLabel(node.displayName);
-  const nameWidth = estimatedTextWidth(name, nameplate.fontSize) + nameplate.paddingX * 2;
-  const statusTop = nameplate.top + nameplate.height + statusSticker.gap;
-  const statusWidth =
-    statusLabel === undefined
-      ? 0
-      : estimatedTextWidth(statusLabel, statusSticker.fontSize) + statusSticker.paddingX * 2;
   return (
     <>
       <ellipse
@@ -379,9 +390,32 @@ function SvgCharacter({
           </text>
         </g>
       ) : null}
+      <rect x="-38" y="-92" width="76" height="132" fill="transparent" />
+    </>
+  );
+}
+
+function SvgCharacterLabels({
+  node,
+  visible,
+  statusLabel,
+}: {
+  readonly node: SceneCharacter;
+  readonly visible: boolean;
+  readonly statusLabel: string | undefined;
+}) {
+  const name = characterLabel(node.displayName);
+  const nameWidth = estimatedTextWidth(name, nameplate.fontSize) + nameplate.paddingX * 2;
+  const statusTop = nameplate.top + nameplate.height + statusSticker.gap;
+  const statusWidth =
+    statusLabel === undefined
+      ? 0
+      : estimatedTextWidth(statusLabel, statusSticker.fontSize) + statusSticker.paddingX * 2;
+  return (
+    <>
       <rect
         className="room-character-plate"
-        data-visible={selected || showName}
+        data-visible={visible}
         x={-nameWidth / 2}
         y={nameplate.top}
         width={nameWidth}
@@ -396,7 +430,7 @@ function SvgCharacter({
         textAnchor="middle"
         dominantBaseline="central"
         y={nameplate.top + nameplate.height / 2}
-        data-visible={selected || showName}
+        data-visible={visible}
       >
         {name}
       </text>
@@ -423,7 +457,6 @@ function SvgCharacter({
           </text>
         </g>
       )}
-      <rect x="-38" y="-92" width="76" height="132" fill="transparent" />
     </>
   );
 }
