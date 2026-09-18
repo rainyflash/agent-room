@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use agent_room_application::ports::{
     MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
 };
@@ -30,7 +32,7 @@ use agent_room_domain::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sqlx::{
-    Row as _, SqlitePool,
+    Connection as _, Row as _, SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use tempfile::TempDir;
@@ -265,6 +267,74 @@ async fn 批次中途编码失败必须回滚事件与同步游标() {
         0
     );
     assert_eq!(current_cursor(&inspector).await, None);
+}
+
+// 投影和提交仓储共用 messages.sqlite。发送路径正持有写锁时，同步循环写入回显批次
+// 必须等锁；否则锁竞争会被当成存储不可用，触发整条 Agent 会话重连。
+#[tokio::test]
+async fn 提交仓储持有写锁时投影批次会等待而不是报存储不可用() {
+    let (temporary, store, inspector) = open_store().await;
+    let mut submissions = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new().filename(temporary.path().join("messages.sqlite3")),
+    )
+    .await
+    .expect("提交仓储连接可打开");
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut submissions)
+        .await
+        .expect("提交仓储拿到写锁");
+    sqlx::query(
+        "INSERT INTO message_submissions
+         (submission_id, kind, fingerprint, transaction_id, state, event_id)
+         VALUES (?, 'preview', zeroblob(32), 'transaction-7', 'accepted', '$echo:matrix.test')",
+    )
+    .bind(Uuid::now_v7().to_string())
+    .execute(&mut submissions)
+    .await
+    .expect("发送路径写入已接受");
+
+    let batch = MessageProjectionBatch::new(
+        sync_token("sync-echo"),
+        vec![preview_mutation(
+            "$echo:matrix.test",
+            MessageId::from_uuid(Uuid::now_v7()),
+            owner_actor(),
+            946_684_800_000,
+            "自己的回显",
+            7,
+            Some(1),
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
+    let sync_loop = store.clone();
+    let pending = tokio::spawn(async move { sync_loop.apply(&batch).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !pending.is_finished(),
+        "写锁被另一连接占用时投影批次应等待锁释放，而不是立即失败"
+    );
+    sqlx::query("COMMIT")
+        .execute(&mut submissions)
+        .await
+        .expect("发送路径提交");
+
+    pending
+        .await
+        .expect("同步任务完成")
+        .expect("写锁释放后投影成功");
+    assert_eq!(
+        scalar_count(
+            &inspector,
+            "SELECT COUNT(*) FROM message_current_projection"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        current_cursor(&inspector).await.as_deref(),
+        Some("sync-echo")
+    );
 }
 
 #[tokio::test]

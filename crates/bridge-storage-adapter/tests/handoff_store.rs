@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use agent_room_bridge_core::handoffs::{
     HandoffReceiptRecord, HandoffRecordOutcome, HandoffStore, HandoffStoreCommand,
@@ -19,7 +19,10 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use sha2::{Digest as _, Sha256};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{
+    Connection as _, SqliteConnection,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -86,6 +89,58 @@ async fn 消费与密文删除原子执行且只能成功一次() {
         .await
         .expect_err("重复消费必须失败");
     assert_eq!(failure.kind(), HandoffStoreFailureKind::AlreadyResolved);
+    assert_eq!(package_count(&path).await, 0);
+}
+
+// 定向交接收件箱与本仓储是同一文件上的两个连接池；消费先读后写，必须等另一连接释放写锁。
+#[tokio::test]
+async fn 另一连接持有写锁时消费会等待而不是报存储不可用() {
+    let directory = tempfile::tempdir().expect("可创建临时目录");
+    let path = database_path(&directory);
+    let fixture = delivered_handoff(Arc::from(b"consume-under-contention".as_slice()));
+    let store = open_store(&path, STORAGE_KEY).await;
+    store
+        .accept_incoming(&fixture.handoff, &fixture.package)
+        .await
+        .expect("合法交付可以落库");
+
+    let mut inbox = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+        .await
+        .expect("第二条连接可打开");
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut inbox)
+        .await
+        .expect("第二条连接拿到写锁");
+
+    let consumer = store.clone();
+    let handoff_id = fixture.handoff.fields().id;
+    let target_instance_id = fixture.handoff.fields().target_instance_id;
+    let pending = tokio::spawn(async move {
+        consumer
+            .apply(
+                handoff_id,
+                HandoffStoreCommand::Consume {
+                    target_instance_id,
+                    occurred_at: time(1_300),
+                },
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !pending.is_finished(),
+        "写锁被另一连接占用时消费应等待锁释放，而不是立即失败"
+    );
+    sqlx::query("COMMIT")
+        .execute(&mut inbox)
+        .await
+        .expect("第二条连接提交");
+
+    let outcome = pending
+        .await
+        .expect("消费任务完成")
+        .expect("写锁释放后消费成功");
+    assert!(matches!(outcome, HandoffStoreCommandOutcome::Consumed(_)));
     assert_eq!(package_count(&path).await, 0);
 }
 

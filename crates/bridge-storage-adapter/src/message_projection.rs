@@ -27,7 +27,7 @@ use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
 use uuid::{Uuid, Version};
 
 use crate::{
-    database::{SqliteBridgeStorageOpenFailure, open_pool},
+    database::{SqliteBridgeStorageOpenFailure, begin_write, open_pool},
     error::{SqliteFailureKind, classify},
     message_projection_crypto::{
         MESSAGE_PROJECTION_WRAPPING_NONCE_BYTES, MessageProjectionKeyCipher,
@@ -61,9 +61,7 @@ impl SqliteMessageTimelineRepository {
         &self,
         batch: &MessageProjectionBatch,
     ) -> Result<(), MessageProjectionStoreFailure> {
-        let mut transaction = self
-            .pool
-            .begin()
+        let mut transaction = begin_write(&self.pool)
             .await
             .map_err(|error| map_sqlx_error(&error))?;
         for mutation in batch.mutations() {

@@ -16,7 +16,7 @@ use agent_room_domain::{
 };
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use crate::database::{SqliteBridgeStorageOpenFailure, open_handoff_pool};
+use crate::database::{SqliteBridgeStorageOpenFailure, begin_write, open_handoff_pool};
 use crypto::{EncryptedPackage, HandoffPackageCipher};
 
 pub use crypto::{
@@ -51,8 +51,7 @@ impl SqliteHandoffStore {
     }
 
     async fn begin(&self) -> Result<Transaction<'_, Sqlite>, HandoffStoreFailure> {
-        self.pool
-            .begin()
+        begin_write(&self.pool)
             .await
             .map_err(|error| record::map_sqlx_error(&error))
     }
