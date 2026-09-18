@@ -1,4 +1,5 @@
 import { Button } from '@agent-room/ui-system';
+import { RefreshCw } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
@@ -15,7 +16,7 @@ import type { DesktopRuntimeFailure } from '../domain/desktop-runtime';
 import { receiverAgentId, receiverStatus } from '../domain/reception-status';
 import { useReceptionQueries } from './use-reception-queries';
 import './reception-panel.css';
-import { ReceptionOwnershipPanel } from './reception-ownership-panel';
+import { ReceptionOwnershipPanel, receptionOwnershipQueryKeys } from './reception-ownership-panel';
 
 const unavailable = () => err({ code: 'receiver.unavailable', retryable: false });
 
@@ -82,28 +83,42 @@ export function ReceptionPanel({
   );
   return (
     <section className="reception-panel" aria-label={t('reception.title')}>
-      <h3>{t('reception.title')}</h3>
-      <ReceptionOwnershipPanel agentId={agentId} roomId={roomId} />
-      <p>{t(agentId === undefined ? 'reception.description' : 'reception.agentDescription')}</p>
-      <div className="reception-actions">
-        <Button size="compact" tone="quiet" onClick={() => void copy()}>
-          {t(copyState === 'copied' ? 'reception.copied' : 'reception.copy')}
-        </Button>
-        <Button
-          size="compact"
-          tone="quiet"
+      <div className="reception-section-head">
+        <h3>{t('reception.title')}</h3>
+        <button
+          type="button"
+          className="ar-icon-button reception-refresh"
+          aria-label={t('reception.refresh')}
+          title={t('reception.refresh')}
           onClick={() => {
+            const principalId = principal?.principalId ?? null;
             void queryClient.invalidateQueries({ queryKey });
+            void queryClient.invalidateQueries({
+              queryKey: receptionOwnershipQueryKeys.records(principalId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: receptionOwnershipQueryKeys.devices(principalId),
+            });
             void grantsQuery.refetch();
           }}
         >
-          {t('reception.refresh')}
+          <RefreshCw aria-hidden="true" />
+        </button>
+      </div>
+      <p className="reception-panel__intro">
+        {t(agentId === undefined ? 'reception.description' : 'reception.agentDescription')}
+      </p>
+      <div className="reception-actions">
+        <Button size="compact" tone="ghost" onClick={() => void copy()}>
+          {t(copyState === 'copied' ? 'reception.copied' : 'reception.copy')}
         </Button>
       </div>
       {copyState === 'copyFailed' ? <p role="status">{t('reception.copyFailed')}</p> : null}
-      <details>
-        <summary>{t('reception.prompt').slice(0, 30)}…</summary>
-        <p className="reception-copy">{t('reception.prompt')}</p>
+      <details className="ar-disclosure">
+        <summary>{t('reception.showPrompt')}</summary>
+        <div className="ar-disclosure__body">
+          <p className="reception-copy">{t('reception.prompt')}</p>
+        </div>
       </details>
       {receivers.isPending ? <p>{t('reception.loading')}</p> : null}
       {failure?.ok === false ? (
@@ -172,6 +187,7 @@ export function ReceptionPanel({
           }}
         />
       ))}
+      <ReceptionOwnershipPanel agentId={agentId} roomId={roomId} embedded />
     </section>
   );
 }
@@ -238,37 +254,49 @@ function ReceptionOffer({
   );
   return (
     <div className="reception-card">
-      <strong>{session.displayName}</strong>
-      <p>{offer.task.workspace}</p>
-      <p>{t('reception.enableDescription', { days: RECEPTION_AUTHORIZATION_DAYS })}</p>
-      <Button size="compact" disabled={busy || !canEnable} onClick={onEnable}>
-        {t('reception.enable')}
-      </Button>
-      <details>
-        <summary>{t('reception.manual')}</summary>
-        <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
-        {allowed.length === 0 ? <p>{t('reception.noGrant')}</p> : null}
-        <details>
-          <summary>{t('reception.settings')}</summary>
-          <label>
-            {t('reception.executable')}
-            <input
-              value={executable}
-              onChange={(event) => {
-                setExecutable(event.target.value);
-              }}
-            />
-          </label>
-        </details>
-        <Button
-          size="compact"
-          disabled={busy || !allowed.some((grant) => grant.grantId === grantId)}
-          onClick={() => {
-            onConfigure(grantId, executable);
-          }}
-        >
-          {t('reception.bind')}
+      <strong className="reception-card__name">{session.displayName}</strong>
+      <p className="reception-card__path">{offer.task.workspace}</p>
+      <p className="reception-card__hint">
+        {t('reception.enableDescription', { days: RECEPTION_AUTHORIZATION_DAYS })}
+      </p>
+      <div className="reception-actions">
+        <Button size="compact" disabled={busy || !canEnable} onClick={onEnable}>
+          {t('reception.enable')}
         </Button>
+      </div>
+      <details className="ar-disclosure">
+        <summary>{t('reception.manual')}</summary>
+        <div className="ar-disclosure__body">
+          <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
+          {allowed.length === 0 ? (
+            <p className="reception-card__hint">{t('reception.noGrant')}</p>
+          ) : null}
+          <details className="ar-disclosure ar-disclosure--nested">
+            <summary>{t('reception.settings')}</summary>
+            <div className="ar-disclosure__body">
+              <label>
+                {t('reception.executable')}
+                <input
+                  value={executable}
+                  onChange={(event) => {
+                    setExecutable(event.target.value);
+                  }}
+                />
+              </label>
+            </div>
+          </details>
+          <div className="reception-actions">
+            <Button
+              size="compact"
+              disabled={busy || !allowed.some((grant) => grant.grantId === grantId)}
+              onClick={() => {
+                onConfigure(grantId, executable);
+              }}
+            >
+              {t('reception.bind')}
+            </Button>
+          </div>
+        </div>
       </details>
     </div>
   );
@@ -304,18 +332,28 @@ export function ReceptionCard({
   const status = receiverStatus(view);
   return (
     <article className="reception-card" data-status={status}>
-      <strong>{binding.session.displayName}</strong>
-      <span>{binding.host.hostType === 'claude_code' ? 'Claude Code' : 'Codex'}</span>
-      <span role="status">{t(`reception.${status}`)}</span>
-      <p>{binding.host.workspace}</p>
+      <strong className="reception-card__name">{binding.session.displayName}</strong>
+      <div className="reception-card__facts">
+        <span className="reception-chip" data-tone={status} role="status">
+          {t(`reception.${status}`)}
+        </span>
+        <span className="reception-card__meta">
+          {binding.host.hostType === 'claude_code' ? 'Claude Code' : 'Codex'}
+        </span>
+      </div>
+      <p className="reception-card__path">{binding.host.workspace}</p>
       {error ? (
-        <p role="alert">
+        <p className="reception-card__notice" role="alert">
           <code>{error.code}</code>
         </p>
       ) : null}
-      {lastDelivery ? <p>{t(`reception.${lastDelivery.stage}`)}</p> : null}
-      {pending ? <p>{t('reception.pending')}</p> : null}
-      {pending && !lastDelivery ? <p>{t('reception.legacyPending')}</p> : null}
+      {lastDelivery ? (
+        <p className="reception-card__hint">{t(`reception.${lastDelivery.stage}`)}</p>
+      ) : null}
+      {pending ? <p className="reception-card__notice">{t('reception.pending')}</p> : null}
+      {pending && !lastDelivery ? (
+        <p className="reception-card__notice">{t('reception.legacyPending')}</p>
+      ) : null}
       <div className="reception-actions">
         {running ? (
           <Button
@@ -346,7 +384,7 @@ export function ReceptionCard({
           <>
             <Button
               size="compact"
-              tone="quiet"
+              tone="ghost"
               disabled={
                 busy ||
                 !lastDelivery ||
@@ -360,7 +398,7 @@ export function ReceptionCard({
             </Button>
             <Button
               size="compact"
-              tone="quiet"
+              tone="ghost"
               disabled={busy}
               onClick={() => {
                 onAction({ action: 'resolve', event: checkpoint.eventId, resolution: 'skip' });
@@ -382,38 +420,44 @@ export function ReceptionCard({
         </Button>
       </div>
       {!running ? (
-        <details>
+        <details className="ar-disclosure">
           <summary>{t('reception.settings')}</summary>
-          <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
-          {allowed.length === 0 ? <p>{t('reception.noGrant')}</p> : null}
-          <label>
-            {t('reception.executable')}
-            <input
-              value={executable}
-              onChange={(event) => {
-                setExecutable(event.target.value);
-              }}
-            />
-          </label>
-          <label>
-            {t('reception.workspace')}
-            <input
-              value={workspace}
-              onChange={(event) => {
-                setWorkspace(event.target.value);
-              }}
-            />
-          </label>
-          <Button
-            size="compact"
-            tone="quiet"
-            disabled={busy || !grantId || !executable || !workspace}
-            onClick={() => {
-              onAction({ action: 'update', automationGrantId: grantId, executable, workspace });
-            }}
-          >
-            {t('reception.update')}
-          </Button>
+          <div className="ar-disclosure__body">
+            <GrantSelect grants={allowed} value={grantId} onChange={setGrantId} />
+            {allowed.length === 0 ? (
+              <p className="reception-card__hint">{t('reception.noGrant')}</p>
+            ) : null}
+            <label>
+              {t('reception.executable')}
+              <input
+                value={executable}
+                onChange={(event) => {
+                  setExecutable(event.target.value);
+                }}
+              />
+            </label>
+            <label>
+              {t('reception.workspace')}
+              <input
+                value={workspace}
+                onChange={(event) => {
+                  setWorkspace(event.target.value);
+                }}
+              />
+            </label>
+            <div className="reception-actions">
+              <Button
+                size="compact"
+                tone="ghost"
+                disabled={busy || !grantId || !executable || !workspace}
+                onClick={() => {
+                  onAction({ action: 'update', automationGrantId: grantId, executable, workspace });
+                }}
+              >
+                {t('reception.update')}
+              </Button>
+            </div>
+          </div>
         </details>
       ) : null}
     </article>

@@ -77,7 +77,9 @@ export function HostSessionOnboarding({
             <li key={entry.session.sessionId}>
               <div>
                 <strong>{entry.displayName}</strong>
-                <span>{t(`desktop.hosts.session.${entry.session.state}`)}</span>
+                <span data-state={entry.session.state}>
+                  {t(`desktop.hosts.session.${entry.session.state}`)}
+                </span>
               </div>
               <p>
                 {t(

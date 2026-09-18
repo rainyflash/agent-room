@@ -17,6 +17,9 @@ import type {
 import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
+import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
+import type { ProductDevice } from '@/features/security/domain/access-management';
+import '@/features/lobby/ui/lobby-game.css';
 import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import { OnboardingWorkspace } from '@/features/onboarding/ui/onboarding-page';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -90,6 +93,52 @@ const reception = receptionFixture(
   '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
 );
 const receptionEnabled = new URLSearchParams(location.search).has('reception');
+// ?ownership=idle|active|unreachable lists receptions this account runs on other computers,
+// the way leftover or remote receptions appear in the local-agent panel.
+const ownershipStatus = new URLSearchParams(location.search).get('ownership');
+const ownershipRecords: readonly ReceptionRecord[] =
+  ownershipStatus === null
+    ? []
+    : [
+        {
+          agentId: agent.agentId,
+          catalogId: lobby.catalogId,
+          roomId: '!fixture:matrix.test',
+          sessionKey: '0198b601-77a5-74f1-b4f4-940f291951c1',
+          displayName: 'Alpha 41 acceptance Claude Code',
+          instanceId: '0198b601-77a5-74f1-b4f4-940f291951c2',
+          deviceId: '0198b601-77a5-74f1-b4f4-940f291951c3',
+          deviceLabel: 'Alpha 41 fresh-device acceptance',
+          runId: '0198b601-77a5-74f1-b4f4-940f291951c4',
+          status: ownershipStatus === 'idle' ? 'idle' : 'active',
+          nextDeviceId: null,
+          lastSeenUnixMs: ownershipStatus === 'unreachable' ? 1 : Date.now(),
+          revision: 3,
+          progress: { afterEventId: '$fixture-latest', pending: null, retry: null },
+        },
+      ];
+const fixtureDevices: readonly ProductDevice[] = [
+  {
+    createdAtUnixMs: 1,
+    deviceId: '0198b601-77a5-74f1-b4f4-940f291951d1',
+    label: 'Studio desktop',
+    lastSeenAtUnixMs: 1,
+    matrixDeviceId: 'STUDIO',
+    platform: 'windows',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+  {
+    createdAtUnixMs: 1,
+    deviceId: '0198b601-77a5-74f1-b4f4-940f291951d2',
+    label: 'Travel laptop',
+    lastSeenAtUnixMs: 1,
+    matrixDeviceId: 'LAPTOP',
+    platform: 'macos',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+];
 function inviteSessionKey(): string | null {
   return (
     readInviteHistory(window.localStorage, principal.principalId).identities[0]?.sessionKey ?? null
@@ -208,7 +257,9 @@ function AuthenticatedOnboardingFixture() {
 }
 
 async function bootstrapFixture() {
-  await initializeI18n(window.localStorage, ['en']);
+  await initializeI18n(window.localStorage, [
+    new URLSearchParams(location.search).get('lang') ?? 'en',
+  ]);
   const runtime = createCloudRuntime(
     {
       controlPlaneUrl: 'https://api.fixture.invalid',
@@ -221,11 +272,11 @@ async function bootstrapFixture() {
   const services = {
     ...runtime.services,
     receptionOwnership: {
-      list: () => ready({ receptions: [], limited: false }),
+      list: () => ready({ receptions: ownershipRecords, limited: false }),
       transfer: unavailable,
     },
     accessManagement: {
-      listProductDevices: () => ready([]),
+      listProductDevices: () => ready(ownershipRecords.length === 0 ? [] : fixtureDevices),
       listAgentInstances: unavailable,
       revokeAgentInstance: unavailable,
       revokeProductDevice: unavailable,
@@ -270,7 +321,14 @@ async function bootstrapFixture() {
             <SessionProvider dependencies={sessionDependencies}>
               <DesktopRuntimeProvider gateway={gateway}>
                 <AuthenticatedOnboardingFixture />
-                <DesktopRuntimeSurface />
+                {new URLSearchParams(location.search).get('placement') === 'game' ? (
+                  // The lobby's top-left placement, where the panel is narrowest.
+                  <div className="lobby-game">
+                    <DesktopRuntimeSurface placement="game" />
+                  </div>
+                ) : (
+                  <DesktopRuntimeSurface />
+                )}
               </DesktopRuntimeProvider>
             </SessionProvider>
           </AppServicesProvider>

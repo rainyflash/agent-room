@@ -561,6 +561,19 @@
   bottom: auto;
   width: 240px;
   z-index: 20;
+  transition: width 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lobby-game .desktop-runtime[data-placement='game'][data-expanded='true'] {
+  width: min(372px, calc(100vw - 72px));
+}
+/* 展开后停在舞台内：顶部 150px，下方留出底部操作栏 */
+.lobby-game .desktop-runtime[data-placement='game'] .desktop-runtime__panel {
+  max-height: max(240px, calc(100vh - 340px));
+}
+@media (prefers-reduced-motion: reduce) {
+  .lobby-game .desktop-runtime[data-placement='game'] {
+    transition: none;
+  }
 }
 
 /* 场景上的名牌与状态贴纸（无 WebGL 回退）；胶囊底色与几何在 scene-style.ts */
@@ -1049,6 +1062,9 @@
   .lobby-game .desktop-runtime[data-placement='game'] {
     left: 24px;
     width: 220px;
+  }
+  .lobby-game .desktop-runtime[data-placement='game'][data-expanded='true'] {
+    width: calc(100vw - 48px);
   }
   .scene-speech {
     width: 175px;

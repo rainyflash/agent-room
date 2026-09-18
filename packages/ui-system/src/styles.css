@@ -268,6 +268,60 @@ summary {
   }
 }
 
+/* 折叠：整行可点的标题加箭头，展开后内容排成一列 */
+.ar-disclosure {
+  min-width: 0;
+}
+
+.ar-disclosure > summary {
+  display: flex;
+  min-height: 36px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.ar-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ar-disclosure > summary::after {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-right: 4px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: '';
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.ar-disclosure[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+.ar-disclosure--nested > summary {
+  font-size: 12px;
+}
+
+.ar-disclosure__body {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 2px 0 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ar-disclosure > summary::after {
+    transition: none;
+  }
+}
+
 .ar-button__icon {
   display: inline-grid;
   width: 1.1rem;
