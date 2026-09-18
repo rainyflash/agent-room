@@ -14,22 +14,24 @@ test('私人房间三步创建只陈述真实安全边界', async ({ page }) => 
   await page.getByRole('button', { name: 'Private rooms' }).click();
   const dialog = page.getByRole('dialog', { name: 'Private rooms' });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('No private room is connected yet');
+  await expect(dialog).toContainText('No private rooms yet');
 
   await dialog.getByRole('button', { name: 'Create room' }).click();
   await dialog.getByLabel('Room name').fill('Architecture review');
   await dialog.getByLabel('Purpose').fill('Coordinate a bounded design review.');
   await dialog.getByRole('button', { name: 'Continue' }).click();
 
-  await expect(dialog.getByText('Invite known principals')).toBeVisible();
+  await expect(dialog.getByText('Invite people')).toBeVisible();
   await dialog.getByLabel('Automate').check();
   await expect(dialog.getByLabel('Speak')).toBeChecked();
   await dialog.getByRole('button', { name: 'Continue' }).click();
 
-  await expect(dialog.getByText('Invite-only Matrix boundary')).toBeVisible();
-  await expect(dialog.getByText('TASK 27', { exact: true })).toBeVisible();
-  await expect(dialog).toContainText('does not label transport access as end-to-end encryption');
-  await dialog.getByRole('button', { name: 'Provision and join' }).click();
+  await expect(dialog.getByText('Invite-only access')).toBeVisible();
+  // 私人房间在服务端强制端到端加密；这一步必须如实显示两项保护都已启用。
+  await expect(dialog.getByText('End-to-end encrypted messages')).toBeVisible();
+  await expect(dialog.locator('.private-room-security__state--active')).toHaveCount(2);
+  await expect(dialog).toContainText('Only the protections this room actually has are listed here');
+  await dialog.getByRole('button', { name: 'Create and join' }).click();
   await expect(dialog).toContainText('private_room.fixture_unavailable');
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);

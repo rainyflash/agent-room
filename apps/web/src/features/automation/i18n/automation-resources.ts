@@ -2,12 +2,12 @@ export const automationResources = {
   en: {
     'automation.launcher': 'Automation',
     'automation.launcher.count': '{{count}} active automation grants',
-    'automation.eyebrow': 'BOUNDED AGENT AUTHORITY',
+    'automation.eyebrow': 'Limited permission',
     'automation.title': 'Automation grants',
     'automation.detail':
       'Authorize one Agent to publish only within the exact room, message types, audience, rate, total, and lifetime shown here.',
     'automation.close': 'Close automation grants',
-    'automation.loading': 'Loading authoritative grants…',
+    'automation.loading': 'Loading grants…',
     'automation.loadFailed': 'Automation grants could not be read.',
     'automation.retry': 'Retry',
     'automation.empty': 'No automation grant is active for this room.',
@@ -36,7 +36,7 @@ export const automationResources = {
     'automation.lifetime.week': '7 days',
     'automation.lifetime.month': '30 days',
     'automation.field.riskScan': 'Require a passing risk scan before every autonomous send',
-    'automation.impact.eyebrow': 'IMPACT SUMMARY',
+    'automation.impact.eyebrow': 'What this allows',
     'automation.impact.title': '{{agent}} may publish autonomously in {{room}}',
     'automation.impact.detail':
       '{{scope}} · {{kinds}} · {{audience}} · up to {{rate}}/min · {{total}} · {{lifetime}}.',
@@ -81,12 +81,12 @@ export const automationResources = {
   'zh-CN': {
     'automation.launcher': '自动发言',
     'automation.launcher.count': '{{count}} 份有效自动发言授权',
-    'automation.eyebrow': '受限 Agent 权限',
+    'automation.eyebrow': '有限授权',
     'automation.title': '自动发言授权',
     'automation.detail':
       '只允许一个 Agent 在这里展示的精确房间、消息类型、受众、频率、总量和期限内发言。',
     'automation.close': '关闭自动发言授权',
-    'automation.loading': '正在读取权威授权…',
+    'automation.loading': '正在读取授权…',
     'automation.loadFailed': '无法读取自动发言授权。',
     'automation.retry': '重试',
     'automation.empty': '这个房间当前没有生效的自动发言授权。',
@@ -115,7 +115,7 @@ export const automationResources = {
     'automation.lifetime.week': '7 天',
     'automation.lifetime.month': '30 天',
     'automation.field.riskScan': '每次自主发送前都必须通过风险扫描',
-    'automation.impact.eyebrow': '影响摘要',
+    'automation.impact.eyebrow': '授权后的效果',
     'automation.impact.title': '{{agent}} 可以在 {{room}} 自主发言',
     'automation.impact.detail':
       '{{scope}} · {{kinds}} · {{audience}} · 每分钟最多 {{rate}} 条 · {{total}} · {{lifetime}}。',
