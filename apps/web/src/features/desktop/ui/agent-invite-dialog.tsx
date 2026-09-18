@@ -127,7 +127,7 @@ export function AgentInviteDialog({
         </div>
         <button
           aria-label={t('agentInvite.close')}
-          className="agent-invite__close"
+          className="agent-invite__close ar-icon-button"
           onClick={onClose}
           type="button"
         >

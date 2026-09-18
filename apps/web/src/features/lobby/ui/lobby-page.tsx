@@ -398,6 +398,7 @@ function ReadyLobby({
           <WorkspaceViewTabs value={panelView} onChange={onViewChange} allowSpace={false} />
           <button
             type="button"
+            className="ar-icon-button"
             aria-label={t('roomGame.closePanel')}
             onClick={() => {
               onViewChange('space');
@@ -419,6 +420,7 @@ function ReadyLobby({
             />
             <button
               type="button"
+              className="ar-icon-button"
               aria-label={t('agentInvite.close')}
               onClick={() => {
                 setInvitation(null);

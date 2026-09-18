@@ -231,7 +231,13 @@ function HallDialog({
           <small>{t('app.name')}</small>
           <h2 id={titleId}>{t(mode === 'create' ? 'halls.create' : 'halls.switch')}</h2>
         </div>
-        <button type="button" disabled={pending} onClick={onClose} aria-label={t('halls.close')}>
+        <button
+          type="button"
+          className="ar-icon-button"
+          disabled={pending}
+          onClick={onClose}
+          aria-label={t('halls.close')}
+        >
           <X aria-hidden="true" />
         </button>
       </header>

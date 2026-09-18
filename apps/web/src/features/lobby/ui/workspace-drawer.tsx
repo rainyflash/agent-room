@@ -40,7 +40,7 @@ export function WorkspaceDrawer({
       onClose={onClose}
     >
       <button
-        className="workspace-drawer__close"
+        className="workspace-drawer__close ar-icon-button"
         type="button"
         aria-label={t('roomWorkspace.closePanel')}
         onClick={onClose}

@@ -2,7 +2,7 @@
   width: 100%;
   min-width: 0;
   padding-top: 12px;
-  border-top: 1px solid var(--border-subtle, #dee5e4);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .host-onboarding h3 {
   font-size: 13px;
@@ -20,9 +20,10 @@
   gap: 8px;
 }
 .host-onboarding li {
-  padding: 10px;
-  border: 1px solid var(--border-subtle, #dee5e4);
-  border-radius: 10px;
+  padding: 10px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 14px;
+  background: var(--color-paper);
 }
 .host-onboarding li > div {
   display: flex;

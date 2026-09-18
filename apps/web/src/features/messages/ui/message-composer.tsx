@@ -155,7 +155,7 @@ export function MessageComposer({
               ? 'messages.composer.close'
               : 'messages.composer.minimize',
           )}
-          className="inspector-close"
+          className="inspector-close ar-icon-button"
           onClick={minimizeOrClose}
           type="button"
         >

@@ -46,6 +46,8 @@
   --ar-press-small: 0 3px 0 var(--ar-outline);
   --ar-pill: 999px;
   --ar-panel-radius: 28px;
+  /* 弹窗与侧栏共用的遮罩：墨色压暗，不再各自挑一个蓝灰色。 */
+  --ar-backdrop: color-mix(in srgb, var(--color-ink) 52%, transparent);
   --ar-sunny: #ffc53d;
   --ar-sunny-hover: #ffb81f;
   --ar-coral: #f07058;
@@ -218,6 +220,54 @@ summary {
   box-shadow: none;
 }
 
+/* 关闭、收起这类只有图标的按钮：圆形、墨色描边、可按下。 */
+.ar-icon-button {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  cursor: pointer;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press-small);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.ar-icon-button:not(:disabled):hover {
+  background: var(--ar-surface-muted);
+}
+
+.ar-icon-button:not(:disabled):active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+}
+
+.ar-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.ar-icon-button > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2;
+}
+
+@media (max-width: 767px) {
+  .ar-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .ar-button__icon {
   display: inline-grid;
   width: 1.1rem;
@@ -238,8 +288,9 @@ summary {
   height: 26px;
   flex: 0 0 26px;
   place-items: center;
-  border: 1px solid currentColor;
+  border: var(--ar-outline-thin) solid currentColor;
   border-radius: 50%;
+  background: var(--ar-surface);
 }
 
 .ar-status-mark > svg {
@@ -250,14 +301,17 @@ summary {
 
 .ar-status-mark--active {
   color: var(--ar-success);
+  background: var(--ar-mint);
 }
 
 .ar-status-mark--network {
   color: var(--ar-accent);
+  background: var(--ar-accent-soft);
 }
 
 .ar-status-mark--alert {
   color: var(--color-alert);
+  background: var(--ar-danger-soft);
 }
 
 .ar-status-mark--idle {
@@ -286,5 +340,10 @@ summary {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .ar-button:not(:disabled):active,
+  .ar-icon-button:not(:disabled):active {
+    transform: none;
   }
 }

@@ -8,8 +8,8 @@
   gap: 24px;
   min-height: 72px;
   padding: 0 40px;
-  border-bottom: 1px solid var(--ar-line);
-  background: var(--ar-surface);
+  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  background: var(--ar-canvas);
 }
 .app-navigation__brand,
 .app-navigation__links,
@@ -26,7 +26,7 @@
   font-size: 22px;
   font-weight: 700;
   white-space: nowrap;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 .app-navigation__identity {
   display: flex;
@@ -45,31 +45,46 @@
   width: 32px;
   height: 32px;
 }
+/* 与房间面板的标签同一套：胶囊按钮，当前页是墨色底。 */
 .app-navigation__links {
   min-width: 0;
   overflow-x: auto;
-  align-items: stretch;
-  align-self: stretch;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px;
 }
 .app-navigation__links a {
   position: relative;
-  min-height: 48px;
+  min-height: 44px;
   padding: 0 16px;
-  color: var(--ar-muted);
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
   font-size: 14px;
-  font-weight: 560;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
-  border-bottom: 2px solid transparent;
 }
 .app-navigation__links a[aria-current='page'] {
-  border-bottom-color: var(--ar-accent);
-  color: var(--ar-accent);
+  border-color: var(--ar-outline);
+  background: var(--ar-outline);
+  color: var(--ar-surface);
 }
-.app-navigation__links a:hover {
-  background: var(--ar-surface-muted);
-  color: var(--ar-accent);
+.app-navigation__links a:not([aria-current='page']):hover {
+  border-color: var(--ar-outline);
+  background: var(--ar-surface);
+}
+.app-navigation__links small {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-coral);
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 700;
 }
 .app-navigation__links svg {
   width: 17px;
@@ -121,15 +136,15 @@
     grid-column: 1 / -1;
     grid-row: 2;
     width: 100%;
-    border-top: 1px solid var(--ar-line);
-    gap: 0;
+    gap: 4px;
+    padding: 6px 0 8px;
   }
   .app-navigation__links a {
     flex: 1 0 auto;
     padding: 0 8px;
     justify-content: center;
     font-size: 13px;
-    min-height: 48px;
+    min-height: 44px;
   }
   .app-navigation__actions {
     gap: 4px;

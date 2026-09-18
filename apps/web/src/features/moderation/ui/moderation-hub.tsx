@@ -179,7 +179,7 @@ export function ModerationHub({
                   </div>
                   <button
                     aria-label={t('moderation.governance.close')}
-                    className="inspector-close"
+                    className="inspector-close ar-icon-button"
                     disabled={mutation.isPending}
                     onClick={close}
                     ref={closeRef}

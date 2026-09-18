@@ -10,7 +10,7 @@
   min-width: 0;
   color: var(--color-ink);
   padding: 24px 48px;
-  background: var(--ar-surface-muted);
+  background: var(--ar-canvas);
 }
 .connection-rail__header {
   display: flex;
@@ -36,11 +36,12 @@
 .connection-rail__intro h2 {
   margin: 0 0 16px;
   line-height: 1.15;
-  letter-spacing: -0.04em;
-  font-weight: 630;
+  letter-spacing: 0;
+  font-weight: 600;
   font-size: clamp(30px, 3vw, 42px);
   color: var(--color-ink);
   max-width: 18ch;
+  font-family: var(--font-display);
 }
 .connection-rail__intro p {
   max-width: 40ch;
@@ -64,7 +65,7 @@
   list-style: none;
   margin: auto 0 0;
   padding: 24px 0;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .connection-step {
   display: flex;
@@ -111,7 +112,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   padding-top: 16px;
   font-size: 12px;
   color: var(--ar-muted);
@@ -120,20 +121,19 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 100svh;
+  min-height: calc(100svh - 32px);
   background: var(--ar-surface);
-  border: 0;
-  border-left: 1px solid var(--ar-line);
-  box-shadow: none;
-  margin: 0;
-  border-radius: 0;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  box-shadow: var(--ar-press);
+  margin: 16px 16px 20px 0;
+  border-radius: var(--ar-panel-radius);
 }
 .connection-workspace__topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--ar-line);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   min-height: 96px;
   padding: 24px 32px;
 }
@@ -170,10 +170,11 @@
 .connection-workspace h1 {
   margin: 0 0 20px;
   line-height: 1.22;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   color: var(--color-ink);
   font-size: var(--ar-page-title);
-  font-weight: 650;
+  font-weight: 600;
+  font-family: var(--font-display);
 }
 .connection-workspace__lede {
   margin: 0 0 30px;
@@ -216,9 +217,9 @@
   display: flex;
   gap: 12px;
   padding: 16px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
-  background: var(--ar-surface-muted);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 20px;
+  background: var(--ar-danger-soft);
 }
 .failure-panel__line {
   width: 3px;
@@ -255,17 +256,19 @@
   gap: 16px;
   padding: 18px;
   margin-top: 20px;
-  border: 1px solid var(--ar-line);
-  border-radius: 12px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 20px;
+  background: var(--color-paper);
 }
 .identity-summary__icon {
   display: grid;
   width: 36px;
   height: 36px;
   place-items: center;
-  border-radius: 10px;
-  color: var(--ar-accent);
-  background: var(--ar-surface-muted);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--ar-mint);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
 }
 .identity-summary__icon svg {
   width: 20px;
@@ -296,6 +299,7 @@
   color: var(--ar-accent);
   text-decoration: none;
   font-size: 13px;
+  font-weight: 600;
 }
 .connection-account-link svg {
   width: 16px;
@@ -308,7 +312,7 @@
   line-height: 1.7;
 }
 .connection-service-details {
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   margin: 0 40px 32px;
 }
 .connection-service-details summary {
@@ -419,6 +423,8 @@
     margin: 0;
     border-radius: 0;
     border-left: 0;
+    border: 0;
+    box-shadow: none;
   }
   .connection-workspace__topbar {
     padding: 16px 20px;

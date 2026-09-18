@@ -15,17 +15,19 @@
 }
 .roster-views button,
 .roster-pagination button {
-  border: 1px solid var(--line, #dbe4e3);
-  border-radius: 8px;
-  background: transparent;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface);
   color: inherit;
-  padding: 8px 12px;
+  padding: 6px 14px;
   cursor: pointer;
+  min-height: 36px;
+  font-weight: 600;
 }
 .roster-views button[aria-pressed='true'] {
-  background: #e6f2ef;
-  border-color: #217e79;
-  color: #185d59;
+  background: var(--ar-outline);
+  border-color: var(--ar-outline);
+  color: var(--ar-surface);
 }
 .roster-pagination {
   justify-content: space-between;
@@ -40,10 +42,10 @@
   margin: 16px 4px 6px;
   font-size: 12px;
   font-weight: 600;
-  color: #536560;
+  color: var(--ar-muted);
 }
 .roster-archive-note {
-  color: #647570;
+  color: var(--ar-muted);
   font-size: 12px;
   line-height: 1.6;
   margin: 0 0 12px;
@@ -85,7 +87,7 @@
   font-size: 12px;
 }
 .agent-lifecycle-facts dt {
-  color: #647570;
+  color: var(--ar-muted);
 }
 .agent-lifecycle-facts dd {
   margin: 0;
@@ -95,7 +97,7 @@
   font-size: 12px;
   line-height: 1.6;
   padding: 12px 16px;
-  border-top: 1px solid #dbe4e3;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .roster-policy summary {
   cursor: pointer;
@@ -109,9 +111,10 @@
 }
 .roster-policy select,
 .roster-policy button {
-  border: 1px solid #b4c7c1;
-  border-radius: 6px;
-  padding: 6px 10px;
-  background: transparent;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  padding: 4px 12px;
+  background: var(--color-paper);
   color: inherit;
+  min-height: 36px;
 }

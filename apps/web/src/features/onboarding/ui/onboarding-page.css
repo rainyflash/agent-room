@@ -25,11 +25,12 @@
 
 .onboarding__intro h1 {
   max-width: 22ch;
-  font-weight: 670;
+  font-weight: 600;
   line-height: 1.2;
   font-size: var(--ar-page-title);
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   margin: 0 0 16px;
+  font-family: var(--font-display);
 }
 
 .onboarding__intro > p {
@@ -57,21 +58,35 @@
   align-items: center;
   gap: 0.75rem;
   min-height: 52px;
-  border-top: 1px solid var(--ar-ink-18);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: var(--ar-muted);
   font-family: var(--font-sans);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   letter-spacing: 0;
 }
 
 .onboarding__progress li:last-child {
-  border-bottom: 1px solid var(--ar-ink-18);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .onboarding__progress li[data-complete='true'] {
   color: var(--color-ink);
 }
+.onboarding__progress li[data-complete='true'] span {
+  border-color: var(--ar-outline);
+  color: var(--color-ink);
+  background: var(--ar-mint);
+}
 .onboarding__progress span {
-  color: var(--ar-accent);
+  color: var(--ar-muted);
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 50%;
+  background: var(--color-paper);
+  font-size: 12px;
+  font-weight: 700;
 }
 .onboarding__progress svg {
   width: 15px;
@@ -88,35 +103,37 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 1rem;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 24px;
   min-height: 180px;
   padding: 24px;
   background: var(--ar-surface);
+  box-shadow: var(--ar-press);
 }
 
 .onboarding-fact[data-status='active'] {
-  box-shadow: none;
-  border-color: var(--ar-accent);
+  box-shadow: var(--ar-press);
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
 }
 .onboarding-fact[data-status='complete'] {
-  box-shadow: none;
+  box-shadow: var(--ar-press);
 }
 
 .onboarding-fact__icon {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   place-items: center;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 10px;
-  background: var(--ar-ink-04);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-mint);
 }
 
 .onboarding-fact__icon svg {
   width: 19px;
   height: 19px;
-  stroke-width: 1.65;
+  stroke-width: 2;
 }
 .onboarding-fact__copy {
   min-width: 0;
@@ -131,9 +148,9 @@
 
 .onboarding-fact h2 {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 680;
-  letter-spacing: -0.025em;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .onboarding-fact p {
@@ -164,25 +181,28 @@
 }
 
 .onboarding__hosts {
-  border-radius: var(--ar-radius);
+  border-radius: 24px;
   overflow: hidden;
   margin-top: 1.5rem;
-  border: 1px solid var(--ar-ink-18);
-  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press);
 }
 
 .onboarding__hosts > header {
   display: grid;
   gap: 2rem;
   padding: 1.35rem 1.5rem;
-  border-bottom: 1px solid var(--ar-ink-18);
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
   grid-template-columns: minmax(220px, 0.65fr) minmax(0, 1.35fr);
 }
 
 .onboarding__hosts h2 {
   margin: 0.35rem 0 0;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   font-size: 20px;
+  font-family: var(--font-display);
+  font-weight: 600;
 }
 .onboarding__hosts header > p {
   margin: 0;
@@ -210,8 +230,9 @@
   gap: 1rem;
   padding: 1rem 1.25rem;
   margin-top: 1.5rem;
-  border: 1px solid color-mix(in srgb, var(--color-alert) 45%, transparent);
-  background: color-mix(in srgb, var(--color-alert) 7%, var(--color-paper));
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  background: var(--ar-danger-soft);
+  border-radius: 20px;
 }
 
 .onboarding__failure > svg {
@@ -300,7 +321,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) solid var(--ar-line);
   background: var(--ar-surface);
   padding: 16px max(40px, calc((100% - var(--ar-page-width)) / 2));
 }

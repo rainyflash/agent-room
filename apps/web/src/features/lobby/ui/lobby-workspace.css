@@ -48,8 +48,9 @@
 }
 .workspace-navigation__brand > span {
   font-size: 19px;
-  font-weight: 650;
-  letter-spacing: -0.045em;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-family: var(--font-display);
 }
 .workspace-navigation__brand small {
   display: block;
@@ -79,16 +80,16 @@
   align-items: center;
   gap: 10px;
   padding: 13px 12px;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: 18px;
   color: var(--color-ink);
   background: transparent;
   text-align: left;
 }
 .workspace-navigation__room[aria-pressed='true'] {
-  border-color: var(--ar-line);
-  color: var(--ar-accent);
-  background: var(--ar-accent-soft);
+  border-color: var(--ar-outline);
+  color: var(--color-ink);
+  background: var(--ar-warning-soft);
 }
 .workspace-navigation__room > svg {
   width: 21px;
@@ -123,8 +124,8 @@
   width: 100%;
   gap: 10px;
   padding: 10px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: 16px;
   color: var(--color-ink);
   background: transparent;
   text-align: left;
@@ -133,8 +134,8 @@
   background: var(--ar-surface-muted);
 }
 .workspace-direct__session[aria-pressed='true'] {
-  background: var(--ar-accent-soft);
-  border-color: var(--ar-line);
+  background: var(--ar-warning-soft);
+  border-color: var(--ar-outline);
 }
 .workspace-direct__avatar {
   display: grid;
@@ -142,10 +143,10 @@
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
-  border: 1px solid var(--ar-line);
-  border-radius: 10px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 12px;
   color: var(--color-ink);
-  background: var(--ar-surface-muted);
+  background: var(--ar-sky);
   font-size: 12px;
   font-weight: 600;
 }
@@ -155,8 +156,8 @@
 .workspace-direct__identity strong {
   display: block;
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -198,9 +199,16 @@
   gap: 9px;
   padding: 10px 8px;
   color: var(--ar-muted);
-  font-size: 12px;
+  font-size: 13px;
   list-style: none;
   cursor: pointer;
+  min-height: 44px;
+  border-radius: 14px;
+}
+.workspace-navigation__link:hover,
+.workspace-navigation__settings > summary:hover {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
 }
 .workspace-navigation__link > svg,
 .workspace-navigation__settings > summary > svg {
@@ -220,10 +228,10 @@
 }
 .workspace-navigation__actions {
   display: grid;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--ar-line);
-  border-radius: 8px;
+  gap: 6px;
+  padding: 6px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 18px;
   background: var(--ar-surface-muted);
 }
 .workspace-navigation__actions > .ar-button {
@@ -232,7 +240,7 @@
   color: var(--color-ink);
 }
 .workspace-navigation__actions .ar-button:hover {
-  background: var(--ar-surface-muted);
+  background: var(--ar-surface);
 }
 .workspace-navigation .language-control {
   display: flex;
@@ -245,9 +253,13 @@
 .workspace-navigation .language-control select {
   width: 100%;
   max-width: none;
-  color: inherit;
-  background: var(--ar-surface-muted);
-  font-size: 12px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-size: 13px;
+  min-height: 40px;
+  padding: 0 0.9rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
 }
 .workspace-navigation__account {
   display: flex;
@@ -255,16 +267,16 @@
   gap: 10px;
   margin-top: 14px;
   padding: 16px 4px 2px;
-  border-top: 1px solid var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .workspace-navigation__account > span {
   display: grid;
   place-items: center;
   width: 33px;
   height: 33px;
-  border: 1px solid var(--ar-line);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
-  background: var(--ar-surface-muted);
+  background: var(--ar-mint);
 }
 .workspace-navigation__account svg {
   width: 16px;
@@ -278,8 +290,8 @@
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
 }
 .workspace-navigation__account small {
@@ -648,15 +660,16 @@
   width: min(340px, 91vw);
   height: 100dvh;
   max-height: 100dvh;
-  padding: 44px 0 0;
+  padding: 64px 0 0;
   margin: 0;
   border: 0;
   color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  box-shadow: -20px 0 80px #23303918;
+  background: var(--ar-surface);
+  border-left: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius) 0 0 var(--ar-panel-radius);
 }
 .workspace-drawer::backdrop {
-  background: #23303966;
+  background: var(--ar-backdrop);
   backdrop-filter: blur(3px);
 }
 .workspace-drawer--navigation {
@@ -664,23 +677,14 @@
   left: 0;
   background: var(--ar-surface);
   color: var(--color-ink);
+  border-left: 0;
+  border-right: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: 0 var(--ar-panel-radius) var(--ar-panel-radius) 0;
 }
 .workspace-drawer__close {
   position: absolute;
-  top: 10px;
+  top: 12px;
   right: 12px;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--ar-line);
-  border-radius: 7px;
-  color: inherit;
-  background: transparent;
-}
-.workspace-drawer__close svg {
-  width: 17px;
-  height: 17px;
 }
 .workspace-drawer .workspace-navigation {
   padding-top: 8px;
@@ -749,11 +753,6 @@
   font-size: 12px;
 }
 .lobby-workspace .direct-conversation__actions .ar-button--ghost {
-  border-color: var(--ar-line);
-}
-.lobby-workspace .direct-conversation__close {
-  color: var(--ar-muted);
-  background: transparent;
   border-color: var(--ar-line);
 }
 .lobby-workspace .direct-conversation__messages {
@@ -1013,10 +1012,6 @@
   }
   .lobby-workspace .direct-conversation__actions .ar-button {
     padding: 6px;
-  }
-  .lobby-workspace .direct-conversation__close {
-    width: 30px;
-    height: 30px;
   }
 }
 @media (max-height: 600px) {
