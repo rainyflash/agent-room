@@ -9,8 +9,9 @@ mod secure_storage_service;
 
 pub use client::{LocalBridgeClient, LocalBridgeClientFailure, LocalBridgeClientFailureKind};
 pub use credentials::{
-    IPC_INSTALLATION_ID_ACCOUNT, IPC_SHARED_SECRET_ACCOUNT, IpcCredentialFailure,
-    IpcCredentialFailureKind, IpcCredentialSource, OsIpcCredentialReader,
+    AGENT_RUNTIME_SESSION_ACCOUNT, DEVICE_SESSION_ACCOUNT, IPC_INSTALLATION_ID_ACCOUNT,
+    IPC_SHARED_SECRET_ACCOUNT, IpcCredentialFailure, IpcCredentialFailureKind, IpcCredentialSource,
+    OsIpcCredentialReader, SERVER_BOUND_ACCOUNTS,
 };
 pub use endpoint::LocalIpcEndpoint;
 pub use location::{

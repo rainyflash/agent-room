@@ -74,7 +74,7 @@ Windows 可运行候选及客户端发布流程（`--profile client`）；生产
 | 报告场景               | 必须实际验证                                                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------------- |
 | `first-device`         | 首次电脑授权完成、Bridge 保持连接、人物进入房间、回复被接收端验证                              |
-| `upgrade`              | 安装旧版后升级当前候选，登录、同一人物身份和未确认投递恢复                                     |
+| `upgrade`              | 安装旧版后升级当前候选，登录、同一人物身份和未确认投递恢复（服务器迁移版本见下文）             |
 | `continuous-reception` | 真实宿主处理两条不同消息并产生两条已验证回复；空闲不调用模型；手动接管停止后台；交回后保留游标 |
 
 CI 里的 `windows_installer_acceptance.py` 负责无账号的安装、运行中升级、卸载检查；它不能代替上述登录和真实接待验收。每个实际验收执行器或维护者导出一份 JSON：
@@ -123,3 +123,13 @@ python tools/release_qa.py --work <发布目录> run       # 批准后：加入�
 - 从那次授权的提交到本次候选，`LOGIN_PATHS` 列出的登录相关代码（设备授权、身份组件、设备登记接口、Keycloak 配置等）没有变化。比对用 git 历史，拿不到历史就判为不成立。
 
 长期设备的授权失效时（例如刷新令牌过期），`start` 会停掉它、换一份全新的隔离资料申请设备码，这一版按新设备验收，完成后新资料成为下一任长期设备。复用时人物也沿用同一个，验收不再每版新建 Agent。
+
+#### 服务器迁移版本
+
+产品搬到另一台服务器（换域名、Matrix server name 随之改变、数据从头开始）时，旧服务器上的登录、升级验收身份和未确认投递都带不过去，`upgrade` 的保留检查不可能成立。这样的版本要在 `tools/release_acceptance.py` 的 `SERVER_MIGRATIONS` 里登记版本号和迁移前后的 server name。只有登记过的版本，`upgrade` 报告才能记为 `upgradeMode: server-migration`，必需检查换成：
+
+- `installedPreviousVersion`、`upgradedToCandidate`：和平时一样，已安装的旧版本被签名安装器原地升级到候选；
+- `previousLoginNotReused`：升级后的应用在新服务器上没有登录，旧服务器的登录没有被沿用；
+- `signedInToNewServer`：维护者在升级后的桌面应用里登录新服务器，会话建立、内置 Bridge 就绪。
+
+这种报告不能声称 `loginRestored`、`identityPreserved` 或 `pendingDeliveryPreserved`。`release_qa.py` 发现当前版本已登记时自动走这条路径：`baseline` 只记录已安装的旧版本号；`upgrade` 升级后先确认新服务器上没有沿用旧登录，再等维护者在桌面应用里登录新服务器。

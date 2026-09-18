@@ -21,6 +21,7 @@ mod release_update_config;
 mod release_update_state;
 mod release_updates;
 mod runtime_target;
+mod server_move;
 use receiver_runtime::{
     ReceiverRuntime, desktop_receiver_action, desktop_receiver_configure, desktop_receiver_list,
 };
@@ -177,6 +178,7 @@ fn setup_runtime(
     webview_migration::retire_legacy_service_worker(app)?;
     let mut config = DesktopBridgeConfig::from_environment()
         .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
+    server_move::retire_previous_server(&config);
     setup_user_sessions(app, &config)?;
     let targets = Arc::new(
         RuntimeTargetStore::open(&config.data_root())

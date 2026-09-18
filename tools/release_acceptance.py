@@ -46,6 +46,13 @@ LOGIN_PATHS = (
     "tools/prodops/render.py",
 )
 LoginChanges = Callable[[str, str], list[str]]
+# A release that moves the product to another server cannot carry the old server's login, identity or
+# deliveries across. Each such release is listed with its move. Its upgrade report still proves the in-place
+# upgrade, and instead proves the upgraded app did not reuse the old login and signs in to the new server.
+SERVER_MIGRATIONS = {"0.1.0-alpha.43": {"from": "room.the-zeroth.com", "to": "agentroom.chat"}}
+MIGRATED_UPGRADE_CHECKS = {"installedPreviousVersion", "upgradedToCandidate", "previousLoginNotReused",
+                           "signedInToNewServer"}
+PRESERVATION_CHECKS = {"loginRestored", "identityPreserved", "pendingDeliveryPreserved"}
 
 
 def login_changes(base: str, head: str) -> list[str]:
@@ -118,6 +125,17 @@ def verify(root: Path, version: str, revision: str, *, now: int | None = None,
                 required = REUSED_DEVICE_CHECKS
             elif mode != "fresh":
                 raise ReleaseFailure("first-device 设备模式无效。")
+        if scenario == "upgrade":
+            mode = report.get("upgradeMode", "in-place")
+            if mode == "server-migration":
+                migration = SERVER_MIGRATIONS.get(version)
+                if migration is None or report.get("serverMigration") != migration:
+                    raise ReleaseFailure("只有登记过的服务器迁移版本，升级验收才可以不保留旧服务器上的登录和数据。")
+                if isinstance(checks, dict) and PRESERVATION_CHECKS & set(checks):
+                    raise ReleaseFailure("服务器迁移的升级报告不能声称保留了旧服务器上的登录或数据。")
+                required = MIGRATED_UPGRADE_CHECKS
+            elif mode != "in-place":
+                raise ReleaseFailure("upgrade 升级模式无效。")
         if not isinstance(checks, dict) or not required <= set(checks) or any(checks.get(key) is not True for key in required):
             raise ReleaseFailure(f"{scenario} 缺少已通过的必需检查。")
         if report.get("fixture") is not False:

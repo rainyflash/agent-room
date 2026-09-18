@@ -79,6 +79,8 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 UUID7 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 HOST_NAMES = {"codex": "Codex", "claude_code": "Claude Code"}
 IDLE_OBSERVATION_SECONDS = 66
+# After a server move the owner registers and signs in on the new server while the runner waits.
+MIGRATION_SIGN_IN_SECONDS = 20 * 60
 # Accessible names of the room controls in both UI languages, so the desktop language does not matter.
 LABELS = {
     "input": ("聊天消息", "Message"),
@@ -145,6 +147,7 @@ class Acceptance:
         self.device_record_path = Path(device["record"]) if isinstance(device, dict) else None
         self.use_fresh_device()
         self.canary_name = f"{self.slug}-attachment.txt"
+        self.migration = release_acceptance.SERVER_MIGRATIONS.get(self.version)
         self.room_id = self.config["room"]["roomId"]
         self.catalog_id = self.config["room"]["catalogId"]
         self.api = self.config["controlPlaneUrl"].rstrip("/")
@@ -650,6 +653,9 @@ class Acceptance:
             stream.write(NEWLINE)
 
     def upgrade_baseline(self) -> None:
+        if self.migration:
+            self.migration_baseline()
+            return
         base, profile, record = self.installed()
         version = subprocess.check_output([base[0], "--version"], encoding="utf-8", timeout=15).strip()
         version = version.removeprefix("agent-room ")
@@ -667,6 +673,37 @@ class Acceptance:
             "version": version, "capturedAtUnixSeconds": int(time.time()), "profileId": profile,
             "agentId": identity["agent"]["agentId"], "roomId": identity["roomId"],
             "pendingEventIds": events, "acknowledged": False})
+
+    def bridge_data_dir(self) -> Path:
+        configured = self.config["upgrade"].get("bridgeDataDir")
+        return Path(configured) if configured else Path(os.environ["LOCALAPPDATA"]) / "AgentRoom" / "Bridge"
+
+    def migration_baseline(self) -> None:
+        """A server move carries no identity or deliveries across: record the installed version and the old
+        server's default agent target, which the upgraded desktop must retire instead of reusing."""
+        desktop = Path(self.config["upgrade"]["installDir"]) / "agent-room-desktop.exe"
+        version = subprocess.check_output([str(desktop), "--installer-version"], encoding="utf-8", timeout=15).strip()
+        if version == self.version:
+            raise ReleaseFailure("本机已经是候选版本；升级验收要先装着上一个公开版本。")
+        target = self.bridge_data_dir() / "desktop" / "agent-target.json"
+        self.write_record("upgrade-baseline.json", {
+            "version": version, "capturedAtUnixSeconds": int(time.time()), "serverMigration": self.migration,
+            "agentTargetSha256": digest(target) if target.exists() else None})
+
+    def previous_state_retired(self) -> dict[str, Any]:
+        """The upgraded desktop recorded the new server and moved the old default agent target aside."""
+        data = self.bridge_data_dir()
+        record = data / "deployment.json"
+        if not record.exists() or load(record).get("controlPlaneUrl") != self.config["controlPlaneUrl"]:
+            raise ReleaseFailure("升级后的桌面没有把本机状态记到新服务器名下。")
+        old = load(self.work / "upgrade-baseline.json")["agentTargetSha256"]
+        if old is not None:
+            if not any(digest(path) == old for path in data.glob("retired/*/desktop/agent-target.json")):
+                raise ReleaseFailure("旧服务器的默认 Agent 目标没有被移进 retired。")
+            active = data / "desktop" / "agent-target.json"
+            if active.exists() and digest(active) == old:
+                raise ReleaseFailure("升级后仍在使用旧服务器的默认 Agent 目标。")
+        return {"deploymentRecorded": True, "previousAgentTargetRetired": old is not None}
 
     def upgrade_install(self) -> None:
         install_dir = Path(self.config["upgrade"]["installDir"])
@@ -707,10 +744,38 @@ class Acceptance:
     def upgrade_session(self) -> None:
         self.qa.mkdir(exist_ok=True)
         self.ensure_desktop()
+        if self.migration:
+            self.migrated_session()
+            return
         result = self.page("capture-native-session.js", native_session_js(self.origin, self.api, self.version))
         if not (result.get("loginRestored") and result.get("bridgeReady")):
             raise ReleaseFailure(f"升级后登录或 Bridge 没有恢复：{result}")
         self.write_record("native-session-restoration.json", result)
+
+    def migrated_session(self) -> None:
+        """The upgraded app must hold no login on the new server; then the owner signs in there anew."""
+        initial = self.work / "migrated-session-initial.json"
+        script = migrated_session_js(self.origin, self.api, self.version)
+        if not initial.exists():
+            observed = self.page("observe-migrated-session.js", script)
+            if observed["signedIn"]:
+                raise ReleaseFailure("升级后应用已经登录了新服务器，无法证明旧登录没有被沿用。")
+            self.write_record(initial.name, {**observed, **self.previous_state_retired()})
+        print(f"请在桌面应用里登录新服务器 {self.migration['to']}（新服务器上要重新注册账号）；"
+              "登录且本机 Agent 就绪后自动继续。", flush=True)
+        deadline = time.time() + MIGRATION_SIGN_IN_SECONDS
+        while True:
+            observed = self.page("observe-migrated-session.js", script)
+            if observed["signedIn"] and observed["bridgeReady"]:
+                break
+            if time.time() > deadline:
+                raise ReleaseFailure(f"{MIGRATION_SIGN_IN_SECONDS // 60} 分钟内没有在新服务器上登录并就绪："
+                                     f"{observed}；登录后重跑 upgrade 继续。")
+            time.sleep(10)
+        self.write_record("native-session-restoration.json", {
+            **observed, "previousLoginNotReused": True, "signedInToNewServer": True,
+            "previousAgentTargetRetired": load(initial)["previousAgentTargetRetired"],
+            "initialObservationSha256": digest(initial)})
 
     def upgrade_verify(self) -> None:
         baseline = load(self.work / "upgrade-baseline.json")
@@ -720,6 +785,17 @@ class Acceptance:
                 and installed["version"] == native["currentVersion"] == self.version
                 and native["observedAtUnixSeconds"] >= installed["verifiedAtUnixSeconds"]):
             raise ReleaseFailure("升级记录彼此不一致。")
+        if self.migration:
+            if not (native.get("previousLoginNotReused") and native.get("signedInToNewServer")
+                    and native.get("bridgeReady")):
+                raise ReleaseFailure("迁移后的登录记录不完整。")
+            self.write_record("usability-evidence-upgrade.json", {
+                "previousVersion": baseline["version"], "currentVersion": self.version,
+                "observedAtUnixSeconds": int(time.time()), "installerSha256": installed["installerSha256"],
+                "runtimeHashesMatched": True, "upgradeMode": "server-migration", "serverMigration": self.migration,
+                "previousLoginNotReused": True, "previousAgentTargetRetired": native["previousAgentTargetRetired"],
+                "signedInToNewServer": True, "bridgeReady": True})
+            return
         identity = self.installed_cli("resume")["identity"]
         try:
             if identity["agent"]["agentId"] != baseline["agentId"] or identity["roomId"] != baseline["roomId"]:
@@ -1025,6 +1101,26 @@ def native_session_js(origin: str, api: str, version: str) -> str:
 }""", {"ORIGIN": json.dumps(origin), "API": json.dumps(api), "VERSION": json.dumps(version)})
 
 
+def migrated_session_js(origin: str, api: str, version: str) -> str:
+    """Observe, without failing, whether the upgraded app is signed in to the new server and its Bridge is ready."""
+    return fill("""async page => {
+  return await page.evaluate(async () => {
+    if (location.origin !== @@ORIGIN@@) throw new Error('Expected the installed desktop application');
+    const runtime = await window.__TAURI_INTERNALS__.invoke('desktop_runtime_snapshot');
+    if (runtime.currentVersion !== @@VERSION@@) throw new Error('The installed candidate is not running');
+    const response = await fetch(@@API@@ + '/auth/session', {
+      credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(15000),
+    });
+    const session = response.status === 200 ? await response.json() : null;
+    const signedIn = session !== null && typeof session.principalId === 'string';
+    const bridgePhase = runtime.bridge.lifecycle.phase;
+    const bridgeReady = ['authorized', 'ready'].includes(bridgePhase) && runtime.bridge.authorization === null;
+    return {currentVersion: runtime.currentVersion, signedIn, httpSessionStatus: response.status, bridgePhase,
+      bridgeReady, updatesConfigured: runtime.updatesConfigured, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
+  });
+}""", {"ORIGIN": json.dumps(origin), "API": json.dumps(api), "VERSION": json.dumps(version)})
+
+
 def goto_room_js(target: str) -> str:
     return fill("async page => { await page.goto(@@TARGET@@, {waitUntil: 'domcontentloaded', timeout: 30000}); "
                 "await page.getByRole('textbox', {name: @@INPUT@@}).waitFor({state: 'visible', timeout: 45000}); "
@@ -1174,13 +1270,24 @@ def assemble_reports(run: Acceptance) -> None:
           "升级验收的旧版本不一致。")
     check(upgrade["currentVersion"] == installed["version"] == metadata["version"], "升级验收不是当前候选。")
     check(installed["installerExitCode"] == 0 and installed["runtimeHashesMatched"], "安装器或运行时摘要未通过。")
-    check(upgrade["previousPendingCount"] > 0 and not upgrade["acknowledgedDuringVerification"], "升级前没有待确认投递。")
-    check(all(upgrade[key] for key in ["runtimeHashesMatched", "loginRestored", "identityPreserved",
-                                       "roomPreserved", "pendingDeliveryPreserved"]), "升级后状态未全部保留。")
-    upgraded = report("upgrade", {key: True for key in
-                                  ["installedPreviousVersion", "upgradedToCandidate", "loginRestored",
-                                   "identityPreserved", "pendingDeliveryPreserved"]},
-                      [work / "usability-evidence-upgrade.json"], upgrade["observedAtUnixSeconds"])
+    if run.migration:
+        check(upgrade.get("upgradeMode") == "server-migration" and upgrade.get("serverMigration") == run.migration,
+              "升级记录不是登记的服务器迁移。")
+        check(all(upgrade.get(key) is True for key in ["runtimeHashesMatched", "previousLoginNotReused",
+                                                        "signedInToNewServer", "bridgeReady"]),
+              "服务器迁移后没有丢开旧登录并在新服务器上登录就绪。")
+        upgraded = report("upgrade", {key: True for key in sorted(release_acceptance.MIGRATED_UPGRADE_CHECKS)},
+                          [work / "usability-evidence-upgrade.json"], upgrade["observedAtUnixSeconds"],
+                          upgradeMode="server-migration", serverMigration=run.migration)
+    else:
+        check(upgrade["previousPendingCount"] > 0 and not upgrade["acknowledgedDuringVerification"],
+              "升级前没有待确认投递。")
+        check(all(upgrade[key] for key in ["runtimeHashesMatched", "loginRestored", "identityPreserved",
+                                           "roomPreserved", "pendingDeliveryPreserved"]), "升级后状态未全部保留。")
+        upgraded = report("upgrade", {key: True for key in
+                                      ["installedPreviousVersion", "upgradedToCandidate", "loginRestored",
+                                       "identityPreserved", "pendingDeliveryPreserved"]},
+                          [work / "usability-evidence-upgrade.json"], upgrade["observedAtUnixSeconds"])
     release_acceptance.assemble(run.candidate, [first, upgraded, continuous])
     release_acceptance.verify(run.candidate, metadata["version"], metadata["revision"])
     # release_flow looks for the index next to the reports as well as in the candidate directory.

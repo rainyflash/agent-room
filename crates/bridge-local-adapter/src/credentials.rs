@@ -7,6 +7,12 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 pub const IPC_INSTALLATION_ID_ACCOUNT: &str = "bridge-ipc-installation-id-v1";
 pub const IPC_SHARED_SECRET_ACCOUNT: &str = "bridge-ipc-shared-secret-v1";
+pub const DEVICE_SESSION_ACCOUNT: &str = "device-session-v1";
+pub const AGENT_RUNTIME_SESSION_ACCOUNT: &str = "agent-runtime-session-v1";
+/// 只有签发它们的服务器才接受的凭据：设备会话和默认 Agent 的运行会话。
+/// 签名种子和本机存储密钥与服务器无关，换服务器时保留。
+pub const SERVER_BOUND_ACCOUNTS: [&str; 2] =
+    [DEVICE_SESSION_ACCOUNT, AGENT_RUNTIME_SESSION_ACCOUNT];
 const IPC_SHARED_SECRET_BYTES: usize = 32;
 
 pub trait IpcCredentialSource: Send + Sync {
