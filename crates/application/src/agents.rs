@@ -4,7 +4,7 @@ use agent_room_domain::{
     DomainError,
     agents::{
         AdapterBinding, AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
-        AgentMatrixDeviceId, AgentRole, AgentVisibility, host_agent_slug,
+        AgentMatrixDeviceId, AgentRole, AgentStatus, AgentVisibility, host_agent_slug,
     },
     ids::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
@@ -22,7 +22,8 @@ use crate::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceRegistration, AgentInstanceRegistrationTransaction, AgentMembershipChange,
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
-        Clock, IdentifierFactory, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
+        AgentRetirementOutcome, AgentRetirementTransaction, Clock, IdentifierFactory,
+        MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
         MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
         MatrixDeviceId, MatrixFailureKind, MatrixSession, MatrixUserId, OutboxMessage, PortFuture,
         RegisteredAgent, SecretFactory, StoredAgentInstanceRegistration,
@@ -116,12 +117,24 @@ pub struct ChangeAgentMembership {
     pub role: Option<AgentRole>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteAgent {
+    pub actor: AuthenticatedPrincipal,
+    pub agent_id: AgentId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentManagementFailureKind {
     InvalidRequest,
     Forbidden,
     NotFound,
     Conflict,
+    /// 账户的默认 Agent 用账户标识建立并按需重建，不能删除。
+    DefaultAgent,
+    /// 还有其他 Owner 时不替他们删除。
+    SharedOwnership,
+    /// 仍有未撤销的运行实例，先撤销实例再删除。
+    ActiveInstances,
     DependencyUnavailable,
     Internal,
 }
@@ -188,6 +201,8 @@ pub trait AgentManagementUseCases: Send + Sync {
         &self,
         request: ChangeAgentMembership,
     ) -> PortFuture<'_, AgentManagementResult<()>>;
+
+    fn delete_agent(&self, request: DeleteAgent) -> PortFuture<'_, AgentManagementResult<()>>;
 }
 
 pub struct AgentManagementService {
@@ -199,6 +214,7 @@ pub struct AgentManagementService {
     managed_instances: Arc<dyn AgentInstanceManagementRepository>,
     matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
     matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
+    retirements: Arc<dyn AgentRetirementTransaction>,
     secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
@@ -213,6 +229,7 @@ pub struct AgentManagementDependencies {
     pub managed_instances: Arc<dyn AgentInstanceManagementRepository>,
     pub matrix_identities: Arc<dyn MatrixAgentIdentityProvisioner>,
     pub matrix_sessions: Arc<dyn MatrixAgentDeviceSessionRotator>,
+    pub retirements: Arc<dyn AgentRetirementTransaction>,
     pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
@@ -229,6 +246,7 @@ impl AgentManagementService {
             managed_instances: dependencies.managed_instances,
             matrix_identities: dependencies.matrix_identities,
             matrix_sessions: dependencies.matrix_sessions,
+            retirements: dependencies.retirements,
             secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -329,10 +347,15 @@ impl AgentManagementService {
     ) -> AgentManagementResult<Vec<RegisteredAgent>> {
         let operation = "agent.list";
         ensure_active_principal(&request.actor, self.clock.now(), operation)?;
-        self.agents
+        let agents = self
+            .agents
             .list_for_principal(request.actor.principal_id)
             .await
-            .map_err(|error| map_repository_failure(operation, &error))
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        Ok(agents
+            .into_iter()
+            .filter(|agent| agent.agent.status() != AgentStatus::Retired)
+            .collect())
     }
 
     async fn ensure_default_agent_internal(
@@ -365,7 +388,10 @@ impl AgentManagementService {
             .list_for_principal(principal_id)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
-        if let Some(agent) = existing.into_iter().next() {
+        if let Some(agent) = existing
+            .into_iter()
+            .find(|agent| agent.agent.status() != AgentStatus::Retired)
+        {
             return Ok(agent);
         }
 
@@ -384,6 +410,37 @@ impl AgentManagementService {
             AgentId::from_uuid(principal_uuid),
         )
         .await
+    }
+
+    async fn delete_agent_internal(&self, request: DeleteAgent) -> AgentManagementResult<()> {
+        let operation = "agent.delete";
+        let now = self.clock.now();
+        ensure_active_principal(&request.actor, now, operation)?;
+        let principal_id = request.actor.principal_id;
+        if request.agent_id.as_uuid() == principal_id.as_uuid() {
+            return Err(failure(operation, AgentManagementFailureKind::DefaultAgent));
+        }
+        let event = agent_retired_event(
+            self.identifiers.as_ref(),
+            request.agent_id,
+            principal_id,
+            now,
+        )?;
+        let outcome = self
+            .retirements
+            .retire(principal_id, request.agent_id, now, &event)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        let kind = match outcome {
+            AgentRetirementOutcome::Retired | AgentRetirementOutcome::AlreadyRetired => {
+                return Ok(());
+            }
+            AgentRetirementOutcome::NotFound => AgentManagementFailureKind::NotFound,
+            AgentRetirementOutcome::NotOwner => AgentManagementFailureKind::Forbidden,
+            AgentRetirementOutcome::NotSoleOwner => AgentManagementFailureKind::SharedOwnership,
+            AgentRetirementOutcome::ActiveInstances => AgentManagementFailureKind::ActiveInstances,
+        };
+        Err(failure(operation, kind))
     }
 
     async fn register_instance_internal(
@@ -406,6 +463,7 @@ impl AgentManagementService {
             .find_registration(request.agent_id)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?
+            .filter(|agent| agent.agent.status() != AgentStatus::Retired)
             .ok_or_else(|| failure(operation, AgentManagementFailureKind::NotFound))?;
 
         let fingerprint = self
@@ -599,6 +657,10 @@ impl AgentManagementUseCases for AgentManagementService {
         request: ChangeAgentMembership,
     ) -> PortFuture<'_, AgentManagementResult<()>> {
         Box::pin(self.change_membership_internal(request))
+    }
+
+    fn delete_agent(&self, request: DeleteAgent) -> PortFuture<'_, AgentManagementResult<()>> {
+        Box::pin(self.delete_agent_internal(request))
     }
 }
 
@@ -807,6 +869,28 @@ fn agent_instance_registered_event(
         occurred_at,
     )
     .map_err(|_| internal_failure("agent_instance.register"))
+}
+
+fn agent_retired_event(
+    identifiers: &dyn IdentifierFactory,
+    agent_id: AgentId,
+    principal_id: PrincipalId,
+    occurred_at: agent_room_domain::time::UtcMillis,
+) -> AgentManagementResult<OutboxMessage> {
+    let mut payload = Map::new();
+    payload.insert(
+        "principal_id".to_owned(),
+        Value::String(principal_id.to_string()),
+    );
+    OutboxMessage::new(
+        identifiers.outbox_event_id(),
+        "agent".to_owned(),
+        agent_id.as_uuid(),
+        "agent.retired.v1".to_owned(),
+        payload,
+        occurred_at,
+    )
+    .map_err(|_| internal_failure("agent.delete"))
 }
 
 fn agent_membership_changed_event(

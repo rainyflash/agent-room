@@ -66,6 +66,30 @@ export class ControlPlaneAgentDirectoryClient implements AgentDirectoryGateway {
       globalThis.clearTimeout(timeout);
     }
   }
+
+  async deleteAgent(agentId: string): Promise<Result<void, AgentDirectoryFailure>> {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => {
+      controller.abort();
+    }, this.#timeoutMs);
+    try {
+      const response = await this.#fetch(
+        controlPlaneEndpoint(this.#baseUrl, `/agents/${encodeURIComponent(agentId)}`),
+        {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+          method: 'DELETE',
+          signal: controller.signal,
+        },
+      );
+      return response.ok ? ok(undefined) : err(await readFailure(response));
+    } catch {
+      return err({ code: 'workspace.unreachable', retryable: true });
+    } finally {
+      globalThis.clearTimeout(timeout);
+    }
+  }
 }
 
 async function readFailure(response: Response): Promise<AgentDirectoryFailure> {

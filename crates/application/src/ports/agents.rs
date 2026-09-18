@@ -168,6 +168,29 @@ pub trait AgentCreationWorkflow: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<Agent>>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRetirementOutcome {
+    Retired,
+    AlreadyRetired,
+    NotFound,
+    NotOwner,
+    NotSoleOwner,
+    ActiveInstances,
+}
+
+/// 由唯一 Owner 删除 Agent：同一事务里撤销仍有效的自动发言授权，并把 Agent 标记为退役。
+///
+/// 仍有未撤销的运行实例时不删除：实例撤销还要清理 Matrix 设备，由实例管理流程单独完成。
+pub trait AgentRetirementTransaction: Send + Sync {
+    fn retire<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
+        retired_at: UtcMillis,
+        event: &'a OutboxMessage,
+    ) -> PortFuture<'a, RepositoryResult<AgentRetirementOutcome>>;
+}
+
 pub trait AgentMembershipRepository: Send + Sync {
     fn find_memberships(
         &self,

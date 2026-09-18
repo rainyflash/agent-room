@@ -59,6 +59,26 @@ describe('ControlPlaneAgentDirectoryClient', () => {
     });
   });
 
+  it('删除 Agent 发送带会话的 DELETE，并保留服务端给出的原因', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(
+        Response.json({ code: 'agent.instances_active', retryable: false }, { status: 409 }),
+      );
+    const client = createClient(fetch);
+
+    expect(await client.deleteAgent(AGENT.agentId)).toEqual({ ok: true, value: undefined });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`https://control.agent-room.test/agents/${AGENT.agentId}`),
+      expect.objectContaining({ credentials: 'include', method: 'DELETE' }),
+    );
+    expect(await client.deleteAgent(AGENT.agentId)).toEqual({
+      error: { code: 'agent.instances_active', retryable: false },
+      ok: false,
+    });
+  });
+
   it('把网络异常映射为可重试失败', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new TypeError('offline'));
 

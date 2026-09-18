@@ -1,11 +1,28 @@
-import { Cpu } from 'lucide-react';
+import { Button } from '@agent-room/ui-system';
+import { Cpu, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { formatWorkspaceTime } from '@/features/workspace/ui/workspace-format';
 
-export function AgentInspector({ agent }: { readonly agent: FleetAgent | null }) {
+export type AgentDeletionControl = {
+  readonly canDelete: (agent: FleetAgent) => boolean;
+  readonly pendingAgentId: string | null;
+  readonly failure: { readonly agentId: string; readonly code: string } | null;
+  readonly recentlyAuthenticated: boolean;
+  readonly onDelete: (agent: FleetAgent) => void;
+  readonly onReauthenticate: () => void;
+};
+
+export function AgentInspector({
+  agent,
+  deletion,
+}: {
+  readonly agent: FleetAgent | null;
+  readonly deletion?: AgentDeletionControl | undefined;
+}) {
   const { i18n, t } = useTranslation();
   if (agent === null) {
     return (
@@ -81,6 +98,87 @@ export function AgentInspector({ agent }: { readonly agent: FleetAgent | null })
           ))}
         </ol>
       )}
+      {deletion?.canDelete(agent) ? (
+        <AgentDeletion agent={agent} deletion={deletion} key={agent.agent.agentId} />
+      ) : null}
     </aside>
+  );
+}
+
+const REAUTHENTICATION_REQUIRED = 'authentication.reauthentication_required';
+
+function AgentDeletion({
+  agent,
+  deletion,
+}: {
+  readonly agent: FleetAgent;
+  readonly deletion: AgentDeletionControl;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const pending = deletion.pendingAgentId === agent.agent.agentId;
+  const failure = deletion.failure?.agentId === agent.agent.agentId ? deletion.failure.code : null;
+  const needsSignIn = !deletion.recentlyAuthenticated || failure === REAUTHENTICATION_REQUIRED;
+  if (!confirming) {
+    return (
+      <section className="workspace-agent-inspector__delete">
+        <Button
+          icon={<Trash2 aria-hidden="true" />}
+          onClick={() => {
+            setConfirming(true);
+          }}
+          size="compact"
+          tone="ghost"
+        >
+          {t('workspace.inspector.delete')}
+        </Button>
+      </section>
+    );
+  }
+  return (
+    <section
+      aria-label={t('workspace.inspector.delete')}
+      className="workspace-agent-inspector__delete"
+      data-confirming="true"
+    >
+      <strong>{t('workspace.inspector.deleteTitle', { name: agent.agent.displayName })}</strong>
+      <p>{t('workspace.inspector.deleteBody')}</p>
+      {needsSignIn ? <p>{t('workspace.inspector.deleteSignIn')}</p> : null}
+      <div className="workspace-agent-inspector__delete-actions">
+        {needsSignIn ? (
+          <Button onClick={deletion.onReauthenticate} size="compact" tone="primary">
+            {t('workspace.inspector.signInAgain')}
+          </Button>
+        ) : (
+          <Button
+            disabled={pending}
+            onClick={() => {
+              deletion.onDelete(agent);
+            }}
+            size="compact"
+            tone="alert"
+          >
+            {t(pending ? 'workspace.inspector.deleting' : 'workspace.inspector.deleteConfirm')}
+          </Button>
+        )}
+        <Button
+          disabled={pending}
+          onClick={() => {
+            setConfirming(false);
+          }}
+          size="compact"
+          tone="quiet"
+        >
+          {t('workspace.inspector.deleteCancel')}
+        </Button>
+      </div>
+      {failure !== null && failure !== REAUTHENTICATION_REQUIRED ? (
+        <p role="alert">
+          {failure === 'agent.shared_ownership'
+            ? t('workspace.inspector.deleteShared')
+            : t('workspace.inspector.deleteFailed', { code: failure })}
+        </p>
+      ) : null}
+    </section>
   );
 }

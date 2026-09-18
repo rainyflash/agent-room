@@ -6,8 +6,8 @@ use agent_room_application::{
     },
     agents::{
         AgentManagementUseCases, ChangeAgentMembership, CreateAgent, CreateHostAgentForDevice,
-        EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance,
-        RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
+        DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
+        RegisterAgentInstance, RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
         RotatedAgentInstanceMatrixSession,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
@@ -29,7 +29,7 @@ use axum::{
     extract::{DefaultBodyLimit, Extension, OriginalUri, Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use axum_extra::extract::CookieJar;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -92,6 +92,7 @@ impl AgentHttpState {
 pub(crate) fn router(state: AgentHttpState) -> Router {
     Router::new()
         .route("/agents", get(list_agents).post(create_agent))
+        .route("/agents/{agent_id}", delete(delete_agent))
         .route("/onboarding/default-agent", put(ensure_default_agent))
         .route(
             DEVICE_DEFAULT_AGENT_TARGET,
@@ -455,6 +456,40 @@ async fn revoke_membership(
         None,
     )
     .await
+}
+
+async fn delete_agent(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(agent_id): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    if !origin_matches(&headers, &state.trusted_origins) {
+        return no_store(invalid_origin(correlation_id).into_response());
+    }
+    let Ok(agent_id) = parse_uuid_v7(&agent_id).map(AgentId::from_uuid) else {
+        return no_store(invalid_resource_id(correlation_id).into_response());
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::RecentAuthentication,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .agents
+        .delete_agent(DeleteAgent { actor, agent_id })
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
 }
 
 async fn change_membership(
@@ -861,9 +896,9 @@ mod tests {
         },
         agents::{
             AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
-            CreateHostAgentForDevice, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
-            RegisterAgentInstance, RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
-            RotatedAgentInstanceMatrixSession,
+            CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
+            ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+            RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
         },
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -923,6 +958,7 @@ mod tests {
         registration: Mutex<Option<RegisterAgentInstance>>,
         rotation: Mutex<Option<RotateAgentInstanceMatrixSession>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
+        deletions: Mutex<Vec<DeleteAgent>>,
     }
 
     impl AgentManagementUseCases for FakeAgents {
@@ -993,6 +1029,14 @@ mod tests {
             self.membership_changes
                 .lock()
                 .expect("Agent 成员变更记录锁可用")
+                .push(request);
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_agent(&self, request: DeleteAgent) -> PortFuture<'_, AgentManagementResult<()>> {
+            self.deletions
+                .lock()
+                .expect("Agent 删除记录锁可用")
                 .push(request);
             Box::pin(async { Ok(()) })
         }
@@ -1559,6 +1603,56 @@ mod tests {
         assert_eq!(changes[0].agent_id, agent_id());
         assert_eq!(changes[0].principal_id.to_string(), TARGET_PRINCIPAL_UUID);
         assert_eq!(changes[0].role, Some(AgentRole::Operator));
+        assert_eq!(
+            *authentication
+                .requirements
+                .lock()
+                .expect("认证要求记录锁可用"),
+            vec![AuthenticationRequirement::RecentAuthentication]
+        );
+    }
+
+    #[tokio::test]
+    async fn 删除_agent_强制最近认证且拒绝跨站来源() {
+        let agents = Arc::new(FakeAgents::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let app = test_router(
+            agents.clone(),
+            authentication.clone(),
+            Arc::new(FakeDevices::default()),
+        );
+        let request = |origin: &str| {
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/agents/{AGENT_UUID}"))
+                .header(header::ORIGIN, origin)
+                .header(header::COOKIE, SESSION_COOKIE)
+                .body(Body::empty())
+                .expect("Agent 删除请求有效")
+        };
+
+        let rejected = app
+            .clone()
+            .oneshot(request("https://attacker.example"))
+            .await
+            .expect("Agent 删除路由可调用");
+        assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+        assert!(
+            agents
+                .deletions
+                .lock()
+                .expect("Agent 删除记录锁可用")
+                .is_empty()
+        );
+
+        let response = app
+            .oneshot(request(FRONTEND_ORIGIN))
+            .await
+            .expect("Agent 删除路由可调用");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let deletions = agents.deletions.lock().expect("Agent 删除记录锁可用");
+        assert_eq!(deletions.len(), 1);
+        assert_eq!(deletions[0].agent_id, agent_id());
         assert_eq!(
             *authentication
                 .requirements

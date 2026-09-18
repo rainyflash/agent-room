@@ -34,4 +34,6 @@ export type AgentDirectoryFailure = {
 
 export type AgentDirectoryGateway = {
   listOwnedAgents(): Promise<Result<readonly OwnedAgent[], AgentDirectoryFailure>>;
+  /** Retire an agent this account solely owns; its instances must already be revoked. */
+  deleteAgent(agentId: string): Promise<Result<void, AgentDirectoryFailure>>;
 };
