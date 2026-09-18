@@ -9,7 +9,7 @@ export const moderationResources = {
     'moderation.reason.other': 'Other',
     'moderation.report.action': 'Report',
     'moderation.report.title': 'Report this event',
-    'moderation.report.eyebrow': 'MINIMUM EVIDENCE',
+    'moderation.report.eyebrow': 'Minimal evidence',
     'moderation.report.detail':
       'The event identifier is attached automatically. No decrypted body is read or uploaded.',
     'moderation.report.reason': 'Reason',
@@ -28,7 +28,7 @@ export const moderationResources = {
     'moderation.report.failure': 'The report was not created: {{code}}',
     'moderation.report.retryAfter': 'Try again in {{count}} seconds.',
     'moderation.governance.launcher': 'Governance',
-    'moderation.governance.eyebrow': 'ROOM AUTHORITY',
+    'moderation.governance.eyebrow': 'Room moderation',
     'moderation.governance.title': 'Room governance',
     'moderation.governance.detail':
       'Review submitted evidence, apply reversible Matrix controls, and inspect body-free audit facts.',
@@ -94,7 +94,7 @@ export const moderationResources = {
     'moderation.reason.other': '其他',
     'moderation.report.action': '举报',
     'moderation.report.title': '举报此事件',
-    'moderation.report.eyebrow': '最小证据',
+    'moderation.report.eyebrow': '仅提交必要信息',
     'moderation.report.detail': '系统只自动附带事件标识，不读取或上传解密后的完整正文。',
     'moderation.report.reason': '原因',
     'moderation.report.description': '给审核者的背景说明',
@@ -112,7 +112,7 @@ export const moderationResources = {
     'moderation.report.failure': '举报未创建：{{code}}',
     'moderation.report.retryAfter': '{{count}} 秒后可重试。',
     'moderation.governance.launcher': '治理',
-    'moderation.governance.eyebrow': '房间权限',
+    'moderation.governance.eyebrow': '房间管理',
     'moderation.governance.title': '房间治理',
     'moderation.governance.detail':
       '审核显式证据、执行可撤销 Matrix 控制，并查看不含正文的审计事实。',

@@ -6,7 +6,12 @@ import type { ReactNode } from 'react';
 
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { LobbyAgent } from '@/features/lobby/domain/lobby';
-import { agentAttendance, agentLifecycle, agentRosterGroup } from '../domain/agent-attendance';
+import {
+  agentAttendance,
+  agentLifecycle,
+  agentRosterGroup,
+  type AgentRosterGroup,
+} from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
 import './agent-roster.css';
 import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
@@ -22,6 +27,22 @@ export type AgentInspectorProps = {
   readonly onMessage?: (agentId: string) => void;
   readonly pendingAction?: 'block' | 'message' | null;
 };
+
+/** 人物详情里只说离线多久；「离线」两个字上面的状态已经说过了。 */
+function offlineDurationKey(group: AgentRosterGroup) {
+  switch (group) {
+    case 'offline_hour':
+      return 'agentState.offlineFor.hour';
+    case 'offline_today':
+      return 'agentState.offlineFor.today';
+    case 'offline_week':
+      return 'agentState.offlineFor.week';
+    case 'offline_older':
+      return 'agentState.offlineFor.older';
+    default:
+      return 'agentState.offline';
+  }
+}
 
 export function AgentInspector({
   hasBackgroundReception = false,
@@ -86,7 +107,7 @@ export function AgentInspector({
           aria-label={t('studio.reception')}
           data-state={reception}
         >
-          <strong>{t(`agentState.${reception}`)}</strong>
+          <strong>{t('studio.reception')}</strong>
           <p>
             {t(
               hasBackgroundReception && lifecycle.reception !== 'waiting'
@@ -96,16 +117,19 @@ export function AgentInspector({
           </p>
         </section>
         <dl className="agent-lifecycle-facts">
-          <div>
-            <dt>
-              {t(lifecycle.connection === 'online' ? 'agentState.work' : 'agentState.lastWork')}
-            </dt>
-            <dd>{t(`lobby.status.${agent.reportedStatus ?? agent.status}`)}</dd>
-          </div>
+          {/* 离线且没有报告过工作状态时，「最后工作状态：离线」只是把上面的状态再说一遍。 */}
+          {(agent.reportedStatus ?? agent.status) === 'offline' ? null : (
+            <div>
+              <dt>
+                {t(lifecycle.connection === 'online' ? 'agentState.work' : 'agentState.lastWork')}
+              </dt>
+              <dd>{t(`lobby.status.${agent.reportedStatus ?? agent.status}`)}</dd>
+            </div>
+          )}
           {lifecycle.connection === 'offline' ? (
             <div>
               <dt>{t('agentState.offlineTime')}</dt>
-              <dd>{t(`agentState.group.${agentRosterGroup(agent, observedAtUnixMs)}`)}</dd>
+              <dd>{t(offlineDurationKey(agentRosterGroup(agent, observedAtUnixMs)))}</dd>
             </div>
           ) : null}
           {lifecycle.archiveReason !== null ? (

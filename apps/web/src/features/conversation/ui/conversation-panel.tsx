@@ -183,14 +183,19 @@ export function ConversationPanel({
         </span>
         <span className="conversation-panel__room">{roomName}</span>
       </div>
-      <ConversationSearch
-        messages={timeline}
-        filter={filter}
-        onChange={setFilter}
-        count={visibleTimeline.length}
-      />
+      {/* 还没有任何消息时，搜索框和「已加载 0 条」只是噪音。 */}
+      {timeline.length === 0 ? null : (
+        <ConversationSearch
+          messages={timeline}
+          filter={filter}
+          onChange={setFilter}
+          count={visibleTimeline.length}
+        />
+      )}
       <div className="conversation-history-tools">
-        <span>{t('history.scope', { count: timeline.length })}</span>
+        {timeline.length === 0 ? null : (
+          <span>{t('history.scope', { count: timeline.length })}</span>
+        )}
         {history?.canLoadMore && onLoadOlder ? (
           <button
             type="button"

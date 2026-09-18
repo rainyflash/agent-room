@@ -112,7 +112,7 @@ export const workspaceResources = {
     'workspace.inspector.noInstances': '这个身份还没有登记任何 Runtime 实例。',
     'workspace.loading': '正在同步账户舰队',
     'workspace.failed.title': '无法加载账户舰队',
-    'workspace.failed.detail': '云端数据仍是权威事实。请重试失败边界，不要从本机状态猜测。',
+    'workspace.failed.detail': '暂时读不到最新的账户数据。请检查网络后重试。',
     'workspace.failed.retry': '重试',
     'workspace.diagnostic.title': '连接诊断',
     'workspace.diagnostic.healthySummary': '所有已观测服务层均在线。',
