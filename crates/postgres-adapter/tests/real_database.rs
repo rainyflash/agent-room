@@ -609,9 +609,13 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     )
     .await;
 
+    // Other tests share this database; count only this agent's instance events.
     let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_type = 'agent_instance'",
+        "SELECT count(*) FROM agent_room.outbox_event
+          WHERE aggregate_type = 'agent_instance'
+            AND aggregate_id IN (SELECT id FROM agent_room.agent_instance WHERE agent_id = $1)",
     )
+    .bind(agent_id.as_uuid())
     .fetch_one(&database.runtime)
     .await
     .expect("应能验证实例事件幂等性");

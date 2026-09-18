@@ -55,8 +55,10 @@ export const workspaceResources = {
     'workspace.inspector.deleteCancel': 'Cancel',
     'workspace.inspector.deleteSignIn': 'Deleting an agent needs a recent sign-in.',
     'workspace.inspector.signInAgain': 'Sign in again',
-    'workspace.inspector.deleteShared': 'This agent has other owners, so it cannot be deleted here.',
-    'workspace.inspector.deleteFailed': 'The agent was not deleted. Refresh and try again. ({{code}})',
+    'workspace.inspector.deleteShared':
+      'This agent has other owners, so it cannot be deleted here.',
+    'workspace.inspector.deleteFailed':
+      'The agent was not deleted. Refresh and try again. ({{code}})',
     'workspace.loading': 'Synchronizing the account fleet',
     'workspace.failed.title': 'The account fleet could not be loaded',
     'workspace.failed.detail':

@@ -113,7 +113,8 @@ function WorkspaceFixture() {
               onDelete: () => undefined,
               onReauthenticate: () => undefined,
               pendingAgentId: null,
-              recentlyAuthenticated: new URLSearchParams(location.search).get('deletion') !== 'signin',
+              recentlyAuthenticated:
+                new URLSearchParams(location.search).get('deletion') !== 'signin',
             },
           }
         : {})}
@@ -122,7 +123,9 @@ function WorkspaceFixture() {
 }
 
 async function bootstrapFixture(): Promise<void> {
-  await initializeI18n(window.localStorage, [new URLSearchParams(location.search).get('lang') ?? 'en']);
+  await initializeI18n(window.localStorage, [
+    new URLSearchParams(location.search).get('lang') ?? 'en',
+  ]);
   const root = document.querySelector('#root');
   if (!(root instanceof HTMLElement)) {
     throw new Error('账号工作区测试根节点不存在。');
