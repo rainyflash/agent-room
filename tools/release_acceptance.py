@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
+import subprocess
 import time
 import json
 import shutil
 import tempfile
+from typing import Callable
 
 try:
     from .release import ReleaseFailure, load_object, resolve_local_file, sha256_file
@@ -25,9 +27,55 @@ SCENARIOS = {
     "upgrade": {"installedPreviousVersion", "upgradedToCandidate", "loginRestored", "identityPreserved", "pendingDeliveryPreserved"},
     "continuous-reception": {"realHostInvoked", "twoIncomingMessages", "twoRepliesVerified", "idleDidNotInvokeHost", "manualTakeoverStoppedReceiver", "resumeKeptCursor"},
 }
+# A release may run first-device on the long-lived acceptance device instead of a fresh profile. It then
+# proves the candidate Bridge restores that device's saved authorization, and is only accepted while the
+# device's last fresh authorization is recent and no login code has changed since.
+REUSED_DEVICE_CHECKS = {"authorizationRestored", "bridgeConnected", "agentJoined", "replyVerified"}
+FRESH_AUTHORIZATION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+LOGIN_PATHS = (
+    "apps/bridge/src/config.rs",
+    "apps/control-plane/src/features/authentication.rs",
+    "apps/control-plane/src/features/devices.rs",
+    "crates/application/src/devices.rs",
+    "crates/application/src/ports/identity.rs",
+    "crates/bridge-core/src/authorization.rs",
+    "crates/identity-adapter/",
+    "crates/postgres-adapter/src/devices.rs",
+    "infra/oidc/",
+    "infra/production/keycloak-registration-reconcile.py",
+    "tools/prodops/render.py",
+)
+LoginChanges = Callable[[str, str], list[str]]
 
 
-def verify(root: Path, version: str, revision: str, *, now: int | None = None) -> None:
+def login_changes(base: str, head: str) -> list[str]:
+    """Login-related paths changed between two revisions; fails closed when history is unavailable."""
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(["git", "-C", str(root), "diff", "--name-only", base, head],
+                            capture_output=True, text=True, encoding="utf-8", check=False)
+    if result.returncode:
+        raise ReleaseFailure("无法比对上次新设备授权之后的代码变化。")
+    return [path for path in result.stdout.splitlines() if path.startswith(LOGIN_PATHS)]
+
+
+def reuse_blocker(fresh: object, revision: str, now: int, changes: LoginChanges = login_changes) -> str | None:
+    """Why this revision may not reuse the long-lived acceptance device, or None when it may."""
+    if (not isinstance(fresh, dict) or not isinstance(fresh.get("version"), str)
+            or not re.fullmatch(r"[0-9a-f]{40}", str(fresh.get("revision")))):
+        return "长期验收设备缺少有效的新设备授权记录。"
+    captured = fresh.get("capturedAtUnixSeconds")
+    if not isinstance(captured, int) or isinstance(captured, bool) or captured > now:
+        return "长期验收设备的授权时间无效。"
+    if now - captured > FRESH_AUTHORIZATION_MAX_AGE_SECONDS:
+        return "上次新设备授权已超过 30 天。"
+    changed = changes(fresh["revision"], revision)
+    if changed:
+        return "上次新设备授权之后登录相关代码有变化：" + "、".join(changed[:5])
+    return None
+
+
+def verify(root: Path, version: str, revision: str, *, now: int | None = None,
+           changes: LoginChanges = login_changes) -> None:
     index = load_object(root / "release-usability-acceptance.json", "易用性验收清单")
     metadata = load_object(root / "release-metadata.json", "候选元数据")
     if index.get("schemaVersion") != 1 or index.get("version") != version or index.get("revision") != revision:
@@ -59,6 +107,17 @@ def verify(root: Path, version: str, revision: str, *, now: int | None = None) -
         if not isinstance(captured, int) or isinstance(captured, bool) or not isinstance(published, int) or not published <= captured <= current + 60:
             raise ReleaseFailure(f"{scenario} 报告时间不在候选验收期内。")
         checks = report.get("checks")
+        if scenario == "first-device":
+            mode = report.get("deviceMode", "fresh")
+            if mode == "reused":
+                blocker = reuse_blocker(report.get("freshAuthorization"), revision, current, changes)
+                if blocker is not None:
+                    raise ReleaseFailure(f"first-device 不能复用长期验收设备：{blocker}")
+                if isinstance(checks, dict) and "authorizationCompleted" in checks:
+                    raise ReleaseFailure("复用长期验收设备时不能声称本次完成了设备授权。")
+                required = REUSED_DEVICE_CHECKS
+            elif mode != "fresh":
+                raise ReleaseFailure("first-device 设备模式无效。")
         if not isinstance(checks, dict) or not required <= set(checks) or any(checks.get(key) is not True for key in required):
             raise ReleaseFailure(f"{scenario} 缺少已通过的必需检查。")
         if report.get("fixture") is not False:
