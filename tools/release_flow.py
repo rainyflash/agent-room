@@ -107,6 +107,15 @@ class GitHub:
         value = json.loads(command(["gh", "api", f"repos/{self.repository}/compare/{revision}...main"]))
         return isinstance(value, dict) and value.get("status") in {"ahead", "identical"}
 
+    def workflow_changes_since(self, revision: str) -> list[str]:
+        """Workflow files main changed after the revision; a full page means the list may be incomplete."""
+        value = json.loads(command(["gh", "api", f"repos/{self.repository}/compare/{revision}...main"]))
+        files = value.get("files") if isinstance(value, dict) else None
+        if not isinstance(files, list) or len(files) >= 300:
+            raise RuntimeError("无法完整核对候选提交之后 main 的改动。")
+        return [str(item.get("filename")) for item in files
+                if isinstance(item, dict) and str(item.get("filename", "")).startswith(".github/workflows/")]
+
     def branch_revision(self, branch: str) -> str | None:
         refs = json.loads(command(["gh", "api", f"repos/{self.repository}/git/matching-refs/heads/{branch}"]))
         if not isinstance(refs, list):
@@ -238,6 +247,12 @@ class ReleaseFlow:
         revision = self.value("revision")
         if not self.github.on_main(revision):
             raise RuntimeError("候选提交不在受保护的 main 上，不能发布。")
+        # GitHub refuses tokens without the workflow scope (GITHUB_TOKEN included) to create a release
+        # tag on a commit whose workflow files differ from the default branch (Alpha 44).
+        changed = self.github.workflow_changes_since(revision)
+        if changed:
+            raise RuntimeError("main 在候选提交之后改了工作流文件（" + "、".join(changed[:3]) + "），"
+                               "GitHub 会拒绝在候选提交上创建发行标签；先撤回这些改动，公开后再恢复。")
         current = self.github.branch_revision(branch)
         if current is None:
             self.github.create_branch(branch, revision)

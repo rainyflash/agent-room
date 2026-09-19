@@ -48,6 +48,7 @@ class ReleaseFlowTests(unittest.TestCase):
     def test_publication_runs_from_a_protected_branch_pinned_to_the_candidate(self):
         self.github.json.return_value = []
         self.github.on_main.return_value = True
+        self.github.workflow_changes_since.return_value = []
         self.github.branch_revision.return_value = None
         self.github.branch_protected.return_value = True
         with self.assertRaises(flow.Waiting) as waiting:
@@ -74,11 +75,14 @@ class ReleaseFlowTests(unittest.TestCase):
         self.github.json.return_value = []
         cases = [
             ({"on_main": False, "branch_revision": None, "branch_protected": True}, "不在受保护的 main"),
+            ({"on_main": True, "workflow_changes_since": [".github/workflows/ci.yml"], "branch_revision": None,
+              "branch_protected": True}, "工作流文件"),
             ({"on_main": True, "branch_revision": "b" * 40, "branch_protected": True}, "不会移动"),
             ({"on_main": True, "branch_revision": self.state["revision"], "branch_protected": False}, "未受保护"),
         ]
         for answers, message in cases:
             with self.subTest(message=message):
+                self.github.workflow_changes_since.return_value = []
                 for name, value in answers.items():
                     getattr(self.github, name).return_value = value
                 with self.assertRaisesRegex(RuntimeError, message):
