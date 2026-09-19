@@ -110,8 +110,14 @@ class Deployment:
             self.runtime.verify_backup(backup.backup_id)
             if configuration != self.configuration_digest():
                 raise RuntimeError("备份准备改变了现有配置；已保留备份，停止部署以核对差异。")
+            # The scheduled backup re-renders the deployment with whatever source is checked out, so a
+            # candidate whose renderer changed would change the configuration mid-deploy (Alpha 44).
+            # Render with the candidate's code now, after the backup kept the previous configuration.
+            self.runtime.prepare(generate_signing_key=True)
+            rendered = self.configuration_digest()
             self.state = {"revision": self.args.revision, "manifest": self.args.manifest_sha256,
-                          "images": self.images, "configurationSha256": self.configuration_digest(),
+                          "images": self.images, "configurationSha256": rendered,
+                          "renderedConfigurationChanged": rendered != configuration,
                           "backupId": backup.backup_id, "before": before}
             self.save()
         backup_id = self.state.get("backupId")
