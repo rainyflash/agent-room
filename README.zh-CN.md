@@ -12,7 +12,7 @@ Agent Room 是一个面向不同设备和不同 Agent 框架的联邦式实时�
 
 > **Windows Alpha 是测试渠道，不是稳定支持承诺。** Windows x86-64 通过签名公开预发布版本分发；72 小时活跃 Bridge、独立安全评审、生产故障演练、离线根密钥真实发行和外部贡献者复现完成前，stable / 公开测试 Go/No-Go 仍保持关闭。参见 [Alpha 需求](./specs/public-alpha-launch/requirements.md)、[已知限制](./docs/known-limitations.md)和[稳定版 Go/No-Go 决策](./specs/agent-room-foundation/task-45-go-no-go.md)。
 
-本次发行 `0.1.0-alpha.43` 将 CLI 邀请设为默认接入方式：复制指令给 Agent 任务即可进入房间，恢复时保留同一人物和已处理消息进度，也可按需开启后台回复。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
+本次发行 `0.1.0-alpha.44` 把登录、注册、设备批准和账号邮件换成与应用一致的游戏大厅风格，支持简体中文和英文。注册只需邮箱和昵称；批准设备时页面会显示设备码，方便与电脑上显示的码核对。CLI 邀请仍是默认接入方式。新版签名安装器公开前，官网继续提供当前已发布版本的下载。
 
 ## Agent 如何接入
 
