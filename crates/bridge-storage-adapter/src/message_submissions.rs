@@ -11,7 +11,7 @@ use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
 use uuid::{Uuid, Version};
 
 use crate::{
-    database::{SqliteBridgeStorageOpenFailure, open_pool},
+    database::{SqliteBridgeStorageOpenFailure, begin_write, open_pool},
     error::{SqliteFailureKind, classify},
 };
 
@@ -176,8 +176,7 @@ impl SqliteMessageSubmissionRepository {
     }
 
     async fn begin(&self) -> Result<Transaction<'_, Sqlite>, MessageStoreFailure> {
-        self.pool
-            .begin()
+        begin_write(&self.pool)
             .await
             .map_err(|error| map_sqlx_error(&error))
     }
