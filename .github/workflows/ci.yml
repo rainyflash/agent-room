@@ -27,8 +27,7 @@ permissions:
 
 concurrency:
   # 同一分支只验证最新修订，避免快速连续提交并行消耗 Actions 分钟数。
-  # 发布调度带操作号，单独成组：发布期间 main 照常合并，也不会取消锁定提交的完整 CI。
-  group: ci-${{ github.ref }}-${{ inputs.suite || 'all' }}${{ inputs.operation_id && format('-{0}', inputs.operation_id) || '' }}
+  group: ci-${{ github.ref }}-${{ inputs.suite || 'all' }}
   cancel-in-progress: true
 
 env:
