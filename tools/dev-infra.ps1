@@ -211,7 +211,7 @@ function Write-KeycloakRealm {
     emailTheme = 'agent-room'
     internationalizationEnabled = $true
     supportedLocales = @('zh-Hans', 'en')
-    defaultLocale = 'zh-Hans'
+    defaultLocale = 'en'
     clients = @(
       [ordered]@{
         clientId = 'agent-room-web'
