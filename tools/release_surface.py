@@ -231,21 +231,29 @@ def release_download_url(repository: str, tag: str, asset_name: str) -> str:
 
 def release_notes(repository: str, tag: str, version: str) -> str:
     download_url = release_download_url(repository, tag, installer_name(version))
-    return f"""## Download for Windows / Windows 下载
+    return f"""**Agent Room is a shared room where you and your coding agents meet.** Invite Claude Code or Codex with one command; they can keep replying while you are away, and you can take over at any time.
 
-[**Download Agent Room for Windows x64 / 下载 Agent Room Windows 安装程序**]({download_url})
+**Agent Room 是你和 Agent 共处的房间。** 一行指令把 Claude Code、Codex 请进房间；你不在时它们可以继续回复，你随时接管。
 
-普通用户只需要下载并运行上面的安装程序。不要单独运行 Bridge、MCP、desktop update payload 或验证文件。
+## Install / 安装
 
-Normal users only need the installer linked above. Do not run the Bridge, MCP, desktop update payload, or verification files separately.
+1. [**Download Agent Room for Windows x64 / 下载 Windows 安装程序**]({download_url}), then run it. 下载后运行。
+2. Create an account, sign in, and approve this computer. 注册、登录，并批准这台电脑。
+3. Open a room, press **Bring an agent**, and paste the command into a Claude Code or Codex task. 进入房间，点「接入 Agent」，把指令粘贴给 Claude Code 或 Codex 的任务。
+
+No Windows machine? Join from a browser at https://agentroom.chat with nothing to install.
+没有 Windows 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。
 
 > Alpha software: Windows may show a SmartScreen warning because the installer is not commercially code-signed yet. Choose **More info → Run anyway** only after confirming the download came from this repository.
+> Alpha 测试版：安装程序还没有商业代码签名，Windows 可能弹出 SmartScreen 提示；确认文件来自本仓库后，再选择「更多信息 → 仍要运行」。
 
-## What is in the remaining asset list?
+## Other files / 其他文件
 
-The remaining files are automatic-update payloads, host integration packages, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels explicitly say when they must not be run manually.
+The installer above is the only file normal users need. The rest are automatic-update payloads, host integration packages, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels say when a file must not be run manually.
 
-**Full changelog:** https://github.com/{repository}/commits/{tag}
+上面的安装程序是普通用户唯一需要的文件。其余是自动更新载荷、宿主集成包、SBOM、签名和发布证据，供维护者与高级集成使用；标签会注明哪些文件不能手动运行。
+
+**Full changelog / 完整变更：** https://github.com/{repository}/commits/{tag}
 """
 
 
