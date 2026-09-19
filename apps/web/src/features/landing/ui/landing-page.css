@@ -245,3 +245,7 @@
     max-width: 100%;
   }
 }
+.landing__guide-link {
+  color: inherit;
+  text-underline-offset: 3px;
+}

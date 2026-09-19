@@ -16,6 +16,7 @@ import { privateRoomResources } from '@/features/private-rooms/i18n/private-room
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { hallResources } from '@/features/room-directory/i18n/hall-resources';
 import { applicationResources } from '@/features/updates/i18n/application-resources';
+import { guideResources } from '@/features/guide/i18n/guide-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
@@ -45,7 +46,13 @@ export const resources = {
       'landing.login': 'Log in',
       'landing.register': 'Create account',
       'landing.registrationPending': 'Registration coming soon',
-      'landing.alphaNote': 'Windows Alpha · You can also join in your browser.',
+      'landing.alphaNote.windows': 'Windows Alpha · You can also join in your browser.',
+      'landing.alphaNote.macos':
+        'Windows Alpha · A Mac build is in progress. Join in your browser today — everything except bringing a local agent in works there.',
+      'landing.alphaNote.linux':
+        'Windows Alpha · On Linux, join in your browser — everything except bringing a local agent in works there.',
+      'landing.alphaNote.other': 'Windows Alpha · You can also join in your browser.',
+      'landing.guide': 'How it works',
       'landing.flowTitle': 'Make yourself at home',
       'landing.flow.meet.title': 'Find your people',
       'landing.flow.meet.detail': 'See who is in the room and what they are working on.',
@@ -803,6 +810,7 @@ export const resources = {
       ...roomDirectoryResources.en,
       ...hallResources.en,
       ...applicationResources.en,
+      ...guideResources.en,
       ...securityResources.en,
       ...workspaceResources.en,
     },
@@ -830,7 +838,13 @@ export const resources = {
       'landing.login': '登录',
       'landing.register': '注册账户',
       'landing.registrationPending': '注册即将开放',
-      'landing.alphaNote': 'Windows Alpha · 也可以直接从浏览器加入。',
+      'landing.alphaNote.windows': 'Windows Alpha · 也可以直接从浏览器加入。',
+      'landing.alphaNote.macos':
+        'Windows Alpha · Mac 版正在做。现在可以直接在浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
+      'landing.alphaNote.linux':
+        'Windows Alpha · Linux 请在浏览器里加入，除了把本机 Agent 请进房间，其他都能用。',
+      'landing.alphaNote.other': 'Windows Alpha · 也可以直接从浏览器加入。',
+      'landing.guide': '使用指南',
       'landing.flowTitle': '在这里，自在相聚',
       'landing.flow.meet.title': '找到你的伙伴',
       'landing.flow.meet.detail': '看看谁在房间里，以及他们正在做什么。',
@@ -1507,6 +1521,7 @@ export const resources = {
       ...roomDirectoryResources['zh-CN'],
       ...hallResources['zh-CN'],
       ...applicationResources['zh-CN'],
+      ...guideResources['zh-CN'],
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
     },

@@ -4,6 +4,7 @@ import { ArrowRight, Download } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
+import { detectVisitorPlatform } from '@/features/landing/domain/visitor-platform';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
@@ -15,6 +16,8 @@ export function LandingPage() {
   const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
   const reduceMotion = useReducedMotion();
   const registrationOpen = config.registrationMode === 'open-email';
+  // Mac 和 Linux 访客先知道桌面端只有 Windows 版，不用点完下载才发现。
+  const platform = detectVisitorPlatform(window.navigator.userAgent);
   return (
     <main className="landing" id="main-content">
       <header className="landing__topbar">
@@ -87,7 +90,12 @@ export function LandingPage() {
               </a>
             )}
           </div>
-          <p className="landing__alpha-note">{t('landing.alphaNote')}</p>
+          <p className="landing__alpha-note">
+            {t(`landing.alphaNote.${platform}`)}{' '}
+            <Link className="landing__guide-link" to="/guide">
+              {t('landing.guide')}
+            </Link>
+          </p>
         </motion.div>
         <div className="landing__scene">
           <RoomIllustration populated />
