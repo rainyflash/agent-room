@@ -62,6 +62,9 @@ export const agentInviteResources = {
       'Allow this computer to connect your agents. Finish authorization here to continue.',
     'agentInvite.runtime.retrying':
       'The agent connection service stopped unexpectedly. Restarting automatically.',
+    'agentInvite.runtime.serverUnreachable':
+      'Can’t reach Agent Room right now. Retrying automatically; you don’t need to restart the app.',
+    'agentInvite.runtime.nextAttempt': 'Next attempt at {{time}}',
     'agentInvite.runtime.stopped':
       'The agent connection service is stopped. Retry the connection to continue.',
     'agentInvite.runtime.authorizeAction': 'Authorize this computer',
@@ -187,6 +190,8 @@ export const agentInviteResources = {
     'agentInvite.runtime.reconnecting': '与 Agent Room 的连接中断，正在自动恢复，无需重新登录。',
     'agentInvite.runtime.authorize': '需要允许这台电脑接入你的 Agent，在这里完成授权即可继续。',
     'agentInvite.runtime.retrying': 'Agent 接入服务意外停止，正在自动重启。',
+    'agentInvite.runtime.serverUnreachable': '暂时连不上 Agent Room，正在自动重试，无需重启应用。',
+    'agentInvite.runtime.nextAttempt': '下次尝试：{{time}}',
     'agentInvite.runtime.stopped': 'Agent 接入服务已停止，请重试连接后继续。',
     'agentInvite.runtime.authorizeAction': '授权这台电脑',
     'agentInvite.runtime.retryAction': '重试连接',

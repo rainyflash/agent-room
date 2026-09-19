@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next';
 import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
 import {
   authorizationFailureMessage,
-  desktopPhaseMessage,
+  desktopPhaseLabel,
   hostFailureMessage,
 } from '@/features/desktop/domain/desktop-connection';
 import { LocalConnectionNotice } from './local-connection-notice';
@@ -87,7 +87,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
         </span>
         <span>
           <strong>{t('desktop.runtime.title')}</strong>
-          <small>{t(desktopPhaseMessage[phase])}</small>
+          <small>{t(desktopPhaseLabel(controller.snapshot?.bridge.lifecycle))}</small>
         </span>
         <ChevronDown aria-hidden="true" className="desktop-runtime__chevron" />
       </button>
@@ -136,7 +136,9 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               </section>
             )}
 
-            {phase === 'reconnecting' || phase === 'starting' ? <LocalConnectionNotice /> : null}
+            {phase === 'reconnecting' || phase === 'starting' || phase === 'retry_scheduled' ? (
+              <LocalConnectionNotice />
+            ) : null}
             {phase === 'halted' ? (
               <section className="desktop-runtime__failure">
                 <AlertTriangle aria-hidden="true" />

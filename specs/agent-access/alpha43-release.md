@@ -13,7 +13,7 @@
 ## 构建与发布
 
 - [完整 CI](https://github.com/rainyflash/agent-room/actions/runs/35368793294) 第一次运行时，「Linux 无桌面凭据恢复与 Matrix 真实收发」作业偶发 `message_store_unavailable`，重跑该作业后八项必需作业全部通过，用时 32 分钟。原因是本地 SQLite 写事务没有在开头取写锁，锁竞争被误报为消息存储不可用；[PR 74](https://github.com/rainyflash/agent-room/pull/74) 已修复，不在本版。[CodeQL](https://github.com/rainyflash/agent-room/actions/runs/35368755328) 和同提交的 [联邦验收](https://github.com/rainyflash/agent-room/actions/runs/35368755378) 通过。
-- [full 签名候选](https://github.com/rainyflash/agent-room/actions/runs/35368804720) 第一次运行时 Windows 原生发行作业失败。安装器验收会启动 Bridge 连接生产身份服务，当时 `id.agentroom.chat` 还没上线，Bridge 启动即退出。先用本候选已推送的镜像把服务器切到新域名，再重跑该作业，通过；候选全程用时 70 分钟。本地以独立公钥核验离线根签名、Sigstore 来源与证书提交、Tauri 更新签名、逐项摘要与 SBOM、远端镜像索引摘要，并确认 CI 安装器验收与候选一致，服务器上运行的三个镜像摘要与签名清单一致。
+- [full 签名候选](https://github.com/rainyflash/agent-room/actions/runs/35368804720) 第一次运行时 Windows 原生发行作业失败。安装器验收以无窗口的验收模式启动桌面端，由它拉起 Bridge 并等待 Bridge 退出。当时 `id.agentroom.chat` 还没上线，全新安装的 Bridge 在首次设备授权时连不上身份服务，直接以退出码 1 退出（本地复现的错误码为 `bridge.identity_provider_unavailable`）；桌面端随之以退出码 1 退出，验收报告「桌面端在 Bridge 启动前退出」。先用本候选已推送的镜像把服务器切到新域名，再重跑该作业，通过；候选全程用时 70 分钟。本地以独立公钥核验离线根签名、Sigstore 来源与证书提交、Tauri 更新签名、逐项摘要与 SBOM、远端镜像索引摘要，并确认 CI 安装器验收与候选一致，服务器上运行的三个镜像摘要与签名清单一致。
 - 候选锁定后 main 合入了 PR 74：维护者已同意 main 不再冻结，并为 `release/*` 分支加了保护。从受保护的 `release/alpha43` 调度的[锁定运行](https://github.com/rainyflash/agent-room/actions/runs/35422693735)被整体跳过，因为本版提交里的发布工作流只允许在 main 上运行。随后按[发布流程](../../docs/release-workflow.md)的手动模式，在 main 上不带 `expected_revision` 调度[正式发布工作流](https://github.com/rainyflash/agent-room/actions/runs/35422826846)。调度前确认两点：候选提交是 main 的祖先；两者差异只有 PR 74 在 `crates/bridge-storage-adapter/` 下的 7 个文件，发布作业既不运行也不构建它们（签名验证器只依赖 `crates/release-manifest`）。调度后确认实际运行的提交就是核对过的 main 头。手动模式少了工作流内把 Sigstore 证据钉到候选提交的那一层，这一层已由本地核验覆盖。公开这一步用时 2 分 17 秒。
 
 签名清单 SHA-256 为 `c5a66d2a1603f7a262b61cd58855feba544d54ef3edbd12a6030574ebedfe7b3`。Windows 安装器为 `40,096,615` 字节，SHA-256 为 `2ceca3f483ba0c88a0dbb806f27b7328f9fed72480b904f87c6673bc0d6792b3`。公开后，匿名下载的安装器、版本签名清单与 testing 渠道签名清单均与已核验候选一致，离线根签名重新核验通过。
@@ -47,7 +47,7 @@
 ## 后续
 
 - **让 `release/*` 分支真正可用。** 发布工作流改为也接受受保护的 `release/*` 分支，锁定模式仍要求运行提交等于候选提交；发布流程据此调度，main 从此不必冻结。计划在 Alpha 44 的版本提交之前合入，这样 Alpha 44 可以在 `release/alpha44` 上以锁定模式公开。
-- **身份服务不可达时，Bridge 启动即退出，不会等待重试。** 候选的安装器验收因此失败过一次。普通用户在断网或服务短暂不可用时启动应用，也会遇到同样的问题，应改为可恢复的等待。
+- **尚未授权的设备连不上身份服务时，Bridge 以退出码 1 退出，不会等待重试。** 验收模式的桌面端随 Bridge 一起退出，候选的安装器验收因此失败过一次。已授权的设备不受影响，启动后按退避自动重连；首次启动、换服务器后等尚未授权的桌面应用本身不会退出，但自动重启 Bridge 三次后就停在「自动重启已停止」，要手动重连。应改为可恢复的等待。
 - **身份页面换成大厅风格。** 登录、注册、设备批准和邮件仍是 Keycloak 默认样式，维护者批准设备码时就问起过。新设计已获批准，随 Alpha 44 发布（[PR 75](https://github.com/rainyflash/agent-room/pull/75)）。设备批准链接也改为把设备码放在 URL 片段里，这样经过登录跳转也不会丢。
 - **旧域名收尾。**
   - Cloudflare 上 `the-zeroth.com` 区域里的 `room.*` 记录待删除。
