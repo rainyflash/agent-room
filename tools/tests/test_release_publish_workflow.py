@@ -79,6 +79,19 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertIn('test "$GITHUB_SHA" = "$EXPECTED_REVISION"', self.workflow)
         self.assertIn('test "$EXPECTED_REVISION" = "$REVISION"', self.workflow)
 
+    def test_release_分支只以锁定模式发布已合入_main_的候选(self) -> None:
+        self.assertIn(
+            "if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') }}",
+            self.workflow,
+        )
+        self.assertIn(
+            'if [ "$GITHUB_REF" != refs/heads/main ]; then test -n "$EXPECTED_REVISION"; fi',
+            self.workflow,
+        )
+        # 完整历史里才有 origin/main，用于确认候选已经合入。
+        self.assertIn("fetch-depth: 0", self.workflow)
+        self.assertIn('git merge-base --is-ancestor "$REVISION" origin/main', self.workflow)
+
     def test_浏览器候选使用同源代理并保留桌面独立会话域(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
         browser_urls = re.findall(

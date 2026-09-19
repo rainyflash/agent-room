@@ -45,6 +45,48 @@ class ReleaseFlowTests(unittest.TestCase):
         self.assertEqual(resumed.state["runs"]["ci.yml"]["id"], 12)
         self.github.call.assert_called_once()
 
+    def test_publication_runs_from_a_protected_branch_pinned_to_the_candidate(self):
+        self.github.json.return_value = []
+        self.github.on_main.return_value = True
+        self.github.branch_revision.return_value = None
+        self.github.branch_protected.return_value = True
+        with self.assertRaises(flow.Waiting) as waiting:
+            self.subject.workflow("release-publish.yml", {"tag": "v0.2.0"})
+        self.assertTrue(waiting.exception.pollable)
+        # main may have moved on; publication no longer depends on its head.
+        self.github.main_revision.assert_not_called()
+        self.github.create_branch.assert_called_once_with("release/v0.2.0", self.state["revision"])
+        arguments = self.github.call.call_args.args
+        self.assertEqual(arguments[:5], ("workflow", "run", "release-publish.yml", "--ref", "release/v0.2.0"))
+        self.assertIn(f"expected_revision={self.state['revision']}", arguments)
+        self.assertEqual(self.github.json.call_args.args[4:6], ("--branch", "release/v0.2.0"))
+        operation = self.state["runs"]["release-publish.yml"]["operation"]
+        found = [{"databaseId": 14, "displayTitle": f"release-flow:{operation}", "headSha": self.state["revision"]}]
+        self.github.json.side_effect = [found, self.run_result(headBranch="main")]
+        with self.assertRaisesRegex(RuntimeError, "release/v0.2.0"):
+            self.subject.workflow("release-publish.yml", {"tag": "v0.2.0"})
+        self.github.json.side_effect = [self.run_result(headBranch="release/v0.2.0")]
+        self.subject.workflow("release-publish.yml", {"tag": "v0.2.0"})
+        self.assertEqual(self.state["runs"]["release-publish.yml"]["id"], 14)
+        self.github.call.assert_called_once()
+
+    def test_publication_never_moves_or_trusts_an_unsuitable_release_branch(self):
+        self.github.json.return_value = []
+        cases = [
+            ({"on_main": False, "branch_revision": None, "branch_protected": True}, "不在受保护的 main"),
+            ({"on_main": True, "branch_revision": "b" * 40, "branch_protected": True}, "不会移动"),
+            ({"on_main": True, "branch_revision": self.state["revision"], "branch_protected": False}, "未受保护"),
+        ]
+        for answers, message in cases:
+            with self.subTest(message=message):
+                for name, value in answers.items():
+                    getattr(self.github, name).return_value = value
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self.subject.workflow("release-publish.yml", {"tag": "v0.2.0"})
+                self.assertFalse(self.state["runs"]["release-publish.yml"]["dispatched"])
+        self.github.create_branch.assert_not_called()
+        self.github.call.assert_not_called()
+
     def test_only_incomplete_successfully_dispatched_runs_are_pollable(self):
         with self.assertRaises(flow.Waiting) as pending:
             flow.completed_run(self.run_result(status="in_progress"), self.state["revision"])
