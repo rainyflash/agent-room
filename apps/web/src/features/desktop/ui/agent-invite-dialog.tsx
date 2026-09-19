@@ -576,7 +576,8 @@ function ConnectionInvite({
           ) : (
             <p role="status">{t('agentInvite.web.observe')}</p>
           )}
-          {copiedAt === null ? null : (
+          {/* Once the agent is in the room, the paste instruction is stale; the first-reply step takes over. */}
+          {copiedAt === null || status.kind === 'ready' ? null : (
             <p className="agent-invite__note">{t('agentInvite.progress.copied')}</p>
           )}
           {status.kind === 'ready' &&
