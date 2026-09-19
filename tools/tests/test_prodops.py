@@ -492,6 +492,33 @@ class ProductionRenderingTests(unittest.TestCase):
             original_client["redirectUris"], ["https://api.example/old-callback"]
         )
 
+        presented = module.apply_presentation_policy(closed)
+        self.assertEqual((presented["loginTheme"], presented["emailTheme"]), ("agent-room", "agent-room"))
+        self.assertEqual(presented["supportedLocales"], ["zh-Hans", "en"])
+        self.assertEqual(presented["defaultLocale"], "zh-Hans")
+        self.assertTrue(presented["internationalizationEnabled"])
+        self.assertEqual(presented["passwordPolicy"], "length(8)")
+        self.assertNotIn("loginTheme", closed)
+        # Other operator rules stay; a stricter minimum is never lowered.
+        self.assertEqual(module.password_policy("length(12) and digits(1)"), "length(12) and digits(1)")
+        self.assertEqual(module.password_policy("length(4) and notUsername(undefined)"),
+                         "length(8) and notUsername(undefined)")
+
+        profile = {"attributes": [
+            {"name": "username"},
+            {"name": "firstName", "required": {"roles": ["admin", "user"]}},
+            {"name": "lastName", "required": {"roles": ["admin", "user"]},
+             "permissions": {"view": ["admin", "user"], "edit": ["admin", "user"]}},
+        ]}
+        nickname_only = module.apply_user_profile_policy(profile)
+        surname = next(item for item in nickname_only["attributes"] if item["name"] == "lastName")
+        self.assertNotIn("required", surname)
+        self.assertEqual(surname["permissions"], {"view": ["admin"], "edit": ["admin"]})
+        self.assertIn("required", profile["attributes"][2])
+        self.assertEqual(module.apply_user_profile_policy(nickname_only), nickname_only)
+        with self.assertRaises(module.ReconcileError):
+            module.apply_user_profile_policy({"attributes": [{"name": "email"}]})
+
     def test_nominal_memory_check_allows_only_bounded_system_reservation(self) -> None:
         gibibyte = 1024**3
         allowance = 256 * 1024**2

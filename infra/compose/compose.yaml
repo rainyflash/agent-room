@@ -72,6 +72,8 @@ services:
       - '127.0.0.1:19000:9000'
     volumes:
       - ${AGENT_ROOM_LOCAL_DIR:?缺少 AGENT_ROOM_LOCAL_DIR}/generated/keycloak:/opt/keycloak/data/import:ro
+      # start-dev 不缓存主题：改完模板刷新页面即可看到。
+      - ../identity/themes/agent-room:/opt/keycloak/themes/agent-room:ro
     healthcheck:
       test:
         [

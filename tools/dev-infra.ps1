@@ -207,6 +207,11 @@ function Write-KeycloakRealm {
     registrationAllowed = $false
     loginWithEmailAllowed = $true
     sslRequired = 'none'
+    loginTheme = 'agent-room'
+    emailTheme = 'agent-room'
+    internationalizationEnabled = $true
+    supportedLocales = @('zh-Hans', 'en')
+    defaultLocale = 'zh-Hans'
     clients = @(
       [ordered]@{
         clientId = 'agent-room-web'

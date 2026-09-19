@@ -41,7 +41,10 @@ LOGIN_PATHS = (
     "crates/bridge-core/src/authorization.rs",
     "crates/identity-adapter/",
     "crates/postgres-adapter/src/devices.rs",
+    # The identity theme renders the sign-in and device approval pages; the image pins Keycloak itself.
+    "infra/identity/",
     "infra/oidc/",
+    "infra/production/Containerfile.identity",
     "infra/production/keycloak-registration-reconcile.py",
     "tools/prodops/render.py",
 )

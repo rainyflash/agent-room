@@ -152,6 +152,12 @@ class UsabilityAcceptanceTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseFailure):
             acceptance.login_changes("0" * 40, "HEAD")
 
+    def test_identity_pages_and_image_count_as_login_code(self):
+        # A theme or Keycloak change can break device approval, so it needs a fresh device authorization.
+        for path in ("infra/identity/themes/agent-room/login/login-oauth-grant.ftl",
+                     "infra/production/Containerfile.identity"):
+            self.assertTrue(path.startswith(acceptance.LOGIN_PATHS), path)
+
     def test_assembly_does_not_write_partial_invalid_evidence(self):
         (self.root / "release-usability-acceptance.json").unlink()
         report = self.reports["upgrade"]
