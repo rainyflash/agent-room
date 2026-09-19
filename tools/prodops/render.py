@@ -280,7 +280,9 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         "emailTheme": "agent-room",
         "internationalizationEnabled": True,
         "supportedLocales": ["zh-Hans", "en"],
-        "defaultLocale": "zh-Hans",
+        # 浏览器语言优先：中文浏览器看到中文。默认语言只在浏览器语言不是这两种时兜底，
+        # 与网页端 fallbackLng 一致用英文，法语、日语等浏览器不会看到中文登录页。
+        "defaultLocale": "en",
         "passwordPolicy": "length(8)",
         "clients": [
             {

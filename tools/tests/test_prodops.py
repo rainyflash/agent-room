@@ -495,7 +495,8 @@ class ProductionRenderingTests(unittest.TestCase):
         presented = module.apply_presentation_policy(closed)
         self.assertEqual((presented["loginTheme"], presented["emailTheme"]), ("agent-room", "agent-room"))
         self.assertEqual(presented["supportedLocales"], ["zh-Hans", "en"])
-        self.assertEqual(presented["defaultLocale"], "zh-Hans")
+        # 兜底语言与网页端 fallbackLng 一致：浏览器语言不是中英文时给英文，不给中文。
+        self.assertEqual(presented["defaultLocale"], "en")
         self.assertTrue(presented["internationalizationEnabled"])
         self.assertEqual(presented["passwordPolicy"], "length(8)")
         self.assertNotIn("loginTheme", closed)

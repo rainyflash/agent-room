@@ -22,10 +22,11 @@ WEB_CLIENT_ID: Final = "agent-room-web"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
-# 身份镜像自带的登录与邮件主题；界面简体中文优先，也提供英文。
+# 身份镜像自带的登录与邮件主题；提供简体中文和英文，按浏览器语言选择。
+# 默认语言只在浏览器语言不是这两种时兜底，与网页端一致用英文。
 THEME: Final = "agent-room"
 SUPPORTED_LOCALES: Final = ("zh-Hans", "en")
-DEFAULT_LOCALE: Final = "zh-Hans"
+DEFAULT_LOCALE: Final = "en"
 MINIMUM_PASSWORD_LENGTH: Final = 8
 
 
