@@ -46,6 +46,22 @@ class ReleaseSurfaceTests(unittest.TestCase):
         self.assertIn("无需下载", labels[next(name for name in labels if name.endswith("cdx.json"))])
         self.assertIn(self.installer, plan.body)
 
+    def test_发行说明先介绍产品再给下载和浏览器入口(self) -> None:
+        plan = build_plan(
+            self.repository,
+            self.tag,
+            self.version,
+            {"id": 42},
+            [{"id": 1, "name": self.installer, "label": None}],
+        )
+
+        body = plan.body
+        # 第一屏先说这是什么，中英文都有；下载按钮和免安装入口都在安装步骤里。
+        self.assertLess(body.index("Agent Room is a shared room"), body.index("## Install"))
+        self.assertIn("一行指令把 Claude Code、Codex 请进房间", body)
+        self.assertIn("https://agentroom.chat", body)
+        self.assertLess(body.index(self.installer), body.index("## Other files"))
+
     def test_已经正确标记的资产不会重复更新(self) -> None:
         label = asset_label(self.installer, self.installer)
         plan = build_plan(
