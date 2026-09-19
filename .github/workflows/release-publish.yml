@@ -38,7 +38,8 @@ env:
 jobs:
   publish:
     name: 最终密码学门禁与发布
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # 受保护的 release/* 分支钉住候选提交，发布期间 main 可以照常合并。
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') }}
     environment: public-release
     permissions:
       contents: write
@@ -50,8 +51,10 @@ jobs:
         env:
           EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
+          # release/* 分支只接受锁定模式：运行的核验代码必须就是候选提交。
+          if [ "$GITHUB_REF" != refs/heads/main ]; then test -n "$EXPECTED_REVISION"; fi
           if [ -n "$EXPECTED_REVISION" ]; then test "$GITHUB_SHA" = "$EXPECTED_REVISION"; fi
-      - name: 检出受保护主分支
+      - name: 检出受保护分支
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
         with:
           fetch-depth: 0
@@ -97,6 +100,8 @@ jobs:
           REVISION="$(jq -er '.revision | select(type == "string" and test("^[0-9a-f]{40}$"))' candidate/release-metadata.json)"
           test "$(git rev-parse --verify "$REVISION^{commit}")" = "$REVISION"
           if [ -n "$EXPECTED_REVISION" ]; then test "$EXPECTED_REVISION" = "$REVISION"; fi
+          # 发布分支只钉住提交；候选本身必须已经合入受保护的 main。
+          git merge-base --is-ancestor "$REVISION" origin/main
           python tools/release_promotion.py verify --record candidate/release-promotion-compatible-server.json --expected-stage compatible-server --version "$VERSION" --revision "$REVISION"
           python tools/release_promotion.py verify-evidence --record candidate/release-promotion-compatible-server.json --root candidate --release-base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
       - name: 验证 testing 签名、所有摘要、SBOM 与 Sigstore 身份

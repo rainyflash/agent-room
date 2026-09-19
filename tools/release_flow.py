@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from collections.abc import Callable
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -25,6 +26,7 @@ CI_JOBS = frozenset({
     "供应链与物料清单", "真实网页登录与会话恢复", "PostgreSQL、Matrix、对象存储与协议集成",
     "Linux Agent 运行时镜像与 HTTPS MCP 验收", "Linux 无桌面凭据恢复与 Matrix 真实收发",
 })
+PUBLISH_WORKFLOW = "release-publish.yml"
 
 
 class Waiting(RuntimeError):
@@ -101,10 +103,37 @@ class GitHub:
             raise RuntimeError("无法核对受保护主分支。")
         return revision
 
+    def on_main(self, revision: str) -> bool:
+        value = json.loads(command(["gh", "api", f"repos/{self.repository}/compare/{revision}...main"]))
+        return isinstance(value, dict) and value.get("status") in {"ahead", "identical"}
 
-def completed_run(run: dict[str, object], revision: str, required_jobs: frozenset[str] = frozenset()) -> None:
-    if run.get("headSha") != revision or run.get("headBranch") != "main":
-        raise RuntimeError("远端运行不属于已锁定的 main 提交。")
+    def branch_revision(self, branch: str) -> str | None:
+        refs = json.loads(command(["gh", "api", f"repos/{self.repository}/git/matching-refs/heads/{branch}"]))
+        if not isinstance(refs, list):
+            raise RuntimeError("无法核对发布分支。")
+        # matching-refs 按前缀匹配，release/v1.0 也会列出 release/v1.0.1。
+        exact = [ref for ref in refs if isinstance(ref, dict) and ref.get("ref") == f"refs/heads/{branch}"]
+        if not exact:
+            return None
+        target = exact[0].get("object")
+        revision = target.get("sha") if isinstance(target, dict) else None
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise RuntimeError("无法核对发布分支。")
+        return revision
+
+    def create_branch(self, branch: str, revision: str) -> None:
+        command(["gh", "api", "-X", "POST", f"repos/{self.repository}/git/refs",
+                 "-f", f"ref=refs/heads/{branch}", "-f", f"sha={revision}"])
+
+    def branch_protected(self, branch: str) -> bool:
+        value = json.loads(command(["gh", "api", f"repos/{self.repository}/branches/{quote(branch, safe='')}"]))
+        return isinstance(value, dict) and value.get("protected") is True
+
+
+def completed_run(run: dict[str, object], revision: str, required_jobs: frozenset[str] = frozenset(),
+                  branch: str = "main") -> None:
+    if run.get("headSha") != revision or run.get("headBranch") != branch:
+        raise RuntimeError(f"远端运行不属于已锁定的 {branch} 提交。")
     if run.get("status") != "completed":
         raise Waiting(f"远端运行尚未结束：{run.get('url', '')}", pollable=True)
     if run.get("conclusion") != "success":
@@ -154,8 +183,9 @@ class ReleaseFlow:
             raise RuntimeError("运行身份检查点无效。")
         title = f"release-flow:{entry['operation']}"
         revision = self.value("revision")
+        branch = self.dispatch_branch(workflow)
         if "id" not in entry:
-            found = self.github.json("run", "list", "--workflow", workflow, "--branch", "main", "--commit", revision,
+            found = self.github.json("run", "list", "--workflow", workflow, "--branch", branch, "--commit", revision,
                                      "--event", "workflow_dispatch", "--limit", "100", "--json", "databaseId,displayTitle,headSha")
             if not isinstance(found, list):
                 raise RuntimeError("无法查找远端运行。")
@@ -170,11 +200,13 @@ class ReleaseFlow:
                 # resubmit and create another build/signature on an uncertain result.
                 raise Waiting(f"正在核对 {workflow} 的派发结果；不会重复创建候选。操作号 {entry['operation']}。可用 --attach-run 工作流=编号核对已存在的运行。")
             else:
-                if self.github.main_revision() != revision:
+                if workflow == PUBLISH_WORKFLOW:
+                    self.pin_release_branch(branch)
+                elif self.github.main_revision() != revision:
                     raise RuntimeError("main 已变化，请为新的提交创建独立发布检查点。")
                 entry["dispatched"] = True
                 self.save()  # durable intent precedes the mutation
-                arguments = ["workflow", "run", workflow, "--ref", "main"]
+                arguments = ["workflow", "run", workflow, "--ref", branch]
                 for key, value in {**fields, "operation_id": entry["operation"], "expected_revision": revision}.items():
                     arguments.extend(("-f", f"{key}={value}"))
                 self.github.call(*arguments)
@@ -186,7 +218,7 @@ class ReleaseFlow:
         if not isinstance(result, dict):
             raise RuntimeError("远端运行结果无效。")
         try:
-            completed_run(result, revision, required)
+            completed_run(result, revision, required, branch)
         except Waiting:
             if workflow != "release-candidate.yml" or result.get("status") != "completed" or result.get("conclusion") == "success":
                 raise
@@ -197,6 +229,23 @@ class ReleaseFlow:
             else:
                 self.recover_candidate(identifier)
 
+    def dispatch_branch(self, workflow: str) -> str:
+        # CI and the candidate build on main right after the version merge; publication runs
+        # from a protected branch pinned to the candidate, so main can keep merging meanwhile.
+        return f"release/{self.value('tag')}" if workflow == PUBLISH_WORKFLOW else "main"
+
+    def pin_release_branch(self, branch: str) -> None:
+        revision = self.value("revision")
+        if not self.github.on_main(revision):
+            raise RuntimeError("候选提交不在受保护的 main 上，不能发布。")
+        current = self.github.branch_revision(branch)
+        if current is None:
+            self.github.create_branch(branch, revision)
+        elif current != revision:
+            raise RuntimeError(f"{branch} 没有指向锁定提交；不会移动已有的发布分支。")
+        if not self.github.branch_protected(branch):
+            raise RuntimeError(f"{branch} 未受保护，public-release 环境会拒绝它；请先为 release/* 设置分支保护。")
+
     def attach_run(self, specification: str) -> None:
         workflow, separator, identifier = specification.partition("=")
         if not separator or workflow not in {"ci.yml", "release-candidate.yml", "release-publish.yml"} or not re.fullmatch(r"[1-9][0-9]*", identifier):
@@ -205,7 +254,7 @@ class ReleaseFlow:
         runs = self.state.get("runs")
         entry = runs.get(workflow) if isinstance(runs, dict) else None
         if not isinstance(entry, dict) or not isinstance(result, dict) or any(result.get(key) != expected for key, expected in {
-            "headSha": self.value("revision"), "headBranch": "main", "event": "workflow_dispatch",
+            "headSha": self.value("revision"), "headBranch": self.dispatch_branch(workflow), "event": "workflow_dispatch",
             "displayTitle": f"release-flow:{entry.get('operation')}",
         }.items()):
             raise RuntimeError("附加运行必须属于本次派发的操作号和提交。")
@@ -377,7 +426,7 @@ class ReleaseFlow:
         self.step("独立签名及产物核验", self.verify_candidate)
         self.step("服务端兼容部署", self.compatible_server)
         self.step("新设备、升级及真实接待验收", self.acceptance)
-        self.step("公开发行", lambda: self.workflow("release-publish.yml", {"tag": self.value("tag"), "installed_version": self.value("installedVersion"), "highest_sequence": str(self.state["highestSequence"])}))
+        self.step("公开发行", lambda: self.workflow(PUBLISH_WORKFLOW, {"tag": self.value("tag"), "installed_version": self.value("installedVersion"), "highest_sequence": str(self.state["highestSequence"])}))
         self.step("更新渠道核对", self.verify_publication)
         if self.value("profile") == "full":
             self.step("网页部署及运行核验", lambda: self.deploy("web"))
