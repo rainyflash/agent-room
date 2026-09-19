@@ -329,6 +329,9 @@ describe('AgentInviteDialog', () => {
     await readyToCopy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await screen.findByText('Waiting for the agent to run its connection instructions…');
+    const pasteHint =
+      'Instructions copied. Paste them into the agent task and let it run the command.';
+    expect(screen.getByText(pasteHint)).toBeVisible();
     const stored = readInviteHistory(window.localStorage, owner.principalId).identities[0];
     if (stored === undefined) throw new Error('Invitation was not saved');
     const entry = (state: HostSessionDiagnostics['session']['state'], key: string) => ({
@@ -355,6 +358,8 @@ describe('AgentInviteDialog', () => {
     sessions = [entry('ready', stored.sessionKey)];
     await screen.findByText('“Ada’s Codex” is in the room', undefined, { timeout: 5_000 });
     expect(screen.getByText('Reading messages right now')).toBeVisible();
+    // The paste instruction is done once the agent is in the room.
+    expect(screen.queryByText(pasteHint)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(view.onClose).toHaveBeenCalledTimes(1);
   }, 15_000);
