@@ -637,8 +637,13 @@ async fn initialize_device_session(
         credentials,
         secrets,
     });
-    let initial_session =
-        establish_initial_session(config, &session_service, authorization_service).await?;
+    let initial_session = establish_initial_session(
+        config,
+        &session_service,
+        authorization_service,
+        reconnect_policy,
+    )
+    .await?;
 
     Ok(DeviceSessionRuntime {
         service: session_service,
@@ -1265,6 +1270,7 @@ async fn establish_initial_session(
     config: &BridgeConfig,
     session_service: &BridgeSessionService,
     authorization_service: BridgeAuthorizationService,
+    reconnect_policy: ReconnectPolicy,
 ) -> Result<Option<ActiveBridgeSession>, BridgeRuntimeError> {
     match session_service.active_session().await {
         Ok(session) => {
@@ -1272,20 +1278,24 @@ async fn establish_initial_session(
             Ok(Some(session))
         }
         Err(error) if error.kind() == BridgeSessionFailureKind::NotAuthorized => {
-            let authorized = authorization_service
-                .authorize(
-                    AuthorizeBridgeDevice {
-                        label: config.device_label.clone(),
-                        platform: current_platform(),
-                        profile_import: ProfileImportConsent {
-                            display_name: config.import_oidc_profile,
-                            locale: config.import_oidc_profile,
-                        },
+            let authorization = ConfiguredDeviceAuthorization {
+                service: authorization_service,
+                request: AuthorizeBridgeDevice {
+                    label: config.device_label.clone(),
+                    platform: current_platform(),
+                    profile_import: ProfileImportConsent {
+                        display_name: config.import_oidc_profile,
+                        locale: config.import_oidc_profile,
                     },
-                    &TerminalAuthorizationPrompt,
-                )
-                .await
-                .map_err(BridgeRuntimeError::authorization)?;
+                },
+            };
+            let authorized = authorize_first_device(
+                &authorization,
+                &TerminalAuthorizationPrompt,
+                reconnect_policy,
+                announce_authorization_retry,
+            )
+            .await?;
             announce_authorized_device(authorized)?;
             let session = session_service
                 .active_session()
@@ -1298,6 +1308,102 @@ async fn establish_initial_session(
             Ok(None)
         }
         Err(error) => Err(BridgeRuntimeError::session(error)),
+    }
+}
+
+/// 一次完整的首次设备授权：发现身份服务、申请并展示设备码、等待批准、注册设备。
+trait FirstDeviceAuthorization: Send + Sync {
+    fn attempt<'a>(
+        &'a self,
+        prompt: &'a dyn OidcDeviceAuthorizationPromptSink,
+    ) -> PortFuture<'a, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>>;
+}
+
+struct ConfiguredDeviceAuthorization {
+    service: BridgeAuthorizationService,
+    request: AuthorizeBridgeDevice,
+}
+
+impl FirstDeviceAuthorization for ConfiguredDeviceAuthorization {
+    fn attempt<'a>(
+        &'a self,
+        prompt: &'a dyn OidcDeviceAuthorizationPromptSink,
+    ) -> PortFuture<'a, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>> {
+        Box::pin(self.service.authorize(self.request.clone(), prompt))
+    }
+}
+
+/// 首次授权在拿到设备码之前连不上身份服务或控制面时，进程不退出：按与设备会话重连
+/// 相同的退避策略等待后重来，并把原因和下次尝试的时间报告给桌面端。
+///
+/// 已经展示过设备码的失败照旧返回。重来会申请新码，用户可能正在批准旧码，
+/// 所以要由用户显式重试；桌面端对此停在「授权失败」。
+async fn authorize_first_device(
+    authorization: &impl FirstDeviceAuthorization,
+    prompt: &dyn OidcDeviceAuthorizationPromptSink,
+    reconnect_policy: ReconnectPolicy,
+    announce_retry: impl Fn(
+        BridgeAuthorizationFailure,
+        DurationMillis,
+    ) -> Result<(), BridgeRuntimeError>,
+) -> Result<AuthorizedBridgeDevice, BridgeRuntimeError> {
+    let mut backoff = ReconnectBackoff::new(reconnect_policy);
+    loop {
+        let attempt = PromptPresence::new(prompt);
+        let failure = match authorization.attempt(&attempt).await {
+            Ok(authorized) => return Ok(authorized),
+            Err(failure) => failure,
+        };
+        if attempt.presented() || !is_unreachable_authorization_failure(failure) {
+            return Err(BridgeRuntimeError::authorization(failure));
+        }
+        let delay = backoff.record_failure(retry_entropy());
+        tracing::warn!(
+            operation = failure.operation(),
+            failure_kind = ?failure.kind(),
+            consecutive_failures = backoff.consecutive_failures(),
+            retry_after_ms = delay.value(),
+            "首次设备授权连不上服务，已安排重试"
+        );
+        announce_retry(failure, delay)?;
+        sleep(Duration::from_millis(delay.value())).await;
+    }
+}
+
+const fn is_unreachable_authorization_failure(failure: BridgeAuthorizationFailure) -> bool {
+    matches!(
+        failure.kind(),
+        BridgeAuthorizationFailureKind::IdentityProviderUnavailable
+            | BridgeAuthorizationFailureKind::ControlPlaneUnavailable
+    )
+}
+
+/// 记录这次尝试有没有把设备码交给用户。
+struct PromptPresence<'a> {
+    prompt: &'a dyn OidcDeviceAuthorizationPromptSink,
+    presented: AtomicBool,
+}
+
+impl<'a> PromptPresence<'a> {
+    const fn new(prompt: &'a dyn OidcDeviceAuthorizationPromptSink) -> Self {
+        Self {
+            prompt,
+            presented: AtomicBool::new(false),
+        }
+    }
+
+    fn presented(&self) -> bool {
+        self.presented.load(Ordering::Acquire)
+    }
+}
+
+impl OidcDeviceAuthorizationPromptSink for PromptPresence<'_> {
+    fn present(
+        &self,
+        prompt: &OidcDeviceAuthorizationPrompt,
+    ) -> Result<(), OidcDevicePromptFailure> {
+        self.presented.store(true, Ordering::Release);
+        self.prompt.present(prompt)
     }
 }
 
@@ -2062,6 +2168,31 @@ enum BridgeSupervisorEvent<'a> {
         channel: &'static str,
         code: &'static str,
     },
+    /// 首次授权连不上服务，Bridge 保持运行并将在 `retryAfterMs` 后重试。
+    ServerUnreachable {
+        channel: &'static str,
+        code: &'static str,
+        #[serde(rename = "retryAfterMs")]
+        retry_after_ms: u64,
+    },
+}
+
+fn announce_authorization_retry(
+    failure: BridgeAuthorizationFailure,
+    delay: DurationMillis,
+) -> Result<(), BridgeRuntimeError> {
+    let reason = BridgeRuntimeError::authorization(failure);
+    if supervisor_events_enabled() {
+        return write_supervisor_event(&BridgeSupervisorEvent::ServerUnreachable {
+            channel: "agent_room_desktop",
+            code: reason.code(),
+            retry_after_ms: delay.value(),
+        });
+    }
+    write_stdout(&format!(
+        "{reason}，{} 秒后重试设备授权。\n",
+        delay.value().div_ceil(1_000)
+    ))
 }
 
 fn announce_supervisor_ready() -> Result<(), BridgeRuntimeError> {
@@ -2847,5 +2978,340 @@ mod tests {
                 Ok(TargetedHandoffClaimOutcome::Empty)
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod first_authorization_tests {
+    use std::{
+        collections::VecDeque,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU32, Ordering},
+        },
+    };
+
+    use agent_room_application::{
+        devices::{AuthenticatedDevice, DeviceCredentials},
+        ports::{
+            DeviceSignature, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
+            OidcDeviceGrantGateway, OidcDevicePromptFailure, OidcFailure, OidcFailureKind,
+            OidcResult, PortFuture, PrincipalAccount, ProfileImportConsent, SecretValue,
+        },
+    };
+    use agent_room_bridge_core::{
+        authorization::{
+            AuthorizeBridgeDevice, BridgeAuthorizationDependencies, BridgeAuthorizationFailure,
+            BridgeAuthorizationService,
+        },
+        ports::{
+            BridgeCredentialResult, ControlPlaneDeviceGateway, ControlPlaneDeviceResult,
+            DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
+            RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
+        },
+        reconnect::ReconnectPolicy,
+    };
+    use agent_room_domain::{
+        devices::{DevicePlatform, DevicePublicSigningKey},
+        identity::Principal,
+        ids::{DeviceId, PrincipalId},
+        time::{DurationMillis, UtcMillis},
+    };
+    use agent_room_identity_adapter::SecureSecretFactory;
+    use serde_json::json;
+
+    use super::{
+        BridgeRuntimeError, BridgeSupervisorEvent, ConfiguredDeviceAuthorization,
+        authorize_first_device,
+    };
+
+    #[derive(Debug, Clone, Copy)]
+    enum 身份服务表现 {
+        展示设备码前失败(OidcFailureKind),
+        展示设备码后失败(OidcFailureKind),
+        批准,
+    }
+
+    struct 脚本身份服务 {
+        script: Mutex<VecDeque<身份服务表现>>,
+        attempts: AtomicU32,
+    }
+
+    impl OidcDeviceGrantGateway for 脚本身份服务 {
+        fn authorize<'a>(
+            &'a self,
+            prompt_sink: &'a dyn OidcDeviceAuthorizationPromptSink,
+        ) -> PortFuture<'a, OidcResult<SecretValue>> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            let step = self
+                .script
+                .lock()
+                .expect("脚本锁未中毒")
+                .pop_front()
+                .expect("授权尝试次数超出脚本");
+            Box::pin(async move {
+                if let 身份服务表现::展示设备码前失败(kind) = step {
+                    return Err(OidcFailure::new(kind));
+                }
+                prompt_sink
+                    .present(&OidcDeviceAuthorizationPrompt {
+                        user_code: SecretValue::new("ABCD-EFGH").expect("测试验证码有效"),
+                        verification_uri: "https://identity.example/device".to_owned(),
+                        verification_uri_complete: None,
+                        expires_in: DurationMillis::new(600_000).expect("时长有效"),
+                        polling_interval: DurationMillis::new(5_000).expect("时长有效"),
+                    })
+                    .map_err(|_| OidcFailure::new(OidcFailureKind::PromptUnavailable))?;
+                match step {
+                    身份服务表现::展示设备码后失败(kind) => {
+                        Err(OidcFailure::new(kind))
+                    }
+                    _ => Ok(SecretValue::new("header.payload.signature").expect("测试断言有效")),
+                }
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct 计数提示(AtomicU32);
+
+    impl OidcDeviceAuthorizationPromptSink for 计数提示 {
+        fn present(
+            &self,
+            _prompt: &OidcDeviceAuthorizationPrompt,
+        ) -> Result<(), OidcDevicePromptFailure> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct 测试签名身份;
+
+    impl DeviceSigningIdentity for 测试签名身份 {
+        fn public_key(&self) -> BridgeCredentialResult<DevicePublicSigningKey> {
+            Ok(DevicePublicSigningKey::new(vec![9; 32]).expect("测试公钥有效"))
+        }
+
+        fn sign(&self, _message: &[u8]) -> BridgeCredentialResult<DeviceSignature> {
+            Ok(DeviceSignature::new(vec![7; 64]).expect("测试签名有效"))
+        }
+    }
+
+    struct 测试签名存储;
+
+    impl DeviceSigningIdentityStore for 测试签名存储 {
+        fn load_or_create(&self) -> BridgeCredentialResult<Arc<dyn DeviceSigningIdentity>> {
+            Ok(Arc::new(测试签名身份))
+        }
+    }
+
+    struct 测试控制面;
+
+    impl ControlPlaneDeviceGateway for 测试控制面 {
+        fn register(
+            &self,
+            _request: RegisterBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async { Ok(设备凭据()) })
+        }
+
+        fn refresh(
+            &self,
+            _request: RefreshBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async { Ok(设备凭据()) })
+        }
+    }
+
+    #[derive(Default)]
+    struct 内存凭据库(Mutex<Option<StoredBridgeDeviceCredentials>>);
+
+    impl DeviceCredentialVault for 内存凭据库 {
+        fn load(&self) -> BridgeCredentialResult<Option<StoredBridgeDeviceCredentials>> {
+            Ok(self.0.lock().expect("凭据锁未中毒").clone())
+        }
+
+        fn replace(
+            &self,
+            credentials: &StoredBridgeDeviceCredentials,
+        ) -> BridgeCredentialResult<()> {
+            self.0
+                .lock()
+                .expect("凭据锁未中毒")
+                .replace(credentials.clone());
+            Ok(())
+        }
+
+        fn clear(&self) -> BridgeCredentialResult<()> {
+            self.0.lock().expect("凭据锁未中毒").take();
+            Ok(())
+        }
+    }
+
+    fn 设备凭据() -> DeviceCredentials {
+        DeviceCredentials {
+            device: AuthenticatedDevice {
+                account: PrincipalAccount {
+                    principal: Principal::new(PrincipalId::from_uuid(uuid::Uuid::from_u128(1))),
+                    matrix_user_id: "@device-user:matrix.example".to_owned(),
+                    display_name: "设备用户".to_owned(),
+                    avatar_content_id: None,
+                    locale: "zh-CN".to_owned(),
+                },
+                device_id: DeviceId::from_uuid(uuid::Uuid::from_u128(2)),
+                access_token_expires_at: UtcMillis::new(301_000).expect("测试时间有效"),
+            },
+            access_token: SecretValue::new("bridge-access-token").expect("测试 Token 有效"),
+            refresh_token: SecretValue::new("bridge-refresh-token").expect("测试 Token 有效"),
+            refresh_token_expires_at: UtcMillis::new(86_401_000).expect("测试时间有效"),
+        }
+    }
+
+    fn 首次授权(
+        script: impl IntoIterator<Item = 身份服务表现>,
+    ) -> (ConfiguredDeviceAuthorization, Arc<脚本身份服务>) {
+        let oidc = Arc::new(脚本身份服务 {
+            script: Mutex::new(script.into_iter().collect()),
+            attempts: AtomicU32::new(0),
+        });
+        let service = BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
+            oidc: oidc.clone(),
+            signing_identities: Arc::new(测试签名存储),
+            control_plane: Arc::new(测试控制面),
+            credentials: Arc::new(内存凭据库::default()),
+            secrets: Arc::new(SecureSecretFactory),
+        });
+        let authorization = ConfiguredDeviceAuthorization {
+            service,
+            request: AuthorizeBridgeDevice {
+                label: "Windows 验收设备".to_owned(),
+                platform: DevicePlatform::Windows,
+                profile_import: ProfileImportConsent {
+                    display_name: false,
+                    locale: false,
+                },
+            },
+        };
+        (authorization, oidc)
+    }
+
+    fn 毫秒级退避() -> ReconnectPolicy {
+        ReconnectPolicy::new(
+            DurationMillis::new(1).expect("时长有效"),
+            DurationMillis::new(4).expect("时长有效"),
+        )
+        .expect("退避策略有效")
+    }
+
+    fn 不得重试(
+        _failure: BridgeAuthorizationFailure,
+        _delay: DurationMillis,
+    ) -> Result<(), BridgeRuntimeError> {
+        panic!("这类失败不得自动重试");
+    }
+
+    #[tokio::test]
+    async fn 首次授权在拿到设备码前连不上身份服务时不退出而是退避重试() {
+        let (authorization, oidc) = 首次授权([
+            身份服务表现::展示设备码前失败(OidcFailureKind::DependencyUnavailable),
+            身份服务表现::展示设备码前失败(OidcFailureKind::DependencyUnavailable),
+            身份服务表现::批准,
+        ]);
+        let prompts = 计数提示::default();
+        let retries = Mutex::new(Vec::new());
+
+        let authorized = authorize_first_device(
+            &authorization,
+            &prompts,
+            毫秒级退避(),
+            |failure, delay| {
+                retries.lock().expect("重试记录锁未中毒").push((
+                    BridgeRuntimeError::authorization(failure).code(),
+                    delay.value(),
+                ));
+                Ok(())
+            },
+        )
+        .await
+        .expect("身份服务恢复后应完成授权");
+
+        assert_eq!(oidc.attempts.load(Ordering::SeqCst), 3);
+        assert_eq!(prompts.0.load(Ordering::SeqCst), 1);
+        assert_eq!(authorized.device_id, 设备凭据().device.device_id);
+        let retries = retries.into_inner().expect("重试记录锁未中毒");
+        assert_eq!(retries.len(), 2);
+        for (code, delay) in retries {
+            assert_eq!(code, "bridge.identity_provider_unavailable");
+            assert!((1..=4).contains(&delay), "退避必须来自重连策略：{delay}");
+        }
+    }
+
+    #[tokio::test]
+    async fn 已经展示设备码的授权失败不会自动换新码() {
+        let (authorization, oidc) = 首次授权([身份服务表现::展示设备码后失败(
+            OidcFailureKind::DependencyUnavailable,
+        )]);
+        let prompts = 计数提示::default();
+
+        let failure = authorize_first_device(&authorization, &prompts, 毫秒级退避(), 不得重试)
+            .await
+            .expect_err("展示设备码后的失败必须交给用户显式重试");
+
+        assert_eq!(failure.code(), "bridge.identity_provider_unavailable");
+        assert_eq!(oidc.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(prompts.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn 连得上但被拒绝或响应无效时照旧失败() {
+        for (kind, code) in [
+            (
+                OidcFailureKind::ProviderRejected,
+                "bridge.authorization_denied",
+            ),
+            (
+                OidcFailureKind::InvalidConfiguration,
+                "bridge.authorization_internal",
+            ),
+            (
+                OidcFailureKind::InvalidIdentityToken,
+                "bridge.identity_assertion_invalid",
+            ),
+        ] {
+            let (authorization, oidc) =
+                首次授权([身份服务表现::展示设备码前失败(kind)]);
+
+            let failure = authorize_first_device(
+                &authorization,
+                &计数提示::default(),
+                毫秒级退避(),
+                不得重试,
+            )
+            .await
+            .expect_err("非连通性失败不得重试");
+
+            assert_eq!(failure.code(), code, "{kind:?}");
+            assert_eq!(oidc.attempts.load(Ordering::SeqCst), 1, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn 连不上服务的监督事件携带稳定代码和重试间隔() {
+        let event = serde_json::to_value(BridgeSupervisorEvent::ServerUnreachable {
+            channel: "agent_room_desktop",
+            code: "bridge.identity_provider_unavailable",
+            retry_after_ms: 1_500,
+        })
+        .expect("监督事件可序列化");
+
+        assert_eq!(
+            event,
+            json!({
+                "event": "server_unreachable",
+                "channel": "agent_room_desktop",
+                "code": "bridge.identity_provider_unavailable",
+                "retryAfterMs": 1_500
+            })
+        );
     }
 }

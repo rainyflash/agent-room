@@ -9,6 +9,9 @@ const RESTART_DELAYS: [Duration; MAX_AUTOMATIC_RESTARTS] = [
     Duration::from_secs(4),
     Duration::from_secs(16),
 ];
+const SERVER_UNREACHABLE_DIAGNOSTIC: &str = "desktop.bridge.server_unreachable";
+/// Bridge 重连退避允许配置的最大间隔；更长的值只可能来自损坏的输出。
+const MAX_SERVER_RETRY_DELAY: Duration = Duration::from_mins(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,6 +194,28 @@ impl BridgeRestartPolicy {
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
         self.snapshot.changed_at_unix_ms = now_unix_ms;
+    }
+
+    /// Bridge 仍在运行，只是连不上服务器，已按自己的退避安排好下一次尝试。
+    /// 这不是崩溃：不占用自动重启预算，也不发停止通知；用户随时可以显式重试。
+    pub(crate) fn server_unreachable(
+        &mut self,
+        now_unix_ms: i64,
+        failure_code: impl Into<String>,
+        retry_after: Duration,
+    ) {
+        let already_waiting = self.snapshot.phase == BridgePhase::RetryScheduled
+            && self.snapshot.diagnostic_code.as_deref() == Some(SERVER_UNREACHABLE_DIAGNOSTIC);
+        if !already_waiting {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
+        let delay_ms =
+            i64::try_from(retry_after.min(MAX_SERVER_RETRY_DELAY).as_millis()).unwrap_or(i64::MAX);
+        self.snapshot.phase = BridgePhase::RetryScheduled;
+        self.snapshot.ownership = Some(BridgeOwnership::Managed);
+        self.snapshot.diagnostic_code = Some(SERVER_UNREACHABLE_DIAGNOSTIC.to_owned());
+        self.snapshot.last_failure_code = Some(failure_code.into());
+        self.snapshot.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
     }
 
     pub(crate) fn set_diagnostic(&mut self, now_unix_ms: i64, code: impl Into<String>) {
@@ -441,6 +466,117 @@ mod tests {
             ExitDecision::RetryAfter(std::time::Duration::from_secs(1))
         );
         assert_eq!(policy.snapshot().phase, BridgePhase::RetryScheduled);
+    }
+
+    #[test]
+    fn 连不上服务器时显示下次尝试时间且不占用自动重启预算() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(10);
+
+        policy.server_unreachable(
+            1_000,
+            "bridge.identity_provider_unavailable",
+            std::time::Duration::from_millis(2_500),
+        );
+
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.phase, BridgePhase::RetryScheduled);
+        assert_eq!(snapshot.ownership, Some(BridgeOwnership::Managed));
+        assert_eq!(
+            snapshot.diagnostic_code.as_deref(),
+            Some("desktop.bridge.server_unreachable")
+        );
+        assert_eq!(
+            snapshot.last_failure_code.as_deref(),
+            Some("bridge.identity_provider_unavailable")
+        );
+        assert_eq!(snapshot.next_retry_at_unix_ms, Some(3_500));
+        assert_eq!(snapshot.automatic_restart_count, 0);
+        assert_eq!(snapshot.changed_at_unix_ms, 1_000);
+    }
+
+    #[test]
+    fn 服务器长时间不可达也不会停机并保留开始等待的时间() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(0);
+
+        for minute in 1..=30_i64 {
+            policy.server_unreachable(
+                minute * 60_000,
+                "bridge.identity_provider_unavailable",
+                std::time::Duration::from_mins(1),
+            );
+        }
+
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.phase, BridgePhase::RetryScheduled);
+        assert_eq!(snapshot.changed_at_unix_ms, 60_000);
+        assert_eq!(snapshot.next_retry_at_unix_ms, Some(31 * 60_000));
+        assert_eq!(snapshot.automatic_restart_count, 0);
+        // Bridge 本身仍在运行，唤醒后不应再启动一个与它竞争的进程。
+        assert_eq!(
+            decide_resume(ResumeProbeState::Absent, true, BridgePhase::RetryScheduled),
+            ResumeDecision::KeepProbing
+        );
+        // 真正的崩溃仍按原有预算重启。
+        assert_eq!(
+            policy.child_exited(31 * 60_000, Some(1), false),
+            ExitDecision::RetryAfter(std::time::Duration::from_secs(1))
+        );
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.bridge.process_exited")
+        );
+    }
+
+    #[test]
+    fn 服务器恢复后进入授权并清除连不上的诊断() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(0);
+        policy.server_unreachable(
+            100,
+            "bridge.identity_provider_unavailable",
+            std::time::Duration::from_secs(1),
+        );
+
+        policy.authorization_required(900);
+
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.phase, BridgePhase::AuthorizationRequired);
+        assert_eq!(snapshot.diagnostic_code, None);
+        assert_eq!(snapshot.last_failure_code, None);
+        assert_eq!(snapshot.next_retry_at_unix_ms, None);
+    }
+
+    #[test]
+    fn 用户可以在等待服务器时立即重试() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.server_unreachable(
+            100,
+            "bridge.identity_provider_unavailable",
+            std::time::Duration::from_secs(30),
+        );
+
+        policy.explicit_retry(200);
+
+        assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
+        assert_eq!(policy.snapshot().next_retry_at_unix_ms, None);
+    }
+
+    #[test]
+    fn 异常的重试间隔被限制在_bridge_退避上限内() {
+        let mut policy = BridgeRestartPolicy::new(0);
+
+        policy.server_unreachable(
+            0,
+            "bridge.identity_provider_unavailable",
+            std::time::Duration::MAX,
+        );
+
+        assert_eq!(
+            policy.snapshot().next_retry_at_unix_ms,
+            Some(15 * 60 * 1_000)
+        );
     }
 
     #[test]

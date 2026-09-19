@@ -405,7 +405,12 @@ impl BridgeSupervisorActor {
             }
             ResumeDecision::StartManaged => self.start_managed(),
             ResumeDecision::KeepProbing => {
-                if self.policy.snapshot().phase == BridgePhase::Halted {
+                // 子进程还在而阶段是 RetryScheduled，说明 Bridge 正按自己的退避等服务器恢复；
+                // 保留这个状态，不要用探测诊断盖掉它。
+                if matches!(
+                    self.policy.snapshot().phase,
+                    BridgePhase::Halted | BridgePhase::RetryScheduled
+                ) {
                     return;
                 }
                 self.policy.set_diagnostic(
@@ -519,10 +524,7 @@ impl BridgeSupervisorActor {
     }
 
     fn handle_stdout(&mut self, bytes: &[u8]) {
-        let Ok(line) = std::str::from_utf8(bytes) else {
-            return;
-        };
-        let Ok(event) = serde_json::from_str::<BridgeSupervisorEvent>(line.trim()) else {
+        let Some(event) = supervisor_event(bytes) else {
             return;
         };
         match event {
@@ -567,6 +569,20 @@ impl BridgeSupervisorActor {
                 if channel == SUPERVISOR_CHANNEL && is_stable_bridge_code(&code) =>
             {
                 self.policy.set_diagnostic(now_unix_ms(), code);
+                self.publish();
+            }
+            BridgeSupervisorEvent::ServerUnreachable {
+                channel,
+                code,
+                retry_after_ms,
+            } if channel == SUPERVISOR_CHANNEL && is_stable_bridge_code(&code) => {
+                self.authorization = None;
+                self.session = None;
+                self.policy.server_unreachable(
+                    now_unix_ms(),
+                    code,
+                    Duration::from_millis(retry_after_ms),
+                );
                 self.publish();
             }
             _ => {}
@@ -743,6 +759,17 @@ enum BridgeSupervisorEvent {
         channel: String,
         code: String,
     },
+    ServerUnreachable {
+        channel: String,
+        code: String,
+        #[serde(rename = "retryAfterMs")]
+        retry_after_ms: u64,
+    },
+}
+
+fn supervisor_event(bytes: &[u8]) -> Option<BridgeSupervisorEvent> {
+    let line = std::str::from_utf8(bytes).ok()?;
+    serde_json::from_str(line.trim()).ok()
 }
 
 #[derive(Debug, Clone)]
@@ -851,8 +878,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AuthorizationPrompt, BridgeAgentSessionView, is_stable_bridge_code,
-        stable_bridge_error_code,
+        AuthorizationPrompt, BridgeAgentSessionView, BridgeSupervisorEvent, is_stable_bridge_code,
+        stable_bridge_error_code, supervisor_event,
     };
 
     #[test]
@@ -896,6 +923,26 @@ mod tests {
 
         assert_eq!(code.as_deref(), Some("bridge.config_missing"));
         assert!(stable_bridge_error_code(b"random stderr C:\\Users\\secret").is_none());
+    }
+
+    #[test]
+    fn 解析_bridge_连不上服务器时的监督事件() {
+        let line = br#"{"event":"server_unreachable","channel":"agent_room_desktop","code":"bridge.identity_provider_unavailable","retryAfterMs":1500}
+"#;
+
+        let Some(BridgeSupervisorEvent::ServerUnreachable {
+            channel,
+            code,
+            retry_after_ms,
+        }) = supervisor_event(line)
+        else {
+            panic!("Bridge 输出的事件必须能被桌面端解析");
+        };
+
+        assert_eq!(channel, "agent_room_desktop");
+        assert_eq!(code, "bridge.identity_provider_unavailable");
+        assert_eq!(retry_after_ms, 1_500);
+        assert!(supervisor_event("Agent Room Bridge 已就绪。".as_bytes()).is_none());
     }
 
     #[test]

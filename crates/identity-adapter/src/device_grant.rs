@@ -1,4 +1,4 @@
-use std::{error::Error, str::FromStr, time::Duration};
+use std::{error::Error, future::Future, pin::Pin, str::FromStr, time::Duration};
 
 use agent_room_application::ports::{
     OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
@@ -7,15 +7,16 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::time::{DurationMillis, UtcMillis};
 use openidconnect::{
-    AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationUrl,
-    DeviceCodeErrorResponse, DeviceCodeErrorResponseType, IssuerUrl, Nonce, ProviderMetadata,
-    RequestTokenError, Scope,
+    AdditionalProviderMetadata, AsyncHttpClient, AuthType, ClientId, DeviceAuthorizationUrl,
+    DeviceCodeErrorResponse, DeviceCodeErrorResponseType, HttpClientError, HttpRequest,
+    HttpResponse, IssuerUrl, Nonce, ProviderMetadata, RequestTokenError, Scope,
     core::{
         CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
         CoreDeviceAuthorizationResponse, CoreGrantType, CoreIdToken, CoreJsonWebKey,
         CoreJweContentEncryptionAlgorithm, CoreJweKeyManagementAlgorithm, CoreResponseMode,
         CoreResponseType, CoreSubjectIdentifierType,
     },
+    http::StatusCode,
     reqwest,
 };
 use serde::{Deserialize, Serialize};
@@ -62,8 +63,38 @@ pub struct DiscoveredOidcDeviceGrant {
     client_id: ClientId,
     request_timeout: Duration,
     maximum_polling_duration: Duration,
-    http_client: reqwest::Client,
+    http_client: ProviderHttpClient,
     metadata: OnceCell<DeviceProviderMetadata>,
+}
+
+/// 身份服务前面的网关在上游没起来或超时时回 502/503/504，正文是网关自己的页面。
+/// 交给协议层解析只会被误判为配置错误或无效断言，所以在这里当作连不上：发现和
+/// 设备码请求报告身份服务暂不可用，令牌轮询按 RFC 8628 退避后继续。TLS 与 issuer
+/// 校验不受影响，这些响应的正文也不会被当作协议数据使用。
+struct ProviderHttpClient(reqwest::Client);
+
+impl<'c> AsyncHttpClient<'c> for ProviderHttpClient {
+    type Error = HttpClientError<reqwest::Error>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<HttpResponse, Self::Error>> + Send + Sync + 'c>>;
+
+    fn call(&'c self, request: HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let response = self.0.call(request).await?;
+            if matches!(
+                response.status(),
+                StatusCode::BAD_GATEWAY
+                    | StatusCode::SERVICE_UNAVAILABLE
+                    | StatusCode::GATEWAY_TIMEOUT
+            ) {
+                return Err(HttpClientError::Other(format!(
+                    "身份服务网关暂不可用：HTTP {}",
+                    response.status().as_u16()
+                )));
+            }
+            Ok(response)
+        })
+    }
 }
 
 impl DiscoveredOidcDeviceGrant {
@@ -100,7 +131,7 @@ impl DiscoveredOidcDeviceGrant {
             client_id: ClientId::new(config.client_id),
             request_timeout: config.request_timeout,
             maximum_polling_duration: config.maximum_polling_duration,
-            http_client,
+            http_client: ProviderHttpClient(http_client),
             metadata: OnceCell::new(),
         })
     }

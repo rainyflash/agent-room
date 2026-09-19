@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use agent_room_application::ports::{
     OidcDeviceAssertionVerifier, OidcDeviceAuthorizationPrompt, OidcDeviceAuthorizationPromptSink,
@@ -9,7 +16,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -51,6 +58,42 @@ enum 轮询结局 {
     无人批准,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum 故障端点 {
+    发现,
+    设备码,
+    轮询,
+}
+
+/// 身份服务前的网关：上游没起来时对某个端点先回若干次错误状态和网关自己的 HTML。
+#[derive(Clone)]
+struct 网关故障 {
+    endpoint: 故障端点,
+    status: StatusCode,
+    remaining: Arc<AtomicUsize>,
+}
+
+impl 网关故障 {
+    fn 拦截(&self, endpoint: 故障端点) -> Option<Response> {
+        if self.endpoint != endpoint {
+            return None;
+        }
+        self.remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .ok()?;
+        Some(
+            (
+                self.status,
+                [(CONTENT_TYPE, "text/html")],
+                "<html><body><h1>upstream unavailable</h1></body></html>",
+            )
+                .into_response(),
+        )
+    }
+}
+
 #[derive(Clone)]
 struct 提供者状态 {
     issuer: String,
@@ -58,6 +101,8 @@ struct 提供者状态 {
     poll_outcome: 轮询结局,
     poll_count: Arc<Mutex<usize>>,
     signing_key_pem: Arc<str>,
+    gateway_fault: Option<网关故障>,
+    announces_foreign_issuer: bool,
 }
 
 struct 假设备授权提供者 {
@@ -72,6 +117,24 @@ impl 假设备授权提供者 {
     }
 
     async fn 启动场景(assertion_variant: 断言变体, poll_outcome: 轮询结局) -> Self {
+        Self::启动完整场景(assertion_variant, poll_outcome, None, false).await
+    }
+
+    async fn 启动网关故障(endpoint: 故障端点, status: StatusCode, times: usize) -> Self {
+        let fault = 网关故障 {
+            endpoint,
+            status,
+            remaining: Arc::new(AtomicUsize::new(times)),
+        };
+        Self::启动完整场景(断言变体::有效, 轮询结局::批准, Some(fault), false).await
+    }
+
+    async fn 启动完整场景(
+        assertion_variant: 断言变体,
+        poll_outcome: 轮询结局,
+        gateway_fault: Option<网关故障>,
+        announces_foreign_issuer: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("应能绑定本地测试端口");
@@ -83,6 +146,8 @@ impl 假设备授权提供者 {
             poll_outcome,
             poll_count: poll_count.clone(),
             signing_key_pem: Arc::from(生成测试签名密钥()),
+            gateway_fault,
+            announces_foreign_issuer,
         };
         let router = Router::new()
             .route("/.well-known/openid-configuration", get(发现文档))
@@ -103,13 +168,25 @@ impl 假设备授权提供者 {
     }
 
     fn 网关(&self) -> DiscoveredOidcDeviceGrant {
-        DiscoveredOidcDeviceGrant::new(OidcDeviceGrantConfig {
-            issuer_url: self.issuer.clone(),
-            client_id: CLIENT_ID.to_owned(),
-            request_timeout: Duration::from_secs(2),
-            maximum_polling_duration: Duration::from_secs(10),
-        })
-        .expect("测试网关配置有效")
+        设备授权网关(&self.issuer)
+    }
+}
+
+fn 设备授权网关(issuer: &str) -> DiscoveredOidcDeviceGrant {
+    DiscoveredOidcDeviceGrant::new(OidcDeviceGrantConfig {
+        issuer_url: issuer.to_owned(),
+        client_id: CLIENT_ID.to_owned(),
+        request_timeout: Duration::from_secs(2),
+        maximum_polling_duration: Duration::from_secs(10),
+    })
+    .expect("测试网关配置有效")
+}
+
+impl 提供者状态 {
+    fn 网关拦截(&self, endpoint: 故障端点) -> Option<Response> {
+        self.gateway_fault
+            .as_ref()
+            .and_then(|fault| fault.拦截(endpoint))
     }
 }
 
@@ -143,9 +220,17 @@ impl OidcDeviceAuthorizationPromptSink for 无法展示提示 {
     }
 }
 
-async fn 发现文档(State(state): State<提供者状态>) -> Json<serde_json::Value> {
+async fn 发现文档(State(state): State<提供者状态>) -> Response {
+    if let Some(response) = state.网关拦截(故障端点::发现) {
+        return response;
+    }
+    let issuer = if state.announces_foreign_issuer {
+        "https://another-identity.example/realms/agent-room".to_owned()
+    } else {
+        state.issuer.clone()
+    };
     Json(json!({
-        "issuer": state.issuer,
+        "issuer": issuer,
         "authorization_endpoint": format!("{}/authorize", state.issuer),
         "device_authorization_endpoint": format!("{}/device", state.issuer),
         "token_endpoint": format!("{}/token", state.issuer),
@@ -157,6 +242,7 @@ async fn 发现文档(State(state): State<提供者状态>) -> Json<serde_json::
         "grant_types_supported": ["urn:ietf:params:oauth:grant-type:device_code"],
         "scopes_supported": ["openid", "profile"]
     }))
+    .into_response()
 }
 
 async fn 公钥集(State(state): State<提供者状态>) -> Json<CoreJsonWebKeySet> {
@@ -167,6 +253,9 @@ async fn 公钥集(State(state): State<提供者状态>) -> Json<CoreJsonWebKeyS
 }
 
 async fn 创建设备码(State(state): State<提供者状态>, body: Bytes) -> Response {
+    if let Some(response) = state.网关拦截(故障端点::设备码) {
+        return response;
+    }
     let form = 表单(&body);
     let scopes = form.get("scope").map(String::as_str).unwrap_or_default();
     if form.get("client_id").map(String::as_str) != Some(CLIENT_ID)
@@ -194,6 +283,9 @@ async fn 创建设备码(State(state): State<提供者状态>, body: Bytes) -> R
 }
 
 async fn 轮询令牌(State(state): State<提供者状态>, body: Bytes) -> Response {
+    if let Some(response) = state.网关拦截(故障端点::轮询) {
+        return response;
+    }
     let form = 表单(&body);
     if form.get("client_id").map(String::as_str) != Some(CLIENT_ID)
         || form.get("device_code").map(String::as_str) != Some(DEVICE_CODE)
@@ -429,4 +521,122 @@ async fn 验证码无法展示时报告本地故障且不开始轮询() {
 
     assert_eq!(failure.kind(), OidcFailureKind::PromptUnavailable);
     assert_eq!(*provider.poll_count.lock().await, 0);
+}
+
+#[tokio::test]
+async fn 身份服务连不上时报告暂不可用且没有展示验证码() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("应能绑定本地测试端口");
+    let issuer = format!("http://{}", listener.local_addr().expect("测试地址可读"));
+    drop(listener);
+    let prompt_sink = 记录提示::default();
+
+    let failure = 设备授权网关(&issuer)
+        .authorize(&prompt_sink)
+        .await
+        .expect_err("连不上身份服务时授权必须失败");
+
+    assert_eq!(failure.kind(), OidcFailureKind::DependencyUnavailable);
+    assert!(prompt_sink.0.lock().expect("提示锁未中毒").is_none());
+}
+
+#[tokio::test]
+async fn 网关回报上游不可用时归为身份服务暂不可用而非配置错误() {
+    for endpoint in [故障端点::发现, 故障端点::设备码] {
+        for status in [
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            let provider = 假设备授权提供者::启动网关故障(endpoint, status, 1).await;
+            let prompt_sink = 记录提示::default();
+
+            let failure = provider
+                .网关()
+                .authorize(&prompt_sink)
+                .await
+                .expect_err("网关不可用时授权必须失败");
+
+            assert_eq!(
+                failure.kind(),
+                OidcFailureKind::DependencyUnavailable,
+                "{endpoint:?} {status}"
+            );
+            assert!(
+                prompt_sink.0.lock().expect("提示锁未中毒").is_none(),
+                "{endpoint:?} {status}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn 发现端点的其他错误状态仍按配置错误处理() {
+    let provider =
+        假设备授权提供者::启动网关故障(故障端点::发现, StatusCode::NOT_FOUND, 1).await;
+
+    let failure = provider
+        .网关()
+        .authorize(&记录提示::default())
+        .await
+        .expect_err("发现端点 404 时授权必须失败");
+
+    assert_eq!(failure.kind(), OidcFailureKind::InvalidConfiguration);
+}
+
+#[tokio::test]
+async fn 发现文档的_issuer_与配置不一致时仍拒绝() {
+    let provider =
+        假设备授权提供者::启动完整场景(断言变体::有效, 轮询结局::批准, None, true).await;
+
+    let failure = provider
+        .网关()
+        .authorize(&记录提示::default())
+        .await
+        .expect_err("issuer 错配必须失败");
+
+    assert_eq!(failure.kind(), OidcFailureKind::InvalidConfiguration);
+}
+
+#[tokio::test]
+async fn 身份服务恢复后同一网关实例重新发现并完成授权() {
+    let provider =
+        假设备授权提供者::启动网关故障(故障端点::发现, StatusCode::BAD_GATEWAY, 1).await;
+    let gateway = provider.网关();
+
+    let first = gateway
+        .authorize(&记录提示::default())
+        .await
+        .expect_err("网关不可用时第一次授权必须失败");
+    let prompt_sink = 记录提示::default();
+    let assertion = gateway
+        .authorize(&prompt_sink)
+        .await
+        .expect("失败的发现不得被缓存，恢复后应能完成授权");
+
+    assert_eq!(first.kind(), OidcFailureKind::DependencyUnavailable);
+    assert!(prompt_sink.0.lock().expect("提示锁未中毒").is_some());
+    gateway
+        .verify_assertion(&assertion)
+        .await
+        .expect("恢复后签发的断言仍须通过完整校验");
+}
+
+#[tokio::test]
+async fn 轮询期间网关短暂不可用时继续等待用户批准() {
+    let provider =
+        假设备授权提供者::启动网关故障(故障端点::轮询, StatusCode::BAD_GATEWAY, 1).await;
+    let gateway = provider.网关();
+
+    let assertion = gateway
+        .authorize(&记录提示::default())
+        .await
+        .expect("轮询遇到网关错误后应按退避继续，而不是放弃用户正在批准的设备码");
+
+    gateway
+        .verify_assertion(&assertion)
+        .await
+        .expect("断言仍须通过完整校验");
+    assert_eq!(*provider.poll_count.lock().await, 2);
 }

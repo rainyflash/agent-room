@@ -1,5 +1,7 @@
-import type { BridgePhase } from '@/features/desktop/domain/desktop-runtime';
+import type { BridgePhase, BridgeRuntime } from '@/features/desktop/domain/desktop-runtime';
 import type { TranslationKey } from '@/shared/i18n/resources';
+
+type BridgeLifecycle = BridgeRuntime['lifecycle'];
 
 export const desktopPhaseMessage: Readonly<Record<BridgePhase, TranslationKey>> = {
   authorization_required: 'desktop.phase.authorizationRequired',
@@ -12,6 +14,20 @@ export const desktopPhaseMessage: Readonly<Record<BridgePhase, TranslationKey>> 
   reconnecting: 'desktop.phase.reconnecting',
   stopped: 'desktop.phase.stopped',
 };
+
+// Bridge 进程还在，只是连不上服务器，按自己的退避等下一次尝试；与进程崩溃后的自动重启区分开。
+export function waitingForServer(lifecycle: BridgeLifecycle | undefined): boolean {
+  return (
+    lifecycle?.phase === 'retry_scheduled' &&
+    lifecycle.diagnosticCode === 'desktop.bridge.server_unreachable'
+  );
+}
+
+export function desktopPhaseLabel(lifecycle: BridgeLifecycle | undefined): TranslationKey {
+  return waitingForServer(lifecycle)
+    ? 'desktop.phase.serverUnreachable'
+    : desktopPhaseMessage[lifecycle?.phase ?? 'discovering'];
+}
 
 export function localConnectionReady(phase: BridgePhase): boolean {
   return phase === 'authorized' || phase === 'ready';
