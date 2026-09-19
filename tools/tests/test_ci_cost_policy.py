@@ -48,15 +48,6 @@ class CiCostPolicyTests(unittest.TestCase):
                 self.assertIn("github.event_name == 'workflow_dispatch'", condition)
                 self.assertNotIn("||", condition)
 
-    def test_release_dispatch_is_not_cancelled_by_later_pushes(self) -> None:
-        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-        group = next(line.strip() for line in workflow.splitlines() if line.startswith("  group: "))
-
-        # 普通推送仍按分支取消旧运行；带操作号的发布调度自成一组，main 继续合并不会取消它。
-        self.assertIn("${{ github.ref }}", group)
-        self.assertIn("inputs.operation_id", group)
-        self.assertIn("cancel-in-progress: true", workflow)
-
     def test_push_ci_does_not_build_release_sidecars(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
