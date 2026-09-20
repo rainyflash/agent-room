@@ -112,7 +112,7 @@ afterEach(() => {
 describe('首次引导页面', () => {
   it('接入检查异常时显示可重试错误，不留下没有说明的空白状态', async () => {
     vi.mocked(useAppServices).mockReturnValue({
-      config: { windowsDownloadUrl: null },
+      config: { windowsDownloadUrl: null, macosDownloadUrl: null },
       lobbyEntry: { enter: vi.fn(), enterKnown: vi.fn() },
       onboarding: { bootstrap: vi.fn().mockRejectedValue(new Error('fixture transport failure')) },
     } as unknown as ReturnType<typeof useAppServices>);
@@ -144,6 +144,7 @@ describe('首次引导页面', () => {
     vi.mocked(useAppServices).mockReturnValue({
       config: {
         windowsDownloadUrl: 'https://download.agent-room.test/windows',
+        macosDownloadUrl: null,
       },
       lobbyEntry: {
         enter: vi.fn(),
@@ -175,7 +176,10 @@ describe('首次引导页面', () => {
     );
     const enter = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
-      config: { windowsDownloadUrl: 'https://download.agent-room.test/windows' },
+      config: {
+        windowsDownloadUrl: 'https://download.agent-room.test/windows',
+        macosDownloadUrl: null,
+      },
       lobbyEntry: { enter, enterKnown: vi.fn() },
       onboarding: { bootstrap },
     } as unknown as ReturnType<typeof useAppServices>);

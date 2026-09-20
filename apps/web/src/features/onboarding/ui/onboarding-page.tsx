@@ -58,7 +58,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
   const { config, lobbyEntry, onboarding } = useAppServices();
-  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
+  const { url: downloadUrl } = usePublishedDownload(config);
   const locale = principal.locale;
   const bootstrap = useQuery({
     networkMode: 'always',

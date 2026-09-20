@@ -31,6 +31,7 @@ const config = {
   matrixHomeserverUrl: 'https://matrix.agent-room.test',
   registrationMode: 'open-email' as const,
   windowsDownloadUrl: null,
+  macosDownloadUrl: null,
 };
 
 beforeAll(async () => {

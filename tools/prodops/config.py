@@ -133,6 +133,7 @@ class IdentityConfig:
 @dataclass(frozen=True, slots=True)
 class DistributionConfig:
     windows_download_url: str | None
+    macos_download_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,17 +425,22 @@ def _parse_identity(value: object) -> IdentityConfig:
 
 def _parse_distribution(value: object) -> DistributionConfig:
     if value is None:
-        return DistributionConfig(windows_download_url=None)
+        return DistributionConfig(windows_download_url=None, macos_download_url=None)
     source = _mapping(value, "distribution")
-    _reject_unknown(source, {"windowsDownloadUrl"}, "distribution")
-    raw_url = source.get("windowsDownloadUrl")
-    if raw_url is None:
-        return DistributionConfig(windows_download_url=None)
-    if not isinstance(raw_url, str):
-        raise DeploymentConfigError("distribution.windowsDownloadUrl 必须是 HTTPS URL。")
+    _reject_unknown(source, {"windowsDownloadUrl", "macosDownloadUrl"}, "distribution")
     return DistributionConfig(
-        windows_download_url=_https_url(raw_url, "distribution.windowsDownloadUrl")
+        windows_download_url=_parse_download_url(source, "windowsDownloadUrl"),
+        macos_download_url=_parse_download_url(source, "macosDownloadUrl"),
     )
+
+
+def _parse_download_url(source: dict[str, object], key: str) -> str | None:
+    raw_url = source.get(key)
+    if raw_url is None:
+        return None
+    if not isinstance(raw_url, str):
+        raise DeploymentConfigError(f"distribution.{key} 必须是 HTTPS URL。")
+    return _https_url(raw_url, f"distribution.{key}")
 
 
 def _parse_smtp(value: object) -> SmtpConfig:

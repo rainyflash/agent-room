@@ -4,7 +4,6 @@ import { ArrowRight, Download } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
-import { detectVisitorPlatform } from '@/features/landing/domain/visitor-platform';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
@@ -13,11 +12,10 @@ import { ApplicationVersionLink } from '@/features/updates/ui/application-versio
 export function LandingPage() {
   const { t } = useTranslation();
   const { config, controlPlane } = useAppServices();
-  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
+  // 下载按钮给的是访客这个系统的安装包；没有的系统先说清楚，不用点完下载才发现。
+  const { url: downloadUrl, platform } = usePublishedDownload(config);
   const reduceMotion = useReducedMotion();
   const registrationOpen = config.registrationMode === 'open-email';
-  // Mac 和 Linux 访客先知道桌面端只有 Windows 版，不用点完下载才发现。
-  const platform = detectVisitorPlatform(window.navigator.userAgent);
   return (
     <main className="landing" id="main-content">
       <header className="landing__topbar">
@@ -86,12 +84,18 @@ export function LandingPage() {
                 target="_blank"
               >
                 <Download aria-hidden="true" />
-                {t('landing.download')}
+                {t(platform === 'macos' ? 'landing.download.macos' : 'landing.download.windows')}
               </a>
             )}
           </div>
           <p className="landing__alpha-note">
-            {t(`landing.alphaNote.${platform}`)}{' '}
+            {t(
+              downloadUrl === null
+                ? 'landing.alphaNote.pending'
+                : platform === 'macos'
+                  ? 'landing.alphaNote.macos'
+                  : 'landing.alphaNote.windows',
+            )}{' '}
             <Link className="landing__guide-link" to="/guide">
               {t('landing.guide')}
             </Link>

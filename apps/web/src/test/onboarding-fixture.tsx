@@ -266,6 +266,7 @@ async function bootstrapFixture() {
       matrixHomeserverUrl: 'https://matrix.fixture.invalid',
       registrationMode: 'open-email',
       windowsDownloadUrl: 'https://download.fixture.invalid/windows.exe',
+      macosDownloadUrl: 'https://download.fixture.invalid/macos.dmg',
     },
     gateway,
   );

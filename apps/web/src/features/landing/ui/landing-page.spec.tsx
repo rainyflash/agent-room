@@ -25,6 +25,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('公开 Alpha 首页', () => {
@@ -44,15 +45,47 @@ describe('公开 Alpha 首页', () => {
 
     renderPage();
 
-    expect(screen.getByRole('button', { name: 'Windows download unavailable' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'No download for your system' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Download for Windows' })).not.toBeInTheDocument();
+  });
+
+  it('Mac 访客拿到磁盘映像，而不是 Windows 安装包', () => {
+    vi.stubGlobal('navigator', {
+      languages: ['en'],
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    });
+    configure(
+      'https://download.agent-room.test/v0.1.0-alpha.1/installer.exe',
+      'https://download.agent-room.test/v0.1.0-alpha.1/agent-room.dmg',
+    );
+
+    renderPage();
+
+    expect(screen.getByRole('link', { name: 'Download for Mac' })).toHaveAttribute(
+      'href',
+      'https://download.agent-room.test/v0.1.0-alpha.1/agent-room.dmg',
+    );
+    expect(screen.getByText(/Apple silicon disk image/u)).toBeVisible();
+  });
+
+  it('还没有安装包的系统看到的是浏览器路径，不是别人的安装包', () => {
+    vi.stubGlobal('navigator', {
+      languages: ['en'],
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
+    });
+    configure('https://download.agent-room.test/v0.1.0-alpha.1/installer.exe');
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'No download for your system' })).toBeDisabled();
+    expect(screen.getByText(/No desktop build for your system yet/u)).toBeVisible();
   });
 
   it('注册入口发送明确的注册意图', async () => {
     const user = userEvent.setup();
     const beginAuthentication = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
-      config: { registrationMode: 'open-email', windowsDownloadUrl: null },
+      config: { registrationMode: 'open-email', windowsDownloadUrl: null, macosDownloadUrl: null },
       controlPlane: { beginAuthentication },
     } as unknown as ReturnType<typeof useAppServices>);
 
@@ -72,9 +105,9 @@ describe('公开 Alpha 首页', () => {
   });
 });
 
-function configure(windowsDownloadUrl: string | null) {
+function configure(windowsDownloadUrl: string | null, macosDownloadUrl: string | null = null) {
   vi.mocked(useAppServices).mockReturnValue({
-    config: { registrationMode: 'closed', windowsDownloadUrl },
+    config: { registrationMode: 'closed', windowsDownloadUrl, macosDownloadUrl },
     controlPlane: { beginAuthentication: vi.fn() },
   } as unknown as ReturnType<typeof useAppServices>);
 }
