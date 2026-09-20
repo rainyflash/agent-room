@@ -59,7 +59,7 @@ def validate_source(run: Mapping[str, object], artifacts: Sequence[object],
             if artifact.get("expired") is not False:
                 raise ReleaseCiFailure("来源候选产物已过期。")
             names.append(name)
-    required = {"release-metadata", "release-native-windows-x86_64"}
+    required = {"release-metadata", "release-native-windows-x86_64", "release-native-darwin-aarch64"}
     if profile == "full":
         required.update(f"release-image-{name}" for name in ("control-plane", "identity", "web"))
     if len(names) != len(set(names)) or set(names) != required:

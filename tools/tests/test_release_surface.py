@@ -6,9 +6,11 @@ from unittest.mock import patch
 from tools.release_surface import (
     GhCliReleaseGateway,
     ReleaseSurfaceFailure,
+    WINDOWS_DOWNLOAD_LABEL,
     asset_label,
     build_plan,
     installer_name,
+    macos_image_name,
 )
 
 
@@ -63,7 +65,7 @@ class ReleaseSurfaceTests(unittest.TestCase):
         self.assertLess(body.index(self.installer), body.index("## Other files"))
 
     def test_已经正确标记的资产不会重复更新(self) -> None:
-        label = asset_label(self.installer, self.installer)
+        label = asset_label(self.installer, {self.installer: WINDOWS_DOWNLOAD_LABEL})
         plan = build_plan(
             self.repository,
             self.tag,
@@ -73,6 +75,44 @@ class ReleaseSurfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.asset_updates, ())
+
+    def test_磁盘映像在时发行说明和标签都给_mac_入口(self) -> None:
+        image = macos_image_name(self.version)
+        plan = build_plan(
+            self.repository,
+            self.tag,
+            self.version,
+            {"id": 42},
+            [
+                {"id": 1, "name": self.installer, "label": None},
+                {"id": 2, "name": image, "label": None},
+                {
+                    "id": 3,
+                    "name": "agent-room-desktop-v0.1.0-alpha.1-darwin-aarch64.app.tar.gz",
+                    "label": None,
+                },
+            ],
+        )
+
+        labels = {update.name: update.label for update in plan.asset_updates}
+        self.assertTrue(labels[image].startswith("DOWNLOAD / 下载"))
+        self.assertIn("自动更新载荷", labels["agent-room-desktop-v0.1.0-alpha.1-darwin-aarch64.app.tar.gz"])
+        self.assertIn(image, plan.body)
+        self.assertIn("Privacy & Security", plan.body)
+        self.assertIn("Windows 或 Mac", plan.body)
+        self.assertNotIn("Windows Alpha", plan.title)
+
+    def test_没有磁盘映像时不提_mac_也不给死链(self) -> None:
+        plan = build_plan(
+            self.repository,
+            self.tag,
+            self.version,
+            {"id": 42},
+            [{"id": 1, "name": self.installer, "label": None}],
+        )
+
+        self.assertNotIn(macos_image_name(self.version), plan.body)
+        self.assertNotIn("Privacy & Security", plan.body)
 
     def test_缺少安装器会响亮失败(self) -> None:
         with self.assertRaisesRegex(ReleaseSurfaceFailure, "安装器"):

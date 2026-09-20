@@ -122,26 +122,39 @@ jobs:
           - runner: windows-latest
             target: windows-x86_64
             rust_target: x86_64-pc-windows-msvc
+            cache_key: windows-runtime
+            python: python
+            updater_payload: '*-setup.exe'
             bridge: target/release/agent-room-bridge.exe
             mcp: target/release/agent-room-mcp.exe
             cli: target/release/agent-room.exe
+          # 公开仓库的标准 macOS runner 不计费；更大规格的 runner 即使公开仓库也要付费，不要改。
+          - runner: macos-latest
+            target: darwin-aarch64
+            rust_target: aarch64-apple-darwin
+            cache_key: macos-desktop
+            python: python3
+            updater_payload: '*.app.tar.gz'
+            bridge: target/release/agent-room-bridge
+            mcp: target/release/agent-room-mcp
+            cli: target/release/agent-room
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
       - name: 在占用原生构建资源前校验 MCP 插件静态契约
-        run: python tools/plugin.py validate
+        run: ${{ matrix.python }} tools/plugin.py validate
       - name: 安装 Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
         with:
           node-version-file: .node-version
       - name: 安装 Rust
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
-      - name: 恢复 Windows Release 编译缓存
+      - name: 恢复 Release 编译缓存
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:
-          shared-key: windows-runtime
+          shared-key: ${{ matrix.cache_key }}
           add-job-id-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装固定依赖
@@ -160,6 +173,9 @@ jobs:
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: ${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
           VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.agentroom.chat
           VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
+          VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-darwin-aarch64.dmg
+          # 临时签名：还没有 Developer ID 证书，Gatekeeper 首次打开仍会拦，指南里写了怎么放行。
+          APPLE_SIGNING_IDENTITY: '-'
           AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
           AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_TESTING_RELEASE_KEY_ID }}
           AGENT_ROOM_RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_TESTING_RELEASE_PUBLIC_KEY }}
@@ -176,7 +192,7 @@ jobs:
           }
           corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
           if ($LASTEXITCODE -ne 0) { throw 'Tauri 签名构建失败。' }
-          $payloads = @(Get-ChildItem target/release/bundle -Recurse -File -Filter '*-setup.exe')
+          $payloads = @(Get-ChildItem target/release/bundle -Recurse -File | Where-Object { $_.Name -like '${{ matrix.updater_payload }}' })
           if ($payloads.Count -ne 1) { throw "Tauri 更新载荷数量异常：$($payloads.Count)" }
           $signature = "$($payloads[0].FullName).sig"
           cargo run --locked --release --package agent-room-release-tool -- verify-tauri --public-key "$env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY" --payload "$($payloads[0].FullName)" --signature $signature
@@ -186,9 +202,10 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
         run: |
-          python tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
+          ${{ matrix.python }} tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
           if ($LASTEXITCODE -ne 0) { throw 'MCP 真实协议与 Codex 插件契约校验失败。' }
       - name: 在干净 Windows 候选机验收安装、运行时与卸载
+        if: ${{ matrix.target == 'windows-x86_64' }}
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
@@ -197,13 +214,21 @@ jobs:
           if ($installers.Count -ne 1) { throw "NSIS 安装器数量异常：$($installers.Count)" }
           python tools/windows_installer_acceptance.py --installer "$($installers[0].FullName)" --expected-version "$env:VERSION" --report candidate/windows-installer-acceptance.json
           if ($LASTEXITCODE -ne 0) { throw '干净 Windows 安装器验收失败。' }
+      - name: 在干净 macOS 候选机验收安装、运行时与移除
+        if: ${{ matrix.target == 'darwin-aarch64' }}
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          image="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$image"
+          python3 tools/macos_bundle_acceptance.py --image "$image" --expected-version "$VERSION" --report candidate/macos-bundle-acceptance.json
       - name: 收集原生发布产物
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_BASE_URL: ${{ needs.metadata.outputs.release_base_url }}
         shell: pwsh
         run: >-
-          python tools/release_assets.py collect-native
+          ${{ matrix.python }} tools/release_assets.py collect-native
           --bundle-root target/release/bundle
           --bridge "${{ matrix.bridge }}"
           --mcp "${{ matrix.mcp }}"
@@ -216,7 +241,7 @@ jobs:
           --rust-target "${{ matrix.rust_target }}"
       - name: 为原生文件生成逐件 SBOM 与 Sigstore bundle
         run: >-
-          python tools/release_assets.py attest-blobs
+          ${{ matrix.python }} tools/release_assets.py attest-blobs
           --root candidate
           --metadata "candidate/native-metadata-${{ matrix.target }}.json"
           --descriptor-root candidate
@@ -298,6 +323,7 @@ jobs:
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agentroom.chat
             VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
+            VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL=https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-darwin-aarch64.dmg
       - name: 保存单架构不可变摘要
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
