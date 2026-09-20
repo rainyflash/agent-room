@@ -5,6 +5,7 @@ import re
 import unittest
 from urllib.parse import urlsplit
 
+from tools import release_native
 from tools.prodops.render import BROWSER_CONTROL_PLANE_PATH_PREFIX
 
 
@@ -49,6 +50,17 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
 
         self.assertLess(first_surface, publish)
         self.assertGreater(final_surface, publish)
+
+    def test_候选为每个原生平台都留下安装验收回执(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("target: windows-x86_64", candidate)
+        self.assertIn("target: darwin-aarch64", candidate)
+        # 公开仓库的标准 macOS runner 不计费，更大规格的要付费。
+        self.assertIn("runner: macos-latest", candidate)
+        for platform, (receipt, _checks) in release_native.ACCEPTANCE_RECEIPTS.items():
+            with self.subTest(platform=platform):
+                self.assertIn(f"candidate/{receipt}", candidate)
 
     def test_alpha候选默认只构建客户端(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
@@ -125,9 +137,9 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertLess(contract_gate, fixed_dependencies)
         self.assertLess(contract_gate, desktop_build)
         self.assertLess(desktop_build, runtime_gate)
-        self.assertIn("python tools/plugin.py validate", candidate)
+        self.assertIn("${{ matrix.python }} tools/plugin.py validate", candidate)
         self.assertNotRegex(candidate, r"cargo build[^\n]*agent-room-mcp")
-        self.assertEqual(candidate.count("python tools/plugin.py stage"), 1)
+        self.assertEqual(candidate.count("${{ matrix.python }} tools/plugin.py stage"), 1)
         self.assertNotIn("cache-to: type=gha,mode=max", candidate)
         self.assertIn("cache-to: type=gha,mode=min", candidate)
 

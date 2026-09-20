@@ -33,7 +33,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             "event": "workflow_dispatch", "status": "completed",
         }
         self.artifacts = [{"name": name, "expired": False} for name in (
-            "release-metadata", "release-native-windows-x86_64",
+            "release-metadata", "release-native-windows-x86_64", "release-native-darwin-aarch64",
             "release-image-control-plane", "release-image-identity", "release-image-web",
         )]
 
@@ -65,7 +65,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 validate_source(self.run, artifacts, self.args.repository, "full")
         with self.assertRaises(ReleaseCiFailure):
             validate_source(self.run, self.artifacts, self.args.repository, "client")
-        self.assertEqual(validate_source(self.run, self.artifacts[:2], self.args.repository,
+        self.assertEqual(validate_source(self.run, self.artifacts[:3], self.args.repository,
                                         "client"), self.args.revision)
 
     def test_recovery_rejects_identity_changes_and_expiration_extension(self) -> None:

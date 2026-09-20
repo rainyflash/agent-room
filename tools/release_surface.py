@@ -14,6 +14,8 @@ from typing import Final, Mapping, Protocol, Sequence
 
 API_VERSION: Final = "2026-03-10"
 REPOSITORY_PATTERN: Final = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+WINDOWS_DOWNLOAD_LABEL: Final = "DOWNLOAD / 下载：Windows 安装程序（运行这个文件）"
+MACOS_DOWNLOAD_LABEL: Final = "DOWNLOAD / 下载：Mac 磁盘映像（Apple 芯片，拖进「应用程序」）"
 SEMVER_PATTERN: Final = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:[-+][0-9A-Za-z.-]+)?$"
@@ -225,27 +227,44 @@ def installer_name(version: str) -> str:
     return f"agent-room-installer-v{version}-windows-x86_64.exe"
 
 
+def macos_image_name(version: str) -> str:
+    return f"agent-room-installer-v{version}-darwin-aarch64.dmg"
+
+
 def release_download_url(repository: str, tag: str, asset_name: str) -> str:
     return f"https://github.com/{repository}/releases/download/{tag}/{asset_name}"
 
 
-def release_notes(repository: str, tag: str, version: str) -> str:
+def release_notes(repository: str, tag: str, version: str, *, macos_published: bool) -> str:
     download_url = release_download_url(repository, tag, installer_name(version))
+    macos_url = release_download_url(repository, tag, macos_image_name(version))
+    downloads = f"""   - [**Windows x64 / Windows 安装程序**]({download_url}) — run the installer. 运行安装程序。"""
+    browsers = """No Windows machine? Join from a browser at https://agentroom.chat with nothing to install.
+没有 Windows 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
+    macos_warning = ""
+    if macos_published:
+        downloads += f"""
+   - [**macOS · Apple silicon / Mac 磁盘映像（Apple 芯片）**]({macos_url}) — drag Agent Room into Applications. 拖进「应用程序」。"""
+        browsers = """No Windows or Mac machine? Join from a browser at https://agentroom.chat with nothing to install.
+没有 Windows 或 Mac 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
+        macos_warning = """
+> The Mac build is not notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and choose **Open Anyway**.
+> Mac 版还没有做苹果公证，首次打开会被系统拦下：到「系统设置 → 隐私与安全性」里选「仍要打开」。"""
     return f"""**Agent Room is a shared room where you and your coding agents meet.** Invite Claude Code or Codex with one command; they can keep replying while you are away, and you can take over at any time.
 
 **Agent Room 是你和 Agent 共处的房间。** 一行指令把 Claude Code、Codex 请进房间；你不在时它们可以继续回复，你随时接管。
 
 ## Install / 安装
 
-1. [**Download Agent Room for Windows x64 / 下载 Windows 安装程序**]({download_url}), then run it. 下载后运行。
+1. Download the app for your system and install it. 下载你系统对应的安装包并安装。
+{downloads}
 2. Create an account, sign in, and approve this computer. 注册、登录，并批准这台电脑。
 3. Open a room, press **Bring an agent**, and paste the command into a Claude Code or Codex task. 进入房间，点「接入 Agent」，把指令粘贴给 Claude Code 或 Codex 的任务。
 
-No Windows machine? Join from a browser at https://agentroom.chat with nothing to install.
-没有 Windows 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。
+{browsers}
 
 > Alpha software: Windows may show a SmartScreen warning because the installer is not commercially code-signed yet. Choose **More info → Run anyway** only after confirming the download came from this repository.
-> Alpha 测试版：安装程序还没有商业代码签名，Windows 可能弹出 SmartScreen 提示；确认文件来自本仓库后，再选择「更多信息 → 仍要运行」。
+> Alpha 测试版：安装程序还没有商业代码签名，Windows 可能弹出 SmartScreen 提示；确认文件来自本仓库后，再选择「更多信息 → 仍要运行」。{macos_warning}
 
 ## Other files / 其他文件
 
@@ -257,9 +276,9 @@ The installer above is the only file normal users need. The rest are automatic-u
 """
 
 
-def asset_label(name: str, expected_installer: str) -> str:
-    if name == expected_installer:
-        return "DOWNLOAD / 下载：Windows 安装程序（运行这个文件）"
+def asset_label(name: str, downloads: Mapping[str, str]) -> str:
+    if name in downloads:
+        return downloads[name]
     if name.endswith(".cdx.json"):
         return "VERIFY / 验证文件：CycloneDX SBOM（无需下载）"
     if name.endswith(".sigstore.json"):
@@ -270,11 +289,11 @@ def asset_label(name: str, expected_installer: str) -> str:
         return "VERIFY / 验证文件：自动更新签名（无需下载）"
     if name.startswith("agent-room-cli-"):
         return "ADVANCED / 高级集成：Agent CLI 命令行工具"
-    if name.startswith("agent-room-bridge-") and name.endswith(".exe"):
+    if name.startswith("agent-room-bridge-"):
         return "INTERNAL / 内部组件：Bridge（不要单独运行）"
-    if name.startswith("agent-room-mcp-") and name.endswith(".exe"):
+    if name.startswith("agent-room-mcp-"):
         return "INTERNAL / 内部组件：MCP（不要单独运行）"
-    if name.startswith("agent-room-desktop-") and name.endswith(".exe"):
+    if name.startswith("agent-room-desktop-"):
         return "INTERNAL / 内部组件：自动更新载荷（不要手动运行）"
     if name.startswith("agent-room-codex-plugin-"):
         return "ADVANCED / 高级集成：Codex 适配包（安装器会自动配置）"
@@ -319,20 +338,26 @@ def build_plan(
         raise ReleaseSurfaceFailure(
             f"Release 必须且只能包含一个普通用户安装器：{expected_installer}。"
         )
+    # Mac 版按平台可选：这一版没有磁盘映像时，发行说明就不提 Mac，不给死链。
+    macos_image = macos_image_name(version)
+    macos_published = any(asset.name == macos_image for asset in parsed_assets)
+    downloads = {expected_installer: WINDOWS_DOWNLOAD_LABEL}
+    if macos_published:
+        downloads[macos_image] = MACOS_DOWNLOAD_LABEL
     updates = tuple(
         AssetLabelUpdate(
             asset_id=asset.asset_id,
             name=asset.name,
-            label=asset_label(asset.name, expected_installer),
+            label=asset_label(asset.name, downloads),
         )
         for asset in parsed_assets
-        if asset.label != asset_label(asset.name, expected_installer)
+        if asset.label != asset_label(asset.name, downloads)
     )
     return ReleaseSurfacePlan(
         release_id=release_id,
         tag=tag,
-        title=f"Agent Room {tag} — Windows Alpha",
-        body=release_notes(repository, tag, version),
+        title=f"Agent Room {tag} — Alpha",
+        body=release_notes(repository, tag, version, macos_published=macos_published),
         asset_updates=updates,
     )
 

@@ -69,6 +69,45 @@ class NativeReleaseTests(unittest.TestCase):
             self.write("windows-installer-acceptance.json", self.receipt)
             with self.assertRaises(release.ReleaseFailure): self.verify()
 
+    def add_macos_candidate(self):
+        artifacts = list(self.artifacts)
+        for name, kind in (("desktop.app.tar.gz", "desktop"), ("installer.dmg", "installer")):
+            path = self.root / name
+            path.write_text("mac payload", encoding="utf-8")
+            artifacts.append(release.ArtifactSource(name, kind, "darwin-aarch64", path, f"https://example.org/{name}", path, "https://example.org/sbom", path, "https://example.org/signature", "sigstore-bundle"))
+        self.updater["platforms"]["darwin-aarch64"] = {"url": "https://example.org/desktop.app.tar.gz", "signature": "minisign-test-only"}
+        self.write("updater.json", self.updater)
+        return artifacts
+
+    def macos_receipt(self):
+        return {"schemaVersion": 1, "version": "0.2.0", "result": "passed", "platform": "darwin-aarch64", "installer": {"sha256": release.sha256_file(self.root / "installer.dmg")}, "checks": dict.fromkeys(release_native.MACOS_BUNDLE_CHECKS, True)}
+
+    @patch.object(release, "run_checked")
+    def test_each_installer_platform_carries_its_own_acceptance(self, _run):
+        artifacts = self.add_macos_candidate()
+        with patch.object(release, "parse_artifacts", return_value=artifacts):
+            # 磁盘映像在候选里，但还没有 macOS 验收回执。
+            with self.assertRaises(release.ReleaseFailure): self.verify()
+            self.write("macos-bundle-acceptance.json", self.macos_receipt())
+            self.verify()
+
+    @patch.object(release, "run_checked")
+    def test_macos_receipt_must_match_this_disk_image_and_be_complete(self, _run):
+        artifacts = self.add_macos_candidate()
+        with patch.object(release, "parse_artifacts", return_value=artifacts):
+            receipt = self.macos_receipt()
+            receipt["checks"]["postReplaceDesktopExitedWithBridge"] = False
+            self.write("macos-bundle-acceptance.json", receipt)
+            with self.assertRaises(release.ReleaseFailure): self.verify()
+            receipt = self.macos_receipt()
+            receipt["installer"]["sha256"] = "b" * 64
+            self.write("macos-bundle-acceptance.json", receipt)
+            with self.assertRaises(release.ReleaseFailure): self.verify()
+            receipt = self.macos_receipt()
+            receipt["platform"] = "windows-x86_64"
+            self.write("macos-bundle-acceptance.json", receipt)
+            with self.assertRaises(release.ReleaseFailure): self.verify()
+
     @patch.object(release, "run_checked")
     def test_unlisted_updater_payload_is_not_accepted(self, run):
         self.updater["platforms"]["windows-x86_64"]["url"] = "https://example.org/replacement.exe"
