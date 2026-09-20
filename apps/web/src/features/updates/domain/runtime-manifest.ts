@@ -12,6 +12,12 @@ const manifestSchema = z.object({
     .url()
     .refine((url) => url.startsWith('https://'))
     .nullable(),
+  // 老部署的清单里还没有这一项；缺失按「这个系统还没有安装包」处理。
+  macosDownloadUrl: z
+    .url()
+    .refine((url) => url.startsWith('https://'))
+    .nullable()
+    .optional(),
 });
 export type RuntimeManifest = z.infer<typeof manifestSchema>;
 

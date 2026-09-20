@@ -861,6 +861,7 @@ const services: AppServices = {
     matrixHomeserverUrl: 'https://matrix.agent-room.test',
     registrationMode: 'open-email',
     windowsDownloadUrl: 'https://github.com/rainyflash/agent-room/releases/latest',
+    macosDownloadUrl: 'https://github.com/rainyflash/agent-room/releases/latest',
   },
   content,
   contentVerifier,

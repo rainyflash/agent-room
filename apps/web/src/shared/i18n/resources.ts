@@ -40,18 +40,18 @@ export const resources = {
       'landing.title': 'A room for you and your agents.',
       'landing.description':
         'Meet in a shared space. See who is around, find an agent, and start a conversation.',
-      'landing.download': 'Download for Windows',
-      'landing.downloadPending': 'Windows download unavailable',
+      'landing.download.windows': 'Download for Windows',
+      'landing.download.macos': 'Download for Mac',
+      'landing.downloadPending': 'No download for your system',
       'landing.preview': 'Enter the room',
       'landing.login': 'Log in',
       'landing.register': 'Create account',
       'landing.registrationPending': 'Registration coming soon',
-      'landing.alphaNote.windows': 'Windows Alpha · You can also join in your browser.',
+      'landing.alphaNote.windows': 'Alpha · Windows installer. You can also join in your browser.',
       'landing.alphaNote.macos':
-        'Windows Alpha · A Mac build is in progress. Join in your browser today — everything except bringing a local agent in works there.',
-      'landing.alphaNote.linux':
-        'Windows Alpha · On Linux, join in your browser — everything except bringing a local agent in works there.',
-      'landing.alphaNote.other': 'Windows Alpha · You can also join in your browser.',
+        'Alpha · Apple silicon disk image. If macOS blocks the first launch, allow it in System Settings › Privacy & Security.',
+      'landing.alphaNote.pending':
+        'Alpha · No desktop build for your system yet. Join in your browser — everything except bringing a local agent in works there.',
       'landing.guide': 'How it works',
       'landing.flowTitle': 'Make yourself at home',
       'landing.flow.meet.title': 'Find your people',
@@ -198,7 +198,7 @@ export const resources = {
       'desktop.connection.state.starting.title': 'Starting the local Agent runtime',
       'desktop.connection.state.starting.detail':
         'Agent Room is verifying the Bridge process and its authenticated IPC endpoint.',
-      'desktop.connection.state.authorization.title': 'Authorize this Windows device',
+      'desktop.connection.state.authorization.title': 'Authorize this computer',
       'desktop.connection.state.authorization.detail':
         'Continue in your system browser. The desktop app receives only the resulting device session state.',
       'desktop.connection.state.agent.title': 'Preparing your first Agent',
@@ -832,18 +832,18 @@ export const resources = {
       'navigation.security': '安全',
       'landing.title': '你和 Agent，相聚一个房间。',
       'landing.description': '进入共享空间，看看谁在这里，找到一个 Agent，从一句问候开始交流。',
-      'landing.download': '下载 Windows 应用',
-      'landing.downloadPending': 'Windows 下载暂不可用',
+      'landing.download.windows': '下载 Windows 应用',
+      'landing.download.macos': '下载 Mac 应用',
+      'landing.downloadPending': '暂无你系统的下载',
       'landing.preview': '进入房间',
       'landing.login': '登录',
       'landing.register': '注册账户',
       'landing.registrationPending': '注册即将开放',
-      'landing.alphaNote.windows': 'Windows Alpha · 也可以直接从浏览器加入。',
+      'landing.alphaNote.windows': 'Alpha · Windows 安装包。也可以直接从浏览器加入。',
       'landing.alphaNote.macos':
-        'Windows Alpha · Mac 版正在做。现在可以直接在浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
-      'landing.alphaNote.linux':
-        'Windows Alpha · Linux 请在浏览器里加入，除了把本机 Agent 请进房间，其他都能用。',
-      'landing.alphaNote.other': 'Windows Alpha · 也可以直接从浏览器加入。',
+        'Alpha · Apple 芯片磁盘映像。首次打开若被系统拦下，在「系统设置 › 隐私与安全性」里允许它运行。',
+      'landing.alphaNote.pending':
+        'Alpha · 你的系统还没有桌面端安装包。先从浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
       'landing.guide': '使用指南',
       'landing.flowTitle': '在这里，自在相聚',
       'landing.flow.meet.title': '找到你的伙伴',
@@ -983,7 +983,7 @@ export const resources = {
       'desktop.connection.state.starting.title': '正在启动本机 Agent 运行时',
       'desktop.connection.state.starting.detail':
         'Agent Room 正在验证 Bridge 进程及其已认证的 IPC 端点。',
-      'desktop.connection.state.authorization.title': '授权当前 Windows 设备',
+      'desktop.connection.state.authorization.title': '授权当前设备',
       'desktop.connection.state.authorization.detail':
         '请在系统浏览器中继续；桌面应用只接收授权完成后的设备会话状态。',
       'desktop.connection.state.agent.title': '正在准备你的第一个 Agent',

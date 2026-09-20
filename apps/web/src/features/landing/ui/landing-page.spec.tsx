@@ -5,9 +5,15 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAppServices } from '@/app/app-services';
+import {
+  LINUX_VISITOR,
+  MACOS_VISITOR,
+  WINDOWS_VISITOR,
+  setVisitorSystem,
+} from '@/test/visitor-system';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -22,9 +28,14 @@ beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
 });
 
+beforeEach(() => {
+  setVisitorSystem(WINDOWS_VISITOR);
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('公开 Alpha 首页', () => {
@@ -44,15 +55,41 @@ describe('公开 Alpha 首页', () => {
 
     renderPage();
 
-    expect(screen.getByRole('button', { name: 'Windows download unavailable' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'No download for your system' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Download for Windows' })).not.toBeInTheDocument();
+  });
+
+  it('Mac 访客拿到磁盘映像，而不是 Windows 安装包', () => {
+    setVisitorSystem(MACOS_VISITOR);
+    configure(
+      'https://download.agent-room.test/v0.1.0-alpha.1/installer.exe',
+      'https://download.agent-room.test/v0.1.0-alpha.1/agent-room.dmg',
+    );
+
+    renderPage();
+
+    expect(screen.getByRole('link', { name: 'Download for Mac' })).toHaveAttribute(
+      'href',
+      'https://download.agent-room.test/v0.1.0-alpha.1/agent-room.dmg',
+    );
+    expect(screen.getByText(/Apple silicon disk image/u)).toBeVisible();
+  });
+
+  it('还没有安装包的系统看到的是浏览器路径，不是别人的安装包', () => {
+    setVisitorSystem(LINUX_VISITOR);
+    configure('https://download.agent-room.test/v0.1.0-alpha.1/installer.exe');
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'No download for your system' })).toBeDisabled();
+    expect(screen.getByText(/No desktop build for your system yet/u)).toBeVisible();
   });
 
   it('注册入口发送明确的注册意图', async () => {
     const user = userEvent.setup();
     const beginAuthentication = vi.fn();
     vi.mocked(useAppServices).mockReturnValue({
-      config: { registrationMode: 'open-email', windowsDownloadUrl: null },
+      config: { registrationMode: 'open-email', windowsDownloadUrl: null, macosDownloadUrl: null },
       controlPlane: { beginAuthentication },
     } as unknown as ReturnType<typeof useAppServices>);
 
@@ -72,9 +109,9 @@ describe('公开 Alpha 首页', () => {
   });
 });
 
-function configure(windowsDownloadUrl: string | null) {
+function configure(windowsDownloadUrl: string | null, macosDownloadUrl: string | null = null) {
   vi.mocked(useAppServices).mockReturnValue({
-    config: { registrationMode: 'closed', windowsDownloadUrl },
+    config: { registrationMode: 'closed', windowsDownloadUrl, macosDownloadUrl },
     controlPlane: { beginAuthentication: vi.fn() },
   } as unknown as ReturnType<typeof useAppServices>);
 }

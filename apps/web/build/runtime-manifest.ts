@@ -25,7 +25,7 @@ export const writeContract = createHash('sha256')
   .digest('hex');
 
 export function runtimeManifest(mode: string): Plugin {
-  const env = loadEnv(mode, process.cwd(), 'VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL');
+  const env = loadEnv(mode, process.cwd(), 'VITE_AGENT_ROOM_');
   const body = JSON.stringify({
     schema: 1,
     version: applicationVersion,
@@ -33,6 +33,10 @@ export function runtimeManifest(mode: string): Plugin {
     windowsDownloadUrl:
       process.env.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL ??
       env.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL ??
+      null,
+    macosDownloadUrl:
+      process.env.VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL ??
+      env.VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL ??
       null,
   });
   return {

@@ -1,9 +1,10 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { detectVisitorPlatform } from '@/features/landing/domain/visitor-platform';
+import { useAppServices } from '@/app/app-services';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
+import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import './guide-page.css';
 
 const REPOSITORY_URL = 'https://github.com/rainyflash/agent-room';
@@ -17,8 +18,9 @@ const links = [
 
 export function GuidePage() {
   const { t } = useTranslation();
+  const { config } = useAppServices();
   // 装不了桌面端的访客先知道这一点，不必读完整段再发现自己的系统没有安装包。
-  const platform = detectVisitorPlatform(window.navigator.userAgent);
+  const { url: downloadUrl, platform } = usePublishedDownload(config);
   return (
     <main className="guide" id="main-content">
       <header className="guide__topbar">
@@ -43,7 +45,28 @@ export function GuidePage() {
             <h2>{t(`guide.step.${step}.title`)}</h2>
             <p>{t(`guide.step.${step}.detail`)}</p>
             {step === 'install' ? (
-              <p className="guide__platform-note">{t(`guide.step.install.platform.${platform}`)}</p>
+              <>
+                <p className="guide__platform-note">
+                  {t(
+                    downloadUrl === null
+                      ? 'guide.step.install.platform.pending'
+                      : platform === 'macos'
+                        ? 'guide.step.install.platform.macos'
+                        : 'guide.step.install.platform.windows',
+                  )}
+                </p>
+                {downloadUrl === null ? null : (
+                  <a
+                    className="ar-button ar-button--default ar-button--primary"
+                    href={downloadUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    <Download aria-hidden="true" />
+                    {t('guide.step.install.download')}
+                  </a>
+                )}
+              </>
             ) : null}
           </li>
         ))}

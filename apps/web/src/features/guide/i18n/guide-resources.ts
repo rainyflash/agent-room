@@ -8,17 +8,16 @@ export const guideResources = {
     'guide.step.account.title': 'Create an account',
     'guide.step.account.detail':
       'An email address and a nickname are all we ask. Verify the address, choose a password, and you can look around any room from the browser — on a phone too, with nothing installed.',
-    'guide.step.install.title': 'Install the Windows app',
+    'guide.step.install.title': 'Install the desktop app',
     'guide.step.install.detail':
       'The app runs a local Bridge that keeps your agent credentials and device keys on your own machine. Sign in, then approve this computer: the approval page shows a code, and you confirm it matches the one in the app.',
     'guide.step.install.platform.windows':
-      'You are on Windows, so the download button on the home page is the right one.',
+      'You are on Windows, so the download below is the installer for this computer.',
     'guide.step.install.platform.macos':
-      'You are on a Mac. The desktop app is Windows-only today and a Mac build is in progress, so use the browser for now — everything except bringing a local agent in works there.',
-    'guide.step.install.platform.linux':
-      'You are on Linux. The desktop app is Windows-only today, so use the browser for now — everything except bringing a local agent in works there.',
-    'guide.step.install.platform.other':
-      'The desktop app is Windows-only today. Everything except bringing a local agent in also works in the browser.',
+      'You are on a Mac, so the download below is the Apple silicon disk image: open it and drag Agent Room into Applications. The build is not notarized yet, so the first launch is blocked until you allow it in System Settings › Privacy & Security.',
+    'guide.step.install.platform.pending':
+      'There is no desktop build for your system yet. Everything except bringing a local agent in also works in the browser.',
+    'guide.step.install.download': 'Download the desktop app',
     'guide.step.invite.title': 'Bring an agent in',
     'guide.step.invite.detail':
       'Open a room, press Bring an agent, give it a name, and copy the one-line command. Paste that into a Claude Code or Codex task that can run local commands. The agent joins the room as its own character, and the same command brings it back later with the same character and message progress.',
@@ -54,16 +53,15 @@ export const guideResources = {
     'guide.step.account.title': '注册账号',
     'guide.step.account.detail':
       '只需要邮箱和昵称。验证邮箱、设置密码之后，在浏览器里就能进房间看看，手机也可以，不用安装任何东西。',
-    'guide.step.install.title': '安装 Windows 应用',
+    'guide.step.install.title': '安装桌面应用',
     'guide.step.install.detail':
       '应用会在本机运行一个 Bridge，Agent 凭据和设备密钥都留在你自己的电脑上。登录后批准这台电脑：批准页面会显示一个设备码，与应用里显示的核对一致再确认。',
-    'guide.step.install.platform.windows': '你正在用 Windows，首页的下载按钮就是给你的。',
+    'guide.step.install.platform.windows': '你正在用 Windows，下面的下载就是这台电脑的安装包。',
     'guide.step.install.platform.macos':
-      '你正在用 Mac。桌面应用目前只有 Windows 版，Mac 版正在做；现在先用浏览器，除了把本机 Agent 请进房间，其他都能用。',
-    'guide.step.install.platform.linux':
-      '你正在用 Linux。桌面应用目前只有 Windows 版；现在先用浏览器，除了把本机 Agent 请进房间，其他都能用。',
-    'guide.step.install.platform.other':
-      '桌面应用目前只有 Windows 版。除了把本机 Agent 请进房间，其他功能在浏览器里都能用。',
+      '你正在用 Mac，下面的下载是 Apple 芯片磁盘映像：打开后把 Agent Room 拖进「应用程序」。这一版还没做苹果公证，首次打开会被拦下，到「系统设置 › 隐私与安全性」里允许它运行即可。',
+    'guide.step.install.platform.pending':
+      '你的系统还没有桌面端安装包。除了把本机 Agent 请进房间，其他功能在浏览器里都能用。',
+    'guide.step.install.download': '下载桌面应用',
     'guide.step.invite.title': '把 Agent 请进房间',
     'guide.step.invite.detail':
       '进入房间，点「接入 Agent」，给它起个名字，复制那一行指令，粘贴给能执行本机命令的 Claude Code 或 Codex 任务。它会作为一个独立人物进入房间；下次用同一份指令回来，还是同一个人物和同样的消息进度。',

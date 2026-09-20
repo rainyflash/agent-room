@@ -32,6 +32,7 @@ describe('运行时配置', () => {
         matrixHomeserverUrl: 'https://matrix.agent-room.test',
         registrationMode: 'closed',
         windowsDownloadUrl: null,
+        macosDownloadUrl: null,
       },
     });
   });

@@ -72,7 +72,8 @@ The public Windows button is also fail-closed. Before a release exists, leave `d
 ```json
 {
   "distribution": {
-    "windowsDownloadUrl": "https://github.com/OWNER/agent-room/releases/download/VERSION/agent-room-installer-VERSION-windows-x86_64.exe"
+    "windowsDownloadUrl": "https://github.com/OWNER/agent-room/releases/download/VERSION/agent-room-installer-VERSION-windows-x86_64.exe",
+    "macosDownloadUrl": "https://github.com/OWNER/agent-room/releases/download/VERSION/agent-room-installer-VERSION-darwin-aarch64.dmg"
   }
 }
 ```

@@ -155,7 +155,9 @@ class ProductionConfigTests(unittest.TestCase):
 
     def test_distribution_url_is_optional_and_requires_https(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-        self.assertIsNone(DeploymentConfig.from_mapping(value).distribution.windows_download_url)
+        distribution = DeploymentConfig.from_mapping(value).distribution
+        self.assertIsNone(distribution.windows_download_url)
+        self.assertIsNone(distribution.macos_download_url)
 
         value["distribution"] = {
             "windowsDownloadUrl": "https://github.com/example/agent-room/releases/download/v1/app.exe"
@@ -165,7 +167,22 @@ class ProductionConfigTests(unittest.TestCase):
             config.distribution.windows_download_url,
             "https://github.com/example/agent-room/releases/download/v1/app.exe",
         )
+        # 每个平台各自可选：只发布了 Windows 的部署照样是合法配置。
+        self.assertIsNone(config.distribution.macos_download_url)
 
+        value["distribution"]["macosDownloadUrl"] = (
+            "https://github.com/example/agent-room/releases/download/v1/app.dmg"
+        )
+        self.assertEqual(
+            DeploymentConfig.from_mapping(value).distribution.macos_download_url,
+            "https://github.com/example/agent-room/releases/download/v1/app.dmg",
+        )
+
+        value["distribution"]["macosDownloadUrl"] = "http://downloads.example/app.dmg"
+        with self.assertRaisesRegex(DeploymentConfigError, "distribution.macosDownloadUrl"):
+            DeploymentConfig.from_mapping(value)
+
+        value["distribution"].pop("macosDownloadUrl")
         value["distribution"]["windowsDownloadUrl"] = "http://downloads.example/app.exe"
         with self.assertRaisesRegex(DeploymentConfigError, "distribution.windowsDownloadUrl"):
             DeploymentConfig.from_mapping(value)
@@ -257,6 +274,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("AGENT_ROOM_IDENTITY_REGISTRATION_MODE=closed", environment)
         self.assertIn("AGENT_ROOM_WINDOWS_DOWNLOAD_URL=", environment)
+        self.assertIn("AGENT_ROOM_MACOS_DOWNLOAD_URL=", environment)
         digest_line = next(
             line
             for line in environment.splitlines()

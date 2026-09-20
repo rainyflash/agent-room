@@ -43,6 +43,7 @@ const runtimeConfigSchema = z.object({
   matrixHomeserverUrl: originSchema,
   registrationMode: registrationModeSchema,
   windowsDownloadUrl: optionalDownloadUrlSchema,
+  macosDownloadUrl: optionalDownloadUrlSchema,
 });
 
 export type RuntimeConfig = z.output<typeof runtimeConfigSchema>;
@@ -58,6 +59,7 @@ export type RuntimeEnvironment = {
   readonly VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE?: unknown;
   readonly VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL?: unknown;
   readonly VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL?: unknown;
+  readonly VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL?: unknown;
 };
 
 export function loadRuntimeConfig(
@@ -71,6 +73,7 @@ export function loadRuntimeConfig(
       'https://matrix.agent-room.localhost:18443',
     registrationMode: environment.VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE,
     windowsDownloadUrl: environment.VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL,
+    macosDownloadUrl: environment.VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL,
   });
 
   if (parsed.success) {

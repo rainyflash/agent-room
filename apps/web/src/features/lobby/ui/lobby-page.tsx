@@ -122,7 +122,7 @@ function ReadyLobby({
   const { t } = useTranslation();
   const { config, localRuntime, messages: messageGateway } = useAppServices();
   const reception = useReceptionEvidence();
-  const downloadUrl = usePublishedDownload(config.windowsDownloadUrl);
+  const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);

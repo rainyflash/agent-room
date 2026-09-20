@@ -188,6 +188,12 @@
           "format": "uri",
           "pattern": "^https://",
           "maxLength": 2048
+        },
+        "macosDownloadUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "maxLength": 2048
         }
       }
     }
