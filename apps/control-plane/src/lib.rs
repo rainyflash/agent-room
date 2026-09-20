@@ -75,7 +75,9 @@ use axum::{
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use config::{AccountLifecycleConfig, AuthenticationConfig, ControlPlaneConfig, LobbyConfig};
+use config::{
+    AccountLifecycleConfig, AuthenticationConfig, ControlPlaneConfig, DesktopOrigins, LobbyConfig,
+};
 use features::accounts::AccountHttpState;
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agent_instances::{AgentInstanceHttpState, AgentInstanceHttpStateDependencies};
@@ -197,7 +199,7 @@ pub async fn run() -> Result<(), StartupError> {
         runtime.readiness.clone(),
         routes,
         &config.authentication.frontend_origin,
-        &config.authentication.desktop_origin,
+        &config.authentication.desktop_origins,
         metrics,
     )?;
 
@@ -228,12 +230,12 @@ fn build_router(
     readiness: Arc<ReadinessService>,
     feature_routes: Router,
     frontend_origin: &url::Url,
-    desktop_origin: &url::Url,
+    desktop_origins: &DesktopOrigins,
     metrics: TelemetryMetrics,
 ) -> Result<Router, StartupError> {
-    let origins = [frontend_origin, desktop_origin]
-        .into_iter()
-        .map(|origin| HeaderValue::from_str(&origin.origin().ascii_serialization()))
+    let origins = std::iter::once(frontend_origin.origin().ascii_serialization())
+        .chain(desktop_origins.values().iter().cloned())
+        .map(|origin| HeaderValue::from_str(&origin))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| {
             StartupError::new(
@@ -317,7 +319,7 @@ async fn build_identity_router(
             secrets: secrets.clone(),
         },
         &authentication_config.frontend_origin,
-        &authentication_config.desktop_origin,
+        &authentication_config.desktop_origins,
     );
     let content_runtime =
         content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
@@ -331,7 +333,7 @@ async fn build_identity_router(
             secrets: secrets.clone(),
             matrix_identities: matrix_identities.clone(),
             frontend_origin: &authentication_config.frontend_origin,
-            desktop_origin: &authentication_config.desktop_origin,
+            desktop_origins: &authentication_config.desktop_origins,
         })
         .await?;
     let (content_routes, content_cleanup, matrix_authority, content_authorizer) =
@@ -394,7 +396,7 @@ fn personal_routes(
             secrets: dependencies.secrets.clone(),
             trusted_origins: features::authentication::TrustedOrigins::new(
                 &config.frontend_origin,
-                &config.desktop_origin,
+                &config.desktop_origins,
             ),
         },
     ))
@@ -475,7 +477,7 @@ fn build_frontend_telemetry_state(
     FrontendTelemetryHttpState::new(
         authentication,
         &config.authentication.frontend_origin,
-        &config.authentication.desktop_origin,
+        &config.authentication.desktop_origins,
         metrics,
     )
 }
@@ -489,7 +491,7 @@ fn build_account_http_state(
         accounts,
         authentication,
         &config.authentication.frontend_origin,
-        &config.authentication.desktop_origin,
+        &config.authentication.desktop_origins,
     )
 }
 
@@ -641,7 +643,7 @@ fn build_agent_identity_http_states(
                 secrets: dependencies.secrets.clone(),
             },
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         instances: AgentInstanceHttpState::new(
             AgentInstanceHttpStateDependencies {
@@ -649,7 +651,7 @@ fn build_agent_identity_http_states(
                 authentication: dependencies.authentication.clone(),
             },
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         cards: AgentCardHttpState::new(AgentCardHttpDependencies {
             cards,
@@ -699,7 +701,7 @@ fn build_agent_collaboration_http_states(
                 secrets: dependencies.secrets.clone(),
             },
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         lobbies: LobbyHttpState::new(LobbyHttpDependencies {
             entries,
@@ -714,20 +716,20 @@ fn build_agent_collaboration_http_states(
             private_rooms,
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         direct_sessions: DirectSessionHttpState::new(
             direct_sessions,
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         automation,
         moderation: ModerationHttpState::new(
             moderation,
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
-            &config.authentication.desktop_origin,
+            &config.authentication.desktop_origins,
         ),
         roster: features::agent_roster::AgentRosterHttpState {
             service: Arc::new(
@@ -740,7 +742,7 @@ fn build_agent_collaboration_http_states(
             authentication: dependencies.authentication.clone(),
             trusted_origins: features::authentication::TrustedOrigins::new(
                 &config.authentication.frontend_origin,
-                &config.authentication.desktop_origin,
+                &config.authentication.desktop_origins,
             ),
         },
     })
@@ -839,7 +841,7 @@ fn build_automation_http_state(
             secrets: dependencies.secrets.clone(),
         },
         &config.authentication.frontend_origin,
-        &config.authentication.desktop_origin,
+        &config.authentication.desktop_origins,
     ))
 }
 
@@ -914,7 +916,7 @@ fn build_authentication_http_state(
         service,
         config.issuer_url.clone(),
         config.frontend_origin.clone(),
-        &config.desktop_origin,
+        &config.desktop_origins,
         config.login_attempt_ttl,
         config.web_session_ttl,
     )
@@ -1195,7 +1197,8 @@ mod tests {
     use uuid::{Uuid, Version};
 
     use super::{
-        build_router, correlation::CORRELATION_ID_HEADER, telemetry_metrics::TelemetryMetrics,
+        DesktopOrigins, build_router, correlation::CORRELATION_ID_HEADER,
+        telemetry_metrics::TelemetryMetrics,
     };
 
     const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
@@ -1230,7 +1233,7 @@ mod tests {
             Arc::new(readiness),
             axum::Router::new(),
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
-            &url::Url::parse("http://tauri.localhost").expect("测试桌面 Origin 有效"),
+            &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")
@@ -1245,7 +1248,12 @@ mod tests {
 
     #[tokio::test]
     async fn cors_只回显精确配置的浏览器与桌面_origin() {
-        for origin in [FRONTEND_ORIGIN, "http://tauri.localhost"] {
+        // Windows 桌面是 http://tauri.localhost，macOS 桌面是自定义协议 tauri://localhost。
+        for origin in [
+            FRONTEND_ORIGIN,
+            "http://tauri.localhost",
+            "tauri://localhost",
+        ] {
             let response = router_with(Ok(()))
                 .oneshot(
                     Request::builder()
@@ -1449,7 +1457,7 @@ mod real_dependency_tests {
     use url::Url;
 
     use super::{
-        build_router,
+        DesktopOrigins, build_router,
         config::{ControlPlaneConfig, DependencyConfig},
         features::health::HealthRuntime,
         telemetry_metrics::TelemetryMetrics,
@@ -1463,7 +1471,7 @@ mod real_dependency_tests {
             runtime.readiness.clone(),
             axum::Router::new(),
             &frontend_origin,
-            &Url::parse("http://tauri.localhost").expect("测试桌面 Origin 有效"),
+            &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
         )
         .expect("测试 CORS 配置有效")

@@ -1,4 +1,4 @@
-use std::{env, fmt, fs, net::SocketAddr, time::Duration};
+use std::{env, fmt, fs, net::SocketAddr, sync::Arc, time::Duration};
 
 use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
 use thiserror::Error;
@@ -16,7 +16,9 @@ const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
-const DEFAULT_DESKTOP_ORIGIN: &str = "http://tauri.localhost";
+// Windows 的 WebView2 从 http://tauri.localhost 提供应用，macOS 的 WKWebView 用自定义
+// 协议 tauri://localhost。两者都要逐字精确匹配，绝不放宽成通配。
+const DEFAULT_DESKTOP_ORIGINS: &str = "http://tauri.localhost,tauri://localhost";
 const DEFAULT_LOBBY_RESERVATION_LIFETIME_MILLIS: u64 = 60 * 1_000;
 const DEFAULT_LOBBY_PROVISIONING_LEASE_MILLIS: u64 = 30 * 1_000;
 const DEFAULT_CONTENT_OBJECT_TIMEOUT_MILLIS: u64 = 30_000;
@@ -106,7 +108,7 @@ pub(crate) struct AuthenticationConfig {
     pub(crate) device_client_id: String,
     pub(crate) redirect_url: Url,
     pub(crate) frontend_origin: Url,
-    pub(crate) desktop_origin: Url,
+    pub(crate) desktop_origins: DesktopOrigins,
     pub(crate) matrix_server_name: String,
     pub(crate) login_attempt_ttl: Duration,
     pub(crate) web_session_ttl: Duration,
@@ -427,10 +429,10 @@ fn read_authentication_config(
             "AGENT_ROOM_FRONTEND_ORIGIN",
             &read_required_text(source, "AGENT_ROOM_FRONTEND_ORIGIN")?,
         )?,
-        desktop_origin: parse_origin(
+        desktop_origins: DesktopOrigins::parse(
             "AGENT_ROOM_DESKTOP_ORIGIN",
             &read_optional(source, "AGENT_ROOM_DESKTOP_ORIGIN")
-                .unwrap_or_else(|| DEFAULT_DESKTOP_ORIGIN.to_owned()),
+                .unwrap_or_else(|| DEFAULT_DESKTOP_ORIGINS.to_owned()),
         )?,
         matrix_server_name: read_required_text(source, "AGENT_ROOM_MATRIX_SERVER_NAME")?,
         login_attempt_ttl: read_bounded_duration(
@@ -705,6 +707,68 @@ fn parse_origin(name: &'static str, value: &str) -> Result<Url, ConfigError> {
     Ok(url)
 }
 
+/// 桌面壳的受信任来源集合，按平台各一条，逐字精确匹配。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DesktopOrigins(Arc<[String]>);
+
+impl DesktopOrigins {
+    /// 解析逗号分隔的桌面 Origin 列表。
+    ///
+    /// # Errors
+    ///
+    /// 任何一条不是纯 Origin、带凭据或整体为空时返回配置错误。
+    pub(crate) fn parse(name: &'static str, value: &str) -> Result<Self, ConfigError> {
+        let mut origins = Vec::new();
+        for entry in value.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            origins.push(parse_desktop_origin(name, entry)?);
+        }
+        if origins.is_empty() {
+            return Err(ConfigError::invalid(name, "必须至少包含一个桌面 Origin"));
+        }
+        origins.sort_unstable();
+        origins.dedup();
+        Ok(Self(origins.into()))
+    }
+
+    pub(crate) fn values(&self) -> &[String] {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::parse("TEST_DESKTOP_ORIGIN", DEFAULT_DESKTOP_ORIGINS).expect("默认桌面 Origin 有效")
+    }
+}
+
+fn parse_desktop_origin(name: &'static str, value: &str) -> Result<String, ConfigError> {
+    let url =
+        Url::parse(value).map_err(|_| ConfigError::invalid(name, "必须是有效的桌面 Origin"))?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return Err(ConfigError::invalid(
+            name,
+            "必须是无路径、无查询、无凭据的桌面 Origin",
+        ));
+    }
+    let Some(host) = url.host_str() else {
+        return Err(ConfigError::invalid(name, "桌面 Origin 必须带主机名"));
+    };
+    // macOS 的 tauri:// 在 URL 规范里是不透明来源，Url::origin() 会序列化成 null，
+    // 因此这里按浏览器实际发送的 Origin 头逐段拼装。
+    Ok(match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum ConfigError {
     #[error("缺少必需配置：{name}")]
@@ -823,6 +887,57 @@ mod tests {
                 "01991aaa-0000-7000-8000-000000000001".to_owned(),
             ),
         ]))
+    }
+
+    #[test]
+    fn 默认信任两个平台的桌面来源且逐字精确() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+
+        // Windows 的 WebView2 与 macOS 的 WKWebView 各发各的 Origin，两个都要在列表里。
+        assert_eq!(
+            config.authentication.desktop_origins.values(),
+            ["http://tauri.localhost", "tauri://localhost"]
+        );
+
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_DESKTOP_ORIGIN",
+            "tauri://localhost, http://tauri.localhost".to_owned(),
+        );
+        let custom = ControlPlaneConfig::from_source(&environment).expect("显式桌面来源配置有效");
+        assert_eq!(
+            custom.authentication.desktop_origins.values(),
+            ["http://tauri.localhost", "tauri://localhost"]
+        );
+    }
+
+    #[test]
+    fn 桌面来源不接受通配路径与凭据() {
+        // 空值等同于没配，走默认；这里只看真正被解析的内容。
+        for value in [
+            "*",
+            ",",
+            "http://tauri.localhost/app",
+            "http://user:secret@tauri.localhost",
+            "http://tauri.localhost?trusted=1",
+            "tauri://",
+        ] {
+            let mut environment = valid_environment();
+            environment
+                .0
+                .insert("AGENT_ROOM_DESKTOP_ORIGIN", value.to_owned());
+
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid {
+                        name: "AGENT_ROOM_DESKTOP_ORIGIN",
+                        ..
+                    })
+                ),
+                "{value} 不应被当作可信桌面来源"
+            );
+        }
     }
 
     #[test]

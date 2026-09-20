@@ -48,12 +48,12 @@ impl AccountHttpState {
         lifecycle: Arc<dyn AccountLifecycleUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
-        desktop_origin: &url::Url,
+        desktop_origins: &crate::config::DesktopOrigins,
     ) -> Self {
         Self {
             lifecycle,
             authentication,
-            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
 }

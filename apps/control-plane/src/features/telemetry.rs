@@ -33,12 +33,12 @@ impl FrontendTelemetryHttpState {
     pub(crate) fn new(
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &Url,
-        desktop_origin: &Url,
+        desktop_origins: &crate::config::DesktopOrigins,
         metrics: TelemetryMetrics,
     ) -> Self {
         Self {
             authentication,
-            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
             metrics,
         }
     }
