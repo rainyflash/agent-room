@@ -70,6 +70,37 @@ jobs:
           # 报告写到仓库外，保持工作树干净，后面的构建卫生检查才有意义。
           python3 tools/macos_bundle_acceptance.py --image "$image" --expected-version "$version" --report "$RUNNER_TEMP/macos-bundle-acceptance.json"
           cat "$RUNNER_TEMP/macos-bundle-acceptance.json"
+      - name: 临时验证发行配置的签名构建与收集（不合并）
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        shell: pwsh
+        run: |
+          corepack pnpm@10.28.0 --filter @agent-room/desktop exec tauri signer generate -w "$env:RUNNER_TEMP/smoke.key" -p ''
+          $env:TAURI_SIGNING_PRIVATE_KEY = "$env:RUNNER_TEMP/smoke.key"
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
+          corepack pnpm@10.28.0 --filter @agent-room/desktop build:signed
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri 签名构建失败。' }
+          $payloads = @(Get-ChildItem target/release/bundle -Recurse -File | Where-Object { $_.Name -like '*.app.tar.gz' })
+          if ($payloads.Count -ne 1) { throw "Tauri 更新载荷数量异常：$($payloads.Count)" }
+          $signature = "$($payloads[0].FullName).sig"
+          if (-not (Test-Path $signature)) { throw "缺少更新签名：$signature" }
+          $version = python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "."); from tools.release_ci import workspace_version; print(workspace_version(Path("Cargo.toml")))'
+          python3 tools/plugin.py stage --binary target/release/agent-room-mcp --platform-tag darwin-aarch64
+          if ($LASTEXITCODE -ne 0) { throw 'MCP 真实协议与 Codex 插件契约校验失败。' }
+          python3 tools/release_assets.py collect-native `
+            --bundle-root target/release/bundle `
+            --bridge target/release/agent-room-bridge `
+            --mcp target/release/agent-room-mcp `
+            --cli target/release/agent-room `
+            --plugin "artifacts/codex-plugin/agent-room-plugin-v$version-darwin-aarch64.zip" `
+            --output-root "$env:RUNNER_TEMP/candidate" `
+            --metadata "$env:RUNNER_TEMP/candidate/native-metadata-darwin-aarch64.json" `
+            --release-base-url "https://example.invalid/releases/download/v$version" `
+            --version "$version" `
+            --rust-target aarch64-apple-darwin
+          if ($LASTEXITCODE -ne 0) { throw '原生产物收集失败。' }
+          Get-Content "$env:RUNNER_TEMP/candidate/native-metadata-darwin-aarch64.json"
+          Get-ChildItem "$env:RUNNER_TEMP/candidate" | Select-Object -ExpandProperty Name
       - name: 检查构建卫生
         run: python3 tools/build_hygiene.py
       - name: 组装 macOS ARM64 测试包
