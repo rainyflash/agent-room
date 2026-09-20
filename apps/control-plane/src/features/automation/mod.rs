@@ -41,14 +41,14 @@ impl AutomationHttpState {
     pub(crate) fn new(
         dependencies: AutomationHttpDependencies,
         frontend_origin: &url::Url,
-        desktop_origin: &url::Url,
+        desktop_origins: &crate::config::DesktopOrigins,
     ) -> Self {
         Self {
             automation: dependencies.automation,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
-            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
 }

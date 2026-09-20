@@ -81,7 +81,7 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
         self.assertEqual(docker_gateway["AGENT_ROOM_BIND_ADDRESS"], "0.0.0.0:8090")
         self.assertEqual(
             loopback["AGENT_ROOM_DESKTOP_ORIGIN"],
-            "http://tauri.localhost",
+            "http://tauri.localhost,tauri://localhost",
         )
 
     def test_缺失凭据时立即失败(self) -> None:

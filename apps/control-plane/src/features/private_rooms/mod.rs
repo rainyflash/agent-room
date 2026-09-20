@@ -31,12 +31,12 @@ impl PrivateRoomHttpState {
         rooms: Arc<dyn PrivateRoomUseCases>,
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
-        desktop_origin: &url::Url,
+        desktop_origins: &crate::config::DesktopOrigins,
     ) -> Self {
         Self {
             rooms,
             authentication,
-            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
 }

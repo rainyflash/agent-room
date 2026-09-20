@@ -61,7 +61,7 @@ impl AuthenticationHttpState {
         authentication: Arc<dyn AuthenticationUseCases>,
         issuer: Url,
         frontend_origin: Url,
-        desktop_origin: &Url,
+        desktop_origins: &crate::config::DesktopOrigins,
         login_cookie_ttl: Duration,
         session_cookie_ttl: Duration,
     ) -> Result<Self, AuthenticationHttpConfigurationError> {
@@ -71,13 +71,7 @@ impl AuthenticationHttpState {
         {
             return Err(AuthenticationHttpConfigurationError::FrontendOrigin);
         }
-        if desktop_origin.path() != "/"
-            || desktop_origin.query().is_some()
-            || desktop_origin.fragment().is_some()
-        {
-            return Err(AuthenticationHttpConfigurationError::DesktopOrigin);
-        }
-        let trusted_origins = TrustedOrigins::new(&frontend_origin, desktop_origin);
+        let trusted_origins = TrustedOrigins::new(&frontend_origin, desktop_origins);
         let login_failure_redirect = frontend_origin
             .join("/connect")
             .map_err(|_| AuthenticationHttpConfigurationError::FrontendOrigin)?
@@ -705,11 +699,12 @@ pub(crate) async fn authenticate_session(
 pub(crate) struct TrustedOrigins(Arc<[String]>);
 
 impl TrustedOrigins {
-    pub(crate) fn new(frontend_origin: &Url, desktop_origin: &Url) -> Self {
-        let mut values = vec![
-            frontend_origin.origin().ascii_serialization(),
-            desktop_origin.origin().ascii_serialization(),
-        ];
+    pub(crate) fn new(
+        frontend_origin: &Url,
+        desktop_origins: &crate::config::DesktopOrigins,
+    ) -> Self {
+        let mut values = vec![frontend_origin.origin().ascii_serialization()];
+        values.extend(desktop_origins.values().iter().cloned());
         values.sort_unstable();
         values.dedup();
         Self(values.into())
@@ -780,8 +775,6 @@ pub(crate) fn missing_session_error(correlation_id: CorrelationId) -> ApiError {
 pub(crate) enum AuthenticationHttpConfigurationError {
     #[error("前端 Origin 配置无效")]
     FrontendOrigin,
-    #[error("桌面 Origin 配置无效")]
-    DesktopOrigin,
     #[error("Cookie 生命周期配置无效")]
     CookieLifetime,
 }
@@ -963,7 +956,7 @@ mod tests {
             fake,
             Url::parse("https://identity.example").expect("OIDC issuer 有效"),
             Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
-            &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
+            &crate::config::DesktopOrigins::for_tests(),
             Duration::from_mins(10),
             Duration::from_hours(8),
         )

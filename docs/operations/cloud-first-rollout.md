@@ -21,7 +21,7 @@
 4. 确认这两个有序、可向后兼容的迁移包含在候选中：
    - `infra/migrations/202608300001_desktop_human_sessions.sql`
    - `infra/migrations/202608300002_targeted_handoffs.sql`
-5. 确认生产 Compose 将 `AGENT_ROOM_DESKTOP_ORIGIN` 精确设置为 `http://tauri.localhost`。
+5. 确认生产 Compose 将 `AGENT_ROOM_DESKTOP_ORIGIN` 精确设置为 `http://tauri.localhost,tauri://localhost`（Windows 与 macOS 桌面各一条）。
 6. 运行仓库完整格式、Lint、类型、Rust、协议、Python、Web 构建和真实 Windows/Tauri Bridge-offline 验收。
 
 任何一项失败都必须 No-Go，不能靠“先发出去看看”绕过。

@@ -97,7 +97,7 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 
 升级前必须先执行任务 41 定义的备份与恢复验证。`down` 只停止容器，不删除 `state-dir`。
 
-控制平面必须显式允许 Windows Tauri 的精确源站 `http://tauri.localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为该值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
+控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储
 

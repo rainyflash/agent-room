@@ -45,12 +45,12 @@ impl AgentInstanceHttpState {
     pub(crate) fn new(
         dependencies: AgentInstanceHttpStateDependencies,
         frontend_origin: &url::Url,
-        desktop_origin: &url::Url,
+        desktop_origins: &crate::config::DesktopOrigins,
     ) -> Self {
         Self {
             instances: dependencies.instances,
             authentication: dependencies.authentication,
-            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origin),
+            trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
 }
@@ -397,7 +397,7 @@ mod tests {
                     authentication: authentication.clone(),
                 },
                 &Url::parse(FRONTEND_ORIGIN).expect("前端 Origin 有效"),
-                &Url::parse("http://tauri.localhost").expect("桌面 Origin 有效"),
+                &crate::config::DesktopOrigins::for_tests(),
             );
             Self {
                 app: router(state).layer(middleware::from_fn(crate::correlation::attach)),

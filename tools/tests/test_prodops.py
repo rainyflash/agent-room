@@ -561,8 +561,9 @@ class ProductionRenderingTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+        # Windows 桌面是 http://tauri.localhost，macOS 桌面是 tauri://localhost，两个都要精确列出。
         self.assertIn(
-            "AGENT_ROOM_DESKTOP_ORIGIN: http://tauri.localhost",
+            "AGENT_ROOM_DESKTOP_ORIGIN: http://tauri.localhost,tauri://localhost",
             compose,
         )
         self.assertNotIn("AGENT_ROOM_DESKTOP_ORIGIN: '*'", compose)
