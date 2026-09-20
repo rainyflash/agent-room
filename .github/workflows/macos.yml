@@ -62,6 +62,14 @@ jobs:
           test "$actual" = "$expected"
           echo "已打包并运行 $actual"
           find target/release/bundle -maxdepth 2 -name '*.dmg' -print
+      - name: 验收磁盘映像
+        run: |
+          image="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$image"
+          version="$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "."); from tools.release_ci import workspace_version; print(workspace_version(Path("Cargo.toml")))')"
+          # 报告写到仓库外，保持工作树干净，后面的构建卫生检查才有意义。
+          python3 tools/macos_bundle_acceptance.py --image "$image" --expected-version "$version" --report "$RUNNER_TEMP/macos-bundle-acceptance.json"
+          cat "$RUNNER_TEMP/macos-bundle-acceptance.json"
       - name: 检查构建卫生
         run: python3 tools/build_hygiene.py
       - name: 组装 macOS ARM64 测试包
