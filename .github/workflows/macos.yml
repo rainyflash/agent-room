@@ -62,6 +62,19 @@ jobs:
           test "$actual" = "$expected"
           echo "已打包并运行 $actual"
           find target/release/bundle -maxdepth 2 -name '*.dmg' -print
+      - name: 诊断 Bridge 在 runner 上的行为
+        run: |
+          app="$(find target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          export AGENT_ROOM_BRIDGE_DATA_DIR="$RUNNER_TEMP/bridge-data"
+          export AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE="dev.agent-room.diagnose.$RANDOM"
+          security list-keychains
+          set +e
+          # 直接跑 Bridge，把输出留下来：验收模式会等它退出，先看清楚它到底做了什么。
+          timeout 90 "$app/Contents/MacOS/agent-room-bridge" > "$RUNNER_TEMP/bridge.log" 2>&1
+          echo "bridge exit=$?"
+          set -e
+          echo "--- bridge output (first 60 lines)"
+          head -60 "$RUNNER_TEMP/bridge.log" || true
       - name: 验收磁盘映像
         run: |
           image="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
