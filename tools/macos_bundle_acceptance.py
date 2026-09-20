@@ -216,14 +216,17 @@ def wait_for_image_exit(
 
 
 def terminate(process: subprocess.Popen[bytes] | None) -> None:
-    if process is None or process.poll() is not None:
+    if process is None:
         return
-    process.terminate()
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=10)
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    if process.stdin is not None:
+        process.stdin.close()
 
 
 def install_from_image(image: Path, mountpoint: Path, applications: Path) -> Path:
@@ -309,7 +312,8 @@ def accept(
             bridge_pid = wait_for_bridge(previous_bridge_ids, desktop_process, launch_timeout_seconds)
             mcp_process = subprocess.Popen(
                 (str(layout.mcp),),
-                stdin=subprocess.DEVNULL,
+                # MCP 走 stdio，stdin 一到 EOF 就正常退出；验收要看它保持运行，必须留着管道。
+                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=environment,
