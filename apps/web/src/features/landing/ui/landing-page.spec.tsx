@@ -5,9 +5,15 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAppServices } from '@/app/app-services';
+import {
+  LINUX_VISITOR,
+  MACOS_VISITOR,
+  WINDOWS_VISITOR,
+  setVisitorSystem,
+} from '@/test/visitor-system';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -20,6 +26,10 @@ vi.mock('motion/react', () => ({
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
+});
+
+beforeEach(() => {
+  setVisitorSystem(WINDOWS_VISITOR);
 });
 
 afterEach(() => {
@@ -50,10 +60,7 @@ describe('公开 Alpha 首页', () => {
   });
 
   it('Mac 访客拿到磁盘映像，而不是 Windows 安装包', () => {
-    vi.stubGlobal('navigator', {
-      languages: ['en'],
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
-    });
+    setVisitorSystem(MACOS_VISITOR);
     configure(
       'https://download.agent-room.test/v0.1.0-alpha.1/installer.exe',
       'https://download.agent-room.test/v0.1.0-alpha.1/agent-room.dmg',
@@ -69,10 +76,7 @@ describe('公开 Alpha 首页', () => {
   });
 
   it('还没有安装包的系统看到的是浏览器路径，不是别人的安装包', () => {
-    vi.stubGlobal('navigator', {
-      languages: ['en'],
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
-    });
+    setVisitorSystem(LINUX_VISITOR);
     configure('https://download.agent-room.test/v0.1.0-alpha.1/installer.exe');
 
     renderPage();

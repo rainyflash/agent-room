@@ -14,6 +14,7 @@ import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runti
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
 import { useSession } from '@/features/session/ui/session-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { WINDOWS_VISITOR, setVisitorSystem } from '@/test/visitor-system';
 import { ok } from '@/shared/result';
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
@@ -64,6 +65,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  setVisitorSystem(WINDOWS_VISITOR);
   window.localStorage.clear();
   vi.mocked(useSession).mockReturnValue({
     send: vi.fn(),
