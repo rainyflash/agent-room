@@ -53,16 +53,19 @@ jobs:
         run: |
           app="$(find target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$app"
-          binary="$app/Contents/MacOS/$(ls "$app/Contents/MacOS" | head -1)"
-          expected="$(python -c 'from pathlib import Path; import sys; sys.path.insert(0, "."); from tools.release_ci import workspace_version; print(workspace_version(Path("Cargo.toml")))')"
+          ls "$app/Contents/MacOS"
+          # 桌面端和三个 sidecar 都在同一个目录里，必须点名，不能按文件名顺序取第一个。
+          binary="$app/Contents/MacOS/agent-room-desktop"
+          test -x "$binary"
+          expected="$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "."); from tools.release_ci import workspace_version; print(workspace_version(Path("Cargo.toml")))')"
           actual="$("$binary" --installer-version)"
           test "$actual" = "$expected"
           echo "已打包并运行 $actual"
           find target/release/bundle -maxdepth 2 -name '*.dmg' -print
       - name: 检查构建卫生
-        run: python tools/build_hygiene.py
+        run: python3 tools/build_hygiene.py
       - name: 组装 macOS ARM64 测试包
-        run: python tools/closed_test.py package --platform-tag macos-arm64
+        run: python3 tools/closed_test.py package --platform-tag macos-arm64
       - name: 上传构建产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
         with:
