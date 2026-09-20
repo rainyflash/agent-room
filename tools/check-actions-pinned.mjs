@@ -6,9 +6,10 @@ const workflowNames = readdirSync(workflowsDirectory)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 const remoteActionPattern = /^[^/\s]+\/[^@\s]+@[a-f0-9]{40}$/u;
-const hostedMacosPattern = /\bmacos-(?:latest|\d+)(?:-(?:large|xlarge|intel))?\b/giu;
+// 公开仓库的标准 macOS runner 免费且不限分钟数；更大规格的 runner 即使公开仓库也计费。
+const paidMacosPattern = /\bmacos-(?:latest|\d+)(?:-intel)?-(?:large|xlarge)\b/giu;
 const unpinnedActions = [];
-const hostedMacosRunners = [];
+const paidMacosRunners = [];
 let remoteActionCount = 0;
 
 for (const workflowName of workflowNames) {
@@ -16,9 +17,9 @@ for (const workflowName of workflowNames) {
 
   lines.forEach((line, index) => {
     const executableLine = line.split('#', 1)[0] ?? '';
-    const hostedMacosMatches = [...executableLine.matchAll(hostedMacosPattern)];
-    hostedMacosMatches.forEach((match) => {
-      hostedMacosRunners.push(`${workflowName}:${index + 1}: ${match[0]}`);
+    const paidMacosMatches = [...executableLine.matchAll(paidMacosPattern)];
+    paidMacosMatches.forEach((match) => {
+      paidMacosRunners.push(`${workflowName}:${index + 1}: ${match[0]}`);
     });
 
     const match = /^\s*uses:\s*([^#\s]+)(?:\s*#.*)?$/u.exec(line);
@@ -47,15 +48,15 @@ if (unpinnedActions.length > 0) {
   process.exitCode = 1;
 }
 
-if (hostedMacosRunners.length > 0) {
+if (paidMacosRunners.length > 0) {
   process.stderr.write(
-    `禁止使用昂贵的 GitHub 托管 macOS Runner；请改用手动自托管 macOS：\n${hostedMacosRunners.join('\n')}\n`,
+    `禁止使用计费的大规格 macOS Runner；标准 macOS runner 对公开仓库免费：\n${paidMacosRunners.join('\n')}\n`,
   );
   process.exitCode = 1;
 }
 
 if (process.exitCode === undefined) {
   process.stdout.write(
-    `GitHub Actions 策略检查通过：${remoteActionCount} 个远程 Action 均已固定，且未配置托管 macOS。\n`,
+    `GitHub Actions 策略检查通过：${remoteActionCount} 个远程 Action 均已固定，且未使用计费的大规格 macOS Runner。\n`,
   );
 }
