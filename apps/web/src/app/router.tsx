@@ -9,6 +9,7 @@ import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
+import { GuidePage } from '@/features/guide/ui/guide-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
 import { RoomDirectoryPage } from '@/features/room-directory/ui/room-directory-page';
@@ -39,6 +40,11 @@ const aboutRoute = createRoute({
   component: ApplicationAboutPage,
 });
 
+const guideRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/guide',
+  component: GuidePage,
+});
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
@@ -104,6 +110,7 @@ const adminRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   aboutRoute,
+  guideRoute,
   indexRoute,
   connectRoute,
   onboardingRoute,

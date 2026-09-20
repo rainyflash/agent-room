@@ -1,0 +1,126 @@
+.guide {
+  min-height: 100svh;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+  padding-bottom: 64px;
+}
+.guide__topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 72px;
+  padding: 12px 40px;
+  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+}
+.guide__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+  color: var(--color-ink);
+  text-decoration: none;
+  font-size: 22px;
+  font-weight: 600;
+  font-family: var(--font-display);
+}
+.guide__brand img {
+  width: 32px;
+  height: 32px;
+}
+.guide__intro,
+.guide__steps,
+.guide__faq,
+.guide__links {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+.guide__intro {
+  padding-top: 48px;
+}
+.guide__intro h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1.15;
+}
+.guide__lede {
+  margin: 12px 0 0;
+  font-size: 17px;
+  color: var(--ar-muted);
+}
+.guide__steps {
+  list-style: none;
+  margin: 40px auto 0;
+  display: grid;
+  gap: 20px;
+}
+.guide__steps > li {
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 18px;
+  background: var(--ar-surface);
+  padding: 20px 22px;
+}
+.guide__step-label {
+  display: inline-block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ar-muted);
+}
+.guide__steps h2 {
+  margin: 6px 0 8px;
+  font-family: var(--font-display);
+  font-size: 21px;
+}
+.guide__steps p {
+  margin: 0;
+  line-height: 1.65;
+}
+.guide__platform-note {
+  margin-top: 12px !important;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--ar-canvas);
+  font-size: 14px;
+  color: var(--ar-muted);
+}
+.guide__faq,
+.guide__links {
+  margin-top: 48px;
+}
+.guide__faq h2,
+.guide__links h2 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  margin: 0 0 16px;
+}
+.guide__faq dl {
+  margin: 0;
+  display: grid;
+  gap: 18px;
+}
+.guide__faq dt {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.guide__faq dd {
+  margin: 0;
+  line-height: 1.65;
+  color: var(--ar-muted);
+}
+.guide__links ul {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+@media (max-width: 720px) {
+  .guide__topbar {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+  }
+  .guide__intro {
+    padding-top: 32px;
+  }
+}
