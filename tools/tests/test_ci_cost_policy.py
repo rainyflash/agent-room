@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-MACOS_WORKFLOW = ROOT / ".github" / "workflows" / "macos-self-hosted.yml"
+MACOS_WORKFLOW = ROOT / ".github" / "workflows" / "macos.yml"
 JOB_HEADING = re.compile(r"^  [a-z0-9-]+:$")
 
 
@@ -71,12 +71,17 @@ class CiCostPolicyTests(unittest.TestCase):
         self.assertNotIn("  desktop-platforms:", workflow)
         self.assertIn("shared-key: windows-runtime", workflow)
 
-    def test_macos_remains_manual_and_self_hosted(self) -> None:
+    def test_macos_stays_manual_on_a_standard_runner(self) -> None:
         workflow = MACOS_WORKFLOW.read_text(encoding="utf-8")
 
+        # 公开仓库的标准 runner 不计费，因此 macOS 不再需要自托管机器；但更大规格的
+        # runner 即使公开仓库也要付费，而且 macOS 构建很慢，仍然只按需手动派发。
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("runs-on: [self-hosted, macOS, ARM64]", workflow)
-        self.assertNotRegex(workflow, r"runs-on:\s+macos-")
+        self.assertNotIn("pull_request:", workflow)
+        self.assertNotIn("push:", workflow)
+        runners = [line.strip() for line in workflow.splitlines() if line.strip().startswith("runs-on:")]
+        self.assertEqual(len(runners), 1)
+        self.assertRegex(runners[0], r"^runs-on: macos-(?:latest|[0-9]+)$")
 
 
 if __name__ == "__main__":
