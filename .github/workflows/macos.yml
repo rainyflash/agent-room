@@ -65,16 +65,31 @@ jobs:
       - name: 诊断 Bridge 在 runner 上的行为
         run: |
           app="$(find target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          export AGENT_ROOM_BRIDGE_DATA_DIR="$RUNNER_TEMP/bridge-data"
-          export AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE="dev.agent-room.diagnose.$RANDOM"
-          security list-keychains
-          set +e
-          # 直接跑 Bridge，把输出留下来：验收模式会等它退出，先看清楚它到底做了什么。
-          timeout 90 "$app/Contents/MacOS/agent-room-bridge" > "$RUNNER_TEMP/bridge.log" 2>&1
-          echo "bridge exit=$?"
-          set -e
-          echo "--- bridge output (first 60 lines)"
-          head -60 "$RUNNER_TEMP/bridge.log" || true
+          bridge="$app/Contents/MacOS/agent-room-bridge"
+          probe() {
+            local label="$1" log="$RUNNER_TEMP/bridge-$1.log"
+            shift
+            ( "$@" "$bridge" > "$log" 2>&1 & echo $! > "$RUNNER_TEMP/bridge.pid" )
+            local pid; pid="$(cat "$RUNNER_TEMP/bridge.pid")"
+            local waited=0
+            while [ "$waited" -lt 75 ]; do
+              if ! kill -0 "$pid" 2>/dev/null; then break; fi
+              sleep 5; waited=$((waited + 5))
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "[$label] still running after ${waited}s; killing"
+              kill "$pid" 2>/dev/null || true
+            else
+              echo "[$label] exited on its own within ${waited}s"
+            fi
+            echo "[$label] output:"; head -40 "$log" || true
+          }
+          export AGENT_ROOM_BRIDGE_DATA_DIR="$RUNNER_TEMP/bridge-keychain"
+          export AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE="dev.agent-room.diagnose.keychain"
+          probe keychain env
+          unset AGENT_ROOM_BRIDGE_DATA_DIR AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE
+          head -c 32 /dev/urandom > "$RUNNER_TEMP/vault.key"
+          probe vault env             AGENT_ROOM_BRIDGE_DATA_DIR="$RUNNER_TEMP/bridge-vault"             AGENT_ROOM_BRIDGE_SECURE_STORAGE_SERVICE=dev.agent-room.diagnose.vault             AGENT_ROOM_BRIDGE_VAULT_DIR="$RUNNER_TEMP/vault"             AGENT_ROOM_BRIDGE_VAULT_KEY_FILE="$RUNNER_TEMP/vault.key"
       - name: 验收磁盘映像
         run: |
           image="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
