@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -215,6 +216,15 @@ def wait_for_image_exit(
     raise MacosBundleAcceptanceFailure(f"{label}没有随桌面端退出。")
 
 
+def stop_managed_bridge(process_id: int) -> None:
+    """按平台的方式请求受管 Bridge 退出；它不是本脚本的子进程。"""
+
+    try:
+        os.kill(process_id, signal.SIGTERM)
+    except ProcessLookupError as error:
+        raise MacosBundleAcceptanceFailure("受管 Bridge 在验收停止前就已经不在了。") from error
+
+
 def terminate(process: subprocess.Popen[bytes] | None) -> None:
     if process is None:
         return
@@ -268,7 +278,11 @@ def replace_install(image: Path, mountpoint: Path, destination: Path) -> None:
 
 def write_new_report(path: Path, document: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as stream:
+    try:
+        stream = path.open("x", encoding="utf-8")
+    except FileExistsError as error:
+        raise MacosBundleAcceptanceFailure(f"拒绝覆盖已有验收报告：{path}") from error
+    with stream:
         json.dump(document, stream, ensure_ascii=False, indent=2, sort_keys=True)
         stream.write("\n")
 
@@ -321,9 +335,12 @@ def accept(
             wait_for_process_stability(mcp_process, "MCP")
             terminate(mcp_process)
             mcp_process = None
+            # macOS 没有安装器钩子去停正在运行的应用（Windows 靠的是原地升级），
+            # 所以这里验收另一条同样要成立的约束：受管 Bridge 一停，桌面端必须跟着
+            # 退出，不能把运行时留在后台。桌面端随退出码 1 结束，因为 Bridge 是被信号带走的。
+            stop_managed_bridge(bridge_pid)
             wait_for_process_exit(desktop_process, "桌面端")
             wait_for_image_exit(BRIDGE_EXECUTABLE, bridge_pid, "受管 Bridge")
-            terminate(desktop_process)
             desktop_process = None
 
             replace_install(image, mountpoint, installed)
@@ -333,6 +350,7 @@ def accept(
                 raise MacosBundleAcceptanceFailure(
                     f"覆盖安装后的版本不符：{upgraded_version} != {expected_version}"
                 )
+            verify_cli_version(layout.cli, expected_version)
             previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
             desktop_process = subprocess.Popen(
                 (str(layout.desktop), "--installer-acceptance"),
@@ -344,9 +362,9 @@ def accept(
             upgraded_bridge_pid = wait_for_bridge(
                 previous_bridge_ids, desktop_process, launch_timeout_seconds
             )
+            stop_managed_bridge(upgraded_bridge_pid)
             wait_for_process_exit(desktop_process, "覆盖安装后的桌面端")
             wait_for_image_exit(BRIDGE_EXECUTABLE, upgraded_bridge_pid, "覆盖安装后的受管 Bridge")
-            terminate(desktop_process)
             desktop_process = None
         finally:
             terminate(mcp_process)
@@ -390,10 +408,11 @@ def accept(
                     "desktopLaunch": True,
                     "managedBridgeLaunch": True,
                     "mcpLaunch": True,
+                    "desktopExitedWithBridge": True,
                     "replaceInstall": True,
                     "postReplaceDesktopLaunch": True,
                     "postReplaceBridgeLaunch": True,
-                    "runtimeStoppedWithDesktop": True,
+                    "postReplaceDesktopExitedWithBridge": True,
                     "applicationRemoved": True,
                 },
             },
