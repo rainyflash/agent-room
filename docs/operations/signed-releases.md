@@ -39,14 +39,14 @@ target/release/agent-room-release-tool keygen \
 
 在同一个受保护的 `release-candidate` Environment 配置以下值。当前候选工作流使用 Apple ID 的 App 专用密码完成公证：
 
-| 类型 | 名称 | 内容 |
-| --- | --- | --- |
-| Secret | `APPLE_CERTIFICATE` | 包含 Developer ID Application 证书及其私钥的加密 `.p12`，经过 Base64 编码 |
-| Secret | `APPLE_CERTIFICATE_PASSWORD` | 该 `.p12` 的导出密码 |
-| Secret | `APPLE_ID` | 证书所属开发者团队的 Apple 账户邮箱 |
-| Secret | `APPLE_PASSWORD` | Apple 账户生成的 App 专用密码，不是账户主密码 |
-| Variable | `APPLE_SIGNING_IDENTITY` | 钥匙串中的完整名称：`Developer ID Application: 姓名 (TEAMID)` |
-| Variable | `APPLE_TEAM_ID` | 与证书匹配的十位 Team ID |
+| 类型     | 名称                         | 内容                                                                      |
+| -------- | ---------------------------- | ------------------------------------------------------------------------- |
+| Secret   | `APPLE_CERTIFICATE`          | 包含 Developer ID Application 证书及其私钥的加密 `.p12`，经过 Base64 编码 |
+| Secret   | `APPLE_CERTIFICATE_PASSWORD` | 该 `.p12` 的导出密码                                                      |
+| Secret   | `APPLE_ID`                   | 证书所属开发者团队的 Apple 账户邮箱                                       |
+| Secret   | `APPLE_PASSWORD`             | Apple 账户生成的 App 专用密码，不是账户主密码                             |
+| Variable | `APPLE_SIGNING_IDENTITY`     | 钥匙串中的完整名称：`Developer ID Application: 姓名 (TEAMID)`             |
+| Variable | `APPLE_TEAM_ID`              | 与证书匹配的十位 Team ID                                                  |
 
 使用 `gh secret set APPLE_PASSWORD --env release-candidate --repo OWNER/REPO` 的隐藏输入提示保存密码，不把密码写入命令参数、Git 或构建日志。本机的 `notarytool --keychain-profile` 名称只引用本机钥匙串中的条目，不能直接作为 GitHub runner 的凭据。
 
