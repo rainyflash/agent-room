@@ -98,7 +98,10 @@ class ReleaseSurfaceTests(unittest.TestCase):
         self.assertTrue(labels[image].startswith("DOWNLOAD / 下载"))
         self.assertIn("自动更新载荷", labels["agent-room-desktop-v0.1.0-alpha.1-darwin-aarch64.app.tar.gz"])
         self.assertIn(image, plan.body)
-        self.assertIn("Privacy & Security", plan.body)
+        # 发布的磁盘映像都经过公证，发行说明不能再教用户绕过 Gatekeeper。
+        self.assertIn("notarized by Apple", plan.body)
+        self.assertNotIn("Privacy & Security", plan.body)
+        self.assertNotIn("Open Anyway", plan.body)
         self.assertIn("Windows 或 Mac", plan.body)
         self.assertNotIn("Windows Alpha", plan.title)
 

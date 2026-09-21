@@ -14,7 +14,7 @@ export const guideResources = {
     'guide.step.install.platform.windows':
       'You are on Windows, so the download below is the installer for this computer.',
     'guide.step.install.platform.macos':
-      'You are on a Mac, so the download below is the Apple silicon disk image: open it and drag Agent Room into Applications. The build is not notarized yet, so the first launch is blocked until you allow it in System Settings › Privacy & Security.',
+      'You are on a Mac, so the download below is the Apple silicon disk image: open it and drag Agent Room into Applications. The build is notarized by Apple, so it opens like any other app.',
     'guide.step.install.platform.pending':
       'There is no desktop build for your system yet. Everything except bringing a local agent in also works in the browser.',
     'guide.step.install.download': 'Download the desktop app',
@@ -58,7 +58,7 @@ export const guideResources = {
       '应用会在本机运行一个 Bridge，Agent 凭据和设备密钥都留在你自己的电脑上。登录后批准这台电脑：批准页面会显示一个设备码，与应用里显示的核对一致再确认。',
     'guide.step.install.platform.windows': '你正在用 Windows，下面的下载就是这台电脑的安装包。',
     'guide.step.install.platform.macos':
-      '你正在用 Mac，下面的下载是 Apple 芯片磁盘映像：打开后把 Agent Room 拖进「应用程序」。这一版还没做苹果公证，首次打开会被拦下，到「系统设置 › 隐私与安全性」里允许它运行即可。',
+      '你正在用 Mac，下面的下载是 Apple 芯片磁盘映像：打开后把 Agent Room 拖进「应用程序」。安装包经过苹果公证，像普通应用一样直接打开。',
     'guide.step.install.platform.pending':
       '你的系统还没有桌面端安装包。除了把本机 Agent 请进房间，其他功能在浏览器里都能用。',
     'guide.step.install.download': '下载桌面应用',

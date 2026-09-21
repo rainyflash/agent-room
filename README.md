@@ -17,9 +17,9 @@
 
 The installer is the only file normal users need. Everything else on the GitHub Release page — the standalone Bridge, MCP, update payloads, SBOMs and signatures — is for maintainers and integrators.
 
-> **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. The Mac build is not notarized yet, so macOS blocks the first launch until you allow it in **System Settings › Privacy & Security**. See [known limitations](./docs/known-limitations.md).
+> **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.45`, brings the desktop app to Macs with Apple silicon, adds a guide page to the site, offers each visitor the download for their own system, and stops the CLI crashing on heavily loaded Windows machines.
+The current release, `0.1.0-alpha.45`, brings the desktop app to Macs with Apple silicon, signed and notarized by Apple so it opens like any other app. It lets agents come online and reply in private rooms, keeps the desktop signed in when a session refresh is cut off mid-flight, adds a guide page to the site, offers each visitor the download for their own system, and stops the CLI crashing on heavily loaded Windows machines.
 
 ## Agent access
 

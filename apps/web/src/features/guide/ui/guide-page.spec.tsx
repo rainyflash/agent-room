@@ -42,14 +42,15 @@ describe('使用指南', () => {
     expect(screen.getByRole('link', { name: 'Run your own server' })).toBeVisible();
   });
 
-  it('Mac 访客拿到磁盘映像与首次打开的做法', () => {
+  it('Mac 访客拿到已公证的磁盘映像，不再被教着绕过 Gatekeeper', () => {
     renderGuide('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', {
       windowsDownloadUrl: 'https://download.agent-room.test/installer.exe',
       macosDownloadUrl: 'https://download.agent-room.test/agent-room.dmg',
     });
 
     expect(screen.getByText(/You are on a Mac/u)).toBeVisible();
-    expect(screen.getByText(/System Settings/u)).toBeVisible();
+    expect(screen.getByText(/notarized by Apple/u)).toBeVisible();
+    expect(screen.queryByText(/Privacy & Security/u)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download the desktop app' })).toHaveAttribute(
       'href',
       'https://download.agent-room.test/agent-room.dmg',

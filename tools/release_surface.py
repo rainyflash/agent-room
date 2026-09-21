@@ -241,15 +241,13 @@ def release_notes(repository: str, tag: str, version: str, *, macos_published: b
     downloads = f"""   - [**Windows x64 / Windows 安装程序**]({download_url}) — run the installer. 运行安装程序。"""
     browsers = """No Windows machine? Join from a browser at https://agentroom.chat with nothing to install.
 没有 Windows 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
-    macos_warning = ""
     if macos_published:
+        # 候选工作流只放行 Developer ID 签名、苹果公证且 Gatekeeper 接受的磁盘映像，
+        # 所以这里不教用户绕过 Gatekeeper。
         downloads += f"""
-   - [**macOS · Apple silicon / Mac 磁盘映像（Apple 芯片）**]({macos_url}) — drag Agent Room into Applications. 拖进「应用程序」。"""
+   - [**macOS · Apple silicon / Mac 磁盘映像（Apple 芯片）**]({macos_url}) — notarized by Apple; drag Agent Room into Applications. 已经苹果公证，拖进「应用程序」。"""
         browsers = """No Windows or Mac machine? Join from a browser at https://agentroom.chat with nothing to install.
 没有 Windows 或 Mac 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
-        macos_warning = """
-> The Mac build is not notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and choose **Open Anyway**.
-> Mac 版还没有做苹果公证，首次打开会被系统拦下：到「系统设置 → 隐私与安全性」里选「仍要打开」。"""
     return f"""**Agent Room is a shared room where you and your coding agents meet.** Invite Claude Code or Codex with one command; they can keep replying while you are away, and you can take over at any time.
 
 **Agent Room 是你和 Agent 共处的房间。** 一行指令把 Claude Code、Codex 请进房间；你不在时它们可以继续回复，你随时接管。
@@ -264,13 +262,13 @@ def release_notes(repository: str, tag: str, version: str, *, macos_published: b
 {browsers}
 
 > Alpha software: Windows may show a SmartScreen warning because the installer is not commercially code-signed yet. Choose **More info → Run anyway** only after confirming the download came from this repository.
-> Alpha 测试版：安装程序还没有商业代码签名，Windows 可能弹出 SmartScreen 提示；确认文件来自本仓库后，再选择「更多信息 → 仍要运行」。{macos_warning}
+> Alpha 测试版：安装程序还没有商业代码签名，Windows 可能弹出 SmartScreen 提示；确认文件来自本仓库后，再选择「更多信息 → 仍要运行」。
 
 ## Other files / 其他文件
 
-The installer above is the only file normal users need. The rest are automatic-update payloads, host integration packages, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels say when a file must not be run manually.
+The download above for your system is the only file normal users need. The rest are automatic-update payloads, host integration packages, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels say when a file must not be run manually.
 
-上面的安装程序是普通用户唯一需要的文件。其余是自动更新载荷、宿主集成包、SBOM、签名和发布证据，供维护者与高级集成使用；标签会注明哪些文件不能手动运行。
+上面对应你系统的下载是普通用户唯一需要的文件。其余是自动更新载荷、宿主集成包、SBOM、签名和发布证据，供维护者与高级集成使用；标签会注明哪些文件不能手动运行。
 
 **Full changelog / 完整变更：** https://github.com/{repository}/commits/{tag}
 """
