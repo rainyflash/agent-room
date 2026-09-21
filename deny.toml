@@ -5,6 +5,7 @@ all-features = true
 unmaintained = "workspace"
 ignore = [
   { id = "RUSTSEC-2023-0071", reason = "生产路径只使用公开 JWKS 执行 RSA 验签；隔离回环 OIDC 协议测试会即时生成临时 RSA 密钥并仅在测试进程内签名，上游当前没有修复版本，发布新版本后必须移除此例外" },
+  { id = "RUSTSEC-2026-0292", reason = "imbl-sized-chunks 0.1.3 只经 Matrix SDK 0.18 的 eyeball-im/imbl 传递引入，仅当集合元素析构时 panic 才会重复释放；本项目只用经典 sync_once，不启用事件缓存、时间线或滑动同步，运行路径上 SDK 只把房间句柄放进该集合，其析构不会主动 panic，同步数据也无法改变析构行为；修复需 Matrix SDK 0.19，但它要求的 libsqlite3-sys 0.38 超出 Bridge 本地存储所用 sqlx 0.9.0 的上限，sqlx 放宽后必须升级 Matrix SDK 并删除此例外（跟踪 #101）" },
 ]
 
 [licenses]
