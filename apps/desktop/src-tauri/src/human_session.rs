@@ -3,9 +3,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use agent_room_bridge_local_adapter::SystemCredentialStore;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cookie::{Cookie, SameSite, time::OffsetDateTime};
-use keyring::{Entry, Error as KeyringError};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -113,22 +113,19 @@ trait HumanSessionVault: Send + Sync {
 }
 
 struct KeyringHumanSessionVault {
-    service: String,
+    store: SystemCredentialStore,
 }
 
 impl KeyringHumanSessionVault {
     fn new(service: impl Into<String>) -> Self {
         Self {
-            service: service.into(),
+            store: SystemCredentialStore::new(service),
         }
     }
 
     fn read<TValue: DeserializeOwned>(&self, account: &str) -> HumanSessionResult<Option<TValue>> {
-        let entry = Entry::new(&self.service, account).map_err(|_| unavailable_vault())?;
-        let serialized = match entry.get_password() {
-            Ok(value) => value,
-            Err(KeyringError::NoEntry) => return Ok(None),
-            Err(_) => return Err(unavailable_vault()),
+        let Some(serialized) = self.store.read(account).map_err(|_| unavailable_vault())? else {
+            return Ok(None);
         };
         serde_json::from_str(&serialized)
             .map(Some)
@@ -139,17 +136,13 @@ impl KeyringHumanSessionVault {
         let serialized = serde_json::to_string(value).map_err(|_| {
             HumanSessionFailure::new("desktop.human_session.serialize_failed", false)
         })?;
-        Entry::new(&self.service, account)
-            .and_then(|entry| entry.set_password(&serialized))
+        self.store
+            .write(account, &serialized)
             .map_err(|_| unavailable_vault())
     }
 
     fn delete(&self, account: &str) -> HumanSessionResult<()> {
-        let entry = Entry::new(&self.service, account).map_err(|_| unavailable_vault())?;
-        match entry.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(_) => Err(unavailable_vault()),
-        }
+        self.store.delete(account).map_err(|_| unavailable_vault())
     }
 }
 

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use agent_room_bridge_local_adapter::SystemCredentialStore;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -53,29 +53,30 @@ trait MatrixCredentialVault: Send + Sync {
 }
 
 struct KeyringMatrixCredentialVault {
-    service: String,
+    store: SystemCredentialStore,
+}
+
+impl KeyringMatrixCredentialVault {
+    fn new(service: impl Into<String>) -> Self {
+        Self {
+            store: SystemCredentialStore::new(service),
+        }
+    }
 }
 
 impl MatrixCredentialVault for KeyringMatrixCredentialVault {
     fn load(&self) -> Result<Option<String>, MatrixSessionFailure> {
-        match Entry::new(&self.service, ACCOUNT).and_then(|entry| entry.get_password()) {
-            Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(_) => Err(unavailable()),
-        }
+        self.store.read(ACCOUNT).map_err(|_| unavailable())
     }
 
     fn save(&self, serialized: &str) -> Result<(), MatrixSessionFailure> {
-        Entry::new(&self.service, ACCOUNT)
-            .and_then(|entry| entry.set_password(serialized))
+        self.store
+            .write(ACCOUNT, serialized)
             .map_err(|_| unavailable())
     }
 
     fn clear(&self) -> Result<(), MatrixSessionFailure> {
-        match Entry::new(&self.service, ACCOUNT).and_then(|entry| entry.delete_credential()) {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(_) => Err(unavailable()),
-        }
+        self.store.delete(ACCOUNT).map_err(|_| unavailable())
     }
 }
 
@@ -86,12 +87,12 @@ pub(crate) struct MatrixCredentialRuntime {
 
 impl MatrixCredentialRuntime {
     pub(crate) fn system(config: &DesktopBridgeConfig) -> Self {
-        Self::new(Arc::new(KeyringMatrixCredentialVault {
-            service: storage_service(
+        Self::new(Arc::new(KeyringMatrixCredentialVault::new(
+            storage_service(
                 config.secure_storage_service().as_str(),
                 config.matrix_base_url().as_str(),
             ),
-        }))
+        )))
     }
 
     fn new(vault: Arc<dyn MatrixCredentialVault>) -> Self {
@@ -241,7 +242,7 @@ mod tests {
         if let Ok(service) = std::env::var(TEST_SERVICE) {
             assert!(service.starts_with("dev.agent-room.test.matrix."));
             let runtime =
-                MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault { service }));
+                MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault::new(service)));
             assert!(runtime.load().expect("新进程可恢复会话") == Some(session()));
             return;
         }
@@ -249,9 +250,8 @@ mod tests {
         let _store = lock_system_credential_store();
         // 只读写随机测试命名空间，不接触当前用户的产品会话。
         let service = format!("dev.agent-room.test.matrix.{}", uuid::Uuid::now_v7());
-        let runtime = MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault {
-            service: service.clone(),
-        }));
+        let runtime =
+            MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault::new(&service)));
         runtime.save(&session()).expect("Windows 凭据库可写入");
         drop(runtime);
         let child = std::process::Command::new(std::env::current_exe().expect("可定位测试程序"))
@@ -262,7 +262,7 @@ mod tests {
             .env(TEST_SERVICE, &service)
             .output();
         let restored =
-            MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault { service }));
+            MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault::new(service)));
         let result = restored.load();
         restored.clear().expect("清理本次测试凭据");
         let child = child.expect("测试子进程可运行");

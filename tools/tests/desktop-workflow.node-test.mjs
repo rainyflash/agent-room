@@ -15,7 +15,14 @@ test('packaging runs the same native and browser checks as local validation', ()
   assert.ok(checks.some((command) => command.includes('agent-lifecycle.e2e.ts')));
   for (const operation of ['clippy', 'test']) {
     const command = checks.find((entry) => entry.includes(operation) && entry[0] === 'cargo');
-    for (const component of ['cli', 'mcp', 'bridge-ipc', 'agent-client', 'agent-reception'])
+    for (const component of [
+      'cli',
+      'mcp',
+      'bridge-ipc',
+      'bridge-local-adapter',
+      'agent-client',
+      'agent-reception',
+    ])
       assert.ok(command.includes(`agent-room-${component}`));
   }
 });

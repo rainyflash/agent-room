@@ -1,12 +1,12 @@
 //! Shared credential location for Bridge and its local clients.
 
 mod encrypted;
+mod system;
 
 use std::{env, path::Path};
 
-use keyring::{Entry, Error as KeyringError};
-
 use encrypted::EncryptedStore;
+pub use system::SystemCredentialStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretStoreFailure {
@@ -16,7 +16,7 @@ pub enum SecretStoreFailure {
 }
 
 enum Backend {
-    Keyring,
+    System(SystemCredentialStore),
     Encrypted(EncryptedStore),
 }
 
@@ -29,20 +29,18 @@ pub struct LocalSecretStore {
 
 impl LocalSecretStore {
     pub fn from_environment(service: impl Into<String>) -> Self {
+        let service = service.into();
         let backend = match (
             env::var_os("AGENT_ROOM_BRIDGE_VAULT_DIR"),
             env::var_os("AGENT_ROOM_BRIDGE_VAULT_KEY_FILE"),
         ) {
-            (None, None) => Ok(Backend::Keyring),
+            (None, None) => Ok(Backend::System(SystemCredentialStore::new(service.clone()))),
             (Some(directory), Some(key)) => {
                 EncryptedStore::new(Path::new(&directory), Path::new(&key)).map(Backend::Encrypted)
             }
             _ => Err(SecretStoreFailure::Configuration),
         };
-        Self {
-            service: service.into(),
-            backend,
-        }
+        Self { service, backend }
     }
 
     /// Opens an explicitly selected encrypted store, independently of environment.
@@ -68,11 +66,7 @@ impl LocalSecretStore {
         self.validate_account(account)?;
         match self.backend.as_ref().map_err(|failure| *failure)? {
             Backend::Encrypted(store) => store.read(&self.service, account),
-            Backend::Keyring => match self.entry(account)?.get_password() {
-                Ok(value) => Ok(Some(value)),
-                Err(KeyringError::NoEntry) => Ok(None),
-                Err(_) => Err(SecretStoreFailure::Unavailable),
-            },
+            Backend::System(store) => store.read(account),
         }
     }
 
@@ -85,10 +79,7 @@ impl LocalSecretStore {
         }
         match self.backend.as_ref().map_err(|failure| *failure)? {
             Backend::Encrypted(store) => store.write(&self.service, account, value),
-            Backend::Keyring => self
-                .entry(account)?
-                .set_password(value)
-                .map_err(|_| SecretStoreFailure::Unavailable),
+            Backend::System(store) => store.write(account, value),
         }
     }
 
@@ -98,15 +89,8 @@ impl LocalSecretStore {
         self.validate_account(account)?;
         match self.backend.as_ref().map_err(|failure| *failure)? {
             Backend::Encrypted(store) => store.delete(&self.service, account),
-            Backend::Keyring => match self.entry(account)?.delete_credential() {
-                Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-                Err(_) => Err(SecretStoreFailure::Unavailable),
-            },
+            Backend::System(store) => store.delete(account),
         }
-    }
-
-    fn entry(&self, account: &str) -> Result<Entry, SecretStoreFailure> {
-        Entry::new(&self.service, account).map_err(|_| SecretStoreFailure::Unavailable)
     }
 
     fn validate_account(&self, account: &str) -> Result<(), SecretStoreFailure> {
