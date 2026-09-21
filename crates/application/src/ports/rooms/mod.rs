@@ -26,8 +26,8 @@ pub use direct_sessions::{
 };
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-    PrivateRoomSnapshot, PrivateRoomStore,
+    PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+    PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,

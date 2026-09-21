@@ -273,10 +273,11 @@ impl PrivateRoomStore for 固定私人房间仓储 {
     }
 }
 
-/// 记录受邀的 Matrix 身份，并可模拟 Agent 已经在房间内的重连情形。
+/// 记录受邀的 Matrix 身份与发言授予，并可模拟 Agent 已经在房间内的重连情形。
 struct 记录私人Matrix {
     已加入: bool,
     邀请: Mutex<Vec<String>>,
+    发言授予: Mutex<Vec<(String, bool)>>,
 }
 
 impl 记录私人Matrix {
@@ -284,10 +285,14 @@ impl 记录私人Matrix {
         Self {
             已加入,
             邀请: Mutex::new(Vec::new()),
+            发言授予: Mutex::new(Vec::new()),
         }
     }
     fn 邀请记录(&self) -> Vec<String> {
         self.邀请.lock().expect("锁可用").clone()
+    }
+    fn 发言授予记录(&self) -> Vec<(String, bool)> {
+        self.发言授予.lock().expect("锁可用").clone()
     }
 }
 
@@ -330,10 +335,16 @@ impl PrivateRoomMatrixGateway for 记录私人Matrix {
     fn set_speaking<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,
-        _user_id: &'a MatrixUserId,
-        _allowed: bool,
+        user_id: &'a MatrixUserId,
+        allowed: bool,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        Box::pin(async { unreachable!("入场不得改写发言权限") })
+        Box::pin(async move {
+            self.发言授予
+                .lock()
+                .expect("锁可用")
+                .push((user_id.as_str().to_owned(), allowed));
+            Ok(())
+        })
     }
     fn set_speaking_batch<'a>(
         &'a self,
@@ -578,6 +589,11 @@ async fn agent_随已加入且可发言的主体进入私人房间并被邀请�
     service.enter(request).await.expect("入场成功");
 
     assert_eq!(matrix.邀请记录(), [matrix_user_id().as_str()]);
+    // 没有发言级别，Agent 连状态都发布不了，入场后会以「上线失败」告终。
+    assert_eq!(
+        matrix.发言授予记录(),
+        [(matrix_user_id().as_str().to_owned(), true)]
+    );
     assert_eq!(
         *membership.joins.lock().expect("锁可用"),
         [private_matrix_room().as_str()]
@@ -598,6 +614,7 @@ async fn 非成员与只读成员的_agent_都进不了私人房间且不会被�
 
         assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
         assert!(matrix.邀请记录().is_empty(), "被拒绝时不得发出 Matrix 邀请");
+        assert!(matrix.发言授予记录().is_empty(), "被拒绝时不得授予发言");
         assert!(membership.joins.lock().expect("锁可用").is_empty());
     }
 }
@@ -611,6 +628,11 @@ async fn 重连时不重复邀请已在房间的_agent() {
     service.enter(request).await.expect("入场成功");
 
     assert!(matrix.邀请记录().is_empty(), "已加入时不应再次邀请");
+    // 重连时照样确认发言权：早先入场却没拿到发言级别的 Agent 这样就能自愈。
+    assert_eq!(
+        matrix.发言授予记录(),
+        [(matrix_user_id().as_str().to_owned(), true)]
+    );
 }
 
 #[tokio::test]
