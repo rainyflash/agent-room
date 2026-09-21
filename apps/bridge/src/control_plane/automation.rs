@@ -172,13 +172,11 @@ fn status_failure(status: StatusCode) -> AutomationAuthorizationFailure {
 
 fn map_session_failure(failure: BridgeSessionFailure) -> AutomationAuthorizationFailure {
     match failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
-            AutomationAuthorizationFailure::denied(
-                AutomationAuthorizationDenial::ControlPlaneRejected,
-            )
-        }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::NotAuthorized => AutomationAuthorizationFailure::denied(
+            AutomationAuthorizationDenial::ControlPlaneRejected,
+        ),
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             AutomationAuthorizationFailure::unavailable()
         }

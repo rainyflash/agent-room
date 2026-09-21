@@ -1,10 +1,10 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        DeviceProofNonceStore, DeviceRefreshContext, DeviceRefreshOutcome,
-        DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
-        DeviceSessionStore, DeviceTokenReplacement, OutboxMessage,
+        DeviceProofNonceStore, DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay,
+        DeviceRefreshReplaySalt, DeviceRegistrationTransaction, DeviceRepository,
+        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
+        DeviceSessionRegistration, DeviceSessionStore, DeviceTokenReplacement, OutboxMessage,
         PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount, PrincipalRegistration,
         SecretDigest, StoredDeviceSession,
     },
@@ -426,6 +426,23 @@ async fn rotate_refresh_transaction(
         return Ok(DeviceRefreshOutcome::Rejected);
     }
     if locked.consumed {
+        // 同一尝试号的重试不是重用：客户端没收到结果，服务端返回当时签发的同一对令牌。
+        if let Some(requested) = replacement.replay.as_ref()
+            && let Some(replayed) = replay_refresh_attempt(
+                &mut transaction,
+                &locked,
+                requested,
+                replacement.issued_at,
+                operation,
+            )
+            .await?
+        {
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            return Ok(replayed);
+        }
         compromise_device(
             &mut transaction,
             &locked.device,
@@ -446,6 +463,7 @@ async fn rotate_refresh_transaction(
 
     let session =
         persist_refresh_replacement(&mut transaction, &locked, replacement, operation).await?;
+    record_refresh_attempt(&mut transaction, &locked, replacement, operation).await?;
     transaction
         .commit()
         .await
@@ -455,6 +473,106 @@ async fn rotate_refresh_transaction(
         refresh_token_expires_at: session.family.expires_at(),
         session: Box::new(session),
     })
+}
+
+/// 只有尝试号一致、它签发的新刷新令牌仍是当前令牌时才重放；否则交回重用检测。
+async fn replay_refresh_attempt(
+    transaction: &mut Transaction<'_, Postgres>,
+    locked: &LockedRefreshContext,
+    requested: &DeviceRefreshReplay,
+    now: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<Option<DeviceRefreshOutcome>> {
+    // 调用方已按旧令牌锁住 Token 族、设备和主体行，同一设备的轮换全部串行，
+    // 这里读到的新令牌状态不会被并发的下一次轮换改掉。
+    let row = sqlx::query(
+        r"SELECT attempt.attempt_id, attempt.replay_salt,
+            successor.secret_digest AS successor_digest,
+            successor.consumed_at IS NULL
+                AND successor.revoked_at IS NULL
+                AND successor.expires_at > to_timestamp($2::double precision / 1000.0)
+                AS successor_current,
+            access.secret_digest AS access_digest,
+            access.revoked_at IS NULL AS access_active,
+            floor(extract(epoch FROM access.expires_at) * 1000)::bigint AS access_expires_at_ms
+           FROM agent_room.device_refresh_attempt AS attempt
+           JOIN agent_room.device_refresh_token AS successor
+             ON successor.id = attempt.successor_refresh_token_id
+           JOIN agent_room.device_access_token AS access ON access.id = attempt.access_token_id
+           WHERE attempt.refresh_token_id = $1",
+    )
+    .bind(locked.refresh_id)
+    .bind(now.value())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let attempt_id: Uuid = decode(&row, "attempt_id", operation)?;
+    let salt: Option<Vec<u8>> = decode(&row, "replay_salt", operation)?;
+    let successor_current: bool = decode(&row, "successor_current", operation)?;
+    let access_active: bool = decode(&row, "access_active", operation)?;
+    let Some(salt) = salt else {
+        return Ok(None);
+    };
+    if attempt_id != requested.attempt_id.as_uuid() || !successor_current || !access_active {
+        return Ok(None);
+    }
+    Ok(Some(DeviceRefreshOutcome::Replayed {
+        session: Box::new(StoredDeviceSession {
+            account: locked.account.clone(),
+            device: locked.device.clone(),
+            family: locked.family.clone(),
+            access_token_expires_at: decode_time(&row, "access_expires_at_ms", operation)?,
+        }),
+        refresh_token_expires_at: locked.family.expires_at(),
+        salt: DeviceRefreshReplaySalt::from_array(
+            salt.try_into().map_err(|_| corrupt_data(operation))?,
+        ),
+        access_token_digest: decode_digest(&row, "access_digest", operation)?,
+        refresh_token_digest: decode_digest(&row, "successor_digest", operation)?,
+    }))
+}
+
+async fn record_refresh_attempt(
+    transaction: &mut Transaction<'_, Postgres>,
+    locked: &LockedRefreshContext,
+    replacement: &DeviceTokenReplacement,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    // 刚被消费的令牌若来自上一次带尝试号的轮换，那次轮换已无法再重放，不再保留它的派生盐。
+    sqlx::query(
+        r"UPDATE agent_room.device_refresh_attempt
+           SET replay_salt = NULL
+           WHERE successor_refresh_token_id = $1 AND replay_salt IS NOT NULL",
+    )
+    .bind(locked.refresh_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let Some(replay) = replacement.replay.as_ref() else {
+        return Ok(());
+    };
+    sqlx::query(
+        r"INSERT INTO agent_room.device_refresh_attempt (
+            refresh_token_id, attempt_id, successor_refresh_token_id, access_token_id,
+            replay_salt, created_at
+        ) VALUES (
+            $1, $2, $3, $4, $5,
+            to_timestamp($6::double precision / 1000.0)
+        )",
+    )
+    .bind(locked.refresh_id)
+    .bind(replay.attempt_id.as_uuid())
+    .bind(replacement.refresh_token_id.as_uuid())
+    .bind(replacement.access_token_id.as_uuid())
+    .bind(replay.salt.as_bytes().as_slice())
+    .bind(replacement.issued_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
 }
 
 struct LockedRefreshContext {
@@ -1031,6 +1149,17 @@ where
 {
     row.try_get(column)
         .map_err(|error| map_sqlx_error(operation, &error))
+}
+
+fn decode_digest(
+    row: &PgRow,
+    column: &str,
+    operation: &'static str,
+) -> RepositoryResult<SecretDigest> {
+    let value: Vec<u8> = decode(row, column, operation)?;
+    Ok(SecretDigest::from_array(
+        value.try_into().map_err(|_| corrupt_data(operation))?,
+    ))
 }
 
 fn decode_time(row: &PgRow, column: &str, operation: &'static str) -> RepositoryResult<UtcMillis> {

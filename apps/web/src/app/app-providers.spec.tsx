@@ -194,6 +194,7 @@ function renderApplication(localRuntime: DesktopRuntimeGateway) {
 function runtimeGateway(available: boolean): DesktopRuntimeGateway {
   const bridge: BridgeRuntime = {
     authorization: null,
+    deviceReauthorizationAvailable: false,
     lifecycle: {
       automaticRestartCount: 0,
       changedAtUnixMs: 1,
@@ -240,6 +241,7 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     readLobby: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     retryBridge: () => Promise.resolve(ok(bridge)),
+    reauthorizeBridge: () => Promise.resolve(ok(bridge)),
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
     snapshot: () => Promise.resolve(ok(snapshot)),
     subscribe: () => Promise.resolve(ok(() => undefined)),

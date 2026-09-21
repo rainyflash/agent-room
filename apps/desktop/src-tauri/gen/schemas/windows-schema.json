@@ -657,6 +657,12 @@
           "markdownDescription": "Enables the desktop_plan_agent_host command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_reauthorize_bridge command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-reauthorize-bridge",
+          "markdownDescription": "Enables the desktop_reauthorize_bridge command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_receiver_action command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-receiver-action",
@@ -817,6 +823,12 @@
           "type": "string",
           "const": "deny-desktop-plan-agent-host",
           "markdownDescription": "Denies the desktop_plan_agent_host command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_reauthorize_bridge command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-reauthorize-bridge",
+          "markdownDescription": "Denies the desktop_reauthorize_bridge command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_receiver_action command without any pre-configured scope.",

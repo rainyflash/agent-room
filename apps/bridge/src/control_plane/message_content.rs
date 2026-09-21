@@ -452,9 +452,9 @@ fn parse_content_id(value: &str) -> Result<ContentId, MessageContentFailure> {
 
 fn map_session_failure(failure_value: BridgeSessionFailure) -> MessageContentFailure {
     let kind = match failure_value.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => MessageContentFailureKind::Denied,
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::NotAuthorized => MessageContentFailureKind::Denied,
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             MessageContentFailureKind::Unavailable
         }

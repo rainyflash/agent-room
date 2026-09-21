@@ -11,6 +11,7 @@ const readySnapshot = {
   autostartEnabled: false,
   bridge: {
     authorization: null,
+    deviceReauthorizationAvailable: false,
     session: null,
     lifecycle: {
       automaticRestartCount: 0,
@@ -80,6 +81,31 @@ describe('Tauri 桌面运行时适配器', () => {
     );
 
     await expect(gateway.snapshot()).resolves.toEqual({
+      error: { code: 'desktop.command.invalid_response', retryable: true },
+      ok: false,
+    });
+  });
+
+  it('重新授权这台电脑只调用闭合命令并校验返回的运行时视图', async () => {
+    const restarting = {
+      ...readySnapshot.bridge,
+      lifecycle: { ...readySnapshot.bridge.lifecycle, phase: 'starting' },
+    };
+    const invoke = vi.fn().mockResolvedValue(restarting);
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(gateway.reauthorizeBridge()).resolves.toEqual({ ok: true, value: restarting });
+    expect(invoke).toHaveBeenCalledWith('desktop_reauthorize_bridge', {});
+
+    const withoutFlag = {
+      authorization: restarting.authorization,
+      lifecycle: restarting.lifecycle,
+      session: restarting.session,
+    };
+    const strict = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockResolvedValue(withoutFlag) }),
+    );
+    await expect(strict.reauthorizeBridge()).resolves.toEqual({
       error: { code: 'desktop.command.invalid_response', retryable: true },
       ok: false,
     });

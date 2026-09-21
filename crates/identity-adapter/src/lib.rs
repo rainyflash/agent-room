@@ -1,10 +1,12 @@
 use std::{error::Error, time::Duration};
 
 use agent_room_application::ports::{
-    AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier, DeviceProofVerifier,
-    DeviceSignature, OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange,
-    OidcFailure, OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, PortFuture,
-    SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
+    AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier,
+    DEVICE_REFRESH_REPLAY_SALT_LENGTH, DerivedDeviceTokens, DeviceProofVerifier,
+    DeviceRefreshReplay, DeviceRefreshReplaySalt, DeviceRefreshTokenDerivation, DeviceSignature,
+    OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
+    OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, PortFuture, SecretDigest,
+    SecretFactory, SecretGenerationFailure, SecretValue, VerifiedOidcIdentity,
 };
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey, devices::DevicePublicSigningKey,
@@ -163,6 +165,44 @@ impl SecretFactory for SecureSecretFactory {
     fn digest(&self, value: &str) -> SecretDigest {
         SecretDigest::from_array(Sha256::digest(value.as_bytes()).into())
     }
+}
+
+impl DeviceRefreshTokenDerivation for SecureSecretFactory {
+    fn replay_salt(&self) -> Result<DeviceRefreshReplaySalt, SecretGenerationFailure> {
+        let mut salt = [0_u8; DEVICE_REFRESH_REPLAY_SALT_LENGTH];
+        getrandom::fill(&mut salt).map_err(|_| SecretGenerationFailure::EntropyUnavailable)?;
+        Ok(DeviceRefreshReplaySalt::from_array(salt))
+    }
+
+    fn derive(
+        &self,
+        refresh_token: &SecretValue,
+        replay: &DeviceRefreshReplay,
+    ) -> Result<DerivedDeviceTokens, SecretGenerationFailure> {
+        Ok(DerivedDeviceTokens {
+            access_token: derive_refresh_replay_token(refresh_token, replay, b"access")?,
+            refresh_token: derive_refresh_replay_token(refresh_token, replay, b"refresh")?,
+        })
+    }
+}
+
+/// 以旧刷新令牌为 HMAC 密钥派生新令牌。服务端只保存盐与新令牌摘要，
+/// 缺少只在请求里出现的旧令牌明文，数据库内容本身无法还原新令牌。
+fn derive_refresh_replay_token(
+    refresh_token: &SecretValue,
+    replay: &DeviceRefreshReplay,
+    purpose: &[u8],
+) -> Result<SecretValue, SecretGenerationFailure> {
+    let mut mac =
+        <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(refresh_token.expose().as_bytes())
+            .map_err(|_| SecretGenerationFailure::EntropyUnavailable)?;
+    mac.update(b"agent-room/device-refresh-replay/v1\0");
+    mac.update(purpose);
+    mac.update(b"\0");
+    mac.update(replay.attempt_id.as_uuid().as_bytes());
+    mac.update(replay.salt.as_bytes());
+    SecretValue::new(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+        .map_err(|_| SecretGenerationFailure::EntropyUnavailable)
 }
 
 pub struct HmacAccountDeletionReceiptIssuer {
@@ -463,15 +503,67 @@ pub enum OidcAdapterConfigurationError {
 mod tests {
     use agent_room_application::ports::{
         AccountDeletionReceiptIssuer, AgentInstanceSignatureVerifier, DeviceProofVerifier,
-        SecretFactory, SecretValue,
+        DeviceRefreshReplay, DeviceRefreshReplaySalt, DeviceRefreshTokenDerivation, SecretFactory,
+        SecretValue,
     };
-    use agent_room_domain::{agents::AgentInstancePublicSigningKey, ids::AccountDeletionJobId};
+    use agent_room_domain::{
+        agents::AgentInstancePublicSigningKey,
+        ids::{AccountDeletionJobId, DeviceRefreshAttemptId},
+    };
     use uuid::Uuid;
 
     use super::{
         Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier, Ed25519DeviceSigningKey,
         HmacAccountDeletionReceiptIssuer, OidcAdapterConfig, SecureSecretFactory,
     };
+
+    #[test]
+    fn 同一刷新尝试总能重新派生同一对令牌且任一输入变化都会得到新令牌() {
+        let factory = SecureSecretFactory;
+        let refresh_token = SecretValue::new("old-refresh-token").expect("旧令牌有效");
+        let replay = DeviceRefreshReplay {
+            attempt_id: DeviceRefreshAttemptId::from_uuid(Uuid::now_v7()),
+            salt: factory.replay_salt().expect("系统随机源可用"),
+        };
+
+        let first = factory.derive(&refresh_token, &replay).expect("令牌可派生");
+        assert_eq!(
+            first,
+            factory.derive(&refresh_token, &replay).expect("令牌可重放")
+        );
+        assert_ne!(first.access_token, first.refresh_token);
+        assert_eq!(first.access_token.expose().len(), 43);
+        assert_eq!(first.refresh_token.expose().len(), 43);
+
+        let other_attempt = DeviceRefreshReplay {
+            attempt_id: DeviceRefreshAttemptId::from_uuid(Uuid::now_v7()),
+            ..replay.clone()
+        };
+        let other_salt = DeviceRefreshReplay {
+            salt: factory.replay_salt().expect("系统随机源可用"),
+            ..replay.clone()
+        };
+        let other_token = SecretValue::new("another-refresh-token").expect("旧令牌有效");
+        for derived in [
+            factory.derive(&refresh_token, &other_attempt),
+            factory.derive(&refresh_token, &other_salt),
+            factory.derive(&other_token, &replay),
+        ] {
+            let derived = derived.expect("令牌可派生");
+            assert_ne!(derived.access_token, first.access_token);
+            assert_ne!(derived.refresh_token, first.refresh_token);
+        }
+    }
+
+    #[test]
+    fn 刷新重放盐来自安全随机源且调试输出脱敏() {
+        let factory = SecureSecretFactory;
+        let first = factory.replay_salt().expect("系统随机源可用");
+
+        assert_ne!(first, factory.replay_salt().expect("系统随机源可用"));
+        assert_eq!(format!("{first:?}"), "[已脱敏]");
+        assert_ne!(first, DeviceRefreshReplaySalt::from_array([0; 32]));
+    }
 
     #[test]
     fn 会话密钥具有足够熵且调试输出脱敏() {

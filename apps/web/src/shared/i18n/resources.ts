@@ -105,6 +105,9 @@ export const resources = {
       'desktop.halted.description':
         'The local connection failed repeatedly and has paused. Retry when you are ready.',
       'desktop.halted.retry': 'Reconnect local agents',
+      'desktop.halted.reauthorizeDescription':
+        'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and asks for a new one-time code.',
+      'desktop.halted.reauthorize': 'Re-authorize this computer',
       'desktop.halted.lastFailure': 'Last Bridge failure',
       'desktop.halted.exitCode': 'Last exit code',
       'desktop.failure.description': 'The desktop boundary rejected an operation.',
@@ -893,6 +896,9 @@ export const resources = {
       'desktop.halted.title': '自动重启已停止',
       'desktop.halted.description': '本机连接连续失败，已暂停自动重试。准备好后可以重新连接。',
       'desktop.halted.retry': '重新连接本机 Agent',
+      'desktop.halted.reauthorizeDescription':
+        '如果重新连接后仍然停止，可以重新授权这台电脑：清除本机保存的设备凭据，再用新的一次性代码授权。',
+      'desktop.halted.reauthorize': '重新授权这台电脑',
       'desktop.halted.lastFailure': '最近一次 Bridge 故障',
       'desktop.halted.exitCode': '最近退出码',
       'desktop.failure.description': '桌面权限边界拒绝了一项操作。',

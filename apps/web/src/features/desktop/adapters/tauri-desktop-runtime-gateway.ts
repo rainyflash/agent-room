@@ -60,6 +60,7 @@ const desktopCommands = {
   installUpdate: 'desktop_install_update',
   lobbySnapshot: 'desktop_lobby_snapshot',
   planHost: 'desktop_plan_agent_host',
+  reauthorize: 'desktop_reauthorize_bridge',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
   hostSessions: 'desktop_host_session_diagnostics',
@@ -205,6 +206,10 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.retry, {}, bridgeRuntimeSchema);
+  }
+
+  async reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.reauthorize, {}, bridgeRuntimeSchema);
   }
 
   async setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>> {

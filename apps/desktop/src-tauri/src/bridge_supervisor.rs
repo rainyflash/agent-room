@@ -23,7 +23,7 @@ use crate::{
         BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy,
         ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, decide_resume,
     },
-    desktop_config::DesktopBridgeConfig,
+    desktop_config::{BridgeLaunch, DesktopBridgeConfig},
 };
 
 const SUPERVISOR_CHANNEL: &str = "agent_room_desktop";
@@ -47,6 +47,23 @@ pub(crate) struct BridgeRuntimeView {
     pub(crate) lifecycle: BridgeLifecycleSnapshot,
     pub(crate) authorization: Option<AuthorizationPromptView>,
     pub(crate) session: Option<BridgeAgentSessionView>,
+    /// 停机视图是否提供「重新授权这台电脑」。
+    pub(crate) device_reauthorization_available: bool,
+}
+
+impl BridgeRuntimeView {
+    fn new(
+        lifecycle: BridgeLifecycleSnapshot,
+        authorization: Option<AuthorizationPromptView>,
+        session: Option<BridgeAgentSessionView>,
+    ) -> Self {
+        Self {
+            device_reauthorization_available: lifecycle.device_reauthorization_available(),
+            lifecycle,
+            authorization,
+            session,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -87,11 +104,7 @@ impl BridgeSupervisor {
     pub(crate) fn start(app: AppHandle, config: DesktopBridgeConfig) -> Self {
         let policy = BridgeRestartPolicy::new(now_unix_ms());
         let initial = SupervisorState {
-            view: BridgeRuntimeView {
-                lifecycle: policy.snapshot().clone(),
-                authorization: None,
-                session: None,
-            },
+            view: BridgeRuntimeView::new(policy.snapshot().clone(), None, None),
             authorization_url: None,
         };
         let (state_tx, state_rx) = watch::channel(initial);
@@ -147,6 +160,19 @@ impl BridgeSupervisor {
     pub(crate) fn retry(&self) -> Result<(), SupervisorFailure> {
         self.input
             .try_send(ActorInput::ExplicitRetry)
+            .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))
+    }
+
+    /// 清除本机设备会话凭据并重新申请设备授权，只在停机视图提供。
+    pub(crate) fn reauthorize_device(&self) -> Result<(), SupervisorFailure> {
+        if !self.state.borrow().view.device_reauthorization_available {
+            return Err(SupervisorFailure::new(
+                "desktop.bridge.reauthorization_unavailable",
+                false,
+            ));
+        }
+        self.input
+            .try_send(ActorInput::ReauthorizeDevice)
             .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))
     }
 
@@ -242,6 +268,7 @@ impl BridgeSupervisorActor {
             };
             match input {
                 ActorInput::ExplicitRetry => self.handle_explicit_retry().await,
+                ActorInput::ReauthorizeDevice => self.handle_reauthorize_device(),
                 ActorInput::AutomaticRetry { generation } => {
                     if generation == self.generation
                         && self.policy.snapshot().phase == BridgePhase::RetryScheduled
@@ -271,6 +298,10 @@ impl BridgeSupervisorActor {
     }
 
     fn start_managed(&mut self) {
+        self.start_managed_with(BridgeLaunch::Normal);
+    }
+
+    fn start_managed_with(&mut self, launch: BridgeLaunch) {
         if self.shutting_down.load(Ordering::SeqCst) {
             return;
         }
@@ -284,7 +315,7 @@ impl BridgeSupervisorActor {
             .app
             .shell()
             .sidecar("agent-room-bridge")
-            .map(|command| command.envs(self.config.environment()))
+            .map(|command| command.envs(self.config.launch_environment(launch)))
             .and_then(tauri_plugin_shell::process::Command::spawn);
         let Ok((mut events, child)) = spawned else {
             self.policy.halt(
@@ -340,6 +371,21 @@ impl BridgeSupervisorActor {
         self.kill_managed_child();
         self.policy.explicit_retry(now_unix_ms());
         self.start_managed();
+    }
+
+    fn handle_reauthorize_device(&mut self) {
+        // 请求排队期间状态可能已经变化；只对仍然停机的托管 Bridge 生效。
+        if self.shutting_down.load(Ordering::SeqCst)
+            || !self.policy.snapshot().device_reauthorization_available()
+        {
+            return;
+        }
+        // 先推进代次，让旧子进程迟到的事件失效。
+        self.generation = self.generation.saturating_add(1);
+        self.kill_managed_child();
+        self.session = None;
+        self.policy.explicit_retry(now_unix_ms());
+        self.start_managed_with(BridgeLaunch::ReauthorizeDevice);
     }
 
     fn handle_reconfigure(&mut self, config: DesktopBridgeConfig) {
@@ -686,11 +732,11 @@ impl BridgeSupervisorActor {
     fn publish(&self) {
         let authorization = self.authorization.as_ref().map(AuthorizationPrompt::view);
         let next = SupervisorState {
-            view: BridgeRuntimeView {
-                lifecycle: self.policy.snapshot().clone(),
+            view: BridgeRuntimeView::new(
+                self.policy.snapshot().clone(),
                 authorization,
-                session: self.session.clone(),
-            },
+                self.session.clone(),
+            ),
             authorization_url: self
                 .authorization
                 .as_ref()
@@ -704,6 +750,7 @@ impl BridgeSupervisorActor {
 #[derive(Debug)]
 enum ActorInput {
     ExplicitRetry,
+    ReauthorizeDevice,
     Reconfigure {
         config: Box<DesktopBridgeConfig>,
     },
@@ -878,9 +925,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AuthorizationPrompt, BridgeAgentSessionView, BridgeSupervisorEvent, is_stable_bridge_code,
-        stable_bridge_error_code, supervisor_event,
+        AuthorizationPrompt, BridgeAgentSessionView, BridgeRuntimeView, BridgeSupervisorEvent,
+        is_stable_bridge_code, stable_bridge_error_code, supervisor_event,
     };
+    use crate::bridge_lifecycle::{BridgeOwnership, BridgeRestartPolicy};
 
     #[test]
     fn offline_and_reconnecting_are_not_reported_as_starting() {
@@ -954,6 +1002,37 @@ mod tests {
         assert!(!is_stable_bridge_code("C:\\Users\\secret"));
         assert!(!is_stable_bridge_code("bridge.MatrixFailure"));
         assert!(!is_stable_bridge_code(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn 停机视图向界面提供重新授权这台电脑() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(0);
+        for now in 1..=4 {
+            let _ = policy.child_exited(now, Some(1), false);
+        }
+
+        let halted = serde_json::to_value(BridgeRuntimeView::new(
+            policy.snapshot().clone(),
+            None,
+            None,
+        ))
+        .expect("运行时视图可序列化");
+
+        assert_eq!(halted["lifecycle"]["phase"], "halted");
+        assert_eq!(halted["deviceReauthorizationAvailable"], true);
+
+        policy.explicit_retry(5);
+        let restarting = BridgeRuntimeView::new(policy.snapshot().clone(), None, None);
+        assert!(!restarting.device_reauthorization_available);
+
+        let mut external = BridgeRestartPolicy::new(0);
+        external.discovered_ready(1, BridgeOwnership::External);
+        external.halt(2, "desktop.bridge.offline");
+        assert!(
+            !BridgeRuntimeView::new(external.snapshot().clone(), None, None)
+                .device_reauthorization_available
+        );
     }
 
     #[test]

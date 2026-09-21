@@ -181,6 +181,20 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   >
                     {t('desktop.halted.retry')}
                   </Button>
+                  {controller.snapshot?.bridge.deviceReauthorizationAvailable === true ? (
+                    <div className="desktop-runtime__reauthorize">
+                      <p>{t('desktop.halted.reauthorizeDescription')}</p>
+                      <Button
+                        disabled={controller.busy !== null}
+                        icon={<KeyRound aria-hidden="true" />}
+                        onClick={() => void controller.reauthorizeBridge()}
+                        size="compact"
+                        tone="quiet"
+                      >
+                        {t('desktop.halted.reauthorize')}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </section>
             ) : null}

@@ -2,17 +2,17 @@ use std::env;
 
 use agent_room_application::persistence::RepositoryErrorKind;
 use agent_room_application::ports::{
-    DeviceProofNonceStore, DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository,
-    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-    DeviceSessionRegistration, DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration,
-    SecretDigest,
+    DeviceProofNonceStore, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
+    DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
+    DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
+    DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration, SecretDigest,
 };
 use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily},
     identity::Principal,
     ids::{
-        DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId, OutboxEventId,
-        PrincipalId,
+        DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId, DeviceRefreshTokenId,
+        DeviceTokenFamilyId, OutboxEventId, PrincipalId,
     },
     time::UtcMillis,
 };
@@ -210,6 +210,211 @@ async fn 并发刷新只能一次成功且旧令牌重用会提交泄露撤销()
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 同一尝试号的并发重试重放原轮换且不提交泄露撤销() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let registration = registration(51, 52);
+    let stored = register(&repositories, &registration).await;
+    let attempt = DeviceRefreshAttemptId::from_uuid(Uuid::now_v7());
+    let original = attempted_replacement(53, 54, 1_000, attempt, 7);
+    let rotated = rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &original,
+    )
+    .await;
+    assert!(matches!(rotated, DeviceRefreshOutcome::Rotated { .. }));
+
+    // 重试时服务端会为请求抽取新盐与新令牌，重放必须忽略它们，交回原轮换的盐和摘要。
+    let first_request = attempted_replacement(55, 56, 2_000, attempt, 8);
+    let second_request = attempted_replacement(57, 58, 2_000, attempt, 9);
+    let (first_retry, second_retry) = tokio::join!(
+        rotate(
+            &repositories,
+            &registration.session.refresh_token_digest,
+            &first_request
+        ),
+        rotate(
+            &repositories,
+            &registration.session.refresh_token_digest,
+            &second_request
+        ),
+    );
+
+    for retried in [first_retry, second_retry] {
+        assert_replays(&retried, &original, stored.device.id());
+    }
+    assert_eq!(
+        device_state(&database.runtime, stored.device.id()).await,
+        ("verified".to_owned(), "active".to_owned())
+    );
+    let next = rotate(
+        &repositories,
+        &original.refresh_token_digest,
+        &attempted_replacement(59, 60, 3_000, new_attempt(), 10),
+    )
+    .await;
+    assert!(
+        matches!(next, DeviceRefreshOutcome::Rotated { .. }),
+        "重放交回的新令牌仍是当前令牌，可以继续轮换"
+    );
+
+    delete_device_events(&database.runtime, stored.device.id()).await;
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 新令牌再次轮换后清空派生盐且迟到的旧尝试按重用处理() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let registration = registration(61, 62);
+    let stored = register(&repositories, &registration).await;
+    let attempt = new_attempt();
+    let original = attempted_replacement(63, 64, 1_000, attempt, 12);
+    rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &original,
+    )
+    .await;
+    rotate(
+        &repositories,
+        &original.refresh_token_digest,
+        &attempted_replacement(65, 66, 2_000, new_attempt(), 13),
+    )
+    .await;
+
+    let retained_salt: Option<Vec<u8>> = sqlx::query_scalar(
+        r"SELECT attempt.replay_salt
+           FROM agent_room.device_refresh_attempt AS attempt
+           JOIN agent_room.device_refresh_token AS refresh
+             ON refresh.id = attempt.refresh_token_id
+           WHERE refresh.secret_digest = $1",
+    )
+    .bind(
+        registration
+            .session
+            .refresh_token_digest
+            .as_bytes()
+            .as_slice(),
+    )
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可读取上一轮尝试记录");
+    assert_eq!(retained_salt, None, "新令牌轮换后不应再保留可重放的派生盐");
+
+    let late_retry = rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &attempted_replacement(67, 68, 3_000, attempt, 14),
+    )
+    .await;
+    assert!(matches!(
+        late_retry,
+        DeviceRefreshOutcome::ReuseDetected { .. }
+    ));
+    assert_eq!(
+        device_state(&database.runtime, stored.device.id()).await,
+        ("revoked".to_owned(), "compromised".to_owned())
+    );
+
+    delete_device_events(&database.runtime, stored.device.id()).await;
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 换一个尝试号重放已轮换的令牌仍提交泄露撤销() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let registration = registration(71, 72);
+    let stored = register(&repositories, &registration).await;
+    rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &attempted_replacement(73, 74, 1_000, new_attempt(), 1),
+    )
+    .await;
+
+    let reuse = rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &attempted_replacement(75, 76, 2_000, new_attempt(), 2),
+    )
+    .await;
+
+    assert!(matches!(reuse, DeviceRefreshOutcome::ReuseDetected { .. }));
+    assert_eq!(
+        device_state(&database.runtime, stored.device.id()).await,
+        ("revoked".to_owned(), "compromised".to_owned())
+    );
+
+    delete_device_events(&database.runtime, stored.device.id()).await;
+    database.close().await;
+}
+
+async fn register(
+    repositories: &PostgresRepositories,
+    registration: &RegistrationFixture,
+) -> agent_room_application::ports::StoredDeviceSession {
+    DeviceRegistrationTransaction::register(
+        repositories,
+        &registration.principal,
+        &registration.device,
+        &registration.session,
+    )
+    .await
+    .expect("设备与 Token 应原子写入")
+}
+
+async fn rotate(
+    repositories: &PostgresRepositories,
+    refresh_token_digest: &SecretDigest,
+    replacement: &DeviceTokenReplacement,
+) -> DeviceRefreshOutcome {
+    DeviceSessionStore::rotate_refresh(
+        repositories,
+        refresh_token_digest,
+        replacement,
+        security_event(replacement.issued_at.value() - test_time(0).value()),
+    )
+    .await
+    .expect("刷新轮换应返回确定结果")
+}
+
+fn assert_replays(
+    outcome: &DeviceRefreshOutcome,
+    original: &DeviceTokenReplacement,
+    device_id: DeviceId,
+) {
+    let DeviceRefreshOutcome::Replayed {
+        session,
+        salt,
+        access_token_digest,
+        refresh_token_digest,
+        ..
+    } = outcome
+    else {
+        panic!("同一尝试号的重试必须重放原轮换，实际为 {outcome:?}");
+    };
+    let original_replay = original.replay.as_ref().expect("原轮换带尝试号");
+    assert_eq!(salt, &original_replay.salt);
+    assert_eq!(access_token_digest, &original.access_token_digest);
+    assert_eq!(refresh_token_digest, &original.refresh_token_digest);
+    assert_eq!(
+        session.access_token_expires_at,
+        original.access_token_expires_at
+    );
+    assert_eq!(session.device.id(), device_id);
+}
+
+fn new_attempt() -> DeviceRefreshAttemptId {
+    DeviceRefreshAttemptId::from_uuid(Uuid::now_v7())
+}
+
 struct RegistrationFixture {
     principal: PrincipalRegistration,
     device: Device,
@@ -271,7 +476,37 @@ fn replacement(access_digest: u8, refresh_digest: u8, offset: i64) -> DeviceToke
         refresh_token_id: DeviceRefreshTokenId::from_uuid(Uuid::now_v7()),
         refresh_token_digest: SecretDigest::from_array([refresh_digest; 32]),
         issued_at: test_time(offset),
+        replay: None,
     }
+}
+
+fn attempted_replacement(
+    access_digest: u8,
+    refresh_digest: u8,
+    offset: i64,
+    attempt_id: DeviceRefreshAttemptId,
+    salt: u8,
+) -> DeviceTokenReplacement {
+    DeviceTokenReplacement {
+        replay: Some(DeviceRefreshReplay {
+            attempt_id,
+            salt: DeviceRefreshReplaySalt::from_array([salt; 32]),
+        }),
+        ..replacement(access_digest, refresh_digest, offset)
+    }
+}
+
+async fn device_state(pool: &PgPool, device_id: DeviceId) -> (String, String) {
+    sqlx::query_as(
+        r"SELECT device.trust_state, family.state
+           FROM agent_room.device AS device
+           JOIN agent_room.device_token_family AS family ON family.device_id = device.id
+           WHERE device.id = $1",
+    )
+    .bind(device_id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("可读取设备与 Token 族状态")
 }
 
 fn security_event(offset: i64) -> DeviceSecurityEvent {

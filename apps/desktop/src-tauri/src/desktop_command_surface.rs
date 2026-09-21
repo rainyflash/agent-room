@@ -8,6 +8,7 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_restore_human_session",
     "desktop_runtime_snapshot",
     "desktop_retry_bridge",
+    "desktop_reauthorize_bridge",
     "desktop_set_autostart",
     "desktop_set_language",
     "desktop_open_authorization",

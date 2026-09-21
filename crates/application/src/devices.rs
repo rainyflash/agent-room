@@ -4,7 +4,7 @@ use agent_room_domain::{
     devices::{
         Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily, DeviceTrustState,
     },
-    ids::{DeviceId, PrincipalId},
+    ids::{DeviceId, DeviceRefreshAttemptId, PrincipalId},
     time::{DurationMillis, UtcMillis},
 };
 
@@ -12,8 +12,9 @@ use crate::{
     matrix_device_cleanup::revoke_agent_matrix_device,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        AgentInstanceMatrixCleanupStore, Clock, DeviceProofNonceStore, DeviceProofVerifier,
-        DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository,
+        AgentInstanceMatrixCleanupStore, Clock, DerivedDeviceTokens, DeviceProofNonceStore,
+        DeviceProofVerifier, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
+        DeviceRefreshTokenDerivation, DeviceRegistrationTransaction, DeviceRepository,
         DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
         DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
         IdentifierFactory, MatrixAgentDeviceSessionRevoker, PendingAgentMatrixDeviceRevocation,
@@ -263,6 +264,9 @@ pub struct AuthenticateDeviceRequest<'a> {
 pub struct RefreshDeviceSession<'a> {
     pub refresh_token: &'a SecretValue,
     pub proof: &'a DeviceRequestProof,
+    /// 客户端为这次刷新生成的尝试号。结果未知时客户端用同一尝试号重试，
+    /// 服务端返回同一对新令牌而不判为重用；旧客户端不带尝试号。
+    pub attempt_id: Option<DeviceRefreshAttemptId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,6 +371,7 @@ pub struct DeviceAuthorizationService {
     matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
     secrets: Arc<dyn SecretFactory>,
+    refresh_tokens: Arc<dyn DeviceRefreshTokenDerivation>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
     policy: DeviceAuthorizationPolicy,
@@ -382,6 +387,7 @@ pub struct DeviceAuthorizationDependencies {
     pub matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     pub matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
     pub secrets: Arc<dyn SecretFactory>,
+    pub refresh_tokens: Arc<dyn DeviceRefreshTokenDerivation>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -401,6 +407,7 @@ impl DeviceAuthorizationService {
             matrix_cleanup: dependencies.matrix_cleanup,
             matrix: dependencies.matrix,
             secrets: dependencies.secrets,
+            refresh_tokens: dependencies.refresh_tokens,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
             policy,
@@ -550,17 +557,17 @@ impl DeviceAuthorizationService {
         }
         self.verify_signature_only(&context.device, request.proof, &refresh_digest, now)?;
 
-        let access_token = generate_secret(&*self.secrets, operation)?;
-        let refresh_token = generate_secret(&*self.secrets, operation)?;
+        let (replay, tokens) = self.new_refresh_tokens(&request, operation)?;
         let replacement = DeviceTokenReplacement {
             access_token_id: self.identifiers.device_access_token_id(),
-            access_token_digest: self.secrets.digest(access_token.expose()),
+            access_token_digest: self.secrets.digest(tokens.access_token.expose()),
             access_token_expires_at: now
                 .checked_add(self.policy.access_token_ttl)
                 .map_err(|_| internal_failure(operation))?,
             refresh_token_id: self.identifiers.device_refresh_token_id(),
-            refresh_token_digest: self.secrets.digest(refresh_token.expose()),
+            refresh_token_digest: self.secrets.digest(tokens.refresh_token.expose()),
             issued_at: now,
+            replay,
         };
         let outcome = self
             .sessions
@@ -581,10 +588,31 @@ impl DeviceAuthorizationService {
                 refresh_token_expires_at,
             } => Ok(credentials(
                 &session,
-                access_token,
-                refresh_token,
+                tokens.access_token,
+                tokens.refresh_token,
                 refresh_token_expires_at,
             )),
+            DeviceRefreshOutcome::Replayed {
+                session,
+                refresh_token_expires_at,
+                salt,
+                access_token_digest,
+                refresh_token_digest,
+            } => {
+                let replayed = self.replayed_refresh_tokens(
+                    &request,
+                    salt,
+                    &access_token_digest,
+                    &refresh_token_digest,
+                    operation,
+                )?;
+                Ok(credentials(
+                    &session,
+                    replayed.access_token,
+                    replayed.refresh_token,
+                    refresh_token_expires_at,
+                ))
+            }
             DeviceRefreshOutcome::ReuseDetected { .. } => Err(failure(
                 operation,
                 DeviceAuthorizationFailureKind::RefreshTokenReuse,
@@ -697,6 +725,69 @@ impl DeviceAuthorizationService {
             ));
         }
         Ok(())
+    }
+
+    /// 带尝试号的轮换由旧令牌、尝试号和新盐派生新令牌，之后重试同一尝试能重新得到这对令牌；
+    /// 旧客户端不带尝试号，仍签发随机令牌。
+    fn new_refresh_tokens(
+        &self,
+        request: &RefreshDeviceSession<'_>,
+        operation: &'static str,
+    ) -> DeviceAuthorizationResult<(Option<DeviceRefreshReplay>, DerivedDeviceTokens)> {
+        let Some(attempt_id) = request.attempt_id else {
+            return Ok((
+                None,
+                DerivedDeviceTokens {
+                    access_token: generate_secret(&*self.secrets, operation)?,
+                    refresh_token: generate_secret(&*self.secrets, operation)?,
+                },
+            ));
+        };
+        let salt = self
+            .refresh_tokens
+            .replay_salt()
+            .map_err(|_| internal_failure(operation))?;
+        let replay = DeviceRefreshReplay { attempt_id, salt };
+        let tokens = self.derive_refresh_tokens(request.refresh_token, &replay, operation)?;
+        Ok((Some(replay), tokens))
+    }
+
+    /// 用原轮换的盐重新派生，并确认得到的正是当时登记的那一对令牌。
+    fn replayed_refresh_tokens(
+        &self,
+        request: &RefreshDeviceSession<'_>,
+        salt: DeviceRefreshReplaySalt,
+        access_token_digest: &SecretDigest,
+        refresh_token_digest: &SecretDigest,
+        operation: &'static str,
+    ) -> DeviceAuthorizationResult<DerivedDeviceTokens> {
+        // 仓储只在尝试号一致时重放；没有尝试号却得到重放说明仓储实现有误。
+        let attempt_id = request
+            .attempt_id
+            .ok_or_else(|| internal_failure(operation))?;
+        let replayed = self.derive_refresh_tokens(
+            request.refresh_token,
+            &DeviceRefreshReplay { attempt_id, salt },
+            operation,
+        )?;
+        // 摘要对不上说明盐或令牌记录被改动过，宁可失败也不交出未登记的凭据。
+        if self.secrets.digest(replayed.access_token.expose()) != *access_token_digest
+            || self.secrets.digest(replayed.refresh_token.expose()) != *refresh_token_digest
+        {
+            return Err(internal_failure(operation));
+        }
+        Ok(replayed)
+    }
+
+    fn derive_refresh_tokens(
+        &self,
+        refresh_token: &SecretValue,
+        replay: &DeviceRefreshReplay,
+        operation: &'static str,
+    ) -> DeviceAuthorizationResult<DerivedDeviceTokens> {
+        self.refresh_tokens
+            .derive(refresh_token, replay)
+            .map_err(|_| internal_failure(operation))
     }
 
     fn verify_signature_only(

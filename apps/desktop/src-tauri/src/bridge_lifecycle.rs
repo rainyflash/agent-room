@@ -10,6 +10,7 @@ const RESTART_DELAYS: [Duration; MAX_AUTOMATIC_RESTARTS] = [
     Duration::from_secs(16),
 ];
 const SERVER_UNREACHABLE_DIAGNOSTIC: &str = "desktop.bridge.server_unreachable";
+const AUTHORIZATION_FAILED_DIAGNOSTIC: &str = "desktop.authorization.failed";
 /// Bridge 重连退避允许配置的最大间隔；更长的值只可能来自损坏的输出。
 const MAX_SERVER_RETRY_DELAY: Duration = Duration::from_mins(15);
 
@@ -45,6 +46,17 @@ pub(crate) struct BridgeLifecycleSnapshot {
     pub(crate) next_retry_at_unix_ms: Option<i64>,
     pub(crate) last_exit_code: Option<i32>,
     pub(crate) changed_at_unix_ms: i64,
+}
+
+impl BridgeLifecycleSnapshot {
+    /// 停机的托管 Bridge 可以「重新授权这台电脑」：清除本机设备凭据后重新申请设备码。
+    /// 外部 Bridge 不归桌面管，桌面不能重启它，也不应清除它的凭据；授权流程本身失败时，
+    /// 本机尚无凭据，普通重试就会重新授权，不必再给第二个入口。
+    pub(crate) fn device_reauthorization_available(&self) -> bool {
+        self.phase == BridgePhase::Halted
+            && self.ownership == Some(BridgeOwnership::Managed)
+            && self.diagnostic_code.as_deref() != Some(AUTHORIZATION_FAILED_DIAGNOSTIC)
+    }
 }
 
 #[derive(Debug)]
@@ -254,7 +266,7 @@ impl BridgeRestartPolicy {
             // 重启会申请全新的设备码，无法继续用户刚批准的那次授权。
             // 保留具体失败原因，等待显式重试，避免把注册失败变成重复授权。
             self.snapshot.phase = BridgePhase::Halted;
-            self.snapshot.diagnostic_code = Some("desktop.authorization.failed".to_owned());
+            self.snapshot.diagnostic_code = Some(AUTHORIZATION_FAILED_DIAGNOSTIC.to_owned());
             return ExitDecision::Halt;
         }
 
@@ -577,6 +589,42 @@ mod tests {
             policy.snapshot().next_retry_at_unix_ms,
             Some(15 * 60 * 1_000)
         );
+    }
+
+    #[test]
+    fn 停机的托管_bridge_提供重新授权而运行中或外部的不提供() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(0);
+        policy.set_diagnostic(1, "bridge.refresh_outcome_unknown");
+        assert!(!policy.snapshot().device_reauthorization_available());
+        for now in 2..=5 {
+            let _ = policy.child_exited(now, Some(1), false);
+        }
+        assert_eq!(policy.snapshot().phase, BridgePhase::Halted);
+        assert!(
+            policy.snapshot().device_reauthorization_available(),
+            "自动重启预算耗尽后应能从停机视图重新授权"
+        );
+
+        policy.explicit_retry(6);
+        assert!(!policy.snapshot().device_reauthorization_available());
+
+        let mut external = BridgeRestartPolicy::new(0);
+        external.discovered_ready(1, BridgeOwnership::External);
+        external.halt(2, "desktop.bridge.offline");
+        assert!(
+            !external.snapshot().device_reauthorization_available(),
+            "外部 Bridge 的凭据不归桌面清除"
+        );
+    }
+
+    #[test]
+    fn 授权流程失败的停机视图只保留普通重试() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.authorization_required(1);
+        assert_eq!(policy.child_exited(2, Some(1), false), ExitDecision::Halt);
+
+        assert!(!policy.snapshot().device_reauthorization_available());
     }
 
     #[test]

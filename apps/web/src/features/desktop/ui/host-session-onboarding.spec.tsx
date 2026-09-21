@@ -29,6 +29,7 @@ const gateway: DesktopRuntimeGateway = {
   openAuthorization: unavailable,
   readLobby: unavailable,
   retryBridge: unavailable,
+  reauthorizeBridge: unavailable,
   setAutostart: (enabled) => Promise.resolve(ok(enabled)),
   snapshot: unavailable,
   subscribe: () => Promise.resolve(ok(() => undefined)),

@@ -43,6 +43,7 @@ function copied(mock: ReturnType<typeof clipboardMock>, index: number): string {
 
 const readyBridge: BridgeRuntime = {
   authorization: null,
+  deviceReauthorizationAvailable: false,
   session: null,
   lifecycle: {
     automaticRestartCount: 0,
@@ -88,6 +89,7 @@ function gateway(
     openAuthorization: unavailable,
     readLobby: unavailable,
     retryBridge: () => Promise.resolve(ok(readyBridge)),
+    reauthorizeBridge: () => Promise.resolve(ok(readyBridge)),
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
     snapshot: () =>
       Promise.resolve(

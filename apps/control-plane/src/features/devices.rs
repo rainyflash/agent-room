@@ -14,7 +14,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
-    ids::DeviceId,
+    ids::{DeviceId, DeviceRefreshAttemptId},
     time::UtcMillis,
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -34,11 +34,15 @@ use uuid::Uuid;
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
+    features::{
+        authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
+        resource_ids::parse_uuid_v7,
+    },
 };
 
 const REGISTER_DEVICE_PATH: &str = "/auth/devices/register";
 const REFRESH_DEVICE_PATH: &str = "/auth/devices/refresh";
+const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
 const PROOF_ISSUED_AT_HEADER: &str = "x-agent-room-proof-issued-at";
 const PROOF_NONCE_HEADER: &str = "x-agent-room-proof-nonce";
@@ -229,11 +233,18 @@ async fn refresh_device_session(
                 .into_response(),
         );
     };
+    let Ok(attempt_id) = refresh_attempt_id(&headers) else {
+        return no_store(
+            ApiError::invalid_request("device.invalid_idempotency_key", correlation_id)
+                .into_response(),
+        );
+    };
     match state
         .devices
         .refresh_device_session(RefreshDeviceSession {
             refresh_token: &refresh_token,
             proof: &proof,
+            attempt_id,
         })
         .await
     {
@@ -337,6 +348,15 @@ fn request_proof(
     request_target: &str,
 ) -> Result<DeviceRequestProof, ()> {
     request_proof_for(state.secrets.as_ref(), headers, "POST", request_target, "")
+}
+
+/// 新版 Bridge 用幂等键标识一次刷新尝试；旧版不带，仍按不可重试的轮换处理。
+fn refresh_attempt_id(headers: &HeaderMap) -> Result<Option<DeviceRefreshAttemptId>, ()> {
+    let Some(value) = headers.get(IDEMPOTENCY_KEY_HEADER) else {
+        return Ok(None);
+    };
+    let value = value.to_str().map_err(|_| ())?;
+    parse_uuid_v7(value).map(|id| Some(DeviceRefreshAttemptId::from_uuid(id)))
 }
 
 pub(crate) async fn authenticate_signed_device_request(
@@ -524,7 +544,7 @@ mod tests {
     use agent_room_domain::{
         devices::{Device, DevicePlatform, DevicePublicSigningKey},
         identity::Principal,
-        ids::{DeviceId, PrincipalId},
+        ids::{DeviceId, DeviceRefreshAttemptId, PrincipalId},
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -551,6 +571,7 @@ mod tests {
     struct FakeDevices {
         registration: Mutex<Option<RegisterDevice>>,
         refreshes: AtomicUsize,
+        refresh_attempts: Mutex<Vec<Option<DeviceRefreshAttemptId>>>,
         revocation: Mutex<Option<(PrincipalId, DeviceId)>>,
         pending_matrix_cleanup: AtomicUsize,
     }
@@ -581,6 +602,10 @@ mod tests {
             assert_eq!(request.proof.request_target(), "/auth/devices/refresh");
             assert_eq!(request.proof.body_digest(), &SecureSecretFactory.digest(""));
             self.refreshes.fetch_add(1, Ordering::SeqCst);
+            self.refresh_attempts
+                .lock()
+                .expect("刷新尝试记录锁可用")
+                .push(request.attempt_id);
             Box::pin(async { Ok(credentials()) })
         }
 
@@ -865,6 +890,63 @@ mod tests {
             .expect("路由执行成功");
         assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
         assert_eq!(devices.refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            devices
+                .refresh_attempts
+                .lock()
+                .expect("刷新尝试记录锁可用")
+                .as_slice(),
+            [None],
+            "旧版 Bridge 不带幂等键时仍走原有轮换"
+        );
+    }
+
+    #[tokio::test]
+    async fn 刷新幂等键作为尝试号传给用例且拒绝非_v7_值() {
+        const ATTEMPT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
+        let devices = Arc::new(FakeDevices::default());
+        let refresh = |idempotency_key: &'static str| {
+            Request::builder()
+                .method("POST")
+                .uri("/auth/devices/refresh")
+                .header(header::AUTHORIZATION, "Bearer refresh-token")
+                .header(DEVICE_ID_HEADER, DEVICE_UUID)
+                .header(PROOF_ISSUED_AT_HEADER, "1700000000000")
+                .header(PROOF_NONCE_HEADER, "0123456789abcdef")
+                .header(PROOF_SIGNATURE_HEADER, URL_SAFE_NO_PAD.encode([5_u8; 64]))
+                .header("idempotency-key", idempotency_key)
+                .body(Body::empty())
+                .expect("请求有效")
+        };
+
+        let accepted = test_router(devices.clone(), Arc::new(FakeAuthentication::default()))
+            .oneshot(refresh(ATTEMPT_UUID))
+            .await
+            .expect("路由执行成功");
+        assert_eq!(accepted.status(), StatusCode::OK);
+
+        for invalid_key in ["not-a-uuid", "550e8400-e29b-41d4-a716-446655440000"] {
+            let rejected = test_router(devices.clone(), Arc::new(FakeAuthentication::default()))
+                .oneshot(refresh(invalid_key))
+                .await
+                .expect("路由执行成功");
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                body_json(rejected).await["code"],
+                "device.invalid_idempotency_key"
+            );
+        }
+        assert_eq!(
+            devices
+                .refresh_attempts
+                .lock()
+                .expect("刷新尝试记录锁可用")
+                .as_slice(),
+            [Some(DeviceRefreshAttemptId::from_uuid(
+                Uuid::parse_str(ATTEMPT_UUID).expect("尝试号有效")
+            ))],
+            "非法幂等键不能触发轮换"
+        );
     }
 
     #[tokio::test]

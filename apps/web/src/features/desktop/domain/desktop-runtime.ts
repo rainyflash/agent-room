@@ -60,6 +60,8 @@ export const bridgeRuntimeSchema = z
     lifecycle: bridgeLifecycleSchema,
     authorization: authorizationPromptSchema.nullable(),
     session: bridgeAgentSessionSchema.nullable(),
+    // 停机视图是否提供「重新授权这台电脑」，由桌面监督进程判定。
+    deviceReauthorizationAvailable: z.boolean(),
   })
   .strict();
 
@@ -382,6 +384,7 @@ export type DesktopRuntimeGateway = {
   restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>>;
   snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>>;
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
+  reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;
   openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>>;
   checkUpdate(

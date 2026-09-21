@@ -35,9 +35,9 @@ use commands::{
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_detect_agent_hosts, desktop_host_session_diagnostics, desktop_install_update,
     desktop_load_matrix_session, desktop_lobby_snapshot, desktop_open_authorization,
-    desktop_plan_agent_host, desktop_remove_agent_host, desktop_restore_human_session,
-    desktop_retry_bridge, desktop_runtime_snapshot, desktop_save_matrix_session,
-    desktop_set_autostart,
+    desktop_plan_agent_host, desktop_reauthorize_bridge, desktop_remove_agent_host,
+    desktop_restore_human_session, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_save_matrix_session, desktop_set_autostart,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -119,6 +119,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_restore_human_session,
             desktop_runtime_snapshot,
             desktop_retry_bridge,
+            desktop_reauthorize_bridge,
             desktop_set_autostart,
             desktop_set_language,
             desktop_open_authorization,

@@ -16,6 +16,7 @@
     "allow-desktop-restore-human-session",
     "allow-desktop-runtime-snapshot",
     "allow-desktop-retry-bridge",
+    "allow-desktop-reauthorize-bridge",
     "allow-desktop-set-autostart",
     "allow-desktop-set-language",
     "allow-desktop-open-authorization",

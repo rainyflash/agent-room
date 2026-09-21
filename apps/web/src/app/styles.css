@@ -947,6 +947,19 @@
   text-align: right;
 }
 
+.desktop-runtime__reauthorize {
+  margin-top: 0.72rem;
+  padding-top: 0.62rem;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.desktop-runtime__reauthorize > p {
+  margin-bottom: 0.5rem !important;
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .desktop-runtime__command-failure {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;

@@ -246,11 +246,11 @@ fn status_failure(status: StatusCode, category: Option<&str>) -> ControlPlaneLob
 
 fn map_session_failure(session_failure: BridgeSessionFailure) -> ControlPlaneLobbyEntryFailure {
     let kind = match session_failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+        BridgeSessionFailureKind::NotAuthorized => {
             ControlPlaneLobbyEntryFailureKind::AuthenticationRejected
         }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             ControlPlaneLobbyEntryFailureKind::Unavailable
         }
