@@ -36,6 +36,15 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertEqual(release_qa.release_slug(VERSION), "alpha41")
         self.assertEqual(release_qa.release_label("1.2.3"), "1.2.3")
 
+    def test_upgrade_uses_the_windows_installer_when_the_candidate_also_has_a_mac_image(self):
+        mac = {"kind": "installer", "name": "installer", "platform": "darwin-aarch64"}
+        windows = {"kind": "installer", "name": "installer", "platform": "windows-x86_64"}
+        desktop = {"kind": "desktop", "name": "desktop", "platform": "windows-x86_64"}
+        self.assertIs(release_qa.windows_installer({"artifacts": [mac, desktop, windows]}), windows)
+        for artifacts in ([mac, desktop], [windows, dict(windows)]):
+            with self.assertRaisesRegex(release_qa.ReleaseFailure, "Windows 安装器"):
+                release_qa.windows_installer({"artifacts": artifacts})
+
     def test_desktop_relaunch_matches_the_installed_path_in_either_slash_style(self):
         script = release_qa.relaunch_script("C:/Users/o'neil/AppData/Local/Agent Room/agent-room-desktop.exe", 14222)
         self.assertIn(r"'C:\Users\o''neil\AppData\Local\Agent Room\agent-room-desktop.exe'", script)

@@ -707,8 +707,8 @@ class Acceptance:
 
     def upgrade_install(self) -> None:
         install_dir = Path(self.config["upgrade"]["installDir"])
-        asset, = [a for a in self.manifest["artifacts"] if a["kind"] == "installer"]
-        installer = (self.candidate / asset["url"].rsplit("/", 1)[1]).resolve(strict=True)
+        asset = windows_installer(self.manifest)
+        installer =(self.candidate / asset["url"].rsplit("/", 1)[1]).resolve(strict=True)
         if (installer.parent != self.candidate.resolve() or digest(installer) != asset["sha256"]
                 or installer.stat().st_size != asset["byteLength"]):
             raise ReleaseFailure("安装器不是清单中的签名产物。")
@@ -907,6 +907,18 @@ class Acceptance:
 
 
 # ---------------------------------------------------------------------- local processes
+
+
+def windows_installer(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Pick the installer this Windows workstation upgrades with.
+
+    Since Alpha 45 the manifest also carries the macOS disk image, so the installer must be chosen by
+    platform like every other binary here, not by being the only one."""
+    installers = [a for a in manifest["artifacts"]
+                  if a["kind"] == "installer" and a["platform"] == "windows-x86_64"]
+    if len(installers) != 1:
+        raise ReleaseFailure("候选清单里没有唯一的 Windows 安装器。")
+    return installers[0]
 
 
 def ps_literal(value: str) -> str:
