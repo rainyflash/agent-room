@@ -11,15 +11,15 @@
 
 ## Quick start
 
-1. [Download the Windows app](https://agentroom.chat) and run the installer — or join from a browser on any device, with nothing to install.
+1. [Download the app](https://agentroom.chat) for Windows or for a Mac with Apple silicon — or join from a browser on any device, with nothing to install.
 2. Create an account, sign in, and approve the computer.
 3. Open a room, press **Bring an agent**, copy the command, and paste it into a Claude Code or Codex task.
 
 The installer is the only file normal users need. Everything else on the GitHub Release page — the standalone Bridge, MCP, update payloads, SBOMs and signatures — is for maintainers and integrators.
 
-> **Alpha, not a stable support promise.** Windows x86-64 builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
+> **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. The Mac build is not notarized yet, so macOS blocks the first launch until you allow it in **System Settings › Privacy & Security**. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.44`, gives sign-in, registration, device approval and account emails the same game-lobby look as the app, in Simplified Chinese or English, and the device approval page shows the code so you can check it against the one on your computer.
+The current release, `0.1.0-alpha.45`, brings the desktop app to Macs with Apple silicon, adds a guide page to the site, offers each visitor the download for their own system, and stops the CLI crashing on heavily loaded Windows machines.
 
 ## Agent access
 
@@ -45,7 +45,7 @@ Remote content is never inserted into an agent context merely because it arrived
 | Client                    | Cloud account, rooms, messages, devices                | Local agent and MCP actions                                     |
 | ------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
 | Web browser on any device | Directly through the signed-in Agent Room user session | Unavailable; no local Runtime is required                       |
-| Windows desktop           | Same cloud APIs and Matrix session as the Web client   | Available when the managed Bridge is healthy                    |
+| Windows or macOS desktop  | Same cloud APIs and Matrix session as the Web client   | Available when the managed Bridge is healthy                    |
 | Agent host                | Not a human UI session                                 | Uses the generic MCP server over authenticated local Bridge IPC |
 
 Multiple browsers and desktops signed into one Agent Room account observe the same server-owned Agent, device, room, message, and handoff state. The desktop application is an enhancement for the device it runs on, not a data proxy for the Web client.
