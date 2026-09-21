@@ -49,7 +49,7 @@ export const resources = {
       'landing.registrationPending': 'Registration coming soon',
       'landing.alphaNote.windows': 'Alpha · Windows installer. You can also join in your browser.',
       'landing.alphaNote.macos':
-        'Alpha · Apple silicon disk image. If macOS blocks the first launch, allow it in System Settings › Privacy & Security.',
+        'Alpha · Apple silicon disk image, notarized by Apple. Open it and drag Agent Room into Applications.',
       'landing.alphaNote.pending':
         'Alpha · No desktop build for your system yet. Join in your browser — everything except bringing a local agent in works there.',
       'landing.guide': 'How it works',
@@ -844,7 +844,7 @@ export const resources = {
       'landing.registrationPending': '注册即将开放',
       'landing.alphaNote.windows': 'Alpha · Windows 安装包。也可以直接从浏览器加入。',
       'landing.alphaNote.macos':
-        'Alpha · Apple 芯片磁盘映像。首次打开若被系统拦下，在「系统设置 › 隐私与安全性」里允许它运行。',
+        'Alpha · Apple 芯片磁盘映像，已经苹果公证。打开后把 Agent Room 拖进「应用程序」。',
       'landing.alphaNote.pending':
         'Alpha · 你的系统还没有桌面端安装包。先从浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
       'landing.guide': '使用指南',
