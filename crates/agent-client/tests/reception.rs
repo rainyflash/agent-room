@@ -262,6 +262,125 @@ async fn 曾经空闲不代表后续连接失败或挂起可以当作空页() {
     );
 }
 
+/// 等待调用慢于调用方窗口的后端；期限结束时的收尾读取照常立即返回。
+struct SlowBackend {
+    message: Option<IpcMessagePreviewSummary>,
+    calls: Mutex<Vec<IpcMethod>>,
+}
+impl SlowBackend {
+    const DELAY: Duration = Duration::from_secs(3);
+    fn new(message: Option<IpcMessagePreviewSummary>) -> Self {
+        Self {
+            message,
+            calls: Mutex::new(vec![]),
+        }
+    }
+    fn names(&self) -> Vec<String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|method| method.name().to_owned())
+            .collect()
+    }
+}
+impl BridgeToolClient for SlowBackend {
+    fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        self.calls.lock().unwrap().push(method.clone());
+        let delay = if method.name() == "wait_inbox" {
+            Self::DELAY
+        } else {
+            Duration::ZERO
+        };
+        let message = self.message.clone();
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(page(message.into_iter().collect()))
+        })
+    }
+}
+
+/// 单次往返慢于窗口时，一次性读取欠调用方一个答复，持续监听不欠：窗口只结束这一轮。
+#[tokio::test(start_paused = true)]
+async fn 慢于窗口的往返只结束持续监听的一轮而不是整个等待() {
+    assert_eq!(
+        wait_for_messages(
+            &SlowBackend::new(None),
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::For(Duration::from_secs(1))
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        "agent.inbox.timeout",
+        "一次性读取必须在期限内答复，卡住的 Bridge 不能伪装成空房间"
+    );
+
+    let listening = SlowBackend::new(None);
+    let start = tokio::time::Instant::now();
+    assert_eq!(
+        wait_for_messages(
+            &listening,
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::Continuous(Duration::from_secs(1))
+        )
+        .await
+        .unwrap(),
+        page(vec![]),
+        "持续监听的窗口到期不是失败，调用方继续等待"
+    );
+    assert_eq!(start.elapsed(), SlowBackend::DELAY, "在途请求跑完才收尾");
+    assert_eq!(
+        listening.names(),
+        ["wait_inbox", "read_inbox"],
+        "窗口结束仍然撤销等待状态"
+    );
+}
+
+/// 慢往返带回的消息照常投递；真实连接错误仍然终止持续监听。
+#[tokio::test(start_paused = true)]
+async fn 持续监听交付慢往返的消息但连接错误仍然终止() {
+    let delivering = SlowBackend::new(Some(preview("$next")));
+    assert_eq!(
+        wait_for_messages(
+            &delivering,
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::Continuous(Duration::from_secs(1))
+        )
+        .await
+        .unwrap(),
+        page(vec![preview("$next")])
+    );
+    assert_eq!(delivering.names(), ["wait_inbox"]);
+
+    let broken = Backend::new(vec![Err(BridgeToolFailure::new(
+        "test.disconnected",
+        IpcErrorCategory::DependencyUnavailable,
+        true,
+        BTreeMap::new(),
+    ))]);
+    assert_eq!(
+        wait_for_messages(
+            &broken,
+            SESSION.into(),
+            request(),
+            MessageReadMode::Inbox,
+            MessageWait::Continuous(Duration::from_secs(1))
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        "test.disconnected",
+        "真实连接错误仍然终止持续监听"
+    );
+}
+
 #[test]
 fn 待处理状态必须在下一条投递前明确完成且可持久化恢复() {
     let policy = ReceptionPolicy {

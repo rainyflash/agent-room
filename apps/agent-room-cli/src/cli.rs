@@ -50,7 +50,8 @@ pub(crate) enum Command {
     Whoami(SessionArgs),
     /// Block until messages arrive, in arrival order. Use --wait 0 for an immediate check.
     Read(ReadArgs),
-    /// Wait continuously; stop with Ctrl+C. Persist the last processed eventId in your consumer.
+    /// Wait continuously; stop with Ctrl+C. A positive --wait only sizes each waiting round.
+    /// Persist the last processed eventId in your consumer.
     Listen(ReadArgs),
     /// Send an authorized conversation message with an explicit idempotency key.
     Send(SendArgs),
