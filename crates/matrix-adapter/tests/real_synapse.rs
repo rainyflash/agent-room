@@ -15,7 +15,7 @@ use agent_room_application::ports::{
     RoomProvisioningGateway, SecretValue,
 };
 use agent_room_domain::{
-    ids::{AgentId, ModerationActionId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, ModerationActionId, PrincipalId, RoomCatalogId},
     moderation::{
         ModerationAction, ModerationActionKind, ModerationReason, ModerationTarget,
         ModerationTargetKind,
@@ -490,6 +490,16 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
         .await
         .expect_err("未授予发言硬边界时必须拒绝发送");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+    // Agent 发布状态才算上线；私人房间里它与发言同级。以前建房时漏了这一项，状态落到
+    // state_default=100，Agent 即使拿到发言级别也永远上不了线（bridge.agent_status_publication_failed）。
+    let status = agent_status_event();
+    let denied = scenario
+        .member
+        .gateway()
+        .send_state_event(&scenario.room_id, &status)
+        .await
+        .expect_err("旁观者不得发布 Agent 状态");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 
     scenario
         .provisioner
@@ -508,6 +518,7 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
         &message_event(unique_value("private-allowed"), "授权后可发言"),
     )
     .await;
+    send_state_with_retry(scenario.member.gateway(), &scenario.room_id, &status).await;
     scenario
         .provisioner
         .set_speaking(&scenario.room_id, &scenario.member_user_id, false)
@@ -523,6 +534,23 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
         .await
         .expect_err("发言能力撤销后必须立即拒绝发送");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+    let denied = scenario
+        .member
+        .gateway()
+        .send_state_event(&scenario.room_id, &status)
+        .await
+        .expect_err("发言能力撤销后也不得再发布 Agent 状态");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+}
+
+fn agent_status_event() -> MatrixStateEvent {
+    MatrixStateEvent::new(
+        MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+            .expect("事件类型有效"),
+        MatrixStateKey::from_agent_instance_id(AgentInstanceId::from_uuid(Uuid::now_v7())),
+        json!({ "schemaVersion": "1.0", "status": "idle" }),
+    )
+    .expect("测试状态事件有效")
 }
 
 async fn verify_private_room_governance_boundary(scenario: &PrivateRoomScenario) {

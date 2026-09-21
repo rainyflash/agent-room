@@ -62,6 +62,17 @@ pub trait PrivateRoomPrincipalDirectory: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
 }
 
+/// 列出某个主体名下全部 Agent 的 Matrix 用户。
+///
+/// Agent 不是私人房间成员，它随主体入场，在 Matrix 上的能力不能超过该主体。主体的发言被收回、
+/// 被移除、被封禁或自行离开时，服务靠它找到要一起收紧的 Agent。
+pub trait PrivateRoomAgentDirectory: Send + Sync {
+    fn agent_matrix_users(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>>;
+}
+
 /// 私人房间在 Matrix 上的最小硬边界能力。
 ///
 /// 邀请、管理和自动发送仍由产品权限表裁决；实现不得把这些能力粗暴映射为 Matrix 管理员。

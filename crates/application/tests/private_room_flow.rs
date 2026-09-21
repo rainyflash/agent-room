@@ -12,8 +12,8 @@ use agent_room_application::{
     ports::{
         Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -234,6 +234,110 @@ async fn 权限降级先写_matrix_而升级先写产品事实() {
     assert_eq!(fixture.events(), vec!["store.save", "matrix.speak.on"]);
 }
 
+/// 成员带进来的 Agent 已在房间里并拿到发言级别；另一个 Agent 从没进过这个房间。
+fn member_agents_entered(fixture: &Fixture) -> (MatrixUserId, MatrixUserId) {
+    let in_room = MatrixUserId::new("@_agent_member_in_room:matrix.test").expect("用户有效");
+    let elsewhere = MatrixUserId::new("@_agent_member_elsewhere:matrix.test").expect("用户有效");
+    fixture.agents.register(fixture.member, &in_room);
+    fixture.agents.register(fixture.member, &elsewhere);
+    fixture
+        .matrix
+        .set_membership(&in_room, PrivateMatrixMembership::Joined);
+    fixture
+        .matrix
+        .speaking
+        .lock()
+        .expect("发言锁正常")
+        .insert(in_room.as_str().to_owned(), true);
+    (in_room, elsewhere)
+}
+
+#[tokio::test]
+async fn 成员被收回发言时其_agent_一起收回且恢复时一起恢复() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    let (in_room, elsewhere) = member_agents_entered(&fixture);
+    fixture.clear_events();
+
+    fixture
+        .service
+        .update_permissions(ChangePrivateRoomPermissions {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: viewer_permissions(),
+        })
+        .await
+        .expect("降级应成功");
+
+    // Agent 的能力不能超过带它进来的成员：成员不能发言，它也不能。
+    assert_eq!(
+        fixture.matrix.speaking_allowed(in_room.as_str()),
+        Some(false)
+    );
+    assert_eq!(fixture.matrix.speaking_allowed(elsewhere.as_str()), None);
+    // 收紧仍然先写 Matrix，数据库失败时不会留下仍能发言的 Agent。
+    assert_eq!(fixture.events().last(), Some(&"store.save"));
+
+    fixture
+        .service
+        .update_permissions(ChangePrivateRoomPermissions {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: speaker_permissions(),
+        })
+        .await
+        .expect("升级应成功");
+    assert_eq!(
+        fixture.matrix.speaking_allowed(in_room.as_str()),
+        Some(true)
+    );
+    assert_eq!(fixture.matrix.speaking_allowed(elsewhere.as_str()), None);
+}
+
+#[tokio::test]
+async fn 移除成员时一并移出随其入场的_agent() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    let (in_room, elsewhere) = member_agents_entered(&fixture);
+
+    fixture
+        .service
+        .remove(GovernPrivateRoomMember {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+        })
+        .await
+        .expect("移除应成功");
+
+    // 以前这里只移除成员本人，他的 Agent 仍留在房间里读消息。
+    assert_eq!(
+        fixture.matrix.membership_of(&in_room),
+        Some(PrivateMatrixMembership::Left)
+    );
+    assert_eq!(fixture.matrix.membership_of(&elsewhere), None);
+}
+
+#[tokio::test]
+async fn 成员自行离开时随其入场的_agent_也离开() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    let (in_room, _) = member_agents_entered(&fixture);
+    fixture
+        .matrix
+        .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Left);
+
+    fixture
+        .service
+        .leave(fixture.member_action())
+        .await
+        .expect("离开应成功");
+
+    assert_eq!(
+        fixture.matrix.membership_of(&in_room),
+        Some(PrivateMatrixMembership::Left)
+    );
+}
+
 #[tokio::test]
 async fn 房主转移支持响应丢失后的幂等协议对账() {
     let fixture = Fixture::joined(viewer_permissions()).await;
@@ -292,6 +396,7 @@ struct Fixture {
     service: PrivateRoomService,
     store: Arc<TestStore>,
     matrix: Arc<TestMatrix>,
+    agents: Arc<TestAgentDirectory>,
     events: Arc<Mutex<Vec<&'static str>>>,
     catalog: RoomCatalogId,
     owner: PrincipalId,
@@ -316,11 +421,13 @@ impl Fixture {
             ),
         ])));
         let runtime = Arc::new(TestRuntime);
+        let agents = Arc::new(TestAgentDirectory::default());
         let service = PrivateRoomService::new(PrivateRoomDependencies {
             store: store.clone(),
             matrix_provisioner: matrix.clone(),
             matrix: matrix.clone(),
             principals,
+            agents: agents.clone(),
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
@@ -331,6 +438,7 @@ impl Fixture {
             service,
             store,
             matrix,
+            agents,
             events,
             catalog: catalog_id(10),
             owner,
@@ -683,6 +791,39 @@ impl PrivateRoomMatrixGateway for TestMatrix {
             self.record("matrix.archive");
             Ok(())
         })
+    }
+}
+
+/// 主体名下的 Agent；默认为空，只有关心 Agent 的用例才登记。
+#[derive(Default)]
+struct TestAgentDirectory {
+    agents: Mutex<BTreeMap<PrincipalId, Vec<MatrixUserId>>>,
+}
+
+impl TestAgentDirectory {
+    fn register(&self, principal_id: PrincipalId, agent: &MatrixUserId) {
+        self.agents
+            .lock()
+            .expect("Agent 锁正常")
+            .entry(principal_id)
+            .or_default()
+            .push(agent.clone());
+    }
+}
+
+impl PrivateRoomAgentDirectory for TestAgentDirectory {
+    fn agent_matrix_users(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
+        let agents = self
+            .agents
+            .lock()
+            .expect("Agent 锁正常")
+            .get(&principal_id)
+            .cloned()
+            .unwrap_or_default();
+        Box::pin(async move { Ok(agents) })
     }
 }
 

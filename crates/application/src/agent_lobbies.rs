@@ -222,6 +222,13 @@ impl AgentLobbyEntryService {
                 .await
                 .map_err(AgentLobbyEntryFailure::Membership)?;
         }
+        // 私人房间默认只让成员旁观；Agent 要上线（发布状态）和回复都需要发言级别。上面的准入
+        // 已确认它代表的主体此刻已加入且能发言，所以按同样的能力授予。主体失去发言、被移除
+        // 或离开时由私人房间服务收回。重连时重复授予不会再写权限状态。
+        self.private_matrix
+            .set_speaking(&matrix_room, &access.matrix_user_id, true)
+            .await
+            .map_err(AgentLobbyEntryFailure::Membership)?;
         Ok(snapshot.instance().id())
     }
 }
