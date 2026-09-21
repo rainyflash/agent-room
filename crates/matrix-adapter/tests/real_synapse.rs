@@ -492,11 +492,11 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
     // Agent 发布状态才算上线；私人房间里它与发言同级。以前建房时漏了这一项，状态落到
     // state_default=100，Agent 即使拿到发言级别也永远上不了线（bridge.agent_status_publication_failed）。
-    let status = agent_status_event();
+    let status = agent_status_probe();
     let denied = scenario
         .member
         .gateway()
-        .send_state_event(&scenario.room_id, &status)
+        .send_state_event(&scenario.room_id, &status.with_status("idle"))
         .await
         .expect_err("旁观者不得发布 Agent 状态");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
@@ -518,7 +518,12 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
         &message_event(unique_value("private-allowed"), "授权后可发言"),
     )
     .await;
-    send_state_with_retry(scenario.member.gateway(), &scenario.room_id, &status).await;
+    send_state_with_retry(
+        scenario.member.gateway(),
+        &scenario.room_id,
+        &status.with_status("idle"),
+    )
+    .await;
     scenario
         .provisioner
         .set_speaking(&scenario.room_id, &scenario.member_user_id, false)
@@ -534,23 +539,41 @@ async fn verify_private_room_speaking_boundary(scenario: &PrivateRoomScenario) {
         .await
         .expect_err("发言能力撤销后必须立即拒绝发送");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+    // 必须换一个内容：与当前状态完全相同的状态事件会被 Synapse 去重，直接返回已有事件 ID 而
+    // 不做权限检查，那样测不到撤权。
+    let changed = status.with_status("working");
     let denied = scenario
         .member
         .gateway()
-        .send_state_event(&scenario.room_id, &status)
+        .send_state_event(&scenario.room_id, &changed)
         .await
         .expect_err("发言能力撤销后也不得再发布 Agent 状态");
     assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
 }
 
-fn agent_status_event() -> MatrixStateEvent {
-    MatrixStateEvent::new(
-        MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
-            .expect("事件类型有效"),
-        MatrixStateKey::from_agent_instance_id(AgentInstanceId::from_uuid(Uuid::now_v7())),
-        json!({ "schemaVersion": "1.0", "status": "idle" }),
-    )
-    .expect("测试状态事件有效")
+/// 同一个 Agent 实例的状态事件；状态键固定，内容可以换。
+struct AgentStatusProbe {
+    state_key: MatrixStateKey,
+}
+
+impl AgentStatusProbe {
+    fn with_status(&self, status: &str) -> MatrixStateEvent {
+        MatrixStateEvent::new(
+            MatrixEventType::new("io.github.rainyflash.agentroom.agent.status.v1")
+                .expect("事件类型有效"),
+            self.state_key.clone(),
+            json!({ "schemaVersion": "1.0", "status": status }),
+        )
+        .expect("测试状态事件有效")
+    }
+}
+
+fn agent_status_probe() -> AgentStatusProbe {
+    AgentStatusProbe {
+        state_key: MatrixStateKey::from_agent_instance_id(AgentInstanceId::from_uuid(
+            Uuid::now_v7(),
+        )),
+    }
 }
 
 async fn verify_private_room_governance_boundary(scenario: &PrivateRoomScenario) {
