@@ -145,6 +145,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
       - name: 在占用原生构建资源前校验 MCP 插件静态契约
         run: ${{ matrix.python }} tools/plugin.py validate
+      - name: 校验 macOS 签名与公证配置
+        if: ${{ matrix.target == 'darwin-aarch64' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name 未在 release-candidate 环境配置。"
+              exit 1
+            fi
+          done
+          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || [[ "$APPLE_SIGNING_IDENTITY" != "Developer ID Application: "*" ($APPLE_TEAM_ID)" ]]; then
+            echo "::error::必须使用与 APPLE_TEAM_ID 一致的 Developer ID Application 证书。"
+            exit 1
+          fi
       - name: 安装 Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
         with:
@@ -174,8 +195,13 @@ jobs:
           VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL: https://matrix.agentroom.chat
           VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-windows-x86_64.exe
           VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.metadata.outputs.tag }}/agent-room-installer-v${{ needs.metadata.outputs.version }}-darwin-aarch64.dmg
-          # 临时签名：还没有 Developer ID 证书，Gatekeeper 首次打开仍会拦，指南里写了怎么放行。
-          APPLE_SIGNING_IDENTITY: '-'
+          # Tauri 在临时钥匙串导入证书，并使用 App 专用密码完成 Apple 公证与票据装订。
+          APPLE_CERTIFICATE: ${{ matrix.target == 'darwin-aarch64' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.target == 'darwin-aarch64' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.target == 'darwin-aarch64' && vars.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ matrix.target == 'darwin-aarch64' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.target == 'darwin-aarch64' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.target == 'darwin-aarch64' && vars.APPLE_TEAM_ID || '' }}
           AGENT_ROOM_SIGNED_UPDATES_REQUIRED: '1'
           AGENT_ROOM_RELEASE_KEY_ID: ${{ vars.AGENT_ROOM_TESTING_RELEASE_KEY_ID }}
           AGENT_ROOM_RELEASE_PUBLIC_KEY: ${{ vars.AGENT_ROOM_TESTING_RELEASE_PUBLIC_KEY }}
@@ -197,6 +223,27 @@ jobs:
           $signature = "$($payloads[0].FullName).sig"
           cargo run --locked --release --package agent-room-release-tool -- verify-tauri --public-key "$env:AGENT_ROOM_TAURI_UPDATER_PUBLIC_KEY" --payload "$($payloads[0].FullName)" --signature $signature
           if ($LASTEXITCODE -ne 0) { throw 'Tauri 更新签名反向验证失败。' }
+      - name: 验证 macOS Developer ID 签名与公证票据
+        if: ${{ matrix.target == 'darwin-aarch64' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          apps=(target/release/bundle/macos/*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::macOS 应用包数量异常：${#apps[@]}"
+            exit 1
+          fi
+          app="${apps[0]}"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signing_info="$(codesign --display --verbose=4 "$app" 2>&1)"
+          printf '%s\n' "$signing_info" | grep -Fx "Authority=$APPLE_SIGNING_IDENTITY"
+          printf '%s\n' "$signing_info" | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
+          printf '%s\n' "$signing_info" | grep -E 'flags=.*runtime'
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
       - name: 使用已构建二进制执行 MCP 真实协议门禁
         env:
           VERSION: ${{ needs.metadata.outputs.version }}

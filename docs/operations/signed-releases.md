@@ -10,7 +10,7 @@ Agent Room Alpha 使用三层彼此独立的证据，任何一层都不能替代
 2. Tauri minisign 密钥为桌面更新归档提供安装器强制验证；
 3. testing 专用 Ed25519 发布密钥签署根发布清单，约束渠道、单调序号、版本、有效期、回滚来源和全部产物摘要。
 
-OS 代码签名是第四个可选层，不属于更新信任根。没有商业代码签名不会关闭以上任一验证。
+OS 代码签名是独立的第四层，不属于更新信任根。macOS 发布候选必须通过 Developer ID 签名、Apple 公证和 Gatekeeper 检查；Windows 的 OS 代码签名仍是可选层。两者都不会替代以上任一验证。
 
 testing 发布私钥和 Tauri 私钥是两把独立的在线密钥，只能存放在受保护的 `release-candidate` Environment，不能进入 Git、构建产物、日志或容器镜像。testing 发布私钥泄露会允许攻击者伪造 Alpha 发布清单，因此该信任模型明确不用于 stable。Tauri 私钥泄露仍不能单独伪造 testing 根清单，反之亦然。
 
@@ -35,6 +35,25 @@ target/release/agent-room-release-tool keygen \
 
 受保护环境 `release-candidate` 保存 testing 发布私钥、`TAURI_SIGNING_PRIVATE_KEY` 和可选密码。Alpha 允许单维护者在 `public-release` 环境自审批；这只是误操作门槛，不冒充双人安全复核。stable 上线前必须引入不同的离线根密钥、独立审批与客户端信任迁移，绝不能把 testing 私钥直接升级成 stable 根。
 
+### macOS 签名与公证凭据
+
+在同一个受保护的 `release-candidate` Environment 配置以下值。当前候选工作流使用 Apple ID 的 App 专用密码完成公证：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `APPLE_CERTIFICATE` | 包含 Developer ID Application 证书及其私钥的加密 `.p12`，经过 Base64 编码 |
+| Secret | `APPLE_CERTIFICATE_PASSWORD` | 该 `.p12` 的导出密码 |
+| Secret | `APPLE_ID` | 证书所属开发者团队的 Apple 账户邮箱 |
+| Secret | `APPLE_PASSWORD` | Apple 账户生成的 App 专用密码，不是账户主密码 |
+| Variable | `APPLE_SIGNING_IDENTITY` | 钥匙串中的完整名称：`Developer ID Application: 姓名 (TEAMID)` |
+| Variable | `APPLE_TEAM_ID` | 与证书匹配的十位 Team ID |
+
+使用 `gh secret set APPLE_PASSWORD --env release-candidate --repo OWNER/REPO` 的隐藏输入提示保存密码，不把密码写入命令参数、Git 或构建日志。本机的 `notarytool --keychain-profile` 名称只引用本机钥匙串中的条目，不能直接作为 GitHub runner 的凭据。
+
+候选在开始原生编译前检查六项配置和证书团队，缺失时直接失败，不回退到临时签名。Tauri 在 macOS runner 中导入证书，签署应用及嵌套代码、提交公证并装订票据；随后工作流独立核对签名身份、Team ID、Hardened Runtime、票据和 Gatekeeper。普通 `macos.yml` 测试包继续使用临时签名，不读取发布环境密钥。
+
+导出证书和配置凭据只需使用维护者本机，发行签名与公证均在 GitHub Actions 完成，无需 SSH 到本机。更换或撤销 App 专用密码后应同步更新环境密钥；Developer ID 证书到期前应更新证书及导出密码。
+
 ## 3. 候选构建
 
 只从受保护 `main` 分支手动运行 `签名发布候选`：
@@ -42,13 +61,13 @@ target/release/agent-room-release-tool keygen \
 - `tag` 必须与 `Cargo.toml` workspace 版本完全一致；
 - `sequence` 必须高于该渠道历史最高值；
 - `rollback_from` 只在退回精确已安装版本时填写；
-- `profile=client` 是日常 Alpha 默认值，只交付 Windows 客户端运行时；
+- `profile=client` 是日常 Alpha 默认值，交付 Windows 和 macOS 客户端运行时；
 - `profile=full` 只用于服务端也需要发布时，额外生成三套双架构 OCI 镜像；
 - Alpha 工作流只接受 `testing`；未来 `stable` 使用独立密钥与序号。
 
 工作流执行以下动作：
 
-1. 构建 Windows x64 的 NSIS 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器；macOS ARM64 只在维护者自托管 runner 上单独手动验收，不进入首发候选；
+1. 在 GitHub 官方 Windows x64 和 macOS ARM64 runner 上构建 NSIS / DMG 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器，并执行各平台原生安装验收；macOS 还必须通过上述签名与公证检查；
 2. 仅当 `profile=full` 时，在 GitHub 官方 amd64 与 arm64 Linux runner 上分别原生构建 `control-plane`、`identity`、`web`，记录每个平台不可变 digest，再合并为 amd64/arm64 OCI Index；禁止在 x64 runner 上用 QEMU 编译 Rust 控制面；
 3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；OCI bundle 签署原始 Index manifest，并要求该文件 SHA-256 与远端不可变 digest 完全一致；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；
