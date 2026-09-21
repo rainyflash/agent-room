@@ -235,6 +235,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_系统凭据库跨进程恢复验收() {
+        use crate::credential_store_test_support::{child_report, lock_system_credential_store};
+
         const TEST_SERVICE: &str = "AGENT_ROOM_TEST_MATRIX_VAULT_SERVICE";
         if let Ok(service) = std::env::var(TEST_SERVICE) {
             assert!(service.starts_with("dev.agent-room.test.matrix."));
@@ -243,6 +245,8 @@ mod tests {
             assert!(runtime.load().expect("新进程可恢复会话") == Some(session()));
             return;
         }
+        // 只有父进程取锁：子进程在父进程持锁期间运行，再取锁会互相等待。
+        let _store = lock_system_credential_store();
         // 只读写随机测试命名空间，不接触当前用户的产品会话。
         let service = format!("dev.agent-room.test.matrix.{}", uuid::Uuid::now_v7());
         let runtime = MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault {
@@ -261,7 +265,12 @@ mod tests {
             MatrixCredentialRuntime::new(Arc::new(KeyringMatrixCredentialVault { service }));
         let result = restored.load();
         restored.clear().expect("清理本次测试凭据");
-        assert!(child.expect("测试子进程可运行").status.success());
+        let child = child.expect("测试子进程可运行");
+        assert!(
+            child.status.success(),
+            "新进程未能恢复会话：{}",
+            child_report(&child)
+        );
         assert!(result.expect("Windows 凭据库可恢复") == Some(session()));
     }
 }

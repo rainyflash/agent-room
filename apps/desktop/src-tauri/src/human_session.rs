@@ -797,6 +797,7 @@ mod tests {
 #[cfg(all(test, target_os = "windows"))]
 mod credential_process_tests {
     use super::{HumanSessionVault, KeyringHumanSessionVault, PersistedHumanSession, now_unix_ms};
+    use crate::credential_store_test_support::{child_report, lock_system_credential_store};
 
     const TEST_NAMESPACE: &str = "AGENT_ROOM_TEST_HUMAN_VAULT_NAMESPACE";
     const TEST_PHASE: &str = "AGENT_ROOM_TEST_HUMAN_VAULT_PHASE";
@@ -804,6 +805,8 @@ mod credential_process_tests {
 
     #[test]
     fn windows_登录凭据跨进程保留且注销后不再恢复() {
+        // 锁要跨过三个阶段的子进程：与其他凭据库测试重叠时，系统可能吞掉写入或删除。
+        let _store = lock_system_credential_store();
         let service = format!("dev.agent-room.test-human-session.{}", uuid::Uuid::now_v7());
         let vault = KeyringHumanSessionVault::new(&service);
         let executable = std::env::current_exe().expect("可获取测试进程路径");
@@ -821,12 +824,15 @@ mod credential_process_tests {
             if !result.status.success() {
                 vault.delete_session().expect("失败后清理测试凭据");
                 panic!(
-                    "系统凭据跨进程验收失败，阶段 {phase}: {}",
-                    String::from_utf8_lossy(&result.stderr)
+                    "系统凭据跨进程验收失败，阶段 {phase}：{}",
+                    child_report(&result)
                 );
             }
         }
-        assert!(vault.load_session().expect("可读取测试凭据库").is_none());
+        // 先清理再断言，失败时也不在用户的凭据库里留下测试凭据。
+        let remaining = vault.load_session();
+        vault.delete_session().expect("清理测试凭据");
+        assert!(remaining.expect("可读取测试凭据库").is_none());
     }
 
     #[test]
