@@ -9,6 +9,7 @@ const packages = [
   'agent-room-desktop',
   'agent-room-bridge',
   'agent-room-bridge-ipc',
+  'agent-room-bridge-local-adapter',
   'agent-room-cli',
   'agent-room-mcp',
   'agent-room-agent-client',

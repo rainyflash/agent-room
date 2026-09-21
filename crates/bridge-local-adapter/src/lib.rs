@@ -18,7 +18,7 @@ pub use location::{
     BridgeLocationFailure, BridgeLocationFailureKind, bridge_data_root_from_environment,
     bridge_runtime_root, resolve_bridge_data_root,
 };
-pub use secret_store::{LocalSecretStore, SecretStoreFailure};
+pub use secret_store::{LocalSecretStore, SecretStoreFailure, SystemCredentialStore};
 pub use secure_storage_service::{
     DEFAULT_SECURE_STORAGE_SERVICE, SecureStorageService, SecureStorageServiceFailure,
     resolve_secure_storage_service, secure_storage_service_from_environment,
