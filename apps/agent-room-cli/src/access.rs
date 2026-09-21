@@ -5,7 +5,7 @@ use crate::{
     profile::{Invitation, Profile, ProfileStore, codex_task_id},
     scoped,
 };
-use agent_room_agent_client::BridgeToolClient;
+use agent_room_agent_client::{BridgeToolClient, MessageWait};
 use agent_room_bridge_ipc::{IpcBridgeState, IpcMethod, IpcResponse, IpcSelfSummary};
 use serde_json::json;
 use std::{path::Path, time::Duration};
@@ -325,8 +325,9 @@ async fn read_batch(
     profile: &mut Profile,
     mut args: ReadArgs,
 ) -> Result<Option<IpcResponse>> {
+    let wait = MessageWait::from_seconds(args.wait);
     loop {
-        let Some(mut response) = crate::read(backend, &args).await? else {
+        let Some(mut response) = crate::read(backend, &args, wait).await? else {
             return Ok(None);
         };
         if let Some(cursor) = persist_delivery(root, profile, &mut response).await? {
@@ -351,8 +352,10 @@ async fn listen(
     if args.wait == Some(0) {
         return Err(Failure::validation("cli.listen_wait_must_be_positive"));
     }
+    // 显式期限只是这一轮等待的窗口，到期后继续在进程内等待，不结束流。
+    let wait = MessageWait::continuous_from_seconds(args.wait);
     loop {
-        let Some(mut response) = crate::read(backend, &args).await? else {
+        let Some(mut response) = crate::read(backend, &args, wait).await? else {
             return success(
                 json!({"type": "stopped", "profileId": profile.invitation.session_key}),
             );

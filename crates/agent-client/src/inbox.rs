@@ -15,6 +15,9 @@ pub enum MessageWait {
     UntilMessage,
     /// An explicit caller deadline; zero performs one immediate read.
     For(Duration),
+    /// A continuous listener's refresh window. Reaching it ends one round and the caller keeps
+    /// listening, so the window never cancels a call that is already in flight.
+    Continuous(Duration),
 }
 
 impl MessageWait {
@@ -24,10 +27,18 @@ impl MessageWait {
             Self::For(Duration::from_secs(u64::from(seconds)))
         })
     }
+
+    /// The same explicit window, for a caller that keeps listening after it elapses.
+    #[must_use]
+    pub fn continuous_from_seconds(seconds: Option<u32>) -> Self {
+        seconds.map_or(Self::UntilMessage, |seconds| {
+            Self::Continuous(Duration::from_secs(u64::from(seconds)))
+        })
+    }
 }
 
 /// Wait inside the tool, without returning empty pages to the model unless the caller requests
-/// a deadline. Dropping the future cancels the wait and leaves the cursor
+/// a deadline or a listening window. Dropping the future cancels the wait and leaves the cursor
 /// unchanged. The consumer advances its cursor only after processing a returned page.
 ///
 /// # Errors
@@ -63,10 +74,18 @@ pub async fn wait_for_messages(
     }
     let deadline = match wait {
         MessageWait::UntilMessage => None,
-        MessageWait::For(duration) => Some(tokio::time::Instant::now() + duration),
+        MessageWait::For(duration) | MessageWait::Continuous(duration) => {
+            Some(tokio::time::Instant::now() + duration)
+        }
     };
+    // Only a caller that stops at its deadline may cut off a call in flight: it owes an answer by
+    // then and a stalled Bridge must not pass for an empty room. A listener owes no answer, so its
+    // window only ends the round. Cutting the call off there would turn one slow local round trip
+    // into the end of the stream, while the single IPC still has its own connect and operation
+    // deadlines to report a Bridge that never answers.
+    let answer_due = matches!(wait, MessageWait::For(_));
     loop {
-        let response = if let Some(deadline) = deadline {
+        let response = if let Some(deadline) = deadline.filter(|_| answer_due) {
             tokio::time::timeout_at(deadline, backend.invoke(method.clone()))
                 .await
                 .map_err(|_| {

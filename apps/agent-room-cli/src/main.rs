@@ -211,15 +211,16 @@ async fn read_presence(backend: &dyn BridgeToolClient, args: cli::PresenceArgs) 
 }
 
 async fn read_once(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<()> {
-    match read(backend, args).await? {
+    match read(backend, args, MessageWait::from_seconds(args.wait)).await? {
         Some(response) => success(response),
         None => success(json!({"type": "stopped", "afterEventId": args.after})),
     }
 }
 
-async fn read(
+pub(crate) async fn read(
     backend: &dyn BridgeToolClient,
     args: &cli::ReadArgs,
+    wait: MessageWait,
 ) -> CliResult<Option<IpcResponse>> {
     let waiting = wait_for_messages(
         backend,
@@ -231,7 +232,7 @@ async fn read(
             limit: args.limit,
         },
         MessageReadMode::Inbox,
-        MessageWait::from_seconds(args.wait),
+        wait,
     );
     tokio::select! {
         result = waiting => Ok(Some(result?)),
@@ -300,8 +301,10 @@ async fn listen(backend: &dyn BridgeToolClient, mut args: cli::ReadArgs) -> CliR
     if args.wait == Some(0) {
         return Err(CliFailure::validation("cli.listen_wait_must_be_positive"));
     }
+    // 显式期限只是这一轮等待的窗口，到期后继续在进程内等待，不结束流。
+    let wait = MessageWait::continuous_from_seconds(args.wait);
     loop {
-        let Some(response) = read(backend, &args).await? else {
+        let Some(response) = read(backend, &args, wait).await? else {
             return success(json!({"type": "stopped", "afterEventId": args.after}));
         };
         let IpcResponse::MessagePreviews { previews, .. } = &response else {
