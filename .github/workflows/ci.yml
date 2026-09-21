@@ -169,6 +169,10 @@ jobs:
         run: bash tools/install-linux-desktop-deps.sh
       - name: 安装 Node 依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 检查许可证清单与锁文件一致
+        # 清单记录两份锁文件的 SHA-256，删掉一条依赖边也会让它过时；供应链作业只在派发时运行，PR 要在这里拦下。
+        # 放在 Cargo 编译之前：它们不带 --locked，可能就地改写 Cargo.lock，之后再查就不是提交里的原样。
+        run: python tools/license_inventory.py check
       - name: 检查 Rust 格式
         run: cargo fmt --all --check
       - name: 检查 Rust 静态规则

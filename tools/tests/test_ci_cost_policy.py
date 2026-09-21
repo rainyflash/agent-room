@@ -48,6 +48,20 @@ class CiCostPolicyTests(unittest.TestCase):
                 self.assertIn("github.event_name == 'workflow_dispatch'", condition)
                 self.assertNotIn("||", condition)
 
+    def test_pull_requests_catch_stale_license_inventory(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        steps = [line.strip() for line in job_lines(workflow, "quality")]
+
+        # 供应链作业只在派发时运行，PR 上由必跑的 quality 检查许可证清单；而且要赶在
+        # 不带 --locked 的 Cargo 编译之前，否则它们改写 Cargo.lock 后就查不到提交里的原样。
+        self.assertIn("github.event_name != 'workflow_dispatch'", job_condition(workflow, "quality"))
+        self.assertIn("run: python tools/license_inventory.py check", steps)
+        builds = [
+            index for index, step in enumerate(steps) if re.match(r"run: cargo (?:build|check|clippy|test)\b", step)
+        ]
+        self.assertTrue(builds)
+        self.assertLess(steps.index("run: python tools/license_inventory.py check"), min(builds))
+
     def test_release_dispatch_is_not_cancelled_by_later_pushes(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         group = next(line.strip() for line in workflow.splitlines() if line.startswith("  group: "))
