@@ -63,8 +63,10 @@ pub use content::{
     PrivateContentObjectStore, ReclaimableContentQuery,
 };
 pub use devices::{
-    DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier, DeviceRefreshContext,
-    DeviceRefreshOutcome, DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
+    DEVICE_REFRESH_REPLAY_SALT_LENGTH, DerivedDeviceTokens, DeviceProofNonceStore,
+    DeviceProofValueError, DeviceProofVerifier, DeviceRefreshContext, DeviceRefreshOutcome,
+    DeviceRefreshReplay, DeviceRefreshReplaySalt, DeviceRefreshTokenDerivation,
+    DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
     DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
     DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
     PendingAgentMatrixDeviceRevocation, StoredDeviceSession,

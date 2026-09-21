@@ -51,8 +51,8 @@ use agent_room_bridge_core::{
     },
     onboarding::BridgeOnboardingService,
     ports::{
-        BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceSigningIdentityStore,
-        StatusEventIdentifierFactory,
+        BridgeCredentialFailure, BridgeCredentialFailureKind, DeviceRefreshAttemptIdFactory,
+        DeviceSigningIdentityStore, StatusEventIdentifierFactory,
     },
     presence::{
         PresenceLeasePolicy, PresenceProjectionFailureKind, PresenceProjectionRepository,
@@ -77,7 +77,7 @@ use agent_room_bridge_storage_adapter::{
 use agent_room_domain::{
     agent_status::AgentStatusVisibility,
     devices::DevicePlatform,
-    ids::{AgentId, AgentInstanceRegistrationRequestId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceRegistrationRequestId, DeviceRefreshAttemptId, RoomCatalogId},
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_identity_adapter::{
@@ -89,7 +89,11 @@ use agent_room_matrix_adapter::{
 };
 use agent_room_message_crypto_adapter::AesGcmMessageContentCipher;
 use serde::Serialize;
-use tokio::{sync::watch, task::JoinHandle, time::sleep};
+use tokio::{
+    sync::{oneshot, watch},
+    task::JoinHandle,
+    time::sleep,
+};
 
 use crate::{
     agent_status::AgentStatusPublicationHandle,
@@ -626,9 +630,18 @@ async fn initialize_device_session(
             credentials: credentials.clone(),
             secrets: secrets.clone(),
             clock: clock.clone(),
+            refresh_attempts: Arc::new(SystemDeviceRefreshAttempts),
         },
         BridgeSessionPolicy::new(refresh_lead_time),
     ));
+    if config.reset_device_session {
+        // 桌面端「重新授权这台电脑」：实例锁已在调用方持有，不会与另一个 Bridge 抢写凭据。
+        session_service
+            .forget_device_session()
+            .await
+            .map_err(BridgeRuntimeError::session)?;
+        tracing::warn!("已按桌面端请求清除本机设备会话凭据，接下来重新授权这台设备");
+    }
 
     let authorization_service = BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
         oidc,
@@ -1457,11 +1470,13 @@ async fn run_until_shutdown(
     host_sessions: Arc<HostSessionRegistry>,
 ) -> Result<(), BridgeRuntimeError> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let (authorization_lost_sender, mut authorization_lost) = oneshot::channel();
     let mut server_task = tokio::spawn(server.run(shutdown_receiver));
     let mut session_task = tokio::spawn(maintain_sessions(
         device_session,
         agent_session,
         status.clone(),
+        authorization_lost_sender,
         shutdown_sender.subscribe(),
     ));
 
@@ -1513,6 +1528,22 @@ async fn run_until_shutdown(
                 .map_err(BridgeRuntimeError::ipc)?;
             Err(BridgeRuntimeError::session_stopped_early())
         }
+        // 服务端已确认设备凭据不可用、本机凭据也已清除。停在离线态只会让桌面端停机；
+        // 整体退出后由监督进程重启，新进程直接进入设备授权。
+        Ok(failure) = &mut authorization_lost => {
+            status.mark_shutting_down();
+            shutdown_sender
+                .send(true)
+                .map_err(|_| BridgeRuntimeError::ipc_stopped_early())?;
+            server_task
+                .await
+                .map_err(|_| BridgeRuntimeError::ipc_task())?
+                .map_err(BridgeRuntimeError::ipc)?;
+            session_task
+                .await
+                .map_err(|_| BridgeRuntimeError::session_task())?;
+            Err(BridgeRuntimeError::session(failure))
+        }
     } }.await;
     shutdown_sender.send_replace(true);
     host_sessions.shutdown().await;
@@ -1540,30 +1571,28 @@ async fn maintain_sessions(
     device: DeviceSessionRuntime,
     agent: Option<AgentSessionRuntime>,
     status: Arc<BridgeRuntimeStatus>,
+    authorization_lost: oneshot::Sender<BridgeSessionFailure>,
     shutdown: watch::Receiver<bool>,
 ) {
-    let device_task = maintain_device_session(
-        device.service,
-        device.initial_session,
-        status.clone(),
-        device.clock,
-        device.refresh_lead_time,
-        device.reconnect_policy,
-        shutdown.clone(),
-    );
+    let device_task =
+        maintain_device_session(device, status.clone(), authorization_lost, shutdown.clone());
     let agent_task = maintain_agent_session(agent, status, shutdown);
     tokio::join!(device_task, agent_task);
 }
 
 async fn maintain_device_session(
-    session_service: Arc<BridgeSessionService>,
-    mut session: Option<ActiveBridgeSession>,
+    device: DeviceSessionRuntime,
     status: Arc<BridgeRuntimeStatus>,
-    clock: Arc<dyn Clock>,
-    refresh_lead_time: DurationMillis,
-    reconnect_policy: ReconnectPolicy,
+    authorization_lost: oneshot::Sender<BridgeSessionFailure>,
     mut shutdown: watch::Receiver<bool>,
 ) {
+    let DeviceSessionRuntime {
+        service: session_service,
+        initial_session: mut session,
+        clock,
+        refresh_lead_time,
+        reconnect_policy,
+    } = device;
     let mut backoff = ReconnectBackoff::new(reconnect_policy);
     let mut retry_delay = session
         .is_none()
@@ -1606,6 +1635,15 @@ async fn maintain_device_session(
                 );
                 session = None;
                 retry_delay = Some(delay);
+            }
+            Err(failure) if failure.kind() == BridgeSessionFailureKind::NotAuthorized => {
+                tracing::error!(
+                    operation = failure.operation(),
+                    "Bridge 设备授权已失效，退出后重新授权"
+                );
+                let _ = authorization_lost.send(failure);
+                wait_for_shutdown(&mut shutdown).await;
+                return;
             }
             Err(failure) => {
                 status.mark_fatal();
@@ -1793,6 +1831,7 @@ fn is_reconnectable_session_failure(failure: BridgeSessionFailure) -> bool {
         BridgeSessionFailureKind::ControlPlaneUnavailable
             | BridgeSessionFailureKind::InvalidControlPlaneResponse
             | BridgeSessionFailureKind::SecureStorageUnavailable
+            | BridgeSessionFailureKind::RefreshOutcomeUnknown
     )
 }
 
@@ -2070,6 +2109,14 @@ fn announce_agent_online(online: &AgentOnlineSession) -> Result<(), BridgeRuntim
             .device_id()
             .as_str()
     ))
+}
+
+struct SystemDeviceRefreshAttempts;
+
+impl DeviceRefreshAttemptIdFactory for SystemDeviceRefreshAttempts {
+    fn refresh_attempt_id(&self) -> DeviceRefreshAttemptId {
+        DeviceRefreshAttemptId::from_uuid(uuid::Uuid::now_v7())
+    }
 }
 
 struct SystemAgentRuntimeIdentifiers;
@@ -2502,10 +2549,13 @@ impl BridgeRuntimeError {
 
     fn session(failure: BridgeSessionFailure) -> Self {
         let (code, message) = match failure.kind() {
-            BridgeSessionFailureKind::NotAuthorized => ("bridge.not_authorized", "设备尚未授权"),
+            BridgeSessionFailureKind::NotAuthorized => (
+                "bridge.not_authorized",
+                "设备尚未授权或授权已失效；重新启动 Bridge 后会进入设备授权",
+            ),
             BridgeSessionFailureKind::RefreshOutcomeUnknown => (
                 "bridge.refresh_outcome_unknown",
-                "刷新结果未知；旧刷新令牌不会被再次使用，请在设备管理页撤销后重新授权",
+                "设备会话刷新结果未知；Bridge 会用同一刷新尝试自动重试，无需重新授权",
             ),
             BridgeSessionFailureKind::SecureStorageUnavailable => (
                 "bridge.secure_storage_unavailable",

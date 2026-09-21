@@ -15,6 +15,15 @@ const DEFAULT_BROWSER_CONTROL_PLANE_URL: &str = "https://app.agentroom.chat/_age
 const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.agentroom.chat";
 const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.agentroom.chat/realms/agent-room";
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
+const RESET_DEVICE_SESSION: &str = "AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION";
+
+/// 这一次以什么方式启动托管 Bridge。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BridgeLaunch {
+    Normal,
+    /// 用户选择「重新授权这台电脑」：本次启动先清除本机设备会话凭据，再进入设备授权。
+    ReauthorizeDevice,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct DesktopBridgeConfig {
@@ -82,6 +91,8 @@ impl DesktopBridgeConfig {
             default_device_label().to_owned(),
         );
         environment.insert("AGENT_ROOM_BRIDGE_SUPERVISED".to_owned(), "true".to_owned());
+        // 显式写 false，避免继承到的同名环境变量让每次启动都清除设备凭据。
+        environment.insert(RESET_DEVICE_SESSION.to_owned(), "false".to_owned());
         copy_optional_environment(&mut environment, "AGENT_ROOM_AGENT_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_LOBBY_LANGUAGE")?;
@@ -124,6 +135,14 @@ impl DesktopBridgeConfig {
 
     pub(crate) const fn environment(&self) -> &BTreeMap<String, String> {
         &self.environment
+    }
+
+    pub(crate) fn launch_environment(&self, launch: BridgeLaunch) -> BTreeMap<String, String> {
+        let mut environment = self.environment.clone();
+        if launch == BridgeLaunch::ReauthorizeDevice {
+            environment.insert(RESET_DEVICE_SESSION.to_owned(), "true".to_owned());
+        }
+        environment
     }
 
     pub(crate) fn secure_storage_service(&self) -> SecureStorageService {
@@ -256,7 +275,30 @@ impl DesktopConfigFailure {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalized_base_url, validated_url};
+    use super::{BridgeLaunch, DesktopBridgeConfig, normalized_base_url, validated_url};
+
+    #[test]
+    fn 只有重新授权的那次启动才要求_bridge_清除设备凭据() {
+        let config = DesktopBridgeConfig::from_environment().expect("桌面配置有效");
+
+        let normal = config.launch_environment(BridgeLaunch::Normal);
+        let reauthorize = config.launch_environment(BridgeLaunch::ReauthorizeDevice);
+
+        assert_eq!(
+            normal
+                .get("AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            reauthorize
+                .get("AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(&normal, config.environment());
+        assert_eq!(normal.len(), reauthorize.len());
+    }
 
     #[test]
     fn 服务地址只接受_https_或本机_http() {

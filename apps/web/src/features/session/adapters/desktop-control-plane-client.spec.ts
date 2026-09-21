@@ -25,6 +25,7 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
     openAuthorization: unused,
     readLobby: unused,
     retryBridge: unused,
+    reauthorizeBridge: unused,
     setAutostart: unused,
     snapshot: unused,
     subscribe: unused,

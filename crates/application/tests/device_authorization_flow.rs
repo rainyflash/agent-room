@@ -2,21 +2,23 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
 };
 
 use agent_room_application::{
     devices::{
-        AuthenticateDeviceRequest, DeviceAuthorizationDependencies, DeviceAuthorizationFailureKind,
-        DeviceAuthorizationPolicy, DeviceAuthorizationService, DeviceAuthorizationUseCases,
-        DeviceMatrixCleanup, DeviceRequestProof, DeviceRequestProofPayload, RefreshDeviceSession,
-        RegisterDevice, VerifiedDeviceAuthorization,
+        AuthenticateDeviceRequest, DeviceAuthorizationDependencies, DeviceAuthorizationFailure,
+        DeviceAuthorizationFailureKind, DeviceAuthorizationPolicy, DeviceAuthorizationService,
+        DeviceAuthorizationUseCases, DeviceCredentials, DeviceMatrixCleanup, DeviceRequestProof,
+        DeviceRequestProofPayload, RefreshDeviceSession, RegisterDevice,
+        VerifiedDeviceAuthorization,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentInstanceMatrixCleanupStore, Clock, DeviceProofNonceStore, DeviceProofVerifier,
-        DeviceRefreshContext, DeviceRefreshOutcome, DeviceRegistrationTransaction,
+        AgentInstanceMatrixCleanupStore, Clock, DerivedDeviceTokens, DeviceProofNonceStore,
+        DeviceProofVerifier, DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay,
+        DeviceRefreshReplaySalt, DeviceRefreshTokenDerivation, DeviceRegistrationTransaction,
         DeviceRepository, DeviceRevocationOutcome, DeviceRevocationTransaction,
         DeviceSecurityEvent, DeviceSessionRegistration, DeviceSessionStore, DeviceSignature,
         DeviceTokenReplacement, IdentifierFactory, MatrixAgentDeviceSessionRevoker,
@@ -31,9 +33,9 @@ use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey, DeviceTrustState},
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
-        ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId, WebSessionId,
+        ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId, DeviceRefreshTokenId,
+        DeviceTokenFamilyId, HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId,
+        RoomInstanceId, RoomReservationId, WebSessionId,
     },
     time::{DurationMillis, UtcMillis},
 };
@@ -50,8 +52,22 @@ struct MemoryDeviceStore {
 struct MemoryState {
     session: Option<StoredDeviceSession>,
     access_token_digest: Option<SecretDigest>,
-    refresh_tokens: HashMap<SecretDigest, bool>,
+    refresh_tokens: HashMap<SecretDigest, MemoryRefreshToken>,
     pending_matrix_devices: Vec<PendingAgentMatrixDeviceRevocation>,
+}
+
+#[derive(Default)]
+struct MemoryRefreshToken {
+    consumed: bool,
+    rotation: Option<MemoryRotation>,
+}
+
+/// 与数据库实现相同：只记录带尝试号的轮换，以便同一尝试重试时重放。
+struct MemoryRotation {
+    replay: DeviceRefreshReplay,
+    successor: SecretDigest,
+    access_token_digest: SecretDigest,
+    access_token_expires_at: UtcMillis,
 }
 
 impl DeviceRegistrationTransaction for MemoryDeviceStore {
@@ -78,7 +94,7 @@ impl DeviceRegistrationTransaction for MemoryDeviceStore {
             state.access_token_digest = Some(session.access_token_digest);
             state
                 .refresh_tokens
-                .insert(session.refresh_token_digest, false);
+                .insert(session.refresh_token_digest, MemoryRefreshToken::default());
             state.session = Some(stored.clone());
             Ok(stored)
         })
@@ -128,10 +144,13 @@ impl DeviceSessionStore for MemoryDeviceStore {
     ) -> PortFuture<'a, RepositoryResult<DeviceRefreshOutcome>> {
         Box::pin(async move {
             let mut state = self.state.lock().expect("测试设备仓储锁不得中毒");
-            let Some(consumed) = state.refresh_tokens.get(refresh_token_digest).copied() else {
+            let Some(token) = state.refresh_tokens.get(refresh_token_digest) else {
                 return Ok(DeviceRefreshOutcome::Rejected);
             };
-            if consumed {
+            if token.consumed {
+                if let Some(outcome) = replay_same_attempt(&state, token, replacement) {
+                    return Ok(outcome);
+                }
                 let session = state.session.as_mut().ok_or_else(|| {
                     RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
                 })?;
@@ -153,10 +172,22 @@ impl DeviceSessionStore for MemoryDeviceStore {
                 });
             }
 
-            state.refresh_tokens.insert(*refresh_token_digest, true);
-            state
-                .refresh_tokens
-                .insert(replacement.refresh_token_digest, false);
+            state.refresh_tokens.insert(
+                *refresh_token_digest,
+                MemoryRefreshToken {
+                    consumed: true,
+                    rotation: replacement.replay.clone().map(|replay| MemoryRotation {
+                        replay,
+                        successor: replacement.refresh_token_digest,
+                        access_token_digest: replacement.access_token_digest,
+                        access_token_expires_at: replacement.access_token_expires_at,
+                    }),
+                },
+            );
+            state.refresh_tokens.insert(
+                replacement.refresh_token_digest,
+                MemoryRefreshToken::default(),
+            );
             state.access_token_digest = Some(replacement.access_token_digest);
             let session = state.session.as_mut().ok_or_else(|| {
                 RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
@@ -168,6 +199,32 @@ impl DeviceSessionStore for MemoryDeviceStore {
             })
         })
     }
+}
+
+/// 已消费的令牌只有在同一尝试号、且它签发的新刷新令牌尚未再轮换时才可重放。
+fn replay_same_attempt(
+    state: &MemoryState,
+    token: &MemoryRefreshToken,
+    replacement: &DeviceTokenReplacement,
+) -> Option<DeviceRefreshOutcome> {
+    let rotation = token.rotation.as_ref()?;
+    let requested = replacement.replay.as_ref()?;
+    let successor_current = state
+        .refresh_tokens
+        .get(&rotation.successor)
+        .is_some_and(|successor| !successor.consumed);
+    if requested.attempt_id != rotation.replay.attempt_id || !successor_current {
+        return None;
+    }
+    let mut session = state.session.clone()?;
+    session.access_token_expires_at = rotation.access_token_expires_at;
+    Some(DeviceRefreshOutcome::Replayed {
+        refresh_token_expires_at: session.family.expires_at(),
+        session: Box::new(session),
+        salt: rotation.replay.salt.clone(),
+        access_token_digest: rotation.access_token_digest,
+        refresh_token_digest: rotation.successor,
+    })
 }
 
 impl DeviceRepository for MemoryDeviceStore {
@@ -319,6 +376,38 @@ impl SecretFactory for SequentialSecrets {
                 .wrapping_add(u8::try_from(index % 251).expect("索引可转换"));
         }
         SecretDigest::from_array(digest)
+    }
+}
+
+/// 可读的确定性派生：同一旧令牌、尝试号和盐总得到同一对令牌。
+#[derive(Default)]
+struct TestRefreshTokens(AtomicU8);
+
+impl DeviceRefreshTokenDerivation for TestRefreshTokens {
+    fn replay_salt(&self) -> Result<DeviceRefreshReplaySalt, SecretGenerationFailure> {
+        let sequence = self.0.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        Ok(DeviceRefreshReplaySalt::from_array([sequence; 32]))
+    }
+
+    fn derive(
+        &self,
+        refresh_token: &SecretValue,
+        replay: &DeviceRefreshReplay,
+    ) -> Result<DerivedDeviceTokens, SecretGenerationFailure> {
+        let seed = format!(
+            "{}:{}:{}",
+            refresh_token.expose(),
+            replay.attempt_id,
+            replay.salt.as_bytes()[0]
+        );
+        let token = |purpose: &str| {
+            SecretValue::new(format!("{purpose}:{seed}"))
+                .map_err(|_| SecretGenerationFailure::EntropyUnavailable)
+        };
+        Ok(DerivedDeviceTokens {
+            access_token: token("access")?,
+            refresh_token: token("refresh")?,
+        })
     }
 }
 
@@ -492,6 +581,7 @@ async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
         .refresh_device_session(RefreshDeviceSession {
             refresh_token: &credentials.refresh_token,
             proof: &proof,
+            attempt_id: None,
         })
         .await
         .expect("首次轮换成功");
@@ -499,6 +589,7 @@ async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
         .refresh_device_session(RefreshDeviceSession {
             refresh_token: &credentials.refresh_token,
             proof: &proof,
+            attempt_id: None,
         })
         .await
         .expect_err("旧刷新令牌不能再次使用");
@@ -507,6 +598,186 @@ async fn 旧刷新令牌重用会原子撤销设备和整个_token_族() {
         reuse.kind(),
         DeviceAuthorizationFailureKind::RefreshTokenReuse
     );
+    assert_device_compromised(&store);
+}
+
+#[tokio::test]
+async fn 同一刷新尝试重试时返回同一对新令牌且不触发重用检测() {
+    let (service, store, secrets, _, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    let attempt = attempt_id();
+
+    let first = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt),
+    )
+    .await
+    .expect("首次轮换成功");
+    let retried = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt),
+    )
+    .await
+    .expect("结果未知后重试同一尝试应得到同一结果");
+
+    assert_eq!(retried, first);
+    assert_ne!(first.refresh_token, credentials.refresh_token);
+    assert_eq!(first.device.device_id, credentials.device.device_id);
+    {
+        let state = store.state.lock().expect("测试设备仓储锁不得中毒");
+        let session = state.session.as_ref().expect("会话存在");
+        assert_eq!(session.device.trust_state(), DeviceTrustState::Verified);
+        assert!(session.family.allows_rotation(time(NOW)));
+    }
+    let next = refresh(
+        &service,
+        credentials.device.device_id,
+        &first.refresh_token,
+        Some(attempt_id()),
+    )
+    .await
+    .expect("重放得到的刷新令牌仍是当前令牌，可以继续轮换");
+    assert_ne!(next.refresh_token, first.refresh_token);
+}
+
+#[tokio::test]
+async fn 换一个尝试号使用已轮换的刷新令牌仍按重用撤销设备() {
+    let (service, store, secrets, _, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt_id()),
+    )
+    .await
+    .expect("首次轮换成功");
+
+    let reuse = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt_id()),
+    )
+    .await
+    .expect_err("不同尝试号不是同一次刷新的重试");
+
+    assert_eq!(
+        reuse.kind(),
+        DeviceAuthorizationFailureKind::RefreshTokenReuse
+    );
+    assert_device_compromised(&store);
+}
+
+#[tokio::test]
+async fn 新令牌已被下一次轮换消费后重放旧尝试按重用处理() {
+    let (service, store, secrets, _, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    let attempt = attempt_id();
+    let first = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt),
+    )
+    .await
+    .expect("首次轮换成功");
+    refresh(
+        &service,
+        credentials.device.device_id,
+        &first.refresh_token,
+        Some(attempt_id()),
+    )
+    .await
+    .expect("客户端已拿到新令牌并继续轮换");
+
+    let reuse = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt),
+    )
+    .await
+    .expect_err("客户端早已前进，旧尝试不应再被重放");
+
+    assert_eq!(
+        reuse.kind(),
+        DeviceAuthorizationFailureKind::RefreshTokenReuse
+    );
+    assert_device_compromised(&store);
+}
+
+#[tokio::test]
+async fn 旧客户端的轮换不能被带尝试号的请求重放() {
+    let (service, store, secrets, _, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        None,
+    )
+    .await
+    .expect("旧客户端的轮换成功");
+
+    let reuse = refresh(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt_id()),
+    )
+    .await
+    .expect_err("没有尝试号的轮换无法证明是同一次刷新");
+
+    assert_eq!(
+        reuse.kind(),
+        DeviceAuthorizationFailureKind::RefreshTokenReuse
+    );
+    assert_device_compromised(&store);
+}
+
+async fn refresh(
+    service: &DeviceAuthorizationService,
+    device_id: DeviceId,
+    refresh_token: &SecretValue,
+    attempt_id: Option<DeviceRefreshAttemptId>,
+) -> Result<DeviceCredentials, DeviceAuthorizationFailure> {
+    let proof = proof(
+        device_id,
+        "POST",
+        "/auth/devices/refresh",
+        "nonce-0000000003",
+    );
+    service
+        .refresh_device_session(RefreshDeviceSession {
+            refresh_token,
+            proof: &proof,
+            attempt_id,
+        })
+        .await
+}
+
+fn attempt_id() -> DeviceRefreshAttemptId {
+    DeviceRefreshAttemptId::from_uuid(Uuid::now_v7())
+}
+
+fn assert_device_compromised(store: &MemoryDeviceStore) {
     let state = store.state.lock().expect("测试设备仓储锁不得中毒");
     let session = state.session.as_ref().expect("会话仍保留审计状态");
     assert_eq!(session.device.trust_state(), DeviceTrustState::Revoked);
@@ -673,6 +944,7 @@ fn service(
             matrix_cleanup: store.clone(),
             matrix: matrix.clone(),
             secrets: secrets.clone(),
+            refresh_tokens: Arc::new(TestRefreshTokens::default()),
             identifiers: Arc::new(TestIdentifiers),
             clock: Arc::new(StaticClock),
         },

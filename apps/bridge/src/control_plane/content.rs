@@ -260,9 +260,9 @@ fn parse_content_digest(value: &str) -> Option<Sha256Digest> {
 
 fn map_session_failure(failure: BridgeSessionFailure) -> MessageContentReadFailure {
     let kind = match failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => MessageContentReadFailureKind::Denied,
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::NotAuthorized => MessageContentReadFailureKind::Denied,
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             MessageContentReadFailureKind::Unavailable
         }

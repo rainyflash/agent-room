@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-reauthorize-bridge"
+description = "Enables the desktop_reauthorize_bridge command without any pre-configured scope."
+commands.allow = ["desktop_reauthorize_bridge"]
+
+[[permission]]
+identifier = "deny-desktop-reauthorize-bridge"
+description = "Denies the desktop_reauthorize_bridge command without any pre-configured scope."
+commands.deny = ["desktop_reauthorize_bridge"]

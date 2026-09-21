@@ -160,6 +160,8 @@ impl ReqwestControlPlaneDeviceGateway {
             .client
             .post(self.refresh_url.clone())
             .bearer_auth(request.refresh_token.expose())
+            // 同一次刷新的所有重试共用这个幂等键；不认识它的旧控制面会忽略，按原方式轮换。
+            .header(IDEMPOTENCY_KEY_HEADER, request.attempt_id.to_string())
             .header(DEVICE_ID_HEADER, request.proof.device_id().to_string())
             .header(
                 PROOF_ISSUED_AT_HEADER,
@@ -1019,11 +1021,11 @@ fn onboarding_status_failure(status: StatusCode) -> ControlPlaneOnboardingFailur
 
 fn map_session_failure(failure: BridgeSessionFailure) -> AgentInstanceVerificationGatewayFailure {
     let kind = match failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+        BridgeSessionFailureKind::NotAuthorized => {
             AgentInstanceVerificationGatewayFailureKind::AuthenticationRejected
         }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             AgentInstanceVerificationGatewayFailureKind::Unavailable
         }
@@ -1040,11 +1042,11 @@ fn map_agent_runtime_session_failure(
     failure: BridgeSessionFailure,
 ) -> ControlPlaneAgentRuntimeFailure {
     let kind = match failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+        BridgeSessionFailureKind::NotAuthorized => {
             ControlPlaneAgentRuntimeFailureKind::AuthenticationRejected
         }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             ControlPlaneAgentRuntimeFailureKind::Unavailable
         }
@@ -1057,11 +1059,11 @@ fn map_agent_runtime_session_failure(
 
 fn map_onboarding_session_failure(failure: BridgeSessionFailure) -> ControlPlaneOnboardingFailure {
     let kind = match failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
+        BridgeSessionFailureKind::NotAuthorized => {
             ControlPlaneOnboardingFailureKind::AuthenticationRejected
         }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             ControlPlaneOnboardingFailureKind::Unavailable
         }
@@ -1151,7 +1153,7 @@ mod tests {
         devices::{DevicePlatform, DevicePublicSigningKey},
         ids::{
             AdapterBindingId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
-            DeviceId,
+            DeviceId, DeviceRefreshAttemptId,
         },
         rooms::RoomLanguage,
         time::UtcMillis,
@@ -1178,6 +1180,7 @@ mod tests {
     const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
     const INSTANCE_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
     const LOBBY_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
+    const REFRESH_ATTEMPT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 
     #[derive(Default)]
     struct 测试请求授权器 {
@@ -1278,6 +1281,7 @@ mod tests {
                         == Some("0123456789abcdef")
                     && header(&headers, "x-agent-room-proof-signature")
                         == Some("BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ")
+                    && header(&headers, "idempotency-key") == Some(REFRESH_ATTEMPT_ID)
                     && request.body().size_hint().exact() == Some(0);
                 if valid {
                     (StatusCode::OK, Json(valid_credentials_response())).into_response()
@@ -1304,6 +1308,9 @@ mod tests {
                 proof: DeviceRequestProof::new(
                     payload,
                     DeviceSignature::new(vec![5; 64]).expect("测试签名有效"),
+                ),
+                attempt_id: DeviceRefreshAttemptId::from_uuid(
+                    Uuid::parse_str(REFRESH_ATTEMPT_ID).expect("测试尝试号有效"),
                 ),
             })
             .await

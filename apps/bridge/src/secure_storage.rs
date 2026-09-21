@@ -30,6 +30,7 @@ use agent_room_domain::{
     devices::DevicePublicSigningKey,
     ids::{
         AdapterBindingId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, DeviceId,
+        DeviceRefreshAttemptId,
     },
     time::UtcMillis,
 };
@@ -362,6 +363,9 @@ struct PersistedDeviceCredentials {
     version: u8,
     #[serde(default = "ready_credential_state")]
     state: String,
+    /// 只在待决刷新时写入；就绪凭据不带这个字段，旧版本仍能读取。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh_attempt_id: Option<String>,
     device_id: String,
     access_token: String,
     access_token_expires_at_unix_ms: i64,
@@ -376,13 +380,17 @@ fn ready_credential_state() -> String {
 fn encode_credentials(
     credentials: &StoredBridgeDeviceCredentials,
 ) -> BridgeCredentialResult<String> {
+    let (state, refresh_attempt_id) = match credentials.state {
+        BridgeCredentialState::Ready => ("ready", None),
+        BridgeCredentialState::RefreshPending { attempt_id } => (
+            "refresh_pending",
+            attempt_id.map(|attempt_id| attempt_id.to_string()),
+        ),
+    };
     serde_json::to_string(&PersistedDeviceCredentials {
         version: CREDENTIAL_FORMAT_VERSION,
-        state: match credentials.state {
-            BridgeCredentialState::Ready => "ready",
-            BridgeCredentialState::RefreshPending => "refresh_pending",
-        }
-        .to_owned(),
+        state: state.to_owned(),
+        refresh_attempt_id,
         device_id: credentials.device_id.to_string(),
         access_token: credentials.access_token.expose().to_owned(),
         access_token_expires_at_unix_ms: credentials.access_token_expires_at.value(),
@@ -401,10 +409,19 @@ fn decode_credentials(serialized: &str) -> BridgeCredentialResult<StoredBridgeDe
     let device_id = Uuid::parse_str(&persisted.device_id)
         .map(DeviceId::from_uuid)
         .map_err(|_| corrupt())?;
+    let refresh_attempt_id = persisted
+        .refresh_attempt_id
+        .map(|value| {
+            Uuid::parse_str(&value)
+                .map(DeviceRefreshAttemptId::from_uuid)
+                .map_err(|_| corrupt())
+        })
+        .transpose()?;
     Ok(StoredBridgeDeviceCredentials {
-        state: match persisted.state.as_str() {
-            "ready" => BridgeCredentialState::Ready,
-            "refresh_pending" => BridgeCredentialState::RefreshPending,
+        state: match (persisted.state.as_str(), refresh_attempt_id) {
+            ("ready", None) => BridgeCredentialState::Ready,
+            // 旧版本写入的待决状态没有尝试号，由会话服务补一个新尝试号再对账。
+            ("refresh_pending", attempt_id) => BridgeCredentialState::RefreshPending { attempt_id },
             _ => return Err(corrupt()),
         },
         device_id,
@@ -648,7 +665,7 @@ mod tests {
         agents::AgentInstancePublicSigningKey,
         ids::{
             AdapterBindingId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
-            DeviceId,
+            DeviceId, DeviceRefreshAttemptId,
         },
         time::UtcMillis,
     };
@@ -824,6 +841,59 @@ mod tests {
         let credentials = vault.load().expect("旧版凭据可迁移").expect("旧版凭据存在");
 
         assert_eq!(credentials.state, BridgeCredentialState::Ready);
+    }
+
+    #[test]
+    fn 待决刷新连同尝试号一起持久化而就绪凭据保持旧格式() {
+        let backend = Arc::new(内存安全存储::default());
+        let vault = OsDeviceCredentialVault::new(backend.clone());
+        let pending = StoredBridgeDeviceCredentials {
+            state: BridgeCredentialState::RefreshPending {
+                attempt_id: Some(DeviceRefreshAttemptId::from_uuid(
+                    Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e50")
+                        .expect("测试 UUID 有效"),
+                )),
+            },
+            ..credentials()
+        };
+
+        vault.replace(&pending).expect("待决凭据可写入");
+        assert_eq!(vault.load().expect("待决凭据可读取"), Some(pending));
+        vault.replace(&credentials()).expect("就绪凭据可写入");
+        assert!(
+            !backend.0.lock().expect("存储锁未中毒")[DEVICE_CREDENTIALS]
+                .contains("refresh_attempt_id"),
+            "就绪凭据不写尝试号字段，降级后的旧版本仍能读取"
+        );
+    }
+
+    #[test]
+    fn alpha_44_留下的无尝试号待决刷新仍可读取() {
+        let backend = Arc::new(内存安全存储::default());
+        backend
+            .write(
+                DEVICE_CREDENTIALS,
+                r#"{"version":1,"state":"refresh_pending","device_id":"00000000-0000-0000-0000-000000000001","access_token":"access-token","access_token_expires_at_unix_ms":2000,"refresh_token":"refresh-token","refresh_token_expires_at_unix_ms":3000}"#,
+            )
+            .expect("旧版测试值可写入");
+        let vault = OsDeviceCredentialVault::new(backend.clone());
+
+        let credentials = vault.load().expect("旧版待决凭据可读取").expect("凭据存在");
+        assert_eq!(
+            credentials.state,
+            BridgeCredentialState::RefreshPending { attempt_id: None }
+        );
+
+        backend
+            .write(
+                DEVICE_CREDENTIALS,
+                r#"{"version":1,"state":"ready","refresh_attempt_id":"0198b601-77a1-7bb8-83eb-a8fe68c97e50","device_id":"00000000-0000-0000-0000-000000000001","access_token":"access-token","access_token_expires_at_unix_ms":2000,"refresh_token":"refresh-token","refresh_token_expires_at_unix_ms":3000}"#,
+            )
+            .expect("矛盾测试值可写入");
+        assert_eq!(
+            vault.load().expect_err("就绪凭据不应带尝试号").kind(),
+            BridgeCredentialFailureKind::Corrupt
+        );
     }
 
     #[test]

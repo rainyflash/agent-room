@@ -44,6 +44,7 @@ const authorizationRuntime: BridgeRuntime = {
     ownership: 'managed',
     phase: 'authorization_required',
   },
+  deviceReauthorizationAvailable: false,
 };
 
 function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRuntimeSnapshot {
@@ -67,6 +68,15 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
 function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
   const openAuthorization = vi.fn(() => Promise.resolve(ok(undefined)));
   const retryBridge = vi.fn(() => Promise.resolve(ok(bridge)));
+  const reauthorizeBridge = vi.fn(() =>
+    Promise.resolve(
+      ok({
+        ...bridge,
+        deviceReauthorizationAvailable: false,
+        lifecycle: { ...bridge.lifecycle, phase: 'starting' as const },
+      }),
+    ),
+  );
   const checkUpdate = vi.fn((channel: 'stable' | 'testing') =>
     Promise.resolve(
       ok({
@@ -104,11 +114,12 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
       return Promise.reject(new Error('此测试不读取大厅。'));
     },
     retryBridge,
+    reauthorizeBridge,
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
     snapshot: () => Promise.resolve(ok(snapshot(bridge, updatesConfigured))),
     subscribe: () => Promise.resolve(ok(() => undefined)),
   };
-  return { checkUpdate, installUpdate, openAuthorization, retryBridge, value };
+  return { checkUpdate, installUpdate, openAuthorization, reauthorizeBridge, retryBridge, value };
 }
 
 beforeAll(async () => {
@@ -178,6 +189,7 @@ describe('桌面运行时界面', () => {
         lastFailureCode: 'bridge.identity.discovery_failed',
         phase: 'halted',
       },
+      deviceReauthorizationAvailable: true,
     };
     const runtime = gateway(halted);
     render(
@@ -203,6 +215,50 @@ describe('桌面运行时界面', () => {
     });
   });
 
+  it('停机视图提供重新授权这台电脑，并只通过闭合命令清除本机凭据', async () => {
+    const halted: BridgeRuntime = {
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        automaticRestartCount: 3,
+        diagnosticCode: 'desktop.bridge.restart_budget_exhausted',
+        lastExitCode: 1,
+        lastFailureCode: 'bridge.refresh_outcome_unknown',
+        phase: 'halted',
+      },
+      deviceReauthorizationAvailable: true,
+    };
+    const runtime = gateway(halted);
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await waitFor(() => {
+      expect(screen.getByText('Automatic restart was stopped')).toBeVisible();
+    });
+    expect(
+      screen.getByText(
+        'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and asks for a new one-time code.',
+      ),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Re-authorize this computer' }));
+    await waitFor(() => {
+      expect(runtime.reauthorizeBridge).toHaveBeenCalledTimes(1);
+    });
+    expect(runtime.retryBridge).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: 'Re-authorize this computer' }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it('连不上服务器时说明原因和下次尝试时间，不当作崩溃，也允许立即重试', async () => {
     const nextRetryAtUnixMs = Date.UTC(2026, 8, 18, 17, 8, 57);
     const runtime = gateway({
@@ -215,6 +271,7 @@ describe('桌面运行时界面', () => {
         nextRetryAtUnixMs,
         phase: 'retry_scheduled',
       },
+      deviceReauthorizationAvailable: false,
     });
     const unreachable =
       'Can’t reach Agent Room right now. Retrying automatically; you don’t need to restart the app.';
@@ -282,6 +339,7 @@ describe('桌面运行时界面', () => {
         lastFailureCode: 'bridge.identity_assertion_invalid',
         phase: 'halted',
       },
+      deviceReauthorizationAvailable: false,
     });
     render(
       <I18nextProvider i18n={i18n}>
@@ -308,6 +366,9 @@ describe('桌面运行时界面', () => {
       ).toBeVisible();
     });
     expect(screen.queryByRole('button', { name: 'Open secure sign-in' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Re-authorize this computer' }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect local agents' }));
     await waitFor(() => {
       expect(runtime.retryBridge).toHaveBeenCalledTimes(1);
@@ -324,6 +385,7 @@ describe('桌面运行时界面', () => {
         lastFailureCode: 'bridge.authorization_expired',
         phase: 'halted',
       },
+      deviceReauthorizationAvailable: false,
     });
     const expired =
       'The one-time code expired before it was approved. Try connecting again to get a new code.';
@@ -362,6 +424,7 @@ describe('桌面运行时界面', () => {
         diagnosticCode: 'desktop.bridge.ready',
         phase: 'ready',
       },
+      deviceReauthorizationAvailable: false,
     };
     const runtime = gateway(ready, true);
     render(
@@ -393,6 +456,7 @@ describe('桌面运行时界面', () => {
         diagnosticCode: 'desktop.bridge.ready',
         phase: 'ready',
       },
+      deviceReauthorizationAvailable: false,
     };
     const writeText = vi.fn(() => Promise.resolve(undefined));
     Object.defineProperty(navigator, 'clipboard', {

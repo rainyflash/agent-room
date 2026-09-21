@@ -55,6 +55,7 @@ const requestedPhase = bridgePhaseSchema.safeParse(
 );
 let bridge: BridgeRuntime = {
   authorization: null,
+  deviceReauthorizationAvailable: false,
   session: {
     agentId: agent.agentId,
     instanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
@@ -176,6 +177,15 @@ const gateway: DesktopRuntimeGateway = {
     }),
   retryBridge: () => {
     bridge = { ...bridge, session: null, lifecycle: { ...bridge.lifecycle, phase: 'authorized' } };
+    return ready(bridge);
+  },
+  reauthorizeBridge: () => {
+    bridge = {
+      ...bridge,
+      session: null,
+      deviceReauthorizationAvailable: false,
+      lifecycle: { ...bridge.lifecycle, phase: 'starting' },
+    };
     return ready(bridge);
   },
   setAutostart: (enabled) => {

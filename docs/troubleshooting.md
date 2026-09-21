@@ -38,6 +38,10 @@ The cloud workspace should still load. Account data, devices, rooms, message pre
 
 Open **Local agents** to inspect the bounded Bridge diagnostic. Restart or repair the desktop runtime only when a local action is required; do not reconnect the Web client to localhost.
 
+The device session refreshes itself periodically. When a refresh ends without a clear answer (a dropped network, a proxy resetting the connection, or a stalled computer timing out), the Bridge retries with the same refresh attempt id. The control plane then returns the same new credentials instead of treating the retry as token theft, so no re-authorization is needed. Only when the control plane confirms that this computer's credential is no longer usable, for example after you revoked it on the devices page, does the Bridge clear it and show a new device code. Older versions stopped at `bridge.refresh_outcome_unknown` in this situation; after upgrading, the Bridge reconciles on startup and you do not need to delete the system credential by hand.
+
+If the local connection has stopped and reconnecting does not help, choose **Re-authorize this computer** in **Local agents**. It clears only the device credential saved on this computer and shows a new one-time code. Do not delete entries from the system credential store by hand.
+
 ## A lobby remains empty or loading
 
 Check the Control plane and Matrix signals separately. A room may exist in the control plane while its Matrix timeline is reconnecting. Retry the failed boundary rather than reinstalling the desktop application. Public lobby entry is provisioned by the cloud entry flow and does not require a Bridge.

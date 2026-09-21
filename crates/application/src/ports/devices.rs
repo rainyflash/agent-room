@@ -3,17 +3,21 @@ use std::fmt;
 use agent_room_domain::{
     devices::{Device, DevicePublicSigningKey, DeviceTokenFamily},
     ids::{
-        AgentInstanceId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, OutboxEventId,
-        PrincipalId,
+        AgentInstanceId, DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId,
+        DeviceRefreshTokenId, OutboxEventId, PrincipalId,
     },
     time::UtcMillis,
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::{PortFuture, PrincipalAccount, PrincipalRegistration, SecretDigest};
+use super::{
+    PortFuture, PrincipalAccount, PrincipalRegistration, SecretDigest, SecretGenerationFailure,
+    SecretValue,
+};
 
 const ED25519_SIGNATURE_LENGTH: usize = 64;
+pub const DEVICE_REFRESH_REPLAY_SALT_LENGTH: usize = 32;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct DeviceSignature([u8; ED25519_SIGNATURE_LENGTH]);
@@ -59,6 +63,35 @@ pub struct DeviceSessionRegistration {
     pub issued_at: UtcMillis,
 }
 
+/// 派生同一刷新尝试令牌对所用的服务端随机盐。
+///
+/// 盐本身不足以还原令牌，还需要只在请求里出现、从不落库的旧刷新令牌明文。
+#[derive(Clone, PartialEq, Eq)]
+pub struct DeviceRefreshReplaySalt([u8; DEVICE_REFRESH_REPLAY_SALT_LENGTH]);
+
+impl DeviceRefreshReplaySalt {
+    pub const fn from_array(value: [u8; DEVICE_REFRESH_REPLAY_SALT_LENGTH]) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; DEVICE_REFRESH_REPLAY_SALT_LENGTH] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for DeviceRefreshReplaySalt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[已脱敏]")
+    }
+}
+
+/// 客户端生成的刷新尝试号，以及服务端为这次轮换抽取的派生盐。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRefreshReplay {
+    pub attempt_id: DeviceRefreshAttemptId,
+    pub salt: DeviceRefreshReplaySalt,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceTokenReplacement {
     pub access_token_id: DeviceAccessTokenId,
@@ -67,6 +100,34 @@ pub struct DeviceTokenReplacement {
     pub refresh_token_id: DeviceRefreshTokenId,
     pub refresh_token_digest: SecretDigest,
     pub issued_at: UtcMillis,
+    /// 旧客户端不带尝试号，轮换后无法重放；新客户端带尝试号，同一尝试可安全重试。
+    pub replay: Option<DeviceRefreshReplay>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedDeviceTokens {
+    pub access_token: SecretValue,
+    pub refresh_token: SecretValue,
+}
+
+/// 按「旧刷新令牌 + 尝试号 + 服务端盐」派生一次轮换的新令牌对。
+///
+/// 服务端只保存盐和新令牌摘要。同一尝试重试时重新派生即可得到同一对令牌，
+/// 不需要保存令牌明文，也不需要新的服务端长期密钥。
+pub trait DeviceRefreshTokenDerivation: Send + Sync {
+    /// # Errors
+    ///
+    /// 操作系统安全随机源不可用时返回错误。
+    fn replay_salt(&self) -> Result<DeviceRefreshReplaySalt, SecretGenerationFailure>;
+
+    /// # Errors
+    ///
+    /// 派生结果无法构成合法敏感值时返回错误。
+    fn derive(
+        &self,
+        refresh_token: &SecretValue,
+        replay: &DeviceRefreshReplay,
+    ) -> Result<DerivedDeviceTokens, SecretGenerationFailure>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +156,14 @@ pub enum DeviceRefreshOutcome {
     Rotated {
         session: Box<StoredDeviceSession>,
         refresh_token_expires_at: UtcMillis,
+    },
+    /// 同一刷新尝试已经轮换过，且它签发的令牌仍是当前令牌；调用方用原盐重新派生同一对令牌。
+    Replayed {
+        session: Box<StoredDeviceSession>,
+        refresh_token_expires_at: UtcMillis,
+        salt: DeviceRefreshReplaySalt,
+        access_token_digest: SecretDigest,
+        refresh_token_digest: SecretDigest,
     },
     ReuseDetected {
         device_id: DeviceId,

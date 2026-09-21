@@ -376,11 +376,9 @@ const fn decode_hex_nibble(value: u8) -> Option<u8> {
 
 fn map_session_failure(session_failure: BridgeSessionFailure) -> TargetedHandoffQueueFailure {
     failure(match session_failure.kind() {
-        BridgeSessionFailureKind::NotAuthorized
-        | BridgeSessionFailureKind::RefreshOutcomeUnknown => {
-            TargetedHandoffQueueFailureKind::Denied
-        }
-        BridgeSessionFailureKind::SecureStorageUnavailable
+        BridgeSessionFailureKind::NotAuthorized => TargetedHandoffQueueFailureKind::Denied,
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        | BridgeSessionFailureKind::SecureStorageUnavailable
         | BridgeSessionFailureKind::ControlPlaneUnavailable => {
             TargetedHandoffQueueFailureKind::Unavailable
         }

@@ -9,7 +9,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     devices::{DevicePlatform, DevicePublicSigningKey},
-    ids::DeviceId,
+    ids::{DeviceId, DeviceRefreshAttemptId},
     time::UtcMillis,
 };
 
@@ -70,7 +70,15 @@ pub struct StoredBridgeDeviceCredentials {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeCredentialState {
     Ready,
-    RefreshPending,
+    /// 刷新请求可能已经发出而结果未确认。之后只能用同一尝试号向服务端对账；
+    /// 旧版本写入的待决状态没有尝试号。
+    RefreshPending {
+        attempt_id: Option<DeviceRefreshAttemptId>,
+    },
+}
+
+pub trait DeviceRefreshAttemptIdFactory: Send + Sync {
+    fn refresh_attempt_id(&self) -> DeviceRefreshAttemptId;
 }
 
 pub trait DeviceCredentialVault: Send + Sync {
@@ -107,6 +115,8 @@ pub struct RegisterBridgeDevice {
 pub struct RefreshBridgeDevice {
     pub refresh_token: SecretValue,
     pub proof: DeviceRequestProof,
+    /// 同一次刷新的所有重试共用的幂等键，服务端据此重放而不是判为重用。
+    pub attempt_id: DeviceRefreshAttemptId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

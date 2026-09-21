@@ -100,6 +100,7 @@ beforeEach(() => {
     openAuthorization: vi.fn(),
     refresh: vi.fn(),
     retryBridge: vi.fn(),
+    reauthorizeBridge: vi.fn(),
     setAutostart: vi.fn(),
     snapshot: null,
     update: null,
@@ -199,6 +200,7 @@ describe('首次引导页面', () => {
       openAuthorization: vi.fn(),
       refresh: vi.fn(),
       retryBridge: vi.fn(),
+      reauthorizeBridge: vi.fn(),
       setAutostart: vi.fn(),
       snapshot: {
         agentTarget: {
@@ -208,6 +210,7 @@ describe('首次引导页面', () => {
         },
         bridge: {
           authorization: null,
+          deviceReauthorizationAvailable: false,
           lifecycle: { phase: 'halted' },
           session: null,
         },

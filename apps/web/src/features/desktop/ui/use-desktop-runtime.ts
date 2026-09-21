@@ -27,6 +27,7 @@ type DesktopOperation =
   | 'autostart'
   | 'agent-runtime'
   | 'host-configure'
+  | 'reauthorize'
   | 'refresh'
   | 'retry'
   | 'update-check'
@@ -57,6 +58,7 @@ export type DesktopRuntimeController = {
   readonly openAuthorization: (promptId: string) => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
+  readonly reauthorizeBridge: () => Promise<void>;
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
   readonly configureHost: (host: AgentHostKind) => Promise<void>;
@@ -240,6 +242,20 @@ export function useDesktopRuntime(
   const retryBridge = useCallback(async (): Promise<void> => {
     setBusy('retry');
     const result = await gateway.retryBridge();
+    if (result.ok) {
+      setSnapshot((previous) =>
+        previous === null ? previous : { ...previous, bridge: result.value },
+      );
+      setFailure(null);
+    } else {
+      setFailure(result.error);
+    }
+    setBusy(null);
+  }, [gateway]);
+
+  const reauthorizeBridge = useCallback(async (): Promise<void> => {
+    setBusy('reauthorize');
+    const result = await gateway.reauthorizeBridge();
     if (result.ok) {
       setSnapshot((previous) =>
         previous === null ? previous : { ...previous, bridge: result.value },
@@ -441,6 +457,7 @@ export function useDesktopRuntime(
     openAuthorization,
     refresh,
     retryBridge,
+    reauthorizeBridge,
     installUpdate,
     setAutostart,
     configureHost,

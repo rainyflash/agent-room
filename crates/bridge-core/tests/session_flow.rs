@@ -15,8 +15,9 @@ use agent_room_bridge_core::{
     ports::{
         BridgeCredentialResult, BridgeCredentialState, ControlPlaneDeviceFailure,
         ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway, ControlPlaneDeviceResult,
-        DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
-        RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
+        DeviceCredentialVault, DeviceRefreshAttemptIdFactory, DeviceSigningIdentity,
+        DeviceSigningIdentityStore, RefreshBridgeDevice, RegisterBridgeDevice,
+        StoredBridgeDeviceCredentials,
     },
     session::{
         ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailureKind,
@@ -26,7 +27,7 @@ use agent_room_bridge_core::{
 use agent_room_domain::{
     devices::DevicePublicSigningKey,
     identity::Principal,
-    ids::{DeviceId, PrincipalId},
+    ids::{DeviceId, DeviceRefreshAttemptId, PrincipalId},
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_identity_adapter::SecureSecretFactory;
@@ -66,6 +67,18 @@ struct 测试签名存储 {
 impl DeviceSigningIdentityStore for 测试签名存储 {
     fn load_or_create(&self) -> BridgeCredentialResult<Arc<dyn DeviceSigningIdentity>> {
         Ok(self.identity.clone())
+    }
+}
+
+/// 按顺序发放可预测的尝试号，便于断言重试是否沿用了同一个。
+#[derive(Default)]
+struct 测试尝试号工厂 {
+    issued: AtomicUsize,
+}
+
+impl DeviceRefreshAttemptIdFactory for 测试尝试号工厂 {
+    fn refresh_attempt_id(&self) -> DeviceRefreshAttemptId {
+        attempt(self.issued.fetch_add(1, Ordering::SeqCst) + 1)
     }
 }
 
@@ -265,7 +278,7 @@ async fn 控制面请求在访问令牌临期时先刷新再用新令牌签名()
 }
 
 #[tokio::test]
-async fn 临近过期时先持久化刷新中状态再原子替换新凭据() {
+async fn 临近过期时先持久化带尝试号的刷新中状态再原子替换新凭据() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
     let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
     let messages = Arc::new(Mutex::new(Vec::new()));
@@ -276,13 +289,11 @@ async fn 临近过期时先持久化刷新中状态再原子替换新凭据() {
     assert_eq!(session.access_token.expose(), "new-access-token");
     assert_eq!(
         vault.writes.lock().expect("写入记录锁可用").as_slice(),
-        [
-            BridgeCredentialState::RefreshPending,
-            BridgeCredentialState::Ready
-        ]
+        [pending(1), BridgeCredentialState::Ready]
     );
     let requests = control_plane.requests.lock().expect("刷新请求锁可用");
     let request = requests.first().expect("刷新请求已发送");
+    assert_eq!(request.attempt_id, attempt(1));
     assert_eq!(request.refresh_token.expose(), "old-refresh-token");
     assert_eq!(request.proof.device_id(), device_id());
     assert_eq!(request.proof.method(), "POST");
@@ -329,7 +340,7 @@ async fn 并发临期请求等待同一次刷新并使用同一新会话() {
 }
 
 #[tokio::test]
-async fn 并发刷新结果未知时所有等待者失败且不重放旧令牌() {
+async fn 并发刷新结果未知时等待者共享结论且不重复发送() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
     let control_plane = Arc::new(测试控制平面::paused(刷新结果::结果未知));
     let service = service(
@@ -352,7 +363,7 @@ async fn 并发刷新结果未知时所有等待者失败且不重放旧令牌()
     assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         vault.load().expect("凭据可读").expect("保留待决凭据").state,
-        BridgeCredentialState::RefreshPending
+        pending(1)
     );
 }
 
@@ -403,75 +414,195 @@ async fn 刷新调用取消后释放等待者但保留待决状态() {
     assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         vault.load().expect("凭据可读").expect("保留待决凭据").state,
-        BridgeCredentialState::RefreshPending
+        pending(1)
     );
 }
 
 #[tokio::test]
-async fn 恢复已持久化的待决刷新时拒绝使用尚未过期的访问令牌() {
-    let mut credentials = stored_credentials(time(10_000));
-    credentials.state = BridgeCredentialState::RefreshPending;
-    let vault = Arc::new(内存凭据库::new(credentials));
-    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
-    let service = service(
-        vault,
-        control_plane.clone(),
-        Arc::new(Mutex::new(Vec::new())),
-    );
-
-    assert_eq!(
-        service
-            .active_session()
-            .await
-            .expect_err("持久待决状态必须拒绝会话")
-            .kind(),
-        BridgeSessionFailureKind::RefreshOutcomeUnknown
-    );
-    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn 刷新结果未知会持久停在待决状态且绝不重放旧令牌() {
+async fn 刷新结果未知后以同一尝试号重试并恢复就绪() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
-    let control_plane = Arc::new(测试控制平面::new(刷新结果::结果未知));
+    let control_plane = Arc::new(测试控制平面::sequence(
+        [刷新结果::结果未知, 刷新结果::成功],
+    ));
     let service = service(
         vault.clone(),
         control_plane.clone(),
         Arc::new(Mutex::new(Vec::new())),
     );
 
-    let first = service
+    let unknown = service
         .active_session()
         .await
         .expect_err("未知提交不能继续使用旧会话");
-    let second = service
+    assert_eq!(
+        unknown.kind(),
+        BridgeSessionFailureKind::RefreshOutcomeUnknown
+    );
+    assert_eq!(
+        vault.load().expect("凭据可读").expect("保留待决凭据").state,
+        pending(1)
+    );
+
+    let recovered = service
         .active_session()
         .await
-        .expect_err("再次调用也不能重放旧刷新令牌");
+        .expect("同一尝试号的重试应取得新会话");
 
+    assert_eq!(recovered.access_token.expose(), "new-access-token");
+    let requests = control_plane.requests.lock().expect("刷新请求锁可用");
     assert_eq!(
-        first.kind(),
-        BridgeSessionFailureKind::RefreshOutcomeUnknown
+        requests
+            .iter()
+            .map(|request| (request.attempt_id, request.refresh_token.expose()))
+            .collect::<Vec<_>>(),
+        [
+            (attempt(1), "old-refresh-token"),
+            (attempt(1), "old-refresh-token")
+        ],
+        "重试必须沿用同一尝试号与旧刷新令牌，服务端才能重放而不是判为重用"
     );
+    let stored = vault.load().expect("凭据可读").expect("新凭据已保存");
+    assert_eq!(stored.state, BridgeCredentialState::Ready);
+    assert_eq!(stored.refresh_token.expose(), "new-refresh-token");
     assert_eq!(
-        second.kind(),
-        BridgeSessionFailureKind::RefreshOutcomeUnknown
-    );
-    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        vault
-            .value
-            .lock()
-            .expect("凭据锁可用")
-            .as_ref()
-            .expect("待决凭据保留用于诊断")
-            .state,
-        BridgeCredentialState::RefreshPending
+        vault.writes.lock().expect("写入记录锁可用").as_slice(),
+        [pending(1), BridgeCredentialState::Ready],
+        "重试沿用已持久化的尝试号，不再重写待决状态"
     );
 }
 
 #[tokio::test]
-async fn 网络切换造成的确定失败会恢复旧状态并允许后续重连() {
+async fn 重启后用持久化的尝试号对账而不是使用旧访问令牌() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = pending(7);
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    let session = service
+        .active_session()
+        .await
+        .expect("对账成功后应取得新会话");
+
+    assert_eq!(session.access_token.expose(), "new-access-token");
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control_plane.requests.lock().expect("刷新请求锁可用")[0].attempt_id,
+        attempt(7)
+    );
+    assert_eq!(
+        vault.load().expect("凭据可读").expect("新凭据已保存").state,
+        BridgeCredentialState::Ready
+    );
+}
+
+#[tokio::test]
+async fn 旧版本留下的无尝试号待决状态先持久化新尝试号再对账() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = BridgeCredentialState::RefreshPending { attempt_id: None };
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    service
+        .active_session()
+        .await
+        .expect("旧令牌未被消费时对账成功");
+
+    assert_eq!(
+        control_plane.requests.lock().expect("刷新请求锁可用")[0].attempt_id,
+        attempt(1)
+    );
+    assert_eq!(
+        vault.writes.lock().expect("写入记录锁可用").as_slice(),
+        [pending(1), BridgeCredentialState::Ready],
+        "发请求前必须先记下尝试号，结果未知时才能用它重试"
+    );
+}
+
+#[tokio::test]
+async fn 服务端确认旧令牌不可用时清除本机凭据以便重新授权() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = pending(3);
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::认证拒绝));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    let failure = service.active_session().await.expect_err("旧令牌已不可用");
+
+    assert_eq!(failure.kind(), BridgeSessionFailureKind::NotAuthorized);
+    assert!(
+        vault.load().expect("凭据可读").is_none(),
+        "只有清除本机凭据，启动时才会进入设备授权"
+    );
+}
+
+#[tokio::test]
+async fn 用户要求重新授权时清除本机凭据且不联系控制面() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = pending(5);
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    service
+        .forget_device_session()
+        .await
+        .expect("本机凭据可清除");
+
+    assert!(vault.load().expect("凭据可读").is_none());
+    assert_eq!(
+        service
+            .active_session()
+            .await
+            .expect_err("清除后必须重新授权")
+            .kind(),
+        BridgeSessionFailureKind::NotAuthorized
+    );
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn 待决期间刷新令牌已过期时不再对账而是清除凭据() {
+    let mut credentials = stored_credentials(time(10_000));
+    credentials.state = pending(4);
+    credentials.refresh_token_expires_at = time(1_000);
+    let vault = Arc::new(内存凭据库::new(credentials));
+    let control_plane = Arc::new(测试控制平面::new(刷新结果::成功));
+    let service = service(
+        vault.clone(),
+        control_plane.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+
+    let failure = service
+        .active_session()
+        .await
+        .expect_err("过期令牌无法对账");
+
+    assert_eq!(failure.kind(), BridgeSessionFailureKind::NotAuthorized);
+    assert_eq!(control_plane.calls.load(Ordering::SeqCst), 0);
+    assert!(vault.load().expect("凭据可读").is_none());
+}
+
+#[tokio::test]
+async fn 网络暂时不可用时保留同一尝试号并在恢复后重连() {
     let vault = Arc::new(内存凭据库::new(stored_credentials(time(1_050))));
     let control_plane = Arc::new(测试控制平面::sequence([
         刷新结果::依赖不可用,
@@ -492,19 +623,18 @@ async fn 网络切换造成的确定失败会恢复旧状态并允许后续重�
         BridgeSessionFailureKind::ControlPlaneUnavailable
     );
     assert_eq!(
-        vault
-            .value
-            .lock()
-            .expect("凭据锁可用")
-            .as_ref()
-            .expect("旧凭据应保留")
-            .state,
-        BridgeCredentialState::Ready
+        vault.load().expect("凭据可读").expect("旧凭据应保留").state,
+        pending(1),
+        "无法确认请求是否送达，重连时必须沿用同一尝试号"
     );
 
     let recovered = service.active_session().await.expect("网络恢复后应可重连");
     assert_eq!(recovered.access_token.expose(), "new-access-token");
     assert_eq!(control_plane.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        control_plane.requests.lock().expect("刷新请求锁可用")[1].attempt_id,
+        attempt(1)
+    );
 }
 
 fn assert_pending<F: Future>(future: Pin<&mut F>) {
@@ -531,6 +661,7 @@ fn service(
             credentials: vault,
             secrets: Arc::new(SecureSecretFactory),
             clock: Arc::new(测试时钟(time(1_000))),
+            refresh_attempts: Arc::new(测试尝试号工厂::default()),
         },
         BridgeSessionPolicy::new(DurationMillis::new(100).expect("提前量有效")),
     )
@@ -563,6 +694,19 @@ fn refreshed_credentials() -> DeviceCredentials {
         access_token: SecretValue::new("new-access-token").expect("新访问令牌有效"),
         refresh_token: SecretValue::new("new-refresh-token").expect("新刷新令牌有效"),
         refresh_token_expires_at: time(100_000),
+    }
+}
+
+fn attempt(sequence: usize) -> DeviceRefreshAttemptId {
+    let sequence = u128::try_from(sequence).expect("测试尝试序号可转换");
+    DeviceRefreshAttemptId::from_uuid(Uuid::from_u128(
+        0x0198_b601_77a1_7000_8000_0000_0000_0000 | sequence,
+    ))
+}
+
+fn pending(sequence: usize) -> BridgeCredentialState {
+    BridgeCredentialState::RefreshPending {
+        attempt_id: Some(attempt(sequence)),
     }
 }
 

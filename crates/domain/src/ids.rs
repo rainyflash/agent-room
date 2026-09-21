@@ -39,6 +39,7 @@ define_id!(DeviceId);
 define_id!(DeviceTokenFamilyId);
 define_id!(DeviceAccessTokenId);
 define_id!(DeviceRefreshTokenId);
+define_id!(DeviceRefreshAttemptId);
 define_id!(AgentId);
 define_id!(AgentCreationRequestId);
 define_id!(AgentCardSnapshotId);

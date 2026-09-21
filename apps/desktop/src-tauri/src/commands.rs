@@ -463,6 +463,17 @@ pub(crate) fn desktop_retry_bridge(
     Ok(runtime.bridge.snapshot())
 }
 
+/// 停机视图的恢复入口：清除本机设备会话凭据，重启 Bridge 并显示新的设备授权码。
+#[tauri::command]
+// Tauri 命令宏按值提取 State；这里不是普通函数调用边界。
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn desktop_reauthorize_bridge(
+    runtime: State<'_, DesktopRuntime>,
+) -> Result<BridgeRuntimeView, DesktopCommandFailure> {
+    runtime.bridge.reauthorize_device()?;
+    Ok(runtime.bridge.snapshot())
+}
+
 #[tauri::command]
 // Tauri 命令宏按值提取 AppHandle；这里不是普通函数调用边界。
 #[allow(clippy::needless_pass_by_value)]
