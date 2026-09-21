@@ -5,6 +5,8 @@ mod bridge_supervisor;
 #[cfg(test)]
 mod capability_tests;
 mod commands;
+#[cfg(all(test, windows))]
+mod credential_store_test_support;
 mod deep_link;
 #[cfg(test)]
 mod desktop_command_surface;
