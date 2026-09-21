@@ -17,8 +17,8 @@ use crate::{
         Clock, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomId,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
 
@@ -97,6 +97,8 @@ pub struct PrivateRoomDependencies {
     pub matrix_provisioner: Arc<dyn PrivateRoomMatrixProvisioner>,
     pub matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub principals: Arc<dyn PrivateRoomPrincipalDirectory>,
+    /// 成员能力变化时找到其名下 Agent，让它们在 Matrix 上的能力随之收紧或恢复。
+    pub agents: Arc<dyn PrivateRoomAgentDirectory>,
     /// 必须能读取当前 Matrix 房间状态的受信服务身份，例如内容授权服务。
     pub trusted_matrix_readers: Vec<MatrixUserId>,
     pub identifiers: Arc<dyn IdentifierFactory>,
@@ -108,6 +110,7 @@ pub struct PrivateRoomService {
     matrix_provisioner: Arc<dyn PrivateRoomMatrixProvisioner>,
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     principals: Arc<dyn PrivateRoomPrincipalDirectory>,
+    agents: Arc<dyn PrivateRoomAgentDirectory>,
     trusted_matrix_readers: Vec<MatrixUserId>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
@@ -120,6 +123,7 @@ impl PrivateRoomService {
             matrix_provisioner: dependencies.matrix_provisioner,
             matrix: dependencies.matrix,
             principals: dependencies.principals,
+            agents: dependencies.agents,
             trusted_matrix_readers: dependencies.trusted_matrix_readers,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -308,6 +312,14 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
+        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        self.govern_member_agents(
+            &matrix_room,
+            request.actor.principal_id,
+            MemberAgentChange::Evict,
+            OPERATION,
+        )
+        .await?;
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
         replace_room(snapshot, room, OPERATION)
@@ -333,6 +345,13 @@ impl PrivateRoomService {
             .kick(&matrix_room, &target)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
+        self.govern_member_agents(
+            &matrix_room,
+            request.target_principal_id,
+            MemberAgentChange::Evict,
+            OPERATION,
+        )
+        .await?;
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
         replace_room(snapshot, room, OPERATION)
@@ -358,6 +377,14 @@ impl PrivateRoomService {
             .ban(&matrix_room, &target)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
+        // Agent 只移出不封禁：封禁针对成员本人，Agent 仍可能被其他能发言的共同所有者带进来。
+        self.govern_member_agents(
+            &matrix_room,
+            request.target_principal_id,
+            MemberAgentChange::Evict,
+            OPERATION,
+        )
+        .await?;
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
         replace_room(snapshot, room, OPERATION)
@@ -395,10 +422,18 @@ impl PrivateRoomService {
             .await?;
         let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
 
+        let target_principal = request.target_principal_id;
         match (previous.speak(), request.permissions.speak()) {
             (true, false) => {
                 self.set_speaking(&matrix_room, &target, false, OPERATION)
                     .await?;
+                self.govern_member_agents(
+                    &matrix_room,
+                    target_principal,
+                    MemberAgentChange::Speak(false),
+                    OPERATION,
+                )
+                .await?;
                 self.save_if_changed(&room, expected, changed, OPERATION)
                     .await?;
             }
@@ -407,6 +442,13 @@ impl PrivateRoomService {
                     .await?;
                 self.set_speaking(&matrix_room, &target, true, OPERATION)
                     .await?;
+                self.govern_member_agents(
+                    &matrix_room,
+                    target_principal,
+                    MemberAgentChange::Speak(true),
+                    OPERATION,
+                )
+                .await?;
             }
             (_, desired) => {
                 self.save_if_changed(&room, expected, changed, OPERATION)
@@ -414,6 +456,13 @@ impl PrivateRoomService {
                 if !changed {
                     self.set_speaking(&matrix_room, &target, desired, OPERATION)
                         .await?;
+                    self.govern_member_agents(
+                        &matrix_room,
+                        target_principal,
+                        MemberAgentChange::Speak(desired),
+                        OPERATION,
+                    )
+                    .await?;
                 }
             }
         }
@@ -461,6 +510,13 @@ impl PrivateRoomService {
         if !request.former_owner_permissions.speak() {
             self.set_speaking(&matrix_room, &actor_matrix, false, OPERATION)
                 .await?;
+            self.govern_member_agents(
+                &matrix_room,
+                request.actor.principal_id,
+                MemberAgentChange::Speak(false),
+                OPERATION,
+            )
+            .await?;
         }
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
@@ -718,6 +774,45 @@ impl PrivateRoomService {
             .map_err(|error| matrix(operation, error))
     }
 
+    /// 让某个成员名下已在房间里的 Agent 跟随该成员：能发言就能发言，不能就只能旁观，成员离开
+    /// 房间时一并移出。Agent 不是成员，这是它们在 Matrix 上唯一的能力来源；入场时授予的发言级别
+    /// 必须在这里收回，否则成员被收回发言或移除后，它的 Agent 仍能在房间里说话、读消息。
+    async fn govern_member_agents(
+        &self,
+        matrix_room: &MatrixRoomId,
+        principal_id: PrincipalId,
+        change: MemberAgentChange,
+        operation: &'static str,
+    ) -> PrivateRoomResult<()> {
+        let agents = self
+            .agents
+            .agent_matrix_users(principal_id)
+            .await
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
+        for agent in &agents {
+            let membership = self
+                .matrix
+                .membership(matrix_room, agent)
+                .await
+                .map_err(|error| matrix(operation, error))?;
+            // 只处理确实在房间里（已加入或受邀）的 Agent，不给无关用户写进权限表。
+            if !matches!(
+                membership,
+                Some(PrivateMatrixMembership::Joined | PrivateMatrixMembership::Invited)
+            ) {
+                continue;
+            }
+            match change {
+                MemberAgentChange::Speak(allowed) => {
+                    self.matrix.set_speaking(matrix_room, agent, allowed).await
+                }
+                MemberAgentChange::Evict => self.matrix.kick(matrix_room, agent).await,
+            }
+            .map_err(|error| matrix(operation, error))?;
+        }
+        Ok(())
+    }
+
     async fn reconcile_completed_transfer(
         &self,
         snapshot: PrivateRoomSnapshot,
@@ -752,6 +847,15 @@ impl PrivateRoomService {
             operation,
         )
         .await?;
+        if !request.former_owner_permissions.speak() {
+            self.govern_member_agents(
+                matrix_room,
+                request.actor.principal_id,
+                MemberAgentChange::Speak(false),
+                operation,
+            )
+            .await?;
+        }
         Ok(snapshot)
     }
 }
@@ -954,4 +1058,11 @@ fn replace_room(
     snapshot
         .replacing_room(room)
         .map_err(|error| domain(operation, &error))
+}
+
+/// 成员能力变化时，其名下 Agent 在 Matrix 上要跟着做的调整。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberAgentChange {
+    Speak(bool),
+    Evict,
 }

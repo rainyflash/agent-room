@@ -1,8 +1,8 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentRegistration, AgentRegistrationTransaction, AgentRepository, OutboxMessage,
-        PortFuture, RegisteredAgent,
+        AgentRegistration, AgentRegistrationTransaction, AgentRepository, MatrixUserId,
+        OutboxMessage, PortFuture, PrivateRoomAgentDirectory, RegisteredAgent,
     },
 };
 use agent_room_domain::{
@@ -14,6 +14,29 @@ use agent_room_domain::{
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_event};
+
+/// 私人房间收紧成员能力时，要一并收紧他名下 Agent 在 Matrix 上的能力；复用所有权查询。
+impl PrivateRoomAgentDirectory for PostgresRepositories {
+    fn agent_matrix_users(
+        &self,
+        principal_id: agent_room_domain::ids::PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
+        Box::pin(async move {
+            let agents = AgentRepository::list_for_principal(self, principal_id).await?;
+            agents
+                .into_iter()
+                .map(|agent| {
+                    MatrixUserId::new(agent.matrix_user_id).map_err(|_| {
+                        RepositoryError::new(
+                            "private_room_agent.matrix_user_id",
+                            RepositoryErrorKind::CorruptData,
+                        )
+                    })
+                })
+                .collect()
+        })
+    }
+}
 
 impl AgentRepository for PostgresRepositories {
     fn find(&self, id: AgentId) -> PortFuture<'_, RepositoryResult<Option<Agent>>> {

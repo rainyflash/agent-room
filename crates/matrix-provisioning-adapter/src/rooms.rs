@@ -349,7 +349,8 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
             let operation = MatrixOperation::UpdatePowerLevels;
-            let mut content = read_power_levels(self, room_id, operation).await?;
+            let original = read_power_levels(self, room_id, operation).await?;
+            let mut content = original.clone();
             apply_active_private_policy(
                 &mut content,
                 &[PrivateMatrixSpeakingAssignment::new(
@@ -358,7 +359,7 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
                 )],
                 operation,
             )?;
-            write_power_levels(self, room_id, &content, operation).await
+            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
         })
     }
 
@@ -372,18 +373,20 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
                 return Ok(());
             }
             let operation = MatrixOperation::UpdatePowerLevels;
-            let mut content = read_power_levels(self, room_id, operation).await?;
+            let original = read_power_levels(self, room_id, operation).await?;
+            let mut content = original.clone();
             apply_active_private_policy(&mut content, assignments, operation)?;
-            write_power_levels(self, room_id, &content, operation).await
+            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
         })
     }
 
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
             let operation = MatrixOperation::ArchiveRoom;
-            let mut content = read_power_levels(self, room_id, operation).await?;
-            apply_archived_private_policy(&mut content);
-            write_power_levels(self, room_id, &content, operation).await
+            let original = read_power_levels(self, room_id, operation).await?;
+            let mut content = original.clone();
+            apply_archived_private_policy(&mut content, operation)?;
+            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
         })
     }
 }
@@ -601,11 +604,21 @@ impl<'a> From<&'a MatrixCreateRoom> for CreateRoomRequest<'a> {
             });
         }
         let managed_private = request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate;
+        // 公共大厅里成员可写的状态对所有人开放；私人房间把它们提到发言级别，旁观者不能写。
+        let member_writable_level = if managed_private {
+            PRIVATE_SPEAKER_POWER_LEVEL
+        } else {
+            0
+        };
         let power_level_content_override = (managed_private || !member_writable_events.is_empty())
             .then(|| PowerLevelContentOverride {
                 events: member_writable_events
                     .iter()
-                    .map(|event_type| (event_type.as_str(), 0))
+                    .map(|event_type| (event_type.as_str(), member_writable_level))
+                    .chain(
+                        managed_private
+                            .then_some((AGENT_STATUS_EVENT_TYPE, PRIVATE_SPEAKER_POWER_LEVEL)),
+                    )
                     .collect(),
                 events_default: managed_private.then_some(PRIVATE_SPEAKER_POWER_LEVEL),
                 state_default: managed_private.then_some(PRIVATE_ADMIN_POWER_LEVEL),
@@ -662,6 +675,9 @@ struct MembershipMutationRequest<'a> {
 const PRIVATE_VIEWER_POWER_LEVEL: i64 = 0;
 const PRIVATE_SPEAKER_POWER_LEVEL: i64 = 10;
 const PRIVATE_ADMIN_POWER_LEVEL: i64 = 100;
+/// Agent 发布这条状态才算在房间里上线。私人房间里它与发言同级：能发言的成员以及随其入场的
+/// Agent 才能写，归档后只剩管理员。没有这一项时它落到 `state_default`（管理员），Agent 永远上不了线。
+const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
 
 async fn send_membership_action(
     provisioner: &MatrixApplicationServiceProvisioner,
@@ -723,6 +739,20 @@ async fn read_power_levels(
         .ok_or_else(|| invalid_response(operation))
 }
 
+/// Agent 每次重连都会重新确认发言权；内容没变时不写，免得每次入场都给房间多一条权限状态事件。
+async fn write_power_levels_if_changed(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    original: &Map<String, Value>,
+    content: &Map<String, Value>,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
+    if original == content {
+        return Ok(());
+    }
+    write_power_levels(provisioner, room_id, content, operation).await
+}
+
 async fn write_power_levels(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
@@ -759,7 +789,7 @@ fn apply_active_private_policy(
     assignments: &[PrivateMatrixSpeakingAssignment],
     operation: MatrixOperation,
 ) -> MatrixResult<()> {
-    set_private_policy_thresholds(content, PRIVATE_SPEAKER_POWER_LEVEL);
+    set_private_policy_thresholds(content, PRIVATE_SPEAKER_POWER_LEVEL, operation)?;
     if assignments.is_empty() {
         return Ok(());
     }
@@ -781,11 +811,18 @@ fn apply_active_private_policy(
     Ok(())
 }
 
-fn apply_archived_private_policy(content: &mut Map<String, Value>) {
-    set_private_policy_thresholds(content, PRIVATE_ADMIN_POWER_LEVEL);
+fn apply_archived_private_policy(
+    content: &mut Map<String, Value>,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
+    set_private_policy_thresholds(content, PRIVATE_ADMIN_POWER_LEVEL, operation)
 }
 
-fn set_private_policy_thresholds(content: &mut Map<String, Value>, events_default: i64) {
+fn set_private_policy_thresholds(
+    content: &mut Map<String, Value>,
+    events_default: i64,
+    operation: MatrixOperation,
+) -> MatrixResult<()> {
     for (key, value) in [
         ("events_default", events_default),
         ("state_default", PRIVATE_ADMIN_POWER_LEVEL),
@@ -797,6 +834,17 @@ fn set_private_policy_thresholds(content: &mut Map<String, Value>, events_defaul
     ] {
         content.insert(key.to_owned(), Value::from(value));
     }
+    // 每次改权限都把 Agent 状态补回与发言同级，早先创建时漏掉这一项的房间也随之修好。
+    content
+        .entry("events".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| invalid_response(operation))?
+        .insert(
+            AGENT_STATUS_EVENT_TYPE.to_owned(),
+            Value::from(events_default),
+        );
+    Ok(())
 }
 
 fn decode_membership(
@@ -897,8 +945,8 @@ mod tests {
         MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
     };
     use super::{
-        CreateRoomRequest, apply_active_private_policy, apply_archived_private_policy,
-        decode_membership,
+        AGENT_STATUS_EVENT_TYPE, CreateRoomRequest, apply_active_private_policy,
+        apply_archived_private_policy, decode_membership,
     };
 
     #[tokio::test]
@@ -1029,6 +1077,8 @@ mod tests {
         assert_eq!(levels["kick"], 100);
         assert_eq!(levels["ban"], 100);
         assert_eq!(levels["redact"], 100);
+        // Agent 随能发言的成员入场后必须能发布状态，否则永远停在「上线失败」。
+        assert_eq!(levels["events"][AGENT_STATUS_EVENT_TYPE], 10);
         assert!(levels["users"].is_null(), "不得覆盖 Matrix 创建者映射");
         assert_eq!(body["initial_state"][0]["type"], "m.room.encryption");
         assert_eq!(
@@ -1084,10 +1134,37 @@ mod tests {
         assert_eq!(content["custom_extension"]["keep"], true);
         assert_eq!(content["events_default"], 10);
         assert_eq!(content["invite"], 100);
+        // 早先创建的私人房间缺这一项，Agent 发布状态会落到 state_default=100 而永远上不了线。
+        assert_eq!(content["events"][AGENT_STATUS_EVENT_TYPE], 10);
 
-        apply_archived_private_policy(&mut content);
+        apply_archived_private_policy(&mut content, MatrixOperation::ArchiveRoom)
+            .expect("归档策略有效");
         assert_eq!(content["events_default"], 100);
+        assert_eq!(content["events"][AGENT_STATUS_EVENT_TYPE], 100);
         assert_eq!(content["custom_extension"]["keep"], true);
+    }
+
+    #[test]
+    fn 私人房间策略保留其他事件级别且拒绝损坏的事件表() {
+        let mut content = json!({
+            "events": { "m.room.name": 50, AGENT_STATUS_EVENT_TYPE: 100 },
+        })
+        .as_object()
+        .expect("对象有效")
+        .clone();
+        apply_active_private_policy(&mut content, &[], MatrixOperation::UpdatePowerLevels)
+            .expect("发言策略有效");
+        assert_eq!(content["events"]["m.room.name"], 50);
+        assert_eq!(content["events"][AGENT_STATUS_EVENT_TYPE], 10);
+
+        let mut corrupt = json!({ "events": "not-an-object" })
+            .as_object()
+            .expect("对象有效")
+            .clone();
+        assert!(
+            apply_active_private_policy(&mut corrupt, &[], MatrixOperation::UpdatePowerLevels)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1149,6 +1226,35 @@ mod tests {
         assert_eq!(writes[0]["users"][member.as_str()], 10);
         assert_eq!(writes[0]["custom_extension"]["keep"], true);
         assert_eq!(writes[1]["events_default"], 100);
+    }
+
+    #[tokio::test]
+    async fn 重复授予同一发言权不再写权限状态() {
+        let server = PrivateRoomTestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let room = MatrixRoomId::new("!private:matrix.agent-room.localhost").expect("房间有效");
+        let agent = MatrixUserId::new(
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost",
+        )
+        .expect("Agent 用户有效");
+
+        // Agent 每次重连都会重新确认发言权；第二次内容不变，不应再给房间添一条权限事件。
+        provisioner
+            .set_speaking(&room, &agent, true)
+            .await
+            .expect("首次授予");
+        provisioner
+            .set_speaking(&room, &agent, true)
+            .await
+            .expect("重复授予");
+
+        assert_eq!(
+            server.actions().await,
+            vec!["read-power", "write-power", "read-power"]
+        );
+        let writes = server.power_level_writes().await;
+        assert_eq!(writes[0]["users"][agent.as_str()], 10);
+        assert_eq!(writes[0]["events"][AGENT_STATUS_EVENT_TYPE], 10);
     }
 
     #[tokio::test]
@@ -1387,6 +1493,8 @@ mod tests {
     struct PrivateRoomTestState {
         actions: tokio::sync::Mutex<Vec<&'static str>>,
         power_level_writes: tokio::sync::Mutex<Vec<Value>>,
+        /// 最近一次写入的权限；读取时返回它，才能看出重复授予是否还会再写一次。
+        current_power_levels: tokio::sync::Mutex<Option<Value>>,
     }
 
     impl PrivateRoomTestServer {
@@ -1673,9 +1781,12 @@ mod tests {
         assert_authentication(&headers);
         assert_eq!(room, "!private:matrix.agent-room.localhost");
         state.actions.lock().await.push("read-power");
-        Json(json!({
-            "users": { "@service:matrix.agent-room.localhost": 100 },
-            "custom_extension": { "keep": true }
+        let current = state.current_power_levels.lock().await.clone();
+        Json(current.unwrap_or_else(|| {
+            json!({
+                "users": { "@service:matrix.agent-room.localhost": 100 },
+                "custom_extension": { "keep": true }
+            })
         }))
     }
 
@@ -1688,6 +1799,7 @@ mod tests {
         assert_authentication(&headers);
         assert_eq!(room, "!private:matrix.agent-room.localhost");
         state.actions.lock().await.push("write-power");
+        *state.current_power_levels.lock().await = Some(body.clone());
         state.power_level_writes.lock().await.push(body);
         Json(json!({ "event_id": "$power-level" }))
     }
