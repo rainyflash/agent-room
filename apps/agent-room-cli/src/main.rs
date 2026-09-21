@@ -20,7 +20,11 @@ use output::{CliFailure, CliResult, success, write_json};
 use serde_json::json;
 use std::{io::Read as _, process::ExitCode};
 
-#[tokio::main]
+// CLI 的每条命令都是顺序的：一次一个本机 IPC 往返，没有需要并行的工作。默认的多线程运行时
+// 会按 CPU 数起工作线程（本机 32 个），在 CPU 被抢占得厉害时不仅更慢、更不稳，还会让反应器
+// 线程与丢弃管道连接的线程并发操作同一个具名管道：Windows 管道客户端栈在这里会踩坏堆，进程
+// 直接以 0xC0000374 / 0xC0000005 无声退出。单线程运行时让驱动和任务同线程，两者无法重叠。
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
