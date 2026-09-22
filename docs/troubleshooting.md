@@ -42,6 +42,8 @@ The device session refreshes itself periodically. When a refresh ends without a 
 
 If the local connection has stopped and reconnecting does not help, choose **Re-authorize this computer** in **Local agents**. It clears only the device credential saved on this computer and shows a new one-time code. Do not delete entries from the system credential store by hand.
 
+If the desktop app was closed abruptly, for example ended from Task Manager, the Bridge it started notices, finishes its work, and exits on its own. The next desktop start waits for it and then starts its own Bridge; meanwhile the desktop shows **Checking local connection**. If another Bridge process is still running after five minutes, the connection stops with `desktop.bridge.other_instance_running`, and the desktop still starts its own Bridge as soon as that process exits. Re-authorizing does not help here: end the leftover `agent-room-bridge` process in Task Manager or Activity Monitor, or restart the computer.
+
 ## A lobby remains empty or loading
 
 Check the Control plane and Matrix signals separately. A room may exist in the control plane while its Matrix timeline is reconnecting. Retry the failed boundary rather than reinstalling the desktop application. Public lobby entry is provisioned by the cloud entry flow and does not require a Bridge.

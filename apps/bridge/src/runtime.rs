@@ -230,19 +230,36 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         request_handler,
     )
     .map_err(BridgeRuntimeError::ipc)?;
+    finish_starting(&status, &device_session, agent_session.as_ref());
+    announce_supervisor_ready()?;
+    run_until_shutdown(
+        wait_for_exit_signal(config.exit_with_supervisor),
+        server,
+        status,
+        device_session,
+        agent_session,
+        host_sessions,
+    )
+    .await
+}
+
+/// 按初始会话标记各组件是否就绪，结束启动态。
+fn finish_starting(
+    status: &BridgeRuntimeStatus,
+    device_session: &DeviceSessionRuntime,
+    agent_session: Option<&AgentSessionRuntime>,
+) {
     status.set_component_ready(
         BridgeRuntimeStatus::DEVICE_COMPONENT,
         device_session.initial_session.is_some(),
     );
-    if let Some(runtime) = agent_session.as_ref() {
+    if let Some(runtime) = agent_session {
         status.set_component_ready(
             BridgeRuntimeStatus::AGENT_COMPONENT,
             runtime.initial_session.is_some(),
         );
     }
     status.finish_starting();
-    announce_supervisor_ready()?;
-    run_until_shutdown(server, status, device_session, agent_session, host_sessions).await
 }
 
 fn initialize_onboarding(
@@ -1493,6 +1510,7 @@ async fn initialize_targeted_handoff_inbox(
 }
 
 async fn run_until_shutdown(
+    exit: impl Future<Output = io::Result<()>>,
     server: BridgeIpcServer,
     status: Arc<BridgeRuntimeStatus>,
     device_session: DeviceSessionRuntime,
@@ -1522,7 +1540,7 @@ async fn run_until_shutdown(
         }
     });
     let result = async { tokio::select! {
-        signal = wait_for_exit_signal() => {
+        signal = exit => {
             signal.map_err(|_| BridgeRuntimeError::shutdown_signal())?;
             status.mark_shutting_down();
             shutdown_sender
@@ -1583,7 +1601,28 @@ async fn run_until_shutdown(
     result
 }
 
-async fn wait_for_exit_signal() -> io::Result<()> {
+/// 等操作系统关闭信号；桌面托管启动时，监督它的桌面退出也算。
+///
+/// 桌面被强制结束时来不及结束子进程，Windows 上也没有信号可收。留下的 Bridge 继续占着实例锁和
+/// 本机 IPC，下一次启动的桌面既起不了自己的 Bridge，又会把它当成外部 Bridge 接管，而它随时可能退出。
+async fn wait_for_exit_signal(exit_with_supervisor: bool) -> io::Result<()> {
+    let supervisor_exited = async {
+        if exit_with_supervisor {
+            input_closed(io::stdin()).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::select! {
+        result = operating_system_exit_signal() => result,
+        () = supervisor_exited => {
+            tracing::warn!("监督 Bridge 的桌面已经退出，Bridge 随之有序退出");
+            Ok(())
+        }
+    }
+}
+
+async fn operating_system_exit_signal() -> io::Result<()> {
     #[cfg(unix)]
     {
         let mut terminate =
@@ -1595,6 +1634,26 @@ async fn wait_for_exit_signal() -> io::Result<()> {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await
+}
+
+/// 输入读到结束或读取失败时完成。桌面把标准输入接成自己持有的管道、从不写入，
+/// 桌面进程一退出（包括被强制结束）管道就关闭。
+///
+/// 阻塞读放在独立线程：运行时关闭时会等 `spawn_blocking` 的任务返回，而桌面还在时这次读取不会返回。
+fn input_closed(mut input: impl io::Read + Send + 'static) -> impl Future<Output = ()> {
+    let (closed, receiver) = oneshot::channel();
+    let watcher = std::thread::Builder::new()
+        .name("agent-room-supervisor-watch".to_owned())
+        .spawn(move || {
+            let _ = io::copy(&mut input, &mut io::sink());
+            let _ = closed.send(());
+        });
+    async move {
+        // 看不了输入时不因此退出，照旧只响应操作系统关闭信号。
+        if watcher.is_err() || receiver.await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 async fn maintain_sessions(
@@ -2840,8 +2899,9 @@ mod tests {
 
     use super::{
         AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
-        TargetedHandoffPoller, TargetedHandoffPollingPolicy, is_reconnectable_agent_online_failure,
-        spawn_targeted_handoff_worker_with_policy, verification_destination,
+        TargetedHandoffPoller, TargetedHandoffPollingPolicy, input_closed,
+        is_reconnectable_agent_online_failure, spawn_targeted_handoff_worker_with_policy,
+        verification_destination,
     };
 
     #[test]
@@ -3044,6 +3104,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(poller.completed.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn 监督管道关闭后才触发随桌面退出() {
+        let (reader, writer) = std::io::pipe().expect("可创建管道");
+        let closed = input_closed(reader);
+        tokio::pin!(closed);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut closed)
+                .await
+                .is_err(),
+            "桌面还持有管道时 Bridge 不能退出"
+        );
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), closed)
+            .await
+            .expect("桌面一退出，管道关闭就应触发退出");
     }
 
     impl TargetedHandoffPoller for 计数交接轮询器 {
