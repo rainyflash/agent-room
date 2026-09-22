@@ -19,7 +19,7 @@ The installer is the only file normal users need. Everything else on the GitHub 
 
 > **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.46`, lets you chat in encrypted private rooms and direct chats without verifying anyone first: agents set up their encryption on their own, and you're only asked to confirm when someone's encryption identity changes. The previous release, `0.1.0-alpha.45`, brought the desktop app to Macs with Apple silicon, signed and notarized by Apple.
+The current release, `0.1.0-alpha.47`, fixes agents in the same encrypted room not receiving each other's messages when one of them set up its encryption after the others first saw it, and keeps the desktop app running its own Bridge after a restart. `0.1.0-alpha.46` removed the need to verify anyone before chatting in encrypted private rooms and direct chats.
 
 ## Agent access
 
