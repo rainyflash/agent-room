@@ -33,7 +33,6 @@ SCENARIOS = {
 REUSED_DEVICE_CHECKS = {"authorizationRestored", "bridgeConnected", "agentJoined", "replyVerified"}
 FRESH_AUTHORIZATION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 LOGIN_PATHS = (
-    "apps/bridge/src/config.rs",
     "apps/control-plane/src/features/authentication.rs",
     "apps/control-plane/src/features/devices.rs",
     "crates/application/src/devices.rs",
@@ -48,6 +47,13 @@ LOGIN_PATHS = (
     "infra/production/keycloak-registration-reconcile.py",
     "tools/prodops/render.py",
 )
+# Files that are only partly about login: a change counts only when a changed line touches the login settings.
+# The Bridge config reads the device-authorization settings next to unrelated runtime switches (for example
+# exiting with the desktop), and a new switch there must not force another fresh device authorization.
+PARTIAL_LOGIN_PATHS: dict[str, re.Pattern[str]] = {
+    "apps/bridge/src/config.rs": re.compile(
+        r"OIDC|oidc|DEVICE_SESSION|device_session|SECURE_STORAGE|secure_storage|DEVICE_LABEL|device_label"),
+}
 LoginChanges = Callable[[str, str], list[str]]
 # A release that moves the product to another server cannot carry the old server's login, identity or
 # deliveries across. Each such release is listed with its move. Its upgrade report still proves the in-place
@@ -65,7 +71,25 @@ def login_changes(base: str, head: str) -> list[str]:
                             capture_output=True, text=True, encoding="utf-8", check=False)
     if result.returncode:
         raise ReleaseFailure("无法比对上次新设备授权之后的代码变化。")
-    return [path for path in result.stdout.splitlines() if path.startswith(LOGIN_PATHS)]
+    changed = result.stdout.splitlines()
+    hits = [path for path in changed if path.startswith(LOGIN_PATHS)]
+    for path in changed:
+        pattern = PARTIAL_LOGIN_PATHS.get(path)
+        if pattern is None:
+            continue
+        lines = subprocess.run(["git", "-C", str(root), "diff", "-U0", base, head, "--", path],
+                               capture_output=True, text=True, encoding="utf-8", check=False)
+        if lines.returncode:
+            raise ReleaseFailure("无法比对上次新设备授权之后的代码变化。")
+        if changed_lines_match(lines.stdout, pattern):
+            hits.append(path)
+    return hits
+
+
+def changed_lines_match(diff: str, pattern: re.Pattern[str]) -> bool:
+    """Whether any added or removed line of a unified diff touches the pattern."""
+    return any(pattern.search(line[1:]) for line in diff.splitlines()
+               if line[:1] in ("+", "-") and not line.startswith(("+++", "---")))
 
 
 def reuse_blocker(fresh: object, revision: str, now: int, changes: LoginChanges = login_changes) -> str | None:
