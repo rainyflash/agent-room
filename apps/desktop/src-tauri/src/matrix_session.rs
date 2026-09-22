@@ -66,7 +66,8 @@ impl MatrixSessionRuntime {
             .await
             .map_err(|_| {
                 MatrixSessionFailure::new("desktop.matrix_session.loopback_bind_failed", true)
-            })?;
+            })?
+            .with_language(crate::native_language::language(app));
         let login_url = matrix_sso_url(&self.matrix_base_url, listener.callback_url())?;
         app.opener()
             .open_url(login_url.as_str(), None::<&str>)

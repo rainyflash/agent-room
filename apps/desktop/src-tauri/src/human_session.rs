@@ -216,7 +216,8 @@ impl HumanSessionRuntime {
             .await
             .map_err(|_| {
                 HumanSessionFailure::new("desktop.human_session.loopback_bind_failed", true)
-            })?;
+            })?
+            .with_language(crate::native_language::language(app));
         let callback_url = callback_listener.callback_url().to_string();
         let (authorization_url, client_state) = {
             let _guard = self
