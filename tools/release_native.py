@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 from tools import release
 
 INSTALLER_CHECKS = frozenset({
-    "silentInstall", "desktopPresent", "bridgePresent", "mcpPresent", "desktopVersion",
+    "silentInstall", "desktopPresent", "desktopWindowless", "bridgePresent", "mcpPresent", "desktopVersion",
     "desktopLaunch", "managedBridgeLaunch", "mcpLaunch", "runningUpgrade",
     "upgradeStoppedDesktop", "upgradeStoppedBridge", "upgradeStoppedMcp",
     "postUpgradeDesktopLaunch", "postUpgradeBridgeLaunch", "postUpgradeMcpLaunch",

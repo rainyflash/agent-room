@@ -25,6 +25,7 @@ DESKTOP_EXECUTABLE: Final = "agent-room-desktop.exe"
 BRIDGE_EXECUTABLE: Final = "agent-room-bridge.exe"
 MCP_EXECUTABLE: Final = "agent-room-mcp.exe"
 CLI_EXECUTABLE: Final = "agent-room.exe"
+WINDOWS_GUI_SUBSYSTEM: Final = 2
 SEMVER_PATTERN: Final = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
@@ -141,6 +142,30 @@ def ensure_clean_install_registration(
         raise WindowsInstallerAcceptanceFailure(
             "干净安装验收拒绝覆盖当前用户已有的 Agent Room 安装注册；"
             "请在一次性 Windows runner 上运行。"
+        )
+
+
+def pe_subsystem(executable: Path) -> int:
+    """读取 PE 可选头里的子系统编号（2 = 窗口程序，3 = 控制台程序）。"""
+    with executable.open("rb") as handle:
+        dos_header = handle.read(64)
+        if len(dos_header) < 64 or dos_header[:2] != b"MZ":
+            raise WindowsInstallerAcceptanceFailure(f"{executable.name} 不是 Windows 可执行文件。")
+        pe_offset = int.from_bytes(dos_header[60:64], "little")
+        handle.seek(pe_offset)
+        # PE 签名 4 字节 + COFF 头 20 字节；PE32 与 PE32+ 的 Subsystem 都在可选头偏移 68 处。
+        headers = handle.read(24 + 70)
+    if len(headers) < 94 or headers[:4] != b"PE\0\0":
+        raise WindowsInstallerAcceptanceFailure(f"{executable.name} 的 PE 头无效。")
+    return int.from_bytes(headers[92:94], "little")
+
+
+def verify_desktop_is_windowless(desktop: Path) -> None:
+    # 桌面端必须按窗口子系统链接；按控制台子系统链接的话，每次启动都会先弹一个命令行窗口。
+    subsystem = pe_subsystem(desktop)
+    if subsystem != WINDOWS_GUI_SUBSYSTEM:
+        raise WindowsInstallerAcceptanceFailure(
+            f"已安装桌面端按子系统 {subsystem} 链接，启动会带控制台窗口；应为窗口程序（{WINDOWS_GUI_SUBSYSTEM}）。"
         )
 
 
@@ -338,6 +363,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 timeout_seconds=300,
             )
             layout = locate_installed_layout(install_root)
+            verify_desktop_is_windowless(layout.desktop)
             verify_cli_version(layout.cli, expected_version)
             actual_version = installed_desktop_version(layout.desktop)
             if actual_version != expected_version:
@@ -377,6 +403,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
             mcp = None
 
             layout = locate_installed_layout(install_root)
+            verify_desktop_is_windowless(layout.desktop)
             verify_cli_version(layout.cli, expected_version)
             upgraded_version = installed_desktop_version(layout.desktop)
             if upgraded_version != expected_version:
@@ -448,6 +475,7 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                 "checks": {
                     "silentInstall": True,
                     "desktopPresent": True,
+                    "desktopWindowless": True,
                     "bridgePresent": True,
                     "mcpPresent": True,
                     "desktopVersion": True,
