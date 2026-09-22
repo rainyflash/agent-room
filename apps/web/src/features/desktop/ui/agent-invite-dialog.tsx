@@ -506,6 +506,9 @@ function ConnectionInvite({
                               ? t('agentInvite.host.other')
                               : hostLabels[candidate]}
                           </strong>
+                          {candidate === 'cursor' ? (
+                            <small>{t('agentInvite.host.foregroundOnly')}</small>
+                          ) : null}
                         </button>
                       ))}
                     </div>

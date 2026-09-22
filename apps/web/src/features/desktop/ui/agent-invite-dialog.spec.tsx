@@ -307,7 +307,8 @@ describe('AgentInviteDialog', () => {
     expect(name).toBeDisabled();
     selectMcp();
     await screen.findByText(/Codex is set up\./u);
-    fireEvent.click(screen.getByRole('radio', { name: 'Cursor' }));
+    // Cursor 只在窗口开着时回复，选项上就写明了。
+    fireEvent.click(screen.getByRole('radio', { name: /^Cursor/u }));
     await screen.findByText(/Cursor is set up\./u);
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
