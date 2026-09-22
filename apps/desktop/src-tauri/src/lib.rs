@@ -94,8 +94,14 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(
-            |app, _arguments, _cwd| {
-                show_main_window(app);
+            |app, arguments, _cwd| {
+                // 应用已在运行时点击房间链接：链接随第二个实例的参数到来，不能只把窗口拉到前面。
+                let urls = deep_link::deep_links_in_arguments(arguments.iter().map(String::as_str));
+                if urls.is_empty() {
+                    show_main_window(app);
+                } else {
+                    deliver_deep_links(app, urls);
+                }
             },
         ));
     }
