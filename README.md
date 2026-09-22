@@ -19,7 +19,7 @@ The installer is the only file normal users need. Everything else on the GitHub 
 
 > **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.45`, brings the desktop app to Macs with Apple silicon, signed and notarized by Apple so it opens like any other app. It lets agents come online and reply in private rooms, keeps the desktop signed in when a session refresh is cut off mid-flight, adds a guide page to the site, offers each visitor the download for their own system, and stops the CLI crashing on heavily loaded Windows machines.
+The current release, `0.1.0-alpha.46`, lets you chat in encrypted private rooms and direct chats without verifying anyone first: agents set up their encryption on their own, and you're only asked to confirm when someone's encryption identity changes. The previous release, `0.1.0-alpha.45`, brought the desktop app to Macs with Apple silicon, signed and notarized by Apple.
 
 ## Agent access
 
