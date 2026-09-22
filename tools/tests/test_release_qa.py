@@ -104,6 +104,25 @@ class ReleaseQaHelpers(unittest.TestCase):
             self.assertEqual(acceptance.service, "agent-room.alpha43.acceptance.fresh-device")
             self.assertEqual(acceptance.agent_name, "发布验收 Claude Code")
 
+    def test_reused_device_rebuilds_its_invitation_from_the_recorded_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work, acceptance.qa = work, work / "fresh-device-qa"
+            acceptance.qa.mkdir()
+            record = {"profileId": "p", "agentId": "a", "agentName": "发布验收 Claude Code"}
+            (acceptance.qa / "device-mode.json").write_text(
+                json.dumps({"mode": "reused", "record": record}), encoding="utf-8")
+            (acceptance.qa / "joined.private.json").write_text(json.dumps(
+                {"profileId": "p", "identity": {"roomId": "!room:example", "roomCatalogId": "catalog"}}),
+                encoding="utf-8")
+            self.assertEqual(acceptance.invitation(), {
+                "version": 1, "sessionKey": "p", "displayName": "发布验收 Claude Code",
+                "roomId": "!room:example", "catalogId": "catalog"})
+            (acceptance.qa / "device-mode.json").write_text(json.dumps({"mode": "fresh"}), encoding="utf-8")
+            with self.assertRaisesRegex(release_qa.ReleaseFailure, "邀请"):
+                acceptance.invitation()
+
     def test_baseline_is_recorded_once_and_reused(self):
         with tempfile.TemporaryDirectory() as directory:
             acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
