@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { applicationVersion } from '../domain/runtime-manifest';
+import { updateProgressLabel } from '@/features/desktop/domain/update-progress';
 import { useRuntimeCompatibility } from './runtime-compatibility-context';
 import {
   applyWebApplicationUpdate,
@@ -134,13 +135,13 @@ export function ApplicationAboutPage() {
                   disabled={busy}
                   onClick={() => void check()}
                 >
-                  {t(
-                    busy
-                      ? applying || desktop?.updateBusy === 'installing'
-                        ? 'application.installing'
-                        : 'application.checking'
-                      : 'desktop.update.check',
-                  )}
+                  {busy
+                    ? applying || desktop?.updateBusy === 'installing'
+                      ? native
+                        ? updateProgressLabel(t, desktop.updateProgress ?? null)
+                        : t('application.installing')
+                      : t('application.checking')
+                    : t('desktop.update.check')}
                 </Button>
                 {updateAvailable ? (
                   <Button

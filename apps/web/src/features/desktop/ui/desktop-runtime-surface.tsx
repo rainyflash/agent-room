@@ -24,6 +24,7 @@ import {
   type ReleaseUpdateChannel,
 } from '@/features/desktop/domain/desktop-runtime';
 import { applicationVersion } from '@/features/updates/domain/runtime-manifest';
+import { updateProgressLabel } from '@/features/desktop/domain/update-progress';
 import {
   authorizationFailureMessage,
   desktopPhaseLabel,
@@ -380,11 +381,13 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   size="compact"
                   tone={selectedUpdate?.rollback === true ? 'alert' : 'network'}
                 >
-                  {selectedUpdate?.available === true
-                    ? selectedUpdate.rollback
-                      ? t('desktop.update.rollback')
-                      : t('desktop.update.install')
-                    : t('desktop.update.check')}
+                  {controller.updateBusy === 'installing'
+                    ? updateProgressLabel(t, controller.updateProgress ?? null)
+                    : selectedUpdate?.available === true
+                      ? selectedUpdate.rollback
+                        ? t('desktop.update.rollback')
+                        : t('desktop.update.install')
+                      : t('desktop.update.check')}
                 </Button>
               </section>
             ) : null}

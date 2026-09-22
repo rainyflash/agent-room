@@ -20,6 +20,7 @@ import {
   type HostSessionDiagnostics,
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
+  type ReleaseUpdateProgress,
 } from '@/features/desktop/domain/desktop-runtime';
 
 const defaultGateway = new TauriDesktopRuntimeGateway();
@@ -47,6 +48,7 @@ export type DesktopRuntimeController = {
   readonly snapshot: DesktopRuntimeSnapshot | null;
   readonly update: ReleaseUpdateCheck | null;
   readonly updateBusy?: 'checking' | 'installing' | null;
+  readonly updateProgress?: ReleaseUpdateProgress | null;
   readonly updateFailure?: DesktopRuntimeFailure | null;
   readonly hosts: readonly AgentHostDetection[];
   readonly configuredHost: AgentHostKind | null;
@@ -97,6 +99,7 @@ export function useDesktopRuntime(
   const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
   const [updateBusy, setUpdateBusy] = useState<'checking' | 'installing' | null>(null);
   const [updateFailure, setUpdateFailure] = useState<DesktopRuntimeFailure | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<ReleaseUpdateProgress | null>(null);
   const updateInFlight = useRef(false);
   const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
   const [configuredHost, setConfiguredHost] = useState<AgentHostKind | null>(null);
@@ -196,6 +199,9 @@ export function useDesktopRuntime(
               previous === null ? previous : { ...previous, bridge: runtime },
             );
           }
+        },
+        onUpdateProgress: (progress) => {
+          if (!disposed) setUpdateProgress(progress);
         },
       })
       .then((subscription) => {
@@ -362,6 +368,7 @@ export function useDesktopRuntime(
       return;
     }
     updateInFlight.current = true;
+    setUpdateProgress(null);
     setUpdateBusy('installing');
     setBusy('update-install');
     setUpdateFailure(null);
@@ -469,6 +476,7 @@ export function useDesktopRuntime(
     snapshot,
     update,
     updateBusy,
+    updateProgress,
     updateFailure,
     hosts,
     configuredHost,
