@@ -2074,6 +2074,13 @@ fn retry_delay_for_agent_failure(
             return delay;
         }
     }
+    // Matrix 限流时服务端会给 Retry-After；照它说的等，而不是盲目退避到上限。
+    if let AgentOnlineFailure::Matrix(matrix) = failure
+        && matrix.kind() == MatrixFailureKind::RateLimited
+        && let Some(retry_after) = matrix.retry_after()
+    {
+        return backoff.record_failure_after(retry_after);
+    }
     backoff.record_failure(retry_entropy())
 }
 
