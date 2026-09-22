@@ -13,5 +13,6 @@ pub mod ports;
 pub mod presence;
 pub mod presence_roster;
 pub mod reconnect;
+pub mod room_directory;
 pub mod session;
 pub mod status;

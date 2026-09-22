@@ -10,11 +10,13 @@ use agent_room_application::{
     },
     persistence::RepositoryErrorKind,
     ports::{RoomDirectory, RoomDirectoryQuery, SecretFactory},
+    private_rooms::{ListPrivateRoomsForAccount, PrivateRoomUseCases},
     public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryFailureKind, PublicLobbyEntryUseCases},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
+    private_rooms::PrivateRoomMembershipStatus,
     rooms::{RoomLanguage, RoomRegion},
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -50,6 +52,7 @@ pub(crate) struct LobbyHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
+    private_rooms: Arc<dyn PrivateRoomUseCases>,
 }
 
 pub(crate) struct LobbyHttpDependencies {
@@ -60,6 +63,7 @@ pub(crate) struct LobbyHttpDependencies {
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
+    pub(crate) private_rooms: Arc<dyn PrivateRoomUseCases>,
 }
 
 impl LobbyHttpState {
@@ -72,6 +76,7 @@ impl LobbyHttpState {
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
+            private_rooms: dependencies.private_rooms,
         }
     }
 }
@@ -79,6 +84,7 @@ impl LobbyHttpState {
 pub(crate) fn router(state: LobbyHttpState) -> Router {
     Router::new()
         .route("/lobbies/public", get(list_public_lobbies))
+        .route("/lobbies/accessible", get(list_accessible_rooms))
         .route(
             "/lobbies/{catalog_id}/observation",
             get(resolve_public_lobby_observation),
@@ -153,6 +159,104 @@ struct PublicLobbyObservationResponse {
     matrix_room: String,
 }
 
+/// 这台设备的账号能进的房间：公开大厅加上受邀或已加入的私人房间。Bridge 用它替 Agent
+/// 按名字解析房间，人就不必再从应用里复制房间参数。
+async fn list_accessible_rooms(
+    State(state): State<LobbyHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    const REQUEST_TARGET: &str = "/lobbies/accessible";
+    if !body.is_empty() {
+        return no_store(invalid_body(correlation_id).into_response());
+    }
+    let actor = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "GET",
+        REQUEST_TARGET,
+        "",
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let principal_id = actor.account.principal.id();
+    let public = match state
+        .directory
+        .list_public(&RoomDirectoryQuery::default())
+        .await
+    {
+        Ok(entries) => entries,
+        Err(error) => return no_store(directory_failure(&error, correlation_id)),
+    };
+    let private = match state
+        .private_rooms
+        .list_for_account(ListPrivateRoomsForAccount { principal_id })
+        .await
+    {
+        Ok(rooms) => rooms,
+        Err(failure) => {
+            return no_store(ApiError::private_room(failure, correlation_id).into_response());
+        }
+    };
+    let mut rooms: Vec<AccessibleRoomResponse> = public
+        .into_iter()
+        .map(|entry| AccessibleRoomResponse {
+            kind: "public_lobby",
+            catalog_id: entry.catalog.id().to_string(),
+            matrix_room_id: None,
+            name: entry.catalog.name().to_owned(),
+            slug: entry.catalog.slug().map(|slug| slug.as_str().to_owned()),
+            membership: None,
+        })
+        .collect();
+    rooms.extend(private.into_iter().map(|snapshot| {
+        AccessibleRoomResponse {
+            kind: "private_room",
+            catalog_id: snapshot.catalog().id().to_string(),
+            matrix_room_id: Some(snapshot.instance().matrix_room_id().as_str().to_owned()),
+            name: snapshot.catalog().name().to_owned(),
+            slug: None,
+            // 存储层只返回受邀或已加入的房间；其他状态不该出现，出现也不当成可进。
+            membership: snapshot.room().member(principal_id).and_then(|member| {
+                match member.status() {
+                    PrivateRoomMembershipStatus::Invited => Some("invited"),
+                    PrivateRoomMembershipStatus::Joined => Some("joined"),
+                    PrivateRoomMembershipStatus::Declined
+                    | PrivateRoomMembershipStatus::Removed
+                    | PrivateRoomMembershipStatus::Banned => None,
+                }
+            }),
+        }
+    }));
+    no_store(Json(AccessibleRoomsResponse { rooms }).into_response())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibleRoomsResponse {
+    rooms: Vec<AccessibleRoomResponse>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibleRoomResponse {
+    kind: &'static str,
+    catalog_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matrix_room_id: Option<String>,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    membership: Option<&'static str>,
+}
+
 async fn list_public_lobbies(
     State(state): State<LobbyHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -182,41 +286,44 @@ async fn list_public_lobbies(
             })
             .into_response(),
         ),
-        Err(error) => {
-            let (status, code, category) = match error.kind() {
-                RepositoryErrorKind::Unavailable => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "lobby.directory_unavailable",
-                    ErrorCategory::DependencyUnavailable,
-                ),
-                RepositoryErrorKind::Forbidden
-                | RepositoryErrorKind::NotFound
-                | RepositoryErrorKind::Conflict
-                | RepositoryErrorKind::Constraint
-                | RepositoryErrorKind::CorruptData => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "lobby.directory_internal",
-                    ErrorCategory::Transient,
-                ),
-            };
-            tracing::warn!(
-                correlation.id = %correlation_id.as_uuid(),
-                operation = error.operation(),
-                failure = ?error.kind(),
-                "公开大厅目录读取失败"
-            );
-            no_store(
-                ApiError::new(
-                    status,
-                    code,
-                    category,
-                    "公开大厅目录暂时不可用。",
-                    correlation_id,
-                )
-                .into_response(),
-            )
-        }
+        Err(error) => no_store(directory_failure(&error, correlation_id)),
     }
+}
+
+fn directory_failure(
+    error: &agent_room_application::persistence::RepositoryError,
+    correlation_id: CorrelationId,
+) -> Response {
+    let (status, code, category) = match error.kind() {
+        RepositoryErrorKind::Unavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "lobby.directory_unavailable",
+            ErrorCategory::DependencyUnavailable,
+        ),
+        RepositoryErrorKind::Forbidden
+        | RepositoryErrorKind::NotFound
+        | RepositoryErrorKind::Conflict
+        | RepositoryErrorKind::Constraint
+        | RepositoryErrorKind::CorruptData => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lobby.directory_internal",
+            ErrorCategory::Transient,
+        ),
+    };
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        operation = error.operation(),
+        failure = ?error.kind(),
+        "公开大厅目录读取失败"
+    );
+    ApiError::new(
+        status,
+        code,
+        category,
+        "公开大厅目录暂时不可用。",
+        correlation_id,
+    )
+    .into_response()
 }
 
 async fn resolve_public_lobby_observation(
@@ -486,9 +593,11 @@ mod tests {
         lobby_observation::PublicLobbyObservationService,
         persistence::RepositoryResult,
         ports::{
-            PortFuture, PrincipalAccount, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
-            RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+            PortFuture, PrincipalAccount, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
+            PublicLobbyObservationRoom, RoomDirectory, RoomDirectoryQuery, SecretFactory,
+            SecretValue,
         },
+        private_rooms::{ListPrivateRoomsForAccount, PrivateRoomResult, PrivateRoomUseCases},
         public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryResult, PublicLobbyEntryUseCases},
         rooms::{EnterLobbyOutcome, LobbyJoinKind},
     };
@@ -526,6 +635,7 @@ mod tests {
     const ROOM_INSTANCE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
     const RESERVATION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
 
+    #[derive(Default)]
     struct FakeEntries {
         request: Mutex<Option<EnterAgentLobby>>,
         outcome: Mutex<Option<AgentLobbyEntryResult<EnterLobbyOutcome>>>,
@@ -666,6 +776,8 @@ mod tests {
     struct FakeDevices {
         authentications: AtomicUsize,
         expected_body: Mutex<Option<String>>,
+        /// 默认核对大厅进入请求；列房间的测试改成 GET 与它自己的路径。
+        expected_request: Mutex<Option<(String, String)>>,
     }
 
     impl DeviceAuthorizationUseCases for FakeDevices {
@@ -685,8 +797,14 @@ mod tests {
             assert_eq!(request.proof.device_id(), device_id());
             assert_eq!(request.proof.issued_at(), time(1_700_000_000_000));
             assert_eq!(request.proof.nonce().expose(), "nonce-0123456789abcdef");
-            assert_eq!(request.proof.method(), "POST");
-            assert_eq!(request.proof.request_target(), request_target());
+            let (method, target) = self
+                .expected_request
+                .lock()
+                .expect("设备请求目标记录锁可用")
+                .clone()
+                .unwrap_or_else(|| ("POST".to_owned(), request_target()));
+            assert_eq!(request.proof.method(), method);
+            assert_eq!(request.proof.request_target(), target);
             let expected_body = self
                 .expected_body
                 .lock()
@@ -793,6 +911,69 @@ mod tests {
                 .as_str(),
             "ap-southeast"
         );
+    }
+
+    #[tokio::test]
+    async fn 已认证设备能列出账号可进的房间_公开大厅加受邀私人房间() {
+        let entries = Arc::new(FakeEntries::default());
+        let devices = Arc::new(FakeDevices::default());
+        *devices
+            .expected_request
+            .lock()
+            .expect("设备请求目标记录锁可用") =
+            Some(("GET".to_owned(), "/lobbies/accessible".to_owned()));
+        *devices
+            .expected_body
+            .lock()
+            .expect("设备请求正文记录锁可用") = Some(String::new());
+        let app = test_router(entries, devices.clone());
+        let mut request = Request::builder()
+            .method("GET")
+            .uri("/lobbies/accessible")
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .header("x-agent-room-device-id", DEVICE_UUID)
+            .header("x-agent-room-proof-issued-at", "1700000000000")
+            .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+            .header(
+                "x-agent-room-proof-signature",
+                URL_SAFE_NO_PAD.encode([9_u8; 64]),
+            )
+            .body(Body::empty())
+            .expect("列房间请求有效");
+        request.headers_mut().remove(header::CONTENT_TYPE);
+        let response = app.oneshot(request).await.expect("列房间可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+        let body = response_json(response).await;
+        // 假目录没有公开大厅；设备账号名下的私人房间带名字、Matrix 房间与成员状态。
+        assert_eq!(
+            body,
+            json!({
+                "rooms": [{
+                    "kind": "private_room",
+                    "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e46",
+                    "matrixRoomId": "!private:matrix.agent-room.test",
+                    "name": "Incident Room",
+                    "membership": "joined"
+                }]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn 未签名的列房间请求被拒绝且不触碰目录() {
+        let devices = Arc::new(FakeDevices::default());
+        let app = test_router(Arc::new(FakeEntries::default()), devices.clone());
+        let request = Request::builder()
+            .method("GET")
+            .uri("/lobbies/accessible")
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .body(Body::empty())
+            .expect("缺证明的请求可构造");
+        let response = app.oneshot(request).await.expect("请求可调用");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -947,8 +1128,108 @@ mod tests {
             authentication: Arc::new(FakeAuthentication),
             devices,
             secrets: Arc::new(SecureSecretFactory),
+            private_rooms: Arc::new(FakePrivateRooms),
         });
         router(state).layer(middleware::from_fn(crate::correlation::attach))
+    }
+
+    /// 只回答「这个账号能进哪些私人房间」；其他用例不该被大厅路由碰到。
+    struct FakePrivateRooms;
+
+    impl PrivateRoomUseCases for FakePrivateRooms {
+        fn create(
+            &self,
+            _request: agent_room_application::private_rooms::CreatePrivateRoom,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不创建私人房间")
+        }
+
+        fn inspect(
+            &self,
+            _request: agent_room_application::private_rooms::InspectPrivateRoom,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不查看单个私人房间")
+        }
+
+        fn list(
+            &self,
+            _request: agent_room_application::private_rooms::ListPrivateRooms,
+        ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+            unreachable!("大厅路由不以人的会话列房间")
+        }
+
+        fn list_for_account(
+            &self,
+            request: ListPrivateRoomsForAccount,
+        ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+            // 设备账号就是这间房的房主（两个夹具共用同一个主体）。
+            assert_eq!(request.principal_id, principal_id());
+            let owned = crate::features::private_rooms::tests::snapshot();
+            Box::pin(async move { Ok(vec![owned]) })
+        }
+
+        fn invite(
+            &self,
+            _request: agent_room_application::private_rooms::InvitePrivateRoomMember,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不邀请成员")
+        }
+
+        fn accept(
+            &self,
+            _request: agent_room_application::private_rooms::PrivateRoomMembershipAction,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不接受邀请")
+        }
+
+        fn decline(
+            &self,
+            _request: agent_room_application::private_rooms::PrivateRoomMembershipAction,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不拒绝邀请")
+        }
+
+        fn leave(
+            &self,
+            _request: agent_room_application::private_rooms::PrivateRoomMembershipAction,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不退出房间")
+        }
+
+        fn remove(
+            &self,
+            _request: agent_room_application::private_rooms::GovernPrivateRoomMember,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不移除成员")
+        }
+
+        fn ban(
+            &self,
+            _request: agent_room_application::private_rooms::GovernPrivateRoomMember,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不封禁成员")
+        }
+
+        fn update_permissions(
+            &self,
+            _request: agent_room_application::private_rooms::ChangePrivateRoomPermissions,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不改权限")
+        }
+
+        fn transfer_ownership(
+            &self,
+            _request: agent_room_application::private_rooms::TransferPrivateRoomOwnership,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不转让所有权")
+        }
+
+        fn archive(
+            &self,
+            _request: agent_room_application::private_rooms::ArchivePrivateRoom,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不归档房间")
+        }
     }
 
     fn entry_request(body: &str, include_proof: bool) -> Request<Body> {

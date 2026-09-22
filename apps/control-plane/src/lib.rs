@@ -711,6 +711,7 @@ fn build_agent_collaboration_http_states(
             authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
+            private_rooms: private_rooms.clone(),
         }),
         private_rooms: PrivateRoomHttpState::new(
             private_rooms,

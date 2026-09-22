@@ -515,3 +515,92 @@ async fn 登记仅保存本任务资料且不会改变身份或自动发送() {
     assert_eq!(identity(&registry, &id).await, summary);
     registry.shutdown().await;
 }
+
+/// 可进房间目录：CLI/MCP 在开会话之前就能按名字解析房间。
+struct DirectoryFake {
+    rooms: Vec<AccessibleRoom>,
+}
+
+impl ControlPlaneRoomDirectoryGateway for DirectoryFake {
+    fn list_accessible(
+        &self,
+    ) -> PortFuture<
+        '_,
+        agent_room_bridge_core::room_directory::RoomDirectoryResult<Vec<AccessibleRoom>>,
+    > {
+        let rooms = self.rooms.clone();
+        Box::pin(async move { Ok(rooms) })
+    }
+}
+
+struct RefusingHandler;
+
+impl BridgeIpcRequestHandler for RefusingHandler {
+    fn dispatch(&self, _method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
+        Box::pin(async { Err(session_failure("bridge.test.unexpected_default", false)) })
+    }
+}
+
+struct ReadyStatus;
+
+impl crate::ipc::BridgeStatusReader for ReadyStatus {
+    fn read_status(&self) -> crate::ipc::BridgeStatusSnapshot {
+        crate::ipc::BridgeStatusSnapshot {
+            state: IpcBridgeState::Ready,
+            started_at_unix_ms: 1,
+        }
+    }
+}
+
+#[tokio::test]
+async fn 列房间不需要会话_公开大厅与私人房间都按目录原样返回() {
+    let catalog = agent_room_domain::ids::RoomCatalogId::from_uuid(Uuid::now_v7());
+    let handler = SessionAwareIpcHandler {
+        default: Arc::new(RefusingHandler),
+        sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
+        connection_status: Arc::new(ReadyStatus),
+        room_directory: Arc::new(DirectoryFake {
+            rooms: vec![
+                AccessibleRoom {
+                    kind: AccessibleRoomKind::PublicLobby,
+                    catalog_id: catalog,
+                    matrix_room_id: None,
+                    name: "Lobby".to_owned(),
+                    slug: Some("lobby".to_owned()),
+                    membership: None,
+                },
+                AccessibleRoom {
+                    kind: AccessibleRoomKind::PrivateRoom,
+                    catalog_id: catalog,
+                    matrix_room_id: Some(
+                        agent_room_domain::rooms::MatrixRoomReference::new(
+                            "!private:matrix.test".to_owned(),
+                        )
+                        .expect("Matrix 房间标识有效"),
+                    ),
+                    name: "game dev".to_owned(),
+                    slug: None,
+                    membership: Some(AccessibleRoomMembership::Joined),
+                },
+            ],
+        }),
+    };
+
+    let response = handler
+        .dispatch(IpcMethod::ListRooms)
+        .await
+        .expect("目录可读");
+    let IpcResponse::Rooms { rooms } = response else {
+        panic!("应返回房间列表");
+    };
+    assert_eq!(rooms.len(), 2);
+    assert_eq!(rooms[0].kind, IpcRoomKind::PublicLobby);
+    assert_eq!(rooms[0].slug.as_deref(), Some("lobby"));
+    assert_eq!(rooms[1].kind, IpcRoomKind::PrivateRoom);
+    assert_eq!(
+        rooms[1].matrix_room_id.as_deref(),
+        Some("!private:matrix.test")
+    );
+    assert_eq!(rooms[1].membership, Some(IpcRoomMembership::Joined));
+    assert_eq!(rooms[1].catalog_id, catalog.to_string());
+}

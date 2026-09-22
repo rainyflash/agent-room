@@ -646,6 +646,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::BridgeStatus { .. } => "bridge_status",
         IpcResponse::HostSessionDiagnostics { .. } => "host_session_diagnostics",
         IpcResponse::SelfSummary { .. } => "self_summary",
+        IpcResponse::Rooms { .. } => "rooms",
         IpcResponse::MessagePreviews { .. } => "message_previews",
         IpcResponse::Presence { .. } => "presence",
         IpcResponse::OpenedContent { .. } => "opened_content",

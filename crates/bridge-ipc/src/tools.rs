@@ -17,6 +17,8 @@ pub enum IpcMethod {
         method: Box<IpcMethod>,
     },
     GetSelf,
+    /// 这台设备的账号能进的房间，供 CLI/MCP 按名字解析房间；不需要先开会话。
+    ListRooms,
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -49,6 +51,7 @@ impl IpcMethod {
             Self::CloseHostSession(_) => "close_host_session",
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
+            Self::ListRooms => "list_rooms",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -81,7 +84,7 @@ impl IpcMethod {
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
             Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
-            Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) => {
+            Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) | Self::ListRooms => {
                 IpcScope::PreviewsRead
             }
             Self::GetPresence(_) => IpcScope::PresenceRead,
@@ -104,6 +107,7 @@ impl IpcMethod {
         match self {
             Self::BridgeStatus
             | Self::GetSelf
+            | Self::ListRooms
             | Self::ListRecoverySessions
             | Self::HostSessionDiagnostics => Ok(()),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
@@ -133,6 +137,7 @@ impl IpcMethod {
                         | Self::BridgeStatus
                         | Self::HostSessionDiagnostics
                         | Self::ListRecoverySessions
+                        | Self::ListRooms
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -490,6 +495,9 @@ pub enum IpcResponse {
     SelfSummary {
         summary: IpcSelfSummary,
     },
+    Rooms {
+        rooms: Vec<IpcRoomSummary>,
+    },
     DefaultAgentBootstrap {
         bootstrap: IpcDefaultAgentBootstrap,
     },
@@ -543,6 +551,35 @@ pub struct IpcDefaultAgentBootstrap {
     pub display_name: String,
     pub public_lobby_catalog_id: String,
     pub lobby_language: Option<String>,
+}
+
+/// 账号能进的一个房间：公开大厅只有目录，私人房间还带 Matrix 房间与成员状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcRoomSummary {
+    pub kind: IpcRoomKind,
+    pub catalog_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix_room_id: Option<String>,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<IpcRoomMembership>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcRoomKind {
+    PublicLobby,
+    PrivateRoom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcRoomMembership {
+    Invited,
+    Joined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

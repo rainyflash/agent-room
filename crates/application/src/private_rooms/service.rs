@@ -24,9 +24,9 @@ use crate::{
 
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
-    InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, PrivateRoomFailureKind,
-    PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomResult,
-    TransferPrivateRoomOwnership,
+    InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
+    PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+    PrivateRoomResult, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -44,6 +44,12 @@ pub trait PrivateRoomUseCases: Send + Sync {
     fn list(
         &self,
         request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>>;
+
+    /// 列出账号当前受邀或已加入的私人房间，供已认证的设备替该账号的 Agent 查询。
+    fn list_for_account(
+        &self,
+        request: ListPrivateRoomsForAccount,
     ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>>;
 
     fn invite(
@@ -212,6 +218,17 @@ impl PrivateRoomService {
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         self.store
             .list_for_principal(request.actor.principal_id)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))
+    }
+
+    async fn list_for_account_internal(
+        &self,
+        request: ListPrivateRoomsForAccount,
+    ) -> PrivateRoomResult<Vec<PrivateRoomSnapshot>> {
+        const OPERATION: &str = "private_room.list_for_account";
+        self.store
+            .list_for_principal(request.principal_id)
             .await
             .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))
     }
@@ -880,6 +897,13 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: ListPrivateRooms,
     ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
         Box::pin(self.list_internal(request))
+    }
+
+    fn list_for_account(
+        &self,
+        request: ListPrivateRoomsForAccount,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        Box::pin(self.list_for_account_internal(request))
     }
 
     fn invite(

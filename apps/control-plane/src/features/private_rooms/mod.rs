@@ -2,7 +2,7 @@ mod handlers;
 mod models;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::sync::Arc;
 
