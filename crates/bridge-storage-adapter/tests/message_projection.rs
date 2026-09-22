@@ -47,6 +47,8 @@ const OTHER_INSTANCE_ID: &str = "01945c1e-7b5a-7c7f-8a28-2de53f56a9b4";
 #[tokio::test]
 async fn 重复同步不制造序号空洞且客户端时间不能改写到达顺序() {
     let (_temporary, store, inspector) = open_store().await;
+    // 从未同步过时没有游标，Bridge 只能全量同步。
+    assert_eq!(store.sync_cursor().await.expect("游标可读"), None);
     let first_message_id = MessageId::from_uuid(Uuid::now_v7());
     let second_message_id = MessageId::from_uuid(Uuid::now_v7());
     let batch = MessageProjectionBatch::new(
@@ -122,6 +124,16 @@ async fn 重复同步不制造序号空洞且客户端时间不能改写到达�
         1
     );
     assert_eq!(current_cursor(&inspector).await.as_deref(), Some("sync-1"));
+    // 重启后从这个游标接着同步，而不是重新全量同步只拿最近几十条。
+    assert_eq!(
+        store
+            .sync_cursor()
+            .await
+            .expect("游标可读")
+            .as_ref()
+            .map(MatrixSyncToken::as_str),
+        Some("sync-1")
+    );
 }
 
 #[tokio::test]

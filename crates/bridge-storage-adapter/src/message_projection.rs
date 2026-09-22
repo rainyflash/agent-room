@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use agent_room_application::ports::{MatrixEventId, MatrixRoomId, PortFuture};
+use agent_room_application::ports::{MatrixEventId, MatrixRoomId, MatrixSyncToken, PortFuture};
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
     MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch,
@@ -83,6 +83,27 @@ impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
         batch: &'a MessageProjectionBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
         Box::pin(async move { self.apply_batch(batch).await })
+    }
+
+    fn sync_cursor(
+        &self,
+    ) -> PortFuture<'_, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
+        Box::pin(async move {
+            let stored: Option<String> =
+                sqlx::query_scalar("SELECT next_batch FROM message_sync_state WHERE singleton = 1")
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|error| map_sqlx_error(&error))?;
+            stored
+                .map(|value| {
+                    MatrixSyncToken::new(value).map_err(|_| {
+                        MessageProjectionStoreFailure::new(
+                            MessageProjectionStoreFailureKind::Corrupt,
+                        )
+                    })
+                })
+                .transpose()
+        })
     }
 }
 

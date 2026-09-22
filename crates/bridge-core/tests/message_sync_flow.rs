@@ -92,6 +92,18 @@ impl MessageTimelineProjectionStore for 记录投影存储 {
             .push(batch.clone());
         Box::pin(async { Ok(()) })
     }
+
+    fn sync_cursor(
+        &self,
+    ) -> PortFuture<'_, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
+        let cursor = self
+            .batches
+            .lock()
+            .expect("投影记录锁可用")
+            .last()
+            .map(|batch| batch.next_batch().clone());
+        Box::pin(async move { Ok(cursor) })
+    }
 }
 
 #[derive(Default)]
@@ -440,6 +452,34 @@ async fn 解不开的加密事件留下记录而不是悄悄跳过() {
     assert_eq!(
         batches[0].issues()[0].reason,
         MessageSyncIssueReason::Undecryptable
+    );
+}
+
+#[tokio::test]
+async fn 处理过的批次留下游标供重启后接着同步() {
+    let fixture = 测试夹具::new();
+    let service = fixture.service();
+    assert_eq!(service.stored_cursor().await.expect("游标可读"), None);
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("resume-here").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )],
+    );
+    service.process(&sync).await.expect("空批次可处理");
+    assert_eq!(
+        service
+            .stored_cursor()
+            .await
+            .expect("游标可读")
+            .as_ref()
+            .map(MatrixSyncToken::as_str),
+        Some("resume-here")
     );
 }
 
