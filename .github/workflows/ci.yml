@@ -144,9 +144,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  changes:
+    name: 变更范围
+    # 只改文档的 PR 走快速路径；推送与派发永远完整运行。判断失败时按有代码改动处理。
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          fetch-depth: 2
+      - name: 判断是否只改了文档
+        id: scope
+        run: python tools/ci_change_scope.py
+
   quality:
     name: 格式、类型与测试
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
+    # 只改文档的 PR 也照常运行并报告这个必需检查，只跳过下面标了 docs_only 的编译与测试步骤。
+    # changes 失败时 docs_only 为空，照常完整运行。
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -157,8 +176,10 @@ jobs:
         with:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
+        if: needs.changes.outputs.docs_only != 'true'
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
       - name: 恢复 Linux 质量门编译缓存
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:
           shared-key: linux-quality
@@ -166,6 +187,7 @@ jobs:
           # 发布派发会取消同一提交的 push 运行，只按 push 保存会让 main 缓存长期停留在旧锁文件上。
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: 安装 Linux 桌面编译依赖
+        if: needs.changes.outputs.docs_only != 'true'
         run: bash tools/install-linux-desktop-deps.sh
       - name: 安装 Node 依赖
         run: corepack pnpm@10.28.0 install --frozen-lockfile
@@ -174,33 +196,45 @@ jobs:
         # 放在 Cargo 编译之前：它们不带 --locked，可能就地改写 Cargo.lock，之后再查就不是提交里的原样。
         run: python tools/license_inventory.py check
       - name: 检查 Rust 格式
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo fmt --all --check
       - name: 检查 Rust 静态规则
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: 运行 Rust 测试
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo test --workspace --all-features
-      - name: 检查 TypeScript 与格式
-        run: corepack pnpm@10.28.0 format:check && corepack pnpm@10.28.0 lint && corepack pnpm@10.28.0 typecheck
+      - name: 检查格式
+        run: corepack pnpm@10.28.0 format:check
+      - name: 检查 TypeScript
+        if: needs.changes.outputs.docs_only != 'true'
+        run: corepack pnpm@10.28.0 lint && corepack pnpm@10.28.0 typecheck
       - name: 构建 TypeScript 生产产物
+        if: needs.changes.outputs.docs_only != 'true'
         run: corepack pnpm@10.28.0 build
       - name: 运行 TypeScript 测试
+        if: needs.changes.outputs.docs_only != 'true'
         run: corepack pnpm@10.28.0 test
       - name: 运行 Python 工具测试
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
       - name: 验证开发与打包入口不会越过失败检查
+        if: needs.changes.outputs.docs_only != 'true'
         run: node --test tools/tests/desktop-workflow.node-test.mjs
       - name: 检查凭据泄漏
         run: node tools/check-secrets.mjs --self-test && corepack pnpm@10.28.0 secrets:check
       - name: 验证 TypeScript 覆盖率
+        if: needs.changes.outputs.docs_only != 'true'
         run: corepack pnpm@10.28.0 test:coverage
       - name: 检查协议生成物
+        if: needs.changes.outputs.docs_only != 'true'
         run: corepack pnpm@10.28.0 protocol:check
       - name: 检查 Action 固定策略
         run: corepack pnpm@10.28.0 actions:check
 
   windows-runtime:
     name: Windows 客户端运行时原生检查
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all') && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -232,7 +266,8 @@ jobs:
   web-browser:
     name: Web 真实浏览器验收
     # 浏览器验收不依赖 Rust 检查的产物；不再串行等待 quality，PR 反馈可提前约 11 分钟。
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite == 'all' }}
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all') && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
