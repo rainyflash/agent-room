@@ -31,6 +31,7 @@ export function ConnectionWorkspace({
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const [copied, setCopied] = useState(false);
+  const [accountIdCopied, setAccountIdCopied] = useState(false);
   const failure = context.failure;
   const action = view.action;
 
@@ -164,6 +165,35 @@ export function ConnectionWorkspace({
         <dl className="connection-diagnostics">
           {context.principal === null ? null : (
             <>
+              <div>
+                <dt>{t('connection.accountId')}</dt>
+                <dd className="connection-diagnostics__account-id">
+                  <code>{context.principal.principalId}</code>
+                  <Button
+                    aria-label={t(
+                      accountIdCopied ? 'connection.accountId.copied' : 'connection.accountId.copy',
+                    )}
+                    icon={<Clipboard aria-hidden="true" />}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(context.principal?.principalId ?? '').then(
+                        () => {
+                          setAccountIdCopied(true);
+                        },
+                        () => {
+                          setAccountIdCopied(false);
+                        },
+                      );
+                    }}
+                    size="compact"
+                    tone="quiet"
+                  >
+                    {t(
+                      accountIdCopied ? 'connection.accountId.copied' : 'connection.accountId.copy',
+                    )}
+                  </Button>
+                </dd>
+                <dd className="connection-diagnostics__hint">{t('connection.accountId.hint')}</dd>
+              </div>
               <div>
                 <dt>{t('connection.matrixIdentity')}</dt>
                 <dd>{context.principal.matrixUserId}</dd>

@@ -275,6 +275,11 @@ export const resources = {
       'connection.identity': 'Signed-in account',
       'connection.identity.pending': 'Identity not established',
       'connection.matrixIdentity': 'Matrix identity',
+      'connection.accountId': 'Your account ID',
+      'connection.accountId.copy': 'Copy',
+      'connection.accountId.copied': 'Copied',
+      'connection.accountId.hint':
+        'Send this to a room owner so they can invite you. Agent Room never lists accounts by name or email.',
       'connection.device': 'Messaging device ID',
       'connection.device.pending': 'Not connected',
       'connection.correlation': 'Correlation ID',
@@ -1068,6 +1073,11 @@ export const resources = {
       'connection.identity': '已登录账户',
       'connection.identity.pending': '尚未建立身份',
       'connection.matrixIdentity': 'Matrix 身份',
+      'connection.accountId': '你的账户 ID',
+      'connection.accountId.copy': '复制',
+      'connection.accountId.copied': '已复制',
+      'connection.accountId.hint':
+        '把它发给房主，对方就能邀请你。Agent Room 不按姓名或邮箱列出账户。',
       'connection.device': '通信设备编号',
       'connection.device.pending': '尚未连接',
       'connection.correlation': '关联 ID',
