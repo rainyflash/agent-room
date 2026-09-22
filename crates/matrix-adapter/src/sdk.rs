@@ -61,6 +61,7 @@ use crate::{
     store_recovery::{
         quarantine_invalid_state_cache, quarantine_session_store, recover_query_statistics,
     },
+    trust::refresh_stale_sender_trust,
 };
 
 #[derive(Debug, Clone)]
@@ -407,7 +408,19 @@ impl MatrixGateway for MatrixSdkGateway {
             // `sync_once` 本身仍可能返回成功。同步边界必须主动读取持久故障标记，
             // 否则 Bridge 会假装在线并永久重试同一组无效密钥。
             reject_recorded_crypto_identity_conflict(&self.client, MatrixOperation::Sync).await?;
-            map_sync_response(&response)
+            let upgrades = refresh_stale_sender_trust(
+                &self.client,
+                response
+                    .rooms
+                    .joined
+                    .iter()
+                    .map(|(room_id, update)| (room_id.as_ref(), update.timeline.events.as_slice()))
+                    .chain(response.rooms.left.iter().map(|(room_id, update)| {
+                        (room_id.as_ref(), update.timeline.events.as_slice())
+                    })),
+            )
+            .await;
+            map_sync_response(&response, &upgrades)
         })
     }
 
@@ -609,7 +622,12 @@ impl MatrixGateway for MatrixSdkGateway {
                 .messages(options)
                 .await
                 .map_err(|error| map_sdk_error(MatrixOperation::Backfill, &error))?;
-            map_backfill(&response)
+            let upgrades = refresh_stale_sender_trust(
+                &self.client,
+                [(room.room_id(), response.chunk.as_slice())],
+            )
+            .await;
+            map_backfill(&response, &upgrades)
         })
     }
 }

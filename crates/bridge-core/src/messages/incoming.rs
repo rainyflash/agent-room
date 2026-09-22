@@ -163,6 +163,15 @@ impl MessageSyncService {
                 });
             }
             for event in room.timeline() {
+                if event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE {
+                    // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是发送方扣下了房间密钥。
+                    issues.push(issue(
+                        room.room_id(),
+                        event,
+                        MessageSyncIssueReason::Undecryptable,
+                    ));
+                    continue;
+                }
                 if !is_message_event(event) {
                     continue;
                 }
@@ -744,6 +753,9 @@ fn bounded_object(
         Err(MessageSyncIssueReason::InvalidEnvelope)
     }
 }
+
+/// SDK 解不开时保留的原始事件类型。
+const UNDECRYPTED_EVENT_TYPE: &str = "m.room.encrypted";
 
 fn is_message_event(event: &MatrixTimelineEvent) -> bool {
     matches!(

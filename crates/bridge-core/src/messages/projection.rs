@@ -179,6 +179,8 @@ pub enum MessageSyncIssueReason {
     InvalidSignature,
     OutsideInstanceValidityWindow,
     UntrustedEncryptedSender,
+    /// 没拿到房间密钥（或被扣下）而解不开的加密事件。正文不可见，只留记录供排查。
+    Undecryptable,
 }
 
 impl MessageSyncIssueReason {
@@ -194,6 +196,7 @@ impl MessageSyncIssueReason {
             Self::InvalidSignature => "invalid_signature",
             Self::OutsideInstanceValidityWindow => "outside_instance_validity_window",
             Self::UntrustedEncryptedSender => "untrusted_encrypted_sender",
+            Self::Undecryptable => "undecryptable",
         }
     }
 }

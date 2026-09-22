@@ -403,6 +403,46 @@ async fn 未可信设备的加密房间消息在应用验签前被隔离() {
     );
 }
 
+#[tokio::test]
+async fn 解不开的加密事件留下记录而不是悄悄跳过() {
+    let fixture = 测试夹具::new();
+    let event = timeline_event(
+        "$undecryptable:matrix.test",
+        "m.room.encrypted",
+        json!({
+            "algorithm": "m.megolm.v1.aes-sha2",
+            "ciphertext": "opaque",
+            "session_id": "withheld-session",
+        }),
+        None,
+    );
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("undecryptable-sync").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![event],
+            Vec::new(),
+        )],
+    );
+
+    let outcome = fixture
+        .service()
+        .process(&sync)
+        .await
+        .expect("解不开的事件应被记录");
+
+    assert_eq!(outcome.accepted_events, 0);
+    assert_eq!(outcome.isolated_events, 1);
+    let batches = fixture.projections.batches.lock().expect("投影记录锁可用");
+    assert_eq!(
+        batches[0].issues()[0].reason,
+        MessageSyncIssueReason::Undecryptable
+    );
+}
+
 fn mixed_sync(fixture: &测试夹具, message_id: Uuid, reply_target: Uuid) -> MatrixSyncBatch {
     let room_id = room_id();
     let preview = signed_timeline_event(
