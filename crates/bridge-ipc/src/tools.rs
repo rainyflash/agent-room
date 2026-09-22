@@ -479,6 +479,13 @@ pub enum IpcResponse {
         state: IpcBridgeState,
         #[serde(rename = "startedAtUnixMs")]
         started_at_unix_ms: i64,
+        /// 离线时 Bridge 自己判定的原因码，桌面端据此说明为什么停了。
+        #[serde(
+            rename = "failureCode",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        failure_code: Option<String>,
     },
     SelfSummary {
         summary: IpcSelfSummary,

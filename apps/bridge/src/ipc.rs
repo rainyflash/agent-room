@@ -226,6 +226,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     Ok(IpcResponse::BridgeStatus {
                         state: status.state,
                         started_at_unix_ms: status.started_at_unix_ms,
+                        failure_code: (status.state == IpcBridgeState::Offline)
+                            .then(|| self.status_reader.failure_code().map(str::to_owned))
+                            .flatten(),
                     })
                 }
                 IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
@@ -2435,6 +2438,7 @@ mod tests {
                 result: IpcResponse::BridgeStatus {
                     state: agent_room_bridge_ipc::IpcBridgeState::Ready,
                     started_at_unix_ms: 1_000,
+                    failure_code: None,
                 },
             }
         );

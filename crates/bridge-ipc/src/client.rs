@@ -484,6 +484,7 @@ mod tests {
             IpcResponse::BridgeStatus {
                 state: IpcBridgeState::Ready,
                 started_at_unix_ms: 1_000,
+                failure_code: None,
             }
         );
         server.await.expect("脚本服务端未崩溃");
@@ -623,6 +624,7 @@ mod tests {
                 result: IpcResponse::BridgeStatus {
                     state: IpcBridgeState::Ready,
                     started_at_unix_ms: 1_000,
+                    failure_code: None,
                 },
             },
         )

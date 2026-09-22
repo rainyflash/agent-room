@@ -1744,7 +1744,7 @@ async fn maintain_device_session(
                 return;
             }
             Err(failure) => {
-                status.mark_fatal();
+                status.mark_session_failure(failure);
                 tracing::error!(
                     operation = failure.operation(),
                     failure_kind = ?failure.kind(),
@@ -2114,6 +2114,13 @@ impl BridgeRuntimeStatus {
     fn mark_agent_failure(&self, failure: AgentOnlineFailure) {
         self.fatal_code
             .get_or_init(|| BridgeRuntimeError::agent_online(failure).code());
+    }
+
+    /// 设备会话本身失败：整个 Bridge 离线，并记下原因码让桌面端能说明。
+    fn mark_session_failure(&self, failure: BridgeSessionFailure) {
+        self.fatal_code
+            .get_or_init(|| BridgeRuntimeError::session(failure).code());
+        self.mark_fatal();
     }
 
     fn mark_shutting_down(&self) {
