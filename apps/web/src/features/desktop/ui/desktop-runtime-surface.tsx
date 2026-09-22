@@ -27,6 +27,7 @@ import { applicationVersion } from '@/features/updates/domain/runtime-manifest';
 import {
   authorizationFailureMessage,
   desktopPhaseLabel,
+  haltReasonMessage,
   hostFailureMessage,
 } from '@/features/desktop/domain/desktop-connection';
 import { LocalConnectionNotice } from './local-connection-notice';
@@ -168,7 +169,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                     {t(
                       authorizationFailed
                         ? authorizationFailureDescription
-                        : 'desktop.halted.description',
+                        : haltReasonMessage(controller.snapshot?.bridge.lifecycle.diagnosticCode),
                     )}
                   </p>
                   <code>{controller.snapshot?.bridge.lifecycle.diagnosticCode}</code>

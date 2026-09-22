@@ -546,6 +546,10 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                     Ok(IpcResponse::BridgeStatus {
                         state: status.state,
                         started_at_unix_ms: status.started_at_unix_ms,
+                        failure_code: (status.state
+                            == agent_room_bridge_ipc::IpcBridgeState::Offline)
+                            .then(|| self.connection_status.failure_code().map(str::to_owned))
+                            .flatten(),
                     })
                 }
                 IpcMethod::HostSessionDiagnostics => Ok(self.sessions.diagnostics().await),

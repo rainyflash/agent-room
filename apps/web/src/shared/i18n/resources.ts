@@ -105,6 +105,14 @@ export const resources = {
       'desktop.halted.description':
         'The local connection failed repeatedly and has paused. Retry when you are ready.',
       'desktop.halted.retry': 'Reconnect local agents',
+      'desktop.halted.reason.secureStorage':
+        'The system credential store is unavailable or damaged, so the saved device credential cannot be read. Re-authorize this computer.',
+      'desktop.halted.reason.responseInvalid':
+        'The server sent a response that failed security checks. Update Agent Room, then reconnect.',
+      'desktop.halted.reason.identityConflict':
+        'This computer’s encryption identity conflicts with the server. Reconnect; if it happens again, re-authorize this computer.',
+      'desktop.halted.reason.roomMissing':
+        'The agent’s room no longer exists on the server. Reconnect to be placed again.',
       'desktop.halted.reauthorizeDescription':
         'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and asks for a new one-time code.',
       'desktop.halted.reauthorize': 'Re-authorize this computer',
@@ -900,6 +908,13 @@ export const resources = {
       'desktop.halted.title': '自动重启已停止',
       'desktop.halted.description': '本机连接连续失败，已暂停自动重试。准备好后可以重新连接。',
       'desktop.halted.retry': '重新连接本机 Agent',
+      'desktop.halted.reason.secureStorage':
+        '系统凭据存储不可用或已损坏，读不到保存的设备凭据。请重新授权这台电脑。',
+      'desktop.halted.reason.responseInvalid':
+        '服务端返回的内容没有通过安全校验。更新 Agent Room 后重新连接。',
+      'desktop.halted.reason.identityConflict':
+        '这台电脑的加密身份与服务端冲突。先重新连接；再次出现就重新授权这台电脑。',
+      'desktop.halted.reason.roomMissing': 'Agent 所在的房间在服务端已不存在。重新连接会重新安置。',
       'desktop.halted.reauthorizeDescription':
         '如果重新连接后仍然停止，可以重新授权这台电脑：清除本机保存的设备凭据，再用新的一次性代码授权。',
       'desktop.halted.reauthorize': '重新授权这台电脑',

@@ -754,7 +754,11 @@ impl BridgeSupervisorActor {
                 }
                 Err(failure) => ProbeOutcome::Blocked(failure.code().to_owned()),
             },
-            Ok(IpcResponse::BridgeStatus { state, .. }) => probe_connection_state(state),
+            Ok(IpcResponse::BridgeStatus {
+                state,
+                failure_code,
+                ..
+            }) => probe_connection_state(state, failure_code),
             Ok(_) => ProbeOutcome::Blocked("desktop.bridge.probe_response_invalid".to_owned()),
             Err(failure)
                 if matches!(
@@ -848,12 +852,15 @@ enum ProbeOutcome {
     Blocked(String),
 }
 
-fn probe_connection_state(state: IpcBridgeState) -> ProbeOutcome {
+fn probe_connection_state(state: IpcBridgeState, failure_code: Option<String>) -> ProbeOutcome {
     match state {
         IpcBridgeState::Starting => ProbeOutcome::Pending(ConnectionProgress::Starting),
         IpcBridgeState::Reconnecting => ProbeOutcome::Pending(ConnectionProgress::Reconnecting),
         IpcBridgeState::ShuttingDown => ProbeOutcome::Departing,
-        IpcBridgeState::Offline => ProbeOutcome::Blocked("desktop.bridge.offline".to_owned()),
+        // Bridge 自己判定的原因（如设备授权失效、加密身份冲突）比笼统的「离线」有用得多。
+        IpcBridgeState::Offline => ProbeOutcome::Blocked(
+            failure_code.unwrap_or_else(|| "desktop.bridge.offline".to_owned()),
+        ),
         IpcBridgeState::Ready => ProbeOutcome::Authorized,
     }
 }
@@ -1030,19 +1037,24 @@ mod tests {
         use super::{ConnectionProgress, ProbeOutcome, probe_connection_state};
         use agent_room_bridge_ipc::IpcBridgeState;
         assert!(matches!(
-            probe_connection_state(IpcBridgeState::Reconnecting),
+            probe_connection_state(IpcBridgeState::Reconnecting, None),
             ProbeOutcome::Pending(ConnectionProgress::Reconnecting)
         ));
         assert!(
-            matches!(probe_connection_state(IpcBridgeState::Offline), ProbeOutcome::Blocked(code) if code == "desktop.bridge.offline")
+            matches!(probe_connection_state(IpcBridgeState::Offline, None), ProbeOutcome::Blocked(code) if code == "desktop.bridge.offline")
         );
+        // Bridge 说得出原因时，停机诊断用它的原因码，而不是笼统的「离线」。
         assert!(matches!(
-            probe_connection_state(IpcBridgeState::Ready),
+            probe_connection_state(IpcBridgeState::Offline, Some("bridge.secure_storage_corrupt".to_owned())),
+            ProbeOutcome::Blocked(code) if code == "bridge.secure_storage_corrupt"
+        ));
+        assert!(matches!(
+            probe_connection_state(IpcBridgeState::Ready, None),
             ProbeOutcome::Authorized
         ));
         assert!(
             matches!(
-                probe_connection_state(IpcBridgeState::ShuttingDown),
+                probe_connection_state(IpcBridgeState::ShuttingDown, None),
                 ProbeOutcome::Departing
             ),
             "正在退出的 Bridge 不能当成重连中的外部 Bridge 接管"

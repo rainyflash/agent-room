@@ -54,6 +54,24 @@ export function authorizationFailureMessage(
     : 'desktop.authorization.failedDescription';
 }
 
+// The Bridge names why it went offline; say what a person can do about the common ones.
+export function haltReasonMessage(code: string | null | undefined): TranslationKey {
+  switch (code) {
+    case 'bridge.secure_storage_unavailable':
+    case 'bridge.secure_storage_corrupt':
+      return 'desktop.halted.reason.secureStorage';
+    case 'bridge.control_plane_response_invalid':
+    case 'bridge.matrix_response_invalid':
+      return 'desktop.halted.reason.responseInvalid';
+    case 'bridge.matrix_crypto_identity_conflict':
+      return 'desktop.halted.reason.identityConflict';
+    case 'bridge.matrix_room_not_found':
+      return 'desktop.halted.reason.roomMissing';
+    default:
+      return 'desktop.halted.description';
+  }
+}
+
 export function hostFailureMessage(code: string): TranslationKey {
   switch (code) {
     case 'codex.config_incompatible':
