@@ -558,7 +558,7 @@
   color: var(--ar-muted);
   font-size: 12px;
 }
-@media (max-width: 1199px) {
+@media (max-width: 1199px), (pointer: coarse) {
   .conversation-panel__keyboard {
     display: none;
   }

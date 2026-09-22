@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import { err, ok, type Result } from '@/shared/result';
 import {
+  defaultReleaseChannel,
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
   type AgentHostDetection,
@@ -221,6 +222,16 @@ export function useDesktopRuntime(
         ...result.value,
         bridge: latestRuntime ?? result.value.bridge,
       });
+      // Nobody clicks "check for updates" on their own: look once per launch on the channel this
+      // build came from, and only surface a result. Failures (offline, no manifest) stay silent here.
+      if (result.value.updatesConfigured && result.value.currentVersion !== undefined) {
+        void gateway
+          .checkUpdate(defaultReleaseChannel(result.value.currentVersion))
+          .then((check) => {
+            if (!disposed && check.ok) setUpdate(check.value);
+          })
+          .catch(() => undefined);
+      }
       if (gateway.detectHosts !== undefined) {
         void gateway.detectHosts().then((hostsResult) => {
           if (!disposed) {

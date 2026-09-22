@@ -226,6 +226,11 @@ export type ManualHostConfiguration = DesktopRuntimeSnapshot['manualHostConfigur
 export const releaseUpdateChannelSchema = z.enum(['stable', 'testing']);
 export type ReleaseUpdateChannel = z.infer<typeof releaseUpdateChannelSchema>;
 
+/** A prerelease (alpha, beta, rc) came from the testing channel; only plain versions follow stable. */
+export function defaultReleaseChannel(version: string): ReleaseUpdateChannel {
+  return version.includes('-') ? 'testing' : 'stable';
+}
+
 export const releaseUpdateCheckSchema = z
   .object({
     available: z.boolean(),

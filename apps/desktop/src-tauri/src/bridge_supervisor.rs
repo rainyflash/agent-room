@@ -784,6 +784,7 @@ impl BridgeSupervisorActor {
                 .as_ref()
                 .map(|prompt| prompt.verification_uri.clone()),
         };
+        crate::tray_hint::update_tooltip(&self.app, self.policy.snapshot().phase);
         self.state.send_replace(next.clone());
         let _ = self.app.emit(RUNTIME_CHANGED_EVENT, next.view);
     }
