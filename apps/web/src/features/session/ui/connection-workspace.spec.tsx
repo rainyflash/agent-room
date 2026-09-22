@@ -62,6 +62,16 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
   fireEvent.click(screen.getByText('Connection and identity details'));
   expect(screen.getByText('TESTDEVICE')).toBeVisible();
   expect(screen.getByText('@operator:matrix.test')).toBeVisible();
+  // 账户 ID 不必先进某个房间才看得到：邀请你的人需要它。
+  const writeText = vi.fn(() => Promise.resolve());
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  try {
+    expect(screen.getByText('018c251e-7b5a-7c7f-8a28-2de53f56a9a3')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenCalledWith('018c251e-7b5a-7c7f-8a28-2de53f56a9a3');
+  } finally {
+    vi.unstubAllGlobals();
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith('logout');
 });

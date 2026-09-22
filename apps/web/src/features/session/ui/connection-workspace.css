@@ -449,3 +449,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+.connection-diagnostics__account-id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.connection-diagnostics__account-id code {
+  overflow-wrap: anywhere;
+}
+.connection-diagnostics__hint {
+  margin-top: 4px;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
