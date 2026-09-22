@@ -447,6 +447,22 @@ class Acceptance:
     def joined(self) -> dict[str, Any]:
         return load(self.path("joined.private.json"))
 
+    def invitation(self) -> dict[str, Any]:
+        """The invite this profile joined with.
+
+        A reused long-lived device joined in an earlier release and only resumes here, so this release never
+        wrote the invite. The CLI's profile id is that invite's session key, and the room comes from the
+        resumed identity."""
+        path = self.path("invitation.json")
+        if path.exists():
+            return load(path)
+        if self.device_mode() != "reused":
+            raise ReleaseFailure("缺少本次加入时的邀请记录。")
+        record = load(self.path("device-mode.json"))["record"]
+        identity = self.joined()["identity"]
+        return {"version": 1, "sessionKey": record["profileId"], "displayName": record["agentName"],
+                "roomId": identity["roomId"], "catalogId": identity["roomCatalogId"]}
+
     def register(self) -> None:
         result = self.cli("--profile", self.joined()["profileId"], "register", "--host",
                           self.host_type.replace("_", "-"), "--task-id", self.host["taskId"],
@@ -465,7 +481,7 @@ class Acceptance:
 
     def bind(self) -> None:
         joined = self.joined()
-        invite = load(self.path("invitation.json"))
+        invite = self.invitation()
         authorization = load(self.path("authorization.private.json"))
         grant = authorization["grant"]
         if (grant["agentId"], grant["agentInstanceId"], grant["roomCatalogId"]) != (
