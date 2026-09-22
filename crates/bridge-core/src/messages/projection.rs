@@ -282,6 +282,13 @@ pub trait MessageTimelineProjectionStore: Send + Sync {
         &'a self,
         batch: &'a MessageProjectionBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>>;
+
+    /// 上一次成功应用的批次留下的同步游标；从未同步过时为 `None`。
+    ///
+    /// Bridge 重启后从这里接着同步，而不是每次都从头做一次只带最近几十条的全量同步。
+    fn sync_cursor<'a>(
+        &'a self,
+    ) -> PortFuture<'a, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>>;
 }
 
 const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;

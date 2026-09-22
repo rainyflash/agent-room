@@ -1069,7 +1069,16 @@ async fn establish_agent_online_once(
         targeted_handoffs,
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
-        next_batch: None,
+        // 接着上次处理完的位置同步。以前每次上线都从头全量同步，只带每个房间最近几十条，
+        // 离线期间更早的消息本地永远没有。游标读不出来不挡上线，退回全量同步。
+        next_batch: runtime
+            .messages
+            .stored_cursor()
+            .await
+            .unwrap_or_else(|failure| {
+                tracing::warn!(?failure, "读取上次同步游标失败，改为全量同步");
+                None
+            }),
     };
     complete_agent_online(runtime, online).await
 }
@@ -1079,12 +1088,27 @@ async fn complete_agent_online(
     runtime: &AgentSessionRuntime,
     mut online: AgentOnlineSession,
 ) -> Result<AgentOnlineSession, AgentOnlineFailure> {
-    if let Err(failure) = sync_agent_online(runtime, &mut online, true).await {
+    let mut first = sync_agent_online(runtime, &mut online, true).await;
+    if online.next_batch.is_some() && matches!(&first, Err(failure) if stale_sync_cursor(failure)) {
+        // 服务端不认上次的游标（比如服务端换过库）：只在这一处退回全量同步，
+        // 否则每次重连都会重新读到同一个失效游标。
+        tracing::warn!("服务端不认上次的同步游标，改为全量同步");
+        online.next_batch = None;
+        first = sync_agent_online(runtime, &mut online, true).await;
+    }
+    if let Err(failure) = first {
         online.stop_workers().await;
         return Err(failure);
     }
     ensure_agent_encryption_identity(online.security.as_ref()).await;
     Ok(online)
+}
+
+const fn stale_sync_cursor(failure: &AgentOnlineFailure) -> bool {
+    matches!(
+        failure,
+        AgentOnlineFailure::Matrix(matrix) if matches!(matrix.kind(), MatrixFailureKind::StaleSyncToken)
+    )
 }
 
 /// Agent 上线时建立自己的加密身份（只在从未建立过时）。别人只把房间密钥发给由主人签名的设备，

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_application::ports::{
     DeviceSignature, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch,
-    MatrixTimelineEvent,
+    MatrixSyncToken, MatrixTimelineEvent,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -133,6 +133,18 @@ impl MessageSyncService {
             projections: dependencies.projections,
             submissions: dependencies.submissions,
         }
+    }
+
+    /// 上次成功处理的批次留下的同步游标，供重启后接着同步；从未同步过时为 `None`。
+    ///
+    /// # Errors
+    ///
+    /// 投影存储不可用或游标损坏时返回阶段化错误。
+    pub async fn stored_cursor(&self) -> Result<Option<MatrixSyncToken>, MessageSyncFailure> {
+        self.projections
+            .sync_cursor()
+            .await
+            .map_err(MessageSyncFailure::projection_store)
     }
 
     /// 对账本机未知提交，验证消息事件并原子推进预览投影游标。
