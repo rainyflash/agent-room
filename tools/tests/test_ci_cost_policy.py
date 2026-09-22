@@ -62,6 +62,36 @@ class CiCostPolicyTests(unittest.TestCase):
         self.assertTrue(builds)
         self.assertLess(steps.index("run: python tools/license_inventory.py check"), min(builds))
 
+    def test_docs_only_pull_requests_skip_heavy_work_but_keep_the_required_gate(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        gate = "needs.changes.outputs.docs_only != 'true'"
+
+        # quality 是必需检查：只改文档也要照常运行并报告；changes 失败时也要跑（!cancelled）。
+        quality = job_condition(workflow, "quality")
+        self.assertIn("!cancelled()", quality)
+        self.assertNotIn("docs_only", quality)
+        # 另外两个 PR 作业只在确认只改了文档时跳过；判断失败、输出为空时照常运行。
+        for name in ("windows-runtime", "web-browser"):
+            with self.subTest(job=name):
+                condition = job_condition(workflow, name)
+                self.assertIn("!cancelled()", condition)
+                self.assertIn(gate, condition)
+                self.assertIn("    needs: changes", job_lines(workflow, name))
+
+        # quality 里只有编译与测试步骤挂在这个条件上；格式、许可证与 Python 工具检查照常运行。
+        steps = [line.strip() for line in job_lines(workflow, "quality")]
+        for run in ("run: python tools/license_inventory.py check",
+                    "run: corepack pnpm@10.28.0 format:check",
+                    "run: python -m unittest discover -s tools/tests -p 'test_*.py'"):
+            with self.subTest(always=run):
+                self.assertNotEqual(steps[steps.index(run) - 1], f"if: {gate}")
+        for run in ("run: cargo clippy --workspace --all-targets --all-features -- -D warnings",
+                    "run: cargo test --workspace --all-features",
+                    "run: corepack pnpm@10.28.0 build",
+                    "run: corepack pnpm@10.28.0 test"):
+            with self.subTest(gated=run):
+                self.assertEqual(steps[steps.index(run) - 1], f"if: {gate}")
+
     def test_release_dispatch_is_not_cancelled_by_later_pushes(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         group = next(line.strip() for line in workflow.splitlines() if line.startswith("  group: "))
