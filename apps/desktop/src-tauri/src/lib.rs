@@ -13,6 +13,8 @@ mod desktop_command_surface;
 mod desktop_config;
 mod human_session;
 mod installer_acceptance;
+mod logging;
+use logging::desktop_open_logs;
 mod loopback_callback;
 mod matrix_credentials;
 mod matrix_session;
@@ -125,6 +127,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_set_autostart,
             desktop_set_language,
             desktop_open_authorization,
+            desktop_open_logs,
             desktop_check_update,
             desktop_install_update,
             desktop_detect_agent_hosts,
@@ -141,7 +144,13 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_receiver_configure,
             desktop_receiver_action,
         ])
-        .setup(move |app| setup_runtime(app, update_config.clone()))
+        .setup(move |app| {
+            let result = setup_runtime(app, update_config.clone());
+            if let Err(error) = &result {
+                tracing::error!(%error, "桌面端初始化失败");
+            }
+            result
+        })
         .on_window_event(|window, event| {
             if window.label() == "main"
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
@@ -162,7 +171,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = runtime.receivers.shutdown().await {
-                        eprintln!("receiver shutdown failed [{}]", error.code);
+                        tracing::warn!(error_code = error.code, "接收进程关闭失败");
                     }
                     runtime.bridge.shutdown_now();
                     app.exit(0);
@@ -181,6 +190,14 @@ fn setup_runtime(
     webview_migration::retire_legacy_service_worker(app)?;
     let mut config = DesktopBridgeConfig::from_environment()
         .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
+    let logs = logging::LogLocation::new(&config.data_root());
+    let log_path = logs.install();
+    app.manage(logs);
+    tracing::info!(
+        version = app.package_info().version.to_string(),
+        log_file = log_path.as_deref().map(|path| path.display().to_string()),
+        "Agent Room 桌面端启动"
+    );
     server_move::retire_previous_server(&config);
     setup_user_sessions(app, &config)?;
     let targets = Arc::new(
@@ -201,7 +218,7 @@ fn setup_runtime(
     let restored_receivers = receivers.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(error) = restored_receivers.restore().await {
-            eprintln!("receiver restore failed [{}]", error.code);
+            tracing::warn!(error_code = error.code, "接收进程恢复失败");
         }
     });
     let host_context = HostContext::from_environment(mcp_executable)

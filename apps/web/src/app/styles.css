@@ -820,6 +820,26 @@
   align-items: start;
 }
 
+.desktop-runtime__logs {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.desktop-runtime__logs > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.desktop-runtime__logs > p {
+  margin: 0;
+  min-width: 0;
+}
+
 .desktop-runtime__update-copy {
   min-width: 0;
 }

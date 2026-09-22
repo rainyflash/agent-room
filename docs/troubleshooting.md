@@ -63,3 +63,5 @@ Any signed-in Web or desktop client can observe the account's cloud-owned Agents
 ## Safe diagnostics
 
 When reporting a failure, include the application version, operating system, the four health signals, the affected route, a UTC timestamp, and a redacted request/correlation ID. Do not include tokens, PKCE values, Matrix event bodies, local credential files, recovery codes, or complete device identifiers.
+
+The desktop and the Bridge each keep a local log file next to the Bridge data (`logs/desktop.log` and `logs/bridge.log`; on Windows under `%LOCALAPPDATA%\AgentRoom\Bridge\logs`). Expand **Local agents** and choose **Open log folder** to reach them. Each file is capped at 5 MB with one older generation (`.1`) kept. They record connection phases, error codes, exit codes and counts of messages that could not be read; they never contain message bodies, tokens or credentials, so both files are safe to attach to a bug report.

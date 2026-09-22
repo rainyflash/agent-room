@@ -387,6 +387,8 @@ export type DesktopRuntimeGateway = {
   reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;
   openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>>;
+  /** Reveal the folder holding desktop.log and bridge.log, the two files to send with a bug report. */
+  openLogs?(): Promise<Result<void, DesktopRuntimeFailure>>;
   checkUpdate(
     channel: ReleaseUpdateChannel,
   ): Promise<Result<ReleaseUpdateCheck, DesktopRuntimeFailure>>;

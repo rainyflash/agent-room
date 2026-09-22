@@ -56,6 +56,7 @@ export type DesktopRuntimeController = {
   readonly checkUpdate: (channel: ReleaseUpdateChannel) => Promise<void>;
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
+  readonly openLogs: () => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
   readonly reauthorizeBridge: () => Promise<void>;
@@ -294,6 +295,12 @@ export function useDesktopRuntime(
     [gateway],
   );
 
+  const openLogs = useCallback(async (): Promise<void> => {
+    const result =
+      (await gateway.openLogs?.()) ?? err({ code: 'desktop.logs.unavailable', retryable: false });
+    if (!result.ok) setFailure(result.error);
+  }, [gateway]);
+
   const checkUpdate = useCallback(
     async (channel: ReleaseUpdateChannel): Promise<void> => {
       if (updateInFlight.current) return;
@@ -455,6 +462,7 @@ export function useDesktopRuntime(
       setFailure(null);
     },
     openAuthorization,
+    openLogs,
     refresh,
     retryBridge,
     reauthorizeBridge,

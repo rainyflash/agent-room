@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Download,
   ExternalLink,
+  FolderOpen,
   KeyRound,
   MonitorCog,
   PlugZap,
@@ -376,6 +377,19 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                 </Button>
               </section>
             ) : null}
+
+            <section className="desktop-runtime__logs">
+              <FolderOpen aria-hidden="true" />
+              <p>{t('desktop.logs.hint')}</p>
+              <Button
+                icon={<FolderOpen aria-hidden="true" />}
+                onClick={() => void controller.openLogs()}
+                size="compact"
+                tone="quiet"
+              >
+                {t('desktop.logs.open')}
+              </Button>
+            </section>
           </motion.div>
         ) : null}
       </AnimatePresence>
