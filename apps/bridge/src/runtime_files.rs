@@ -280,7 +280,9 @@ mod tests {
     #[test]
     fn 锁文件记录持有者_pid_且能被读回() {
         let temporary = tempdir().expect("临时目录可创建");
-        let path = temporary.path().join("bridge.lock");
+        // 锁的父目录由代码按私有权限创建；系统临时目录本身在 Linux 上权限太宽。
+        let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
+        let path = paths.instance_lock_path().to_path_buf();
         let _lock = BridgeExclusiveLock::acquire(&path).expect("首次获取");
         // 锁被占时别的进程也读得到持有者，Windows 上锁住的文件本身读不了。
         assert_eq!(lock_holder_pid(&path), Some(std::process::id()));
