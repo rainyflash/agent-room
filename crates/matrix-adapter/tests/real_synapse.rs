@@ -9,10 +9,10 @@ use agent_room_application::ports::{
     MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixSyncToken, MatrixTransactionId, MatrixUserId, ModerationEffectGateway,
-    ModerationEffectTarget, PrivateMatrixMembership, PrivateMatrixRoomCreation,
-    PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-    RoomProvisioningGateway, SecretValue,
+    MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
+    ModerationEffectGateway, ModerationEffectTarget, PrivateMatrixMembership,
+    PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixProvisioner, RoomProvisioningGateway, SecretValue,
 };
 use agent_room_bridge_core::matrix_security::MatrixSecurityCommand;
 use agent_room_domain::{
@@ -203,6 +203,173 @@ async fn 真实_synapse_幂等建立直接会话并接受私有已读回执() {
         .expect("直接会话必须接受私有已读回执");
     leave_with_retry(peer.gateway(), &room_id).await;
     leave_with_retry(creator.gateway(), &room_id).await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_对方后建立身份时发送前刷新设备签名() {
+    let (early, late, room_id) = stale_device_view_room().await;
+    establish_identity(&late).await;
+    // 先入场的一方不再同步就直接发送：发送前的刷新让它看到后来者已签名，不再扣下房间密钥。
+    early
+        .security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("发送前必须能刷新参与者的设备与身份");
+    let sent = send_with_retry(
+        early.matrix().gateway(),
+        &room_id,
+        &message_event(unique_value("refreshed-send"), "后来者签名之后的消息"),
+    )
+    .await;
+    let received = sync_until_event(late.matrix().gateway(), &room_id, sent.event_id()).await;
+    assert_eq!(
+        received.event_type().as_str(),
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        "后来者必须拿到房间密钥并解开这条消息"
+    );
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_对方后建立身份时收到的消息刷新后可信() {
+    let (early, late, room_id) = stale_device_view_room().await;
+    establish_identity(&late).await;
+    late.security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("后来者建立身份后可以发送");
+    let sent = send_with_retry(
+        late.matrix().gateway(),
+        &room_id,
+        &message_event(
+            unique_value("refreshed-receive"),
+            "后来者签名之后发出的消息",
+        ),
+    )
+    .await;
+    // 先入场的一方本机缓存还停在后来者签名之前；收信时刷新发送者，不能把它当作未签名设备隔离。
+    let received = sync_until_event(early.matrix().gateway(), &room_id, sent.event_id()).await;
+    assert!(received.end_to_end_encrypted());
+    assert!(
+        received.end_to_end_sender_trusted(),
+        "发送设备已由其主人签名，本机缓存过时不能让消息被隔离"
+    );
+}
+
+/// 先入场的一方已有加密身份，并在后来者建立身份之前查询过它的设备（此时未签名）。
+///
+/// 复现 Alpha 46 上 Agent 之间互相收不到消息的顺序：对方后来才建立身份，本机缓存却一直停在签名之前。
+async fn stale_device_view_room() -> (
+    MatrixSdkHandoffConnection,
+    MatrixSdkHandoffConnection,
+    MatrixRoomId,
+) {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let early = managed_device(&provisioner, &factory).await;
+    establish_identity(&early).await;
+    let late = managed_device(&provisioner, &factory).await;
+    let early_user = early.matrix().session().metadata().user_id().clone();
+    let late_user = late.matrix().session().metadata().user_id().clone();
+    let room_id = PrivateRoomMatrixProvisioner::create(
+        &provisioner,
+        &private_room_creation(&early_user, &late_user),
+    )
+    .await
+    .expect("Application Service 必须能创建私人房间");
+    join_with_retry(early.matrix().gateway(), &room_id).await;
+    join_with_retry(late.matrix().gateway(), &room_id).await;
+    provisioner
+        .set_speaking_batch(
+            &room_id,
+            &[
+                PrivateMatrixSpeakingAssignment::new(early_user, true),
+                PrivateMatrixSpeakingAssignment::new(late_user, true),
+            ],
+        )
+        .await
+        .expect("双方都应获得发言能力");
+    sync_until_room(
+        early.matrix().gateway(),
+        &room_id,
+        MatrixRoomSyncKind::Joined,
+    )
+    .await;
+    // 此时查询到的后来者设备还没有签名，对它扣下房间密钥是对的。
+    early
+        .security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("先入场的一方可以发送");
+    send_with_retry(
+        early.matrix().gateway(),
+        &room_id,
+        &message_event(unique_value("before-late-identity"), "后来者签名之前的消息"),
+    )
+    .await;
+    (early, late, room_id)
+}
+
+async fn managed_device(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    factory: &MatrixSdkClientFactory,
+) -> MatrixSdkHandoffConnection {
+    let user_id = provisioner
+        .ensure_user(&MatrixAgentUserRegistration::new(
+            MatrixAgentLocalpart::from_agent_id(AgentId::from_uuid(Uuid::now_v7())),
+        ))
+        .await
+        .expect("可建立隔离的验收用户");
+    let request = MatrixAgentDeviceSessionRequest::new(
+        user_id,
+        MatrixDeviceId::new(format!("AR_{}", Uuid::now_v7().simple())).expect("设备标识有效"),
+        "身份刷新验收设备".to_owned(),
+    )
+    .expect("验收设备会话请求有效");
+    let session = provisioner
+        .issue_device_session(&request)
+        .await
+        .expect("可签发验收会话");
+    factory
+        .restore_with_handoffs(&session)
+        .await
+        .expect("验收会话可恢复")
+}
+
+async fn establish_identity(connection: &MatrixSdkHandoffConnection) {
+    connection
+        .security_gateway_handle()
+        .execute(MatrixSecurityCommand::EstablishIdentity)
+        .await
+        .expect("全新账户必须能建立加密身份");
+}
+
+/// 同步直到指定事件出现。事件只在它到达的那一批里出现一次，出现时解不开就不会再解。
+async fn sync_until_event(
+    gateway: &dyn MatrixGateway,
+    room_id: &MatrixRoomId,
+    event_id: &MatrixEventId,
+) -> MatrixTimelineEvent {
+    let mut since = None;
+    for _ in 0..20 {
+        let batch = sync(gateway, since).await;
+        if let Some(event) = batch
+            .rooms()
+            .iter()
+            .filter(|room| room.room_id() == room_id)
+            .flat_map(|room| room.timeline().iter())
+            .find(|event| event.event_id() == Some(event_id))
+        {
+            return event.clone();
+        }
+        since = Some(batch.next_batch().clone());
+    }
+    panic!("同步结果始终缺少事件 {}", event_id.as_str())
 }
 
 #[tokio::test]

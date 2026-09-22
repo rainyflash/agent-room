@@ -9,6 +9,7 @@ mod provisioning;
 mod sdk;
 mod security;
 mod store_recovery;
+mod trust;
 
 pub use configuration::{
     MatrixSdkConfiguration, MatrixSdkConfigurationError, MatrixSdkStoreConfiguration,

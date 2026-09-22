@@ -12,19 +12,23 @@ use matrix_sdk::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::error::invalid_response;
+use crate::{error::invalid_response, trust::SenderTrustUpgrades};
 
 const MAX_RAW_EVENT_BYTES: usize = 131_072;
 
-pub(crate) fn map_sync_response(response: &SyncResponse) -> MatrixResult<MatrixSyncBatch> {
+pub(crate) fn map_sync_response(
+    response: &SyncResponse,
+    upgrades: &SenderTrustUpgrades,
+) -> MatrixResult<MatrixSyncBatch> {
     let next_batch = MatrixSyncToken::new(response.next_batch.clone())
         .map_err(|_| invalid_response_failure(MatrixOperation::Sync))?;
-    let rooms = map_room_updates(&response.rooms)?;
+    let rooms = map_room_updates(&response.rooms, upgrades)?;
     Ok(MatrixSyncBatch::new(next_batch, rooms))
 }
 
 pub(crate) fn map_backfill(
     response: &matrix_sdk::room::Messages,
+    upgrades: &SenderTrustUpgrades,
 ) -> MatrixResult<MatrixBackfillPage> {
     let start = MatrixBackfillToken::new(response.start.clone())
         .map_err(|_| invalid_response_failure(MatrixOperation::Backfill))?;
@@ -37,12 +41,15 @@ pub(crate) fn map_backfill(
     let events = response
         .chunk
         .iter()
-        .map(|event| map_timeline_event(event, MatrixOperation::Backfill))
+        .map(|event| map_timeline_event(event, MatrixOperation::Backfill, upgrades))
         .collect::<MatrixResult<Vec<_>>>()?;
     Ok(MatrixBackfillPage::new(start, end, events))
 }
 
-fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> {
+fn map_room_updates(
+    updates: &RoomUpdates,
+    upgrades: &SenderTrustUpgrades,
+) -> MatrixResult<Vec<MatrixRoomSync>> {
     let mut rooms = Vec::with_capacity(
         updates.joined.len() + updates.invited.len() + updates.left.len() + updates.knocked.len(),
     );
@@ -54,7 +61,7 @@ fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> 
                 MatrixRoomSyncKind::Joined,
                 update.timeline.limited,
                 map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
-                map_timeline(&update.timeline.events)?,
+                map_timeline(&update.timeline.events, upgrades)?,
                 state,
             )
             .with_state_position(state_position),
@@ -78,7 +85,7 @@ fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> 
                 MatrixRoomSyncKind::Left,
                 update.timeline.limited,
                 map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
-                map_timeline(&update.timeline.events)?,
+                map_timeline(&update.timeline.events, upgrades)?,
                 state,
             )
             .with_state_position(state_position),
@@ -97,20 +104,26 @@ fn map_room_updates(updates: &RoomUpdates) -> MatrixResult<Vec<MatrixRoomSync>> 
     Ok(rooms)
 }
 
-fn map_timeline(events: &[TimelineEvent]) -> MatrixResult<Vec<MatrixTimelineEvent>> {
+fn map_timeline(
+    events: &[TimelineEvent],
+    upgrades: &SenderTrustUpgrades,
+) -> MatrixResult<Vec<MatrixTimelineEvent>> {
     events
         .iter()
-        .map(|event| map_timeline_event(event, MatrixOperation::Sync))
+        .map(|event| map_timeline_event(event, MatrixOperation::Sync, upgrades))
         .collect()
 }
 
 fn map_timeline_event(
     event: &TimelineEvent,
     operation: MatrixOperation,
+    upgrades: &SenderTrustUpgrades,
 ) -> MatrixResult<MatrixTimelineEvent> {
     let mapped = map_raw_event(event.raw(), operation)?;
     Ok(match event.encryption_info() {
-        Some(info) if sender_device_trusted(&info.verification_state) => {
+        Some(info)
+            if sender_device_trusted(&info.verification_state) || upgrades.contains(event) =>
+        {
             mapped.with_trusted_end_to_end_encryption()
         }
         Some(_) => mapped.with_untrusted_end_to_end_encryption(),
@@ -121,7 +134,7 @@ fn map_timeline_event(
 /// 发送设备由其主人的加密身份签名即可信，不要求本机核对过对方（首次见到时记住身份）。
 ///
 /// 未签名或未知的设备、发送者不符，以及曾核对过又换了身份的用户仍被隔离。
-const fn sender_device_trusted(state: &VerificationState) -> bool {
+pub(crate) const fn sender_device_trusted(state: &VerificationState) -> bool {
     matches!(
         state,
         VerificationState::Verified
@@ -246,7 +259,7 @@ mod tests {
         },
     };
 
-    use super::{MatrixOperation, map_raw_event, map_timeline_event};
+    use super::{MatrixOperation, SenderTrustUpgrades, map_raw_event, map_timeline_event};
 
     #[test]
     fn 原始事件保留事务标识并剥离无关字段() {
@@ -292,8 +305,12 @@ mod tests {
             VerificationState::Verified,
             VerificationState::Unverified(VerificationLevel::UnverifiedIdentity),
         ] {
-            let event = map_timeline_event(&decrypted_event(state), MatrixOperation::Sync)
-                .expect("可信加密事件可映射");
+            let event = map_timeline_event(
+                &decrypted_event(state),
+                MatrixOperation::Sync,
+                &SenderTrustUpgrades::default(),
+            )
+            .expect("可信加密事件可映射");
             assert!(event.end_to_end_encrypted());
             assert!(event.end_to_end_sender_trusted());
         }
@@ -310,6 +327,7 @@ mod tests {
             let event = map_timeline_event(
                 &decrypted_event(VerificationState::Unverified(state)),
                 MatrixOperation::Sync,
+                &SenderTrustUpgrades::default(),
             )
             .expect("未可信加密事件仍应进入隔离边界");
             assert!(event.end_to_end_encrypted());

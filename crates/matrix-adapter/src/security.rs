@@ -432,12 +432,15 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
             // 不要求逐个核对参与者：房间密钥只发给由其主人签名的设备（见 sdk.rs 的
             // IdentityBasedStrategy），首次见到的身份被记住。只有曾经核对过安全码、之后又换了
             // 加密身份的参与者才拒绝发送，重新核对后恢复；SDK 发送时也会拒绝这种情况。
+            //
+            // 发送前先向服务端刷新每位参与者的设备与身份。本机缓存若还停在对方签名之前，
+            // SDK 会把房间密钥扣下（m.room_key.withheld），对方就解不开这条消息。
             for member in members {
                 if member.user_id() == own {
                     continue;
                 }
                 let identity = crypto
-                    .get_user_identity(member.user_id())
+                    .request_user_identity(member.user_id())
                     .await
                     .map_err(|_| MatrixSecurityFailure::Unavailable)?;
                 if identity.is_some_and(|identity| identity.has_verification_violation()) {
