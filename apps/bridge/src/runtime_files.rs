@@ -121,6 +121,10 @@ impl BridgeExclusiveLock {
         validate_private_file(&file)?;
         file.try_lock().map_err(|error| match error {
             fs::TryLockError::WouldBlock => {
+                // 谁占着锁就报出来，省得用户在任务管理器里猜。
+                if let Some(pid) = lock_holder_pid(path) {
+                    tracing::warn!(holder_pid = pid, "实例锁被另一个 Bridge 进程占用");
+                }
                 BridgeRuntimeFileFailure::new(BridgeRuntimeFileFailureKind::AlreadyHeld)
             }
             fs::TryLockError::Error(error) => map_io_failure(error),
@@ -129,8 +133,34 @@ impl BridgeExclusiveLock {
         file.seek(SeekFrom::Start(0)).map_err(map_io_failure)?;
         writeln!(file, "pid={}", std::process::id()).map_err(map_io_failure)?;
         file.flush().map_err(map_io_failure)?;
+        // Windows 上被独占锁住的文件别的进程读不了，所以持有者 PID 另放一个不加锁的旁文件。
+        let _ = fs::write(
+            holder_pid_path(path),
+            format!(
+                "{}
+",
+                std::process::id()
+            ),
+        );
         Ok(Self { file })
     }
+}
+
+fn holder_pid_path(lock_path: &Path) -> PathBuf {
+    let mut name = lock_path
+        .file_name()
+        .map_or_else(Default::default, std::ffi::OsStr::to_os_string);
+    name.push(".pid");
+    lock_path.with_file_name(name)
+}
+
+/// 当前持有实例锁的 Bridge 进程号；只在锁确实被占时有意义，锁空闲时是过期的。
+pub(crate) fn lock_holder_pid(lock_path: &Path) -> Option<u32> {
+    fs::read_to_string(holder_pid_path(lock_path))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 impl Drop for BridgeExclusiveLock {
@@ -243,7 +273,20 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{BridgeExclusiveLock, BridgeRuntimeFileFailureKind, BridgeRuntimePaths};
+    use super::{
+        BridgeExclusiveLock, BridgeRuntimeFileFailureKind, BridgeRuntimePaths, lock_holder_pid,
+    };
+
+    #[test]
+    fn 锁文件记录持有者_pid_且能被读回() {
+        let temporary = tempdir().expect("临时目录可创建");
+        // 锁的父目录由代码按私有权限创建；系统临时目录本身在 Linux 上权限太宽。
+        let paths = BridgeRuntimePaths::new(temporary.path().join("bridge"));
+        let path = paths.instance_lock_path().to_path_buf();
+        let _lock = BridgeExclusiveLock::acquire(&path).expect("首次获取");
+        // 锁被占时别的进程也读得到持有者，Windows 上锁住的文件本身读不了。
+        assert_eq!(lock_holder_pid(&path), Some(std::process::id()));
+    }
 
     #[test]
     fn 准备运行目录会清理上次残留的附件下载() {
