@@ -44,7 +44,7 @@ describe('HumanMessagePublisher', () => {
     expect(runtime.content.upload).toHaveBeenCalledTimes(2);
     expect(runtime.matrix.publish).toHaveBeenCalledOnce();
   });
-  it.each(['encryption_not_ready', 'peer_verification_required'] as const)(
+  it.each(['encryption_not_ready', 'identity_changed'] as const)(
     '加密前的明确拒绝 %s 保留可重试原因，不误报为待确认或已发送',
     async (kind) => {
       const runtime = dependencies({

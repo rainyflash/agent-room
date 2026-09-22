@@ -11,7 +11,6 @@ const scenarioSchema = z.object({
   targetName: z.string(),
   targetMatrixUserId: z.string(),
   publicRoomId: z.string(),
-  matrixBaseUrl: z.url(),
   firstText: z.string(),
   firstReply: z.string(),
   secondText: z.string(),
@@ -29,7 +28,7 @@ async function wait(name: string): Promise<unknown> {
   return value;
 }
 
-test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async ({ page }) => {
+test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后恢复', async ({ page }) => {
   const raw: unknown = JSON.parse(readFileSync(new URL('input.json', work), 'utf8'));
   const scenario = scenarioSchema.parse(raw);
   const password = process.env.AGENT_ROOM_PRIVATE_CHAT_PASSWORD;
@@ -45,18 +44,25 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
     password,
     expectedDisplayName: 'Local Developer',
   });
-  await page.goto('/settings/security');
-  await expect(page.locator('.security-account-line')).toContainText(userId, { timeout: 40_000 });
-  await page.getByRole('button', { name: 'Establish encrypted identity', exact: true }).click();
-  await expect(
-    page.getByRole('button', { name: 'Establish encrypted identity', exact: true }),
-  ).toHaveCount(0);
+  // 首次同步后自动建立加密身份，不需要去安全中心手动操作。
+  await expect
+    .poll(
+      async () => {
+        await page.goto('/settings/security');
+        await expect(page.locator('.security-account-line')).toContainText(userId, {
+          timeout: 40_000,
+        });
+        return await page
+          .getByRole('button', { name: 'Establish encrypted identity', exact: true })
+          .count();
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(0);
   const storedSession: unknown = await page.evaluate((): unknown =>
     JSON.parse(sessionStorage.getItem('agent-room.matrix-session.v1') ?? 'null'),
   );
-  const { deviceId, accessToken } = z
-    .object({ deviceId: z.string(), accessToken: z.string() })
-    .parse(storedSession);
+  const { deviceId } = z.object({ deviceId: z.string() }).parse(storedSession);
   await page.goto(`/lobby/${scenario.catalogId}`);
   await expect(page).toHaveURL(/\/instance\//u);
   await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
@@ -77,14 +83,29 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
   const inputId = await input.getAttribute('id');
   if (!inputId?.startsWith('chat-!')) throw new Error('Private room ID is missing.');
   const roomId = inputId.slice(5);
-  const before = uploads.length;
-  await input.fill(scenario.firstText);
-  await direct.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(direct.getByRole('alert')).toContainText('Verify this conversation’s participant');
-  await expect(input).toHaveValue(scenario.firstText);
-  expect(uploads).toHaveLength(before);
-  await expect(direct.getByRole('log')).not.toContainText(scenario.firstText);
   put('peer.json', { roomId, userId, deviceId });
+  async function roundtrip(phase: 'first' | 'second'): Promise<void> {
+    const text = scenario[`${phase}Text`];
+    const reply = scenario[`${phase}Reply`];
+    const before = uploads.length;
+    await input.fill(text);
+    await direct.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(direct.getByRole('log')).toContainText(text);
+    // 加密房间只上传密文正文，发送前不再要求核对任何参与者。
+    expect(uploads.length).toBeGreaterThan(before);
+    const messageId = await direct
+      .locator('[data-conversation-message-id]')
+      .filter({ hasText: text })
+      .getAttribute('data-conversation-message-id');
+    expect(messageId).toBeTruthy();
+    put(`${phase}-sent.json`, { roomId, messageId });
+    await wait(`${phase}-replied.json`);
+    await expect(direct.getByRole('log')).toContainText(reply, { timeout: 60_000 });
+    await expect(
+      direct.getByRole('log').locator('blockquote').filter({ hasText: text }),
+    ).toBeVisible();
+  }
+  await roundtrip('first');
   const incoming = page.getByRole('dialog', { name: 'Verify a room participant', exact: true });
   const dialog = page.getByRole('dialog', { name: 'Verify a Matrix device', exact: true });
   for (const round of ['mismatch', 'match']) {
@@ -119,37 +140,14 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
     }
   }
   await wait('verified.json');
-  for (const phase of ['first', 'second'] as const) {
-    if (phase === 'first') {
-      await direct.getByRole('button', { name: 'Retry this message' }).click();
-    } else {
-      await input.fill(scenario.secondText);
-      await direct.getByRole('button', { name: 'Send', exact: true }).click();
-    }
-    const text = scenario[`${phase}Text`];
-    const reply = scenario[`${phase}Reply`];
-    await expect(direct.getByRole('log')).toContainText(text);
-    const messageId = await direct
-      .locator('[data-conversation-message-id]')
-      .filter({ hasText: text })
-      .getAttribute('data-conversation-message-id');
-    expect(messageId).toBeTruthy();
-    put(`${phase}-sent.json`, { roomId, messageId });
-    await wait(`${phase}-replied.json`);
-    await expect(direct.getByRole('log')).toContainText(reply, { timeout: 60_000 });
-    await expect(
-      direct.getByRole('log').locator('blockquote').filter({ hasText: text }),
-    ).toBeVisible();
-    if (phase === 'first') {
-      put('restart-request.json', { ready: true });
-      await wait('restarted.json');
-      await page.reload();
-      await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
-      if ((await input.count()) === 0) await openPrivate();
-      await expect(input).toBeEnabled();
-      await expect(direct.getByRole('log')).toContainText(scenario.firstReply, { timeout: 40_000 });
-    }
-  }
+  put('restart-request.json', { ready: true });
+  await wait('restarted.json');
+  await page.reload();
+  await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
+  if ((await input.count()) === 0) await openPrivate();
+  await expect(input).toBeEnabled();
+  await expect(direct.getByRole('log')).toContainText(scenario.firstReply, { timeout: 40_000 });
+  await roundtrip('second');
   await page.screenshot({ path: fileURLToPath(new URL('private-roundtrip.png', work)) });
   await page.getByRole('button', { name: /^Room chat/u }).click();
   const publicLog = page.locator('.workspace-room-content').getByRole('log');
@@ -166,20 +164,11 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
       (value) => !(value.startsWith('HTTP 404 ') && value.includes(publicEncryption)),
     ),
   ).toEqual([]);
-  // 关闭页面后撤销隔离账号的当前 Matrix 设备，避免预期 401 混入 UI 故障统计。
-  const request = page.request;
-  await page.close();
-  const revoked = await request.post(`${scenario.matrixBaseUrl}/_matrix/client/v3/logout`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    data: {},
-  });
-  expect(revoked.status()).toBe(200);
-  put('revoked.json', { deviceId });
-  await wait('revoked-send-blocked.json');
   put('done.json', {
+    identityEstablishedAutomatically: true,
+    chatWithoutVerification: true,
     sasMismatchRejected: true,
     sasMatched: true,
-    unverifiedSendBlocked: true,
     humanToAgent: true,
     agentToHuman: true,
     replyRelation: true,
@@ -187,6 +176,5 @@ test('原生 SAS 错码拒绝、双向加密私聊与设备重启恢复', async 
     browserReloadRestored: true,
     pixiRenderer: true,
     mobileVerification: true,
-    revokedPeerSendBlocked: true,
   });
 });

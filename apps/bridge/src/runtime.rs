@@ -1036,7 +1036,7 @@ async fn establish_agent_online_once(
             instance_id: registered.identity().agent_instance_id(),
         },
     );
-    let mut online = AgentOnlineSession {
+    let online = AgentOnlineSession {
         security: connection.security_gateway_handle(),
         room_authority: connection.room_authority_gateway_handle(),
         runtime: registered,
@@ -1054,11 +1054,41 @@ async fn establish_agent_online_once(
         presence_projections: runtime.presence_projections.clone(),
         next_batch: None,
     };
+    complete_agent_online(runtime, online).await
+}
+
+/// 首次同步成功后才算上线；随后确保加密身份，失败的同步会停掉已启动的后台任务。
+async fn complete_agent_online(
+    runtime: &AgentSessionRuntime,
+    mut online: AgentOnlineSession,
+) -> Result<AgentOnlineSession, AgentOnlineFailure> {
     if let Err(failure) = sync_agent_online(runtime, &mut online, true).await {
         online.stop_workers().await;
         return Err(failure);
     }
+    ensure_agent_encryption_identity(online.security.as_ref()).await;
     Ok(online)
+}
+
+/// Agent 上线时建立自己的加密身份（只在从未建立过时）。别人只把房间密钥发给由主人签名的设备，
+/// 所以要在第一条加密消息到来之前签好本机设备。失败不影响上线，发送前还会再试一次；
+/// 已有身份但本机缺私钥时不覆盖，交给恢复流程。
+async fn ensure_agent_encryption_identity(
+    security: &dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway,
+) {
+    use agent_room_bridge_core::matrix_security::{MatrixSecurityCommand, MatrixSecurityFailure};
+    match security
+        .execute(MatrixSecurityCommand::EstablishIdentity)
+        .await
+    {
+        Ok(_) => {}
+        Err(MatrixSecurityFailure::RecoveryRequired) => {
+            tracing::info!("Agent 已有加密身份但本机缺少私钥，等待恢复后才能在加密房间收发");
+        }
+        Err(failure) => {
+            tracing::warn!(?failure, "Agent 加密身份暂未建立，发送前会再试一次");
+        }
+    }
 }
 
 fn compose_handoff_receipts(

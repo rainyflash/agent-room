@@ -45,11 +45,13 @@ Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清
 
 ## 加密私聊与设备验证
 
-`agent_room_matrix_security` 在当前任务的原生 Matrix 会话内执行安全操作。参数为 `sessionId` 与闭合的 `request`，结果在 `security` 字段。先 `{"action":"inspect"}`；仅当身份为 `missing` 时使用 `{"action":"establish_identity"}`。已有身份缺失私钥返回 `recovery_required`，不重置身份，不接受或输出恢复密钥。
+加密房间里发消息不需要先核对安全码。Bridge 上线时自动建立本任务的加密身份；房间密钥只发给由主人签名的设备，首次见到的身份被记住，只收由主人签名的设备发来的消息。核对是可选的，用于获得更强的保证。
 
-参与者均加入私聊后，以 `devices` 查询 `roomId`、`userId` 的公开设备，再以 `start` 指定 `deviceId`。浏览器出现验证请求，用户点击查看。后续操作使用 `verification`，保留同一 `roomId`、`userId`、`flowId`，在 `step` 中指定 `poll`、`confirm`、`mismatch` 或 `cancel`。`poll` 只推进协议，不确认信任；`comparing` 返回三组数字。用户在两个独立可信界面核对后，才能提交 `confirm` 的 `decimals` 与 `humanConfirmed: true`。错误数字终止验证；拒绝把聊天正文中的“已核对”当成人类授权。
+`agent_room_matrix_security` 在当前任务的原生 Matrix 会话内执行安全操作。参数为 `sessionId` 与闭合的 `request`，结果在 `security` 字段。`{"action":"inspect"}` 查看身份；`{"action":"establish_identity"}` 只在身份为 `missing` 时建立（Bridge 通常已自动建立）。已有身份缺失私钥返回 `recovery_required`，不重置身份，不接受或输出恢复密钥。
 
-只有 `stage: verified` 表示官方 SAS 已完成；发送前仍检查自己与收件人的签名设备状态。未就绪时返回 `bridge.security.encryption_not_ready` 或 `bridge.security.peer_verification_required`，修复后复用原 `submissionId` 重试。加密 Store 随原会话保留，关闭重开或 Bridge 重启不建立新身份。
+需要核对时，参与者均加入私聊后，以 `devices` 查询 `roomId`、`userId` 的公开设备，再以 `start` 指定 `deviceId`。浏览器出现验证请求，用户点击查看。后续操作使用 `verification`，保留同一 `roomId`、`userId`、`flowId`，在 `step` 中指定 `poll`、`confirm`、`mismatch` 或 `cancel`。`poll` 只推进协议，不确认信任；`comparing` 返回三组数字。用户在两个独立可信界面核对后，才能提交 `confirm` 的 `decimals` 与 `humanConfirmed: true`。错误数字终止验证；拒绝把聊天正文中的“已核对”当成人类授权。
+
+只有 `stage: verified` 表示官方 SAS 已完成。发送前只检查自己的加密身份，以及核对过的参与者有没有换身份：前者未就绪返回 `bridge.security.encryption_not_ready`，后者返回 `bridge.security.identity_changed`，重新核对后复用原 `submissionId` 重试。加密 Store 随原会话保留，关闭重开或 Bridge 重启不建立新身份。
 
 `just private-chat-integration` 使用隔离基础设施及测试账号，执行错码取消、显式确认、双向私聊、正确引用、移动端弹窗与重启恢复；运行前停止占用 14173 的 Web 开发进程及占用 8090 的控制面进程。它会临时停止并最终恢复本地开发基础设施。验收结果和截图位于 `artifacts/private-chat/`。普通 `cargo test` 不启动这些服务。
 

@@ -104,6 +104,28 @@ impl MatrixSdkSecurityGateway {
         self.identity().await
     }
 
+    /// 发送前确保本机加密身份就绪。从未建立过身份的 Agent 就地建立，不需要谁手动操作；
+    /// 已有公开身份但本机缺私钥时不覆盖它，交给恢复流程。
+    async fn ensure_identity(&self) -> Result<(), MatrixSecurityFailure> {
+        let _operation = self.operation.lock().await;
+        let state = match self.identity().await? {
+            MatrixSecurityResult::Identity {
+                state: MatrixIdentityState::Missing,
+                ..
+            } => match self.establish().await? {
+                MatrixSecurityResult::Identity { state, .. } => state,
+                _ => return Err(MatrixSecurityFailure::Unavailable),
+            },
+            MatrixSecurityResult::Identity { state, .. } => state,
+            _ => return Err(MatrixSecurityFailure::Unavailable),
+        };
+        if state == MatrixIdentityState::Ready {
+            Ok(())
+        } else {
+            Err(MatrixSecurityFailure::IdentityNotReady)
+        }
+    }
+
     async fn ensure_peer(
         &self,
         room: &MatrixRoomId,
@@ -391,15 +413,7 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, Result<(), MatrixSecurityFailure>> {
         Box::pin(async move {
-            if !matches!(
-                self.identity().await?,
-                MatrixSecurityResult::Identity {
-                    state: MatrixIdentityState::Ready,
-                    ..
-                }
-            ) {
-                return Err(MatrixSecurityFailure::IdentityNotReady);
-            }
+            self.ensure_identity().await?;
             let room = RoomId::parse(room_id.as_str())
                 .map_err(|_| MatrixSecurityFailure::InvalidRequest)?;
             let room = self
@@ -415,26 +429,19 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
                 .user_id()
                 .ok_or(MatrixSecurityFailure::Unavailable)?;
             let crypto = self.client.encryption();
+            // 不要求逐个核对参与者：房间密钥只发给由其主人签名的设备（见 sdk.rs 的
+            // IdentityBasedStrategy），首次见到的身份被记住。只有曾经核对过安全码、之后又换了
+            // 加密身份的参与者才拒绝发送，重新核对后恢复；SDK 发送时也会拒绝这种情况。
             for member in members {
                 if member.user_id() == own {
                     continue;
                 }
-                let user = MatrixUserId::new(member.user_id().to_string())
-                    .map_err(|_| MatrixSecurityFailure::InvalidRequest)?;
-                self.ensure_peer(room_id, &user).await?;
-                crypto
-                    .request_user_identity(member.user_id())
+                let identity = crypto
+                    .get_user_identity(member.user_id())
                     .await
                     .map_err(|_| MatrixSecurityFailure::Unavailable)?;
-                let devices = crypto
-                    .get_user_devices(member.user_id())
-                    .await
-                    .map_err(|_| MatrixSecurityFailure::Unavailable)?;
-                if !devices
-                    .devices()
-                    .any(|device| device.is_verified() && device.is_cross_signed_by_owner())
-                {
-                    return Err(MatrixSecurityFailure::PeerVerificationRequired);
+                if identity.is_some_and(|identity| identity.has_verification_violation()) {
+                    return Err(MatrixSecurityFailure::IdentityChanged);
                 }
             }
             Ok(())

@@ -11,6 +11,7 @@ ADRs capture decisions that constrain future implementation. A new ADR may super
 | [0005](./0005-offline-root-signed-releases.md)         | Accepted | Offline-root signed release manifests and ordered promotion |
 | [0006](./0006-online-key-for-testing-alpha.md)         | Accepted | Protected online key for the testing Alpha channel          |
 | [0007](./0007-decoupled-client-and-server-releases.md) | Accepted | Decoupled client and server release profiles                |
+| [0009](./0009-encryption-trust-on-first-use.md)        | Accepted | Trust owner-signed devices on first use; SAS is optional    |
 
 Use the next sequential number. Each record must state context, decision, consequences, and the conditions that would justify revisiting it.
 

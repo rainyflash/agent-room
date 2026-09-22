@@ -148,48 +148,62 @@ describe('MatrixSdkHumanMessageGateway', () => {
     }
   });
 
-  it('参与者没有可信签发设备时在上传和重试发送前拒绝', async () => {
-    const sendEvent = vi.fn();
-    const base = client(sendEvent);
-    const gateway = new MatrixSdkHumanMessageGateway(
-      source({
-        getRoom: base.getRoom.bind(base),
-        getUserId: base.getUserId.bind(base),
-        sendEvent,
-        getDeviceId: () => 'WEB',
-        getStateEvent: () => Promise.resolve({ algorithm: 'm.megolm.v1.aes-sha2' }),
-        getCrypto: () => ({
-          ...readyCrypto(),
-          getDeviceVerificationStatus: (userId: string) =>
-            Promise.resolve({
-              crossSigningVerified: userId === '@rainy:agent-room.test',
-              signedByOwner: true,
-            }),
+  it('参与者无需核对安全码：设备由其主人签名即可直接发送', async () => {
+    const sendEvent = vi.fn().mockResolvedValue({ event_id: '$accepted' });
+    const gateway = encryptedGateway(sendEvent, {
+      getDeviceVerificationStatus: (userId: string) =>
+        Promise.resolve({
+          crossSigningVerified: userId === '@rainy:agent-room.test',
+          signedByOwner: true,
         }),
-      } as unknown as MatrixClient),
-    );
-    const intent = {
-      ...request().event.preview,
-      body: 'Private draft',
-      roomId: request().roomId,
-      submissionId: request().event.id,
-      mediaType: 'text/plain' as const,
-      sensitivity: 'normal' as const,
-    };
-    await expect(
-      gateway.protectBody(intent, {
-        bytes: new TextEncoder().encode(intent.body),
-        digestSha256: 'a'.repeat(64),
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      error: { code: 'publication.peer_verification_required', retryable: true },
+    });
+
+    await expect(gateway.protectBody(encryptedIntent(), preparedBody())).resolves.toMatchObject({
+      ok: true,
     });
     await expect(gateway.publish(encryptedRequest())).resolves.toEqual({
+      ok: true,
+      value: { matrixEventId: '$accepted' },
+    });
+    expect(sendEvent).toHaveBeenCalledOnce();
+  });
+
+  it('有人换了加密身份时先提示，用户再次发送即确认并记住新身份', async () => {
+    const sendEvent = vi.fn().mockResolvedValue({ event_id: '$accepted' });
+    const identities = changedIdentity(false);
+    const gateway = encryptedGateway(sendEvent, identities.crypto);
+
+    await expect(gateway.protectBody(encryptedIntent(), preparedBody())).resolves.toEqual({
       ok: false,
-      error: { kind: 'peer_verification_required', retryable: true },
+      error: { code: 'publication.identity_changed', retryable: true },
+    });
+    expect(identities.pinCurrentUserIdentity).not.toHaveBeenCalled();
+
+    await expect(gateway.publish(encryptedRequest())).resolves.toEqual({
+      ok: true,
+      value: { matrixEventId: '$accepted' },
+    });
+    expect(identities.pinCurrentUserIdentity).toHaveBeenCalledWith('@peer:agent-room.test');
+    expect(identities.withdrawVerificationRequirement).not.toHaveBeenCalled();
+    expect(sendEvent).toHaveBeenCalledOnce();
+  });
+
+  it('核对过安全码的人换了身份时，确认会撤销核对要求并记住新身份', async () => {
+    const sendEvent = vi.fn().mockResolvedValue({ event_id: '$accepted' });
+    const identities = changedIdentity(true);
+    const gateway = encryptedGateway(sendEvent, identities.crypto);
+
+    await expect(gateway.publish(encryptedRequest())).resolves.toEqual({
+      ok: false,
+      error: { kind: 'identity_changed', retryable: true },
     });
     expect(sendEvent).not.toHaveBeenCalled();
+
+    await expect(gateway.publish(encryptedRequest())).resolves.toMatchObject({ ok: true });
+    expect(identities.withdrawVerificationRequirement).toHaveBeenCalledWith(
+      '@peer:agent-room.test',
+    );
+    expect(identities.pinCurrentUserIdentity).toHaveBeenCalledWith('@peer:agent-room.test');
   });
 
   it('区分明确 4xx 拒绝、未知提交和本地不可用', async () => {
@@ -251,14 +265,67 @@ function event(eventId: string, sender: string, txnId: string): MatrixEvent {
 
 function readyCrypto() {
   return {
-    getUserDeviceInfo: () =>
-      Promise.resolve(
-        new Map([['@peer:agent-room.test', new Map([['PEER', { deviceId: 'PEER' }]])]]),
-      ),
     isEncryptionEnabledInRoom: () => Promise.resolve(true),
     isCrossSigningReady: () => Promise.resolve(true),
     getDeviceVerificationStatus: () =>
       Promise.resolve({ crossSigningVerified: true, signedByOwner: true }),
+    getUserVerificationStatus: () =>
+      Promise.resolve({ needsUserApproval: false, wasCrossSigningVerified: () => false }),
+  };
+}
+
+function encryptedGateway(sendEvent: ReturnType<typeof vi.fn>, crypto: Record<string, unknown>) {
+  const base = client(sendEvent);
+  return new MatrixSdkHumanMessageGateway(
+    source({
+      getRoom: base.getRoom.bind(base),
+      getUserId: base.getUserId.bind(base),
+      sendEvent,
+      getDeviceId: () => 'WEB',
+      getStateEvent: () => Promise.resolve({ algorithm: 'm.megolm.v1.aes-sha2' }),
+      getCrypto: () => ({ ...readyCrypto(), ...crypto }),
+    } as unknown as MatrixClient),
+  );
+}
+
+/** 对端换了加密身份；记住新身份后不再需要确认。 */
+function changedIdentity(wasVerified: boolean) {
+  let approved = false;
+  const pinCurrentUserIdentity = vi.fn(() => {
+    approved = true;
+    return Promise.resolve();
+  });
+  const withdrawVerificationRequirement = vi.fn(() => Promise.resolve());
+  return {
+    pinCurrentUserIdentity,
+    withdrawVerificationRequirement,
+    crypto: {
+      getUserVerificationStatus: () =>
+        Promise.resolve({
+          needsUserApproval: !approved,
+          wasCrossSigningVerified: () => wasVerified,
+        }),
+      pinCurrentUserIdentity,
+      withdrawVerificationRequirement,
+    },
+  };
+}
+
+function encryptedIntent() {
+  return {
+    ...request().event.preview,
+    body: 'Private draft',
+    roomId: request().roomId,
+    submissionId: request().event.id,
+    mediaType: 'text/plain' as const,
+    sensitivity: 'normal' as const,
+  };
+}
+
+function preparedBody() {
+  return {
+    bytes: new TextEncoder().encode('Private draft'),
+    digestSha256: 'a'.repeat(64),
   };
 }
 

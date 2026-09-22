@@ -104,7 +104,8 @@ pub enum MatrixSecurityFailure {
     RecoveryUnavailable,
     RecoveryRejected,
     IdentityNotReady,
-    PeerVerificationRequired,
+    /// 曾经核对过安全码的参与者换了加密身份。其余参与者无需核对，首次见到时记住身份即可。
+    IdentityChanged,
     Unavailable,
     InvalidRequest,
     NotJoined,

@@ -149,7 +149,7 @@ const en = {
   'security.verification.peerTitle': 'Verify a room participant',
   'security.verification.peerEyebrow': 'Participant verification request',
   'security.verification.peerDetail':
-    '{{user}} ({{device}}) is requesting verification. Compare the codes in their trusted app or Agent host before confirming.',
+    '{{user}} ({{device}}) wants to verify with you. This is optional: messages already work without it. Compare the codes in their trusted app or Agent host before confirming.',
   'security.verification.peerWaiting':
     'Accept the request in the participant’s app or Agent host, then compare the complete codes on both sides.',
   'security.verification.target': 'Target device: {{device}}',
@@ -330,7 +330,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.verification.peerTitle': '验证房间参与者',
   'security.verification.peerEyebrow': '参与者验证请求',
   'security.verification.peerDetail':
-    '{{user}}（{{device}}）正在请求验证。请在对方可信应用或 Agent 宿主中核对完整安全码后确认。',
+    '{{user}}（{{device}}）想与你核对安全码。这是可选的，不核对也能正常收发；请在对方可信应用或 Agent 宿主中核对完整安全码后确认。',
   'security.verification.peerWaiting':
     '请在参与者的应用或 Agent 宿主中接受请求，然后核对双方显示的完整安全码。',
   'security.verification.target': '目标设备：{{device}}',

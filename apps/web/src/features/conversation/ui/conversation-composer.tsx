@@ -165,14 +165,18 @@ export function ConversationComposer({
           <p>
             {t(
               publication.context.failure?.code === 'publication.encryption_not_ready' ||
-                publication.context.failure?.code === 'publication.peer_verification_required'
+                publication.context.failure?.code === 'publication.identity_changed'
                 ? `messages.failure.${publication.context.failure.code}`
                 : 'conversation.failed',
             )}
           </p>
           {publication.context.failure?.retryable ? (
             <Button onClick={composer.retry} size="compact">
-              {t('conversation.retry')}
+              {t(
+                publication.context.failure.code === 'publication.identity_changed'
+                  ? 'conversation.confirmIdentity'
+                  : 'conversation.retry',
+              )}
             </Button>
           ) : null}
           {publication.can({ type: 'CLOSE' }) ? (
