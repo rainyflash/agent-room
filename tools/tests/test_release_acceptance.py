@@ -152,6 +152,23 @@ class UsabilityAcceptanceTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseFailure):
             acceptance.login_changes("0" * 40, "HEAD")
 
+    def test_bridge_config_counts_only_when_a_login_setting_changes(self):
+        # #115 added an "exit with the desktop" switch to the Bridge config; that alone must not force a
+        # fresh device authorization, but touching the device-authorization settings still must.
+        self.assertFalse(any("apps/bridge/src/config.rs".startswith(path) for path in acceptance.LOGIN_PATHS))
+        pattern = acceptance.PARTIAL_LOGIN_PATHS["apps/bridge/src/config.rs"]
+        runtime_switch = "\n".join([
+            "--- a/apps/bridge/src/config.rs", "+++ b/apps/bridge/src/config.rs", "@@ -51,0 +52,2 @@",
+            "+    pub(crate) exit_with_supervisor: bool,",
+            '+            exit_with_supervisor: read_bool(source, "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR", false)?,',
+        ])
+        self.assertFalse(acceptance.changed_lines_match(runtime_switch, pattern))
+        for line in ('-            oidc_issuer_url: read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,',
+                     "+    pub(crate) reset_device_session: bool,",
+                     "+fn read_secure_storage_service("):
+            with self.subTest(line=line):
+                self.assertTrue(acceptance.changed_lines_match("@@ -1 +1 @@\n" + line, pattern))
+
     def test_identity_pages_and_image_count_as_login_code(self):
         # A theme or Keycloak change can break device approval, so it needs a fresh device authorization.
         for path in ("infra/identity/themes/agent-room/login/login-oauth-grant.ftl",
