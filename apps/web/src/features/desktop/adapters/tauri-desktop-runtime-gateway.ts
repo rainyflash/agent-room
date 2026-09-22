@@ -32,6 +32,7 @@ import {
   type DesktopAuthenticationIntent,
   type DesktopHumanSessionChanged,
   type DesktopMatrixAuthenticationGrant,
+  type DesktopNotification,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
@@ -48,6 +49,7 @@ const desktopCommands = {
   applyHost: 'desktop_apply_agent_host',
   authorization: 'desktop_open_authorization',
   openLogs: 'desktop_open_logs',
+  notify: 'desktop_notify',
   autostart: 'desktop_set_autostart',
   language: 'desktop_set_language',
   beginHumanAuthentication: 'desktop_begin_human_authentication',
@@ -240,6 +242,17 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     return this.invokeValidated(
       desktopCommands.openLogs,
       {},
+      z
+        .undefined()
+        .or(z.null())
+        .transform(() => undefined),
+    );
+  }
+
+  async notify(notification: DesktopNotification): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.notify,
+      { title: notification.title, body: notification.body },
       z
         .undefined()
         .or(z.null())

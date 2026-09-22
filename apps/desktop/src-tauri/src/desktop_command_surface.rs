@@ -13,6 +13,7 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_set_language",
     "desktop_open_authorization",
     "desktop_open_logs",
+    "desktop_notify",
     "desktop_check_update",
     "desktop_install_update",
     "desktop_detect_agent_hosts",

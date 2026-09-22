@@ -19,7 +19,9 @@ mod loopback_callback;
 mod matrix_credentials;
 mod matrix_session;
 mod native_language;
+mod notifications;
 use native_language::desktop_set_language;
+use notifications::desktop_notify;
 mod receiver_runtime;
 mod release_update_config;
 mod release_update_state;
@@ -129,6 +131,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_set_language,
             desktop_open_authorization,
             desktop_open_logs,
+            desktop_notify,
             desktop_check_update,
             desktop_install_update,
             desktop_detect_agent_hosts,

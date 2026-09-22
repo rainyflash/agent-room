@@ -160,6 +160,34 @@ export function notificationAllowed(
   );
 }
 
+const notificationTextLimit = 140;
+
+export type SystemNotificationSummary = {
+  readonly count: number;
+  /** Room name when every fresh item comes from one room. */
+  readonly room: string | null;
+  /** Sender and text of the only fresh item; null when there are several. */
+  readonly sender: string | null;
+  readonly text: string;
+};
+
+/** What an operating-system notification may say: one item quotes it briefly, more only count. */
+export function systemNotificationSummary(fresh: readonly InboxItem[]): SystemNotificationSummary {
+  const rooms = new Set(fresh.map((item) => item.room.name).filter((name) => name.length > 0));
+  const only = fresh.length === 1 ? fresh[0] : undefined;
+  const characters = Array.from(only?.text ?? '');
+  const text =
+    characters.length > notificationTextLimit
+      ? `${characters.slice(0, notificationTextLimit - 1).join('')}…`
+      : characters.join('');
+  return {
+    count: fresh.length,
+    room: rooms.size === 1 ? ([...rooms][0] ?? null) : null,
+    sender: only?.sender ?? null,
+    text,
+  };
+}
+
 function attentionKind(
   message: RoomMessageSignal,
   byId: ReadonlyMap<string, RoomMessageSignal>,

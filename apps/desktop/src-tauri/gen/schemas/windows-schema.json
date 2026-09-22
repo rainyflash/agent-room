@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the desktop_lobby_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_notify command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-notify",
+          "markdownDescription": "Enables the desktop_notify command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_open_authorization command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-open-authorization",
@@ -817,6 +823,12 @@
           "type": "string",
           "const": "deny-desktop-lobby-snapshot",
           "markdownDescription": "Denies the desktop_lobby_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_notify command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-notify",
+          "markdownDescription": "Denies the desktop_notify command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_open_authorization command without any pre-configured scope.",
