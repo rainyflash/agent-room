@@ -37,6 +37,7 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_AUTHORIZATION_SECONDS: u64 = 30 * 60;
 /// Bridge 拿不到实例锁时的启动失败代码，见 Bridge 的 `BridgeRuntimeError::instance_lock`。
 const INSTANCE_LOCK_HELD_CODE: &str = "bridge.already_running";
+const OTHER_INSTANCE_CODE: &str = "desktop.bridge.other_instance_running";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -559,7 +560,20 @@ impl BridgeSupervisorActor {
     }
 
     fn unanswered_bridge(&self) -> UnmanagedBridge {
-        if instance_lock_held(&self.config.data_root()) {
+        let data_root = self.config.data_root();
+        if instance_lock_held(&data_root) {
+            if !self
+                .policy
+                .snapshot()
+                .diagnostic_code
+                .as_deref()
+                .eq(&Some(OTHER_INSTANCE_CODE))
+            {
+                tracing::info!(
+                    holder_pid = instance_lock_holder(&data_root),
+                    "另一个 Bridge 进程占着实例锁，等它退出"
+                );
+            }
             UnmanagedBridge::Locked
         } else {
             UnmanagedBridge::Absent
@@ -856,6 +870,17 @@ fn probe_connection_state(state: IpcBridgeState) -> ProbeOutcome {
         IpcBridgeState::Offline => ProbeOutcome::Blocked("desktop.bridge.offline".to_owned()),
         IpcBridgeState::Ready => ProbeOutcome::Authorized,
     }
+}
+
+/// 占着实例锁的 Bridge 进程号，来自 Bridge 写在锁文件旁边的 `.pid` 文件；锁空闲时没有意义。
+fn instance_lock_holder(data_root: &Path) -> Option<u32> {
+    let mut name = std::ffi::OsString::from(BRIDGE_LOCK);
+    name.push(".pid");
+    fs::read_to_string(data_root.join(name))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// 是否还有 Bridge 进程占着本机实例锁。Bridge 在绑定 IPC 之前（启动中）和关闭 IPC 之后（退出收尾）
