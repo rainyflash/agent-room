@@ -1317,6 +1317,15 @@ async fn sync_agent_online(
         reconciled_submissions = outcome.reconciled_submissions,
         "Agent Matrix 增量同步已持久化"
     );
+    // 解不开或来自不受信设备的消息只留下记录；至少在默认的 warn 级别把数量喊出来（不含内容），
+    // 否则「Agent 看不到房间里的消息」在日志里也毫无痕迹。
+    if outcome.isolated_events > 0 || outcome.timeline_gaps > 0 {
+        tracing::warn!(
+            isolated_events = outcome.isolated_events,
+            timeline_gaps = outcome.timeline_gaps,
+            "部分房间消息未能读取：已记为隔离事件或时间线缺口"
+        );
+    }
     online
         .status
         .renew()

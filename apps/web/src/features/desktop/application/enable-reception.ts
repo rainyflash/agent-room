@@ -10,7 +10,8 @@ import type {
 import { receptionGrants } from '../domain/reception';
 import { err, ok, type Result } from '@/shared/result';
 
-export const RECEPTION_AUTHORIZATION_DAYS = 7;
+// 与自动发言授权表单一致：用户明确要求默认 30 天（服务端上限），而不是一周就哑掉。
+export const RECEPTION_AUTHORIZATION_DAYS = 30;
 // Replies are visible to every member of the selected room, including later arrivals.
 // The room, Agent instance, sender policy and reply-only limit remain fixed.
 const RECEPTION_AUDIENCE = 'any_room_member';

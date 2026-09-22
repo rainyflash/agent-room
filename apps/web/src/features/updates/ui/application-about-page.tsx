@@ -10,7 +10,10 @@ import {
   applyWebApplicationUpdate,
   checkWebApplicationUpdate,
 } from '../adapters/browser-application-update';
-import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
+import {
+  defaultReleaseChannel,
+  type ReleaseUpdateChannel,
+} from '@/features/desktop/domain/desktop-runtime';
 import './application-about.css';
 
 export function ApplicationAboutPage() {
@@ -22,7 +25,7 @@ export function ApplicationAboutPage() {
     ? (desktop.snapshot?.currentVersion ?? desktop.update?.currentVersion ?? null)
     : applicationVersion;
   const [channel, setChannel] = useState<ReleaseUpdateChannel>(
-    applicationVersion.includes('-') ? 'testing' : 'stable',
+    defaultReleaseChannel(applicationVersion),
   );
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
