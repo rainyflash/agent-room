@@ -5,10 +5,18 @@ import { AttachmentPicker, selectAttachment } from './attachment-picker';
 import type { AttachmentFailure } from '../domain/conversation-attachment';
 import './conversation-attachments.css';
 import { useTranslation } from 'react-i18next';
-import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
+import {
+  maximumChatCharacters,
+  type ConversationParticipant,
+} from '@/features/conversation/domain/conversation';
 import type { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
 
 export type ConversationComposerController = ReturnType<typeof useConversationComposer>;
+
+// Soft keyboards have no Shift key, so on touch screens Enter makes a new line and the button sends.
+function enterSends(): boolean {
+  return typeof window.matchMedia !== 'function' || !window.matchMedia('(pointer: coarse)').matches;
+}
 
 export function ConversationComposer({
   composer,
@@ -99,7 +107,7 @@ export function ConversationComposer({
         id={`chat-${roomId}`}
         ref={input}
         rows={3}
-        maxLength={8_000}
+        maxLength={maximumChatCharacters}
         placeholder={t('conversation.placeholder')}
         value={composer.text}
         disabled={!canEdit}
@@ -107,7 +115,12 @@ export function ConversationComposer({
           composer.changeText(event.target.value);
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          if (
+            event.key === 'Enter' &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing &&
+            enterSends()
+          ) {
             event.preventDefault();
             if (canSend) composer.submit();
           }

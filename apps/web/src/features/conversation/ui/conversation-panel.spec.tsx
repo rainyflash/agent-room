@@ -109,6 +109,46 @@ describe('人与 Agent 直接聊天', () => {
       );
     },
   );
+  it('键盘上 Enter 发送，触屏上 Enter 只换行、由按钮发送', async () => {
+    const runtime = harness();
+    const user = userEvent.setup();
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await waitFor(() => {
+      expect(input).toBeEnabled();
+    });
+    // 输入框只收 4000 字符，与校验和计数一致，不再放进 8000 再报错。
+    expect(input).toHaveAttribute('maxlength', '4000');
+    await user.type(input, 'From a keyboard{Enter}');
+    await waitFor(() => {
+      expect(runtime.publish).toHaveBeenCalledOnce();
+    });
+    expect(runtime.publish.mock.calls[0]?.[0]).toMatchObject({
+      conversation: { text: 'From a keyboard' },
+    });
+
+    // 软键盘没有 Shift 键：触屏上 Enter 换行，发送靠按钮。
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({ matches: query === '(pointer: coarse)', media: query })),
+    );
+    try {
+      await waitFor(() => {
+        expect(input).toHaveValue('');
+      });
+      await user.type(input, 'first line{Enter}second line');
+      expect(input).toHaveValue('first line\nsecond line');
+      expect(runtime.publish).toHaveBeenCalledOnce();
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => {
+        expect(runtime.publish).toHaveBeenCalledTimes(2);
+      });
+      expect(runtime.publish.mock.calls[1]?.[0]).toMatchObject({
+        conversation: { text: 'first line\nsecond line' },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('一段输入与稳定身份提及直接发布，并清空已发送草稿', async () => {
     const runtime = harness();
     const user = userEvent.setup();

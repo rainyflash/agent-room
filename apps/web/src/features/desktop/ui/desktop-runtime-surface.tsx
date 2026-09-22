@@ -19,7 +19,11 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ReleaseUpdateChannel } from '@/features/desktop/domain/desktop-runtime';
+import {
+  defaultReleaseChannel,
+  type ReleaseUpdateChannel,
+} from '@/features/desktop/domain/desktop-runtime';
+import { applicationVersion } from '@/features/updates/domain/runtime-manifest';
 import {
   authorizationFailureMessage,
   desktopPhaseLabel,
@@ -41,7 +45,11 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
   const session = useOptionalSession();
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
-  const [updateChannel, setUpdateChannel] = useState<ReleaseUpdateChannel>('stable');
+  const [chosenChannel, setUpdateChannel] = useState<ReleaseUpdateChannel | null>(null);
+  // Until the user picks a channel, follow the one this build came from (alphas live on testing).
+  const updateChannel =
+    chosenChannel ??
+    defaultReleaseChannel(controller.snapshot?.currentVersion ?? applicationVersion);
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const authorization = controller.snapshot?.bridge.authorization ?? null;
   const authorizationFailed =
@@ -53,6 +61,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
     controller.failure !== null || authorization !== null || phase === 'halted';
   const open = expanded;
   const selectedUpdate = controller.update?.channel === updateChannel ? controller.update : null;
+  const updateAvailable = selectedUpdate?.available === true;
   const expiry = useMemo(() => {
     if (authorization === null) {
       return null;
@@ -88,7 +97,11 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
         </span>
         <span>
           <strong>{t('desktop.runtime.title')}</strong>
-          <small>{t(desktopPhaseLabel(controller.snapshot?.bridge.lifecycle))}</small>
+          <small>
+            {updateAvailable && !needsAttention
+              ? t('desktop.update.badge', { version: selectedUpdate.targetVersion })
+              : t(desktopPhaseLabel(controller.snapshot?.bridge.lifecycle))}
+          </small>
         </span>
         <ChevronDown aria-hidden="true" className="desktop-runtime__chevron" />
       </button>
@@ -312,9 +325,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
               </section>
             ) : null}
 
-            {controller.snapshot?.updatesConfigured === true &&
-            authorization === null &&
-            phase !== 'halted' ? (
+            {controller.snapshot?.updatesConfigured === true && authorization === null ? (
               <section className="desktop-runtime__updates">
                 <ShieldCheck aria-hidden="true" />
                 <div className="desktop-runtime__update-copy">

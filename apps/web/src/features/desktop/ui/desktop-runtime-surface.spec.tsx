@@ -47,10 +47,15 @@ const authorizationRuntime: BridgeRuntime = {
   deviceReauthorizationAvailable: false,
 };
 
-function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRuntimeSnapshot {
+function snapshot(
+  bridge: BridgeRuntime,
+  updatesConfigured = false,
+  currentVersion?: string,
+): DesktopRuntimeSnapshot {
   return {
     autostartEnabled: false,
     bridge,
+    ...(currentVersion === undefined ? {} : { currentVersion }),
     deepLink: null,
     cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
     manualHostConfiguration: {
@@ -65,7 +70,7 @@ function snapshot(bridge: BridgeRuntime, updatesConfigured = false): DesktopRunt
   };
 }
 
-function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
+function gateway(bridge: BridgeRuntime, updatesConfigured = false, currentVersion?: string) {
   const openAuthorization = vi.fn(() => Promise.resolve(ok(undefined)));
   const retryBridge = vi.fn(() => Promise.resolve(ok(bridge)));
   const reauthorizeBridge = vi.fn(() =>
@@ -118,7 +123,7 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false) {
     retryBridge,
     reauthorizeBridge,
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
-    snapshot: () => Promise.resolve(ok(snapshot(bridge, updatesConfigured))),
+    snapshot: () => Promise.resolve(ok(snapshot(bridge, updatesConfigured, currentVersion))),
     subscribe: () => Promise.resolve(ok(() => undefined)),
   };
   return {
@@ -164,6 +169,74 @@ describe('桌面运行时界面', () => {
       expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
     });
     expect(runtime.openAuthorization).not.toHaveBeenCalled();
+  });
+  it('启动后自动按本版所属渠道查一次更新，折叠标题显示可安装的新版本', async () => {
+    const ready: BridgeRuntime = {
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        diagnosticCode: 'desktop.bridge.ready',
+        phase: 'ready',
+      },
+      deviceReauthorizationAvailable: false,
+    };
+    // 预发行版来自测试渠道；没人会主动点“检查”，所以启动后就查一次。
+    const runtime = gateway(ready, true, '0.1.0-alpha.47');
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    await waitFor(() => {
+      expect(runtime.checkUpdate).toHaveBeenCalledWith('testing');
+    });
+    expect(runtime.checkUpdate).toHaveBeenCalledTimes(1);
+    const trigger = await screen.findByRole('button', { name: /Update 0\.2\.0 ready to install/u });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('button', { name: 'Install & restart' }));
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
+  });
+  it('Bridge 停机时标题仍报告停机，但展开后照样能安装更新', async () => {
+    const halted: BridgeRuntime = {
+      authorization: null,
+      session: null,
+      lifecycle: {
+        ...authorizationRuntime.lifecycle,
+        automaticRestartCount: 4,
+        diagnosticCode: 'desktop.bridge.restart_budget_exhausted',
+        lastFailureCode: 'bridge.identity.discovery_failed',
+        phase: 'halted',
+      },
+      deviceReauthorizationAvailable: true,
+    };
+    const runtime = gateway(halted, true, '0.1.0-alpha.47');
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    await waitFor(() => {
+      expect(runtime.checkUpdate).toHaveBeenCalledWith('testing');
+    });
+    // 需要处理的状态优先于新版本提示。
+    const trigger = await screen.findByRole('button', { name: /Local agents/u });
+    expect(screen.queryByText(/ready to install/u)).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    // 升级往往正是修复停机的办法，所以停机时更新区仍在。
+    fireEvent.click(await screen.findByRole('button', { name: 'Install & restart' }));
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
   });
   it('展开后能打开日志文件夹，出问题时有东西可发', async () => {
     const runtime = gateway(authorizationRuntime);
@@ -455,7 +528,18 @@ describe('桌面运行时界面', () => {
       },
       deviceReauthorizationAvailable: false,
     };
-    const runtime = gateway(ready, true);
+    // 正式版本跟随稳定渠道；启动时的自动检查用的也是这个渠道，显式点“检查”再查一次。
+    const runtime = gateway(ready, true, '0.1.0');
+    runtime.checkUpdate.mockResolvedValueOnce(
+      ok({
+        available: false,
+        channel: 'stable',
+        currentVersion: '0.1.0',
+        rollback: false,
+        sequence: 7,
+        targetVersion: '0.1.0',
+      }),
+    );
     render(
       <I18nextProvider i18n={i18n}>
         <DesktopRuntimeProvider gateway={runtime.value}>
@@ -464,10 +548,14 @@ describe('桌面运行时界面', () => {
       </I18nextProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
-    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => {
       expect(runtime.checkUpdate).toHaveBeenCalledWith('stable');
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Check' }));
+    await waitFor(() => {
+      expect(runtime.checkUpdate).toHaveBeenCalledWith('stable');
+      expect(runtime.checkUpdate).toHaveBeenCalledTimes(2);
       expect(screen.getByText('0.1.0 → 0.2.0')).toBeVisible();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Install & restart' }));

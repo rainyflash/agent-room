@@ -26,6 +26,7 @@ mod release_update_state;
 mod release_updates;
 mod runtime_target;
 mod server_move;
+mod tray_hint;
 use receiver_runtime::{
     ReceiverRuntime, desktop_receiver_action, desktop_receiver_configure, desktop_receiver_list,
 };
@@ -157,6 +158,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             {
                 api.prevent_close();
                 let _ = window.hide();
+                tray_hint::notify_first_hide(window.app_handle());
             }
         })
         .build(tauri::generate_context!())
@@ -200,6 +202,7 @@ fn setup_runtime(
     );
     server_move::retire_previous_server(&config);
     setup_user_sessions(app, &config)?;
+    app.manage(tray_hint::TrayHint::new(&config.data_root()));
     let targets = Arc::new(
         RuntimeTargetStore::open(&config.data_root())
             .map_err(|failure| format!("桌面 Agent 目标读取失败 [{}]", failure.code()))?,

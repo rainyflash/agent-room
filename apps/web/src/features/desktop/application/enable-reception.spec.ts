@@ -79,6 +79,8 @@ describe('enable background replies', () => {
         audience: 'any_room_member',
         messageKinds: ['reply'],
         impactAcknowledged: true,
+        // 默认有效期与自动发言授权表单一致：30 天（服务端上限），不是一周就哑掉。
+        lifetimeSeconds: 30 * 24 * 60 * 60,
       }),
     );
     expect(ports.runtime.receiverAction).toHaveBeenCalledWith(taskId, { action: 'start' });
