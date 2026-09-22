@@ -131,6 +131,7 @@ impl BridgeSupervisor {
             generation: 0,
             managed_child_active: false,
             child_found_other_instance: false,
+            logged_lifecycle: None,
         };
         tauri::async_runtime::spawn(actor.run());
         Self {
@@ -232,6 +233,8 @@ struct BridgeSupervisorActor {
     managed_child_active: bool,
     /// 当前子进程报告另一个 Bridge 进程占着实例锁，它随后的退出不算崩溃。
     child_found_other_instance: bool,
+    /// 上一次写进日志的生命周期状态；状态没变的发布不再重复记。
+    logged_lifecycle: Option<(BridgePhase, Option<String>, Option<String>)>,
 }
 
 impl BridgeSupervisorActor {
@@ -304,6 +307,7 @@ impl BridgeSupervisorActor {
             .map(|command| command.envs(self.config.launch_environment(launch)))
             .and_then(tauri_plugin_shell::process::Command::spawn);
         let Ok((mut events, child)) = spawned else {
+            tracing::error!("Bridge 子进程启动失败：安装包里的 Bridge 不可执行或被拒绝");
             self.policy.halt(
                 now_unix_ms(),
                 "desktop.bridge.sidecar_spawn_failed".to_owned(),
@@ -664,6 +668,7 @@ impl BridgeSupervisorActor {
     }
 
     fn handle_exit(&mut self, exit_code: Option<i32>) {
+        tracing::warn!(?exit_code, "Bridge 子进程退出");
         if let Ok(mut child) = self.child.lock() {
             *child = None;
         }
@@ -771,7 +776,8 @@ impl BridgeSupervisorActor {
         }
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        self.log_lifecycle();
         let authorization = self.authorization.as_ref().map(AuthorizationPrompt::view);
         let next = SupervisorState {
             view: BridgeRuntimeView::new(
@@ -787,6 +793,28 @@ impl BridgeSupervisorActor {
         crate::tray_hint::update_tooltip(&self.app, self.policy.snapshot().phase);
         self.state.send_replace(next.clone());
         let _ = self.app.emit(RUNTIME_CHANGED_EVENT, next.view);
+    }
+
+    fn log_lifecycle(&mut self) {
+        let snapshot = self.policy.snapshot();
+        let current = (
+            snapshot.phase,
+            snapshot.diagnostic_code.clone(),
+            snapshot.last_failure_code.clone(),
+        );
+        if self.logged_lifecycle.as_ref() == Some(&current) {
+            return;
+        }
+        tracing::info!(
+            phase = ?snapshot.phase,
+            ownership = ?snapshot.ownership,
+            diagnostic_code = snapshot.diagnostic_code.as_deref(),
+            last_failure_code = snapshot.last_failure_code.as_deref(),
+            automatic_restart_count = snapshot.automatic_restart_count,
+            last_exit_code = snapshot.last_exit_code,
+            "Bridge 连接状态变化"
+        );
+        self.logged_lifecycle = Some(current);
     }
 }
 

@@ -651,6 +651,12 @@
           "markdownDescription": "Enables the desktop_open_authorization command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_open_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-open-logs",
+          "markdownDescription": "Enables the desktop_open_logs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_plan_agent_host command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-plan-agent-host",
@@ -817,6 +823,12 @@
           "type": "string",
           "const": "deny-desktop-open-authorization",
           "markdownDescription": "Denies the desktop_open_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_open_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-open-logs",
+          "markdownDescription": "Denies the desktop_open_logs command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_plan_agent_host command without any pre-configured scope.",

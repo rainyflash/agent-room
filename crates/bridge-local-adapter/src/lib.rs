@@ -4,6 +4,7 @@ mod client;
 mod credentials;
 mod endpoint;
 mod location;
+mod log_file;
 mod secret_store;
 mod secure_storage_service;
 
@@ -18,6 +19,7 @@ pub use location::{
     BridgeLocationFailure, BridgeLocationFailureKind, bridge_data_root_from_environment,
     bridge_runtime_root, resolve_bridge_data_root,
 };
+pub use log_file::{DEFAULT_LOG_FILE_CAP_BYTES, RotatingLogFile, bridge_log_root};
 pub use secret_store::{LocalSecretStore, SecretStoreFailure, SystemCredentialStore};
 pub use secure_storage_service::{
     DEFAULT_SECURE_STORAGE_SERVICE, SecureStorageService, SecureStorageServiceFailure,

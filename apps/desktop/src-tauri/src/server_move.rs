@@ -63,16 +63,18 @@ pub(crate) fn retire_previous_server(config: &DesktopBridgeConfig) {
     );
     match outcome {
         Ok(ServerMoveOutcome::Retired(folder)) => {
-            eprintln!("previous server state retired to {}", folder.display());
+            tracing::info!(folder = %folder.display(), "上一个服务器的本机状态已归档");
         }
         Ok(ServerMoveOutcome::BridgeRunning) => {
-            eprintln!("previous server state kept for now: a Bridge is still running");
+            tracing::info!("上一个服务器的本机状态暂留：还有 Bridge 在运行");
         }
         Ok(ServerMoveOutcome::Unchanged | ServerMoveOutcome::Recorded) => {}
-        Err(failure) => eprintln!(
-            "previous server state retirement failed [{}]",
-            failure.code()
-        ),
+        Err(failure) => {
+            tracing::warn!(
+                error_code = failure.code(),
+                "归档上一个服务器的本机状态失败"
+            );
+        }
     }
 }
 

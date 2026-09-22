@@ -99,7 +99,7 @@ pub(crate) struct DesktopCommandFailure {
 }
 
 impl DesktopCommandFailure {
-    fn new(code: impl Into<String>, retryable: bool) -> Self {
+    pub(crate) fn new(code: impl Into<String>, retryable: bool) -> Self {
         Self {
             code: code.into(),
             retryable,

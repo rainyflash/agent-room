@@ -95,6 +95,7 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false, currentVersio
     ),
   );
   const installUpdate = vi.fn(() => Promise.resolve(ok(undefined)));
+  const openLogs = vi.fn(() => Promise.resolve(ok(undefined)));
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
@@ -115,6 +116,7 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false, currentVersio
     installUpdate,
     isAvailable: () => true,
     openAuthorization,
+    openLogs,
     readLobby: () => {
       return Promise.reject(new Error('此测试不读取大厅。'));
     },
@@ -124,7 +126,15 @@ function gateway(bridge: BridgeRuntime, updatesConfigured = false, currentVersio
     snapshot: () => Promise.resolve(ok(snapshot(bridge, updatesConfigured, currentVersion))),
     subscribe: () => Promise.resolve(ok(() => undefined)),
   };
-  return { checkUpdate, installUpdate, openAuthorization, reauthorizeBridge, retryBridge, value };
+  return {
+    checkUpdate,
+    installUpdate,
+    openAuthorization,
+    openLogs,
+    reauthorizeBridge,
+    retryBridge,
+    value,
+  };
 }
 
 beforeAll(async () => {
@@ -226,6 +236,25 @@ describe('桌面运行时界面', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Install & restart' }));
     await waitFor(() => {
       expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
+  });
+  it('展开后能打开日志文件夹，出问题时有东西可发', async () => {
+    const runtime = gateway(authorizationRuntime);
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DesktopRuntimeProvider gateway={runtime.value}>
+          <DesktopRuntimeSurface />
+        </DesktopRuntimeProvider>
+      </I18nextProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await waitFor(() => {
+      expect(screen.getByText(/Send desktop\.log and bridge\.log/u)).toBeVisible();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open log folder' }));
+    await waitFor(() => {
+      expect(runtime.openLogs).toHaveBeenCalledTimes(1);
     });
   });
   it('只展示身份站点和一次性代码，并通过闭合命令打开完整地址', async () => {
