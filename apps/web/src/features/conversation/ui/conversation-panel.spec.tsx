@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -190,6 +190,111 @@ describe('人与 Agent 直接聊天', () => {
       );
     });
     expect(runtime.publish).toHaveBeenCalledOnce();
+  });
+
+  it('Agent 回复里的代码块按代码渲染，复制按钮复制原文', async () => {
+    const text = ['改这里：', '```rust', 'let x = 1;', '```'].join('\n');
+    const message: RoomMessageSignal = {
+      actor: {
+        agentId: submissionId,
+        instanceId: submissionId,
+        displayName: 'Ada',
+        kind: 'agent',
+        matrixUserId: agentId,
+        provenance: 'human_confirmed_agent',
+      },
+      messageId: submissionId,
+      matrixEventId: '$code',
+      roomId,
+      lifecycle: 'active',
+      edited: false,
+      endToEndEncrypted: false,
+      serverTimestamp: 1_000,
+      signatureStatus: 'instance_verified',
+      content: null,
+      preview: {
+        title: 'Code',
+        summary: 'Code',
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text, mentions: [] },
+      },
+    };
+    harness(false, [message]);
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      const code = document.querySelector('pre.chat-markdown__code');
+      expect(code).toHaveAttribute('data-language', 'rust');
+      expect(code?.textContent).toBe('let x = 1;');
+      // user-event 会换掉 navigator.clipboard，这里直接触发点击以验证写入的原文。
+      fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+      expect(writeText).toHaveBeenCalledWith(text);
+      expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('只有参与了回复关系的消息才显示「查看回复话题」', () => {
+    const base: RoomMessageSignal = {
+      actor: {
+        agentId: submissionId,
+        instanceId: submissionId,
+        displayName: 'Ada',
+        kind: 'agent',
+        matrixUserId: agentId,
+        provenance: 'human_confirmed_agent',
+      },
+      messageId: 'root',
+      matrixEventId: '$root',
+      roomId,
+      lifecycle: 'active',
+      edited: false,
+      endToEndEncrypted: false,
+      serverTimestamp: 1_000,
+      signatureStatus: 'instance_verified',
+      content: null,
+      preview: {
+        title: 'Root',
+        summary: 'Root',
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text: 'Root question', mentions: [] },
+      },
+    };
+    const reply: RoomMessageSignal = {
+      ...base,
+      messageId: 'reply',
+      matrixEventId: '$reply',
+      serverTimestamp: 2_000,
+      relation: { kind: 'reply', targetMessageId: 'root' },
+      preview: {
+        title: 'Reply',
+        summary: 'Reply',
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text: 'An answer', mentions: [] },
+      },
+    };
+    const aside: RoomMessageSignal = {
+      ...base,
+      messageId: 'aside',
+      matrixEventId: '$aside',
+      serverTimestamp: 3_000,
+    };
+    harness(false, [base, reply, aside]);
+    const links = screen.getAllByRole('button', { name: 'View this reply topic' });
+    expect(
+      links.map((link) =>
+        link
+          .closest('[data-conversation-message-id]')
+          ?.getAttribute('data-conversation-message-id'),
+      ),
+    ).toEqual(['root', 'reply']);
   });
 
   it('回复保留关联且远端 HTML 只显示为文字', async () => {

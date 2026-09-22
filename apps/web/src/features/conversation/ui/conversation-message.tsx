@@ -1,9 +1,11 @@
-import { Reply } from 'lucide-react';
+import { Check, Copy, Reply } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import { initials } from '@/shared/ui/display-name';
 import type { AgentDelivery } from '../domain/message-delivery';
+import { ChatMarkdown } from './chat-markdown';
 import { MessageAttachment } from './message-attachment';
 
 export function ConversationMessage({
@@ -27,6 +29,7 @@ export function ConversationMessage({
 }) {
   const { t } = useTranslation();
   const chat = message.preview?.conversation;
+  const [copied, setCopied] = useState(false);
   return (
     <article
       className={`conversation-message${own ? ' conversation-message--own' : ''}`}
@@ -67,7 +70,7 @@ export function ConversationMessage({
             </div>
           ) : null}
           {chat?.attachmentName !== undefined && chat.text === chat.attachmentName ? null : (
-            <p>{chat?.text}</p>
+            <ChatMarkdown source={chat?.text ?? ''} />
           )}
           {chat?.attachmentName !== undefined && message.content !== null ? (
             <MessageAttachment
@@ -95,18 +98,43 @@ export function ConversationMessage({
           </div>
         ) : null}
       </div>
-      <button
-        className="conversation-message__reply"
-        type="button"
-        disabled={!editable}
-        aria-label={t('conversation.reply', { name: message.actor.displayName })}
-        title={t('conversation.reply', { name: message.actor.displayName })}
-        onClick={() => {
-          onReply(message);
-        }}
-      >
-        <Reply aria-hidden="true" />
-      </button>
+      <div className="conversation-message__actions">
+        {chat?.text ? (
+          <button
+            className="conversation-message__action"
+            type="button"
+            aria-label={t(copied ? 'conversation.copied' : 'conversation.copy')}
+            title={t(copied ? 'conversation.copied' : 'conversation.copy')}
+            onClick={() => {
+              void navigator.clipboard.writeText(chat.text).then(
+                () => {
+                  setCopied(true);
+                  window.setTimeout(() => {
+                    setCopied(false);
+                  }, 1_500);
+                },
+                () => {
+                  setCopied(false);
+                },
+              );
+            }}
+          >
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          </button>
+        ) : null}
+        <button
+          className="conversation-message__action"
+          type="button"
+          disabled={!editable}
+          aria-label={t('conversation.reply', { name: message.actor.displayName })}
+          title={t('conversation.reply', { name: message.actor.displayName })}
+          onClick={() => {
+            onReply(message);
+          }}
+        >
+          <Reply aria-hidden="true" />
+        </button>
+      </div>
     </article>
   );
 }

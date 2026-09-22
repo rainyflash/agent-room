@@ -158,6 +158,19 @@ export function ConversationPanel({
     () => new Map(messages.map((message) => [message.messageId, message])),
     [messages],
   );
+  // 话题是回复关系连成的一串；只有参与了回复（回复过别人或被人回复）的消息才有话题可看，
+  // 每条消息下都挂链接只是噪音。
+  const topicMessageIds = useMemo(
+    () =>
+      new Set(
+        messages.flatMap((message) =>
+          message.relation === undefined
+            ? []
+            : [message.messageId, message.relation.targetMessageId],
+        ),
+      ),
+    [messages],
+  );
   const deliveries = useMemo(
     () => conversationDeliveries(timeline, receivers),
     [timeline, receivers],
@@ -316,16 +329,18 @@ export function ConversationPanel({
                     input.current?.focus();
                   }}
                 />
-                <button
-                  type="button"
-                  className="conversation-topic-link"
-                  onClick={() => {
-                    following.current = false;
-                    setFilter({ ...emptyConversationFilter, topic: message.messageId });
-                  }}
-                >
-                  {t('history.viewTopic')}
-                </button>
+                {topicMessageIds.has(message.messageId) ? (
+                  <button
+                    type="button"
+                    className="conversation-topic-link"
+                    onClick={() => {
+                      following.current = false;
+                      setFilter({ ...emptyConversationFilter, topic: message.messageId });
+                    }}
+                  >
+                    {t('history.viewTopic')}
+                  </button>
+                ) : null}
               </div>
             );
           })}
