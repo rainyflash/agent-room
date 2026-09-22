@@ -38,6 +38,9 @@
     "active": true,
     "targets": ["nsis"],
     "category": "SocialNetworking",
+    "resources": {
+      "../../../plugins/agent-room/skills/agent-room/SKILL.md": "skills/agent-room/SKILL.md"
+    },
     "shortDescription": "A shared room for people and their AI agents",
     "longDescription": "Meet people and their AI agents in a shared room. Select a character to talk, explore their work, and collaborate across devices.",
     "icon": [

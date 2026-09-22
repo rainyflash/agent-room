@@ -20,6 +20,8 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_plan_agent_host",
     "desktop_apply_agent_host",
     "desktop_remove_agent_host",
+    "desktop_skill_status",
+    "desktop_install_skill",
     "desktop_bootstrap_default_agent",
     "desktop_configure_agent_runtime",
     "desktop_lobby_snapshot",

@@ -16,6 +16,7 @@ import {
   agentHostApplyReceiptSchema,
   agentHostDetectionSchema,
   agentHostPlanSchema,
+  agentHostSkillStatusSchema,
   desktopAgentTargetSchema,
   desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
@@ -28,6 +29,7 @@ import {
   type AgentHostDetection,
   type AgentHostKind,
   type AgentHostPlan,
+  type AgentHostSkillStatus,
   type DesktopRuntimeEventHandlers,
   type DesktopAgentTarget,
   type DesktopAuthenticationIntent,
@@ -64,6 +66,8 @@ const desktopCommands = {
   installUpdate: 'desktop_install_update',
   lobbySnapshot: 'desktop_lobby_snapshot',
   planHost: 'desktop_plan_agent_host',
+  skillStatus: 'desktop_skill_status',
+  installSkill: 'desktop_install_skill',
   reauthorize: 'desktop_reauthorize_bridge',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
@@ -316,6 +320,18 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async planHost(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.planHost, { host }, agentHostPlanSchema);
+  }
+
+  async skillStatus(
+    host: AgentHostKind,
+  ): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.skillStatus, { host }, agentHostSkillStatusSchema);
+  }
+
+  async installSkill(
+    host: AgentHostKind,
+  ): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.installSkill, { host }, agentHostSkillStatusSchema);
   }
 
   async applyHost(

@@ -16,7 +16,10 @@ use thiserror::Error;
 const SERVER_NAME: &str = "agent_room";
 mod codex_timeout;
 mod command;
+mod skills;
+
 pub use command::SystemCommandRunner;
+pub use skills::{SKILL_NAME, SkillState, SkillStatus, install_skill, skill_status, skill_target};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -105,6 +108,10 @@ pub struct HostContext {
     pub mcp_executable: PathBuf,
     pub codex_cli_path: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
+    /// Claude Code 的配置目录覆盖（`CLAUDE_CONFIG_DIR`）；技能装在它下面的 `skills/`。
+    pub claude_config_dir: Option<PathBuf>,
+    /// 本版桌面端随包携带的技能文件；没有时技能安装报为不支持。
+    pub skill_source: Option<PathBuf>,
 }
 
 impl HostContext {
@@ -128,7 +135,15 @@ impl HostContext {
             mcp_executable,
             codex_cli_path: env::var_os("CODEX_CLI_PATH").map(PathBuf::from),
             codex_home: env::var_os("CODEX_HOME").map(PathBuf::from),
+            claude_config_dir: skills::claude_config_dir_from_environment(),
+            skill_source: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_skill_source(mut self, source: Option<PathBuf>) -> Self {
+        self.skill_source = source.filter(|path| path.is_absolute());
+        self
     }
 }
 
@@ -253,6 +268,20 @@ impl HostConfigurator {
             return Err(HostFailure::new("host.native_executable_required", false));
         }
         Ok(executable)
+    }
+
+    /// 本版技能文件在宿主里的安装状态。
+    /// # Errors
+    /// 桌面端的技能文件或已安装的文件读不出来。
+    pub fn skill_status(&self, host: HostKind) -> Result<SkillStatus, HostFailure> {
+        skill_status(&self.context, host)
+    }
+
+    /// 把本版技能文件装进宿主的技能目录。
+    /// # Errors
+    /// 宿主不支持技能、没有技能文件，或写入失败。
+    pub fn install_skill(&self, host: HostKind) -> Result<SkillStatus, HostFailure> {
+        install_skill(&self.context, host)
     }
 
     pub fn plan(&self, host: HostKind) -> Result<ConfigurationPlan, HostFailure> {
@@ -949,6 +978,8 @@ mod tests {
             mcp_executable: mcp,
             codex_cli_path: None,
             codex_home: None,
+            claude_config_dir: None,
+            skill_source: None,
         }
     }
 

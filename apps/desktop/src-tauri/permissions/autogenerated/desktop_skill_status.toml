@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-skill-status"
+description = "Enables the desktop_skill_status command without any pre-configured scope."
+commands.allow = ["desktop_skill_status"]
+
+[[permission]]
+identifier = "deny-desktop-skill-status"
+description = "Denies the desktop_skill_status command without any pre-configured scope."
+commands.deny = ["desktop_skill_status"]
