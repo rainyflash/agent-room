@@ -65,3 +65,31 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith('logout');
 });
+
+it('等待浏览器登录时可以重新开始，而不是干等 15 分钟', () => {
+  const context: SessionContext = {
+    authenticationMode: 'interactive',
+    authenticationTarget: 'control',
+    connection: null,
+    controlStatus: 'unavailable',
+    failure: null,
+    principal: null,
+    resumePath: null,
+  };
+  const onAction = vi.fn();
+  render(
+    <I18nextProvider i18n={i18n}>
+      <RouterTestProvider>
+        <ConnectionWorkspace
+          context={context}
+          onAction={onAction}
+          view={connectionViewModel('authenticating', context)}
+        >
+          {null}
+        </ConnectionWorkspace>
+      </RouterTestProvider>
+    </I18nextProvider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Start sign-in again' }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith('retry');
+});

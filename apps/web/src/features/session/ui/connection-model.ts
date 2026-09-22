@@ -250,6 +250,10 @@ function actionForState(
     Partial<Record<SessionStateName, readonly [ConnectionAction, TranslationKey]>>
   > = {
     offline: ['retry', 'connection.action.retry'],
+    // The desktop waits up to 15 minutes for the browser to come back; if the tab was closed or
+    // the identity page failed, the person needs a way out other than waiting it out.
+    authenticating: ['retry', 'connection.action.restartLogin'],
+    awaitingBrowserNavigation: ['retry', 'connection.action.restartLogin'],
     signOutFailed: ['retry', 'connection.action.retryLogout'],
     ready: ['enter', 'connection.action.enter'],
     reconnecting: ['retry', 'connection.action.retry'],
