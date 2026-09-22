@@ -22,6 +22,7 @@ import {
   desktopHumanSessionChangedSchema,
   desktopMatrixAuthenticationGrantSchema,
   releaseUpdateCheckSchema,
+  releaseUpdateProgressSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
   type AgentHostDetection,
@@ -77,7 +78,8 @@ type DesktopEventName =
   | 'desktop://deep-link'
   | 'desktop://human-session-changed'
   | 'desktop://human-session-failed'
-  | 'desktop://runtime-changed';
+  | 'desktop://runtime-changed'
+  | 'desktop://update-progress';
 
 export type TauriDesktopTransport = {
   readonly available: () => boolean;
@@ -358,7 +360,16 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
             handlers.onFailure({ code: 'desktop.event.invalid_deep_link', retryable: false });
           },
         );
+        // Progress is best effort: a malformed event is ignored rather than reported.
+        const removeProgressListener = await this.transport.listen(
+          'desktop://update-progress',
+          (payload) => {
+            const parsed = releaseUpdateProgressSchema.safeParse(payload);
+            if (parsed.success) handlers.onUpdateProgress?.(parsed.data);
+          },
+        );
         return ok(() => {
+          removeProgressListener();
           removeDeepLinkListener();
           removeRuntimeListener();
         });

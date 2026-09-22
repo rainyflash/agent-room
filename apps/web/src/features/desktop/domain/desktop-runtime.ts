@@ -188,6 +188,15 @@ export const desktopDeepLinkSchema = z
     }
   });
 
+export const releaseUpdateProgressSchema = z
+  .object({
+    phase: z.enum(['downloading', 'installing']),
+    downloadedBytes: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ReleaseUpdateProgress = z.infer<typeof releaseUpdateProgressSchema>;
+
 export type DesktopNotification = {
   readonly title: string;
   readonly body: string;
@@ -371,6 +380,7 @@ export type DesktopRuntimeEventHandlers = {
   readonly onDeepLink: (target: DesktopDeepLink) => void;
   readonly onFailure: (failure: DesktopRuntimeFailure) => void;
   readonly onRuntimeChanged: (runtime: BridgeRuntime) => void;
+  readonly onUpdateProgress?: (progress: ReleaseUpdateProgress) => void;
 };
 
 export type DesktopRuntimeGateway = {

@@ -11,7 +11,7 @@ use agent_room_release_manifest::{
 use futures_util::StreamExt as _;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use tauri::{AppHandle, Manager as _};
+use tauri::{AppHandle, Emitter as _, Manager as _};
 use tauri_plugin_updater::{Update, UpdaterExt as _};
 use url::Url;
 
@@ -139,12 +139,16 @@ impl ReleaseUpdateService {
             return Err(ReleaseUpdateFailure::policy("desktop.update.plan_changed"));
         }
 
+        // 下载几十 MB 时按钮不能一动不动：把进度发给界面，最多每 1% 一次。
+        let mut progress =
+            UpdateProgressReporter::new(self.app.clone(), prepared.artifact.byte_length);
         let bytes = prepared
             .update
-            .download(|_, _| {}, || {})
+            .download(|chunk, _| progress.downloaded(chunk), || {})
             .await
             .map_err(|_| ReleaseUpdateFailure::network("desktop.update.download_failed"))?;
         validate_download(&bytes, &prepared.artifact)?;
+        progress.installing();
         self.state
             .record_pending(channel, manifest.sequence, &manifest.version)
             .map_err(ReleaseUpdateFailure::from_state)?;
@@ -258,6 +262,63 @@ impl ReleaseUpdateService {
         serde_json::from_slice(&body)
             .map_err(|_| ReleaseUpdateFailure::policy("desktop.update.manifest_invalid"))
     }
+}
+
+const UPDATE_PROGRESS_EVENT: &str = "desktop://update-progress";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgress {
+    phase: &'static str,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+}
+
+/// 把下载进度发给界面；按整数百分比去重，避免每个数据块都刷一次。
+struct UpdateProgressReporter {
+    app: AppHandle,
+    total_bytes: u64,
+    downloaded_bytes: u64,
+    reported_percent: u64,
+}
+
+impl UpdateProgressReporter {
+    fn new(app: AppHandle, total_bytes: u64) -> Self {
+        Self {
+            app,
+            total_bytes,
+            downloaded_bytes: 0,
+            reported_percent: u64::MAX,
+        }
+    }
+
+    fn downloaded(&mut self, chunk: usize) {
+        self.downloaded_bytes = self.downloaded_bytes.saturating_add(chunk as u64);
+        let percent = percent_of(self.downloaded_bytes, self.total_bytes);
+        if percent != self.reported_percent {
+            self.reported_percent = percent;
+            self.emit("downloading");
+        }
+    }
+
+    fn installing(&mut self) {
+        self.emit("installing");
+    }
+
+    fn emit(&self, phase: &'static str) {
+        let _ = self.app.emit(
+            UPDATE_PROGRESS_EVENT,
+            UpdateProgress {
+                phase,
+                downloaded_bytes: self.downloaded_bytes,
+                total_bytes: self.total_bytes,
+            },
+        );
+    }
+}
+
+fn percent_of(part: u64, total: u64) -> u64 {
+    part.saturating_mul(100).checked_div(total).unwrap_or(0)
 }
 
 enum PreparedRelease {
@@ -388,6 +449,17 @@ impl ReleaseUpdateFailure {
 
 #[cfg(test)]
 mod tests {
+    use super::percent_of;
+
+    #[test]
+    fn 进度百分比不除零且封顶于整数() {
+        assert_eq!(percent_of(0, 0), 0);
+        assert_eq!(percent_of(5, 0), 0);
+        assert_eq!(percent_of(1, 3), 33);
+        assert_eq!(percent_of(3, 3), 100);
+        assert_eq!(percent_of(u64::MAX, 2), u64::MAX / 2);
+    }
+
     use super::*;
 
     #[test]
