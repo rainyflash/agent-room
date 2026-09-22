@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用隔离服务验证原生 Agent 与浏览器的 SAS、加密私聊和重连。"""
+"""用隔离服务验证原生 Agent 与浏览器无需核对即可加密私聊、可选的 SAS 核对和重连。"""
 
 from __future__ import annotations
 
@@ -131,7 +131,6 @@ def main() -> None:
     for name in ("peer.json", "mismatch-browser.json", "mismatch-closed.json", "match-browser.json",
                  "match-native.json", "verified.json", "first-sent.json", "first-replied.json",
                  "restart-request.json", "restarted.json", "second-sent.json", "second-replied.json",
-                 "revoked.json", "revoked-send-blocked.json",
                  "done.json", "result.json"):
         (WORK / name).unlink(missing_ok=True)
     environment = v.prepare_environment()
@@ -157,7 +156,6 @@ def main() -> None:
                 "catalogId": catalog, "targetName": target.display_name,
                 "targetMatrixUserId": identity["agentMatrixUserId"],
                 "publicRoomId": identity["matrixRoomId"],
-                "matrixBaseUrl": "http://127.0.0.1:18008",
                 "firstText": f"Private human question {tag}", "firstReply": f"Private Agent reply {tag}",
                 "secondText": f"Private question after restart {tag}",
                 "secondReply": f"Private reply after restart {tag}",
@@ -168,11 +166,12 @@ def main() -> None:
             try:
                 with v.bridge_mcp_client(target, redactor) as transport:
                     client = transport.bind_session(identity["sessionId"])
-                    if security(client, {"action": "inspect"}).get("state") != "missing":
-                        raise v.VerticalFailure("隔离 Agent 不应已有加密身份。")
-                    prepared = security(client, {"action": "establish_identity"})
-                    if prepared.get("state") != "ready" or security(client, {"action": "establish_identity"}) != prepared:
-                        raise v.VerticalFailure("新身份未就绪或重复初始化改变身份。")
+                    # Bridge 上线时自动建立加密身份，不需要任何人手动操作；重复建立不改变身份。
+                    prepared = security(client, {"action": "inspect"})
+                    if prepared.get("state") != "ready":
+                        raise v.VerticalFailure("Agent 上线后应已自动建立加密身份。")
+                    if security(client, {"action": "establish_identity"}) != prepared:
+                        raise v.VerticalFailure("重复建立改变了加密身份。")
                     browser = processes.start(v.ManagedProcess(
                         name="private-chat-browser",
                         command=[v.executable("node"), str(v.ROOT / "apps/web/node_modules/@playwright/test/cli.js"),
@@ -180,14 +179,14 @@ def main() -> None:
                         environment=browser_env, log_path=WORK / "services/browser.log", redactor=redactor,
                     ))
                     peer = wait_file("peer.json", browser)
-                    require_failure(client.call_tool_result("agent_room_send_message", {
-                        "roomId": peer["roomId"], "submissionId": v.new_uuid_v7(), "chat": True,
-                        "body": "Must not be sent before verification", "provenance": "human_confirmed_agent",
-                    }), "bridge.security.peer_verification_required")
+                    # 不核对安全码也能双向收发：设备由主人签名即可，首次见到的身份被记住。
+                    roundtrip(client, browser, scenario, "first")
+                    print("Encrypted private chat worked in both directions before any verification.",
+                          flush=True)
+                    # 核对是可选的更强保证：错码被拒绝，数字一致后才完成。
                     security(client, {"action": "devices", "roomId": peer["roomId"], "userId": peer["userId"]})
                     verify_peer(client, peer, browser)
-                    print("SAS mismatch rejected; matching verification completed.", flush=True)
-                    roundtrip(client, browser, scenario, "first")
+                    print("Optional SAS: mismatch rejected; matching verification completed.", flush=True)
                     wait_file("restart-request.json", browser)
                 v.close_bridge_session(target, redactor)
                 generation = target.observation.agent_online_generation
@@ -201,13 +200,6 @@ def main() -> None:
                         raise v.VerticalFailure("重启后加密身份或设备发生变化。")
                     write("restarted.json", {"ready": True})
                     roundtrip(client, browser, scenario, "second")
-                    wait_file("revoked.json", browser)
-                    require_failure(client.call_tool_result("agent_room_send_message", {
-                        "roomId": peer["roomId"], "submissionId": v.new_uuid_v7(), "chat": True,
-                        "body": "Must not be sent to a revoked peer device",
-                        "provenance": "human_confirmed_agent",
-                    }), "bridge.security.peer_verification_required")
-                    write("revoked-send-blocked.json", {"blocked": True})
                     outcome.update(wait_file("done.json", browser))
                     if browser.process.wait(timeout=30) != 0:
                         raise v.VerticalFailure("浏览器私聊验收失败。")

@@ -102,8 +102,8 @@ fn map_matrix_security_failure(
             IpcErrorCategory::Conflict,
             false,
         ),
-        MatrixSecurityFailure::PeerVerificationRequired => (
-            "bridge.security.peer_verification_required",
+        MatrixSecurityFailure::IdentityChanged => (
+            "bridge.security.identity_changed",
             IpcErrorCategory::Conflict,
             false,
         ),

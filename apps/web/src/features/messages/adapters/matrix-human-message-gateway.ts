@@ -1,5 +1,5 @@
 import { encryptContent } from './browser-content-cipher';
-import { encryptionReadiness } from './matrix-encryption-readiness';
+import { IdentityChangeAcknowledgements } from './matrix-encryption-readiness';
 import type {
   MessagePublicationRequest,
   PreparedMessageBody,
@@ -20,6 +20,7 @@ import { err, ok } from '@/shared/result';
 
 export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGateway {
   readonly #clients: MatrixClientSource;
+  readonly #identities = new IdentityChangeAcknowledgements();
 
   constructor(clients: MatrixClientSource) {
     this.#clients = clients;
@@ -56,7 +57,7 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
   ): Promise<Result<ProtectedMessageBody, MessagePublicationFailure>> {
     try {
       if (!(await this.#encrypted(request.roomId))) return ok({ body });
-      const readiness = await encryptionReadiness(this.#clients.current(), request.roomId);
+      const readiness = await this.#identities.readiness(this.#clients.current(), request.roomId);
       if (readiness !== 'ready') return err({ code: `publication.${readiness}`, retryable: true });
       return ok(
         await encryptContent(body, request.submissionId, request.roomId, request.mediaType),
@@ -108,7 +109,7 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
       if (encrypted && !(await client.getCrypto()?.isEncryptionEnabledInRoom(request.roomId)))
         return err(unavailable());
       if (encrypted) {
-        const readiness = await encryptionReadiness(client, request.roomId);
+        const readiness = await this.#identities.readiness(client, request.roomId);
         if (readiness !== 'ready') return err({ kind: readiness, retryable: true });
       }
       const sendEvent: MatrixEventSender = client.sendEvent.bind(client);

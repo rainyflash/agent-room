@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { failure } from '@/features/session/adapters/control-plane-client';
 import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
 import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
+import { ensureFirstEncryptionIdentity } from './matrix-encryption-identity';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
 import {
   storedMatrixSessionSchema,
@@ -600,6 +601,7 @@ class BrowserMatrixConnection implements MatrixConnection {
   readonly #persistenceFailure: () => SessionFailure | null;
   #observingActivity = true;
   #started = false;
+  #identityEnsured = false;
   #revoked = false;
   #storesCleared = false;
 
@@ -648,6 +650,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     if (persistenceFailure !== null) return err(persistenceFailure);
     const current = this.#client.getSyncState();
     if (current === this.#syncState.Prepared || current === this.#syncState.Syncing) {
+      this.#ensureEncryptionIdentity();
       return ok(undefined);
     }
     return await new Promise((resolve) => {
@@ -663,6 +666,7 @@ class BrowserMatrixConnection implements MatrixConnection {
       };
       const onSync = (state: SyncState): void => {
         if (state === this.#syncState.Prepared || state === this.#syncState.Syncing) {
+          this.#ensureEncryptionIdentity();
           finish(ok(undefined));
         } else if (state === this.#syncState.Error || state === this.#syncState.Stopped) {
           finish(
@@ -689,6 +693,13 @@ class BrowserMatrixConnection implements MatrixConnection {
         });
       }
     });
+  }
+
+  /** 首次同步完成后本机设备密钥已上传，此时再为从未建立过身份的账户建立加密身份。 */
+  #ensureEncryptionIdentity(): void {
+    if (this.#identityEnsured) return;
+    this.#identityEnsured = true;
+    void ensureFirstEncryptionIdentity(this.#client);
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {

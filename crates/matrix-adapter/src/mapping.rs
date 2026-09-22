@@ -5,7 +5,7 @@ use agent_room_application::ports::{
     MatrixTransactionId, MatrixUserId,
 };
 use matrix_sdk::{
-    deserialized_responses::{TimelineEvent, VerificationState},
+    deserialized_responses::{TimelineEvent, VerificationLevel, VerificationState},
     ruma::serde::Raw,
     sync::{RoomUpdates, State, SyncResponse},
 };
@@ -110,12 +110,23 @@ fn map_timeline_event(
 ) -> MatrixResult<MatrixTimelineEvent> {
     let mapped = map_raw_event(event.raw(), operation)?;
     Ok(match event.encryption_info() {
-        Some(info) if matches!(info.verification_state, VerificationState::Verified) => {
+        Some(info) if sender_device_trusted(&info.verification_state) => {
             mapped.with_trusted_end_to_end_encryption()
         }
         Some(_) => mapped.with_untrusted_end_to_end_encryption(),
         None => mapped,
     })
+}
+
+/// 发送设备由其主人的加密身份签名即可信，不要求本机核对过对方（首次见到时记住身份）。
+///
+/// 未签名或未知的设备、发送者不符，以及曾核对过又换了身份的用户仍被隔离。
+const fn sender_device_trusted(state: &VerificationState) -> bool {
+    matches!(
+        state,
+        VerificationState::Verified
+            | VerificationState::Unverified(VerificationLevel::UnverifiedIdentity)
+    )
 }
 
 fn map_state(state: &State) -> MatrixResult<(MatrixRoomStatePosition, Vec<MatrixTimelineEvent>)> {
@@ -225,8 +236,8 @@ mod tests {
 
     use matrix_sdk::{
         deserialized_responses::{
-            AlgorithmInfo, DecryptedRoomEvent, EncryptionInfo, TimelineEvent, VerificationLevel,
-            VerificationState,
+            AlgorithmInfo, DecryptedRoomEvent, DeviceLinkProblem, EncryptionInfo, TimelineEvent,
+            VerificationLevel, VerificationState,
         },
         ruma::{
             OwnedDeviceId, UserId,
@@ -275,24 +286,35 @@ mod tests {
     }
 
     #[test]
-    fn 解密事件保留_sdk_给出的发送设备信任状态() {
-        let trusted = map_timeline_event(
-            &decrypted_event(VerificationState::Verified),
-            MatrixOperation::Sync,
-        )
-        .expect("可信加密事件可映射");
-        let untrusted = map_timeline_event(
-            &decrypted_event(VerificationState::Unverified(
-                VerificationLevel::UnsignedDevice,
-            )),
-            MatrixOperation::Sync,
-        )
-        .expect("未可信加密事件仍应进入隔离边界");
+    fn 主人签名的发送设备无需本机核对即可信() {
+        // 核对过安全码的，以及只是由主人签名、本机没核对过的（首次见到时记住身份）都可信。
+        for state in [
+            VerificationState::Verified,
+            VerificationState::Unverified(VerificationLevel::UnverifiedIdentity),
+        ] {
+            let event = map_timeline_event(&decrypted_event(state), MatrixOperation::Sync)
+                .expect("可信加密事件可映射");
+            assert!(event.end_to_end_encrypted());
+            assert!(event.end_to_end_sender_trusted());
+        }
+    }
 
-        assert!(trusted.end_to_end_encrypted());
-        assert!(trusted.end_to_end_sender_trusted());
-        assert!(untrusted.end_to_end_encrypted());
-        assert!(!untrusted.end_to_end_sender_trusted());
+    #[test]
+    fn 未签名设备和换了身份的核对对象仍被隔离() {
+        for state in [
+            VerificationLevel::UnsignedDevice,
+            VerificationLevel::VerificationViolation,
+            VerificationLevel::MismatchedSender,
+            VerificationLevel::None(DeviceLinkProblem::MissingDevice),
+        ] {
+            let event = map_timeline_event(
+                &decrypted_event(VerificationState::Unverified(state)),
+                MatrixOperation::Sync,
+            )
+            .expect("未可信加密事件仍应进入隔离边界");
+            assert!(event.end_to_end_encrypted());
+            assert!(!event.end_to_end_sender_trusted());
+        }
     }
 
     fn decrypted_event(verification_state: VerificationState) -> TimelineEvent {

@@ -12,7 +12,7 @@ const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
 const applicationOrigin = 'https://app.agent-room.localhost:18443';
 
-test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', async ({ browser, page }) => {
+test('真实 Synapse 自动建立首个设备的身份、双设备 SAS 与新设备恢复', async ({ browser, page }) => {
   test.setTimeout(300_000);
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
 
@@ -20,8 +20,7 @@ test('真实 Synapse 完成首次信任、双设备 SAS 与新设备恢复', asy
   const additionalContexts: BrowserContext[] = [];
   try {
     await connectDeveloperSession(page);
-    await openSecurity(page);
-    await establishEncryptedIdentity(page);
+    await expectIdentityEstablishedAutomatically(page);
     await setupRecovery(page, recoveryPassphrase);
     const recoverySample = await createRecoverySample(page);
 
@@ -70,13 +69,20 @@ async function openSecurity(page: Page): Promise<void> {
   await expect(page.locator('.security-account-line')).toBeVisible({ timeout: 40_000 });
 }
 
-async function establishEncryptedIdentity(page: Page): Promise<void> {
-  const establish = page.getByRole('button', {
-    name: /Establish encrypted identity|建立加密身份/u,
-  });
-  await expect(establish).toBeVisible({ timeout: 40_000 });
-  await establish.click();
-  await expect(currentDevice(page)).toContainText(/Verified|已验证/u, { timeout: 60_000 });
+/** 首次同步后自动建立加密身份并签好本机设备，不需要去安全中心手动建立。 */
+async function expectIdentityEstablishedAutomatically(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await openSecurity(page);
+        return await currentDevice(page).innerText();
+      },
+      { timeout: 90_000 },
+    )
+    .toMatch(/Verified|已验证/u);
+  await expect(
+    page.getByRole('button', { name: /Establish encrypted identity|建立加密身份/u }),
+  ).toHaveCount(0);
 }
 
 async function setupRecovery(page: Page, passphrase: string): Promise<void> {

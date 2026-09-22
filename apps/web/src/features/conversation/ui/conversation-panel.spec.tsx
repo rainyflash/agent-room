@@ -78,11 +78,15 @@ function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
 
 describe('人与 Agent 直接聊天', () => {
   it.each([
-    ['publication.encryption_not_ready', 'Encryption is not ready.'],
-    ['publication.peer_verification_required', 'Verify this conversation’s participant'],
+    [
+      'publication.encryption_not_ready',
+      'hasn’t joined your encryption identity',
+      'Retry this message',
+    ],
+    ['publication.identity_changed', 'has a new encryption identity', 'Confirm and send'],
   ] as const)(
-    '加密未就绪 %s 时显示设备验证引导，保留草稿并允许修复后重试',
-    async (code, guidance) => {
+    '加密发送前被拦下 %s 时说明原因，保留草稿并用同一提交继续',
+    async (code, guidance, action) => {
       const runtime = harness();
       runtime.publish.mockResolvedValueOnce(err({ code, retryable: true }));
       const user = userEvent.setup();
@@ -95,7 +99,7 @@ describe('人与 Agent 直接聊天', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(guidance);
       expect(input).toHaveValue('Keep this encrypted draft.');
       expect(screen.queryByRole('button', { name: 'Check delivery' })).not.toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'Retry this message' }));
+      await user.click(screen.getByRole('button', { name: action }));
       await waitFor(() => {
         expect(input).toHaveValue('');
       });

@@ -153,7 +153,10 @@ impl MatrixSdkClientFactory {
         let builder = Client::builder()
             .homeserver_url(self.configuration.homeserver_url().clone())
             .request_config(self.request_config())
-            .with_room_key_recipient_strategy(CollectStrategy::OnlyTrustedDevices)
+            // MSC4153：房间密钥只发给由其主人交叉签名的设备，不要求本机核对过对方。服务端
+            // 伪造的未签名设备拿不到密钥；曾核对过的用户换了身份时 SDK 拒绝发送。与网页的
+            // OnlySignedDevicesIsolationMode 一致。要求本机身份已就绪，Bridge 上线时自动建立。
+            .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
             // 自定义 Olm To-Device 交接必须先进入应用层，才能按控制面精确设备映射和
             // Agent Room 签名进行验证。房间事件的交叉签名信任在 mapping 适配器中保留，
             // 不允许这个 SDK 级兼容设置把未可信房间消息抬高为可信消息。

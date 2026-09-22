@@ -14,6 +14,7 @@ use agent_room_application::ports::{
     PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
     RoomProvisioningGateway, SecretValue,
 };
+use agent_room_bridge_core::matrix_security::MatrixSecurityCommand;
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, ModerationActionId, PrincipalId, RoomCatalogId},
     moderation::{
@@ -24,7 +25,7 @@ use agent_room_domain::{
 };
 use agent_room_matrix_adapter::{
     MatrixRoomProvisioningAdapter, MatrixSdkClientFactory, MatrixSdkConfiguration,
-    MatrixSdkStoreConfiguration,
+    MatrixSdkHandoffConnection, MatrixSdkStoreConfiguration,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
@@ -166,15 +167,10 @@ async fn 真实_synapse_执行私人房间邀请发言移除封禁和归档硬�
 async fn 真实_synapse_幂等建立直接会话并接受私有已读回执() {
     let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
     let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
-    let peer_user = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_USER");
-    let peer_password = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_PASSWORD");
     let provisioner = application_service_provisioner(&base_url, application_service_token);
     let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
-    let creator = managed_outsider(&provisioner, &factory).await;
-    let peer = factory
-        .login(&login(&peer_user, &peer_password))
-        .await
-        .expect("直接会话对端必须能登录");
+    let creator = managed_user(&provisioner, &factory).await;
+    let peer = managed_user(&provisioner, &factory).await;
     let creator_user_id = creator.session().metadata().user_id().clone();
     let peer_user_id = peer.session().metadata().user_id().clone();
     let creation = direct_room_creation(&creator_user_id, &peer_user_id);
@@ -402,23 +398,13 @@ struct PrivateRoomScenario {
 async fn prepare_private_room_scenario() -> PrivateRoomScenario {
     let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
     let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
-    let owner_user = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_USER");
-    let owner_password = required_environment("AGENT_ROOM_MATRIX_TEST_ADMIN_PASSWORD");
-    let member_user = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_USER");
-    let member_password = required_environment("AGENT_ROOM_MATRIX_TEST_AGENT_PASSWORD");
     let provisioner = application_service_provisioner(&base_url, application_service_token);
     let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
-    let owner = factory
-        .login(&login(&owner_user, &owner_password))
-        .await
-        .expect("私人房间房主必须能登录");
-    let member = factory
-        .login(&login(&member_user, &member_password))
-        .await
-        .expect("私人房间成员必须能登录");
-    let owner_user_id = MatrixUserId::new(owner_user).expect("房主 Matrix 用户有效");
-    let member_user_id = MatrixUserId::new(member_user).expect("成员 Matrix 用户有效");
-    let outsider = managed_outsider(&provisioner, &factory).await;
+    let owner = managed_user(&provisioner, &factory).await;
+    let member = managed_user(&provisioner, &factory).await;
+    let owner_user_id = owner.session().metadata().user_id().clone();
+    let member_user_id = member.session().metadata().user_id().clone();
+    let outsider = managed_user(&provisioner, &factory).await;
     let creation = private_room_creation(&owner_user_id, &member_user_id);
     let room_id = PrivateRoomMatrixProvisioner::create(&provisioner, &creation)
         .await
@@ -797,7 +783,11 @@ fn application_service_provisioner(
     MatrixApplicationServiceProvisioner::new(configuration).expect("适配器可初始化")
 }
 
-async fn managed_outsider(
+/// 每次建一个全新的受管用户和设备，并建立它的加密身份。
+///
+/// 加密房间只把房间密钥发给由主人签名的设备。全新账户能自动建立身份；反复用同一个种子账户
+/// 登录会得到没有私钥的新设备，只能走恢复，所以加密房间的参与者都用全新账户。
+async fn managed_user(
     provisioner: &MatrixApplicationServiceProvisioner,
     factory: &MatrixSdkClientFactory,
 ) -> MatrixConnection {
@@ -807,21 +797,35 @@ async fn managed_outsider(
     let user_id = provisioner
         .ensure_user(&registration)
         .await
-        .expect("可建立未受邀验收用户");
+        .expect("可建立隔离的验收用户");
     let request = MatrixAgentDeviceSessionRequest::new(
         user_id,
         MatrixDeviceId::new(format!("AR_{}", Uuid::now_v7().simple())).expect("设备标识有效"),
-        "Task 25 未受邀验收设备".to_owned(),
+        "Task 25 验收设备".to_owned(),
     )
-    .expect("未受邀设备会话请求有效");
+    .expect("验收设备会话请求有效");
     let session = provisioner
         .issue_device_session(&request)
         .await
-        .expect("可签发未受邀验收会话");
-    factory
-        .restore(&session)
+        .expect("可签发验收会话");
+    with_encryption_identity(
+        factory
+            .restore_with_handoffs(&session)
+            .await
+            .expect("验收会话可恢复"),
+    )
+    .await
+}
+
+/// 加密房间里的房间密钥只发给由主人签名的设备，发送方自己也要有加密身份。
+/// 与 Bridge 让 Agent 上线时自动建立身份一致；不再需要参与者之间核对安全码。
+async fn with_encryption_identity(connection: MatrixSdkHandoffConnection) -> MatrixConnection {
+    connection
+        .security_gateway_handle()
+        .execute(MatrixSecurityCommand::EstablishIdentity)
         .await
-        .expect("未受邀验收会话可恢复")
+        .expect("首次使用的账户必须能自动建立加密身份");
+    connection.into_parts().0
 }
 
 struct RoomScenario {
