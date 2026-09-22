@@ -40,9 +40,16 @@ impl RotatingLogFile {
     /// 目录建不出来或文件打不开时返回错误；调用方通常改为只写 stderr。
     pub fn open(path: PathBuf, cap: u64) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_private_directories(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
         let written = file.metadata()?.len();
         Ok(Self {
             state: Arc::new(Mutex::new(State {
@@ -77,6 +84,21 @@ impl State {
         self.written = 0;
         Ok(())
     }
+}
+
+/// 与 Bridge 的运行目录同样只对当前用户开放：数据根可能由日志先建出来，Bridge 随后会检查它的权限。
+fn create_private_directories(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(path)
 }
 
 fn previous_generation(path: &Path) -> PathBuf {
@@ -152,6 +174,31 @@ mod tests {
             "kept\nappended\n"
         );
         assert_eq!(reopened.path(), path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 日志目录和文件只对当前用户开放() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().expect("临时目录");
+        let root = directory.path().join("data");
+        let path = root.join("logs").join("bridge.log");
+        RotatingLogFile::open(path.clone(), 64).expect("打开");
+        for created in [&root, &root.join("logs")] {
+            assert_eq!(
+                std::fs::metadata(created)
+                    .expect("目录")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+        assert_eq!(
+            std::fs::metadata(&path).expect("文件").permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
