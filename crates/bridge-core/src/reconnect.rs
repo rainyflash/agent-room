@@ -63,6 +63,17 @@ impl ReconnectBackoff {
         self.policy.delay(self.consecutive_failures, entropy)
     }
 
+    /// 服务端说了何时可以再试（如限流的 `Retry-After`）：照它说的等，不用自己的指数退避猜，
+    /// 但仍算一次失败并受策略上限约束，连续限流时不会无限等下去。
+    pub fn record_failure_after(&mut self, retry_after: DurationMillis) -> DurationMillis {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        let capped = retry_after
+            .value()
+            .min(self.policy.maximum_delay.value())
+            .max(1);
+        DurationMillis::new(capped).unwrap_or(self.policy.maximum_delay)
+    }
+
     pub const fn record_connected(&mut self) {
         self.consecutive_failures = 0;
     }
@@ -108,6 +119,24 @@ mod tests {
 
     fn duration(value: u64) -> DurationMillis {
         DurationMillis::new(value).expect("测试时长有效")
+    }
+
+    #[test]
+    fn 服务端给的等待时间照用_但受上限约束且计入连续失败() {
+        let policy = ReconnectPolicy::new(duration(1_000), duration(8_000)).expect("策略有效");
+        let mut backoff = ReconnectBackoff::new(policy);
+
+        assert_eq!(
+            backoff.record_failure_after(duration(2_500)),
+            duration(2_500)
+        );
+        assert_eq!(
+            backoff.record_failure_after(duration(60_000)),
+            duration(8_000)
+        );
+        assert_eq!(backoff.consecutive_failures(), 2);
+        // 之后没有服务端提示时，指数退避从已累计的失败次数继续。
+        assert!(backoff.record_failure(0).value() >= 2_000);
     }
 
     fn time(value: i64) -> UtcMillis {
