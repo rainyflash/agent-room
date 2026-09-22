@@ -38,6 +38,8 @@ export const inboxResources = {
       'Delivered to the device; waiting for the agent to confirm receipt.',
     'inbox.delivery.failed': 'The delivery needs attention. Open the original item to inspect it.',
     'inbox.new': '{{count}} new items need your attention',
+    'inbox.notification.title': 'Agent Room',
+    'inbox.notification.single': '{{sender}}: {{text}}',
     'inbox.dismiss': 'Dismiss',
   },
   'zh-CN': {
@@ -73,6 +75,8 @@ export const inboxResources = {
     'inbox.delivery.delivered': '已送到设备，等待 Agent 确认读取。',
     'inbox.delivery.failed': '交付需要处理，请打开原内容查看。',
     'inbox.new': '有 {{count}} 条新内容需要你查看',
+    'inbox.notification.title': 'Agent Room',
+    'inbox.notification.single': '{{sender}}：{{text}}',
     'inbox.dismiss': '收起',
   },
 } as const;

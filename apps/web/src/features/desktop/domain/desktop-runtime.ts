@@ -188,6 +188,11 @@ export const desktopDeepLinkSchema = z
     }
   });
 
+export type DesktopNotification = {
+  readonly title: string;
+  readonly body: string;
+};
+
 export const desktopRuntimeSnapshotSchema = z
   .object({
     bridge: bridgeRuntimeSchema,
@@ -394,6 +399,8 @@ export type DesktopRuntimeGateway = {
   openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>>;
   /** Reveal the folder holding desktop.log and bridge.log, the two files to send with a bug report. */
   openLogs?(): Promise<Result<void, DesktopRuntimeFailure>>;
+  /** Show an operating-system notification; the desktop shows it even while the window is hidden in the tray. */
+  notify?(notification: DesktopNotification): Promise<Result<void, DesktopRuntimeFailure>>;
   checkUpdate(
     channel: ReleaseUpdateChannel,
   ): Promise<Result<ReleaseUpdateCheck, DesktopRuntimeFailure>>;

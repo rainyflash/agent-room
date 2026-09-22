@@ -13,6 +13,7 @@ import {
   type AgentHostKind,
   type DesktopAgentTarget,
   type DesktopDeepLink,
+  type DesktopNotification,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
@@ -58,6 +59,7 @@ export type DesktopRuntimeController = {
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
   readonly openLogs: () => Promise<void>;
+  readonly notify: (notification: DesktopNotification) => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
   readonly reauthorizeBridge: () => Promise<void>;
@@ -311,6 +313,13 @@ export function useDesktopRuntime(
       (await gateway.openLogs?.()) ?? err({ code: 'desktop.logs.unavailable', retryable: false });
     if (!result.ok) setFailure(result.error);
   }, [gateway]);
+  // A notification that cannot be shown is not worth an error banner; the in-app notice remains.
+  const notify = useCallback(
+    async (notification: DesktopNotification): Promise<void> => {
+      await gateway.notify?.(notification).catch(() => undefined);
+    },
+    [gateway],
+  );
 
   const checkUpdate = useCallback(
     async (channel: ReleaseUpdateChannel): Promise<void> => {
@@ -474,6 +483,7 @@ export function useDesktopRuntime(
     },
     openAuthorization,
     openLogs,
+    notify,
     refresh,
     retryBridge,
     reauthorizeBridge,
