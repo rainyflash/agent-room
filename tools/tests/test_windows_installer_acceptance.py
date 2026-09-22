@@ -13,6 +13,8 @@ from tools.windows_installer_acceptance import (
     installed_desktop_version,
     verify_cli_version,
     locate_installed_layout,
+    pe_subsystem,
+    verify_desktop_is_windowless,
     wait_for_install_files_removed,
     write_new_report,
 )
@@ -20,6 +22,18 @@ from tools.windows_installer_acceptance import (
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_HOOKS = ROOT / "apps" / "desktop" / "src-tauri" / "windows" / "hooks.nsh"
+DESKTOP_MAIN = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "main.rs"
+
+
+def portable_executable(subsystem: int, *, magic: int = 0x20B) -> bytes:
+    """拼一个只有头部的 PE 文件：DOS 头、PE 签名、COFF 头和可选头。"""
+
+    pe_offset = 128
+    dos_header = b"MZ" + bytes(58) + pe_offset.to_bytes(4, "little")
+    dos_header += bytes(pe_offset - len(dos_header))
+    coff_header = bytes(16) + (112).to_bytes(2, "little") + bytes(2)
+    optional_header = magic.to_bytes(2, "little") + bytes(66) + subsystem.to_bytes(2, "little") + bytes(42)
+    return dos_header + b"PE\0\0" + coff_header + optional_header
 
 
 class WindowsInstallerAcceptanceTests(unittest.TestCase):
@@ -124,6 +138,28 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
             ensure_clean_install_registration(lambda _key: True)
 
         ensure_clean_install_registration(lambda _key: False)
+
+    def test_desktop_must_be_linked_as_a_window_program(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, subsystem, magic in (("gui.exe", 2, 0x20B), ("gui32.exe", 2, 0x10B), ("console.exe", 3, 0x20B)):
+                (root / name).write_bytes(portable_executable(subsystem, magic=magic))
+            (root / "text.exe").write_bytes(b"not an executable at all")
+
+            self.assertEqual(pe_subsystem(root / "gui.exe"), 2)
+            self.assertEqual(pe_subsystem(root / "gui32.exe"), 2)
+            self.assertEqual(pe_subsystem(root / "console.exe"), 3)
+            verify_desktop_is_windowless(root / "gui.exe")
+            # 按控制台子系统链接的桌面端每次启动都会先弹一个命令行窗口，候选不得带着它发布。
+            with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "控制台窗口"):
+                verify_desktop_is_windowless(root / "console.exe")
+            with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "不是 Windows 可执行文件"):
+                verify_desktop_is_windowless(root / "text.exe")
+
+    def test_desktop_source_hides_the_console_in_release_builds(self) -> None:
+        # 安装器验收只在候选上跑；这里在 PR 阶段就拦住把这一行删掉的改动。
+        source = DESKTOP_MAIN.read_text(encoding="utf-8")
+        self.assertIn('#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]', source)
 
     def test_installed_version_uses_headless_desktop_probe(self) -> None:
         completed = type(

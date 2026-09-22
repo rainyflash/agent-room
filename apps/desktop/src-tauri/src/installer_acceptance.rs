@@ -60,12 +60,20 @@ fn run_managed_bridge() -> Result<(), InstallerAcceptanceFailure> {
     let config = DesktopBridgeConfig::from_environment()
         .map_err(|_| InstallerAcceptanceFailure::new("desktop.acceptance.config_invalid"))?;
 
-    let status = Command::new(bridge)
+    let mut command = Command::new(bridge);
+    command
         .current_dir(directory)
         .envs(config.environment())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    // 桌面端本身没有控制台，直接启动的 Bridge 会自己开一个窗口，验收时在 runner 上闪现。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(0x0800_0000);
+    }
+    let status = command
         .spawn()
         .map_err(|_| InstallerAcceptanceFailure::new("desktop.acceptance.bridge_spawn_failed"))?
         .wait()
