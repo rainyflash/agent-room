@@ -323,7 +323,8 @@ describe('AgentInviteDialog', () => {
     fireEvent.click(update);
     await screen.findByText(/The agent-room skill is installed for Claude Code/u);
     expect(runtime.installSkill).toHaveBeenCalledWith('claude-code');
-    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    // 技能就绪后上一次复制作废，按钮回到「复制」；等它回来再点，覆盖率运行下时序更慢。
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(2);
     });

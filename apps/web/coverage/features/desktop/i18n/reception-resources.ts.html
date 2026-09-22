@@ -1,0 +1,478 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for features/desktop/i18n/reception-resources.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">features/desktop/i18n</a> reception-resources.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>1/1</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>1/1</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">export const receptionResources = {
+  en: {
+    'reception.agentDescription': 'Background replies for this agent in this room.',
+    'reception.agentUnavailable':
+      'This agent has no background task registered here. Register its Codex or Claude Code task using the request above. For an agent on another computer, manage it there.',
+    'reception.starting': 'Starting reception…',
+    'reception.reconnecting': 'Reconnecting; replies are paused',
+    'reception.enable': 'Enable background replies',
+    'reception.enableDescription':
+      'Reply only when you mention this agent in this room. Replies are visible to all room members, including people who join later. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
+    'reception.manual': 'Use an existing authorization or custom executable',
+    'reception.title': 'Reception tasks',
+    'reception.description':
+      'Keep a bound Codex or Claude Code task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
+    'reception.empty':
+      'No reception tasks yet. Ask your Codex or Claude Code task to register for reception, then choose a room grant below.',
+    'reception.prompt':
+      'Register this exact task for Agent Room background replies. If connected by CLI, use the same installed executable and --profile value to run register --host codex (or claude-code), with the actual --workspace. Codex may use CODEX_THREAD_ID; otherwise supply the exact --task-id. If connected by MCP, use agent_room_register_reception with this task’s sessionId, accurate hostType and workspace; Codex may use the host’s task metadata. Never guess a task ID or select the latest task. Registration alone must not enable replies.',
+    'reception.copy': 'Copy registration request',
+    'reception.copied': 'Copied',
+    'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
+    'reception.loading': 'Loading reception tasks…',
+    'reception.failed': 'Reception data is unavailable. Refresh to try again.',
+    'reception.failure.host':
+      'The agent host did not produce a reply. Check that it is installed, signed in and has quota, then start the task again.',
+    'reception.failure.files':
+      'Local files for this task are missing or unreadable. Remove the task and set it up again.',
+    'reception.failure.authorization':
+      'The reply authorization is no longer valid. Enable background replies again to create a new one.',
+    'reception.failure.session':
+      'This agent session is no longer available. Register the task again from the agent.',
+    'reception.failure.review': 'A reply is waiting for your review before the task can continue.',
+    'reception.failure.unresponsive':
+      'The task did not respond in time. Stop it and start it again.',
+    'reception.failure.unknown':
+      'The last attempt failed on this computer. Open the log folder under Local agents for details.',
+    'reception.refresh': 'Refresh',
+    'reception.showPrompt': 'Show the request text',
+    'reception.task': 'Registered task',
+    'reception.grant': 'Reply authorization',
+    'reception.choose': 'Choose an authorization',
+    'reception.grantLabel': 'Until {{time}} · {{limit}} replies/min',
+    'reception.noGrant':
+      'No usable reply authorization for this Agent and room. Open the room’s Automation panel to create one.',
+    'reception.bind': 'Add reception task',
+    'reception.start': 'Start reception',
+    'reception.pause': 'Pause',
+    'reception.remove': 'Remove',
+    'reception.update': 'Save authorization and paths',
+    'reception.settings': 'Authorization and paths',
+    'reception.executable': 'Host executable (detected automatically when empty)',
+    'reception.workspace': 'Workspace',
+    'reception.received': 'Message received',
+    'reception.running': 'Replying',
+    'reception.verifying': 'Verifying room receipt',
+    'reception.replied': 'Reply confirmed in room',
+    'reception.needs_review': 'Needs attention',
+    'reception.skipped': 'Skipped by owner',
+    'reception.waiting': 'Waiting for your mention',
+    'reception.paused': 'Paused',
+    'reception.pending':
+      'A reply is unconfirmed. Verify checks the room without waking the task. Retry reuses the original message ID.',
+    'reception.verify': 'Verify receipt',
+    'reception.retry': 'Retry reply',
+    'reception.skip': 'Skip this message',
+    'reception.legacyPending':
+      'This older delivery has no correlation ID. Review the room and host task before skipping; automatic retry could duplicate a reply.',
+    'reception.login': 'Sign in to choose your reply authorization.',
+  },
+  'zh-CN': {
+    'reception.agentDescription': '管理这个 Agent 在本房间的后台回复。',
+    'reception.agentUnavailable':
+      '这个 Agent 尚未在本机登记后台任务。可将上面的登记请求交给它的 Codex 或 Claude Code 任务；在其他电脑运行的 Agent，需要到那台电脑上管理。',
+    'reception.starting': '正在启动接待…',
+    'reception.reconnecting': '正在恢复连接，回复暂时中断',
+    'reception.enable': '开启后台回复',
+    'reception.enableDescription':
+      '只响应你在本房间对它的提及，回复对房间内所有成员（包括之后加入的人）可见。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',
+    'reception.manual': '使用已有授权或指定程序',
+    'reception.title': '接待任务',
+    'reception.description':
+      '让绑定的 Codex 或 Claude Code 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
+    'reception.empty':
+      '还没有接待任务。先让 Codex 或 Claude Code 任务登记接待，再在这里选择房间授权。',
+    'reception.prompt':
+      '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile，执行 register --host codex（或 claude-code），带上真实 --workspace。Codex 可使用 CODEX_THREAD_ID，否则提供准确的 --task-id。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录；Codex 可由工具读取宿主任务元数据。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
+    'reception.copy': '复制登记请求',
+    'reception.copied': '已复制',
+    'reception.copyFailed': '复制失败，请选中请求文字手动复制。',
+    'reception.loading': '正在读取接待任务…',
+    'reception.failed': '暂时无法读取接待信息，请刷新重试。',
+    'reception.failure.host': '宿主没有给出回复。确认它已安装、已登录且有额度，然后重新启动任务。',
+    'reception.failure.files': '这个任务的本机文件缺失或读不出来。移除任务后重新登记。',
+    'reception.failure.authorization': '回复授权已失效。重新启用后台回复会创建新的授权。',
+    'reception.failure.session': '这个 Agent 会话已不可用。请从 Agent 里重新登记任务。',
+    'reception.failure.review': '有一条回复在等你审阅，任务才能继续。',
+    'reception.failure.unresponsive': '任务没有及时响应。停止后再启动一次。',
+    'reception.failure.unknown': '上次尝试在本机失败。打开「本机 Agent」里的日志文件夹查看详情。',
+    'reception.refresh': '刷新',
+    'reception.showPrompt': '查看登记请求原文',
+    'reception.task': '已登记的任务',
+    'reception.grant': '回复授权',
+    'reception.choose': '选择授权',
+    'reception.grantLabel': '有效至 {{time}} · 每分钟 {{limit}} 条',
+    'reception.noGrant': '这个 Agent 在该房间还没有可用的回复授权。请前往房间的“自动化”面板创建。',
+    'reception.bind': '添加接待任务',
+    'reception.start': '开始接待',
+    'reception.pause': '暂停',
+    'reception.remove': '移除',
+    'reception.update': '保存授权与路径',
+    'reception.settings': '授权与路径',
+    'reception.executable': '宿主程序路径（留空自动识别）',
+    'reception.workspace': '工作目录',
+    'reception.received': '已收到消息',
+    'reception.running': '正在回复',
+    'reception.verifying': '正在核对房间回执',
+    'reception.replied': '已确认回复出现在房间',
+    'reception.needs_review': '需要处理',
+    'reception.skipped': '已由你跳过',
+    'reception.waiting': '正在等待你的提及',
+    'reception.paused': '已暂停',
+    'reception.pending':
+      '上一条回复还未确认。“核对回执”只读取房间，不唤醒任务；“重试回复”会复用原消息编号。',
+    'reception.verify': '核对回执',
+    'reception.retry': '重试回复',
+    'reception.skip': '跳过这条消息',
+    'reception.legacyPending':
+      '这条旧版投递没有回执关联编号。请先核对房间与宿主任务，再决定跳过；自动重试可能产生重复回复。',
+    'reception.login': '请先登录，再选择你的回复授权。',
+  },
+} as const;
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-09-22T13:23:39.272Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    
