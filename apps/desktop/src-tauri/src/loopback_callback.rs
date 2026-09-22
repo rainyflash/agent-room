@@ -10,6 +10,8 @@ use tokio::{
 };
 use url::Url;
 
+use crate::native_language::NativeLanguage;
+
 const HUMAN_SESSION_CALLBACK_PATH: &str = "/auth/callback";
 const MATRIX_SESSION_CALLBACK_PREFIX: &str = "/matrix/callback/";
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1_024;
@@ -21,6 +23,8 @@ const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) struct LoopbackCallbackListener {
     callback_url: Url,
     listener: TcpListener,
+    /// 浏览器里那页「已连接，回到桌面应用」用哪种语言写。
+    language: NativeLanguage,
 }
 
 impl LoopbackCallbackListener {
@@ -53,7 +57,14 @@ impl LoopbackCallbackListener {
         Ok(Self {
             callback_url,
             listener,
+            language: NativeLanguage::English,
         })
+    }
+
+    /// 返回页跟随桌面当前语言，而不是固定中文。
+    pub(crate) fn with_language(mut self, language: NativeLanguage) -> Self {
+        self.language = language;
+        self
     }
 
     pub(crate) fn callback_url(&self) -> &Url {
@@ -77,7 +88,8 @@ impl LoopbackCallbackListener {
                 .map_err(|_| LoopbackCallbackFailure::Unavailable)?;
             let (mut stream, peer) = accepted;
             if !peer.ip().is_loopback() {
-                let _ = write_response(&mut stream, CallbackResponse::Rejected).await;
+                let _ =
+                    write_response(&mut stream, CallbackResponse::Rejected, self.language).await;
                 continue;
             }
             match read_callback_url(&mut stream, &self.callback_url).await {
@@ -85,10 +97,12 @@ impl LoopbackCallbackListener {
                     return Ok(LoopbackCallbackRequest {
                         callback_url,
                         stream,
+                        language: self.language,
                     });
                 }
                 Err(()) => {
-                    let _ = write_response(&mut stream, CallbackResponse::Rejected).await;
+                    let _ = write_response(&mut stream, CallbackResponse::Rejected, self.language)
+                        .await;
                 }
             }
         }
@@ -98,6 +112,7 @@ impl LoopbackCallbackListener {
 pub(crate) struct LoopbackCallbackRequest {
     callback_url: Url,
     stream: TcpStream,
+    language: NativeLanguage,
 }
 
 impl LoopbackCallbackRequest {
@@ -111,7 +126,7 @@ impl LoopbackCallbackRequest {
         } else {
             CallbackResponse::Rejected
         };
-        write_response(&mut self.stream, response).await
+        write_response(&mut self.stream, response, self.language).await
     }
 }
 
@@ -188,24 +203,46 @@ enum CallbackResponse {
     Rejected,
 }
 
-async fn write_response(stream: &mut TcpStream, response: CallbackResponse) -> io::Result<()> {
-    let (status, title, message) = match response {
-        CallbackResponse::Authenticated => (
+async fn write_response(
+    stream: &mut TcpStream,
+    response: CallbackResponse,
+    language: NativeLanguage,
+) -> io::Result<()> {
+    let (status, title, message, note, lang) = match (response, language) {
+        (CallbackResponse::Authenticated, NativeLanguage::Chinese) => (
+            "200 OK",
+            "Agent Room 已连接",
+            "现在可以关闭此页面并返回桌面应用。",
+            "返回桌面应用，继续你的对话。",
+            "zh-CN",
+        ),
+        (CallbackResponse::Rejected, NativeLanguage::Chinese) => (
+            "400 Bad Request",
+            "Agent Room 登录失败",
+            "认证回调无效或已过期。请返回 Agent Room 桌面应用重试。",
+            "返回桌面应用重新开始登录。",
+            "zh-CN",
+        ),
+        (CallbackResponse::Authenticated, NativeLanguage::English) => (
             "200 OK",
             "Agent Room connected",
-            "Agent Room 已连接。现在可以关闭此页面并返回桌面应用。",
+            "You can close this page and return to the desktop app.",
+            "Return to the desktop app to continue your conversation.",
+            "en",
         ),
-        CallbackResponse::Rejected => (
+        (CallbackResponse::Rejected, NativeLanguage::English) => (
             "400 Bad Request",
-            "Agent Room authentication failed",
-            "认证回调无效或已过期。请返回 Agent Room 桌面应用重试。",
+            "Agent Room sign-in failed",
+            "The sign-in callback is invalid or has expired. Return to the Agent Room desktop app and try again.",
+            "Return to the desktop app to start sign-in again.",
+            "en",
         ),
     };
     let style = include_str!("ui/auth-return.css").replace("\r\n", "\n");
     let style_hash = STANDARD.encode(Sha256::digest(style.as_bytes()));
     let mark = include_str!("../icons/agent-room-mark.svg");
     let body = format!(
-        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">{mark}</div><h1 lang="en">{title}</h1><p>{message}</p><div class="return-note">返回桌面应用，继续你的对话。</div></main></body></html>"#
+        r#"<!doctype html><html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">{mark}</div><h1>{title}</h1><p>{message}</p><div class="return-note">{note}</div></main></body></html>"#
     );
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
@@ -231,7 +268,8 @@ mod tests {
     async fn 回环监听器只接受自身端口上的闭合回调() {
         let listener = LoopbackCallbackListener::bind_human_session()
             .await
-            .expect("回环端口可绑定");
+            .expect("回环端口可绑定")
+            .with_language(crate::native_language::NativeLanguage::Chinese);
         let callback_base = listener.callback_url().clone();
         let state = "abcdefghijklmnopqrstuvwxyzABCDEF";
         let client = tokio::spawn(async move {
@@ -278,6 +316,10 @@ mod tests {
         assert!(headers.contains("default-src 'none'"));
         assert!(headers.contains("Cache-Control: no-store"));
         assert!(!body.contains("one-time-code"));
+        // 返回页跟随桌面语言：中文桌面看到中文标题和正文，页面语言标记一致。
+        assert!(body.contains(r#"<html lang="zh-CN">"#));
+        assert!(body.contains("<title>Agent Room 已连接</title>"));
+        assert!(body.contains("返回桌面应用，继续你的对话。"));
     }
 
     #[tokio::test]
