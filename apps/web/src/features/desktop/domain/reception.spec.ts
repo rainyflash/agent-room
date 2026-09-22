@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { automationGrantSchema } from '@/features/automation/domain/automation-grant';
-import { receptionGrants } from './reception';
+import { receptionFailureAdvice, receptionGrants } from './reception';
 
 const identity = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
 const other = '0198b601-77a1-7bb8-83eb-a8fe68c97e45';
@@ -39,5 +39,23 @@ describe('receptionGrants', () => {
     ]);
     expect(receptionGrants([grant], null, identity, identity, 2000)).toEqual([]);
     expect(receptionGrants([grant], identity, null, identity, 2000)).toEqual([]);
+  });
+});
+
+describe('reception failure advice', () => {
+  it('把 receiver.* 错误码归到人能处理的几类，未知代码给通用提示', () => {
+    expect(receptionFailureAdvice('receiver.host_turn_failed')).toBe('host');
+    expect(receptionFailureAdvice('receiver.host_output_invalid')).toBe('host');
+    expect(receptionFailureAdvice('receiver.executable_invalid')).toBe('host');
+    expect(receptionFailureAdvice('receiver.storage_unavailable')).toBe('files');
+    expect(receptionFailureAdvice('receiver.checkpoint_write_failed')).toBe('files');
+    expect(receptionFailureAdvice('receiver.automation_grant_invalid')).toBe('authorization');
+    expect(receptionFailureAdvice('receiver.task_id_invalid')).toBe('session');
+    expect(receptionFailureAdvice('receiver.session_not_ready')).toBe('session');
+    expect(receptionFailureAdvice('receiver.pending_review_required')).toBe('review');
+    expect(receptionFailureAdvice('receiver.stop_timeout')).toBe('unresponsive');
+    expect(receptionFailureAdvice('receiver.worker_failed')).toBe('unresponsive');
+    expect(receptionFailureAdvice('receiver.something_new')).toBe('unknown');
+    expect(receptionFailureAdvice('bridge.ipc.bridge_unavailable')).toBe('unknown');
   });
 });

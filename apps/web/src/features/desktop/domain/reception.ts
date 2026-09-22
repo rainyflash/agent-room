@@ -144,3 +144,47 @@ export function receptionGrants(
       (grant.maxTotalMessages === null || grant.totalMessages < grant.maxTotalMessages),
   );
 }
+
+export type ReceptionFailureAdvice =
+  'host' | 'files' | 'authorization' | 'session' | 'review' | 'unresponsive' | 'unknown';
+
+const receptionFailureGroups: readonly (readonly [ReceptionFailureAdvice, readonly string[]])[] = [
+  [
+    'host',
+    ['host_', 'executable_invalid', 'workspace_invalid', 'response_invalid', 'config_read_failed'],
+  ],
+  [
+    'files',
+    [
+      'storage_',
+      'state_',
+      'checkpoint_write_failed',
+      'attachment_directory_',
+      'vault_config_invalid',
+    ],
+  ],
+  ['authorization', ['automation_grant_invalid', 'authorization_mismatch', 'principal_invalid']],
+  ['session', ['task_', 'session_', 'sessions_unavailable']],
+  [
+    'review',
+    [
+      'pending_review_required',
+      'legacy_pending_review_required',
+      'reply_unconfirmed',
+      'release_unconfirmed',
+      'no_pending_delivery',
+      'delivery_missing',
+      'receipt_cursor_stalled',
+    ],
+  ],
+  ['unresponsive', ['stop_timeout', 'shutting_down', 'worker_', 'remove_failed']],
+];
+
+/** What a person can do about a `receiver.*` code; the raw code stays visible for support. */
+export function receptionFailureAdvice(code: string): ReceptionFailureAdvice {
+  const detail = code.startsWith('receiver.') ? code.slice('receiver.'.length) : code;
+  for (const [advice, prefixes] of receptionFailureGroups) {
+    if (prefixes.some((prefix) => detail.startsWith(prefix))) return advice;
+  }
+  return 'unknown';
+}

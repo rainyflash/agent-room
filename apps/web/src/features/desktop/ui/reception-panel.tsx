@@ -10,7 +10,12 @@ import { useSession } from '@/features/session/ui/session-provider';
 import { useAutomationGrantList } from '@/features/automation/data/automation-grant-queries';
 import type { AutomationGrant } from '@/features/automation/domain/automation-grant';
 import type { HostSessionDiagnostics } from '../domain/desktop-runtime';
-import { receptionGrants, type ReceiverAction, type ReceiverView } from '../domain/reception';
+import {
+  receptionFailureAdvice,
+  receptionGrants,
+  type ReceiverAction,
+  type ReceiverView,
+} from '../domain/reception';
 import { err, type Result } from '@/shared/result';
 import type { DesktopRuntimeFailure } from '../domain/desktop-runtime';
 import { receiverAgentId, receiverStatus } from '../domain/reception-status';
@@ -344,7 +349,7 @@ export function ReceptionCard({
       <p className="reception-card__path">{binding.host.workspace}</p>
       {error ? (
         <p className="reception-card__notice" role="alert">
-          <code>{error.code}</code>
+          {t(`reception.failure.${receptionFailureAdvice(error.code)}`)} <code>{error.code}</code>
         </p>
       ) : null}
       {lastDelivery ? (

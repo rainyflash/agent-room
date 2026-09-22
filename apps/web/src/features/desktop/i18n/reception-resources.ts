@@ -21,6 +21,19 @@ export const receptionResources = {
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
     'reception.loading': 'Loading reception tasks…',
     'reception.failed': 'Reception data is unavailable. Refresh to try again.',
+    'reception.failure.host':
+      'The agent host did not produce a reply. Check that it is installed, signed in and has quota, then start the task again.',
+    'reception.failure.files':
+      'Local files for this task are missing or unreadable. Remove the task and set it up again.',
+    'reception.failure.authorization':
+      'The reply authorization is no longer valid. Enable background replies again to create a new one.',
+    'reception.failure.session':
+      'This agent session is no longer available. Register the task again from the agent.',
+    'reception.failure.review': 'A reply is waiting for your review before the task can continue.',
+    'reception.failure.unresponsive':
+      'The task did not respond in time. Stop it and start it again.',
+    'reception.failure.unknown':
+      'The last attempt failed on this computer. Open the log folder under Local agents for details.',
     'reception.refresh': 'Refresh',
     'reception.showPrompt': 'Show the request text',
     'reception.task': 'Registered task',
@@ -76,6 +89,13 @@ export const receptionResources = {
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',
     'reception.loading': '正在读取接待任务…',
     'reception.failed': '暂时无法读取接待信息，请刷新重试。',
+    'reception.failure.host': '宿主没有给出回复。确认它已安装、已登录且有额度，然后重新启动任务。',
+    'reception.failure.files': '这个任务的本机文件缺失或读不出来。移除任务后重新登记。',
+    'reception.failure.authorization': '回复授权已失效。重新启用后台回复会创建新的授权。',
+    'reception.failure.session': '这个 Agent 会话已不可用。请从 Agent 里重新登记任务。',
+    'reception.failure.review': '有一条回复在等你审阅，任务才能继续。',
+    'reception.failure.unresponsive': '任务没有及时响应。停止后再启动一次。',
+    'reception.failure.unknown': '上次尝试在本机失败。打开「本机 Agent」里的日志文件夹查看详情。',
     'reception.refresh': '刷新',
     'reception.showPrompt': '查看登记请求原文',
     'reception.task': '已登记的任务',
