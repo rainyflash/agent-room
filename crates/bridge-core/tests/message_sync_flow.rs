@@ -93,9 +93,9 @@ impl MessageTimelineProjectionStore for 记录投影存储 {
         Box::pin(async { Ok(()) })
     }
 
-    fn sync_cursor<'a>(
-        &'a self,
-    ) -> PortFuture<'a, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
+    fn sync_cursor(
+        &self,
+    ) -> PortFuture<'_, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
         let cursor = self
             .batches
             .lock()

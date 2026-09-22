@@ -1069,18 +1069,22 @@ async fn establish_agent_online_once(
         targeted_handoffs,
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
-        // 接着上次处理完的位置同步。以前每次上线都从头全量同步，只带每个房间最近几十条，
-        // 离线期间更早的消息本地永远没有。游标读不出来不挡上线，退回全量同步。
-        next_batch: runtime
-            .messages
-            .stored_cursor()
-            .await
-            .unwrap_or_else(|failure| {
-                tracing::warn!(?failure, "读取上次同步游标失败，改为全量同步");
-                None
-            }),
+        next_batch: stored_sync_cursor(runtime).await,
     };
     complete_agent_online(runtime, online).await
+}
+
+/// 接着上次处理完的位置同步。以前每次上线都从头全量同步，只带每个房间最近几十条，
+/// 离线期间更早的消息本地永远没有。游标读不出来不挡上线，退回全量同步。
+async fn stored_sync_cursor(runtime: &AgentSessionRuntime) -> Option<MatrixSyncToken> {
+    runtime
+        .messages
+        .stored_cursor()
+        .await
+        .unwrap_or_else(|failure| {
+            tracing::warn!(?failure, "读取上次同步游标失败，改为全量同步");
+            None
+        })
 }
 
 /// 首次同步成功后才算上线；随后确保加密身份，失败的同步会停掉已启动的后台任务。

@@ -85,9 +85,9 @@ impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
         Box::pin(async move { self.apply_batch(batch).await })
     }
 
-    fn sync_cursor<'a>(
-        &'a self,
-    ) -> PortFuture<'a, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
+    fn sync_cursor(
+        &self,
+    ) -> PortFuture<'_, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>> {
         Box::pin(async move {
             let stored: Option<String> =
                 sqlx::query_scalar("SELECT next_batch FROM message_sync_state WHERE singleton = 1")
