@@ -77,6 +77,18 @@ pub(crate) fn deliver_deep_links(app: &AppHandle, urls: impl IntoIterator<Item =
     }
 }
 
+/// 应用已在运行时，Windows 与 Linux 把点击的 `agent-room://` 链接作为第二个实例的参数送来；
+/// 挑出其中的深链，其余参数（如 `--autostart`）忽略。
+pub(crate) fn deep_links_in_arguments<'a>(
+    arguments: impl IntoIterator<Item = &'a str>,
+) -> Vec<Url> {
+    arguments
+        .into_iter()
+        .filter_map(|argument| Url::parse(argument).ok())
+        .filter(|url| url.scheme() == "agent-room")
+        .collect()
+}
+
 fn parse_deep_link(raw: &str) -> Result<DeepLinkTarget, DeepLinkFailure> {
     let url = Url::parse(raw).map_err(|_| DeepLinkFailure::invalid())?;
     if url.scheme() != "agent-room"
@@ -133,7 +145,22 @@ impl DeepLinkFailure {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeepLinkKind, parse_deep_link};
+    use super::{DeepLinkKind, deep_links_in_arguments, parse_deep_link};
+
+    #[test]
+    fn 第二个实例的参数里只挑出本应用的深链() {
+        let urls = deep_links_in_arguments([
+            "agent-room-desktop.exe",
+            "--autostart",
+            "https://agentroom.chat/lobby/x",
+            "agent-room://lobby/0198b601-77a1-7bb8-83eb-a8fe68c97e44",
+        ]);
+        assert_eq!(
+            urls.iter().map(url::Url::as_str).collect::<Vec<_>>(),
+            ["agent-room://lobby/0198b601-77a1-7bb8-83eb-a8fe68c97e44"]
+        );
+        assert!(deep_links_in_arguments(["agent-room-desktop.exe"]).is_empty());
+    }
 
     #[test]
     fn 深链只能映射到闭合的产品路由() {
