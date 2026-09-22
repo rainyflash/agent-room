@@ -11,8 +11,12 @@ const RESTART_DELAYS: [Duration; MAX_AUTOMATIC_RESTARTS] = [
 ];
 const SERVER_UNREACHABLE_DIAGNOSTIC: &str = "desktop.bridge.server_unreachable";
 const AUTHORIZATION_FAILED_DIAGNOSTIC: &str = "desktop.authorization.failed";
+const OTHER_INSTANCE_DIAGNOSTIC: &str = "desktop.bridge.other_instance_running";
 /// Bridge 重连退避允许配置的最大间隔；更长的值只可能来自损坏的输出。
 const MAX_SERVER_RETRY_DELAY: Duration = Duration::from_mins(15);
+/// 另一个 Bridge 进程占着实例锁时最多等这么久再停机提示。上一个桌面留下的 Bridge 要逐个排空宿主
+/// Agent 会话，每个最多约两分钟，收尾通常几十秒，也可能要几分钟。
+const OTHER_INSTANCE_PATIENCE: Duration = Duration::from_mins(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +67,8 @@ impl BridgeLifecycleSnapshot {
 pub(crate) struct BridgeRestartPolicy {
     snapshot: BridgeLifecycleSnapshot,
     crashes: VecDeque<i64>,
+    /// 开始等另一个 Bridge 进程让出实例锁的时间；见到能用的 Bridge、子进程另有退出原因或用户重试时清除。
+    other_instance_since: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +99,30 @@ pub(crate) enum ResumeDecision {
     StartManaged,
     KeepProbing,
     Halt,
+}
+
+/// 桌面没有托管子进程时在本机看到的 Bridge。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UnmanagedBridge {
+    Ready,
+    Authorized,
+    Pending(ConnectionProgress),
+    /// 有 Bridge 应答，但它正在退出。
+    Departing,
+    /// 没有 Bridge 应答，却有 Bridge 进程占着实例锁：它还在启动，或者已经关闭 IPC、正在收尾。
+    Locked,
+    /// 本机没有 Bridge。
+    Absent,
+    /// 应答的 Bridge 处于桌面处理不了的状态。
+    Blocked(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnmanagedAction {
+    None,
+    StartManaged,
+    /// 刚刚停机，提示用户。
+    NotifyStopped,
 }
 
 pub(crate) const fn decide_resume(
@@ -135,11 +165,85 @@ impl BridgeRestartPolicy {
                 changed_at_unix_ms: now_unix_ms,
             },
             crashes: VecDeque::new(),
+            other_instance_since: None,
         }
     }
 
     pub(crate) const fn snapshot(&self) -> &BridgeLifecycleSnapshot {
         &self.snapshot
+    }
+
+    /// 定时探测是否继续。托管 Bridge 按退避等待重启、因反复崩溃或授权失败停机、或者已经关闭时不探测，
+    /// 免得绕过重启预算；外部或来源不明的 Bridge 停机时仍然探测，它一退出桌面就接手启动托管 Bridge。
+    pub(crate) const fn probes_periodically(&self, managed_child_active: bool) -> bool {
+        match self.snapshot.phase {
+            BridgePhase::Stopped | BridgePhase::RetryScheduled => false,
+            BridgePhase::Halted => {
+                !managed_child_active
+                    && !matches!(self.snapshot.ownership, Some(BridgeOwnership::Managed))
+            }
+            _ => true,
+        }
+    }
+
+    /// 桌面没有托管子进程时根据本机看到的 Bridge 更新状态，并返回下一步。
+    ///
+    /// 能应答的 Bridge 只观察、不争夺生命周期。正在退出、或占着实例锁却不应答的 Bridge 不接管：
+    /// 桌面也不能结束一个不归自己管的进程，只能等它走完。什么都没有时由桌面启动托管 Bridge，
+    /// 所以接管过的外部 Bridge 一消失，桌面就会接手。
+    pub(crate) fn observe_unmanaged(
+        &mut self,
+        now_unix_ms: i64,
+        bridge: UnmanagedBridge,
+    ) -> UnmanagedAction {
+        match bridge {
+            UnmanagedBridge::Ready => self.discovered_ready(now_unix_ms, BridgeOwnership::External),
+            UnmanagedBridge::Authorized => {
+                self.discovered_authorized(now_unix_ms, BridgeOwnership::External);
+            }
+            UnmanagedBridge::Pending(progress) => {
+                self.discovered_pending(now_unix_ms, BridgeOwnership::External, progress);
+            }
+            UnmanagedBridge::Departing | UnmanagedBridge::Locked => {
+                return self.await_other_instance(now_unix_ms);
+            }
+            UnmanagedBridge::Absent => return UnmanagedAction::StartManaged,
+            UnmanagedBridge::Blocked(code) => self.halt(now_unix_ms, code),
+        }
+        UnmanagedAction::None
+    }
+
+    /// 等另一个 Bridge 进程走完。这不是托管 Bridge 崩溃，不占用自动重启预算；等得太久才停机提示，
+    /// 之后定时探测照常进行，它一走就启动托管 Bridge。
+    fn await_other_instance(&mut self, now_unix_ms: i64) -> UnmanagedAction {
+        if self.snapshot.phase == BridgePhase::Halted
+            && self.snapshot.diagnostic_code.as_deref() == Some(OTHER_INSTANCE_DIAGNOSTIC)
+        {
+            return UnmanagedAction::None;
+        }
+        let since = *self.other_instance_since.get_or_insert(now_unix_ms);
+        let patience_ms = i64::try_from(OTHER_INSTANCE_PATIENCE.as_millis()).unwrap_or(i64::MAX);
+        let exhausted = now_unix_ms.saturating_sub(since) >= patience_ms;
+        let phase = if exhausted {
+            BridgePhase::Halted
+        } else {
+            BridgePhase::Discovering
+        };
+        if self.snapshot.phase != phase
+            || self.snapshot.ownership.is_some()
+            || self.snapshot.diagnostic_code.as_deref() != Some(OTHER_INSTANCE_DIAGNOSTIC)
+        {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
+        self.snapshot.phase = phase;
+        self.snapshot.ownership = None;
+        self.snapshot.diagnostic_code = Some(OTHER_INSTANCE_DIAGNOSTIC.to_owned());
+        self.snapshot.next_retry_at_unix_ms = None;
+        if exhausted {
+            UnmanagedAction::NotifyStopped
+        } else {
+            UnmanagedAction::None
+        }
     }
 
     pub(crate) fn discovered_ready(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
@@ -151,6 +255,7 @@ impl BridgeRestartPolicy {
         self.snapshot.diagnostic_code = None;
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
+        self.other_instance_since = None;
     }
 
     pub(crate) fn discovered_authorized(&mut self, now_unix_ms: i64, ownership: BridgeOwnership) {
@@ -164,6 +269,7 @@ impl BridgeRestartPolicy {
         self.snapshot.diagnostic_code = None;
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
+        self.other_instance_since = None;
     }
 
     pub(crate) fn discovered_pending(
@@ -189,6 +295,7 @@ impl BridgeRestartPolicy {
             .to_owned(),
         );
         self.snapshot.next_retry_at_unix_ms = None;
+        self.other_instance_since = None;
     }
 
     pub(crate) fn starting(&mut self, now_unix_ms: i64) {
@@ -206,6 +313,7 @@ impl BridgeRestartPolicy {
         self.snapshot.last_failure_code = None;
         self.snapshot.next_retry_at_unix_ms = None;
         self.snapshot.changed_at_unix_ms = now_unix_ms;
+        self.other_instance_since = None;
     }
 
     /// Bridge 仍在运行，只是连不上服务器，已按自己的退避安排好下一次尝试。
@@ -228,6 +336,7 @@ impl BridgeRestartPolicy {
         self.snapshot.diagnostic_code = Some(SERVER_UNREACHABLE_DIAGNOSTIC.to_owned());
         self.snapshot.last_failure_code = Some(failure_code.into());
         self.snapshot.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
+        self.other_instance_since = None;
     }
 
     pub(crate) fn set_diagnostic(&mut self, now_unix_ms: i64, code: impl Into<String>) {
@@ -239,11 +348,16 @@ impl BridgeRestartPolicy {
 
     pub(crate) fn halt(&mut self, now_unix_ms: i64, code: impl Into<String>) {
         let code = code.into();
+        // 外部 Bridge 停机后仍会定时探测，同一原因反复出现时保留最初停机的时间。
+        if self.snapshot.phase != BridgePhase::Halted
+            || self.snapshot.diagnostic_code.as_deref() != Some(code.as_str())
+        {
+            self.snapshot.changed_at_unix_ms = now_unix_ms;
+        }
         self.snapshot.phase = BridgePhase::Halted;
         self.snapshot.diagnostic_code = Some(code.clone());
         self.snapshot.last_failure_code = Some(code);
         self.snapshot.next_retry_at_unix_ms = None;
-        self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
     pub(crate) fn child_exited(
@@ -256,6 +370,7 @@ impl BridgeRestartPolicy {
         self.snapshot.changed_at_unix_ms = now_unix_ms;
         self.snapshot.ownership = Some(BridgeOwnership::Managed);
         self.snapshot.next_retry_at_unix_ms = None;
+        self.other_instance_since = None;
         if shutting_down {
             self.snapshot.phase = BridgePhase::Stopped;
             self.snapshot.diagnostic_code = None;
@@ -300,6 +415,7 @@ impl BridgeRestartPolicy {
     pub(crate) fn explicit_retry(&mut self, now_unix_ms: i64) {
         self.crashes.clear();
         self.snapshot.automatic_restart_count = 0;
+        self.other_instance_since = None;
         self.starting(now_unix_ms);
     }
 
@@ -314,7 +430,7 @@ impl BridgeRestartPolicy {
 mod tests {
     use super::{
         BridgeOwnership, BridgePhase, BridgeRestartPolicy, ConnectionProgress, ExitDecision,
-        ResumeDecision, ResumeProbeState, decide_resume,
+        ResumeDecision, ResumeProbeState, UnmanagedAction, UnmanagedBridge, decide_resume,
     };
 
     #[test]
@@ -406,6 +522,193 @@ mod tests {
         assert_eq!(
             policy.snapshot().last_failure_code.as_deref(),
             Some("bridge.identity.discovery_failed")
+        );
+        assert!(
+            !policy.probes_periodically(false),
+            "反复崩溃停机后不能靠定时探测绕过预算再启动"
+        );
+    }
+
+    #[test]
+    fn 接管的外部_bridge_退出后桌面启动托管_bridge() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        assert_eq!(
+            policy.observe_unmanaged(1_000, UnmanagedBridge::Ready),
+            UnmanagedAction::None
+        );
+        assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::External));
+        assert!(policy.probes_periodically(false));
+
+        // 上一个桌面留下的 Bridge 关闭了 IPC，还在收尾，占着实例锁：不接管也不启动竞争进程。
+        assert_eq!(
+            policy.observe_unmanaged(3_000, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+        assert_eq!(policy.snapshot().phase, BridgePhase::Discovering);
+        assert_eq!(policy.snapshot().ownership, None);
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.bridge.other_instance_running")
+        );
+        assert!(policy.probes_periodically(false), "等待期间继续探测");
+        assert_eq!(
+            policy.observe_unmanaged(5_000, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+        assert_eq!(
+            policy.snapshot().changed_at_unix_ms,
+            3_000,
+            "持续等待不刷新开始时间"
+        );
+
+        // 它彻底退出后桌面接手。
+        assert_eq!(
+            policy.observe_unmanaged(33_000, UnmanagedBridge::Absent),
+            UnmanagedAction::StartManaged
+        );
+        policy.starting(33_000);
+        assert_eq!(policy.snapshot().phase, BridgePhase::Starting);
+        assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::Managed));
+        assert_eq!(
+            policy.snapshot().automatic_restart_count,
+            0,
+            "等待不占重启预算"
+        );
+        // 托管 Bridge 真正崩溃时仍按原有预算重启。
+        assert_eq!(
+            policy.child_exited(34_000, Some(1), false),
+            ExitDecision::RetryAfter(std::time::Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn 正在退出的_bridge_不会被当成外部_bridge_接管() {
+        let mut policy = BridgeRestartPolicy::new(0);
+
+        assert_eq!(
+            policy.observe_unmanaged(1_000, UnmanagedBridge::Departing),
+            UnmanagedAction::None
+        );
+
+        assert_eq!(policy.snapshot().phase, BridgePhase::Discovering);
+        assert_eq!(policy.snapshot().ownership, None);
+        assert!(policy.probes_periodically(false));
+        assert_eq!(
+            policy.observe_unmanaged(3_000, UnmanagedBridge::Absent),
+            UnmanagedAction::StartManaged
+        );
+    }
+
+    #[test]
+    fn 外部_bridge_停机后继续探测_它一退出就启动托管_bridge() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.observe_unmanaged(1_000, UnmanagedBridge::Ready);
+
+        assert_eq!(
+            policy.observe_unmanaged(
+                3_000,
+                UnmanagedBridge::Blocked("desktop.bridge.offline".to_owned())
+            ),
+            UnmanagedAction::None
+        );
+        assert_eq!(policy.snapshot().phase, BridgePhase::Halted);
+        assert_eq!(policy.snapshot().ownership, Some(BridgeOwnership::External));
+        assert!(
+            policy.probes_periodically(false),
+            "外部 Bridge 停机后仍要发现它退出"
+        );
+        policy.observe_unmanaged(
+            5_000,
+            UnmanagedBridge::Blocked("desktop.bridge.offline".to_owned()),
+        );
+        assert_eq!(policy.snapshot().changed_at_unix_ms, 3_000);
+
+        assert_eq!(
+            policy.observe_unmanaged(7_000, UnmanagedBridge::Absent),
+            UnmanagedAction::StartManaged
+        );
+
+        // 启动时第一次探测就受阻，也继续探测，而不是永远停在这里。
+        let mut initial = BridgeRestartPolicy::new(0);
+        initial.observe_unmanaged(
+            1,
+            UnmanagedBridge::Blocked("bridge.ipc.credentials_unavailable".to_owned()),
+        );
+        assert_eq!(initial.snapshot().phase, BridgePhase::Halted);
+        assert!(initial.probes_periodically(false));
+    }
+
+    fn patience_ms() -> i64 {
+        i64::try_from(super::OTHER_INSTANCE_PATIENCE.as_millis()).expect("等待上限可用毫秒表示")
+    }
+
+    #[test]
+    fn 另一个_bridge_久占实例锁时停机提示一次并继续等它() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.starting(0);
+        // 托管子进程报告 `bridge.already_running` 后退出。
+        assert_eq!(
+            policy.observe_unmanaged(100, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+        assert_eq!(policy.snapshot().automatic_restart_count, 0);
+        assert_eq!(
+            policy.observe_unmanaged(100 + patience_ms() - 1, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+
+        let halted_at = 100 + patience_ms();
+        assert_eq!(
+            policy.observe_unmanaged(halted_at, UnmanagedBridge::Locked),
+            UnmanagedAction::NotifyStopped
+        );
+        assert_eq!(policy.snapshot().phase, BridgePhase::Halted);
+        assert_eq!(policy.snapshot().ownership, None);
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.bridge.other_instance_running")
+        );
+        assert!(
+            !policy.snapshot().device_reauthorization_available(),
+            "重新授权放不开别的进程占着的锁"
+        );
+        assert_eq!(
+            policy.observe_unmanaged(halted_at + 2_000, UnmanagedBridge::Locked),
+            UnmanagedAction::None,
+            "只提示一次"
+        );
+        assert_eq!(policy.snapshot().changed_at_unix_ms, halted_at);
+        assert!(policy.probes_periodically(false), "停机后仍等它走");
+        assert_eq!(
+            policy.observe_unmanaged(halted_at + 60_000, UnmanagedBridge::Absent),
+            UnmanagedAction::StartManaged
+        );
+    }
+
+    #[test]
+    fn 能用的_bridge_或用户重试会重新计算等待时间() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.observe_unmanaged(0, UnmanagedBridge::Locked);
+        policy.observe_unmanaged(60_000, UnmanagedBridge::Ready);
+        assert_eq!(
+            policy.observe_unmanaged(100_000, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+        let before_patience = 100_000 + patience_ms() - 1;
+        assert_eq!(
+            policy.observe_unmanaged(before_patience, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+
+        policy.explicit_retry(before_patience);
+        let retried = before_patience + 1;
+        assert_eq!(
+            policy.observe_unmanaged(retried, UnmanagedBridge::Locked),
+            UnmanagedAction::None
+        );
+        assert_eq!(
+            policy.observe_unmanaged(retried + patience_ms(), UnmanagedBridge::Locked),
+            UnmanagedAction::NotifyStopped
         );
     }
 

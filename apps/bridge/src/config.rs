@@ -51,6 +51,8 @@ pub(crate) struct BridgeConfig {
     pub(crate) import_oidc_profile: bool,
     /// 桌面端「重新授权这台电脑」只对这一次启动设置：先清除本机设备会话凭据再启动。
     pub(crate) reset_device_session: bool,
+    /// 桌面托管启动时设置：标准输入是桌面持有的管道，读到结束说明桌面已经退出，Bridge 随之有序退出。
+    pub(crate) exit_with_supervisor: bool,
     pub(crate) data_root: PathBuf,
     pub(crate) secure_storage_service: SecureStorageService,
 }
@@ -122,6 +124,11 @@ impl BridgeConfig {
             reset_device_session: read_bool(
                 source,
                 "AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION",
+                false,
+            )?,
+            exit_with_supervisor: read_bool(
+                source,
+                "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR",
                 false,
             )?,
             data_root: read_data_root(source)?,
@@ -399,6 +406,10 @@ mod tests {
             !config.reset_device_session,
             "只有桌面端显式请求时才清除设备会话"
         );
+        assert!(
+            !config.exit_with_supervisor,
+            "手动运行或标准输入为空时不能因输入结束而退出"
+        );
         assert!(config.agent_id.is_none());
         assert!(config.public_lobby_catalog_id.is_none());
         assert!(config.lobby_language.is_none());
@@ -459,6 +470,30 @@ mod tests {
             BridgeConfig::from_source(&environment),
             Err(BridgeConfigError::Invalid {
                 name: "AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 随桌面退出只接受显式布尔开关() {
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR", "true".to_owned());
+        assert!(
+            BridgeConfig::from_source(&environment)
+                .expect("显式开关有效")
+                .exit_with_supervisor
+        );
+
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR", "yes".to_owned());
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR",
                 ..
             })
         ));

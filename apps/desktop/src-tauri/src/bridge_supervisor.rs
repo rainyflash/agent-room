@@ -1,4 +1,6 @@
 use std::{
+    fs::{self, OpenOptions},
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -21,9 +23,11 @@ use url::Url;
 use crate::{
     bridge_lifecycle::{
         BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy,
-        ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, decide_resume,
+        ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, UnmanagedAction,
+        UnmanagedBridge, decide_resume,
     },
     desktop_config::{BridgeLaunch, DesktopBridgeConfig},
+    server_move::BRIDGE_LOCK,
 };
 
 const SUPERVISOR_CHANNEL: &str = "agent_room_desktop";
@@ -31,6 +35,8 @@ const RUNTIME_CHANGED_EVENT: &str = "desktop://runtime-changed";
 const ACTOR_QUEUE_CAPACITY: usize = 32;
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_AUTHORIZATION_SECONDS: u64 = 30 * 60;
+/// Bridge 拿不到实例锁时的启动失败代码，见 Bridge 的 `BridgeRuntimeError::instance_lock`。
+const INSTANCE_LOCK_HELD_CODE: &str = "bridge.already_running";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +130,7 @@ impl BridgeSupervisor {
             state: state_tx,
             generation: 0,
             managed_child_active: false,
+            child_found_other_instance: false,
         };
         tauri::async_runtime::spawn(actor.run());
         Self {
@@ -223,35 +230,13 @@ struct BridgeSupervisorActor {
     state: watch::Sender<SupervisorState>,
     generation: u64,
     managed_child_active: bool,
+    /// 当前子进程报告另一个 Bridge 进程占着实例锁，它随后的退出不算崩溃。
+    child_found_other_instance: bool,
 }
 
 impl BridgeSupervisorActor {
     async fn run(mut self) {
-        match self.probe().await {
-            ProbeOutcome::Authorized => {
-                self.session = None;
-                self.policy
-                    .discovered_authorized(now_unix_ms(), BridgeOwnership::External);
-                self.publish();
-            }
-            ProbeOutcome::Ready(session) => {
-                self.session = Some(session);
-                self.policy
-                    .discovered_ready(now_unix_ms(), BridgeOwnership::External);
-                self.publish();
-            }
-            ProbeOutcome::Pending(progress) => {
-                self.session = None;
-                self.policy
-                    .discovered_pending(now_unix_ms(), BridgeOwnership::External, progress);
-                self.publish();
-            }
-            ProbeOutcome::Absent => self.start_managed(),
-            ProbeOutcome::Blocked(code) => {
-                self.policy.halt(now_unix_ms(), code);
-                self.publish();
-            }
-        }
+        self.handle_unmanaged_probe().await;
 
         let mut probes = tokio::time::interval(PROBE_INTERVAL);
         probes.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -259,9 +244,9 @@ impl BridgeSupervisorActor {
             let input = tokio::select! {
                 input = self.receiver.recv() => match input { Some(input) => input, None => break },
                 _ = probes.tick() => {
-                    if !matches!(self.policy.snapshot().phase, BridgePhase::Halted | BridgePhase::Stopped | BridgePhase::RetryScheduled) {
+                    if self.policy.probes_periodically(self.managed_child_active) {
                         if self.managed_child_active { self.handle_managed_probe().await; }
-                        else { self.handle_external_probe().await; }
+                        else { self.handle_unmanaged_probe().await; }
                     }
                     continue;
                 }
@@ -306,6 +291,7 @@ impl BridgeSupervisorActor {
             return;
         }
         self.generation = self.generation.saturating_add(1);
+        self.child_found_other_instance = false;
         self.policy.starting(now_unix_ms());
         self.authorization = None;
         self.session = None;
@@ -364,7 +350,7 @@ impl BridgeSupervisorActor {
         if self.policy.snapshot().ownership == Some(BridgeOwnership::External) {
             // The desktop may inspect an external Bridge, but must not start a
             // competing process or terminate a runtime it does not own.
-            self.handle_external_probe().await;
+            self.handle_unmanaged_probe().await;
             return;
         }
         self.generation = self.generation.saturating_add(1);
@@ -411,7 +397,18 @@ impl BridgeSupervisorActor {
     }
 
     async fn handle_resume(&mut self) {
-        let probe = self.probe().await;
+        let probe = match self.probe().await {
+            // 托管子进程自己在退出或连接中途断开时沿用原来的处理，它的退出事件会接着决定是否重启。
+            ProbeOutcome::Departing if self.managed_child_active => {
+                ProbeOutcome::Pending(ConnectionProgress::Reconnecting)
+            }
+            ProbeOutcome::Interrupted(code) if self.managed_child_active => {
+                ProbeOutcome::Blocked(code)
+            }
+            // 正在退出的 Bridge 不接管：按没有 Bridge 处理，启动前再看它是否还占着实例锁。
+            ProbeOutcome::Departing | ProbeOutcome::Interrupted(_) => ProbeOutcome::Absent,
+            probe => probe,
+        };
         if let ProbeOutcome::Pending(progress) = &probe {
             self.session = None;
             let ownership = if self.managed_child_active {
@@ -429,7 +426,9 @@ impl BridgeSupervisorActor {
             ProbeOutcome::Ready(_) => ResumeProbeState::Ready,
             ProbeOutcome::Absent => ResumeProbeState::Absent,
             ProbeOutcome::Blocked(_) => ResumeProbeState::Blocked,
-            ProbeOutcome::Pending(_) => unreachable!("等待态已提前处理"),
+            ProbeOutcome::Pending(_) | ProbeOutcome::Departing | ProbeOutcome::Interrupted(_) => {
+                unreachable!("等待、退出与中断已提前处理")
+            }
         };
         match decide_resume(
             probe_state,
@@ -449,7 +448,7 @@ impl BridgeSupervisorActor {
                 self.policy.discovered_ready(now_unix_ms(), ownership);
                 self.publish();
             }
-            ResumeDecision::StartManaged => self.start_managed(),
+            ResumeDecision::StartManaged => self.start_managed_unless_locked(),
             ResumeDecision::KeepProbing => {
                 // 子进程还在而阶段是 RetryScheduled，说明 Bridge 正按自己的退避等服务器恢复；
                 // 保留这个状态，不要用探测诊断盖掉它。
@@ -497,6 +496,16 @@ impl BridgeSupervisorActor {
                     .discovered_pending(now_unix_ms(), BridgeOwnership::Managed, progress);
                 self.publish();
             }
+            // 自己的子进程正在退出：它的退出事件会接着决定是否重启。
+            ProbeOutcome::Departing => {
+                self.session = None;
+                self.policy.discovered_pending(
+                    now_unix_ms(),
+                    BridgeOwnership::Managed,
+                    ConnectionProgress::Reconnecting,
+                );
+                self.publish();
+            }
             ProbeOutcome::Absent => {
                 if matches!(
                     self.policy.snapshot().phase,
@@ -511,7 +520,7 @@ impl BridgeSupervisorActor {
                     self.publish();
                 }
             }
-            ProbeOutcome::Blocked(code) => {
+            ProbeOutcome::Interrupted(code) | ProbeOutcome::Blocked(code) => {
                 self.session = None;
                 self.policy.halt(now_unix_ms(), code);
                 self.publish();
@@ -519,32 +528,48 @@ impl BridgeSupervisorActor {
         }
     }
 
-    async fn handle_external_probe(&mut self) {
-        match self.probe().await {
-            ProbeOutcome::Authorized => {
-                self.session = None;
-                self.policy
-                    .discovered_authorized(now_unix_ms(), BridgeOwnership::External);
-                self.publish();
-            }
+    /// 没有托管子进程时探测本机 Bridge：启动时、观察外部 Bridge 时，以及等另一个 Bridge 进程走完时。
+    async fn handle_unmanaged_probe(&mut self) {
+        let bridge = match self.probe().await {
             ProbeOutcome::Ready(session) => {
                 self.session = Some(session);
-                self.policy
-                    .discovered_ready(now_unix_ms(), BridgeOwnership::External);
+                UnmanagedBridge::Ready
+            }
+            ProbeOutcome::Authorized => UnmanagedBridge::Authorized,
+            ProbeOutcome::Pending(progress) => UnmanagedBridge::Pending(progress),
+            ProbeOutcome::Departing => UnmanagedBridge::Departing,
+            // 连上后会话中途断开，多半是 Bridge 正在退出；和没有应答一样看实例锁。
+            ProbeOutcome::Absent | ProbeOutcome::Interrupted(_) => self.unanswered_bridge(),
+            ProbeOutcome::Blocked(code) => UnmanagedBridge::Blocked(code),
+        };
+        if bridge != UnmanagedBridge::Ready {
+            self.session = None;
+        }
+        self.observe_unmanaged(bridge);
+    }
+
+    /// 本机没有 Bridge 应答：仍有 Bridge 进程占着实例锁就等它走完，否则启动托管 Bridge。
+    fn start_managed_unless_locked(&mut self) {
+        let bridge = self.unanswered_bridge();
+        self.observe_unmanaged(bridge);
+    }
+
+    fn unanswered_bridge(&self) -> UnmanagedBridge {
+        if instance_lock_held(&self.config.data_root()) {
+            UnmanagedBridge::Locked
+        } else {
+            UnmanagedBridge::Absent
+        }
+    }
+
+    fn observe_unmanaged(&mut self, bridge: UnmanagedBridge) {
+        match self.policy.observe_unmanaged(now_unix_ms(), bridge) {
+            UnmanagedAction::StartManaged => self.start_managed(),
+            UnmanagedAction::NotifyStopped => {
+                self.notify_stopped();
                 self.publish();
             }
-            ProbeOutcome::Pending(progress) => {
-                self.session = None;
-                self.policy
-                    .discovered_pending(now_unix_ms(), BridgeOwnership::External, progress);
-                self.publish();
-            }
-            ProbeOutcome::Absent => self.start_managed(),
-            ProbeOutcome::Blocked(code) => {
-                self.session = None;
-                self.policy.halt(now_unix_ms(), code);
-                self.publish();
-            }
+            UnmanagedAction::None => self.publish(),
         }
     }
 
@@ -553,6 +578,9 @@ impl BridgeSupervisorActor {
             CommandEvent::Stdout(bytes) => self.handle_stdout(&bytes),
             CommandEvent::Stderr(bytes) => {
                 if let Some(code) = stable_bridge_error_code(&bytes) {
+                    if code == INSTANCE_LOCK_HELD_CODE {
+                        self.child_found_other_instance = true;
+                    }
                     self.policy.set_diagnostic(now_unix_ms(), code);
                     self.publish();
                 }
@@ -642,11 +670,18 @@ impl BridgeSupervisorActor {
         self.managed_child_active = false;
         self.authorization = None;
         self.session = None;
-        match self.policy.child_exited(
-            now_unix_ms(),
-            exit_code,
-            self.shutting_down.load(Ordering::SeqCst),
-        ) {
+        let shutting_down = self.shutting_down.load(Ordering::SeqCst);
+        if self.child_found_other_instance && !shutting_down {
+            // 子进程没拿到实例锁就退出了：另一个 Bridge 进程还在，比如上一个桌面留下、正在收尾的那个。
+            // 这不是崩溃，不占重启预算；等它走完再按普通方式启动。重新授权的请求随之作废：Bridge 先拿锁
+            // 后清凭据，这个子进程什么也没动，之后若仍停机，停机视图会再提供重新授权。
+            self.observe_unmanaged(UnmanagedBridge::Locked);
+            return;
+        }
+        match self
+            .policy
+            .child_exited(now_unix_ms(), exit_code, shutting_down)
+        {
             ExitDecision::RetryAfter(delay) => {
                 let sender = self.input.clone();
                 let generation = self.generation;
@@ -655,21 +690,22 @@ impl BridgeSupervisorActor {
                     let _ = sender.send(ActorInput::AutomaticRetry { generation }).await;
                 });
             }
-            ExitDecision::Halt => {
-                let (title, body) = crate::native_language::stopped_message(
-                    crate::native_language::language(&self.app),
-                );
-                let _ = self
-                    .app
-                    .notification()
-                    .builder()
-                    .title(title)
-                    .body(body)
-                    .show();
-            }
+            ExitDecision::Halt => self.notify_stopped(),
             ExitDecision::Stop => {}
         }
         self.publish();
+    }
+
+    fn notify_stopped(&self) {
+        let (title, body) =
+            crate::native_language::stopped_message(crate::native_language::language(&self.app));
+        let _ = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
     }
 
     fn kill_managed_child(&mut self) {
@@ -725,6 +761,12 @@ impl BridgeSupervisorActor {
             {
                 ProbeOutcome::Absent
             }
+            Err(failure)
+                if failure.kind() == LocalBridgeClientFailureKind::Protocol
+                    && failure.retryable() =>
+            {
+                ProbeOutcome::Interrupted(failure.code().to_owned())
+            }
             Err(failure) => ProbeOutcome::Blocked(failure.code().to_owned()),
         }
     }
@@ -769,18 +811,42 @@ enum ProbeOutcome {
     Authorized,
     Ready(BridgeAgentSessionView),
     Pending(ConnectionProgress),
+    /// 应答的 Bridge 正在退出，比如监督它的桌面已经不在。
+    Departing,
     Absent,
+    /// 连上后会话中途断开。
+    Interrupted(String),
     Blocked(String),
 }
 
 fn probe_connection_state(state: IpcBridgeState) -> ProbeOutcome {
     match state {
         IpcBridgeState::Starting => ProbeOutcome::Pending(ConnectionProgress::Starting),
-        IpcBridgeState::Reconnecting | IpcBridgeState::ShuttingDown => {
-            ProbeOutcome::Pending(ConnectionProgress::Reconnecting)
-        }
+        IpcBridgeState::Reconnecting => ProbeOutcome::Pending(ConnectionProgress::Reconnecting),
+        IpcBridgeState::ShuttingDown => ProbeOutcome::Departing,
         IpcBridgeState::Offline => ProbeOutcome::Blocked("desktop.bridge.offline".to_owned()),
         IpcBridgeState::Ready => ProbeOutcome::Authorized,
+    }
+}
+
+/// 是否还有 Bridge 进程占着本机实例锁。Bridge 在绑定 IPC 之前（启动中）和关闭 IPC 之后（退出收尾）
+/// 都持有这把锁，这时再启动一个只会因锁被占立即退出。只做非阻塞尝试，拿到就立即释放；
+/// 锁文件打不开时照常启动，由 Bridge 自己报告原因。
+fn instance_lock_held(data_root: &Path) -> bool {
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(data_root.join(BRIDGE_LOCK))
+    else {
+        return false;
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            false
+        }
+        Err(fs::TryLockError::WouldBlock) => true,
+        Err(fs::TryLockError::Error(_)) => false,
     }
 }
 
@@ -945,6 +1011,37 @@ mod tests {
             probe_connection_state(IpcBridgeState::Ready),
             ProbeOutcome::Authorized
         ));
+        assert!(
+            matches!(
+                probe_connection_state(IpcBridgeState::ShuttingDown),
+                ProbeOutcome::Departing
+            ),
+            "正在退出的 Bridge 不能当成重连中的外部 Bridge 接管"
+        );
+    }
+
+    #[test]
+    fn 实例锁被另一个进程占着时不启动新的_bridge() {
+        use super::instance_lock_held;
+
+        let root = tempfile::tempdir().expect("临时目录有效");
+        assert!(!instance_lock_held(root.path()), "从未启动过 Bridge");
+
+        let path = root.path().join("bridge.lock");
+        std::fs::write(&path, "pid=1\n").expect("锁文件可写");
+        assert!(!instance_lock_held(root.path()), "上一个 Bridge 已经退出");
+
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("锁文件可打开");
+        holder
+            .try_lock()
+            .expect("检查之后锁已释放，Bridge 可以拿到");
+        assert!(instance_lock_held(root.path()));
+        holder.unlock().expect("可释放");
+        assert!(!instance_lock_held(root.path()));
     }
 
     #[test]

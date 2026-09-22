@@ -16,6 +16,7 @@ const DEFAULT_MATRIX_BASE_URL: &str = "https://matrix.agentroom.chat";
 const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.agentroom.chat/realms/agent-room";
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
 const RESET_DEVICE_SESSION: &str = "AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION";
+const EXIT_WITH_SUPERVISOR: &str = "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR";
 
 /// 这一次以什么方式启动托管 Bridge。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,8 @@ impl DesktopBridgeConfig {
         environment.insert("AGENT_ROOM_BRIDGE_SUPERVISED".to_owned(), "true".to_owned());
         // 显式写 false，避免继承到的同名环境变量让每次启动都清除设备凭据。
         environment.insert(RESET_DEVICE_SESSION.to_owned(), "false".to_owned());
+        // 同理：标准输入不是桌面管道的启动（安装器验收）继承到这个开关会立即退出。
+        environment.insert(EXIT_WITH_SUPERVISOR.to_owned(), "false".to_owned());
         copy_optional_environment(&mut environment, "AGENT_ROOM_AGENT_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_LOBBY_LANGUAGE")?;
@@ -137,8 +140,11 @@ impl DesktopBridgeConfig {
         &self.environment
     }
 
+    /// 托管 Bridge 子进程的环境。子进程的标准输入是桌面持有的管道，所以只有这里要求它随桌面退出；
+    /// 安装器验收用 `environment()` 启动、标准输入为空，不能打开这个开关。
     pub(crate) fn launch_environment(&self, launch: BridgeLaunch) -> BTreeMap<String, String> {
         let mut environment = self.environment.clone();
+        environment.insert(EXIT_WITH_SUPERVISOR.to_owned(), "true".to_owned());
         if launch == BridgeLaunch::ReauthorizeDevice {
             environment.insert(RESET_DEVICE_SESSION.to_owned(), "true".to_owned());
         }
@@ -296,8 +302,36 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
-        assert_eq!(&normal, config.environment());
         assert_eq!(normal.len(), reauthorize.len());
+    }
+
+    #[test]
+    fn 只有桌面托管的子进程随桌面退出() {
+        let config = DesktopBridgeConfig::from_environment().expect("桌面配置有效");
+
+        for launch in [BridgeLaunch::Normal, BridgeLaunch::ReauthorizeDevice] {
+            assert_eq!(
+                config
+                    .launch_environment(launch)
+                    .get("AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR")
+                    .map(String::as_str),
+                Some("true")
+            );
+        }
+        // 安装器验收用这份环境启动 Bridge，标准输入为空，打开开关会让 Bridge 立即退出。
+        assert_eq!(
+            config
+                .environment()
+                .get("AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR")
+                .map(String::as_str),
+            Some("false")
+        );
+        let mut managed = config.launch_environment(BridgeLaunch::Normal);
+        managed.insert(
+            "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR".to_owned(),
+            "false".to_owned(),
+        );
+        assert_eq!(&managed, config.environment());
     }
 
     #[test]

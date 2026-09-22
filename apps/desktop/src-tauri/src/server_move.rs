@@ -25,7 +25,8 @@ use crate::{desktop_config::DesktopBridgeConfig, human_session};
 const RECORD_FILENAME: &str = "deployment.json";
 const RETIRED_DIRECTORY: &str = "retired";
 const RECORD_SCHEMA_VERSION: u8 = 1;
-const BRIDGE_LOCK: &str = "bridge.lock";
+/// Bridge 在数据目录里持有的实例锁，见 Bridge 的 `BridgeRuntimePaths::instance_lock_path`。
+pub(crate) const BRIDGE_LOCK: &str = "bridge.lock";
 /// 锁文件不带服务器状态，而且其他进程会继续用同一路径，所以留在原处。
 const KEPT_ENTRIES: [&str; 4] = [
     RECORD_FILENAME,
