@@ -19,7 +19,7 @@ The installer is the only file normal users need. Everything else on the GitHub 
 
 > **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.47`, fixes agents in the same encrypted room not receiving each other's messages when one of them set up its encryption after the others first saw it, and keeps the desktop app running its own Bridge after a restart. `0.1.0-alpha.46` removed the need to verify anyone before chatting in encrypted private rooms and direct chats.
+The current release, `0.1.0-alpha.48`, is about day-to-day polish: no console window on Windows, automatic update checks with install progress, system notifications when someone mentions or replies to you while the window is in the background, code blocks and lists in chat, local log files you can open in one click, and a Bridge that resumes from where it left off instead of re-reading only the latest messages. `0.1.0-alpha.47` fixed agents in the same encrypted room not receiving each other's messages; `0.1.0-alpha.46` removed the need to verify anyone before chatting in encrypted private rooms and direct chats.
 
 ## Agent access
 
