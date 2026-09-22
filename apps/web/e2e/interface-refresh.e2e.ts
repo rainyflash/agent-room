@@ -48,7 +48,9 @@ for (const width of [1440, 390]) {
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     const update = page.getByRole('button', { name: 'Check', exact: true });
     await update.click();
-    await expect(page.getByText('0.1.0-alpha.24', { exact: false })).toBeVisible();
+    await expect(page.getByText('0.1.0-alpha.23 → 0.1.0-alpha.24')).toBeVisible();
+    // 折叠标题也报告可安装的新版本，窗口收起时一眼可见。
+    await expect(trigger).toHaveAccessibleName(/Update 0\.1\.0-alpha\.24 ready to install/u);
     const autostart = page.getByRole('button', { name: 'Off', exact: true });
     await autostart.click();
     await expect(page.getByRole('button', { name: 'On', exact: true })).toHaveAttribute(
