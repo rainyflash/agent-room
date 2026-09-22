@@ -16,3 +16,5 @@ ADRs capture decisions that constrain future implementation. A new ADR may super
 Use the next sequential number. Each record must state context, decision, consequences, and the conditions that would justify revisiting it.
 
 [ADR 0008：人与 Agent 共用房间对话](./0008-human-agent-conversation.md) 补充普通聊天与任务执行的权限边界。
+
+<!-- 快速路径验收用的临时改动，不合并。 -->
