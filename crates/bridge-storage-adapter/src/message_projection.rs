@@ -1,12 +1,15 @@
 use std::path::Path;
 
-use agent_room_application::ports::{MatrixEventId, MatrixRoomId, MatrixSyncToken, PortFuture};
+use agent_room_application::ports::{
+    MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, PortFuture,
+};
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch,
-    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
-    MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
-    MessageTimelineQueryRepository, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery,
+    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
+    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageTimelineProjectionStore,
+    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
     ProjectedMessagePreview,
 };
 use agent_room_domain::{
@@ -67,13 +70,113 @@ impl SqliteMessageTimelineRepository {
         for mutation in batch.mutations() {
             apply_mutation(&mut transaction, mutation, &self.key_cipher).await?;
         }
-        persist_issues(&mut transaction, batch).await?;
+        persist_issues(&mut transaction, batch.next_batch(), batch.issues()).await?;
         persist_gaps(&mut transaction, batch).await?;
         persist_cursor(&mut transaction, batch).await?;
         transaction
             .commit()
             .await
             .map_err(|error| map_sqlx_error(&error))
+    }
+
+    async fn apply_backfill_batch(
+        &self,
+        batch: &MessageBackfillBatch,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        let mut transaction = begin_write(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(&error))?;
+        // 补回的事件按时间先后追加在已收到的消息之后；已经记下的事件由事件 ID 去重。
+        for mutation in batch.mutations() {
+            apply_mutation(&mut transaction, mutation, &self.key_cipher).await?;
+        }
+        let gap = batch.gap();
+        persist_issues(&mut transaction, &gap.sync_token, batch.issues()).await?;
+        sqlx::query(
+            "DELETE FROM message_timeline_gap
+             WHERE sync_token = ? AND room_id = ? AND previous_batch = ?",
+        )
+        .bind(gap.sync_token.as_str())
+        .bind(gap.room_id.as_str())
+        .bind(gap.previous_batch.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_sqlx_error(&error))
+    }
+
+    async fn query_known_events(
+        &self,
+        room_id: &MatrixRoomId,
+        event_ids: &[MatrixEventId],
+    ) -> Result<Vec<MatrixEventId>, MessageProjectionStoreFailure> {
+        if event_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted = serde_json::to_string(
+            &event_ids
+                .iter()
+                .map(MatrixEventId::as_str)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|_| {
+            MessageProjectionStoreFailure::new(MessageProjectionStoreFailureKind::Corrupt)
+        })?;
+        let known: Vec<String> = sqlx::query_scalar(
+            "SELECT event_id FROM message_projection_event
+             WHERE room_id = ? AND event_id IN (SELECT value FROM json_each(?))
+             UNION
+             SELECT event_id FROM message_sync_issue
+             WHERE room_id = ? AND event_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(room_id.as_str())
+        .bind(&wanted)
+        .bind(room_id.as_str())
+        .bind(&wanted)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        Ok(event_ids
+            .iter()
+            .filter(|id| known.iter().any(|known| known == id.as_str()))
+            .cloned()
+            .collect())
+    }
+
+    async fn query_pending_gaps(
+        &self,
+        limit: u16,
+    ) -> Result<Vec<PendingTimelineGap>, MessageProjectionStoreFailure> {
+        let rows = sqlx::query(
+            "SELECT sync_token, room_id, previous_batch FROM message_timeline_gap
+             WHERE previous_batch <> ''
+             ORDER BY rowid ASC
+             LIMIT ?",
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        rows.iter()
+            .map(|row| {
+                let corrupt = || {
+                    MessageProjectionStoreFailure::new(MessageProjectionStoreFailureKind::Corrupt)
+                };
+                Ok(PendingTimelineGap {
+                    sync_token: MatrixSyncToken::new(row.get::<String, _>("sync_token"))
+                        .map_err(|_| corrupt())?,
+                    room_id: MatrixRoomId::new(row.get::<String, _>("room_id"))
+                        .map_err(|_| corrupt())?,
+                    previous_batch: MatrixBackfillToken::new(
+                        row.get::<String, _>("previous_batch"),
+                    )
+                    .map_err(|_| corrupt())?,
+                })
+            })
+            .collect()
     }
 }
 
@@ -83,6 +186,43 @@ impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
         batch: &'a MessageProjectionBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
         Box::pin(async move { self.apply_batch(batch).await })
+    }
+
+    fn room_has_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<bool, MessageProjectionStoreFailure>> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM message_projection_event WHERE room_id = ?)",
+            )
+            .bind(room_id.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(&error))
+        })
+    }
+
+    fn known_events<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_ids: &'a [MatrixEventId],
+    ) -> PortFuture<'a, Result<Vec<MatrixEventId>, MessageProjectionStoreFailure>> {
+        Box::pin(async move { self.query_known_events(room_id, event_ids).await })
+    }
+
+    fn pending_gaps(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<PendingTimelineGap>, MessageProjectionStoreFailure>> {
+        Box::pin(async move { self.query_pending_gaps(limit).await })
+    }
+
+    fn apply_backfill<'a>(
+        &'a self,
+        batch: &'a MessageBackfillBatch,
+    ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
+        Box::pin(async move { self.apply_backfill_batch(batch).await })
     }
 
     fn sync_cursor(
@@ -784,15 +924,16 @@ async fn apply_redaction(
 
 async fn persist_issues(
     transaction: &mut Transaction<'_, Sqlite>,
-    batch: &MessageProjectionBatch,
+    sync_token: &MatrixSyncToken,
+    issues: &[MessageSyncIssue],
 ) -> Result<(), MessageProjectionStoreFailure> {
-    for issue in batch.issues() {
+    for issue in issues {
         sqlx::query(
             "INSERT OR IGNORE INTO message_sync_issue
              (sync_token, room_id, event_id, reason)
              VALUES (?, ?, ?, ?)",
         )
-        .bind(batch.next_batch().as_str())
+        .bind(sync_token.as_str())
         .bind(issue.room_id.as_str())
         .bind(
             issue

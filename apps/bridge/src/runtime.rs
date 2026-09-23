@@ -1374,6 +1374,23 @@ async fn sync_agent_online(
             "部分房间消息未能读取：已记为隔离事件或时间线缺口"
         );
     }
+    // 离线期间一个房间来得太多时，同步只带最近一段；中间那段往回补，补不上也不影响这一轮同步。
+    match runtime.messages.fill_gaps(online.matrix.as_ref()).await {
+        Ok(filled) if filled.filled_gaps > 0 || filled.deferred_gaps > 0 => {
+            tracing::info!(
+                filled_gaps = filled.filled_gaps,
+                accepted_events = filled.accepted_events,
+                isolated_events = filled.isolated_events,
+                truncated_gaps = filled.truncated_gaps,
+                deferred_gaps = filled.deferred_gaps,
+                "已补回同步时漏掉的消息"
+            );
+        }
+        Ok(_) => {}
+        Err(failure) => {
+            tracing::warn!(failure_kind = ?failure.kind(), "补回漏掉的消息失败，下一轮再试");
+        }
+    }
     online
         .status
         .renew()
