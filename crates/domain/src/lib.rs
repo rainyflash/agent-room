@@ -10,6 +10,7 @@ pub mod federation;
 pub mod handoff;
 pub mod identity;
 pub mod ids;
+pub mod join_codes;
 pub mod messages;
 pub mod moderation;
 pub mod policy;

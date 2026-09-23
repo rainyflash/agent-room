@@ -106,6 +106,10 @@ impl PrivateRoomPermissions {
     pub const ALL: Self = Self {
         bits: Self::KNOWN_BITS,
     };
+    /// 凭口令进来的 Agent 成员：只能查看和发言。
+    pub const AGENT_MEMBER: Self = Self {
+        bits: Self::VIEW_BIT | Self::SPEAK_BIT,
+    };
 
     /// 创建相互一致的私人房间权限集合。
     ///
@@ -378,6 +382,25 @@ impl PrivateRoom {
     pub fn admits_autonomous_agent_of(&self, principal_id: PrincipalId) -> bool {
         self.admits_agent_of(principal_id)
             && self.allows(principal_id, PrivateRoomCapability::Automate)
+    }
+
+    /// 判断凭口令进来的 Agent 成员能否入场：它本身仍是有效的 Agent 成员，且房间还在使用中。
+    ///
+    /// 这类 Agent 不随任何成员进出，它的主人也不因此成为房间成员；房主或管理员可以单独移出它。
+    /// 归档房间关闭发言，同样不再接纳它。
+    #[must_use]
+    pub fn admits_agent_member(&self, is_agent_member: bool) -> bool {
+        is_agent_member && self.status == PrivateRoomLifecycleStatus::Active
+    }
+
+    /// 生成、更换、停用 Agent 口令，或移出凭口令进来的 Agent：需要管理权限，房间还在使用中。
+    ///
+    /// # Errors
+    ///
+    /// 操作者没有管理权限，或房间已归档时返回错误。
+    pub fn authorize_agent_access(&self, actor: PrincipalId) -> DomainResult<()> {
+        self.ensure_active("agent_access_changed")?;
+        self.require(actor, PrivateRoomCapability::Manage, "管理 Agent 口令")
     }
 
     /// 邀请成员进入活跃房间。
@@ -1112,6 +1135,37 @@ mod tests {
         );
         assert!(!room.admits_agent_of(principal(2)));
         assert!(!room.admits_autonomous_agent_of(principal(1)));
+    }
+
+    #[test]
+    fn 凭口令进来的_agent_不随成员进出_归档后不再接纳() {
+        let mut room = room();
+        // 它的主人不是成员也能进；不是有效的 Agent 成员就不能。
+        assert!(room.admits_agent_member(true));
+        assert!(!room.admits_agent_member(false));
+        assert!(!room.admits_agent_of(principal(9)));
+        room.archive(principal(1)).expect("归档成功");
+        assert!(!room.admits_agent_member(true));
+    }
+
+    #[test]
+    fn 只有能管理的成员可以管理_agent_口令且房间须在使用中() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        assert!(room.authorize_agent_access(principal(1)).is_ok());
+        assert!(matches!(
+            room.authorize_agent_access(principal(2)),
+            Err(crate::DomainError::Forbidden { .. })
+        ));
+        assert!(room.authorize_agent_access(principal(9)).is_err());
+        room.update_permissions(principal(1), principal(2), PrivateRoomPermissions::ALL)
+            .expect("房主可以授予管理权限");
+        assert!(room.authorize_agent_access(principal(2)).is_ok());
+        room.archive(principal(1)).expect("归档成功");
+        assert!(matches!(
+            room.authorize_agent_access(principal(1)),
+            Err(crate::DomainError::InvalidTransition { .. })
+        ));
     }
 
     fn room() -> PrivateRoom {
