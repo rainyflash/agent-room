@@ -126,6 +126,7 @@ use agent_room_bridge_storage_adapter::{
 };
 
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
+mod connectivity;
 mod host_sessions;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 9] = [
@@ -312,6 +313,8 @@ struct AgentSessionRuntime {
     report_to_desktop_supervisor: bool,
     reconnect_policy: ReconnectPolicy,
     matrix_identity_recovery: MatrixIdentityRecovery,
+    /// 断网重连时探 Matrix 服务器，网络一恢复就提前结束退避。
+    connectivity: Option<Arc<connectivity::ConnectivityProbe>>,
 }
 
 const MATRIX_IDENTITY_RECOVERY_UNTOUCHED: u8 = 0;
@@ -820,6 +823,8 @@ async fn compose_agent_session_runtime(
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
         matrix_identity_recovery: MatrixIdentityRecovery::new(),
+        connectivity: connectivity::ConnectivityProbe::new(&config.matrix_homeserver_url)
+            .map(Arc::new),
     })
 }
 
@@ -1879,7 +1884,7 @@ async fn maintain_agent_session(
         let delay = retry_delay
             .take()
             .unwrap_or_else(|| backoff.record_failure(retry_entropy()));
-        if wait_for_refresh(SessionRefreshPlan::After(delay), &mut shutdown).await {
+        if wait_before_reconnect(&runtime, delay, &mut shutdown).await {
             return;
         }
         match establish_agent_online(&runtime).await {
@@ -1966,6 +1971,18 @@ async fn poll_agent_online(
                 return Some(Err(AgentOnlineFailure::HandoffTransport(failure)));
             }
         }
+    }
+}
+
+/// 重连前的退避等待；能探测连通性时网络一恢复就提前结束。返回 `true` 表示收到关机。
+async fn wait_before_reconnect(
+    runtime: &AgentSessionRuntime,
+    delay: DurationMillis,
+    shutdown: &mut watch::Receiver<bool>,
+) -> bool {
+    match &runtime.connectivity {
+        Some(probe) => probe.wait_for_retry(delay, shutdown).await,
+        None => wait_for_refresh(SessionRefreshPlan::After(delay), shutdown).await,
     }
 }
 

@@ -21,6 +21,7 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 // 关闭会话需排空长轮询、令牌刷新和持久化，再释放独立身份；普通请求的 15 秒不足以完成。
 const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_mins(2);
 
+#[derive(Clone)]
 pub struct LocalBridgeClient {
     runtime_root: PathBuf,
     credentials: Arc<dyn IpcCredentialSource>,
@@ -78,10 +79,27 @@ impl LocalBridgeClient {
 
     /// 以方法需要的唯一作用域建立短会话并转发一次请求。
     ///
+    /// Windows 上整个连接（建立、读写、丢弃）都放到一个专用线程上做，见 [`pipe_thread`]。
+    ///
     /// # Errors
     ///
     /// Bridge 未启动、本地凭据不可用、超时或远端用例失败时返回可修复错误。
     pub async fn invoke(&self, method: IpcMethod) -> Result<IpcResponse, LocalBridgeClientFailure> {
+        #[cfg(windows)]
+        {
+            let client = self.clone();
+            pipe_thread::run(async move { client.invoke_here(method).await }).await
+        }
+        #[cfg(not(windows))]
+        {
+            self.invoke_here(method).await
+        }
+    }
+
+    async fn invoke_here(
+        &self,
+        method: IpcMethod,
+    ) -> Result<IpcResponse, LocalBridgeClientFailure> {
         let required_scope = method.required_scope();
         let credentials = self
             .credentials
@@ -125,6 +143,97 @@ impl LocalBridgeClient {
             .await
             .map_err(|_| LocalBridgeClientFailure::timeout())?
             .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))
+    }
+}
+
+/// Windows 具名管道客户端在一个线程上丢弃连接、运行时的 I/O 驱动同时在另一个线程上处理
+/// 同一个管道时会踩坏堆，进程无声退出（`0xC0000374` / `0xC0000005`，上游 mio#2011）。
+/// CLI 用单线程运行时规避；MCP 和桌面壳需要多线程并发，就把每个连接整个交给这一个专用线程：
+/// 建立、读写、丢弃和驱动它的 I/O 都在同一线程上，两者不会重叠。调用方取消时这边的任务也被
+/// 取消，连接仍在专用线程上丢弃。
+#[cfg(windows)]
+mod pipe_thread {
+    use std::{future::Future, sync::LazyLock};
+
+    use tokio::{
+        runtime::{Builder, Handle},
+        task::JoinHandle,
+    };
+
+    use super::LocalBridgeClientFailure;
+
+    static HANDLE: LazyLock<Option<Handle>> = LazyLock::new(|| {
+        let runtime = Builder::new_current_thread().enable_all().build().ok()?;
+        let handle = runtime.handle().clone();
+        std::thread::Builder::new()
+            .name("agent-room-ipc".to_owned())
+            .spawn(move || runtime.block_on(std::future::pending::<()>()))
+            .ok()?;
+        Some(handle)
+    });
+
+    struct AbortOnDrop<T>(JoinHandle<T>);
+
+    impl<T> Drop for AbortOnDrop<T> {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    pub(super) async fn run<F, T>(work: F) -> Result<T, LocalBridgeClientFailure>
+    where
+        F: Future<Output = Result<T, LocalBridgeClientFailure>> + Send + 'static,
+        T: Send + 'static,
+    {
+        // 专用线程起不来时（极少见）只能就地执行，行为与以前一样。
+        let Some(handle) = HANDLE.as_ref() else {
+            return work.await;
+        };
+        let mut task = AbortOnDrop(handle.spawn(work));
+        (&mut task.0)
+            .await
+            .unwrap_or_else(|_| Err(LocalBridgeClientFailure::unavailable()))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::Duration,
+        };
+
+        use super::run;
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn 连接在专用线程上跑_调用方取消时那边也取消() {
+            let thread = run(async { Ok(std::thread::current().name().map(str::to_owned)) })
+                .await
+                .expect("专用线程可用");
+            assert_eq!(thread.as_deref(), Some("agent-room-ipc"));
+
+            let finished = Arc::new(AtomicBool::new(false));
+            let slow = {
+                let finished = finished.clone();
+                run(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    finished.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+            };
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), slow)
+                    .await
+                    .is_err()
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert!(
+                !finished.load(Ordering::SeqCst),
+                "取消后专用线程上的任务不应继续跑完"
+            );
+        }
     }
 }
 
