@@ -19,7 +19,9 @@ mod command;
 mod skills;
 
 pub use command::SystemCommandRunner;
-pub use skills::{SKILL_NAME, SkillState, SkillStatus, install_skill, skill_status, skill_target};
+pub use skills::{
+    SKILL_NAME, SkillCliCommand, SkillState, SkillStatus, install_skill, skill_status, skill_target,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -112,6 +114,8 @@ pub struct HostContext {
     pub claude_config_dir: Option<PathBuf>,
     /// 本版桌面端随包携带的技能文件；没有时技能安装报为不支持。
     pub skill_source: Option<PathBuf>,
+    /// 桌面端旁边装好的 CLI；有它时装技能会把本机命令前缀写进技能末尾。
+    pub skill_cli: Option<SkillCliCommand>,
 }
 
 impl HostContext {
@@ -137,12 +141,19 @@ impl HostContext {
             codex_home: env::var_os("CODEX_HOME").map(PathBuf::from),
             claude_config_dir: skills::claude_config_dir_from_environment(),
             skill_source: None,
+            skill_cli: None,
         })
     }
 
     #[must_use]
     pub fn with_skill_source(mut self, source: Option<PathBuf>) -> Self {
         self.skill_source = source.filter(|path| path.is_absolute());
+        self
+    }
+
+    #[must_use]
+    pub fn with_skill_cli(mut self, cli: Option<SkillCliCommand>) -> Self {
+        self.skill_cli = cli.filter(|cli| cli.executable.is_absolute());
         self
     }
 }
@@ -980,6 +991,7 @@ mod tests {
             codex_home: None,
             claude_config_dir: None,
             skill_source: None,
+            skill_cli: None,
         }
     }
 

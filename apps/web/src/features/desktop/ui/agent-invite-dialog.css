@@ -312,6 +312,10 @@
 .agent-invite__success {
   color: var(--ar-success) !important;
 }
+.agent-invite__say q {
+  color: var(--color-ink);
+  font-weight: 600;
+}
 .agent-invite__error {
   color: var(--color-alert) !important;
 }

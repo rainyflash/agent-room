@@ -3,7 +3,7 @@
 //! MCP 配置告诉宿主有哪些工具；技能告诉模型该怎么用它们。此前技能只随 Codex 插件走，
 //! Claude Code 拿到的是 14 个裸工具，所以接入时只能把整套流程贴进任务里。
 
-use std::{fs, path::PathBuf};
+use std::{fmt::Write as _, fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,8 +32,16 @@ pub struct SkillStatus {
     pub state: SkillState,
     /// 技能文件的安装位置；不支持的宿主为空。
     pub target: Option<String>,
+    /// 这台电脑应装的内容（随包技能加本机命令一节）的摘要。
     pub bundled_digest: Option<String>,
     pub installed_digest: Option<String>,
+}
+
+/// 桌面端旁边装好的 CLI 及其连接本机 Bridge 的参数（数据目录、连接命名空间）。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkillCliCommand {
+    pub executable: PathBuf,
+    pub args: Vec<String>,
 }
 
 /// 技能在宿主里的安装位置。
@@ -62,7 +70,7 @@ pub fn skill_status(context: &HostContext, host: HostKind) -> Result<SkillStatus
     let Ok(target) = skill_target(context, host) else {
         return Ok(unsupported(host));
     };
-    let Some(bundled) = bundled_skill(context)? else {
+    let Some(bundled) = rendered_skill(context)? else {
         return Ok(unsupported(host));
     };
     let bundled_digest = digest_bytes(&bundled);
@@ -92,7 +100,7 @@ pub fn skill_status(context: &HostContext, host: HostKind) -> Result<SkillStatus
 /// 宿主不支持技能、桌面端没带技能文件，或目录/文件写不进去时返回错误。
 pub fn install_skill(context: &HostContext, host: HostKind) -> Result<SkillStatus, HostFailure> {
     let target = skill_target(context, host)?;
-    let bundled = bundled_skill(context)?
+    let bundled = rendered_skill(context)?
         .ok_or_else(|| HostFailure::new("host.skill_source_missing", false))?;
     let directory = target
         .parent()
@@ -126,6 +134,66 @@ fn unsupported(host: HostKind) -> SkillStatus {
     }
 }
 
+/// 这台电脑应装的技能：随包文件末尾加上本机命令一节。命令位置或数据目录变了，
+/// 已装的那份就判为过期，应用会提示重新安装。
+fn rendered_skill(context: &HostContext) -> Result<Option<Vec<u8>>, HostFailure> {
+    let Some(mut skill) = bundled_skill(context)? else {
+        return Ok(None);
+    };
+    if let Some(section) = context.skill_cli.as_ref().and_then(local_command_section) {
+        if !skill.ends_with(b"\n") {
+            skill.push(b'\n');
+        }
+        skill.extend_from_slice(section.as_bytes());
+    }
+    Ok(Some(skill))
+}
+
+/// 技能正文说“没有复制指令时用本文件末尾‘本机命令’一节”，这里就是那一节。
+fn local_command_section(cli: &SkillCliCommand) -> Option<String> {
+    let executable = cli.executable.to_str()?;
+    let parts: Vec<&str> = std::iter::once(executable)
+        .chain(cli.args.iter().map(String::as_str))
+        .collect();
+    if parts
+        .iter()
+        .any(|part| part.contains(['\n', '\r', '`']) || part.chars().any(char::is_control))
+    {
+        return None;
+    }
+    let posix = parts
+        .iter()
+        .map(|part| posix_quote(part))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut section = format!(
+        "\n## 本机命令\n\n桌面端安装本技能时写入。没有从应用复制的指令时，所有 CLI 命令都用这个前缀（已含这台电脑的程序位置、数据目录和连接命名空间）：\n\n```sh\n{posix}\n```\n"
+    );
+    if cfg!(windows) {
+        let powershell = parts
+            .iter()
+            .map(|part| powershell_quote(part))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = write!(
+            section,
+            "\nPowerShell 里写成：\n\n```powershell\n& {powershell}\n```\n"
+        );
+    }
+    section.push_str(
+        "\n在前缀后接 `rooms` 列出能进的房间，接 `join --room \"<房间名>\"` 按名字进入，接 `guide` 查看全部命令。Agent Room 换了位置或数据目录后，在应用的接入面板里重新安装技能即可。\n",
+    );
+    Some(section)
+}
+
+fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn bundled_skill(context: &HostContext) -> Result<Option<Vec<u8>>, HostFailure> {
     let Some(source) = context.skill_source.as_deref() else {
         return Ok(None);
@@ -154,7 +222,7 @@ pub(crate) fn claude_config_dir_from_environment() -> Option<PathBuf> {
 mod tests {
     use std::fs;
 
-    use super::{SkillState, install_skill, skill_status, skill_target};
+    use super::{SkillCliCommand, SkillState, install_skill, skill_status, skill_target};
     use crate::{HostKind, tests::context};
 
     #[test]
@@ -195,6 +263,60 @@ mod tests {
                 .expect("可覆盖安装")
                 .state,
             SkillState::Current
+        );
+    }
+
+    #[test]
+    fn 装技能时把本机命令前缀写进末尾_前缀变了判为过期() {
+        let directory = tempfile::tempdir().expect("临时目录可创建");
+        let mut context = context(directory.path());
+        let source = directory.path().join("bundle").join("SKILL.md");
+        fs::create_dir_all(source.parent().expect("有父目录")).expect("可建目录");
+        fs::write(&source, "---\nname: agent-room\n---\nbody").expect("技能可写");
+        context.skill_source = Some(source);
+        let executable = directory.path().join("Agent Room").join("agent-room.exe");
+        context.skill_cli = Some(SkillCliCommand {
+            executable: executable.clone(),
+            args: vec![
+                "--data-root".into(),
+                directory
+                    .path()
+                    .join("it's data")
+                    .to_string_lossy()
+                    .into_owned(),
+                "--connection".into(),
+                "agent-room".into(),
+            ],
+        });
+
+        install_skill(&context, HostKind::ClaudeCode).expect("可安装");
+        let installed =
+            fs::read_to_string(skill_target(&context, HostKind::ClaudeCode).expect("有目标"))
+                .expect("已安装文件可读");
+        assert!(installed.starts_with("---\nname: agent-room\n---\nbody\n\n## 本机命令\n"));
+        assert!(installed.contains(&format!("'{}'", executable.display())));
+        assert!(installed.contains("'--connection' 'agent-room'"));
+        assert!(installed.contains(r#"it'"'"'s data"#));
+        assert_eq!(installed.contains("```powershell"), cfg!(windows));
+        if cfg!(windows) {
+            assert!(installed.contains("it''s data"));
+        }
+
+        // 应用换了数据目录：已装的前缀不再对，提示重新安装。
+        context.skill_cli.as_mut().expect("有 CLI").args[3] = "agent-room.other".into();
+        assert_eq!(
+            skill_status(&context, HostKind::ClaudeCode)
+                .expect("状态可读")
+                .state,
+            SkillState::Outdated
+        );
+        // 前缀里有换行或反引号就不写这一节，免得破坏技能文件。
+        context.skill_cli.as_mut().expect("有 CLI").args[3] = "bad\nname".into();
+        install_skill(&context, HostKind::ClaudeCode).expect("可安装");
+        assert_eq!(
+            fs::read_to_string(skill_target(&context, HostKind::ClaudeCode).expect("有目标"))
+                .expect("可读"),
+            "---\nname: agent-room\n---\nbody"
         );
     }
 

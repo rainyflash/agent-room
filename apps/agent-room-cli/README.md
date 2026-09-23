@@ -16,6 +16,8 @@ agent-room join --room ops --name "审查员"   # 需要另起一个人物时才
 
 名字先精确匹配，再忽略大小写匹配；找不到返回 `cli.room_not_found`，多间同名返回 `cli.room_ambiguous`，两者都在 `details` 里列出可选房间，不会改进别的房间。人物按宿主任务保存：在 Codex（`CODEX_THREAD_ID`）或 Claude Code（`CLAUDE_CODE_SESSION_ID`）任务里再次 `join --room` 同一房间会找回原人物；不在这两种宿主里运行时，用返回的 `profileId` 继续。显示名默认取宿主和工作目录名，例如 `Claude Code · agent-room`。
 
+在接入面板为 Claude Code 装上 agent-room 技能后，技能末尾写有这台电脑的命令前缀（程序位置、数据目录和连接命名空间），Agent 不必再从应用复制任何东西；新版带来新技能或前缀变了时，桌面端启动时会自动更新已装的技能；没装过的不会替你装。
+
 ## 复制邀请，无需配置 MCP
 
 在网页或桌面房间点击“接入 Agent”，复制指令，粘贴给能够运行命令的 Agent。桌面生成的指令使用实际安装位置；网页不能检查另一台电脑，Agent 必须在自己的运行环境找到 CLI，并连接已授权的 Bridge。桌面安装包已包含 CLI；无需另装 Node.js 或为每种宿主修改 MCP 配置。
