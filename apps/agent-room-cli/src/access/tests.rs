@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 struct Bridge {
     summary: Mutex<IpcSelfSummary>,
     rooms: Mutex<Vec<IpcRoomSummary>>,
+    pending: Mutex<Option<IpcOpenHostSessionRequest>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
@@ -34,6 +35,7 @@ impl Bridge {
                 granted_capabilities: vec![],
             }),
             rooms: Mutex::new(Vec::new()),
+            pending: Mutex::new(None),
             opened: Mutex::new(Vec::new()),
             read_started: tokio::sync::Notify::new(),
             finish_read: tokio::sync::Notify::new(),
@@ -69,7 +71,24 @@ impl BridgeToolClient for Bridge {
             IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
                 rooms: self.rooms.lock().unwrap().clone(),
             }),
+            IpcMethod::ReadInvitation => Ok(IpcResponse::Invitation {
+                invitation: self.pending.lock().unwrap().clone().map(|invitation| {
+                    agent_room_bridge_ipc::IpcPendingInvitation {
+                        invitation,
+                        expires_in_ms: 60_000,
+                    }
+                }),
+            }),
             IpcMethod::OpenHostSession(request) => {
+                // 和 Bridge 一样：用等待中的人物开出会话，这份邀请就用掉了。
+                let mut pending = self.pending.lock().unwrap();
+                if pending
+                    .as_ref()
+                    .is_some_and(|invitation| invitation.session_key == request.session_key)
+                {
+                    *pending = None;
+                }
+                drop(pending);
                 self.opened.lock().unwrap().push(request);
                 Ok(IpcResponse::HostSession {
                     session: IpcHostSessionSummary {
@@ -192,8 +211,9 @@ async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认
         .code,
         "cli.profile.invitation_mismatch"
     );
-    // 不指定房间就让 Bridge 选默认公开大厅。
-    run(&bridge, directory.path(), "test", None, join(None, None))
+    // 没有等待中的邀请、这个任务也没用过人物时，不指定房间就让 Bridge 选默认公开大厅。
+    let fresh = tempfile::tempdir().unwrap();
+    run(&bridge, fresh.path(), "test", None, join(None, None))
         .await
         .unwrap();
     let opened = bridge.opened.lock().unwrap();
@@ -236,6 +256,100 @@ async fn 房间名不存在或有歧义时不接入并列出候选() {
     assert!(ambiguous.details["candidates"].contains("Ops (private room"));
     assert!(bridge.opened.lock().unwrap().is_empty());
     assert!(!directory.path().join("cli-profiles").exists());
+}
+
+#[tokio::test]
+async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重复接() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    let waiting = IpcOpenHostSessionRequest {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: "面板里起的名字".into(),
+        room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
+            catalog_id: uuid::Uuid::now_v7().to_string(),
+            room_id: Some("!room:test.invalid".into()),
+        }),
+    };
+    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    run(&bridge, directory.path(), "test", None, join(None, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        bridge.opened.lock().unwrap().as_slice(),
+        std::slice::from_ref(&waiting)
+    );
+    let saved = saved_profiles(directory.path());
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].invitation.session_key, waiting.session_key);
+    assert_eq!(saved[0].invitation.display_name, "面板里起的名字");
+    assert_eq!(
+        saved[0].invitation.catalog_id,
+        waiting.room.as_ref().map(|room| room.catalog_id.clone())
+    );
+    assert!(bridge.pending.lock().unwrap().is_none());
+    // 指了房间或名字就是按名字接入，不去接面板的邀请。
+    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(None, Some("另起的名字")),
+    )
+    .await
+    .unwrap();
+    let opened = bridge.opened.lock().unwrap();
+    assert_eq!(opened.len(), 2);
+    assert_ne!(opened[1].session_key, waiting.session_key);
+    assert!(opened[1].room.is_none());
+    drop(opened);
+    assert!(bridge.pending.lock().unwrap().is_some());
+}
+
+#[test]
+fn 只说接入且没有等待中的邀请时回到这个任务最近用过的人物() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = uuid::Uuid::now_v7().to_string();
+    let target = RoomTarget {
+        catalog_id: Some(uuid::Uuid::now_v7().to_string()),
+        room_id: Some("!room:test.invalid".into()),
+    };
+    let mut profiles = Vec::new();
+    for (name, room) in [("Lobby", &RoomTarget::DEFAULT_LOBBY), ("Game", &target)] {
+        let profile = Profile::new(
+            Invitation::for_room(uuid::Uuid::now_v7().to_string(), name.into(), room),
+            "test",
+            Some(task.clone()),
+        );
+        ProfileStore::open(directory.path(), &profile.invitation.session_key)
+            .unwrap()
+            .save(&profile)
+            .unwrap();
+        profiles.push(profile);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        ProfileStore::latest_bound(directory.path(), "test", &task),
+        Some(profiles[1].invitation.session_key.clone())
+    );
+    // 早先的人物刚被用过（例如 ack），就轮到它。
+    std::thread::sleep(Duration::from_millis(20));
+    ProfileStore::open(directory.path(), &profiles[0].invitation.session_key)
+        .unwrap()
+        .save(&profiles[0])
+        .unwrap();
+    assert_eq!(
+        ProfileStore::latest_bound(directory.path(), "test", &task),
+        Some(profiles[0].invitation.session_key.clone())
+    );
+    assert_eq!(
+        ProfileStore::latest_bound(directory.path(), "other", &task),
+        None
+    );
+    assert_eq!(
+        ProfileStore::latest_bound(directory.path(), "test", &uuid::Uuid::now_v7().to_string()),
+        None
+    );
 }
 
 #[test]

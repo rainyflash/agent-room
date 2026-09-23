@@ -257,6 +257,27 @@ impl ProfileStore {
             .max()
     }
 
+    /// 这个宿主任务最近用过的人物（按档案最后写入的时间）：只说“接入”时回到上次的房间。
+    pub(crate) fn latest_bound(root: &Path, service: &str, task_id: &str) -> Option<String> {
+        let entries = fs::read_dir(root.join("cli-profiles")).ok()?;
+        entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|entry| {
+                let path = entry.path();
+                let modified = entry.metadata().and_then(|meta| meta.modified()).ok()?;
+                let profile: Profile = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+                let key = path.file_stem()?.to_str()?.to_owned();
+                (profile.invitation.session_key == key
+                    && validate_key(&key).is_ok()
+                    && profile.bridge_service == service
+                    && profile.task_id.as_deref() == Some(task_id))
+                .then_some((modified, key))
+            })
+            .max()
+            .map(|(_, key)| key)
+    }
+
     pub(crate) fn load(&self) -> Result<Option<Profile>> {
         let file = match File::open(&self.path) {
             Ok(file) => file,
@@ -363,6 +384,8 @@ pub(crate) fn default_display_name() -> String {
 
 fn task_id_from(variable: &str) -> Result<Option<String>> {
     match std::env::var(variable) {
+        // 空值等于没设置，不能让所有命令都因为一个空环境变量失败。
+        Ok(id) if id.is_empty() => Ok(None),
         Ok(id) => {
             validate_task_id(&id)?;
             Ok(Some(id))

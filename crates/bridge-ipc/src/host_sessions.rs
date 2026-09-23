@@ -42,6 +42,28 @@ impl IpcOpenHostSessionRequest {
     }
 }
 
+/// 桌面端接入面板挂在 Bridge 上、等 Agent 来接的人物。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcPendingInvitation {
+    pub invitation: IpcOpenHostSessionRequest,
+    /// 还有多久失效；面板开着时会定期续期。
+    pub expires_in_ms: u64,
+}
+
+/// 面板关闭时撤回；只撤回同一会话键的那份，旧面板撤不掉新面板的邀请。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcWithdrawInvitationRequest {
+    pub session_key: String,
+}
+
+impl IpcWithdrawInvitationRequest {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_session_id(&self.session_key)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcCloseHostSessionRequest {
@@ -193,6 +215,57 @@ mod tests {
             display_name: " ".into(),
         };
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn 等待接入的三个方法各有权限且不能包进会话() {
+        let invitation = IpcOpenHostSessionRequest {
+            room: None,
+            session_key: Uuid::now_v7().to_string(),
+            display_name: "调试人物".into(),
+        };
+        let offer = IpcMethod::OfferInvitation(invitation.clone());
+        assert!(offer.validate().is_ok());
+        assert_eq!(offer.required_scope(), IpcScope::AgentBootstrap);
+        let withdraw = IpcMethod::WithdrawInvitation(IpcWithdrawInvitationRequest {
+            session_key: invitation.session_key.clone(),
+        });
+        assert!(withdraw.validate().is_ok());
+        assert_eq!(withdraw.required_scope(), IpcScope::AgentBootstrap);
+        assert_eq!(
+            IpcMethod::ReadInvitation.required_scope(),
+            IpcScope::HostSessionsManage
+        );
+        assert!(
+            IpcMethod::WithdrawInvitation(IpcWithdrawInvitationRequest {
+                session_key: "../other".into(),
+            })
+            .validate()
+            .is_err()
+        );
+        for method in [offer, withdraw, IpcMethod::ReadInvitation] {
+            let wrapped = IpcMethod::WithSession {
+                session_id: Uuid::now_v7().to_string(),
+                method: Box::new(method),
+            };
+            assert_eq!(
+                wrapped.validate().expect_err("不能包进会话").code(),
+                "bridge.ipc.session_method_invalid"
+            );
+        }
+        let response = crate::IpcResponse::Invitation {
+            invitation: Some(IpcPendingInvitation {
+                invitation,
+                expires_in_ms: 1_000,
+            }),
+        };
+        let encoded = serde_json::to_value(&response).expect("可编码");
+        assert_eq!(encoded["type"], "invitation");
+        assert_eq!(encoded["invitation"]["expiresInMs"], 1_000);
+        assert_eq!(
+            serde_json::from_value::<crate::IpcResponse>(encoded).expect("可解码"),
+            response
+        );
     }
 
     #[test]

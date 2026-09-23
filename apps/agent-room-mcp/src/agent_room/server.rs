@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use agent_room_agent_client::{MessageReadMode, MessageWait};
 use agent_room_bridge_ipc::{
     IpcBridgeState, IpcErrorCategory, IpcHostRoomTarget, IpcHostSessionState,
-    IpcHostSessionSummary, IpcListPreviewsRequest, IpcMethod, IpcOpenHostSessionRequest,
-    IpcResponse, IpcRoomSummary, IpcSelfSummary, resolve_room_by_name,
+    IpcHostSessionSummary, IpcListPreviewsRequest, IpcMethod, IpcResponse, IpcRoomSummary,
+    IpcSelfSummary, resolve_room_by_name,
 };
 use rmcp::{
     ServerHandler,
@@ -55,6 +55,77 @@ impl AgentRoomMcpServer {
             Ok(IpcResponse::Rooms { rooms }) => Ok(rooms),
             Ok(response) => Err(response_mismatch_result(ExpectedResponse::Rooms, &response)),
             Err(failure) => Err(failure_result(&failure)),
+        }
+    }
+
+    /// 决定这次接入用哪个人物、进哪个房间。只说“接入”时先接桌面接入面板正在等的人物，
+    /// 再回到这个任务上次的房间，都没有才进默认公开大厅；给了房间名就按名字解析。
+    async fn plan_join(
+        &self,
+        input: JoinInput,
+        task_id: Option<&str>,
+        codex: bool,
+    ) -> Result<JoinPlan, CallToolResult> {
+        let name = input
+            .room
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        if name.is_none() && input.display_name.is_none() {
+            if let Some(identity) = self.pending_invitation().await {
+                self.joins.adopt(task_id, identity.clone());
+                return Ok(JoinPlan {
+                    identity,
+                    origin: IdentityOrigin::Invited,
+                    room: None,
+                });
+            }
+            if let Some(identity) = self.joins.last(task_id) {
+                return Ok(JoinPlan {
+                    identity,
+                    origin: IdentityOrigin::Reused,
+                    room: None,
+                });
+            }
+        }
+        let room = match name {
+            None => None,
+            Some(name) => Some(self.resolve_room(name).await?),
+        };
+        let target = room.as_ref().map(|room| IpcHostRoomTarget {
+            catalog_id: room.catalog_id.clone(),
+            room_id: room.matrix_room_id.clone(),
+        });
+        let (identity, origin) = self.joins.resolve(task_id, target, input.display_name, || {
+            default_display_name(codex)
+        });
+        Ok(JoinPlan {
+            identity,
+            origin,
+            room,
+        })
+    }
+
+    async fn resolve_room(&self, name: &str) -> Result<IpcRoomSummary, CallToolResult> {
+        let rooms = self.accessible_rooms().await?;
+        match resolve_room_by_name(&rooms, name) {
+            Ok(Some(room)) => Ok(room.clone()),
+            Ok(None) => Err(room_failure("agent.join.room_not_found", name, &rooms)),
+            Err(candidates) => {
+                let candidates: Vec<IpcRoomSummary> = candidates.into_iter().cloned().collect();
+                Err(room_failure("agent.join.room_ambiguous", name, &candidates))
+            }
+        }
+    }
+
+    /// 桌面端接入面板正在等的人物。旧 Bridge 不认识这个方法或暂时读不到时当作没有，
+    /// 真正的连接错误会在随后开会话时如实报出。
+    async fn pending_invitation(&self) -> Option<JoinIdentity> {
+        match self.backend.invoke(IpcMethod::ReadInvitation).await {
+            Ok(IpcResponse::Invitation {
+                invitation: Some(pending),
+            }) => Some(JoinIdentity::from(pending.invitation)),
+            _ => None,
         }
     }
 
@@ -146,6 +217,13 @@ impl AgentRoomMcpServer {
     }
 }
 
+/// 一次接入要用的人物与房间；按名字解析到的房间摘要只在给了房间名时有。
+struct JoinPlan {
+    identity: JoinIdentity,
+    origin: IdentityOrigin,
+    room: Option<IpcRoomSummary>,
+}
+
 fn with_session(session_id: String, method: IpcMethod) -> IpcMethod {
     IpcMethod::WithSession {
         session_id,
@@ -182,7 +260,7 @@ impl AgentRoomMcpServer {
     /// 用户授权接入后按房间名进入；同一宿主任务重跑复用同一人物。
     #[tool(
         name = "agent_room_join",
-        description = "用户授权接入后，按房间名（agent_room_list_rooms 里的 name 或 slug）进入房间并等待会话就绪；不给 room 就进默认公开大厅。人物按当前宿主任务保存：同一任务再次调用得到同一 sessionKey 和人物，给出不同的 displayName 才会新建人物。返回 sessionId 供所有后续工具使用；state 为 starting 时用 agent_room_get_self 继续查询。找不到或有多个同名房间会失败并列出可选房间，不会自行改进别的房间。",
+        description = "用户授权接入后，按房间名（agent_room_list_rooms 里的 name 或 slug）进入房间并等待会话就绪。用户只说“接入”、没有给房间名时，room 和 displayName 都不传：先接上 Agent Room 桌面端接入面板正在等的人物（identity 为 invited），否则回到这个任务上次进的房间，都没有才进默认公开大厅。人物按当前宿主任务保存：同一任务再次调用得到同一 sessionKey 和人物，给出不同的 displayName 才会新建人物。返回 sessionId 供所有后续工具使用；state 为 starting 时用 agent_room_get_self 继续查询。找不到或有多个同名房间会失败并列出可选房间，不会自行改进别的房间。",
         annotations(
             title = "按房间名接入 Agent Room",
             read_only_hint = false,
@@ -196,47 +274,16 @@ impl AgentRoomMcpServer {
         Parameters(input): Parameters<JoinInput>,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> CallToolResult {
-        let room = match input
-            .room
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            None => None,
-            Some(name) => {
-                let rooms = match self.accessible_rooms().await {
-                    Ok(rooms) => rooms,
-                    Err(result) => return result,
-                };
-                match resolve_room_by_name(&rooms, name) {
-                    Ok(Some(room)) => Some(room.clone()),
-                    Ok(None) => return room_failure("agent.join.room_not_found", name, &rooms),
-                    Err(candidates) => {
-                        let candidates: Vec<IpcRoomSummary> =
-                            candidates.into_iter().cloned().collect();
-                        return room_failure("agent.join.room_ambiguous", name, &candidates);
-                    }
-                }
-            }
-        };
         let metadata_thread = context.meta.get("threadId");
         let task_id = host_task_id(metadata_thread);
-        let room_key = room
-            .as_ref()
-            .map_or_else(|| "default".to_owned(), |room| room.catalog_id.clone());
-        let (identity, origin) =
-            self.joins
-                .resolve(task_id.as_deref(), &room_key, input.display_name, || {
-                    default_display_name(metadata_thread.is_some())
-                });
-        let request = IpcOpenHostSessionRequest {
-            session_key: identity.session_key.clone(),
-            display_name: identity.display_name.clone(),
-            room: room.as_ref().map(|room| IpcHostRoomTarget {
-                catalog_id: room.catalog_id.clone(),
-                room_id: room.matrix_room_id.clone(),
-            }),
+        let plan = match self
+            .plan_join(input, task_id.as_deref(), metadata_thread.is_some())
+            .await
+        {
+            Ok(plan) => plan,
+            Err(result) => return result,
         };
+        let request = plan.identity.request();
         if let Err(error) = IpcMethod::OpenHostSession(request.clone()).validate() {
             return validation_failure_result(
                 error.code(),
@@ -262,8 +309,10 @@ impl AgentRoomMcpServer {
             Err(result) => return result,
         };
         if let (Some(expected), Some(summary)) = (
-            room.as_ref()
-                .and_then(|room| room.matrix_room_id.as_deref()),
+            plan.identity
+                .room
+                .as_ref()
+                .and_then(|room| room.room_id.as_deref()),
             summary.as_ref(),
         ) && expected != summary.room_id
         {
@@ -271,10 +320,10 @@ impl AgentRoomMcpServer {
         }
         joined_result(
             &session,
-            &identity,
-            origin,
+            &plan.identity,
+            plan.origin,
             task_id.as_deref(),
-            room.as_ref(),
+            plan.room.as_ref(),
             summary.as_ref(),
         )
     }
@@ -714,6 +763,7 @@ fn joined_result(
         "sessionKey": identity.session_key,
         "displayName": identity.display_name,
         "identity": origin,
+        "target": identity.room,
         "hostTask": host_task,
         "room": room,
         "self": summary,
@@ -907,6 +957,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::HostSessionDiagnostics { .. } => "host_session_diagnostics",
         IpcResponse::SelfSummary { .. } => "self_summary",
         IpcResponse::Rooms { .. } => "rooms",
+        IpcResponse::Invitation { .. } => "invitation",
         IpcResponse::MessagePreviews { .. } => "message_previews",
         IpcResponse::Presence { .. } => "presence",
         IpcResponse::OpenedContent { .. } => "opened_content",

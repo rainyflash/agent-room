@@ -2,7 +2,10 @@ use agent_room_bridge_core::ipc::IpcScope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessionRequest, limits};
+use crate::{
+    IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessionRequest,
+    IpcPendingInvitation, IpcWithdrawInvitationRequest, limits,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -19,6 +22,12 @@ pub enum IpcMethod {
     GetSelf,
     /// 这台设备的账号能进的房间，供 CLI/MCP 按名字解析房间；不需要先开会话。
     ListRooms,
+    /// 桌面端接入面板把准备好的人物挂在 Bridge 上等 Agent 来接；同一时间只挂一份，后挂的替换先挂的。
+    OfferInvitation(IpcOpenHostSessionRequest),
+    /// 面板关闭时撤回自己挂的那份。
+    WithdrawInvitation(IpcWithdrawInvitationRequest),
+    /// 不带邀请的 join 查看正在等待的人物；用它开出会话时这份邀请才被用掉。
+    ReadInvitation,
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -52,6 +61,9 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::ListRooms => "list_rooms",
+            Self::OfferInvitation(_) => "offer_invitation",
+            Self::WithdrawInvitation(_) => "withdraw_invitation",
+            Self::ReadInvitation => "read_invitation",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -77,13 +89,17 @@ impl IpcMethod {
             Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
             Self::OpenHostSession(_)
             | Self::CloseHostSession(_)
+            | Self::ReadInvitation
             | Self::RegisterReception(_)
             | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
-            Self::BootstrapDefaultAgent(_) => IpcScope::AgentBootstrap,
+            // 挂邀请等于替用户准备一个人物，与桌面端建默认人物同属一类权限。
+            Self::BootstrapDefaultAgent(_)
+            | Self::OfferInvitation(_)
+            | Self::WithdrawInvitation(_) => IpcScope::AgentBootstrap,
             Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) | Self::ListRooms => {
                 IpcScope::PreviewsRead
             }
@@ -108,11 +124,13 @@ impl IpcMethod {
             Self::BridgeStatus
             | Self::GetSelf
             | Self::ListRooms
+            | Self::ReadInvitation
             | Self::ListRecoverySessions
             | Self::HostSessionDiagnostics => Ok(()),
+            Self::WithdrawInvitation(request) => request.validate(),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
-            Self::OpenHostSession(request) => request.validate(),
+            Self::OpenHostSession(request) | Self::OfferInvitation(request) => request.validate(),
             Self::CloseHostSession(request) => request.validate(),
             Self::RegisterReception(request) => request.validate(),
             Self::ReceptionControl(request) => {
@@ -138,6 +156,9 @@ impl IpcMethod {
                         | Self::HostSessionDiagnostics
                         | Self::ListRecoverySessions
                         | Self::ListRooms
+                        | Self::OfferInvitation(_)
+                        | Self::WithdrawInvitation(_)
+                        | Self::ReadInvitation
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -497,6 +518,10 @@ pub enum IpcResponse {
     },
     Rooms {
         rooms: Vec<IpcRoomSummary>,
+    },
+    /// 挂上、撤回或查看等待接入的人物；没有等待中的邀请时为空。
+    Invitation {
+        invitation: Option<IpcPendingInvitation>,
     },
     DefaultAgentBootstrap {
         bootstrap: IpcDefaultAgentBootstrap,

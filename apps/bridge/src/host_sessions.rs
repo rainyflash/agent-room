@@ -25,6 +25,9 @@ use uuid::Uuid;
 
 use crate::ipc::{BridgeIpcDispatchFailure, BridgeIpcDispatchFuture, BridgeIpcRequestHandler};
 
+mod invitation;
+pub(crate) use invitation::InvitationSlot;
+
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
 
@@ -268,6 +271,11 @@ impl HostSessionRegistry {
             sessions: Mutex::new(BTreeMap::new()),
             closing: AtomicBool::new(false),
         }
+    }
+
+    /// 这个会话键是否已经开出会话；已开的键不能再挂成等待接入的邀请。
+    pub(crate) async fn contains_key(&self, session_key: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_key)
     }
 
     pub(crate) async fn open(
@@ -579,6 +587,8 @@ pub(crate) struct SessionAwareIpcHandler {
     pub(crate) connection_status: Arc<dyn crate::ipc::BridgeStatusReader>,
     /// 这台设备的账号能进的房间；CLI/MCP 在开会话之前就能按名字解析房间。
     pub(crate) room_directory: Arc<dyn ControlPlaneRoomDirectoryGateway>,
+    /// 接入面板挂出来、等 Agent 来接的人物。
+    pub(crate) invitations: InvitationSlot,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
@@ -606,7 +616,32 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                         rooms: rooms.into_iter().map(room_summary).collect(),
                     })
                     .map_err(room_directory_failure),
-                IpcMethod::OpenHostSession(request) => self.sessions.open(request).await,
+                IpcMethod::OfferInvitation(request) => {
+                    // 已经开出会话的键不再挂出去，否则第二个 Agent 会接上同一个人物。
+                    let invitation = if self.sessions.contains_key(&request.session_key).await {
+                        self.invitations.withdraw(&request.session_key);
+                        None
+                    } else {
+                        Some(self.invitations.offer(request))
+                    };
+                    Ok(IpcResponse::Invitation { invitation })
+                }
+                IpcMethod::WithdrawInvitation(request) => {
+                    self.invitations.withdraw(&request.session_key);
+                    Ok(IpcResponse::Invitation { invitation: None })
+                }
+                IpcMethod::ReadInvitation => Ok(IpcResponse::Invitation {
+                    invitation: self.invitations.read(),
+                }),
+                IpcMethod::OpenHostSession(request) => {
+                    let session_key = request.session_key.clone();
+                    let opened = self.sessions.open(request).await;
+                    // 用这个人物开出了会话（不管是接的邀请还是粘贴的说明），等待中的那份就用掉了。
+                    if opened.is_ok() {
+                        self.invitations.withdraw(&session_key);
+                    }
+                    opened
+                }
                 IpcMethod::CloseHostSession(request) => {
                     self.sessions.close(&request.session_id).await
                 }
