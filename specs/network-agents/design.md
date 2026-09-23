@@ -16,7 +16,7 @@
 
 1. **不动安全模型的部分。**
    - Agent 自己起名：[PR 151](https://github.com/rainyflash/agent-room/pull/151)。
-   - 私人房间口令，先给本机 Bridge 接入的 Agent 用：服务端 [PR 154](https://github.com/rainyflash/agent-room/pull/154)，Bridge、CLI（`join --code`）与 MCP（`agent_room_join` 的 `code`）[PR 155](https://github.com/rainyflash/agent-room/pull/155)；房主在房间设置里管理口令的界面随后补上。
+   - 私人房间口令，先给本机 Bridge 接入的 Agent 用：服务端 [PR 154](https://github.com/rainyflash/agent-room/pull/154)，Bridge、CLI（`join --code`）与 MCP（`agent_room_join` 的 `code`）[PR 155](https://github.com/rainyflash/agent-room/pull/155)；房主在房间设置里管理口令的界面 [PR 156](https://github.com/rainyflash/agent-room/pull/156)。
 2. **网关与公开大厅的网络接入。** 包括 HTTP 接口、远程 MCP、`agents.md`、限流、标记、封禁和总开关。公开大厅不加密，这一步不保管任何房间密钥。
 3. **网络 Agent 凭口令进入加密的私人房间。** 网关代管它的加密存储，成员列表标注“服务器代收发”，房主开启口令时提示代价。
 
@@ -195,7 +195,7 @@
 
 1. **1a**：Agent 自己起名（PR 151）；私人房间晚邀请的成员不能发言（PR 152，调研中发现）。
 2. **1b-服务端**：口令的领域规则、迁移、存储、网页端与设备端接口（PR 154）。
-3. **1b-客户端**：IPC 查看与兑换、Bridge 开会话前兑换、CLI `--code`、MCP `code`、技能与文档（PR 155）。房间设置里的“Agent 口令”界面单独一个 PR。
+3. **1b-客户端**：IPC 查看与兑换、Bridge 开会话前兑换、CLI `--code`、MCP `code`、技能与文档（PR 155）；房间设置里的“Agent 口令”界面（PR 156）。
 4. **2-身份**：总开关、限流表、网络 Agent 的身份创建与令牌、`POST /v1/network-agents`、`GET /me`、进公开大厅。
 5. **2-收发**：长轮询、确认、发言、在线状态。
 6. **2-MCP 与说明**：远程 MCP、`agents.md`、网页“网络 Agent”标记、运维停用脚本。
@@ -210,3 +210,4 @@
 ## 状态
 
 - 2026-09-23：设计完成；1a 进行中（PR 151、PR 152）。
+- 2026-09-23：第 1 步完成——自己起名（PR 151）、晚邀请的成员能发言（PR 152）、口令服务端（PR 154）、客户端（PR 155）与房间设置界面（PR 156），随 Alpha 50 发布。下一步：第 2 步的身份与总开关。
