@@ -20,6 +20,7 @@ import type {
   BridgeRuntime,
   DesktopRuntimeGateway,
   HostSessionDiagnostics,
+  InvitationOffer,
 } from '../domain/desktop-runtime';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok, type Result } from '@/shared/result';
@@ -69,6 +70,8 @@ function gateway(
     readonly installed?: readonly ('codex' | 'claude-code' | 'cursor')[];
     readonly configured?: boolean;
     readonly skill?: 'missing' | 'outdated' | 'current' | 'unsupported';
+    /** The Bridge accepts the dialog's character as a pending invitation. */
+    readonly offers?: boolean;
   } = {},
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
@@ -91,6 +94,12 @@ function gateway(
     skill = 'current';
     return Promise.resolve(skillStatus(host));
   });
+  const offerInvitation = vi.fn((invitation: InvitationOffer) =>
+    Promise.resolve(ok({ invitation, expiresInMs: 600_000 })),
+  );
+  const withdrawInvitation = vi.fn<
+    (sessionKey: string) => Promise<Result<void, { code: string; retryable: boolean }>>
+  >(() => Promise.resolve(ok(undefined)));
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
     beginMatrixAuthentication: unavailable,
@@ -152,8 +161,9 @@ function gateway(
     applyHost,
     skillStatus: (host) => Promise.resolve(skillStatus(host)),
     installSkill,
+    ...(options.offers === true ? { offerInvitation, withdrawInvitation } : {}),
   };
-  return { value, applyHost, installSkill };
+  return { value, applyHost, installSkill, offerInvitation, withdrawInvitation };
 }
 
 function renderDialog(
@@ -343,6 +353,51 @@ describe('AgentInviteDialog', () => {
     // 同一身份：两次复制的是同一个 profile。
     expect(profileIn(short)).toBe(profileIn(long));
   });
+
+  it('面板开着就挂出这个人物：一句“接入 Agent Room”即可，Agent 接上后锁定名字，关闭时撤回', async () => {
+    let sessions: HostSessionDiagnostics[] = [];
+    const runtime = gateway({
+      installed: ['claude-code'],
+      skill: 'current',
+      offers: true,
+      sessions: () => ok(sessions),
+    });
+    const view = renderDialog(runtime.value);
+    await readyToCopy();
+    await waitFor(() => {
+      expect(runtime.offerInvitation).toHaveBeenCalled();
+    });
+    const offered = runtime.offerInvitation.mock.calls[0]?.[0];
+    expect(offered?.sessionKey).toMatch(uuidV7);
+    expect(offered?.displayName).toBe('Ada’s agent');
+    // 这个房间没有目录信息，就不带房间，由 Bridge 走默认大厅。
+    expect(offered?.room).toBeUndefined();
+    expect(await screen.findByText('Join Agent Room')).toBeVisible();
+    expect(
+      screen.getByText(/tell an agent that already has the skill or MCP set up/u),
+    ).toBeVisible();
+
+    // Agent 说了“接入”，用这个人物开出了会话。
+    sessions = [
+      {
+        displayName: 'Ada’s agent',
+        session: {
+          sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
+          state: 'ready',
+          agentId: null,
+          errorCode: null,
+        },
+        sessionKey: offered?.sessionKey ?? null,
+        lastInboxReadAgoMs: 1_000,
+        lastMessageReceivedAgoMs: null,
+        lastMessageSentAgoMs: null,
+      },
+    ];
+    await screen.findByText('“Ada’s agent” is in the room', undefined, { timeout: 5_000 });
+    expect(screen.getByLabelText('Agent name')).toBeDisabled();
+    view.unmount();
+    expect(runtime.withdrawInvitation).toHaveBeenCalledWith(offered?.sessionKey);
+  }, 15_000);
 
   it('空名字不能复制；复制后锁定身份，切换协议不会创建另一个人物', async () => {
     const writeText = clipboardMock();

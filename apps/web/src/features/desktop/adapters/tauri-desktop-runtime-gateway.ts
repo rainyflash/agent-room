@@ -17,6 +17,7 @@ import {
   agentHostDetectionSchema,
   agentHostPlanSchema,
   agentHostSkillStatusSchema,
+  pendingInvitationSchema,
   desktopAgentTargetSchema,
   desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
@@ -30,6 +31,8 @@ import {
   type AgentHostKind,
   type AgentHostPlan,
   type AgentHostSkillStatus,
+  type InvitationOffer,
+  type PendingInvitation,
   type DesktopRuntimeEventHandlers,
   type DesktopAgentTarget,
   type DesktopAuthenticationIntent,
@@ -68,6 +71,8 @@ const desktopCommands = {
   planHost: 'desktop_plan_agent_host',
   skillStatus: 'desktop_skill_status',
   installSkill: 'desktop_install_skill',
+  offerInvitation: 'desktop_offer_invitation',
+  withdrawInvitation: 'desktop_withdraw_invitation',
   reauthorize: 'desktop_reauthorize_bridge',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
@@ -332,6 +337,24 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     host: AgentHostKind,
   ): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.installSkill, { host }, agentHostSkillStatusSchema);
+  }
+
+  async offerInvitation(
+    invitation: InvitationOffer,
+  ): Promise<Result<PendingInvitation | null, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.offerInvitation,
+      { invitation },
+      pendingInvitationSchema.nullable(),
+    );
+  }
+
+  async withdrawInvitation(sessionKey: string): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.withdrawInvitation,
+      { sessionKey },
+      z.null().transform(() => undefined),
+    );
   }
 
   async applyHost(

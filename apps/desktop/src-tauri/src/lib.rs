@@ -42,10 +42,10 @@ use commands::{
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_detect_agent_hosts, desktop_host_session_diagnostics, desktop_install_skill,
     desktop_install_update, desktop_load_matrix_session, desktop_lobby_snapshot,
-    desktop_open_authorization, desktop_plan_agent_host, desktop_reauthorize_bridge,
-    desktop_remove_agent_host, desktop_restore_human_session, desktop_retry_bridge,
-    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
-    desktop_skill_status,
+    desktop_offer_invitation, desktop_open_authorization, desktop_plan_agent_host,
+    desktop_reauthorize_bridge, desktop_remove_agent_host, desktop_restore_human_session,
+    desktop_retry_bridge, desktop_runtime_snapshot, desktop_save_matrix_session,
+    desktop_set_autostart, desktop_skill_status, desktop_withdraw_invitation,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -152,6 +152,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_lobby_snapshot,
             desktop_agent_recovery_sessions,
             desktop_host_session_diagnostics,
+            desktop_offer_invitation,
+            desktop_withdraw_invitation,
             desktop_agent_recovery,
             desktop_receiver_list,
             desktop_receiver_configure,
@@ -176,7 +178,11 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         .build(tauri::generate_context!())
         .expect("Agent Room 桌面壳必须能够构建");
 
-    app.run(|app, event| match event {
+    app.run(on_run_event);
+}
+
+fn on_run_event(app: &tauri::AppHandle, event: RunEvent) {
+    match event {
         RunEvent::Resumed => app.state::<DesktopRuntime>().bridge.resume(),
         RunEvent::ExitRequested { api, .. } => {
             let runtime = app.state::<DesktopRuntime>().inner().clone();
@@ -194,7 +200,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         }
         RunEvent::Exit => app.state::<DesktopRuntime>().bridge.shutdown_now(),
         _ => {}
-    });
+    }
 }
 
 fn setup_runtime(

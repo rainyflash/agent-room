@@ -216,6 +216,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::HostSessionDiagnostics
                 | IpcMethod::ListRecoverySessions
                 | IpcMethod::ListRooms
+                | IpcMethod::OfferInvitation(_)
+                | IpcMethod::WithdrawInvitation(_)
+                | IpcMethod::ReadInvitation
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
                     "bridge.host_session.unavailable",
@@ -670,8 +673,13 @@ fn authorize_method(
                 ..
             })
         );
-    if matches!(method, IpcMethod::HostSessionDiagnostics)
-        && agreement.caller() != IpcCallerKind::DesktopShell
+    // 诊断和挂邀请只属于桌面壳：Agent 不能替用户准备人物，也不能看别的任务的会话。
+    if matches!(
+        method,
+        IpcMethod::HostSessionDiagnostics
+            | IpcMethod::OfferInvitation(_)
+            | IpcMethod::WithdrawInvitation(_)
+    ) && agreement.caller() != IpcCallerKind::DesktopShell
     {
         return Err(BridgeIpcDispatchFailure::new(
             "bridge.ipc.scope_denied",
@@ -686,6 +694,7 @@ fn authorize_method(
         method,
         IpcMethod::BridgeStatus
             | IpcMethod::ListRooms
+            | IpcMethod::ReadInvitation
             | IpcMethod::OpenHostSession(_)
             | IpcMethod::CloseHostSession(_)
             | IpcMethod::WithSession { .. }
@@ -2635,6 +2644,38 @@ mod tests {
                 authorize_method(&IpcMethod::HostSessionDiagnostics, &agreement).is_ok(),
                 caller == IpcCallerKind::DesktopShell
             );
+        }
+    }
+
+    #[test]
+    fn 挂邀请只属于桌面_查看等待中的邀请只给接入的_agent() {
+        let invitation = agent_room_bridge_ipc::IpcOpenHostSessionRequest {
+            session_key: Uuid::now_v7().to_string(),
+            display_name: "面板里的人物".into(),
+            room: None,
+        };
+        let offer_method = IpcMethod::OfferInvitation(invitation.clone());
+        let withdraw_method =
+            IpcMethod::WithdrawInvitation(agent_room_bridge_ipc::IpcWithdrawInvitationRequest {
+                session_key: invitation.session_key,
+            });
+        let agreement = |caller, scope| {
+            let offer =
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_0], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_0], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+        };
+        let desktop = agreement(IpcCallerKind::DesktopShell, IpcScope::AgentBootstrap).unwrap();
+        assert!(authorize_method(&offer_method, &desktop).is_ok());
+        assert!(authorize_method(&withdraw_method, &desktop).is_ok());
+        for caller in [IpcCallerKind::McpServer, IpcCallerKind::AgentCli] {
+            // Agent 协商不到建人物的权限；即便协商到会话管理，也不能替用户挂人物。
+            assert!(agreement(caller, IpcScope::AgentBootstrap).is_err());
+            let agent = agreement(caller, IpcScope::HostSessionsManage).unwrap();
+            assert!(authorize_method(&IpcMethod::ReadInvitation, &agent).is_ok());
+            assert!(authorize_method(&offer_method, &agent).is_err());
+            assert!(authorize_method(&withdraw_method, &agent).is_err());
         }
     }
 

@@ -12,6 +12,8 @@ import {
   type AgentHostDetection,
   type AgentHostKind,
   type AgentHostSkillStatus,
+  type InvitationOffer,
+  type PendingInvitation,
   type DesktopAgentTarget,
   type DesktopDeepLink,
   type DesktopNotification,
@@ -66,6 +68,10 @@ export type DesktopRuntimeController = {
   readonly readHostSessions: () => Promise<
     Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
   >;
+  readonly offerInvitation: (
+    invitation: InvitationOffer,
+  ) => Promise<Result<PendingInvitation | null, DesktopRuntimeFailure>>;
+  readonly withdrawInvitation: (sessionKey: string) => Promise<void>;
   readonly checkUpdate: (channel: ReleaseUpdateChannel) => Promise<void>;
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
@@ -176,6 +182,18 @@ export function useDesktopRuntime(
     () =>
       gateway.readHostSessions?.() ??
       Promise.resolve(err({ code: 'desktop.hosts.diagnostics_unavailable', retryable: false })),
+    [gateway],
+  );
+  const offerInvitation = useCallback(
+    (invitation: InvitationOffer) =>
+      gateway.offerInvitation?.(invitation) ??
+      Promise.resolve(err({ code: 'desktop.invitation.unavailable', retryable: false })),
+    [gateway],
+  );
+  const withdrawInvitation = useCallback(
+    async (sessionKey: string) => {
+      await gateway.withdrawInvitation?.(sessionKey);
+    },
     [gateway],
   );
 
@@ -533,6 +551,8 @@ export function useDesktopRuntime(
     checkSkill,
     installSkill,
     readHostSessions,
+    offerInvitation,
+    withdrawInvitation,
     checkUpdate,
     bootstrapDefaultAgent,
     configureAgentRuntime,

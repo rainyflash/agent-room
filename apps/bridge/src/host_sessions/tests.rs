@@ -584,6 +584,7 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
                 },
             ],
         }),
+        invitations: InvitationSlot::default(),
     };
 
     let response = handler
@@ -603,4 +604,74 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
     );
     assert_eq!(rooms[1].membership, Some(IpcRoomMembership::Joined));
     assert_eq!(rooms[1].catalog_id, catalog.to_string());
+}
+
+#[tokio::test]
+async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键不能再挂() {
+    let handler = SessionAwareIpcHandler {
+        default: Arc::new(RefusingHandler),
+        sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
+        connection_status: Arc::new(ReadyStatus),
+        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        invitations: InvitationSlot::default(),
+    };
+    let pending = |response: IpcResponse| {
+        let IpcResponse::Invitation { invitation } = response else {
+            panic!("应返回邀请");
+        };
+        invitation.map(|pending| pending.invitation)
+    };
+    let offered = request("面板里的人物");
+    assert_eq!(
+        pending(
+            handler
+                .dispatch(IpcMethod::OfferInvitation(offered.clone()))
+                .await
+                .expect("可挂出")
+        ),
+        Some(offered.clone())
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            pending(
+                handler
+                    .dispatch(IpcMethod::ReadInvitation)
+                    .await
+                    .expect("可查看")
+            ),
+            Some(offered.clone())
+        );
+    }
+    handler
+        .dispatch(IpcMethod::OpenHostSession(offered.clone()))
+        .await
+        .expect("用邀请开出会话");
+    assert_eq!(
+        pending(
+            handler
+                .dispatch(IpcMethod::ReadInvitation)
+                .await
+                .expect("可查看")
+        ),
+        None
+    );
+    // 面板定时续期时这个人物已经在房间里：不能再挂出去给第二个 Agent。
+    assert_eq!(
+        pending(
+            handler
+                .dispatch(IpcMethod::OfferInvitation(offered))
+                .await
+                .expect("可调用")
+        ),
+        None
+    );
+    assert_eq!(
+        pending(
+            handler
+                .dispatch(IpcMethod::ReadInvitation)
+                .await
+                .expect("可查看")
+        ),
+        None
+    );
 }

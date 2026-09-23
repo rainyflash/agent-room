@@ -33,7 +33,11 @@ import {
   saveInviteHistory,
 } from '../domain/cli-invitation';
 import { hostFailureMessage, localConnectionReady } from '../domain/desktop-connection';
-import type { AgentHostKind, HostSessionDiagnostics } from '../domain/desktop-runtime';
+import type {
+  AgentHostKind,
+  HostSessionDiagnostics,
+  InvitationOffer,
+} from '../domain/desktop-runtime';
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
@@ -77,6 +81,8 @@ const hostLabels: Readonly<Record<Exclude<AgentInviteHost, 'other'>, string>> = 
 
 const SESSION_POLL_MS = 3_000;
 const SLOW_HINT_MS = 45_000;
+/** Bridge 十分钟不续期就撤掉邀请；面板开着时提前续上。 */
+const OFFER_REFRESH_MS = 3 * 60_000;
 const uuid = new BrowserUuidV7Factory();
 
 type CopyState = 'idle' | 'copied' | 'failed';
@@ -305,6 +311,57 @@ function ConnectionInvite({
       : projectInviteStatus(sessions, identity.sessionKey, room?.roomId);
   const invitedAgentId = sessions?.find((entry) => entry.sessionKey === identity.sessionKey)
     ?.session.agentId;
+  // 面板开着就把这个人物挂在 Bridge 上：已配好的 Agent 只要听到“接入 Agent Room”就能接上，
+  // 不必复制。复制的说明用的是同一个人物，两条路不会多出人物；Agent 接上后不再续期，关闭时撤回。
+  const { offerInvitation, withdrawInvitation } = controller;
+  const [offeredAt, setOfferedAt] = useState<number | null>(null);
+  const offerName = validName ? normalizeInviteDisplayName(identity.displayName) : null;
+  const offerRoomCatalog = room?.catalogId;
+  const offerRoomId = room?.roomId;
+  const awaitingAgent = status.kind === 'waiting';
+  useEffect(() => {
+    if (!controller.available || !localReady || offerName === null || !awaitingAgent)
+      return undefined;
+    const invitation: InvitationOffer = {
+      sessionKey: identity.sessionKey,
+      displayName: offerName,
+      ...(offerRoomCatalog === undefined
+        ? {}
+        : {
+            room: {
+              catalogId: offerRoomCatalog,
+              ...(offerRoomId === undefined ? {} : { roomId: offerRoomId }),
+            },
+          }),
+    };
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const offer = async () => {
+      const result = await offerInvitation(invitation);
+      if (disposed) return;
+      setOfferedAt((current) =>
+        result.ok && result.value !== null ? (current ?? Date.now()) : null,
+      );
+      timer = setTimeout(() => void offer(), OFFER_REFRESH_MS);
+    };
+    void offer();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      void withdrawInvitation(invitation.sessionKey);
+    };
+  }, [
+    controller.available,
+    localReady,
+    offerName,
+    identity.sessionKey,
+    offerRoomCatalog,
+    offerRoomId,
+    awaitingAgent,
+    offerInvitation,
+    withdrawInvitation,
+  ]);
+  const startedAt = copiedAt ?? offeredAt;
   const inviteRoomId = room?.roomId;
   useEffect(() => {
     if (
@@ -312,13 +369,13 @@ function ConnectionInvite({
       diagnosticsFailure !== null ||
       invitedAgentId == null ||
       inviteRoomId === undefined ||
-      copiedAt === null
+      startedAt === null
     )
       return;
     onConnected?.({
       agentId: invitedAgentId,
       roomId: inviteRoomId,
-      startedAt: copiedAt,
+      startedAt,
       displayName: identity.displayName,
     });
   }, [
@@ -326,7 +383,7 @@ function ConnectionInvite({
     diagnosticsFailure,
     invitedAgentId,
     inviteRoomId,
-    copiedAt,
+    startedAt,
     identity.displayName,
     onConnected,
   ]);
@@ -451,7 +508,7 @@ function ConnectionInvite({
           <NameField
             key={identity.sessionKey}
             initial={identity.displayName}
-            disabled={restored || copiedAt !== null}
+            disabled={restored || copiedAt !== null || !awaitingAgent}
             onValidityChange={setValidName}
             onCommit={(displayName) => {
               copyGeneration.current += 1;
@@ -481,7 +538,12 @@ function ConnectionInvite({
             <p role="status">{t('agentInvite.cli.missing')}</p>
           ) : null}
           {mode === 'cli' && skillHost !== null ? (
-            <SkillSetup host={skillHost} hostLabel={skillHostLabel} roomName={room?.roomName} />
+            <SkillSetup
+              host={skillHost}
+              hostLabel={skillHostLabel}
+              offered={offeredAt !== null}
+              roomName={room?.roomName}
+            />
           ) : null}
           <details className="agent-invite__advanced">
             <summary>{t('agentInvite.advanced')}</summary>
@@ -554,6 +616,7 @@ function ConnectionInvite({
                       <SkillSetup
                         host={skillHost}
                         hostLabel={skillHostLabel}
+                        offered={offeredAt !== null}
                         roomName={room?.roomName}
                       />
                     ) : null}
@@ -603,7 +666,15 @@ function ConnectionInvite({
           <h3>{t('agentInvite.step.wait')}</h3>
           {controller.available ? (
             <ArrivalStatus
-              preparation={canCopy ? (copiedAt === null ? 'instructions' : null) : 'setup'}
+              preparation={
+                canCopy
+                  ? copiedAt !== null
+                    ? null
+                    : offeredAt !== null
+                      ? 'say'
+                      : 'instructions'
+                  : 'setup'
+              }
               diagnosticsFailure={diagnosticsFailure}
               onDone={onStartConversation ?? onClose}
               slow={slow && status.kind === 'waiting'}
@@ -621,13 +692,13 @@ function ConnectionInvite({
           room !== null &&
           owner !== null &&
           invitedAgentId != null &&
-          copiedAt !== null ? (
+          startedAt !== null ? (
             <InviteReplyProgress
               gateway={services.messages}
               agentId={invitedAgentId}
               roomId={room.roomId}
               principalId={owner.principalId}
-              startedAt={copiedAt}
+              startedAt={startedAt}
             />
           ) : null}
           <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
@@ -738,11 +809,14 @@ function HostSetup({
 function SkillSetup({
   host,
   hostLabel,
+  offered = false,
   roomName,
 }: {
   readonly host: AgentHostKind;
   readonly hostLabel: string;
-  /** 当前房间；装好技能后提示用户以后直接说房间名，不必再复制。 */
+  /** 这个人物正挂在 Bridge 上等 Agent 来接：一句“接入 Agent Room”就够了。 */
+  readonly offered?: boolean;
+  /** 当前房间；没有挂出邀请时提示直接说房间名，不必再复制。 */
   readonly roomName?: string | undefined;
 }) {
   const { t } = useTranslation();
@@ -762,9 +836,11 @@ function SkillSetup({
           <p className="agent-invite__say">
             {t('agentInvite.skill.sayHint', { host: hostLabel })}{' '}
             <q>
-              {roomName === undefined
-                ? t('agentInvite.skill.sayLobby')
-                : t('agentInvite.skill.sayRoom', { room: roomName })}
+              {offered
+                ? t('agentInvite.skill.sayJoin')
+                : roomName === undefined
+                  ? t('agentInvite.skill.sayLobby')
+                  : t('agentInvite.skill.sayRoom', { room: roomName })}
             </q>
           </p>
         </>
@@ -849,7 +925,7 @@ function ArrivalStatus({
   slow,
   status,
 }: {
-  readonly preparation: 'setup' | 'instructions' | null;
+  readonly preparation: 'setup' | 'instructions' | 'say' | null;
   readonly diagnosticsFailure: string | null;
   readonly onDone: () => void;
   readonly slow: boolean;
@@ -870,7 +946,9 @@ function ArrivalStatus({
         {t(
           preparation === 'setup'
             ? 'agentInvite.status.prepare'
-            : 'agentInvite.status.instructions',
+            : preparation === 'say'
+              ? 'agentInvite.status.say'
+              : 'agentInvite.status.instructions',
         )}
       </p>
     );

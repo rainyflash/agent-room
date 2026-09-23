@@ -687,6 +687,7 @@ struct JoinBridge {
     rooms: Vec<IpcRoomSummary>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     connected_room: Mutex<String>,
+    pending: Mutex<Option<IpcOpenHostSessionRequest>>,
 }
 
 impl JoinBridge {
@@ -695,6 +696,7 @@ impl JoinBridge {
             rooms,
             opened: Mutex::new(Vec::new()),
             connected_room: Mutex::new("!game:test.invalid".into()),
+            pending: Mutex::new(None),
         }
     }
 }
@@ -705,7 +707,24 @@ impl BridgeToolClient for JoinBridge {
             IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
                 rooms: self.rooms.clone(),
             }),
+            IpcMethod::ReadInvitation => Ok(IpcResponse::Invitation {
+                invitation: self.pending.lock().unwrap().clone().map(|invitation| {
+                    agent_room_bridge_ipc::IpcPendingInvitation {
+                        invitation,
+                        expires_in_ms: 60_000,
+                    }
+                }),
+            }),
             IpcMethod::OpenHostSession(request) => {
+                // 和 Bridge 一样：用等待中的人物开出会话，这份邀请就用掉了。
+                let mut pending = self.pending.lock().unwrap();
+                if pending
+                    .as_ref()
+                    .is_some_and(|invitation| invitation.session_key == request.session_key)
+                {
+                    *pending = None;
+                }
+                drop(pending);
                 self.opened.lock().unwrap().push(request);
                 Ok(IpcResponse::HostSession {
                     session: IpcHostSessionSummary {
@@ -882,6 +901,71 @@ async fn 按房间名接入_默认进大厅_找不到或连错房间都不报成
         mismatch["structuredContent"]["code"],
         "agent.join.room_mismatch"
     );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 只说接入时接上面板正在等的人物_之后回到这个任务上次的房间() {
+    let bridge = Arc::new(JoinBridge::new(vec![
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
+    ]));
+    let waiting = IpcOpenHostSessionRequest {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: "面板里起的名字".into(),
+        room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
+            catalog_id: uuid::Uuid::now_v7().to_string(),
+            room_id: Some("!game:test.invalid".into()),
+        }),
+    };
+    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let join = |id: u64, arguments: Value| {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"agent_room_join","arguments":arguments,"_meta":{"threadId":SESSION_B}
+        }})
+    };
+    harness.send(join(300, json!({}))).await;
+    let invited = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(invited["identity"], "invited", "{invited}");
+    assert_eq!(invited["sessionKey"], waiting.session_key.as_str());
+    assert_eq!(invited["displayName"], "面板里起的名字");
+    assert_eq!(invited["target"]["roomId"], "!game:test.invalid");
+    assert_eq!(
+        bridge.opened.lock().unwrap().as_slice(),
+        std::slice::from_ref(&waiting)
+    );
+    assert!(bridge.pending.lock().unwrap().is_none());
+
+    // 邀请用掉以后再说“接入”，回到同一个人物和房间。
+    harness.send(join(301, json!({}))).await;
+    let again = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(again["identity"], "reused");
+    assert_eq!(again["sessionKey"], waiting.session_key.as_str());
+
+    // 按名字去了别的房间，下次只说“接入”就回到那里。
+    harness
+        .send(join(302, json!({"room": "Lobby", "displayName": "Scout"})))
+        .await;
+    let lobby = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(lobby["identity"], "created");
+    harness.send(join(303, json!({}))).await;
+    let back = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(back["identity"], "reused");
+    assert_eq!(back["sessionKey"], lobby["sessionKey"]);
+
+    // 给了名字或房间就不接面板的邀请。
+    let other = IpcOpenHostSessionRequest {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        ..waiting
+    };
+    *bridge.pending.lock().unwrap() = Some(other.clone());
+    harness
+        .send(join(304, json!({"displayName": "另起的名字"})))
+        .await;
+    let named = harness.receive().await["result"]["structuredContent"].clone();
+    assert_ne!(named["sessionKey"], other.session_key.as_str());
+    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&other));
     harness.stop().await;
 }
 

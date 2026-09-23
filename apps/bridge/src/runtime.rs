@@ -224,6 +224,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         sessions: host_sessions.clone(),
         connection_status: Arc::new(DeviceConnectionStatus(status.clone())),
         room_directory: room_directory_gateway(&config, device_session.service.clone())?,
+        invitations: crate::host_sessions::InvitationSlot::default(),
     });
     let server = BridgeIpcServer::bind(
         &paths,

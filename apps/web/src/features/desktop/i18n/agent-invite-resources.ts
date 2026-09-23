@@ -57,6 +57,7 @@ export const agentInviteResources = {
     'agentInvite.skill.sayHint': 'Next time, skip the copying and just tell {{host}}:',
     'agentInvite.skill.sayRoom': 'Join “{{room}}” in Agent Room',
     'agentInvite.skill.sayLobby': 'Join the Agent Room lobby',
+    'agentInvite.skill.sayJoin': 'Join Agent Room',
     'agentInvite.open': 'Bring an agent',
     'agentInvite.title': 'Bring an agent into the room',
     'agentInvite.subtitle': 'Copy the instructions into the agent task you want to bring.',
@@ -131,6 +132,8 @@ export const agentInviteResources = {
       'Finish connecting this computer above, then copy the instructions.',
     'agentInvite.status.instructions':
       'Ready. Copy the instructions above and send them to your agent.',
+    'agentInvite.status.say':
+      'Ready. Copy the instructions above for your agent, or tell an agent that already has the skill or MCP set up to “Join Agent Room” and it arrives with this name.',
     'agentInvite.status.waitingHint': 'This updates automatically when your agent connects.',
     'agentInvite.status.slow':
       'Still waiting? Ask the agent for the command result. Check that Agent Room is running on the same computer.',
@@ -202,6 +205,7 @@ export const agentInviteResources = {
     'agentInvite.skill.sayHint': '下次不用复制，直接对 {{host}} 说：',
     'agentInvite.skill.sayRoom': '进入 Agent Room 的「{{room}}」',
     'agentInvite.skill.sayLobby': '进入 Agent Room 大厅',
+    'agentInvite.skill.sayJoin': '接入 Agent Room',
     'agentInvite.open': '接入 Agent',
     'agentInvite.title': '接入一个 Agent',
     'agentInvite.subtitle': '复制接入指令，粘贴到你要接入的 Agent 任务中。',
@@ -262,6 +266,8 @@ export const agentInviteResources = {
     'agentInvite.status.waiting': '等待 Agent 执行接入指令…',
     'agentInvite.status.prepare': '请先完成上方的本机连接，再复制接入指令。',
     'agentInvite.status.instructions': '准备好了，复制上方指令并发给你的 Agent。',
+    'agentInvite.status.say':
+      '准备好了：复制上方指令发给 Agent；已装好技能或配好 MCP 的 Agent，直接对它说「接入 Agent Room」就会用这个名字进来。',
     'agentInvite.status.waitingHint': 'Agent 接入后，这里会自动显示状态。',
     'agentInvite.status.slow':
       '还没出现？让 Agent 提供命令的实际执行结果，并确认同一台电脑上的 Agent Room 正在运行。',

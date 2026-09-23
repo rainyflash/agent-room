@@ -324,6 +324,25 @@ export const agentHostPlanSchema = z
   .strict();
 export type AgentHostPlan = z.infer<typeof agentHostPlanSchema>;
 
+/** A character the invite dialog parks on the Bridge so an agent that just says "join" takes it. */
+export const pendingInvitationSchema = z
+  .object({
+    invitation: z
+      .object({
+        sessionKey: z.uuidv7(),
+        displayName: z.string().min(1).max(128),
+        room: z
+          .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512).optional() })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    expiresInMs: z.number().int().nonnegative(),
+  })
+  .strict();
+export type PendingInvitation = z.infer<typeof pendingInvitationSchema>;
+export type InvitationOffer = PendingInvitation['invitation'];
+
 export const agentHostSkillStatusSchema = z
   .object({
     host: agentHostKindSchema,
@@ -442,6 +461,14 @@ export type DesktopRuntimeGateway = {
   /** Whether this build's agent-room skill is installed in the host's skill folder. */
   skillStatus?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
   installSkill?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
+  /**
+   * Park the invite dialog's character on the Bridge; an agent that just says "join" takes it.
+   * Resolves to null when that character already has a session, so it is not offered twice.
+   */
+  offerInvitation?(
+    invitation: InvitationOffer,
+  ): Promise<Result<PendingInvitation | null, DesktopRuntimeFailure>>;
+  withdrawInvitation?(sessionKey: string): Promise<Result<void, DesktopRuntimeFailure>>;
   applyHost?(
     host: AgentHostKind,
     expectedOriginalDigest: string,
