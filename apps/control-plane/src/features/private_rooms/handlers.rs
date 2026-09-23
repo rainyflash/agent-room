@@ -3,7 +3,7 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, GovernPrivateRoomMember,
         InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, PrivateRoomMembershipAction,
-        TransferPrivateRoomOwnership,
+        RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::ids::RoomCatalogId;
@@ -19,7 +19,7 @@ use super::{
     PrivateRoomHttpState,
     models::{
         CreatePrivateRoomBody, InviteMemberBody, PermissionsBody, PrivateRoomListResponse,
-        PrivateRoomResponse, TransferOwnershipBody, catalog_id, principal_id,
+        PrivateRoomResponse, RenameRoomBody, TransferOwnershipBody, catalog_id, principal_id,
     },
 };
 use crate::{
@@ -341,6 +341,45 @@ pub(super) async fn transfer_ownership(
                 catalog_id,
                 target_principal_id,
                 former_owner_permissions,
+            })
+            .await,
+        StatusCode::OK,
+        correlation_id,
+    )
+}
+
+/// 房主改房间名；名字规则与建房时相同，Matrix 客户端里显示的名字一起变。
+pub(super) async fn rename(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    body: Result<Json<RenameRoomBody>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return invalid("private_room.invalid_rename_body", correlation_id);
+    };
+    let (actor, catalog_id) = match required_write_context(
+        &state,
+        &headers,
+        &jar,
+        &catalog,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    respond(
+        state
+            .rooms
+            .rename(RenamePrivateRoom {
+                actor,
+                catalog_id,
+                name: body.name,
             })
             .await,
         StatusCode::OK,

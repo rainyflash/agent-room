@@ -119,6 +119,13 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     });
   }
 
+  rename(catalogId: string, name: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
+    return this.#roomRequest(`/private-rooms/${encodeURIComponent(catalogId)}/name`, {
+      body: JSON.stringify({ name }),
+      method: 'PUT',
+    });
+  }
+
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
     return this.#roomRequest(`/private-rooms/${encodeURIComponent(catalogId)}`, {
       method: 'DELETE',

@@ -80,6 +80,7 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             "/private-rooms/{catalog_id}/owner",
             put(handlers::transfer_ownership),
         )
+        .route("/private-rooms/{catalog_id}/name", put(handlers::rename))
         .layer(DefaultBodyLimit::max(MAX_PRIVATE_ROOM_BODY_BYTES))
         .with_state(state)
 }

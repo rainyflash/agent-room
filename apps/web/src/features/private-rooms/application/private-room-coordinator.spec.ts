@@ -85,6 +85,7 @@ function gateway() {
     leave: vi.fn(unavailable),
     list: vi.fn(unavailable),
     remove: vi.fn(unavailable),
+    rename: vi.fn(unavailable),
     transferOwnership: vi.fn(unavailable),
     updatePermissions: vi.fn(unavailable),
   };

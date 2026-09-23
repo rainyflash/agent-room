@@ -26,7 +26,7 @@ use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
     InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
     PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
-    PrivateRoomResult, TransferPrivateRoomOwnership,
+    PrivateRoomResult, RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -95,6 +95,11 @@ pub trait PrivateRoomUseCases: Send + Sync {
     fn archive(
         &self,
         request: ArchivePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    fn rename(
+        &self,
+        request: RenamePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
 }
 
@@ -570,6 +575,41 @@ impl PrivateRoomService {
         replace_room(snapshot, room, OPERATION)
     }
 
+    async fn rename_internal(
+        &self,
+        request: RenamePrivateRoom,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        const OPERATION: &str = "private_room.rename";
+        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        snapshot
+            .room()
+            .authorize_rename(request.actor.principal_id)
+            .map_err(|error| domain(OPERATION, &error))?;
+        let name = request.name.trim().to_owned();
+        if name == snapshot.catalog().name() {
+            return Ok(snapshot);
+        }
+        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let renamed = snapshot
+            .renaming(name)
+            .map_err(|error| domain(OPERATION, &error))?;
+        // 先改 Matrix 房间名：它可以重复设置；目录写失败时重试会再走一遍。
+        self.matrix
+            .set_name(&matrix_room, renamed.catalog().name())
+            .await
+            .map_err(|error| matrix(OPERATION, error))?;
+        self.store
+            .rename(
+                request.catalog_id,
+                renamed.catalog().name(),
+                self.clock.now(),
+            )
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
+        Ok(renamed)
+    }
+
     async fn prepare_creation(
         &self,
         request: &CreatePrivateRoom,
@@ -967,6 +1007,13 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: ArchivePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.archive_internal(request))
+    }
+
+    fn rename(
+        &self,
+        request: RenamePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.rename_internal(request))
     }
 }
 

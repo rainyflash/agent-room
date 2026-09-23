@@ -341,6 +341,17 @@ impl RoomCatalog {
         self.fields.slug.as_ref()
     }
 
+    /// 换一个名字，其余字段与校验规则不变。
+    ///
+    /// # Errors
+    ///
+    /// 新名字不满足房间名规则时返回错误。
+    pub fn renamed(&self, name: String) -> DomainResult<Self> {
+        let mut fields = self.fields.clone();
+        fields.name = name;
+        Self::new(self.id, fields)
+    }
+
     pub fn name(&self) -> &str {
         &self.fields.name
     }

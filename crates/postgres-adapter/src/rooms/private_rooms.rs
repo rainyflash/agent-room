@@ -146,6 +146,15 @@ impl PrivateRoomStore for PostgresRepositories {
             finish(transaction, result, operation).await
         })
     }
+
+    fn rename<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        name: &'a str,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(rename_private_room(self, catalog_id, name, changed_at))
+    }
 }
 
 async fn create_private_room(
@@ -245,6 +254,32 @@ async fn create_private_room(
             operation,
         )
         .await?;
+    }
+    Ok(())
+}
+
+async fn rename_private_room(
+    repositories: &PostgresRepositories,
+    catalog_id: RoomCatalogId,
+    name: &str,
+    changed_at: UtcMillis,
+) -> RepositoryResult<()> {
+    let operation = "private_room.rename";
+    let updated = sqlx::query_scalar::<_, uuid::Uuid>(
+        r"UPDATE agent_room.room_catalog_entry
+           SET name = $2,
+               updated_at = to_timestamp($3::double precision / 1000.0)
+           WHERE id = $1 AND kind = 'private_room'
+           RETURNING id",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(name)
+    .bind(changed_at.value())
+    .fetch_optional(repositories.pool())
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if updated.is_none() {
+        return Err(conflict(operation));
     }
     Ok(())
 }

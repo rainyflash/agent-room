@@ -77,6 +77,14 @@ pub struct TransferPrivateRoomOwnership {
     pub former_owner_permissions: PrivateRoomPermissions,
 }
 
+/// 房主给房间改名。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenamePrivateRoom {
+    pub actor: AuthenticatedPrincipal,
+    pub catalog_id: RoomCatalogId,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchivePrivateRoom {
     pub actor: AuthenticatedPrincipal,

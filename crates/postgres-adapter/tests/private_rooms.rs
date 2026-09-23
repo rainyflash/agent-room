@@ -155,6 +155,42 @@ async fn 私人房间生命周期可完整往返且不依赖房主进程() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 改名只改目录上的名字_不存在的房间不会悄悄成功() {
+    let database = TestDatabase::connect().await;
+    let owner = seed_principal(&database.runtime, "rename-owner").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    PrivateRoomStore::create(&repositories, &snapshot(catalog_id, owner), time(0))
+        .await
+        .expect("创建应成功");
+    PrivateRoomStore::rename(&repositories, catalog_id, "Renamed room", time(1))
+        .await
+        .expect("改名应持久化");
+    let renamed = PrivateRoomStore::find_by_catalog(&repositories, catalog_id)
+        .await
+        .expect("改名后可读取")
+        .expect("房间仍在");
+    assert_eq!(renamed.catalog().name(), "Renamed room");
+    assert_eq!(renamed.room().owner_principal_id(), owner);
+    assert_eq!(
+        renamed.room().version(),
+        snapshot(catalog_id, owner).room().version()
+    );
+    assert!(
+        PrivateRoomStore::rename(
+            &repositories,
+            RoomCatalogId::from_uuid(Uuid::now_v7()),
+            "Nowhere",
+            time(2),
+        )
+        .await
+        .is_err()
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 乐观锁拒绝并发覆盖且数据库约束拒绝伪造房主() {
     let database = TestDatabase::connect().await;
     let owner = seed_principal(&database.runtime, "race-owner").await;
