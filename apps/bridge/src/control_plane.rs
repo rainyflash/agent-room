@@ -53,6 +53,7 @@ mod handoffs;
 mod host_agents;
 mod lobbies;
 mod message_content;
+mod rooms;
 mod targeted_handoffs;
 
 pub use automation::ReqwestControlPlaneAutomationAuthorizationGateway;
@@ -61,6 +62,7 @@ pub use content::ReqwestControlPlaneContentGateway;
 pub use handoffs::ReqwestControlPlaneHandoffGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
 pub use message_content::ReqwestControlPlaneMessageContentGateway;
+pub use rooms::ReqwestControlPlaneRoomDirectoryGateway;
 pub use targeted_handoffs::ReqwestTargetedHandoffQueueGateway;
 
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";

@@ -60,6 +60,7 @@ use agent_room_bridge_core::{
         PresenceSyncService,
     },
     reconnect::{ReconnectBackoff, ReconnectPolicy, SessionRefreshPlan},
+    room_directory::ControlPlaneRoomDirectoryGateway,
     session::{
         ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionFailure,
         BridgeSessionFailureKind, BridgeSessionPolicy, BridgeSessionService,
@@ -118,7 +119,7 @@ use agent_room_bridge::control_plane::{
     ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
     ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneLobbyEntryGateway,
     ReqwestControlPlaneMessageContentGateway, ReqwestControlPlaneOnboardingGateway,
-    ReqwestTargetedHandoffQueueGateway,
+    ReqwestControlPlaneRoomDirectoryGateway, ReqwestTargetedHandoffQueueGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -222,6 +223,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         default: request_handler,
         sessions: host_sessions.clone(),
         connection_status: Arc::new(DeviceConnectionStatus(status.clone())),
+        room_directory: room_directory_gateway(&config, device_session.service.clone())?,
     });
     let server = BridgeIpcServer::bind(
         &paths,
@@ -1085,6 +1087,23 @@ async fn stored_sync_cursor(runtime: &AgentSessionRuntime) -> Option<MatrixSyncT
             tracing::warn!(?failure, "读取上次同步游标失败，改为全量同步");
             None
         })
+}
+
+/// 这台设备的账号能进的房间目录，供 CLI/MCP 按名字解析房间。
+fn room_directory_gateway(
+    config: &BridgeConfig,
+    authorizer: Arc<BridgeSessionService>,
+) -> Result<Arc<dyn ControlPlaneRoomDirectoryGateway>, BridgeRuntimeError> {
+    Ok(Arc::new(
+        ReqwestControlPlaneRoomDirectoryGateway::new(
+            &ControlPlaneHttpConfig {
+                base_url: config.control_plane_url.clone(),
+                request_timeout: config.request_timeout,
+            },
+            authorizer,
+        )
+        .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    ))
 }
 
 /// 首次同步成功后才算上线；随后确保加密身份，失败的同步会停掉已启动的后台任务。

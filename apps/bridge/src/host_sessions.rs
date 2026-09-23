@@ -8,9 +8,13 @@ use std::{
 };
 
 use agent_room_application::ports::PortFuture;
+use agent_room_bridge_core::room_directory::{
+    AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership, ControlPlaneRoomDirectoryGateway,
+    RoomDirectoryFailure, RoomDirectoryFailureKind,
+};
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcMethod,
-    IpcOpenHostSessionRequest, IpcResponse,
+    IpcOpenHostSessionRequest, IpcResponse, IpcRoomKind, IpcRoomMembership, IpcRoomSummary,
 };
 use tokio::{
     sync::{Mutex, RwLock, watch},
@@ -527,6 +531,44 @@ async fn run_host_session(
     }
 }
 
+fn room_summary(room: AccessibleRoom) -> IpcRoomSummary {
+    IpcRoomSummary {
+        kind: match room.kind {
+            AccessibleRoomKind::PublicLobby => IpcRoomKind::PublicLobby,
+            AccessibleRoomKind::PrivateRoom => IpcRoomKind::PrivateRoom,
+        },
+        catalog_id: room.catalog_id.to_string(),
+        matrix_room_id: room.matrix_room_id.map(|id| id.as_str().to_owned()),
+        name: room.name,
+        slug: room.slug,
+        membership: room.membership.map(|membership| match membership {
+            AccessibleRoomMembership::Invited => IpcRoomMembership::Invited,
+            AccessibleRoomMembership::Joined => IpcRoomMembership::Joined,
+        }),
+    }
+}
+
+fn room_directory_failure(failure: RoomDirectoryFailure) -> BridgeIpcDispatchFailure {
+    match failure.kind() {
+        RoomDirectoryFailureKind::NotAuthorized => BridgeIpcDispatchFailure::new(
+            "bridge.rooms.not_authorized",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        RoomDirectoryFailureKind::ControlPlaneUnavailable => BridgeIpcDispatchFailure::new(
+            "bridge.rooms.control_plane_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
+        ),
+        RoomDirectoryFailureKind::InvalidControlPlaneResponse
+        | RoomDirectoryFailureKind::Internal => BridgeIpcDispatchFailure::new(
+            "bridge.rooms.directory_failed",
+            IpcErrorCategory::DependencyUnavailable,
+            false,
+        ),
+    }
+}
+
 fn session_failure(code: &'static str, retryable: bool) -> BridgeIpcDispatchFailure {
     BridgeIpcDispatchFailure::new(code, IpcErrorCategory::DependencyUnavailable, retryable)
 }
@@ -535,6 +577,8 @@ pub(crate) struct SessionAwareIpcHandler {
     pub(crate) default: Arc<dyn BridgeIpcRequestHandler>,
     pub(crate) sessions: Arc<HostSessionRegistry>,
     pub(crate) connection_status: Arc<dyn crate::ipc::BridgeStatusReader>,
+    /// 这台设备的账号能进的房间；CLI/MCP 在开会话之前就能按名字解析房间。
+    pub(crate) room_directory: Arc<dyn ControlPlaneRoomDirectoryGateway>,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
@@ -554,6 +598,14 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 }
                 IpcMethod::HostSessionDiagnostics => Ok(self.sessions.diagnostics().await),
                 IpcMethod::ListRecoverySessions => Ok(self.sessions.recovery_sessions().await),
+                IpcMethod::ListRooms => self
+                    .room_directory
+                    .list_accessible()
+                    .await
+                    .map(|rooms| IpcResponse::Rooms {
+                        rooms: rooms.into_iter().map(room_summary).collect(),
+                    })
+                    .map_err(room_directory_failure),
                 IpcMethod::OpenHostSession(request) => self.sessions.open(request).await,
                 IpcMethod::CloseHostSession(request) => {
                     self.sessions.close(&request.session_id).await

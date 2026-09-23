@@ -215,6 +215,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::RegisterReception(_)
                 | IpcMethod::HostSessionDiagnostics
                 | IpcMethod::ListRecoverySessions
+                | IpcMethod::ListRooms
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
                     "bridge.host_session.unavailable",
@@ -684,6 +685,7 @@ fn authorize_method(
     ) && !matches!(
         method,
         IpcMethod::BridgeStatus
+            | IpcMethod::ListRooms
             | IpcMethod::OpenHostSession(_)
             | IpcMethod::CloseHostSession(_)
             | IpcMethod::WithSession { .. }

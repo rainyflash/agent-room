@@ -33,6 +33,13 @@ pub struct ListPrivateRooms {
     pub actor: AuthenticatedPrincipal,
 }
 
+/// 以账号（而不是人的登录会话）为主体列出私人房间：设备已通过签名认证，Bridge 替账号的
+/// Agent 查询它能进哪些房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPrivateRoomsForAccount {
+    pub principal_id: PrincipalId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvitePrivateRoomMember {
     pub actor: AuthenticatedPrincipal,

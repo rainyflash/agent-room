@@ -12,8 +12,8 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        PrivateRoomMembershipAction, PrivateRoomResult, PrivateRoomUseCases,
-        TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomMembershipAction, PrivateRoomResult,
+        PrivateRoomUseCases, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -104,6 +104,14 @@ impl PrivateRoomUseCases for FakeRooms {
     fn list(
         &self,
         _request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        let snapshot = self.snapshot.clone();
+        Box::pin(async move { Ok(vec![snapshot]) })
+    }
+
+    fn list_for_account(
+        &self,
+        _request: ListPrivateRoomsForAccount,
     ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
         let snapshot = self.snapshot.clone();
         Box::pin(async move { Ok(vec![snapshot]) })
@@ -619,7 +627,8 @@ fn call(
     }
 }
 
-fn snapshot() -> PrivateRoomSnapshot {
+/// 一个受邀/已加入语义清楚的私人房间快照：目录名「Incident Room」，所有者 `owner_id()`。
+pub(crate) fn snapshot() -> PrivateRoomSnapshot {
     let catalog = RoomCatalog::new(
         catalog_id(),
         RoomCatalogFields {
@@ -679,7 +688,7 @@ fn viewer_speaker_permissions() -> PrivateRoomPermissions {
     PrivateRoomPermissions::from_bits(0b0_0011).expect("查看和发言权限有效")
 }
 
-fn owner_id() -> PrincipalId {
+pub(crate) fn owner_id() -> PrincipalId {
     PrincipalId::from_uuid(uuid(OWNER_UUID))
 }
 
