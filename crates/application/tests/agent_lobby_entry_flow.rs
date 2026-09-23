@@ -9,10 +9,12 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
-        MatrixResult, MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount,
-        PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway,
-        PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode, RoomAllocationStore,
-        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
+        JoinCodeAttemptPolicy, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
+        PrincipalAccount, PrivateMatrixMembership, PrivateMatrixSpeakingAssignment,
+        PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
+        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode,
+        RoomAllocationStore, RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
+        SecretDigest,
     },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
@@ -25,6 +27,7 @@ use agent_room_domain::{
         AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId,
         RoomReservationId,
     },
+    join_codes::PrivateRoomAgentMemberStatus,
     private_rooms::{PrivateRoom, PrivateRoomCapability, PrivateRoomPermissions},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -235,6 +238,94 @@ async fn 已失效实例在_matrix_调用前被拒绝() {
 
 /// 只回放一个私人房间快照；入场只按 Matrix 房间定位，其余方法不应被调用。
 struct 固定私人房间仓储(Option<PrivateRoomSnapshot>);
+
+/// 只回答“这个 Agent 是不是凭口令进来的成员”；入场不会碰口令本身。
+struct 固定口令成员仓储(Option<PrivateRoomAgentMemberStatus>);
+
+impl PrivateRoomAgentAccessStore for 固定口令成员仓储 {
+    fn join_code(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomJoinCodeRecord>>> {
+        Box::pin(async { unreachable!("入场不读口令") })
+    }
+    fn replace_join_code<'a>(
+        &'a self,
+        _record: &'a PrivateRoomJoinCodeRecord,
+        _digest: &'a SecretDigest,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("入场不改口令") })
+    }
+    fn clear_join_code(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("入场不改口令") })
+    }
+    fn find_join_code<'a>(
+        &'a self,
+        _digest: &'a SecretDigest,
+    ) -> PortFuture<'a, RepositoryResult<Option<PrivateRoomJoinCodeRecord>>> {
+        Box::pin(async { unreachable!("入场不读口令") })
+    }
+    fn agent_member(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>> {
+        let record = self.0.map(|status| PrivateRoomAgentMemberRecord {
+            catalog_id,
+            agent_id,
+            display_name: "Scout".to_owned(),
+            matrix_user_id: matrix_user_id(),
+            owner_display_name: None,
+            status,
+            permissions: PrivateRoomPermissions::AGENT_MEMBER,
+            joined_at: time(NOW - 5_000),
+            status_changed_at: time(NOW - 5_000),
+        });
+        Box::pin(async move { Ok(record) })
+    }
+    fn agent_members(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>> {
+        Box::pin(async { unreachable!("入场不列成员") })
+    }
+    fn admit_agent(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _agent_id: AgentId,
+        _permissions: PrivateRoomPermissions,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("入场不兑换口令") })
+    }
+    fn remove_agent(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _agent_id: AgentId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("入场不移出成员") })
+    }
+    fn join_code_retry_at<'a>(
+        &'a self,
+        _caller: &'a str,
+        _now: UtcMillis,
+        _policy: JoinCodeAttemptPolicy,
+    ) -> PortFuture<'a, RepositoryResult<Option<UtcMillis>>> {
+        Box::pin(async { unreachable!("入场不限流口令") })
+    }
+    fn record_join_code_failure<'a>(
+        &'a self,
+        _caller: &'a str,
+        _now: UtcMillis,
+        _policy: JoinCodeAttemptPolicy,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("入场不限流口令") })
+    }
+}
 
 impl PrivateRoomStore for 固定私人房间仓储 {
     fn create<'a>(
@@ -458,7 +549,7 @@ fn service_with_mode(
         access,
         memberships,
         expected_mode,
-        None,
+        (None, None),
         Arc::new(记录私人Matrix::new(false)),
         room(),
         reservation(),
@@ -469,7 +560,10 @@ fn private_service(
     access: AgentLobbyAccessRecord,
     memberships: Arc<记录成员工厂>,
     expected_mode: RoomAllocationMode,
-    snapshot: Option<PrivateRoomSnapshot>,
+    (snapshot, agent_member): (
+        Option<PrivateRoomSnapshot>,
+        Option<PrivateRoomAgentMemberStatus>,
+    ),
     private_matrix: Arc<记录私人Matrix>,
     room: RoomInstance,
     reservation: RoomReservation,
@@ -484,6 +578,7 @@ fn private_service(
                 expected_mode,
             }),
             private_rooms: Arc::new(固定私人房间仓储(snapshot)),
+            private_agents: Arc::new(固定口令成员仓储(agent_member)),
             private_matrix,
             memberships,
             provisioning: Arc::new(禁止供给),
@@ -547,6 +642,14 @@ fn private_request(
     snapshot: Option<PrivateRoomSnapshot>,
     private_matrix: &Arc<记录私人Matrix>,
 ) -> (AgentLobbyEntryService, EnterAgentLobby, Arc<记录成员能力>) {
+    private_request_with(snapshot, None, private_matrix)
+}
+
+fn private_request_with(
+    snapshot: Option<PrivateRoomSnapshot>,
+    agent_member: Option<PrivateRoomAgentMemberStatus>,
+    private_matrix: &Arc<记录私人Matrix>,
+) -> (AgentLobbyEntryService, EnterAgentLobby, Arc<记录成员能力>) {
     let membership = Arc::new(记录成员能力::default());
     let factory = Arc::new(记录成员工厂 {
         users: Mutex::new(Vec::new()),
@@ -570,7 +673,7 @@ fn private_request(
         access(true, device_id()),
         factory,
         RoomAllocationMode::Manual(private_room_instance_id()),
-        snapshot,
+        (snapshot, agent_member),
         private_matrix.clone(),
         instance,
         private_reservation(),
@@ -634,6 +737,38 @@ async fn 非成员与只读成员的_agent_都进不了私人房间且不会被�
         assert!(matrix.发言授予记录().is_empty(), "被拒绝时不得授予发言");
         assert!(membership.joins.lock().expect("锁可用").is_empty());
     }
+}
+
+#[tokio::test]
+async fn 凭口令进来的_agent_不需要主人是成员_移出后就进不来() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    // 它的主人不是这个房间的成员，只凭它自己是 Agent 成员入场，并同样拿到发言级别。
+    let (service, request, membership) = private_request_with(
+        Some(私人房间快照(None)),
+        Some(PrivateRoomAgentMemberStatus::Joined),
+        &matrix,
+    );
+    service.enter(request).await.expect("凭口令入场");
+    assert_eq!(matrix.邀请记录(), [matrix_user_id().as_str()]);
+    assert_eq!(
+        matrix.发言授予记录(),
+        [(matrix_user_id().as_str().to_owned(), true)]
+    );
+    assert_eq!(
+        *membership.joins.lock().expect("锁可用"),
+        [private_matrix_room().as_str()]
+    );
+
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let (service, request, membership) = private_request_with(
+        Some(私人房间快照(None)),
+        Some(PrivateRoomAgentMemberStatus::Removed),
+        &matrix,
+    );
+    let failure = service.enter(request).await.expect_err("移出后必须拒绝");
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+    assert!(matrix.邀请记录().is_empty());
+    assert!(membership.joins.lock().expect("锁可用").is_empty());
 }
 
 #[tokio::test]

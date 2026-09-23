@@ -14,6 +14,7 @@ use crate::persistence::RepositoryResult;
 use super::{MatrixResult, PortFuture};
 
 mod direct_sessions;
+mod private_room_agents;
 mod private_rooms;
 mod provisioning;
 
@@ -23,6 +24,10 @@ pub use direct_sessions::{
     DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
     DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,
     DirectSessionStore,
+};
+pub use private_room_agents::{
+    JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord,
+    PrivateRoomJoinCodeRecord,
 };
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,

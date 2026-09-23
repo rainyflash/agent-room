@@ -48,7 +48,10 @@ use agent_room_application::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
         MatrixUserId, SecretValue,
     },
-    private_rooms::{PrivateRoomDependencies, PrivateRoomService},
+    private_rooms::{
+        PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
+        PrivateRoomService,
+    },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
@@ -90,6 +93,7 @@ use features::handoffs::{HandoffHttpDependencies, HandoffHttpState};
 use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
 use features::moderation::ModerationHttpState;
+use features::private_room_agents::{PrivateRoomAgentHttpDependencies, PrivateRoomAgentHttpState};
 use features::private_rooms::PrivateRoomHttpState;
 use features::telemetry::FrontendTelemetryHttpState;
 use observability::Observability;
@@ -120,6 +124,7 @@ struct AgentFeatureHttpStates {
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
+    private_room_agents: PrivateRoomAgentHttpState,
     direct_sessions: DirectSessionHttpState,
     automation: AutomationHttpState,
     moderation: ModerationHttpState,
@@ -136,6 +141,7 @@ struct AgentCollaborationHttpStates {
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
     private_rooms: PrivateRoomHttpState,
+    private_room_agents: PrivateRoomAgentHttpState,
     direct_sessions: DirectSessionHttpState,
     automation: AutomationHttpState,
     moderation: ModerationHttpState,
@@ -448,6 +454,9 @@ fn compose_identity_routes(
         .merge(features::handoffs::router(agents.handoffs))
         .merge(features::lobbies::router(agents.lobbies))
         .merge(features::private_rooms::router(agents.private_rooms))
+        .merge(features::private_room_agents::router(
+            agents.private_room_agents,
+        ))
         .merge(features::direct_sessions::router(agents.direct_sessions))
         .merge(features::agent_cards::router(agents.cards))
         .merge(features::automation::router(agents.automation))
@@ -590,6 +599,7 @@ fn build_agent_feature_states(
         handoffs,
         lobbies,
         private_rooms,
+        private_room_agents,
         direct_sessions,
         automation,
         moderation,
@@ -602,6 +612,7 @@ fn build_agent_feature_states(
         handoffs,
         lobbies,
         private_rooms,
+        private_room_agents,
         direct_sessions,
         automation,
         moderation,
@@ -719,6 +730,16 @@ fn build_agent_collaboration_http_states(
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,
         ),
+        private_room_agents: PrivateRoomAgentHttpState::new(
+            PrivateRoomAgentHttpDependencies {
+                access: build_private_room_agent_access(dependencies),
+                authentication: dependencies.authentication.clone(),
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+            },
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
         direct_sessions: DirectSessionHttpState::new(
             direct_sessions,
             dependencies.authentication.clone(),
@@ -788,6 +809,26 @@ fn build_private_room_service(
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
     })))
+}
+
+/// 私人房间的 Agent 口令。猜错按设备计数：一小时十次，窗口过后自然放开。
+fn build_private_room_agent_access(
+    dependencies: &AgentFeatureDependencies,
+) -> Arc<PrivateRoomAgentAccessService> {
+    Arc::new(PrivateRoomAgentAccessService::new(
+        PrivateRoomAgentAccessDependencies {
+            rooms: dependencies.repositories.clone(),
+            access: dependencies.repositories.clone(),
+            lobby_access: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            secrets: dependencies.secrets.clone(),
+            clock: dependencies.system_runtime.clone(),
+            attempts: agent_room_application::ports::JoinCodeAttemptPolicy {
+                window: DurationMillis::new(60 * 60 * 1_000).expect("固定口令猜错窗口必须有效"),
+                max_failures: 10,
+            },
+        },
+    ))
 }
 
 fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
@@ -879,7 +920,9 @@ fn build_agent_lobby_entry(
             access: repositories.clone(),
             allocations: repositories.clone(),
             // 私人房间的入场资格由成员事实裁决，Matrix 侧按同一网关补发受邀。
-            private_rooms: repositories,
+            private_rooms: repositories.clone(),
+            // 凭口令进来的 Agent 成员不随任何成员入场，按它自己的成员记录裁决。
+            private_agents: repositories,
             private_matrix: matrix.clone(),
             memberships: matrix,
             provisioning,

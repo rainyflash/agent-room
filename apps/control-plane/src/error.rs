@@ -29,7 +29,9 @@ use agent_room_application::{
         ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
         ContentTicketFailure, ContentTicketFailureKind, ObjectStoreFailureKind,
     },
-    private_rooms::{PrivateRoomFailure, PrivateRoomFailureKind},
+    private_rooms::{
+        AgentAccessFailure, AgentAccessFailureKind, PrivateRoomFailure, PrivateRoomFailureKind,
+    },
 };
 use agent_room_domain::content::ContentLifecycleState;
 use agent_room_protocol_conformance::generated::{ErrorCategory, ErrorEnvelope};
@@ -619,6 +621,70 @@ impl ApiError {
         Self::new(status, code, category, message, correlation_id)
     }
 
+    /// 私人房间的 Agent 口令：错误码统一以 `join_code.` 开头，Agent 会把它原样告诉用户。
+    pub(crate) fn agent_access(failure: AgentAccessFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentAccessFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "join_code.invalid",
+                ErrorCategory::Validation,
+                "口令格式不对：应为 12 个字母或数字，分组的连字符可有可无。",
+            ),
+            AgentAccessFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "join_code.forbidden",
+                ErrorCategory::Authorization,
+                "无权管理这个房间的 Agent 口令，或这个 Agent 已被移出、需要房主换一个新口令。",
+            ),
+            AgentAccessFailureKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "join_code.not_found",
+                ErrorCategory::Validation,
+                "口令不对或已停用，或房间、Agent 不存在。",
+            ),
+            AgentAccessFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "join_code.conflict",
+                ErrorCategory::Conflict,
+                "房间已归档或状态已经变化。",
+            ),
+            AgentAccessFailureKind::RateLimited => {
+                let error = Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "join_code.rate_limited",
+                    ErrorCategory::Transient,
+                    "口令猜错次数太多，请稍后再试。",
+                    correlation_id,
+                );
+                log_agent_access_failure(failure, correlation_id);
+                return match failure.retry_at() {
+                    Some(retry_at) => error.retry_after_seconds(seconds_until(retry_at)),
+                    None => error,
+                };
+            }
+            AgentAccessFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "join_code.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "口令服务的依赖暂时不可用。",
+            ),
+            AgentAccessFailureKind::UnknownCommit => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "join_code.unknown_commit",
+                ErrorCategory::UnknownCommit,
+                "操作提交状态未知，请刷新后确认。",
+            ),
+            AgentAccessFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "join_code.internal",
+                ErrorCategory::Transient,
+                "口令服务发生内部错误。",
+            ),
+        };
+        log_agent_access_failure(failure, correlation_id);
+        Self::new(status, code, category, message, correlation_id)
+    }
+
     pub(crate) fn direct_session(
         failure: DirectSessionFailure,
         correlation_id: CorrelationId,
@@ -1198,6 +1264,15 @@ fn unreadable_mapping(state: ContentLifecycleState) -> ErrorMapping {
             "内容已不可读取。",
         ),
     }
+}
+
+fn log_agent_access_failure(failure: AgentAccessFailure, correlation_id: CorrelationId) {
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        operation = failure.operation(),
+        failure = ?failure.kind(),
+        "Agent 口令请求失败"
+    );
 }
 
 fn seconds_until(retry_at: agent_room_domain::time::UtcMillis) -> u64 {

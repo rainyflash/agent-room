@@ -11,8 +11,8 @@ use crate::{
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
         MatrixFailure, MatrixFailureKind, MatrixRoomId, PortFuture, PrivateMatrixMembership,
-        PrivateRoomMatrixGateway, PrivateRoomStore, RoomAllocationEvidence, RoomAllocationMode,
-        RoomAllocationStore,
+        PrivateRoomAgentAccessStore, PrivateRoomMatrixGateway, PrivateRoomStore,
+        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyFailure, EnterLobbyOutcome, EnterLobbyService,
@@ -77,6 +77,8 @@ pub struct AgentLobbyEntryDependencies {
     pub access: Arc<dyn AgentLobbyAccessRepository>,
     pub allocations: Arc<dyn RoomAllocationStore>,
     pub private_rooms: Arc<dyn PrivateRoomStore>,
+    /// 凭口令进来的 Agent 成员：它们不随任何成员入场。
+    pub private_agents: Arc<dyn PrivateRoomAgentAccessStore>,
     pub private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub memberships: Arc<dyn AgentRoomMembershipFactory>,
     pub provisioning: Arc<dyn LobbyProvisioningOperation>,
@@ -89,6 +91,7 @@ pub struct AgentLobbyEntryService {
     access: Arc<dyn AgentLobbyAccessRepository>,
     allocations: Arc<dyn RoomAllocationStore>,
     private_rooms: Arc<dyn PrivateRoomStore>,
+    private_agents: Arc<dyn PrivateRoomAgentAccessStore>,
     private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     memberships: Arc<dyn AgentRoomMembershipFactory>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
@@ -103,6 +106,7 @@ impl AgentLobbyEntryService {
             access: dependencies.access,
             allocations: dependencies.allocations,
             private_rooms: dependencies.private_rooms,
+            private_agents: dependencies.private_agents,
             private_matrix: dependencies.private_matrix,
             memberships: dependencies.memberships,
             provisioning: dependencies.provisioning,
@@ -185,10 +189,11 @@ impl AgentLobbyEntryService {
         self.resolve_private_target(request, access, room).await
     }
 
-    /// 私人房间不在公共目录里，Agent 随它此次代表的主体入场。
+    /// 私人房间不在公共目录里，Agent 随它此次代表的主体入场，或者它本身是凭口令进来的 Agent 成员。
     ///
-    /// 能力不超过该主体：只有已加入且可发言的成员才能带 Agent 进来，移除或封禁该成员会立即
-    /// 让其 Agent 失去房间。目录必须与请求一致，避免用另一个房间的成员资格换取本房间的入场。
+    /// 随主体入场时能力不超过该主体：只有已加入且可发言的成员才能带 Agent 进来，移除或封禁该成员
+    /// 会立即让其 Agent 失去房间。凭口令进来的 Agent 不随任何成员进出，由房主或管理员单独移出。
+    /// 目录必须与请求一致，避免用另一个房间的成员资格换取本房间的入场。
     async fn resolve_private_target(
         &self,
         request: &EnterAgentLobby,
@@ -204,7 +209,9 @@ impl AgentLobbyEntryService {
         if snapshot.catalog().id() != request.catalog_id {
             return Err(AgentLobbyEntryFailure::NotFound);
         }
-        if !snapshot.room().admits_agent_of(access.principal_id) {
+        if !snapshot.room().admits_agent_of(access.principal_id)
+            && !self.admitted_by_code(&snapshot, request.agent_id).await?
+        {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
         let matrix_room =
@@ -223,13 +230,32 @@ impl AgentLobbyEntryService {
                 .map_err(AgentLobbyEntryFailure::Membership)?;
         }
         // 私人房间默认只让成员旁观；Agent 要上线（发布状态）和回复都需要发言级别。上面的准入
-        // 已确认它代表的主体此刻已加入且能发言，所以按同样的能力授予。主体失去发言、被移除
-        // 或离开时由私人房间服务收回。重连时重复授予不会再写权限状态。
+        // 已确认它代表的主体此刻已加入且能发言，或它本身是能发言的 Agent 成员，所以按同样的能力
+        // 授予。主体失去发言、被移除或离开时由私人房间服务收回，Agent 成员被移出时由口令服务收回。
+        // 重连时重复授予不会再写权限状态。
         self.private_matrix
             .set_speaking(&matrix_room, &access.matrix_user_id, true)
             .await
             .map_err(AgentLobbyEntryFailure::Membership)?;
         Ok(snapshot.instance().id())
+    }
+
+    /// 这个 Agent 本身是凭口令进来、仍然有效的 Agent 成员。它的主人不必是房间成员。
+    async fn admitted_by_code(
+        &self,
+        snapshot: &crate::ports::PrivateRoomSnapshot,
+        agent_id: AgentId,
+    ) -> AgentLobbyEntryResult<bool> {
+        let member = self
+            .private_agents
+            .agent_member(snapshot.catalog().id(), agent_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?;
+        Ok(snapshot
+            .room()
+            .admits_agent_member(member.is_some_and(|member| {
+                member.status == agent_room_domain::join_codes::PrivateRoomAgentMemberStatus::Joined
+            })))
     }
 }
 

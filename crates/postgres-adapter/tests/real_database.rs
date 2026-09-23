@@ -49,7 +49,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 48] = [
+const EXPECTED_TABLES: [&str; 51] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -80,6 +80,7 @@ const EXPECTED_TABLES: [&str; 48] = [
     "federation_governance_audit",
     "federation_governance_rule",
     "federation_peer",
+    "join_code_attempt_window",
     "matrix_projection_cursor",
     "matrix_projection_event_receipt",
     "moderation_action",
@@ -89,6 +90,8 @@ const EXPECTED_TABLES: [&str; 48] = [
     "oidc_login_attempt",
     "outbox_event",
     "principal",
+    "private_room_agent_member",
+    "private_room_join_code",
     "private_room_membership",
     "private_room_state",
     "reception_execution",
