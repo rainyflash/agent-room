@@ -52,6 +52,8 @@ const RUNTIME_SECRET_BYTES: usize = 32;
 trait SecretStoreBackend: Send + Sync {
     fn read(&self, account: &str) -> BridgeCredentialResult<Option<String>>;
     fn write(&self, account: &str, value: &str) -> BridgeCredentialResult<()>;
+    /// 写入本机桌面、MCP 和命令行也要读取的值，见 `LocalSecretStore::write_shared`。
+    fn write_shared(&self, account: &str, value: &str) -> BridgeCredentialResult<()>;
     fn delete(&self, account: &str) -> BridgeCredentialResult<()>;
 }
 
@@ -74,6 +76,12 @@ impl SecretStoreBackend for ConfiguredSecretBackend {
 
     fn write(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
         self.store.write(account, value).map_err(map_secret_failure)
+    }
+
+    fn write_shared(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
+        self.store
+            .write_shared(account, value)
+            .map_err(map_secret_failure)
     }
 
     fn delete(&self, account: &str) -> BridgeCredentialResult<()> {
@@ -148,9 +156,9 @@ impl OsBridgeRuntimeSecretVault {
     ///
     /// 系统熵、安全存储或持久值校验失败时返回明确凭据错误。
     pub(crate) fn load_or_create(&self) -> BridgeCredentialResult<BridgeRuntimeSecrets> {
-        let installation_id =
-            self.load_or_create_value(IPC_INSTALLATION_ID, || Ok(Uuid::now_v7().to_string()))?;
-        let shared_secret = self.load_or_create_value(IPC_SHARED_SECRET, random_secret)?;
+        let installation_id = self
+            .load_or_create_shared_value(IPC_INSTALLATION_ID, || Ok(Uuid::now_v7().to_string()))?;
+        let shared_secret = self.load_or_create_shared_value(IPC_SHARED_SECRET, random_secret)?;
         let matrix_store_passphrase =
             self.load_or_create_value(MATRIX_STORE_PASSPHRASE, random_secret)?;
         let handoff_storage_key = self.load_or_create_value(HANDOFF_STORAGE_KEY, random_secret)?;
@@ -186,6 +194,25 @@ impl OsBridgeRuntimeSecretVault {
         }
 
         self.backend.write(account, &create()?)?;
+        self.backend.read(account)?.ok_or_else(unavailable)
+    }
+
+    /// IPC 凭据由本机桌面、MCP 和命令行读取，写入时要让它们不经询问就能读到。
+    ///
+    /// macOS 钥匙串只放行创建凭据时列出的程序，而旧版 Bridge 创建时只列了自己，所以每次启动都把
+    /// 已有的值原样重写一遍：值不变，凭据换上当前安装的访问控制。Bridge 写完才开始监听，
+    /// 客户端又先连上 Bridge 才读取，因而读到的总是重写过的凭据。
+    fn load_or_create_shared_value(
+        &self,
+        account: &str,
+        create: impl FnOnce() -> BridgeCredentialResult<String>,
+    ) -> BridgeCredentialResult<String> {
+        let value = match self.backend.read(account)? {
+            Some(value) if !cfg!(target_os = "macos") => return Ok(value),
+            Some(value) => value,
+            None => create()?,
+        };
+        self.backend.write_shared(account, &value)?;
         self.backend.read(account)?.ok_or_else(unavailable)
     }
 }
@@ -680,8 +707,9 @@ mod tests {
         OsDeviceSigningIdentityStore, SecretStoreBackend, corrupt,
     };
 
+    /// 第二个字段按顺序记下经 `write_shared` 写入的槽位。
     #[derive(Default)]
-    struct 内存安全存储(Mutex<HashMap<String, String>>);
+    struct 内存安全存储(Mutex<HashMap<String, String>>, Mutex<Vec<String>>);
 
     impl SecretStoreBackend for 内存安全存储 {
         fn read(
@@ -701,6 +729,18 @@ mod tests {
                 .expect("存储锁未中毒")
                 .insert(account.to_owned(), value.to_owned());
             Ok(())
+        }
+
+        fn write_shared(
+            &self,
+            account: &str,
+            value: &str,
+        ) -> agent_room_bridge_core::ports::BridgeCredentialResult<()> {
+            self.1
+                .lock()
+                .expect("存储锁未中毒")
+                .push(account.to_owned());
+            self.write(account, value)
         }
 
         fn delete(
@@ -777,6 +817,26 @@ mod tests {
             stored[MESSAGE_CONTENT_ROOT_KEY],
             stored[MESSAGE_PROJECTION_STORAGE_KEY]
         );
+    }
+
+    #[test]
+    fn 只有_ipc_凭据按本机程序共用写入_macos_每次启动原值重写() {
+        let backend = Arc::new(内存安全存储::default());
+        let vault = OsBridgeRuntimeSecretVault::new(backend.clone());
+
+        let first = vault.load_or_create().expect("首次运行时秘密可生成");
+        let stored = backend.0.lock().expect("存储锁未中毒").clone();
+        let second = vault.load_or_create().expect("运行时秘密可恢复");
+
+        assert_eq!(first.installation_id(), second.installation_id());
+        assert_eq!(*backend.0.lock().expect("存储锁未中毒"), stored);
+        let once = [IPC_INSTALLATION_ID, IPC_SHARED_SECRET];
+        let expected: Vec<_> = if cfg!(target_os = "macos") {
+            [once, once].concat()
+        } else {
+            once.to_vec()
+        };
+        assert_eq!(*backend.1.lock().expect("存储锁未中毒"), expected);
     }
 
     #[test]

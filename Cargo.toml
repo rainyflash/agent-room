@@ -18,6 +18,7 @@ members = [
   "crates/domain",
   "crates/host-adapters",
   "crates/identity-adapter",
+  "crates/macos-keychain",
   "crates/matrix-adapter",
   "crates/matrix-provisioning-adapter",
   "crates/message-crypto-adapter",
@@ -47,6 +48,7 @@ agent-room-content-adapter = { version = "0.1.0-alpha.49", path = "crates/conten
 agent-room-domain = { version = "0.1.0-alpha.49", path = "crates/domain" }
 agent-room-host-adapters = { version = "0.1.0-alpha.49", path = "crates/host-adapters" }
 agent-room-identity-adapter = { version = "0.1.0-alpha.49", path = "crates/identity-adapter" }
+agent-room-macos-keychain = { version = "0.1.0-alpha.49", path = "crates/macos-keychain" }
 agent-room-matrix-adapter = { version = "0.1.0-alpha.49", path = "crates/matrix-adapter" }
 agent-room-matrix-provisioning-adapter = { version = "0.1.0-alpha.49", path = "crates/matrix-provisioning-adapter" }
 agent-room-message-crypto-adapter = { version = "0.1.0-alpha.49", path = "crates/message-crypto-adapter" }
@@ -62,6 +64,7 @@ chrono = "0.4.45"
 chacha20poly1305 = "0.10.1"
 clap = { version = "4.6.6", features = ["derive"] }
 cookie = "0.18.2"
+core-foundation = "0.10.1"
 ed25519-dalek = { version = "2.2.0", features = ["zeroize"] }
 futures-util = "0.3.32"
 getrandom = "0.3.4"
@@ -83,6 +86,8 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "r
 rmcp = { version = "3.1.4", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
 rsa = { version = "0.9.10", features = ["pem"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+security-framework = { version = "3.7.0", default-features = false }
+security-framework-sys = { version = "2.17.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_jcs = "0.2.0"

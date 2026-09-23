@@ -101,3 +101,23 @@ fn 拒绝宽权限密钥与符号链接() {
     symlink(&key_path, &link).unwrap();
     assert!(LocalSecretStore::encrypted("owner", &root.path().join("a"), &link).is_err());
 }
+
+#[test]
+fn 共用凭据写入加密存储后与普通写入一样可读且校验相同() {
+    let root = tempfile::tempdir().unwrap();
+    let key_path = key(root.path(), &[7; 32]);
+    let store =
+        LocalSecretStore::encrypted("test.owner", &root.path().join("vault"), &key_path).unwrap();
+    store.write_shared("ipc", "shared-value").unwrap();
+    assert_eq!(store.read("ipc").unwrap().as_deref(), Some("shared-value"));
+    store.write_shared("ipc", "replaced").unwrap();
+    assert_eq!(store.read("ipc").unwrap().as_deref(), Some("replaced"));
+    assert_eq!(
+        store.write_shared("ipc", &"x".repeat(65_537)),
+        Err(SecretStoreFailure::Configuration)
+    );
+    assert_eq!(
+        store.write_shared("", "value"),
+        Err(SecretStoreFailure::Configuration)
+    );
+}

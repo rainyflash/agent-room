@@ -44,6 +44,12 @@ Agent Room 有四个彼此独立的健康信号，禁止再把它们压成一个
 
 桌面应用被异常关闭（例如在任务管理器里结束）时，它启动的 Bridge 会察觉，收尾后自行退出。下次启动的桌面会等它退出后再启动自己的 Bridge，等待期间显示“正在检查本机连接”。如果另一个 Bridge 进程五分钟后仍在运行，本机连接会停在 `desktop.bridge.other_instance_running`，那个进程一退出，桌面仍会自动启动自己的 Bridge。这种情况重新授权没有用：请在任务管理器或活动监视器里结束残留的 `agent-room-bridge` 进程，或重启电脑。
 
+## macOS 反复弹窗要求输入登录钥匙串密码
+
+Bridge 把本机连接用的凭据存在登录钥匙串里，桌面端、MCP 服务和 `agent-room` 命令行都要读取它们才能连上 Bridge。旧版本创建这些凭据时只允许 Bridge 自己读取：其他 Agent Room 程序每读一次，macOS 就弹窗要登录钥匙串密码，点「允许」也只放行这一次。现在的版本在 Bridge 创建这些凭据时就把同一安装里的桌面端、MCP 和命令行列为可读取的程序；更新后第一次启动的 Bridge 会把旧版 Bridge 留下的凭据按原值重写一遍。不需要手动删除钥匙串里的任何条目。
+
+Bridge 的其他秘密仍然只有 Bridge 自己能读取。如果弹窗替 Agent Room、`agent-room-bridge`、`agent-room-mcp`、`agent-room` 以外的程序请求名为 `dev.agent-room.bridge` 的条目，请选「拒绝」：没有其他程序需要这些秘密。
+
 ## 大厅一直为空或加载中
 
 分别检查控制平面和 Matrix，不要混为一谈。房间可能已在控制平面存在，但 Matrix 时间线仍在重连。只重试失败的边界，不要重装桌面端。公共大厅由云端入厅流程创建，不依赖 Bridge。

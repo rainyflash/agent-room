@@ -41,6 +41,32 @@ impl SystemCredentialStore {
             .map_err(|_| SecretStoreFailure::Unavailable)
     }
 
+    /// 写入同一安装里的桌面、MCP 和命令行也要读取的凭据。
+    ///
+    /// macOS 钥匙串只放行创建凭据时列入访问控制表的程序，其余程序每读一次就弹窗要登录密码；
+    /// 已有凭据的表又不能静默修改，所以这里删掉旧凭据，重新创建时把这些程序一并列入。
+    /// 其他凭据库不区分程序，与 [`Self::write`] 相同。
+    ///
+    /// # Errors
+    /// 凭据库拒绝删除或写入时返回错误。
+    pub fn write_shared(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
+        #[cfg(target_os = "macos")]
+        {
+            self.delete(account)?;
+            let readers = installation::programs();
+            let readers: Vec<_> = readers.iter().map(std::path::PathBuf::as_path).collect();
+            agent_room_macos_keychain::add_generic_password(
+                &self.service,
+                account,
+                value.as_bytes(),
+                &readers,
+            )
+            .map_err(|_| SecretStoreFailure::Unavailable)
+        }
+        #[cfg(not(target_os = "macos"))]
+        self.write(account, value)
+    }
+
     /// # Errors
     /// 凭据库拒绝删除时返回错误；删除不存在的凭据视为成功。
     pub fn delete(&self, account: &str) -> Result<(), SecretStoreFailure> {
@@ -58,6 +84,82 @@ impl SystemCredentialStore {
     ) -> keyring::Result<TValue> {
         let _exclusive = exclusive::acquire();
         operation(&Entry::new(&self.service, account)?)
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod installation {
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+    };
+
+    /// 安装包 `Contents/MacOS` 里的四个程序，名字见桌面的 `tools/prepare-sidecar.mjs`。
+    const PROGRAMS: [&str; 4] = [
+        "agent-room-desktop",
+        "agent-room-bridge",
+        "agent-room-mcp",
+        "agent-room",
+    ];
+
+    /// 与当前程序装在同一目录的其他 Agent Room 程序。单独运行、旁边没有它们时为空。
+    pub(super) fn programs() -> Vec<PathBuf> {
+        env::current_exe()
+            .and_then(fs::canonicalize)
+            .map(|current| siblings(&current))
+            .unwrap_or_default()
+    }
+
+    fn siblings(current: &Path) -> Vec<PathBuf> {
+        let Some(directory) = current.parent() else {
+            return Vec::new();
+        };
+        PROGRAMS
+            .iter()
+            .map(|name| directory.join(name))
+            .filter(|path| path != current && path.is_file())
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{super::SystemCredentialStore, siblings};
+
+        #[test]
+        #[ignore = "显式运行以验证当前用户的真实钥匙串"]
+        fn 共用凭据在真实钥匙串里可读取替换和删除() {
+            let store = SystemCredentialStore::new(format!(
+                "agent-room-test-shared-{}",
+                std::process::id()
+            ));
+            store.write_shared("ipc", "first").expect("可创建共用凭据");
+            assert_eq!(store.read("ipc").expect("可读取").as_deref(), Some("first"));
+            store.write_shared("ipc", "second").expect("可重建共用凭据");
+            assert_eq!(
+                store.read("ipc").expect("可读取").as_deref(),
+                Some("second")
+            );
+            store.delete("ipc").expect("可删除");
+            assert_eq!(store.read("ipc").expect("可读取"), None);
+        }
+
+        #[test]
+        fn 只列出同目录里存在的其他程序() {
+            let directory = tempfile::tempdir().expect("可创建临时目录");
+            for name in ["agent-room-bridge", "agent-room-mcp", "agent-room", "other"] {
+                std::fs::write(directory.path().join(name), b"").expect("可写入测试程序");
+            }
+
+            let found = siblings(&directory.path().join("agent-room-bridge"));
+
+            assert_eq!(
+                found,
+                [
+                    directory.path().join("agent-room-mcp"),
+                    directory.path().join("agent-room"),
+                ]
+            );
+        }
     }
 }
 

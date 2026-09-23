@@ -159,3 +159,47 @@ async fn 关闭卡住仍返回超时而不伪造成功() {
     server.abort();
     assert!(server.await.unwrap_err().is_cancelled());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_有_bridge_监听才读取凭据() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct 计数凭据(AtomicUsize);
+
+    impl IpcCredentialSource for 计数凭据 {
+        fn load(&self) -> Result<IpcClientCredentials, IpcCredentialFailure> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(IpcCredentialFailure::new(
+                IpcCredentialFailureKind::Unavailable,
+            ))
+        }
+    }
+
+    let runtime_root = tempfile::tempdir().unwrap();
+    let credentials = Arc::new(计数凭据::default());
+    let client = LocalBridgeClient {
+        runtime_root: runtime_root.path().to_path_buf(),
+        credentials: credentials.clone(),
+        caller: IpcCallerKind::AgentCli,
+        connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+    };
+
+    let absent = client.invoke(IpcMethod::BridgeStatus).await.unwrap_err();
+    assert_eq!(
+        absent.kind(),
+        LocalBridgeClientFailureKind::BridgeUnavailable
+    );
+    assert_eq!(credentials.0.load(Ordering::SeqCst), 0);
+
+    let _listener =
+        std::os::unix::net::UnixListener::bind(runtime_root.path().join("bridge.sock")).unwrap();
+    let unreadable = client.invoke(IpcMethod::BridgeStatus).await.unwrap_err();
+    assert_eq!(
+        unreadable.kind(),
+        LocalBridgeClientFailureKind::CredentialsUnavailable
+    );
+    assert_eq!(credentials.0.load(Ordering::SeqCst), 1);
+}
