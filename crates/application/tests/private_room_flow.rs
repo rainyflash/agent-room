@@ -17,9 +17,10 @@ use agent_room_application::{
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
-        GovernPrivateRoomMember, InspectPrivateRoom, ListPrivateRooms, PrivateRoomDependencies,
-        PrivateRoomFailureKind, PrivateRoomInvitation, PrivateRoomMembershipAction,
-        PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
+        GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
+        PrivateRoomDependencies, PrivateRoomFailureKind, PrivateRoomInvitation,
+        PrivateRoomMembershipAction, PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom,
+        TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -108,6 +109,60 @@ async fn 列表只返回当前主体受邀或已加入的权威房间() {
         .await
         .expect("拒绝后的列表应可读");
     assert!(declined.is_empty());
+}
+
+#[tokio::test]
+async fn 建房之后邀请的成员按邀请的权限得到或收回发言级别() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(viewer_permissions()))
+        .await
+        .expect("创建应成功");
+    assert_eq!(
+        fixture.matrix.speaking_allowed("@member:matrix.test"),
+        Some(false)
+    );
+    let invite = |permissions| InvitePrivateRoomMember {
+        actor: fixture.owner_actor(),
+        catalog_id: fixture.catalog,
+        target_principal_id: fixture.member,
+        permissions,
+    };
+    let decline = || async {
+        fixture
+            .matrix
+            .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Left);
+        fixture
+            .service
+            .decline(fixture.member_action())
+            .await
+            .expect("拒绝邀请应成功");
+    };
+
+    // 以前只有建房时一起邀请的成员拿到发言级别，之后邀请的人进了房间也发不了言。
+    decline().await;
+    fixture
+        .service
+        .invite(invite(speaker_permissions()))
+        .await
+        .expect("再次邀请应成功");
+    assert_eq!(
+        fixture.matrix.speaking_allowed("@member:matrix.test"),
+        Some(true)
+    );
+
+    // 再邀请时只给旁观：收回以前的发言级别。
+    decline().await;
+    fixture
+        .service
+        .invite(invite(viewer_permissions()))
+        .await
+        .expect("只给旁观的邀请应成功");
+    assert_eq!(
+        fixture.matrix.speaking_allowed("@member:matrix.test"),
+        Some(false)
+    );
 }
 
 #[tokio::test]

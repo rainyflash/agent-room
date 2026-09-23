@@ -262,6 +262,15 @@ impl PrivateRoomService {
             .invite(&matrix_room, &target)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
+        // 私人房间的默认成员级别低于发言级别，建房时一起邀请的成员才批量拿到发言级别；之后邀请的
+        // 成员也要按邀请的权限设好，否则进了房间也发不了言。被移出后再邀请只给旁观时同样收回。
+        self.set_speaking(
+            &matrix_room,
+            &target,
+            request.permissions.speak(),
+            OPERATION,
+        )
+        .await?;
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
         replace_room(snapshot, room, OPERATION)
