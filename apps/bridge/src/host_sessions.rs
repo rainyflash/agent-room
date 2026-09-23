@@ -8,9 +8,12 @@ use std::{
 };
 
 use agent_room_application::ports::PortFuture;
-use agent_room_bridge_core::room_directory::{
-    AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership, ControlPlaneRoomDirectoryGateway,
-    RoomDirectoryFailure, RoomDirectoryFailureKind,
+use agent_room_bridge_core::{
+    onboarding::ControlPlaneOnboardingFailureKind,
+    room_directory::{
+        AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership,
+        ControlPlaneRoomDirectoryGateway, RoomDirectoryFailure, RoomDirectoryFailureKind,
+    },
 };
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcMethod,
@@ -26,7 +29,9 @@ use uuid::Uuid;
 use crate::ipc::{BridgeIpcDispatchFailure, BridgeIpcDispatchFuture, BridgeIpcRequestHandler};
 
 mod invitation;
+mod join_codes;
 pub(crate) use invitation::InvitationSlot;
+pub(crate) use join_codes::JoinCodeAccess;
 
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
@@ -581,6 +586,25 @@ fn session_failure(code: &'static str, retryable: bool) -> BridgeIpcDispatchFail
     BridgeIpcDispatchFailure::new(code, IpcErrorCategory::DependencyUnavailable, retryable)
 }
 
+/// 在控制面建宿主人物失败：开会话和凭口令加入都会先建人物。
+pub(crate) fn registration_failure(
+    kind: ControlPlaneOnboardingFailureKind,
+) -> BridgeIpcDispatchFailure {
+    let code = match kind {
+        ControlPlaneOnboardingFailureKind::AuthenticationRejected => {
+            "bridge.host_session.device_authorization_required"
+        }
+        ControlPlaneOnboardingFailureKind::Unavailable => {
+            "bridge.host_session.registration_unavailable"
+        }
+        ControlPlaneOnboardingFailureKind::InvalidResponse => {
+            "bridge.host_session.registration_invalid"
+        }
+        ControlPlaneOnboardingFailureKind::Internal => "bridge.host_session.registration_failed",
+    };
+    session_failure(code, kind == ControlPlaneOnboardingFailureKind::Unavailable)
+}
+
 pub(crate) struct SessionAwareIpcHandler {
     pub(crate) default: Arc<dyn BridgeIpcRequestHandler>,
     pub(crate) sessions: Arc<HostSessionRegistry>,
@@ -589,6 +613,8 @@ pub(crate) struct SessionAwareIpcHandler {
     pub(crate) room_directory: Arc<dyn ControlPlaneRoomDirectoryGateway>,
     /// 接入面板挂出来、等 Agent 来接的人物。
     pub(crate) invitations: InvitationSlot,
+    /// 凭私人房间口令进房间：CLI/MCP 先查看房间、选定人物，再兑换，然后照常开会话。
+    pub(crate) join_codes: JoinCodeAccess,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
@@ -633,6 +659,8 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 IpcMethod::ReadInvitation => Ok(IpcResponse::Invitation {
                     invitation: self.invitations.read(),
                 }),
+                IpcMethod::ResolveJoinCode(request) => self.join_codes.resolve(request).await,
+                IpcMethod::RedeemJoinCode(request) => self.join_codes.redeem(request).await,
                 IpcMethod::OpenHostSession(request) => {
                     let session_key = request.session_key.clone();
                     let opened = self.sessions.open(request).await;

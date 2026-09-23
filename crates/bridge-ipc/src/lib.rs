@@ -23,7 +23,8 @@ pub use agent_room_application::reception::{
 pub use host_sessions::{
     IpcCloseHostSessionRequest, IpcHostRoomTarget, IpcHostSessionDiagnostics, IpcHostSessionState,
     IpcHostSessionSummary, IpcInvitationOffer, IpcOpenHostSessionRequest, IpcPendingInvitation,
-    IpcReceptionHost, IpcReceptionOffer, IpcRegisterReceptionRequest, IpcWithdrawInvitationRequest,
+    IpcReceptionHost, IpcReceptionOffer, IpcRedeemJoinCodeRequest, IpcRegisterReceptionRequest,
+    IpcResolveJoinCodeRequest, IpcWithdrawInvitationRequest,
 };
 mod wire;
 

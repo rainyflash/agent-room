@@ -117,9 +117,10 @@ use agent_room_bridge::control_plane::{
     ControlPlaneHttpConfig, ReqwestAgentInstanceVerificationGateway,
     ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneAutomationAuthorizationGateway,
     ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
-    ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneLobbyEntryGateway,
-    ReqwestControlPlaneMessageContentGateway, ReqwestControlPlaneOnboardingGateway,
-    ReqwestControlPlaneRoomDirectoryGateway, ReqwestTargetedHandoffQueueGateway,
+    ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneJoinCodeGateway,
+    ReqwestControlPlaneLobbyEntryGateway, ReqwestControlPlaneMessageContentGateway,
+    ReqwestControlPlaneOnboardingGateway, ReqwestControlPlaneRoomDirectoryGateway,
+    ReqwestTargetedHandoffQueueGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -226,6 +227,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         connection_status: Arc::new(DeviceConnectionStatus(status.clone())),
         room_directory: room_directory_gateway(&config, device_session.service.clone())?,
         invitations: crate::host_sessions::InvitationSlot::default(),
+        join_codes: join_code_access(&config, &device_session.service)?,
     });
     let server = BridgeIpcServer::bind(
         &paths,
@@ -1110,6 +1112,31 @@ fn room_directory_gateway(
         )
         .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     ))
+}
+
+/// 凭口令进私人房间：查看与兑换都按设备签名；兑换前按会话键建好宿主人物。
+fn join_code_access(
+    config: &BridgeConfig,
+    authorizer: &Arc<BridgeSessionService>,
+) -> Result<crate::host_sessions::JoinCodeAccess, BridgeRuntimeError> {
+    let http = ControlPlaneHttpConfig {
+        base_url: config.control_plane_url.clone(),
+        request_timeout: config.request_timeout,
+    };
+    let configuration =
+        |error: agent_room_bridge::control_plane::ControlPlaneHttpConfigurationError| {
+            BridgeRuntimeError::configuration(error.to_string())
+        };
+    Ok(crate::host_sessions::JoinCodeAccess {
+        gateway: Arc::new(
+            ReqwestControlPlaneJoinCodeGateway::new(&http, authorizer.clone())
+                .map_err(configuration)?,
+        ),
+        host_agents: Arc::new(
+            ReqwestControlPlaneOnboardingGateway::new(&http, authorizer.clone())
+                .map_err(configuration)?,
+        ),
+    })
 }
 
 /// 首次同步成功后才算上线；随后确保加密身份，失败的同步会停掉已启动的后台任务。

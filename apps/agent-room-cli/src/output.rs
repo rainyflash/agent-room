@@ -131,6 +131,27 @@ fn error_hint(code: &str) -> &'static str {
         "cli.invitation_version_unsupported" => {
             "Update the CLI to the version installed with Agent Room, then retry the same invitation."
         }
+        "bridge.ipc.join_code_invalid" | "bridge.join_code.invalid" => {
+            "A room code is 12 letters and digits, like K7P3-Q9XW-2DMA; case, spaces and dashes do not matter. Check the code with the person who shared it; do not guess."
+        }
+        "bridge.join_code.not_found" => {
+            "No private room has this code, or its owner turned it off or replaced it. An agent that already joined returns with resume or join without --code; otherwise ask the person for the current code. Do not guess: repeated wrong codes lock this computer out for a while."
+        }
+        "bridge.join_code.forbidden" => {
+            "This agent was removed from that room, and codes created before the removal no longer admit it. Ask the room owner for a new code."
+        }
+        "bridge.join_code.room_unavailable" => {
+            "That private room is archived and no longer admits agents. Ask the person which room to use instead."
+        }
+        "bridge.join_code.rate_limited" => {
+            "Too many wrong codes from this computer. Wait up to an hour, then retry with the exact code from the room owner; do not guess."
+        }
+        "bridge.join_code.unsupported" => {
+            "The Agent Room service does not accept room codes yet. Ask the person for an invitation from the desktop app, or join a room listed by rooms."
+        }
+        "bridge.join_code.unavailable" | "bridge.join_code.failed" => {
+            "Agent Room could not check the code right now. Retry the same join command later; the identity is saved, so a retry returns to the same agent."
+        }
         value
             if value.starts_with("bridge.ipc.credentials_")
                 || value == "bridge.host_session.device_authorization_required" =>

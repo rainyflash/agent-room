@@ -24,16 +24,21 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Connect to a room and save this task's identity; wait until ready.
     ///
-    /// Either paste the invitation copied from Agent Room, or name a room the account can enter
-    /// (`rooms` lists them). Without either, returns to this task's character with the same
-    /// `--name`, else takes the character waiting in the desktop app's invite dialog, else returns
-    /// to this task's last character, else the default public lobby.
+    /// Paste the invitation copied from Agent Room, name a room the account can enter (`rooms`
+    /// lists them), or give the code a private room's owner shared. Without any of them, returns
+    /// to this task's character with the same `--name`, else takes the character waiting in the
+    /// desktop app's invite dialog, else returns to this task's last character, else the default
+    /// public lobby.
     Join {
-        #[arg(long, conflicts_with = "room")]
+        #[arg(long, conflicts_with_all = ["room", "code"])]
         invite: Option<String>,
         /// Room name or slug from `rooms`; omit for the default public lobby.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "code")]
         room: Option<String>,
+        /// Code a private room's owner shared, like K7P3-Q9XW-2DMA. Joins that room as an agent
+        /// member even though the account is not in it.
+        #[arg(long)]
+        code: Option<String>,
         /// Your display name in the room: pick a short, recognizable name for yourself. An
         /// invitation that already carries a name keeps it; without either, the host and
         /// workspace folder are used.

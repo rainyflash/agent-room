@@ -105,6 +105,66 @@ impl IpcWithdrawInvitationRequest {
     }
 }
 
+/// 凭私人房间口令查看它对应的房间，CLI 与 MCP 据此决定在这个房间里用哪个人物。
+/// 不让任何 Agent 加入。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcResolveJoinCodeRequest {
+    pub code: String,
+}
+
+impl IpcResolveJoinCodeRequest {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_join_code(&self.code)
+    }
+}
+
+/// 凭口令让这个会话键的人物加入私人房间，随后照常用返回的房间开会话。名字要与开会话时一致：
+/// 同一个会话键始终是同一个人物。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcRedeemJoinCodeRequest {
+    pub session_key: String,
+    pub display_name: String,
+    pub code: String,
+}
+
+impl IpcRedeemJoinCodeRequest {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_session_id(&self.session_key)?;
+        validate_display_name(&self.display_name)?;
+        validate_join_code(&self.code)
+    }
+}
+
+// 口令就是房间的钥匙，调试输出里不能出现。
+impl std::fmt::Debug for IpcResolveJoinCodeRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IpcResolveJoinCodeRequest")
+            .field("code", &"[已脱敏]")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for IpcRedeemJoinCodeRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IpcRedeemJoinCodeRequest")
+            .field("session_key", &self.session_key)
+            .field("display_name", &self.display_name)
+            .field("code", &"[已脱敏]")
+            .finish()
+    }
+}
+
+/// 格式在本机就核对，抄错的口令不必连到服务器。
+fn validate_join_code(code: &str) -> Result<(), IpcMethodValidationFailure> {
+    agent_room_domain::join_codes::PrivateRoomJoinCode::parse(code)
+        .map(|_| ())
+        .map_err(|_| failure("bridge.ipc.join_code_invalid"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcCloseHostSessionRequest {
@@ -337,6 +397,83 @@ mod tests {
         let encoded = serde_json::to_value(&response).expect("可编码");
         assert_eq!(encoded["type"], "invitation");
         assert_eq!(encoded["invitation"]["expiresInMs"], 1_000);
+        assert_eq!(
+            serde_json::from_value::<crate::IpcResponse>(encoded).expect("可解码"),
+            response
+        );
+    }
+
+    #[test]
+    fn 口令方法在开会话之前调用_格式在本机核对_口令不进调试输出() {
+        let resolve = IpcMethod::ResolveJoinCode(IpcResolveJoinCodeRequest {
+            code: "k7p3 q9xw 2dma".into(),
+        });
+        assert!(resolve.validate().is_ok());
+        assert_eq!(resolve.required_scope(), IpcScope::HostSessionsManage);
+        let redeem = IpcRedeemJoinCodeRequest {
+            session_key: Uuid::now_v7().to_string(),
+            display_name: "Scout".into(),
+            code: "K7P3-Q9XW-2DMA".into(),
+        };
+        let method = IpcMethod::RedeemJoinCode(redeem.clone());
+        assert!(method.validate().is_ok());
+        assert_eq!(method.required_scope(), IpcScope::HostSessionsManage);
+        let debug = format!("{resolve:?} {method:?}").to_lowercase();
+        assert!(!debug.contains("q9xw"), "{debug}");
+        assert!(debug.contains("scout"));
+        let encoded = serde_json::to_value(&method).expect("可编码");
+        assert_eq!(
+            encoded["redeem_join_code"]["sessionKey"],
+            redeem.session_key
+        );
+        assert_eq!(encoded["redeem_join_code"]["code"], "K7P3-Q9XW-2DMA");
+        for code in ["", "K7P3-Q9XW-2DM", "K7P3_Q9XW_2DMA", "口令"] {
+            let invalid =
+                IpcMethod::ResolveJoinCode(IpcResolveJoinCodeRequest { code: code.into() });
+            assert_eq!(
+                invalid.validate().expect_err("格式不对").code(),
+                "bridge.ipc.join_code_invalid"
+            );
+        }
+        for invalid in [
+            IpcRedeemJoinCodeRequest {
+                session_key: "../other".into(),
+                ..redeem.clone()
+            },
+            IpcRedeemJoinCodeRequest {
+                display_name: " ".into(),
+                ..redeem.clone()
+            },
+            IpcRedeemJoinCodeRequest {
+                code: "K7P3".into(),
+                ..redeem.clone()
+            },
+        ] {
+            assert!(IpcMethod::RedeemJoinCode(invalid).validate().is_err());
+        }
+        for method in [resolve, method] {
+            let wrapped = IpcMethod::WithSession {
+                session_id: Uuid::now_v7().to_string(),
+                method: Box::new(method),
+            };
+            assert_eq!(
+                wrapped.validate().expect_err("不能包进会话").code(),
+                "bridge.ipc.session_method_invalid"
+            );
+        }
+        let response = crate::IpcResponse::JoinCodeRoom {
+            room: crate::IpcRoomSummary {
+                kind: crate::IpcRoomKind::PrivateRoom,
+                catalog_id: Uuid::now_v7().to_string(),
+                matrix_room_id: Some("!project:matrix.test".into()),
+                name: "项目室".into(),
+                slug: None,
+                membership: None,
+            },
+        };
+        let encoded = serde_json::to_value(&response).expect("可编码");
+        assert_eq!(encoded["type"], "join_code_room");
+        assert_eq!(encoded["room"]["matrixRoomId"], "!project:matrix.test");
         assert_eq!(
             serde_json::from_value::<crate::IpcResponse>(encoded).expect("可解码"),
             response

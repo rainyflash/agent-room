@@ -2,7 +2,7 @@ use super::*;
 use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcHostSessionState, IpcHostSessionSummary, IpcInvitationOffer,
-    IpcOpenHostSessionRequest, IpcRoomMembership,
+    IpcOpenHostSessionRequest, IpcRedeemJoinCodeRequest, IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
 
@@ -11,6 +11,12 @@ struct Bridge {
     rooms: Mutex<Vec<IpcRoomSummary>>,
     pending: Mutex<Option<IpcInvitationOffer>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
+    /// 口令 `K7P3-Q9XW-2DMA` 对应的私人房间。
+    code_room: Mutex<Option<IpcRoomSummary>>,
+    redeemed: Mutex<Vec<IpcRedeemJoinCodeRequest>>,
+    refuse_redeem: Mutex<Option<&'static str>>,
+    /// 会话之外的调用按顺序记下方法名。
+    calls: Mutex<Vec<&'static str>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
     read_pages:
@@ -37,6 +43,10 @@ impl Bridge {
             rooms: Mutex::new(Vec::new()),
             pending: Mutex::new(None),
             opened: Mutex::new(Vec::new()),
+            code_room: Mutex::new(None),
+            redeemed: Mutex::new(Vec::new()),
+            refuse_redeem: Mutex::new(None),
+            calls: Mutex::new(Vec::new()),
             read_started: tokio::sync::Notify::new(),
             finish_read: tokio::sync::Notify::new(),
             read_pages: Mutex::new(std::collections::VecDeque::new()),
@@ -67,7 +77,22 @@ impl BridgeToolClient for Bridge {
                 })
             });
         }
+        if !matches!(method, IpcMethod::WithSession { .. }) {
+            self.calls.lock().unwrap().push(method.name());
+        }
         let response = match method {
+            IpcMethod::ResolveJoinCode(request) => self.code_room(&request.code),
+            IpcMethod::RedeemJoinCode(request) => {
+                if let Some(code) = *self.refuse_redeem.lock().unwrap() {
+                    Err(refusal(code))
+                } else {
+                    let room = self.code_room(&request.code);
+                    if room.is_ok() {
+                        self.redeemed.lock().unwrap().push(request);
+                    }
+                    room
+                }
+            }
             IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
                 rooms: self.rooms.lock().unwrap().clone(),
             }),
@@ -115,6 +140,41 @@ impl BridgeToolClient for Bridge {
     }
 }
 
+const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
+
+impl Bridge {
+    /// 和 Bridge 一样忽略大小写、空白和连字符比较口令。
+    fn code_room(&self, code: &str) -> std::result::Result<IpcResponse, BridgeToolFailure> {
+        let normalized: String = code
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_uppercase();
+        match self.code_room.lock().unwrap().clone() {
+            Some(room) if normalized == "K7P3Q9XW2DMA" => Ok(IpcResponse::JoinCodeRoom { room }),
+            _ => Err(refusal("bridge.join_code.not_found")),
+        }
+    }
+}
+
+fn refusal(code: &str) -> BridgeToolFailure {
+    BridgeToolFailure::new(
+        code,
+        agent_room_bridge_ipc::IpcErrorCategory::Validation,
+        false,
+        BTreeMap::new(),
+    )
+}
+
+fn join_code(code: &str, name: Option<&str>) -> Command {
+    Command::Join {
+        invite: None,
+        room: None,
+        code: Some(code.to_owned()),
+        name: name.map(str::to_owned),
+    }
+}
+
 fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
     IpcRoomSummary {
         kind,
@@ -131,6 +191,7 @@ fn join(room: Option<&str>, name: Option<&str>) -> Command {
     Command::Join {
         invite: None,
         room: room.map(str::to_owned),
+        code: None,
         name: name.map(str::to_owned),
     }
 }
@@ -220,6 +281,126 @@ async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认
     assert_eq!(opened.len(), 3);
     assert!(opened[2].room.is_none());
     assert!(!opened[2].display_name.is_empty());
+}
+
+#[tokio::test]
+async fn 凭口令接入先查看房间_存好身份后兑换再开会话_同一档案重跑回到同一人物() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    let project = IpcRoomSummary {
+        kind: IpcRoomKind::PrivateRoom,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: Some("!room:test.invalid".to_owned()),
+        name: "项目室".to_owned(),
+        slug: None,
+        membership: None,
+    };
+    *bridge.code_room.lock().unwrap() = Some(project.clone());
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join_code("k7p3 q9xw 2dma", Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let profiles = saved_profiles(directory.path());
+    assert_eq!(profiles.len(), 1);
+    let saved = &profiles[0].invitation;
+    assert_eq!(
+        saved.catalog_id.as_deref(),
+        Some(project.catalog_id.as_str())
+    );
+    assert_eq!(saved.room_id.as_deref(), Some("!room:test.invalid"));
+    assert_eq!(saved.display_name, "Scout");
+    assert_eq!(
+        bridge.redeemed.lock().unwrap().as_slice(),
+        &[IpcRedeemJoinCodeRequest {
+            session_key: saved.session_key.clone(),
+            display_name: "Scout".to_owned(),
+            code: "k7p3 q9xw 2dma".to_owned(),
+        }]
+    );
+    assert_eq!(bridge.opened.lock().unwrap().as_slice(), &[saved.request()]);
+    assert_eq!(
+        bridge.calls.lock().unwrap().as_slice(),
+        &["resolve_join_code", "redeem_join_code", "open_host_session"]
+    );
+    // 同一档案再凭口令接入：还是这个人物，再兑换一次也没关系。
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(saved.session_key.clone()),
+        join_code(JOIN_CODE, None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(saved_profiles(directory.path()).len(), 1);
+    assert_eq!(bridge.opened.lock().unwrap()[1], saved.request());
+    assert_eq!(
+        bridge.redeemed.lock().unwrap()[1].session_key,
+        saved.session_key
+    );
+}
+
+#[tokio::test]
+async fn 口令不对时什么都不留_兑换被拒时身份已存好_重试回到同一人物() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    *bridge.code_room.lock().unwrap() = Some(IpcRoomSummary {
+        kind: IpcRoomKind::PrivateRoom,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: Some("!room:test.invalid".to_owned()),
+        name: "项目室".to_owned(),
+        slug: None,
+        membership: None,
+    });
+    let wrong = run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join_code("0000-0000-0000", Some("Scout")),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(wrong.code, "bridge.join_code.not_found");
+    assert!(wrong.hint.contains("Do not guess"), "{}", wrong.hint);
+    assert!(!directory.path().join("cli-profiles").exists());
+    *bridge.refuse_redeem.lock().unwrap() = Some("bridge.join_code.forbidden");
+    let refused = run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join_code(JOIN_CODE, Some("Scout")),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.code, "bridge.join_code.forbidden");
+    assert!(
+        bridge.opened.lock().unwrap().is_empty(),
+        "兑换被拒就不开会话"
+    );
+    let saved = saved_profiles(directory.path());
+    assert_eq!(saved.len(), 1);
+    *bridge.refuse_redeem.lock().unwrap() = None;
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(saved[0].invitation.session_key.clone()),
+        join_code(JOIN_CODE, Some("Scout")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(saved_profiles(directory.path()).len(), 1);
+    assert_eq!(
+        bridge.opened.lock().unwrap()[0].session_key,
+        saved[0].invitation.session_key
+    );
 }
 
 #[tokio::test]

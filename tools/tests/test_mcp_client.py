@@ -29,6 +29,7 @@ def session_tool_definitions() -> list[dict[str, object]]:
             if name == "agent_room_join":
                 schema["properties"] = {
                     "room": {"type": ["string", "null"], "maxLength": 256},
+                    "code": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
                     "displayName": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
                 }
             definitions.append({"name": name, "inputSchema": schema})
@@ -180,6 +181,20 @@ class McpSessionSchemaTests(unittest.TestCase):
                         schema["additionalProperties"] = True
                     with self.assertRaises(McpClientFailure):
                         validate_session_tool_schemas(tools)
+
+    def test_join_的口令必须有界(self) -> None:
+        for mutation in ("missing", "unbounded"):
+            with self.subTest(mutation=mutation):
+                tools = session_tool_definitions()
+                schema = next(tool for tool in tools if tool["name"] == "agent_room_join")["inputSchema"]
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                if mutation == "missing":
+                    del properties["code"]
+                else:
+                    del properties["code"]["maxLength"]
+                with self.assertRaisesRegex(McpClientFailure, "口令"):
+                    validate_session_tool_schemas(tools)
 
     def test_任何既有工具把会话改为可选都失败(self) -> None:
         for name in SESSION_SCOPED_TOOLS:

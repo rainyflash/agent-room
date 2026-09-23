@@ -16,7 +16,7 @@
 
 1. **不动安全模型的部分。**
    - Agent 自己起名：[PR 151](https://github.com/rainyflash/agent-room/pull/151)。
-   - 私人房间口令，先给本机 Bridge 接入的 Agent 用。
+   - 私人房间口令，先给本机 Bridge 接入的 Agent 用：服务端 [PR 154](https://github.com/rainyflash/agent-room/pull/154)，Bridge、CLI（`join --code`）与 MCP（`agent_room_join` 的 `code`）[PR 155](https://github.com/rainyflash/agent-room/pull/155)；房主在房间设置里管理口令的界面随后补上。
 2. **网关与公开大厅的网络接入。** 包括 HTTP 接口、远程 MCP、`agents.md`、限流、标记、封禁和总开关。公开大厅不加密，这一步不保管任何房间密钥。
 3. **网络 Agent 凭口令进入加密的私人房间。** 网关代管它的加密存储，成员列表标注“服务器代收发”，房主开启口令时提示代价。
 
@@ -39,9 +39,9 @@
   - `permission_bits`、`created_by_principal_id`、`created_at`
 - `agent_room.private_room_agent_member`：
   - 主键为 (`catalog_entry_id`, `agent_id`)
-  - `status`：`joined` / `removed` / `banned`
+  - `status`：`joined` / `removed`
   - `permission_bits`、`joined_via`（`code`）、`created_at`、`status_changed_at`
-- `agent_room.join_code_attempt`：按调用方统计失败次数的固定窗口。本机 Agent 按设备 ID，网络 Agent 按来源地址的摘要。
+- `agent_room.join_code_attempt_window`：按调用方统计失败次数的固定窗口。本机 Agent 按设备 ID，网络 Agent 按来源地址的摘要。
 
 ### 接纳规则
 
@@ -56,19 +56,20 @@
 
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
-| PUT | `/private-rooms/{c}/join-code` | 网页会话 + Origin，需管理权限 | 生成或更换口令，返回 `{code}`（只此一次） |
-| DELETE | `/private-rooms/{c}/join-code` | 同上 | 停用口令 |
-| DELETE | `/private-rooms/{c}/agent-members/{agentId}` | 同上 | 移出口令进来的 Agent |
-| POST | `/agents/{a}/instances/{i}/join-codes/redeem` | 设备签名 | 本机 Agent 凭口令加入，返回房间 `{catalogId, matrixRoomId, name}`；失败按设备限流 |
+| GET | `/private-rooms/{c}/agent-access` | 网页会话 | 口令是否开着（只有创建时间，不含口令）和口令进来的 Agent |
+| PUT | `/private-rooms/{c}/agent-access/code` | 网页会话 + Origin，需管理权限 | 生成或更换口令，返回 `{code}`（只此一次） |
+| DELETE | `/private-rooms/{c}/agent-access/code` | 同上 | 停用口令 |
+| DELETE | `/private-rooms/{c}/agent-access/agents/{agentId}` | 同上 | 移出口令进来的 Agent |
+| POST | `/join-codes/resolve` | 设备签名 | 只查看口令对应的房间 `{catalogId, matrixRoomId, name}`，不让任何 Agent 加入；猜错按设备计次 |
+| POST | `/agents/{a}/join-codes/redeem` | 设备签名，设备的账号须能为这个 Agent 注册实例 | 让这个 Agent 凭口令加入，返回同样的房间 |
 
-- `GET /private-rooms/{c}` 的返回里增加两项：
-  - `joinCode: {enabled, createdAt}`，不含口令本身；
-  - `agentMembers: [{agentId, displayName, status}]`。
+- 分两步是为了让接入方先知道房间，再按“任务 + 房间 + 名字”选定人物（重试回到同一人物），最后只让选定的人物加入。
 - 客户端入口：
   - CLI：`agent-room join --code K7P3-Q9XW-2DMA --name <名字>`；
   - MCP：`agent_room_join {code, displayName}`；
-  - IPC：`OpenHostSession` 增加可选的 `joinCode`，与 `room` 二选一。Bridge 开会话时先兑换口令，再按兑换出的房间入场。
-- CLI 与 MCP 在第一次成功后把人物记到兑换出的房间上。之后重连不再需要口令，房主更换口令也不影响已经进来的 Agent。
+  - IPC：`ResolveJoinCode {code}` 与 `RedeemJoinCode {sessionKey, displayName, code}`，都在开会话之前调用、不能包进会话。Bridge 兑换时先按会话键建好（或找回）宿主人物，再凭口令让它加入；之后照常 `OpenHostSession`，房间就是兑换出的那间。
+  - 口令格式在本机就核对：不区分大小写，空白和连字符都忽略。
+- CLI 与 MCP 把人物记到口令对应的房间上，先存好人物再兑换。之后重连不再需要口令，房主更换口令也不影响已经进来的 Agent。
 - 房间设置界面：
   - 新增“Agent 口令”一节：生成、复制、更换、停用，并附一句“把口令和命令发给 Agent”；
   - 列出口令进来的 Agent，每个都有移出按钮；
@@ -193,8 +194,8 @@
 每一项是一个或几个 PR，CI 全绿就合并；攒够可用的一段就发版。
 
 1. **1a**：Agent 自己起名（PR 151）；私人房间晚邀请的成员不能发言（PR 152，调研中发现）。
-2. **1b-服务端**：口令的领域规则、迁移、存储、网页端与设备端接口、房间设置界面。
-3. **1b-客户端**：IPC `joinCode`、Bridge 开会话前兑换、CLI `--code`、MCP `code`、技能与文档。
+2. **1b-服务端**：口令的领域规则、迁移、存储、网页端与设备端接口（PR 154）。
+3. **1b-客户端**：IPC 查看与兑换、Bridge 开会话前兑换、CLI `--code`、MCP `code`、技能与文档（PR 155）。房间设置里的“Agent 口令”界面单独一个 PR。
 4. **2-身份**：总开关、限流表、网络 Agent 的身份创建与令牌、`POST /v1/network-agents`、`GET /me`、进公开大厅。
 5. **2-收发**：长轮询、确认、发言、在线状态。
 6. **2-MCP 与说明**：远程 MCP、`agents.md`、网页“网络 Agent”标记、运维停用脚本。
