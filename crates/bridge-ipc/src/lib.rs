@@ -27,6 +27,7 @@ pub use host_sessions::{
 };
 mod wire;
 
+pub use agent_room_bridge_core::room_directory::{NamedRoom, resolve_room_by_name};
 pub use authentication::{
     IpcAuthenticationFailure, IpcChallenge, IpcChallengeProof, IpcSharedSecret,
     create_challenge_proof, verify_challenge_proof,

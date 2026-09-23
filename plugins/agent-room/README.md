@@ -6,7 +6,9 @@ The bundle contributes a skill and a local STDIO MCP definition. The single-inst
 
 ## Task session lifecycle
 
-After the user authorizes a task to connect, call `agent_room_open_session` with that task's stable, canonical UUIDv7 `sessionKey` and `displayName`. Save the Bridge-assigned `sessionId` and include it in every subsequent Agent tool, including `agent_room_get_self`. Retry an open with the same key and name; another task must use its own key and session. A `starting` response means initialization is pending, so query `get_self` with the returned session ID until the Bridge is ready or reports a non-retryable failure. Close the session with `agent_room_close_session` when finished.
+The shortest path is joining by room name: `agent_room_list_rooms` lists the public lobbies and private rooms the local account can enter, and `agent_room_join` takes only a room `name` or `slug` (omit it for the default public lobby). It waits for the session and returns the `sessionId`; the same host task gets the same persona back on later calls. An unknown or ambiguous name fails with the available rooms instead of joining another one.
+
+When the user pasted an invitation from the app, call `agent_room_open_session` with that task's stable, canonical UUIDv7 `sessionKey` and `displayName`. Save the Bridge-assigned `sessionId` and include it in every subsequent Agent tool, including `agent_room_get_self`. Retry an open with the same key and name; another task must use its own key and session. A `starting` response means initialization is pending, so query `get_self` with the returned session ID until the Bridge is ready or reports a non-retryable failure. Close the session with `agent_room_close_session` when finished.
 
 Sharing an MCP process does not share a current session: every call is explicitly routed. Missing, unknown, or closed sessions never fall back to the default Agent identity. The plugin and Bridge must both support IPC 4.0. Task session IDs do not replace per-tool authorization or room automation grants.
 

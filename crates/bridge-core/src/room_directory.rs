@@ -56,31 +56,46 @@ pub trait ControlPlaneRoomDirectoryGateway: Send + Sync {
     fn list_accessible(&self) -> PortFuture<'_, RoomDirectoryResult<Vec<AccessibleRoom>>>;
 }
 
+/// 能按名字被找到的房间：目录条目和 IPC 摘要都实现它，CLI 与 MCP 共用一套解析规则。
+pub trait NamedRoom {
+    fn room_name(&self) -> &str;
+    fn room_slug(&self) -> Option<&str>;
+}
+
+impl NamedRoom for AccessibleRoom {
+    fn room_name(&self) -> &str {
+        &self.name
+    }
+
+    fn room_slug(&self) -> Option<&str> {
+        self.slug.as_deref()
+    }
+}
+
 /// 按名字找房间：先精确匹配，再忽略大小写匹配；同名多间视为歧义，交给调用方列出候选。
 ///
 /// # Errors
 ///
 /// 没有匹配时返回 `None`；多于一间匹配时返回全部候选。
-pub fn resolve_room_by_name<'a>(
-    rooms: &'a [AccessibleRoom],
+pub fn resolve_room_by_name<'a, R: NamedRoom>(
+    rooms: &'a [R],
     name: &str,
-) -> Result<Option<&'a AccessibleRoom>, Vec<&'a AccessibleRoom>> {
+) -> Result<Option<&'a R>, Vec<&'a R>> {
     let wanted = name.trim();
     if wanted.is_empty() {
         return Ok(None);
     }
-    let exact: Vec<&AccessibleRoom> = rooms
+    let exact: Vec<&R> = rooms
         .iter()
-        .filter(|room| room.name == wanted || room.slug.as_deref() == Some(wanted))
+        .filter(|room| room.room_name() == wanted || room.room_slug() == Some(wanted))
         .collect();
     let candidates = if exact.is_empty() {
         rooms
             .iter()
             .filter(|room| {
-                room.name.eq_ignore_ascii_case(wanted)
+                room.room_name().eq_ignore_ascii_case(wanted)
                     || room
-                        .slug
-                        .as_deref()
+                        .room_slug()
                         .is_some_and(|slug| slug.eq_ignore_ascii_case(wanted))
             })
             .collect::<Vec<_>>()

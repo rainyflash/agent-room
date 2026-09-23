@@ -16,7 +16,9 @@ pub struct IpcOpenHostSessionRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcHostRoomTarget {
     pub catalog_id: String,
-    pub room_id: String,
+    /// 私人房间与已知实例的公开大厅带具体 Matrix 房间；只按目录进入公开大厅时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_id: Option<String>,
 }
 
 impl IpcOpenHostSessionRequest {
@@ -24,8 +26,10 @@ impl IpcOpenHostSessionRequest {
         validate_session_id(&self.session_key)?;
         if let Some(room) = &self.room {
             validate_session_id(&room.catalog_id)?;
-            agent_room_domain::rooms::MatrixRoomReference::new(room.room_id.clone())
-                .map_err(|_| failure("bridge.ipc.room_invalid"))?;
+            if let Some(room_id) = &room.room_id {
+                agent_room_domain::rooms::MatrixRoomReference::new(room_id.clone())
+                    .map_err(|_| failure("bridge.ipc.room_invalid"))?;
+            }
         }
         if self.display_name.trim() != self.display_name
             || self.display_name.is_empty()

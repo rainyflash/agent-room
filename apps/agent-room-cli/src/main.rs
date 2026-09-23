@@ -112,6 +112,7 @@ async fn run_command(
             Err(CliFailure::validation("cli.profile.required"))
         }
         Command::Guide => success(access::guide()),
+        Command::Rooms => success(call(backend, IpcMethod::ListRooms).await?),
         Command::Id => success(json!({"id": uuid::Uuid::now_v7()})),
         Command::Doctor => success(call(backend, IpcMethod::BridgeStatus).await?),
         Command::Session {
@@ -354,10 +355,9 @@ fn required(value: Option<String>, code: &str) -> CliResult<String> {
 
 async fn register(backend: &dyn BridgeToolClient, args: cli::RegisterArgs) -> CliResult<()> {
     let host_type = args.host.into();
-    let metadata = if matches!(args.host, cli::Host::Codex) {
-        profile::codex_task_id()?
-    } else {
-        None
+    let metadata = match args.host {
+        cli::Host::Codex => profile::codex_task_id()?,
+        cli::Host::ClaudeCode => profile::claude_code_task_id()?,
     };
     if let (Some(actual), Some(provided)) = (&metadata, &args.task_id)
         && actual != provided

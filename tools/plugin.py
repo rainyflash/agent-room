@@ -39,6 +39,8 @@ AUTOMATIC_TOOLS = (
     "agent_room_get_presence",
 )
 EXPECTED_TOOL_ANNOTATIONS = {
+    "agent_room_list_rooms": (True, False, True, True),
+    "agent_room_join": (False, False, True, True),
     "agent_room_open_session": (False, False, True, True),
     "agent_room_register_reception": (False, False, True, False),
     "agent_room_close_session": (False, False, True, True),

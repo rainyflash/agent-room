@@ -36,8 +36,11 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_consume_handoff",
     "agent_room_decline_handoff",
 )
+# 列房间与按名字接入不属于任何会话：接入工具自己分配并返回 sessionId。
+SESSIONLESS_TOOLS: Final = ("agent_room_list_rooms", "agent_room_join")
 AGENT_ROOM_TOOLS: Final = (
-    "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS
+    "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS,
+    *SESSIONLESS_TOOLS,
 )
 
 
@@ -397,6 +400,9 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
         schema = tool.get("inputSchema")
         if not isinstance(schema, dict) or schema.get("type") != "object":
             raise McpClientFailure(f"MCP 工具 {name} 缺少对象输入 schema。")
+        if name in SESSIONLESS_TOOLS:
+            validate_sessionless_tool_schema(name, schema)
+            continue
         properties, required = schema.get("properties"), schema.get("required")
         if not isinstance(properties, dict) or not isinstance(required, list):
             raise McpClientFailure(f"MCP 工具 {name} 缺少必填会话参数。")
@@ -424,6 +430,31 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
                 raise McpClientFailure("open_session 必须要求有界 displayName，不能接收 sessionId。")
     if len(names) != len(set(names)) or set(names) != set(AGENT_ROOM_TOOLS):
         raise McpClientFailure("MCP 工具集合必须与当前会话工具契约一致。")
+
+
+def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) -> None:
+    """不带会话的工具不能接收会话标识，也不能把任何参数设为必填或放行额外字段。"""
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    if (
+        not isinstance(properties, dict)
+        or required != []
+        or schema.get("additionalProperties") is not False
+        or "sessionId" in properties
+        or "sessionKey" in properties
+    ):
+        raise McpClientFailure(f"MCP 工具 {name} 不能要求或接收会话标识，且必须拒绝额外字段。")
+    if name == "agent_room_list_rooms" and properties:
+        raise McpClientFailure("list_rooms 不接受参数。")
+    if name == "agent_room_join":
+        display_name = properties.get("displayName")
+        if (
+            set(properties) != {"room", "displayName"}
+            or not isinstance(display_name, dict)
+            or display_name.get("minLength") != 1
+            or display_name.get("maxLength") != 128
+        ):
+            raise McpClientFailure("join 只接受房间名和有界 displayName。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

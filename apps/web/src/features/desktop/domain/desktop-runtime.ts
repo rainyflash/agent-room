@@ -276,7 +276,7 @@ export const hostSessionDiagnosticsSchema = z
     displayName: z.string().min(1).max(128),
     roomId: z.string().max(512).nullable().optional(),
     requestedRoom: z
-      .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512) })
+      .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512).optional() })
       .strict()
       .nullable()
       .optional(),

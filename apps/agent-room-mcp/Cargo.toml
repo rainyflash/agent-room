@@ -23,6 +23,7 @@ subtle.workspace = true
 tokio.workspace = true
 tokio-util = "0.7.18"
 url.workspace = true
+uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

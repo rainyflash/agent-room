@@ -16,7 +16,7 @@ fn 原生诊断响应与前端消费的同一份契约保持一致() {
         room_id: Some("!public:matrix.test".into()),
         requested_room: Some(IpcHostRoomTarget {
             catalog_id: "0198b601-77a3-7bb8-83eb-a8fe68c97e44".into(),
-            room_id: "!public:matrix.test".into(),
+            room_id: Some("!public:matrix.test".into()),
         }),
         session_key: Some("0198b601-77a4-7bb8-83eb-a8fe68c97e44".into()),
         reception_offer: Some(IpcReceptionOffer {

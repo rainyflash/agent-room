@@ -5,8 +5,8 @@ from queue import Empty
 from unittest.mock import patch
 
 from tools.mcp_client import (
-    AGENT_ROOM_TOOLS, SESSION_SCOPED_TOOLS, McpClientFailure, McpStdioClient, McpToolFailure,
-    parse_json_object, tool_failure_code, validate_session_tool_schemas,
+    AGENT_ROOM_TOOLS, SESSION_SCOPED_TOOLS, SESSIONLESS_TOOLS, McpClientFailure, McpStdioClient,
+    McpToolFailure, parse_json_object, tool_failure_code, validate_session_tool_schemas,
 )
 
 SESSION_A = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a60"
@@ -24,6 +24,15 @@ def test_client() -> McpStdioClient:
 def session_tool_definitions() -> list[dict[str, object]]:
     definitions = []
     for name in AGENT_ROOM_TOOLS:
+        if name in SESSIONLESS_TOOLS:
+            schema: dict[str, object] = {"type": "object", "additionalProperties": False}
+            if name == "agent_room_join":
+                schema["properties"] = {
+                    "room": {"type": ["string", "null"], "maxLength": 256},
+                    "displayName": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+                }
+            definitions.append({"name": name, "inputSchema": schema})
+            continue
         key = "sessionKey" if name == "agent_room_open_session" else "sessionId"
         properties = {key: {"type": "string", "minLength": 36, "maxLength": 36}}
         required = [key]
@@ -152,10 +161,25 @@ class McpSessionTests(unittest.TestCase):
 
 
 class McpSessionSchemaTests(unittest.TestCase):
-    def test_十四工具都有必填的会话边界(self) -> None:
+    def test_十六工具都有必填的会话边界(self) -> None:
         tools = session_tool_definitions()
-        self.assertEqual(len(tools), 14)
+        self.assertEqual(len(tools), 16)
         validate_session_tool_schemas(tools)
+
+    def test_不带会话的工具不能接收会话标识或必填参数(self) -> None:
+        for name in SESSIONLESS_TOOLS:
+            for mutation in ("session", "required", "loose"):
+                with self.subTest(name=name, mutation=mutation):
+                    tools = session_tool_definitions()
+                    schema = next(tool for tool in tools if tool["name"] == name)["inputSchema"]
+                    if mutation == "session":
+                        schema.setdefault("properties", {})["sessionId"] = {"type": "string"}
+                    elif mutation == "required":
+                        schema["required"] = ["room"]
+                    else:
+                        schema["additionalProperties"] = True
+                    with self.assertRaises(McpClientFailure):
+                        validate_session_tool_schemas(tools)
 
     def test_任何既有工具把会话改为可选都失败(self) -> None:
         for name in SESSION_SCOPED_TOOLS:

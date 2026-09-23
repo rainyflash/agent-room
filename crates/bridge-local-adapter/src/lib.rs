@@ -19,7 +19,9 @@ pub use location::{
     BridgeLocationFailure, BridgeLocationFailureKind, bridge_data_root_from_environment,
     bridge_runtime_root, resolve_bridge_data_root,
 };
-pub use log_file::{DEFAULT_LOG_FILE_CAP_BYTES, RotatingLogFile, bridge_log_root};
+pub use log_file::{
+    DEFAULT_LOG_FILE_CAP_BYTES, RotatingLogFile, bridge_log_root, create_private_directories,
+};
 pub use secret_store::{LocalSecretStore, SecretStoreFailure, SystemCredentialStore};
 pub use secure_storage_service::{
     DEFAULT_SECURE_STORAGE_SERVICE, SecureStorageService, SecureStorageServiceFailure,

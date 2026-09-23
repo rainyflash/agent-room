@@ -85,6 +85,7 @@ async fn run() -> Result<(), String> {
             .map_err(|error| error.to_string());
     }
     let service = AgentRoomMcpServer::new(backend)
+        .with_join_store(data_root.join("mcp-joins"))
         .serve(stdio())
         .await
         .map_err(|error| format!("无法建立 STDIO 会话：{error}"))?;

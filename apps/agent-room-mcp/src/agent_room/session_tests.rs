@@ -8,7 +8,7 @@ use agent_room_agent_client::BridgeToolFuture;
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcErrorCategory,
     IpcHostSessionState, IpcHostSessionSummary, IpcMethod, IpcOpenHostSessionRequest, IpcResponse,
-    IpcSelfSummary,
+    IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary,
 };
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
@@ -682,6 +682,209 @@ async fn 建立会话失败摘要与响应类型错误不能伪装为成功() {
     harness.stop().await;
 }
 
+/// 按名字接入时会话键由服务生成，不能用逐次比对的脚本桥；这个假 Bridge 只记录打开请求。
+struct JoinBridge {
+    rooms: Vec<IpcRoomSummary>,
+    opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
+    connected_room: Mutex<String>,
+}
+
+impl JoinBridge {
+    fn new(rooms: Vec<IpcRoomSummary>) -> Self {
+        Self {
+            rooms,
+            opened: Mutex::new(Vec::new()),
+            connected_room: Mutex::new("!game:test.invalid".into()),
+        }
+    }
+}
+
+impl BridgeToolClient for JoinBridge {
+    fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        let response = match method {
+            IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
+                rooms: self.rooms.clone(),
+            }),
+            IpcMethod::OpenHostSession(request) => {
+                self.opened.lock().unwrap().push(request);
+                Ok(IpcResponse::HostSession {
+                    session: IpcHostSessionSummary {
+                        session_id: uuid::Uuid::now_v7().to_string(),
+                        state: IpcHostSessionState::Ready,
+                        agent_id: None,
+                        error_code: None,
+                    },
+                })
+            }
+            IpcMethod::WithSession { method, .. } if matches!(*method, IpcMethod::GetSelf) => {
+                Ok(IpcResponse::SelfSummary {
+                    summary: IpcSelfSummary {
+                        room_catalog_id: None,
+                        agent: IpcAgentSummary {
+                            agent_id: uuid::Uuid::now_v7().to_string(),
+                            display_name: "Scout".into(),
+                            matrix_user_id: "@scout:test.invalid".into(),
+                            avatar_url: None,
+                        },
+                        instance_id: uuid::Uuid::now_v7().to_string(),
+                        matrix_device_id: "TEST".into(),
+                        room_id: self.connected_room.lock().unwrap().clone(),
+                        connection_state: IpcBridgeState::Ready,
+                        granted_capabilities: vec![],
+                    },
+                })
+            }
+            other => Err(BridgeToolFailure::new(
+                "test.unexpected_call",
+                IpcErrorCategory::Internal,
+                false,
+                BTreeMap::from([("method".to_owned(), format!("{other:?}"))]),
+            )),
+        };
+        Box::pin(async move { response })
+    }
+}
+
+fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
+    IpcRoomSummary {
+        kind,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: matches!(kind, IpcRoomKind::PrivateRoom)
+            .then(|| "!game:test.invalid".to_owned()),
+        name: name.to_owned(),
+        slug: slug.map(str::to_owned),
+        membership: matches!(kind, IpcRoomKind::PrivateRoom).then_some(IpcRoomMembership::Joined),
+    }
+}
+
+#[tokio::test]
+async fn 按房间名接入_同任务复用人物_没有任务时按连接复用() {
+    let bridge = Arc::new(JoinBridge::new(vec![
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let listed = harness.call("agent_room_list_rooms", json!({})).await;
+    assert_ne!(listed["isError"], true);
+    assert_eq!(
+        listed["structuredContent"]["rooms"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        listed["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("不可信")
+    );
+
+    harness.send(json!({"jsonrpc":"2.0","id":200,"method":"tools/call","params":{
+        "name":"agent_room_join","arguments":{"room":"Game-Dev","displayName":"Scout"},"_meta":{"threadId":SESSION_B}
+    }})).await;
+    let joined = harness.receive().await["result"].clone();
+    assert_ne!(joined["isError"], true, "{joined}");
+    let first = &joined["structuredContent"];
+    assert_eq!(first["state"], "ready");
+    assert_eq!(first["identity"], "created");
+    assert_eq!(first["displayName"], "Scout");
+    assert_eq!(first["room"]["name"], "game dev");
+    assert_eq!(first["self"]["roomId"], "!game:test.invalid");
+    assert_eq!(first["sessionId"].as_str().unwrap().len(), 36);
+    let key = first["sessionKey"].as_str().unwrap().to_owned();
+
+    // 同一任务再次接入：同一会话键与名字，且不必再给名字。
+    harness.send(json!({"jsonrpc":"2.0","id":201,"method":"tools/call","params":{
+        "name":"agent_room_join","arguments":{"room":"game dev"},"_meta":{"threadId":SESSION_B}
+    }})).await;
+    let again = harness.receive().await["result"].clone();
+    assert_eq!(again["structuredContent"]["identity"], "reused");
+    assert_eq!(again["structuredContent"]["hostTask"], SESSION_B);
+    assert_eq!(again["structuredContent"]["sessionKey"], key);
+    assert_eq!(again["structuredContent"]["displayName"], "Scout");
+    {
+        let opened = bridge.opened.lock().unwrap();
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened[0], opened[1]);
+        assert_eq!(opened[0].session_key, key);
+        assert_eq!(
+            opened[0].room.as_ref().unwrap().room_id.as_deref(),
+            Some("!game:test.invalid")
+        );
+    }
+
+    // 别的任务不共享人物；没有任务标识时每次都是新人物。
+    harness.send(json!({"jsonrpc":"2.0","id":202,"method":"tools/call","params":{
+        "name":"agent_room_join","arguments":{"room":"game dev"},"_meta":{"threadId":SESSION_C}
+    }})).await;
+    let other = harness.receive().await["result"].clone();
+    assert_eq!(other["structuredContent"]["identity"], "created");
+    assert_ne!(other["structuredContent"]["sessionKey"], key);
+    // 没有 threadId 元数据时按宿主环境或这条连接复用：重试同一房间仍是同一人物。
+    let lobby = harness
+        .call("agent_room_join", json!({"room":"lobby"}))
+        .await;
+    assert_eq!(lobby["structuredContent"]["identity"], "created", "{lobby}");
+    assert_eq!(lobby["structuredContent"]["room"]["kind"], "public_lobby");
+    assert!(lobby["structuredContent"]["room"]["matrixRoomId"].is_null());
+    let lobby_retry = harness
+        .call("agent_room_join", json!({"room":"Lobby"}))
+        .await;
+    assert_eq!(lobby_retry["structuredContent"]["identity"], "reused");
+    assert_eq!(
+        lobby_retry["structuredContent"]["sessionKey"],
+        lobby["structuredContent"]["sessionKey"]
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 按房间名接入_默认进大厅_找不到或连错房间都不报成功() {
+    let bridge = Arc::new(JoinBridge::new(vec![
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    // 不给房间名就进默认大厅：打开请求不带房间。
+    let default = harness.call("agent_room_join", json!({})).await;
+    assert_ne!(default["isError"], true);
+    assert!(default["structuredContent"]["room"].is_null());
+    assert!(bridge.opened.lock().unwrap().last().unwrap().room.is_none());
+
+    // 找不到房间：失败并列出能进的房间，不打开会话。
+    let opened_before = bridge.opened.lock().unwrap().len();
+    let missing = harness
+        .call("agent_room_join", json!({"room":"missing"}))
+        .await;
+    assert_eq!(missing["isError"], true);
+    assert_eq!(
+        missing["structuredContent"]["code"],
+        "agent.join.room_not_found"
+    );
+    assert_eq!(
+        missing["structuredContent"]["details"]["rooms"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(bridge.opened.lock().unwrap().len(), opened_before);
+
+    // 连上的房间与目录不符不能报成功。
+    *bridge.connected_room.lock().unwrap() = "!other:test.invalid".into();
+    let mismatch = harness
+        .call("agent_room_join", json!({"room":"game dev"}))
+        .await;
+    assert_eq!(mismatch["isError"], true);
+    assert_eq!(
+        mismatch["structuredContent"]["code"],
+        "agent.join.room_mismatch"
+    );
+    harness.stop().await;
+}
+
 #[test]
 fn 所有工具的_schema_都公开强制的会话边界() {
     let server = AgentRoomMcpServer::new(Arc::new(ScriptedBridge::default()));
@@ -693,6 +896,26 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             "{}",
             tool.name
         );
+        // 列房间不涉及会话；按名字接入的会话键由服务按宿主任务保存，调用方不传。
+        if tool.name == "agent_room_list_rooms" {
+            assert!(
+                schema
+                    .get("required")
+                    .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty))
+            );
+            continue;
+        }
+        if tool.name == "agent_room_join" {
+            assert!(
+                schema
+                    .get("required")
+                    .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty))
+            );
+            assert!(schema["properties"].get("sessionId").is_none());
+            assert!(schema["properties"].get("sessionKey").is_none());
+            assert_eq!(schema["properties"]["displayName"]["maxLength"], 128);
+            continue;
+        }
         let required = schema["required"]
             .as_array()
             .expect("每个工具都有必填会话参数");
