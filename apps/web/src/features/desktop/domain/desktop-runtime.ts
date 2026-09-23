@@ -324,6 +324,17 @@ export const agentHostPlanSchema = z
   .strict();
 export type AgentHostPlan = z.infer<typeof agentHostPlanSchema>;
 
+export const agentHostSkillStatusSchema = z
+  .object({
+    host: agentHostKindSchema,
+    state: z.enum(['unsupported', 'missing', 'outdated', 'current']),
+    target: z.string().min(1).max(1024).nullable(),
+    bundledDigest: z.string().length(64).nullable(),
+    installedDigest: z.string().length(64).nullable(),
+  })
+  .strict();
+export type AgentHostSkillStatus = z.infer<typeof agentHostSkillStatusSchema>;
+
 export const agentHostApplyReceiptSchema = z
   .object({
     host: agentHostKindSchema,
@@ -428,6 +439,9 @@ export type DesktopRuntimeGateway = {
   detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
   readHostSessions?(): Promise<Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>>;
   planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
+  /** Whether this build's agent-room skill is installed in the host's skill folder. */
+  skillStatus?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
+  installSkill?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
   applyHost?(
     host: AgentHostKind,
     expectedOriginalDigest: string,

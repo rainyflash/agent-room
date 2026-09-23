@@ -234,6 +234,20 @@ function ConnectionInvite({
   const detection = host === 'other' ? null : controller.hosts.find((entry) => entry.host === host);
   const { checkHost, readHostSessions } = controller;
   const setup = host === 'other' ? null : controller.hostSetup[host];
+  // Claude Code is the only host with a skill folder today; check it whenever it is installed so the
+  // invitation can shrink to one line as soon as the skill is current.
+  const skillHost: AgentHostKind | null = controller.hosts.some(
+    (entry) => entry.host === 'claude-code' && entry.installed,
+  )
+    ? 'claude-code'
+    : null;
+  const skillHostLabel = hostLabels['claude-code'];
+  const { checkSkill } = controller;
+  useEffect(() => {
+    if (skillHost !== null) void checkSkill(skillHost);
+  }, [skillHost, checkSkill]);
+  const skillSetup = skillHost === null ? undefined : controller.skillSetup[skillHost];
+  const skillCurrent = skillSetup?.phase === 'ready' && skillSetup.status.state === 'current';
   const canCopy =
     validName &&
     normalizeInviteDisplayName(identity.displayName) !== null &&
@@ -324,7 +338,7 @@ function ConnectionInvite({
   const scope = invocation + ' --profile ' + identity.sessionKey;
   const prompt =
     mode === 'cli'
-      ? t('agentInvite.cli.prompt', {
+      ? t(skillCurrent ? 'agentInvite.cli.promptWithSkill' : 'agentInvite.cli.prompt', {
           command:
             invocation +
             ' join --invite ' +
@@ -347,6 +361,15 @@ function ConnectionInvite({
     setCopyState('idle');
     setCopiedAt(null);
   };
+  // The instructions change shape once the skill is current, so an earlier copy is stale.
+  const skillCurrentRef = useRef(skillCurrent);
+  useEffect(() => {
+    if (skillCurrentRef.current === skillCurrent) return;
+    skillCurrentRef.current = skillCurrent;
+    copyGeneration.current += 1;
+    setCopyState('idle');
+    setCopiedAt(null);
+  }, [skillCurrent]);
   const newIdentity = () => {
     setIdentity(makeIdentity());
     setRestored(false);
@@ -457,6 +480,9 @@ function ConnectionInvite({
           {controller.available && cliConfiguration === null && mode === 'cli' ? (
             <p role="status">{t('agentInvite.cli.missing')}</p>
           ) : null}
+          {mode === 'cli' && skillHost !== null ? (
+            <SkillSetup host={skillHost} hostLabel={skillHostLabel} />
+          ) : null}
           <details className="agent-invite__advanced">
             <summary>{t('agentInvite.advanced')}</summary>
             <div
@@ -524,6 +550,9 @@ function ConnectionInvite({
                             )
                       }
                     />
+                    {host === 'claude-code' && skillHost !== null ? (
+                      <SkillSetup host={skillHost} hostLabel={skillHostLabel} />
+                    ) : null}
                   </>
                 ) : (
                   <p>{t('agentInvite.mcp.web')}</p>
@@ -694,6 +723,58 @@ function HostSetup({
       {setup?.phase !== 'failed' ? null : (
         <p className="agent-invite__error" role="alert">
           {t(hostFailureMessage(setup.error.code), { host: hostLabel })}
+          <small>{t('agentInvite.errorCode', { code: setup.error.code })}</small>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Installs this build's agent-room skill into the host; with it loaded, the invitation is one line. */
+function SkillSetup({
+  host,
+  hostLabel,
+}: {
+  readonly host: AgentHostKind;
+  readonly hostLabel: string;
+}) {
+  const { t } = useTranslation();
+  const controller = useDesktopRuntimeController();
+  const setup = controller.skillSetup[host];
+  const status = setup?.phase === 'ready' ? setup.status : null;
+  if (status?.state === 'unsupported') return null;
+  const busy = setup?.phase === 'checking' || setup?.phase === 'installing';
+  return (
+    <div className="agent-invite__setup agent-invite__skill">
+      {status?.state === 'current' ? (
+        <p className="agent-invite__success" role="status">
+          <CircleCheckBig aria-hidden="true" />
+          {t('agentInvite.skill.current', { host: hostLabel })}
+        </p>
+      ) : (
+        <>
+          <p>{t('agentInvite.skill.description', { host: hostLabel })}</p>
+          <Button
+            disabled={controller.busy !== null || busy}
+            icon={busy ? <RefreshCw aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
+            onClick={() => void controller.installSkill(host)}
+            size="compact"
+            tone="network"
+          >
+            {t(
+              setup?.phase === 'installing'
+                ? 'agentInvite.skill.installing'
+                : status?.state === 'outdated'
+                  ? 'agentInvite.skill.update'
+                  : 'agentInvite.skill.install',
+              { host: hostLabel },
+            )}
+          </Button>
+        </>
+      )}
+      {setup?.phase !== 'failed' ? null : (
+        <p className="agent-invite__error" role="alert">
+          {t('agentInvite.skill.failed', { host: hostLabel })}
           <small>{t('agentInvite.errorCode', { code: setup.error.code })}</small>
         </p>
       )}

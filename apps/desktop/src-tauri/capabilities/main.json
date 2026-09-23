@@ -28,6 +28,8 @@
     "allow-desktop-plan-agent-host",
     "allow-desktop-apply-agent-host",
     "allow-desktop-remove-agent-host",
+    "allow-desktop-skill-status",
+    "allow-desktop-install-skill",
     "allow-desktop-bootstrap-default-agent",
     "allow-desktop-configure-agent-runtime",
     "allow-desktop-lobby-snapshot",

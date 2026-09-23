@@ -40,11 +40,12 @@ use commands::{
     desktop_apply_agent_host, desktop_begin_human_authentication,
     desktop_begin_matrix_authentication, desktop_bootstrap_default_agent, desktop_check_update,
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
-    desktop_detect_agent_hosts, desktop_host_session_diagnostics, desktop_install_update,
-    desktop_load_matrix_session, desktop_lobby_snapshot, desktop_open_authorization,
-    desktop_plan_agent_host, desktop_reauthorize_bridge, desktop_remove_agent_host,
-    desktop_restore_human_session, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_save_matrix_session, desktop_set_autostart,
+    desktop_detect_agent_hosts, desktop_host_session_diagnostics, desktop_install_skill,
+    desktop_install_update, desktop_load_matrix_session, desktop_lobby_snapshot,
+    desktop_open_authorization, desktop_plan_agent_host, desktop_reauthorize_bridge,
+    desktop_remove_agent_host, desktop_restore_human_session, desktop_retry_bridge,
+    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
+    desktop_skill_status,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -144,6 +145,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_plan_agent_host,
             desktop_apply_agent_host,
             desktop_remove_agent_host,
+            desktop_skill_status,
+            desktop_install_skill,
             desktop_bootstrap_default_agent,
             desktop_configure_agent_runtime,
             desktop_lobby_snapshot,
@@ -234,7 +237,8 @@ fn setup_runtime(
         }
     });
     let host_context = HostContext::from_environment(mcp_executable)
-        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
+        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?
+        .with_skill_source(bundled_skill_source(app));
     let hosts = Arc::new(HostConfigurator::system(host_context));
     app.manage(DesktopRuntime {
         bridge,
@@ -287,6 +291,24 @@ fn installed_mcp_executable() -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err("安装包缺少 agent-room-mcp".to_owned())
+    }
+}
+
+/// 随包携带的技能文件（`skills/agent-room/SKILL.md`）。找不到时技能安装报为不支持，
+/// 不影响其他功能。
+fn bundled_skill_source(app: &tauri::App) -> Option<PathBuf> {
+    let path = app
+        .path()
+        .resolve(
+            "skills/agent-room/SKILL.md",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()?;
+    if path.is_file() {
+        Some(path)
+    } else {
+        tracing::warn!(path = %path.display(), "安装包里没有技能文件，技能安装不可用");
+        None
     }
 }
 

@@ -1,6 +1,6 @@
 use agent_room_host_adapters::{
     ApplyReceipt, ConfigurationPlan, HostConfigurator, HostDetection, HostFailure, HostKind,
-    ManualHostConfiguration,
+    ManualHostConfiguration, SkillStatus,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -383,6 +383,33 @@ pub(crate) async fn desktop_apply_agent_host(
 ) -> Result<ApplyReceipt, DesktopCommandFailure> {
     let hosts = runtime.hosts.clone();
     tauri::async_runtime::spawn_blocking(move || hosts.apply(host, &expected_original_digest))
+        .await
+        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
+        .map_err(Into::into)
+}
+
+/// 本版技能文件在宿主里的安装状态；装上后接入说明只剩一行命令。
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_skill_status(
+    runtime: State<'_, DesktopRuntime>,
+    host: HostKind,
+) -> Result<SkillStatus, DesktopCommandFailure> {
+    let hosts = runtime.hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || hosts.skill_status(host))
+        .await
+        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_install_skill(
+    runtime: State<'_, DesktopRuntime>,
+    host: HostKind,
+) -> Result<SkillStatus, DesktopCommandFailure> {
+    let hosts = runtime.hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || hosts.install_skill(host))
         .await
         .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
         .map_err(Into::into)

@@ -11,6 +11,7 @@ import {
   type BridgeRuntime,
   type AgentHostDetection,
   type AgentHostKind,
+  type AgentHostSkillStatus,
   type DesktopAgentTarget,
   type DesktopDeepLink,
   type DesktopNotification,
@@ -36,6 +37,11 @@ type DesktopOperation =
   | 'update-check'
   | 'update-install';
 
+export type SkillSetupState =
+  | { readonly phase: 'checking' | 'installing' }
+  | { readonly phase: 'ready'; readonly status: AgentHostSkillStatus }
+  | { readonly phase: 'failed'; readonly error: DesktopRuntimeFailure };
+
 export type HostSetupState =
   | { readonly phase: 'checking' | 'required' | 'configured' }
   | { readonly phase: 'failed'; readonly error: DesktopRuntimeFailure };
@@ -54,6 +60,9 @@ export type DesktopRuntimeController = {
   readonly configuredHost: AgentHostKind | null;
   readonly hostSetup: Readonly<Partial<Record<AgentHostKind, HostSetupState>>>;
   readonly checkHost: (host: AgentHostKind) => Promise<void>;
+  readonly skillSetup: Readonly<Partial<Record<AgentHostKind, SkillSetupState>>>;
+  readonly checkSkill: (host: AgentHostKind) => Promise<void>;
+  readonly installSkill: (host: AgentHostKind) => Promise<void>;
   readonly readHostSessions: () => Promise<
     Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
   >;
@@ -121,6 +130,44 @@ export function useDesktopRuntime(
         [host]: plan.ok
           ? { phase: plan.value.action === 'unchanged' ? 'configured' : 'required' }
           : { phase: 'failed', error: plan.error },
+      }));
+    },
+    [gateway],
+  );
+  const [skillSetup, setSkillSetup] = useState<Partial<Record<AgentHostKind, SkillSetupState>>>({});
+  const skillChecks = useRef<Partial<Record<AgentHostKind, number>>>({});
+  const checkSkill = useCallback(
+    async (host: AgentHostKind): Promise<void> => {
+      const generation = (skillChecks.current[host] ?? 0) + 1;
+      skillChecks.current[host] = generation;
+      setSkillSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
+      const status =
+        (await gateway.skillStatus?.(host)) ??
+        err({ code: 'desktop.hosts.skill_unavailable', retryable: false });
+      if (skillChecks.current[host] !== generation) return;
+      setSkillSetup((previous) => ({
+        ...previous,
+        [host]: status.ok
+          ? { phase: 'ready', status: status.value }
+          : { phase: 'failed', error: status.error },
+      }));
+    },
+    [gateway],
+  );
+  const installSkill = useCallback(
+    async (host: AgentHostKind): Promise<void> => {
+      const generation = (skillChecks.current[host] ?? 0) + 1;
+      skillChecks.current[host] = generation;
+      setSkillSetup((previous) => ({ ...previous, [host]: { phase: 'installing' } }));
+      const status =
+        (await gateway.installSkill?.(host)) ??
+        err({ code: 'desktop.hosts.skill_unavailable', retryable: false });
+      if (skillChecks.current[host] !== generation) return;
+      setSkillSetup((previous) => ({
+        ...previous,
+        [host]: status.ok
+          ? { phase: 'ready', status: status.value }
+          : { phase: 'failed', error: status.error },
       }));
     },
     [gateway],
@@ -482,6 +529,9 @@ export function useDesktopRuntime(
     configuredHost,
     hostSetup,
     checkHost,
+    skillSetup,
+    checkSkill,
+    installSkill,
     readHostSessions,
     checkUpdate,
     bootstrapDefaultAgent,

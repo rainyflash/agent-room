@@ -68,6 +68,7 @@ function gateway(
     readonly sessions?: () => SessionsResult;
     readonly installed?: readonly ('codex' | 'claude-code' | 'cursor')[];
     readonly configured?: boolean;
+    readonly skill?: 'missing' | 'outdated' | 'current' | 'unsupported';
   } = {},
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
@@ -75,6 +76,20 @@ function gateway(
   const applyHost = vi.fn(() => {
     configured = true;
     return Promise.resolve(ok(undefined));
+  });
+  let skill = options.skill ?? 'unsupported';
+  const skillStatus = (host: 'codex' | 'claude-code' | 'cursor') =>
+    ok({
+      host,
+      state: host === 'claude-code' ? skill : ('unsupported' as const),
+      target: host === 'claude-code' ? 'C:/Users/ada/.claude/skills/agent-room/SKILL.md' : null,
+      bundledDigest: '2'.repeat(64),
+      installedDigest:
+        skill === 'current' ? '2'.repeat(64) : skill === 'outdated' ? '3'.repeat(64) : null,
+    });
+  const installSkill = vi.fn((host: 'codex' | 'claude-code' | 'cursor') => {
+    skill = 'current';
+    return Promise.resolve(skillStatus(host));
   });
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
@@ -135,8 +150,10 @@ function gateway(
         }),
       ),
     applyHost,
+    skillStatus: (host) => Promise.resolve(skillStatus(host)),
+    installSkill,
   };
-  return { value, applyHost };
+  return { value, applyHost, installSkill };
 }
 
 function renderDialog(
@@ -287,6 +304,39 @@ describe('AgentInviteDialog', () => {
       expect(writeText).toHaveBeenCalledTimes(3);
     });
     expect(copied(writeText, 2)).toBe(prompt);
+  });
+
+  it('装上 Claude Code 的技能后，接入说明缩成几行；技能过期时提示更新', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const runtime = gateway({ installed: ['claude-code'], skill: 'outdated' });
+    renderDialog(runtime.value);
+    await readyToCopy();
+    // 技能过期：说明仍是完整版，按钮写「更新」。
+    const update = await screen.findByRole('button', { name: 'Update the skill for Claude Code' });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await screen.findByText('Copied. Paste it to your agent.');
+    const long = copied(writeText, 0);
+    expect(long).toContain('ack --event');
+    expect(long).not.toContain('agent-room skill');
+
+    fireEvent.click(update);
+    await screen.findByText(/The agent-room skill is installed for Claude Code/u);
+    expect(runtime.installSkill).toHaveBeenCalledWith('claude-code');
+    // 技能就绪后上一次复制作废，按钮回到「复制」；等它回来再点，覆盖率运行下时序更慢。
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(2);
+    });
+    const short = copied(writeText, 1);
+    expect(short).toContain('Follow the agent-room skill');
+    expect(short).toContain('join --invite');
+    expect(short).toContain('I authorize conversational replies');
+    expect(short).toContain('guide');
+    expect(short).not.toContain('ack --event');
+    expect(short.length).toBeLessThan(long.length / 2);
+    // 同一身份：两次复制的是同一个 profile。
+    expect(profileIn(short)).toBe(profileIn(long));
   });
 
   it('空名字不能复制；复制后锁定身份，切换协议不会创建另一个人物', async () => {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-install-skill"
+description = "Enables the desktop_install_skill command without any pre-configured scope."
+commands.allow = ["desktop_install_skill"]
+
+[[permission]]
+identifier = "deny-desktop-install-skill"
+description = "Denies the desktop_install_skill command without any pre-configured scope."
+commands.deny = ["desktop_install_skill"]

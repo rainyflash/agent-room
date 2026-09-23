@@ -627,6 +627,12 @@
           "markdownDescription": "Enables the desktop_host_session_diagnostics command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_install_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-install-skill",
+          "markdownDescription": "Enables the desktop_install_skill command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_install_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-install-update",
@@ -735,6 +741,12 @@
           "markdownDescription": "Enables the desktop_set_language command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_skill_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-skill-status",
+          "markdownDescription": "Enables the desktop_skill_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_agent_recovery command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-agent-recovery",
@@ -805,6 +817,12 @@
           "type": "string",
           "const": "deny-desktop-host-session-diagnostics",
           "markdownDescription": "Denies the desktop_host_session_diagnostics command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_install_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-install-skill",
+          "markdownDescription": "Denies the desktop_install_skill command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_install_update command without any pre-configured scope.",
@@ -913,6 +931,12 @@
           "type": "string",
           "const": "deny-desktop-set-language",
           "markdownDescription": "Denies the desktop_set_language command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_skill_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-skill-status",
+          "markdownDescription": "Denies the desktop_skill_status command without any pre-configured scope."
         },
         {
           "description": "This permission set configures if your\napplication can enable or disable auto\nstarting the application on boot.\n\n#### Granted Permissions\n\nIt allows all to check, enable and\ndisable the automatic start on boot.\n\n\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-is-enabled`",
