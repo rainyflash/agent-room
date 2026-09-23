@@ -1,8 +1,17 @@
 use std::sync::atomic::AtomicUsize;
 
-use agent_room_bridge_ipc::{
-    IpcAgentSummary, IpcBridgeState, IpcOpenContentRequest, IpcSelfSummary,
+use agent_room_bridge_core::{
+    join_codes::{
+        ControlPlaneJoinCodeGateway, JoinCodeFailure, JoinCodeFailureKind, JoinCodeResult,
+        JoinCodeRoom,
+    },
+    onboarding::{BridgeDefaultAgent, ControlPlaneOnboardingResult, HostAgentRegistrationGateway},
 };
+use agent_room_bridge_ipc::{
+    IpcAgentSummary, IpcBridgeState, IpcOpenContentRequest, IpcRedeemJoinCodeRequest,
+    IpcResolveJoinCodeRequest, IpcSelfSummary,
+};
+use agent_room_domain::ids::AgentCreationRequestId;
 use tokio::sync::Notify;
 
 use super::*;
@@ -533,6 +542,79 @@ impl ControlPlaneRoomDirectoryGateway for DirectoryFake {
     }
 }
 
+/// 控制面的口令接口：只认一个口令，记下查看与兑换的调用。
+#[derive(Default)]
+struct JoinCodesFake {
+    resolved: std::sync::Mutex<Vec<String>>,
+    redeemed: std::sync::Mutex<Vec<(agent_room_domain::ids::AgentId, String)>>,
+}
+
+impl ControlPlaneJoinCodeGateway for JoinCodesFake {
+    fn resolve<'a>(&'a self, code: &'a str) -> PortFuture<'a, JoinCodeResult<JoinCodeRoom>> {
+        self.resolved.lock().unwrap().push(code.to_owned());
+        Box::pin(async move { code_room(code) })
+    }
+
+    fn redeem<'a>(
+        &'a self,
+        agent_id: agent_room_domain::ids::AgentId,
+        code: &'a str,
+    ) -> PortFuture<'a, JoinCodeResult<JoinCodeRoom>> {
+        self.redeemed
+            .lock()
+            .unwrap()
+            .push((agent_id, code.to_owned()));
+        Box::pin(async move { code_room(code) })
+    }
+}
+
+const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
+
+fn code_room(code: &str) -> JoinCodeResult<JoinCodeRoom> {
+    if code != JOIN_CODE {
+        return Err(JoinCodeFailure::new(JoinCodeFailureKind::NotFound));
+    }
+    Ok(JoinCodeRoom {
+        catalog_id: agent_room_domain::ids::RoomCatalogId::from_uuid(Uuid::from_u128(7)),
+        matrix_room_id: agent_room_domain::rooms::MatrixRoomReference::new(
+            "!project:matrix.test".to_owned(),
+        )
+        .expect("Matrix 房间标识有效"),
+        name: "项目室".to_owned(),
+    })
+}
+
+/// 控制面按会话键幂等地建宿主人物：同一个键总是同一个 Agent。
+#[derive(Default)]
+struct HostAgentsFake {
+    created: std::sync::Mutex<Vec<(AgentCreationRequestId, String)>>,
+}
+
+impl HostAgentRegistrationGateway for HostAgentsFake {
+    fn create_host_agent<'a>(
+        &'a self,
+        session_key: AgentCreationRequestId,
+        display_name: &'a str,
+    ) -> PortFuture<'a, ControlPlaneOnboardingResult<BridgeDefaultAgent>> {
+        self.created
+            .lock()
+            .unwrap()
+            .push((session_key, display_name.to_owned()));
+        let agent = BridgeDefaultAgent {
+            agent_id: agent_room_domain::ids::AgentId::from_uuid(session_key.as_uuid()),
+            display_name: display_name.to_owned(),
+        };
+        Box::pin(async move { Ok(agent) })
+    }
+}
+
+fn join_codes(gateway: Arc<JoinCodesFake>, host_agents: Arc<HostAgentsFake>) -> JoinCodeAccess {
+    JoinCodeAccess {
+        gateway,
+        host_agents,
+    }
+}
+
 struct RefusingHandler;
 
 impl BridgeIpcRequestHandler for RefusingHandler {
@@ -585,6 +667,7 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
             ],
         }),
         invitations: InvitationSlot::default(),
+        join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
     };
 
     let response = handler
@@ -614,6 +697,7 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         connection_status: Arc::new(ReadyStatus),
         room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
         invitations: InvitationSlot::default(),
+        join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
     };
     let pending = |response: IpcResponse| {
         let IpcResponse::Invitation { invitation } = response else {
@@ -682,4 +766,80 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         ),
         None
     );
+}
+
+#[tokio::test]
+async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再让它加入() {
+    let gateway = Arc::new(JoinCodesFake::default());
+    let host_agents = Arc::new(HostAgentsFake::default());
+    let handler = SessionAwareIpcHandler {
+        default: Arc::new(RefusingHandler),
+        sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
+        connection_status: Arc::new(ReadyStatus),
+        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        invitations: InvitationSlot::default(),
+        join_codes: join_codes(gateway.clone(), host_agents.clone()),
+    };
+    let room = |response: IpcResponse| {
+        let IpcResponse::JoinCodeRoom { room } = response else {
+            panic!("应返回口令对应的房间");
+        };
+        room
+    };
+
+    let resolved = room(
+        handler
+            .dispatch(IpcMethod::ResolveJoinCode(IpcResolveJoinCodeRequest {
+                code: JOIN_CODE.to_owned(),
+            }))
+            .await
+            .expect("查看房间"),
+    );
+    assert_eq!(resolved.kind, IpcRoomKind::PrivateRoom);
+    assert_eq!(resolved.name, "项目室");
+    assert_eq!(
+        resolved.matrix_room_id.as_deref(),
+        Some("!project:matrix.test")
+    );
+    assert!(
+        host_agents.created.lock().unwrap().is_empty(),
+        "只看不建人物"
+    );
+    assert!(gateway.redeemed.lock().unwrap().is_empty());
+
+    let session_key = Uuid::now_v7();
+    let redeemed = room(
+        handler
+            .dispatch(IpcMethod::RedeemJoinCode(IpcRedeemJoinCodeRequest {
+                session_key: session_key.to_string(),
+                display_name: "Scout".to_owned(),
+                code: JOIN_CODE.to_owned(),
+            }))
+            .await
+            .expect("兑换口令"),
+    );
+    assert_eq!(redeemed, resolved);
+    assert_eq!(
+        host_agents.created.lock().unwrap().as_slice(),
+        &[(
+            AgentCreationRequestId::from_uuid(session_key),
+            "Scout".to_owned()
+        )]
+    );
+    assert_eq!(
+        gateway.redeemed.lock().unwrap().as_slice(),
+        &[(
+            agent_room_domain::ids::AgentId::from_uuid(session_key),
+            JOIN_CODE.to_owned()
+        )]
+    );
+
+    let wrong = handler
+        .dispatch(IpcMethod::ResolveJoinCode(IpcResolveJoinCodeRequest {
+            code: "0000-0000-0000".to_owned(),
+        }))
+        .await
+        .expect_err("口令不对");
+    assert_eq!(wrong.code(), "bridge.join_code.not_found");
+    assert!(!wrong.retryable());
 }

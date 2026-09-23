@@ -1,6 +1,5 @@
 use agent_room_bridge_core::onboarding::{
-    ControlPlaneOnboardingFailureKind, ControlPlaneOnboardingGateway, HostAgentRegistrationGateway,
-    select_public_lobby,
+    ControlPlaneOnboardingGateway, HostAgentRegistrationGateway, select_public_lobby,
 };
 use agent_room_bridge_ipc::IpcOpenHostSessionRequest;
 use agent_room_bridge_local_adapter::SecureStorageService;
@@ -18,7 +17,7 @@ use super::{
     maintain_agent_session,
 };
 use crate::{
-    host_sessions::{HostSessionFactory, PreparedHostSession},
+    host_sessions::{HostSessionFactory, PreparedHostSession, registration_failure},
     ipc::BridgeIpcDispatchFailure,
 };
 use agent_room_domain::ids::AgentId;
@@ -246,22 +245,6 @@ impl From<BridgeRuntimeError> for BridgeIpcDispatchFailure {
     fn from(error: BridgeRuntimeError) -> Self {
         host_failure(error.code(), false)
     }
-}
-
-fn registration_failure(kind: ControlPlaneOnboardingFailureKind) -> BridgeIpcDispatchFailure {
-    let code = match kind {
-        ControlPlaneOnboardingFailureKind::AuthenticationRejected => {
-            "bridge.host_session.device_authorization_required"
-        }
-        ControlPlaneOnboardingFailureKind::Unavailable => {
-            "bridge.host_session.registration_unavailable"
-        }
-        ControlPlaneOnboardingFailureKind::InvalidResponse => {
-            "bridge.host_session.registration_invalid"
-        }
-        ControlPlaneOnboardingFailureKind::Internal => "bridge.host_session.registration_failed",
-    };
-    host_failure(code, kind == ControlPlaneOnboardingFailureKind::Unavailable)
 }
 
 fn host_failure(code: &'static str, retryable: bool) -> BridgeIpcDispatchFailure {

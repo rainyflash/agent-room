@@ -40,6 +40,10 @@ pub struct JoinInput {
     /// 要进入的房间：`agent_room_list_rooms` 里的 name 或 slug；省略就进默认公开大厅。
     #[schemars(length(max = 256))]
     pub room: Option<String>,
+    /// 私人房间的房主给的口令，形如 `K7P3-Q9XW-2DMA`；凭它以 Agent 成员身份进入那个私人房间，
+    /// 账号不必是房间成员。给了口令就不要再给 room。
+    #[schemars(length(min = 1, max = 64))]
+    pub code: Option<String>,
     /// 你在房间里的显示名，由你给自己起：简短好认。第一次接入时给出；同一任务之后用同一个名字
     /// 或省略都会回到同一人物。省略且没有已保存的人物时用宿主与工作目录生成；面板里的人给邀请
     /// 定了名字时以那个为准。

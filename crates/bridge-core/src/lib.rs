@@ -4,6 +4,7 @@ pub mod agent_verification;
 pub mod authorization;
 pub mod handoffs;
 pub mod ipc;
+pub mod join_codes;
 pub mod lobby_session;
 pub mod matrix_recovery;
 pub mod matrix_security;

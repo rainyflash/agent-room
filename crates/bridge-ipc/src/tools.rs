@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcInvitationOffer,
-    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcWithdrawInvitationRequest, limits,
+    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
+    IpcResolveJoinCodeRequest, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +29,10 @@ pub enum IpcMethod {
     WithdrawInvitation(IpcWithdrawInvitationRequest),
     /// 不带邀请的 join 查看正在等待的人物；用它开出会话时这份邀请才被用掉。
     ReadInvitation,
+    /// 凭私人房间口令查看房间，供 CLI/MCP 决定用哪个人物；不让任何 Agent 加入，也不需要先开会话。
+    ResolveJoinCode(IpcResolveJoinCodeRequest),
+    /// 凭口令让这个会话键的人物加入私人房间；随后照常开会话进入返回的房间。
+    RedeemJoinCode(IpcRedeemJoinCodeRequest),
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -64,6 +69,8 @@ impl IpcMethod {
             Self::OfferInvitation(_) => "offer_invitation",
             Self::WithdrawInvitation(_) => "withdraw_invitation",
             Self::ReadInvitation => "read_invitation",
+            Self::ResolveJoinCode(_) => "resolve_join_code",
+            Self::RedeemJoinCode(_) => "redeem_join_code",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -87,9 +94,12 @@ impl IpcMethod {
     pub const fn required_scope(&self) -> IpcScope {
         match self {
             Self::BridgeStatus | Self::HostSessionDiagnostics => IpcScope::BridgeStatusRead,
+            // 凭口令进房间是开会话的一部分：CLI 与 MCP 在开会话之前调用。
             Self::OpenHostSession(_)
             | Self::CloseHostSession(_)
             | Self::ReadInvitation
+            | Self::ResolveJoinCode(_)
+            | Self::RedeemJoinCode(_)
             | Self::RegisterReception(_)
             | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
@@ -128,6 +138,8 @@ impl IpcMethod {
             | Self::ListRecoverySessions
             | Self::HostSessionDiagnostics => Ok(()),
             Self::WithdrawInvitation(request) => request.validate(),
+            Self::ResolveJoinCode(request) => request.validate(),
+            Self::RedeemJoinCode(request) => request.validate(),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
@@ -160,6 +172,8 @@ impl IpcMethod {
                         | Self::OfferInvitation(_)
                         | Self::WithdrawInvitation(_)
                         | Self::ReadInvitation
+                        | Self::ResolveJoinCode(_)
+                        | Self::RedeemJoinCode(_)
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -523,6 +537,10 @@ pub enum IpcResponse {
     /// 挂上、撤回或查看等待接入的人物；没有等待中的邀请时为空。
     Invitation {
         invitation: Option<IpcPendingInvitation>,
+    },
+    /// 口令对应的私人房间：查看时还没有人加入，兑换后选定的人物已是它的 Agent 成员。
+    JoinCodeRoom {
+        room: IpcRoomSummary,
     },
     DefaultAgentBootstrap {
         bootstrap: IpcDefaultAgentBootstrap,

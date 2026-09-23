@@ -40,8 +40,11 @@ impl PrivateRoomJoinCode {
         }
         let mut code = String::with_capacity(LENGTH);
         for character in input.chars() {
+            // 转交时常带进换行或制表符，和空格一样当作分隔。
+            if character == '-' || character.is_whitespace() {
+                continue;
+            }
             let normalized = match character.to_ascii_uppercase() {
-                '-' | ' ' => continue,
                 'O' => '0',
                 'I' | 'L' => '1',
                 other => other,
@@ -145,7 +148,13 @@ mod tests {
     fn 输入容忍大小写分隔和易混字符() {
         let code = PrivateRoomJoinCode::parse("K7P3-Q9XW-2DMA").unwrap();
         assert_eq!(code.normalized(), "K7P3Q9XW2DMA");
-        for input in ["k7p3 q9xw 2dma", " K7P3Q9XW2DMA ", "k7p3-q9xw-2dma"] {
+        for input in [
+            "k7p3 q9xw 2dma",
+            " K7P3Q9XW2DMA ",
+            "k7p3-q9xw-2dma",
+            "K7P3-Q9XW-2DMA\n",
+            "\tK7P3 Q9XW\u{3000}2DMA",
+        ] {
             assert_eq!(PrivateRoomJoinCode::parse(input).unwrap(), code);
         }
         assert_eq!(

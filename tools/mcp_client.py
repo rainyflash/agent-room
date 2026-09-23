@@ -448,13 +448,16 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
         raise McpClientFailure("list_rooms 不接受参数。")
     if name == "agent_room_join":
         display_name = properties.get("displayName")
+        code = properties.get("code")
         if (
-            set(properties) != {"room", "displayName"}
+            set(properties) != {"room", "code", "displayName"}
             or not isinstance(display_name, dict)
             or display_name.get("minLength") != 1
             or display_name.get("maxLength") != 128
+            or not isinstance(code, dict)
+            or code.get("maxLength") != 64
         ):
-            raise McpClientFailure("join 只接受房间名和有界 displayName。")
+            raise McpClientFailure("join 只接受房间名、有界口令和有界 displayName。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

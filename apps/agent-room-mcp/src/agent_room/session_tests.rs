@@ -688,6 +688,11 @@ struct JoinBridge {
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     connected_room: Mutex<String>,
     pending: Mutex<Option<agent_room_bridge_ipc::IpcInvitationOffer>>,
+    /// 口令 `K7P3-Q9XW-2DMA` 对应的私人房间，以及兑换过的会话键与名字。
+    code_room: Mutex<Option<IpcRoomSummary>>,
+    redeemed: Mutex<Vec<agent_room_bridge_ipc::IpcRedeemJoinCodeRequest>>,
+    /// 会话之外的调用按顺序记下方法名。
+    calls: Mutex<Vec<&'static str>>,
 }
 
 impl JoinBridge {
@@ -697,13 +702,39 @@ impl JoinBridge {
             opened: Mutex::new(Vec::new()),
             connected_room: Mutex::new("!game:test.invalid".into()),
             pending: Mutex::new(None),
+            code_room: Mutex::new(None),
+            redeemed: Mutex::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn code_room(&self, code: &str) -> Result<IpcResponse, BridgeToolFailure> {
+        let normalized = code
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_uppercase();
+        match self.code_room.lock().unwrap().clone() {
+            Some(room) if normalized == "K7P3Q9XW2DMA" => Ok(IpcResponse::JoinCodeRoom { room }),
+            _ => Err(failure("bridge.join_code.not_found", false)),
         }
     }
 }
 
 impl BridgeToolClient for JoinBridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
+        if !matches!(method, IpcMethod::WithSession { .. }) {
+            self.calls.lock().unwrap().push(method.name());
+        }
         let response = match method {
+            IpcMethod::ResolveJoinCode(request) => self.code_room(&request.code),
+            IpcMethod::RedeemJoinCode(request) => {
+                let room = self.code_room(&request.code);
+                if room.is_ok() {
+                    self.redeemed.lock().unwrap().push(request);
+                }
+                room
+            }
             IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
                 rooms: self.rooms.clone(),
             }),
@@ -987,6 +1018,102 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     harness.stop().await;
 }
 
+#[tokio::test]
+async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑换() {
+    let bridge = Arc::new(JoinBridge::new(vec![room(
+        IpcRoomKind::PublicLobby,
+        "Lobby",
+        Some("lobby"),
+    )]));
+    let project = IpcRoomSummary {
+        kind: IpcRoomKind::PrivateRoom,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: Some("!game:test.invalid".to_owned()),
+        name: "项目室".to_owned(),
+        slug: None,
+        membership: None,
+    };
+    *bridge.code_room.lock().unwrap() = Some(project.clone());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let join = |id: u64, arguments: Value| {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"agent_room_join","arguments":arguments,"_meta":{"threadId":SESSION_B}
+        }})
+    };
+    harness
+        .send(join(
+            400,
+            json!({"code": "k7p3 q9xw 2dma", "displayName": "Scout"}),
+        ))
+        .await;
+    let joined = harness.receive().await["result"].clone();
+    assert_ne!(joined["isError"], true, "{joined}");
+    let first = &joined["structuredContent"];
+    assert_eq!(first["identity"], "created");
+    assert_eq!(first["displayName"], "Scout");
+    assert_eq!(first["room"]["name"], "项目室");
+    assert_eq!(first["target"]["catalogId"], project.catalog_id.as_str());
+    let key = first["sessionKey"].as_str().unwrap().to_owned();
+    assert_eq!(
+        bridge.redeemed.lock().unwrap().as_slice(),
+        &[agent_room_bridge_ipc::IpcRedeemJoinCodeRequest {
+            session_key: key.clone(),
+            display_name: "Scout".to_owned(),
+            code: "k7p3 q9xw 2dma".to_owned(),
+        }]
+    );
+    assert_eq!(
+        bridge.calls.lock().unwrap().as_slice(),
+        &["resolve_join_code", "redeem_join_code", "open_host_session"]
+    );
+
+    // 同一任务再凭口令接入同一房间：回到同一人物，只是再兑换一次。
+    harness
+        .send(join(401, json!({"code": "K7P3-Q9XW-2DMA"})))
+        .await;
+    let again = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(again["identity"], "reused", "{again}");
+    assert_eq!(again["sessionKey"], key.as_str());
+    // 之后只说“接入”也回到这个房间。
+    harness.send(join(402, json!({}))).await;
+    let back = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(back["sessionKey"], key.as_str());
+
+    // 口令不对：如实失败，不开会话；房间名和口令不能一起给。
+    let opened = bridge.opened.lock().unwrap().len();
+    harness
+        .send(join(
+            403,
+            json!({"code": "0000-0000-0000", "displayName": "Pilot"}),
+        ))
+        .await;
+    let wrong = harness.receive().await["result"].clone();
+    assert_eq!(wrong["isError"], true);
+    assert_eq!(
+        wrong["structuredContent"]["code"],
+        "bridge.join_code.not_found"
+    );
+    assert!(
+        wrong["structuredContent"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("不要猜")
+    );
+    harness
+        .send(join(404, json!({"room": "Lobby", "code": JOIN_CODE})))
+        .await;
+    let both = harness.receive().await["result"].clone();
+    assert_eq!(
+        both["structuredContent"]["code"],
+        "agent.join.room_and_code"
+    );
+    assert_eq!(bridge.opened.lock().unwrap().len(), opened);
+    assert_eq!(bridge.redeemed.lock().unwrap().len(), 2);
+    harness.stop().await;
+}
+
+const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
+
 #[test]
 fn 所有工具的_schema_都公开强制的会话边界() {
     let server = AgentRoomMcpServer::new(Arc::new(ScriptedBridge::default()));
@@ -1016,6 +1143,7 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             assert!(schema["properties"].get("sessionId").is_none());
             assert!(schema["properties"].get("sessionKey").is_none());
             assert_eq!(schema["properties"]["displayName"]["maxLength"], 128);
+            assert_eq!(schema["properties"]["code"]["maxLength"], 64);
             continue;
         }
         let required = schema["required"]
