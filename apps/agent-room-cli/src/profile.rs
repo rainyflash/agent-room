@@ -38,9 +38,7 @@ impl Invitation {
         if self.version != 1 {
             return Err(Failure::validation("cli.invitation_version_unsupported"));
         }
-        if self.catalog_id.is_some() && self.room_id.is_none() {
-            return Err(Failure::validation("cli.invitation_room_invalid"));
-        }
+        // 只有 Matrix 房间没有目录的旧邀请仍然有效：进默认大厅，连上后核对房间是否一致。
         IpcMethod::OpenHostSession(self.request())
             .validate()
             .map_err(|_| Failure::validation("cli.invitation_invalid"))?;
@@ -56,19 +54,47 @@ impl Invitation {
         Ok(())
     }
 
+    /// 按名字接入时本机合成的邀请：与应用里复制出来的邀请同构，后续命令看不出区别。
+    pub(crate) fn for_room(session_key: String, display_name: String, target: &RoomTarget) -> Self {
+        Self {
+            version: 1,
+            session_key,
+            display_name,
+            room_id: target.room_id.clone(),
+            catalog_id: target.catalog_id.clone(),
+        }
+    }
+
     pub(crate) fn request(&self) -> IpcOpenHostSessionRequest {
         IpcOpenHostSessionRequest {
             session_key: self.session_key.clone(),
             display_name: self.display_name.clone(),
-            room: self
-                .catalog_id
-                .as_ref()
-                .zip(self.room_id.as_ref())
-                .map(|(catalog, room)| agent_room_bridge_ipc::IpcHostRoomTarget {
+            room: self.catalog_id.as_ref().map(|catalog| {
+                agent_room_bridge_ipc::IpcHostRoomTarget {
                     catalog_id: catalog.clone(),
-                    room_id: room.clone(),
-                }),
+                    room_id: self.room_id.clone(),
+                }
+            }),
         }
+    }
+}
+
+/// `join --room` 解析出的目标房间；默认公开大厅两项皆空，由 Bridge 选择。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoomTarget {
+    pub(crate) catalog_id: Option<String>,
+    pub(crate) room_id: Option<String>,
+}
+
+impl RoomTarget {
+    pub(crate) const DEFAULT_LOBBY: Self = Self {
+        catalog_id: None,
+        room_id: None,
+    };
+
+    /// 同一目录条目就是同一个房间；Matrix 房间实例变了由连接时的房间核对来报。
+    pub(crate) fn matches(&self, invitation: &Invitation) -> bool {
+        invitation.catalog_id == self.catalog_id
     }
 }
 
@@ -163,7 +189,7 @@ impl ProfileStore {
     pub(crate) fn reader_lock(root: &Path, key: &str) -> Result<File> {
         validate_key(key)?;
         let directory = root.join("cli-profiles");
-        fs::create_dir_all(&directory)
+        agent_room_bridge_local_adapter::create_private_directories(&directory)
             .map_err(|_| Failure::local("cli.profile.storage_unavailable"))?;
         let lock = OpenOptions::new()
             .create(true)
@@ -183,7 +209,7 @@ impl ProfileStore {
     pub(crate) fn open(root: &Path, key: &str) -> Result<Self> {
         validate_key(key)?;
         let directory = root.join("cli-profiles");
-        fs::create_dir_all(&directory)
+        agent_room_bridge_local_adapter::create_private_directories(&directory)
             .map_err(|_| Failure::local("cli.profile.storage_unavailable"))?;
         let lock = OpenOptions::new()
             .create(true)
@@ -201,6 +227,34 @@ impl ProfileStore {
             _lock: lock,
             path: directory.join(format!("{key}.json")),
         })
+    }
+
+    /// 找这个宿主任务已经为同一房间保存过的身份，让重跑 `join --room` 复用人物而不是再造一个。
+    /// 指定了不同显示名就视为要另一个人物。无法读取的文件跳过；多个候选取最新的键。
+    pub(crate) fn find_bound(
+        root: &Path,
+        service: &str,
+        task_id: &str,
+        target: &RoomTarget,
+        display_name: Option<&str>,
+    ) -> Option<String> {
+        let entries = fs::read_dir(root.join("cli-profiles")).ok()?;
+        entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|entry| {
+                let bytes = fs::read(entry.path()).ok()?;
+                let profile: Profile = serde_json::from_slice(&bytes).ok()?;
+                let key = entry.path().file_stem()?.to_str()?.to_owned();
+                (profile.invitation.session_key == key
+                    && validate_key(&key).is_ok()
+                    && profile.bridge_service == service
+                    && profile.task_id.as_deref() == Some(task_id)
+                    && target.matches(&profile.invitation)
+                    && display_name.is_none_or(|name| name == profile.invitation.display_name))
+                .then_some(key)
+            })
+            .max()
     }
 
     pub(crate) fn load(&self) -> Result<Option<Profile>> {
@@ -260,7 +314,55 @@ fn validate_key(key: &str) -> Result<()> {
 }
 
 pub(crate) fn codex_task_id() -> Result<Option<String>> {
-    match std::env::var("CODEX_THREAD_ID") {
+    task_id_from("CODEX_THREAD_ID")
+}
+
+/// Claude Code 把会话 ID 传给子进程；`claude --resume` 用的正是它，所以它就是接待要的任务 ID。
+pub(crate) fn claude_code_task_id() -> Result<Option<String>> {
+    task_id_from("CLAUDE_CODE_SESSION_ID")
+}
+
+/// 当前宿主任务的标识，用来把身份绑定到任务；没有已知宿主时为空。
+pub(crate) fn host_task_id() -> Result<Option<String>> {
+    match codex_task_id()? {
+        Some(id) => Ok(Some(id)),
+        None => claude_code_task_id(),
+    }
+}
+
+/// 默认显示名：宿主加工作目录名，例如 `Claude Code · agent-room`，让房间里一眼看出是谁。
+pub(crate) fn default_display_name() -> String {
+    let host = if std::env::var_os("CODEX_THREAD_ID").is_some() {
+        "Codex"
+    } else if std::env::var_os("CLAUDE_CODE_SESSION_ID").is_some()
+        || std::env::var_os("CLAUDECODE").is_some()
+    {
+        "Claude Code"
+    } else {
+        "Agent"
+    };
+    let workspace = std::env::current_dir()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .map(|name| {
+            name.chars()
+                .filter(|character| !character.is_control())
+                .take(64)
+                .collect::<String>()
+        })
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
+    match workspace {
+        Some(workspace) => format!("{host} · {workspace}"),
+        None => host.to_owned(),
+    }
+}
+
+fn task_id_from(variable: &str) -> Result<Option<String>> {
+    match std::env::var(variable) {
         Ok(id) => {
             validate_task_id(&id)?;
             Ok(Some(id))

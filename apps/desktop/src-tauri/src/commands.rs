@@ -1,6 +1,6 @@
 use agent_room_host_adapters::{
     ApplyReceipt, ConfigurationPlan, HostConfigurator, HostDetection, HostFailure, HostKind,
-    ManualHostConfiguration, SkillStatus,
+    ManualHostConfiguration, SkillCliCommand, SkillStatus,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -59,6 +59,15 @@ pub(crate) struct CliConfiguration {
 }
 
 fn cli_configuration() -> Result<Option<CliConfiguration>, DesktopCommandFailure> {
+    Ok(installed_cli()?.map(|cli| CliConfiguration {
+        command: cli.executable.to_string_lossy().into_owned(),
+        args: cli.args,
+    }))
+}
+
+/// 桌面端旁边装好的 CLI，以及它连上本机 Bridge 需要的数据目录和连接命名空间。
+/// 接入面板的复制指令和装进技能的本机命令都用它，两处前缀始终一致。开发构建没有 CLI 时为空。
+pub(crate) fn installed_cli() -> Result<Option<SkillCliCommand>, DesktopCommandFailure> {
     let executable = std::env::current_exe()
         .map_err(|_| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?;
     let directory = executable
@@ -72,12 +81,15 @@ fn cli_configuration() -> Result<Option<CliConfiguration>, DesktopCommandFailure
     if !cli.is_file() {
         return Ok(None);
     }
+    if cli.to_str().is_none() {
+        return Err(DesktopCommandFailure::new(
+            "desktop.cli.path_unavailable",
+            false,
+        ));
+    }
     let config = DesktopBridgeConfig::from_environment()?;
-    Ok(Some(CliConfiguration {
-        command: cli
-            .to_str()
-            .ok_or_else(|| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?
-            .into(),
+    Ok(Some(SkillCliCommand {
+        executable: cli,
         args: vec![
             "--data-root".into(),
             config

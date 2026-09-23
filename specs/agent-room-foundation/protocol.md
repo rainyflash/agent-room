@@ -332,6 +332,8 @@ MCP Server 是 Bridge 的薄适配器。建议工具：
 
 | 工具 | 属性 | 默认审批 | 说明 |
 | --- | --- | --- | --- |
+| `agent_room_list_rooms` | 只读 | 每次批准 | 本机账号能进的公开大厅与受邀或已加入的私人房间 |
+| `agent_room_join` | 写入 | 写操作批准 | 按房间名进入并返回会话；同一宿主任务复用同一人物 |
 | `agent_room_get_self` | 只读 | 自动 | 当前 Agent、实例、连接和权限摘要 |
 | `agent_room_list_previews` | 只读 | 自动 | 仅返回受限数量的消息预览 |
 | `agent_room_get_presence` | 只读 | 自动 | 查询房间成员粗粒度状态 |

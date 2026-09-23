@@ -2,11 +2,13 @@ use super::*;
 use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcHostSessionState, IpcHostSessionSummary, IpcOpenHostSessionRequest,
+    IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
 
 struct Bridge {
     summary: Mutex<IpcSelfSummary>,
+    rooms: Mutex<Vec<IpcRoomSummary>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
@@ -31,6 +33,7 @@ impl Bridge {
                 connection_state: IpcBridgeState::Ready,
                 granted_capabilities: vec![],
             }),
+            rooms: Mutex::new(Vec::new()),
             opened: Mutex::new(Vec::new()),
             read_started: tokio::sync::Notify::new(),
             finish_read: tokio::sync::Notify::new(),
@@ -63,6 +66,9 @@ impl BridgeToolClient for Bridge {
             });
         }
         let response = match method {
+            IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
+                rooms: self.rooms.lock().unwrap().clone(),
+            }),
             IpcMethod::OpenHostSession(request) => {
                 self.opened.lock().unwrap().push(request);
                 Ok(IpcResponse::HostSession {
@@ -88,6 +94,230 @@ impl BridgeToolClient for Bridge {
         };
         Box::pin(async move { response })
     }
+}
+
+fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
+    IpcRoomSummary {
+        kind,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: matches!(kind, IpcRoomKind::PrivateRoom)
+            .then(|| "!room:test.invalid".to_owned()),
+        name: name.to_owned(),
+        slug: slug.map(str::to_owned),
+        membership: matches!(kind, IpcRoomKind::PrivateRoom).then_some(IpcRoomMembership::Joined),
+    }
+}
+
+fn join(room: Option<&str>, name: Option<&str>) -> Command {
+    Command::Join {
+        invite: None,
+        room: room.map(str::to_owned),
+        name: name.map(str::to_owned),
+    }
+}
+
+fn saved_profiles(root: &Path) -> Vec<Profile> {
+    let mut profiles: Vec<Profile> = std::fs::read_dir(root.join("cli-profiles"))
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap())
+        .collect();
+    profiles.sort_by(|a, b| a.invitation.session_key.cmp(&b.invitation.session_key));
+    profiles
+}
+
+#[tokio::test]
+async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认进公开大厅() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    let private = room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev"));
+    let catalog = private.catalog_id.clone();
+    bridge
+        .rooms
+        .lock()
+        .unwrap()
+        .extend([room(IpcRoomKind::PublicLobby, "Lobby", None), private]);
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("Game-Dev"), Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let profiles = saved_profiles(directory.path());
+    assert_eq!(profiles.len(), 1);
+    let first = &profiles[0];
+    assert_eq!(
+        first.invitation.catalog_id.as_deref(),
+        Some(catalog.as_str())
+    );
+    assert_eq!(
+        first.invitation.room_id.as_deref(),
+        Some("!room:test.invalid")
+    );
+    assert_eq!(first.invitation.display_name, "Scout");
+    assert_eq!(first.room_id.as_deref(), Some("!room:test.invalid"));
+    let key = first.invitation.session_key.clone();
+    // 带 --profile 重跑同一房间：复用保存的邀请，不看默认显示名。
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key.clone()),
+        join(Some("game dev"), None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(saved_profiles(directory.path()).len(), 1);
+    {
+        let opened = bridge.opened.lock().unwrap();
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened[0], opened[1]);
+        assert_eq!(opened[0].session_key, key);
+    }
+    // 同一档案换房间不能悄悄换掉身份。
+    assert_eq!(
+        run(
+            &bridge,
+            directory.path(),
+            "test",
+            Some(key.clone()),
+            join(Some("Lobby"), None),
+        )
+        .await
+        .unwrap_err()
+        .code,
+        "cli.profile.invitation_mismatch"
+    );
+    // 不指定房间就让 Bridge 选默认公开大厅。
+    run(&bridge, directory.path(), "test", None, join(None, None))
+        .await
+        .unwrap();
+    let opened = bridge.opened.lock().unwrap();
+    assert_eq!(opened.len(), 3);
+    assert!(opened[2].room.is_none());
+    assert!(!opened[2].display_name.is_empty());
+}
+
+#[tokio::test]
+async fn 房间名不存在或有歧义时不接入并列出候选() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    bridge.rooms.lock().unwrap().extend([
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "ops", None),
+        room(IpcRoomKind::PrivateRoom, "Ops", None),
+    ]);
+    let missing = run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("missing"), None),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(missing.code, "cli.room_not_found");
+    assert!(missing.details["available"].contains("Lobby [lobby] (public lobby"));
+    let ambiguous = run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("OPS"), None),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(ambiguous.code, "cli.room_ambiguous");
+    assert!(ambiguous.details["candidates"].contains("ops (private room"));
+    assert!(ambiguous.details["candidates"].contains("Ops (private room"));
+    assert!(bridge.opened.lock().unwrap().is_empty());
+    assert!(!directory.path().join("cli-profiles").exists());
+}
+
+#[test]
+fn 同一宿主任务为同一房间保存过的身份会被找回() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = RoomTarget {
+        catalog_id: Some(uuid::Uuid::now_v7().to_string()),
+        room_id: Some("!room:test.invalid".into()),
+    };
+    let task = uuid::Uuid::now_v7().to_string();
+    let mut older = Profile::new(
+        Invitation::for_room(uuid::Uuid::now_v7().to_string(), "Scout".into(), &target),
+        "test",
+        Some(task.clone()),
+    );
+    older.session_id = None;
+    let newer = Profile::new(
+        Invitation::for_room(uuid::Uuid::now_v7().to_string(), "Scout".into(), &target),
+        "test",
+        Some(task.clone()),
+    );
+    let other_task = Profile::new(
+        Invitation::for_room(uuid::Uuid::now_v7().to_string(), "Scout".into(), &target),
+        "test",
+        Some(uuid::Uuid::now_v7().to_string()),
+    );
+    let lobby = Profile::new(
+        Invitation::for_room(
+            uuid::Uuid::now_v7().to_string(),
+            "Scout".into(),
+            &RoomTarget::DEFAULT_LOBBY,
+        ),
+        "test",
+        Some(task.clone()),
+    );
+    for profile in [&older, &newer, &other_task, &lobby] {
+        ProfileStore::open(directory.path(), &profile.invitation.session_key)
+            .unwrap()
+            .save(profile)
+            .unwrap();
+    }
+    std::fs::write(
+        directory.path().join("cli-profiles").join("broken.json"),
+        b"not a profile",
+    )
+    .unwrap();
+    assert_eq!(
+        ProfileStore::find_bound(directory.path(), "test", &task, &target, None),
+        Some(newer.invitation.session_key.clone())
+    );
+    assert_eq!(
+        ProfileStore::find_bound(directory.path(), "test", &task, &target, Some("Scout")),
+        Some(newer.invitation.session_key.clone())
+    );
+    assert_eq!(
+        ProfileStore::find_bound(directory.path(), "test", &task, &target, Some("Other")),
+        None
+    );
+    assert_eq!(
+        ProfileStore::find_bound(directory.path(), "other", &task, &target, None),
+        None
+    );
+    assert_eq!(
+        ProfileStore::find_bound(
+            directory.path(),
+            "test",
+            &task,
+            &RoomTarget::DEFAULT_LOBBY,
+            None
+        ),
+        Some(lobby.invitation.session_key.clone())
+    );
+    assert_eq!(
+        ProfileStore::find_bound(
+            directory.path(),
+            "test",
+            &other_task.task_id.clone().unwrap(),
+            &target,
+            None
+        ),
+        Some(other_task.invitation.session_key.clone())
+    );
 }
 
 fn profile() -> Profile {

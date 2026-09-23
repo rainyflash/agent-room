@@ -568,6 +568,16 @@ pub struct IpcRoomSummary {
     pub membership: Option<IpcRoomMembership>,
 }
 
+impl agent_room_bridge_core::room_directory::NamedRoom for IpcRoomSummary {
+    fn room_name(&self) -> &str {
+        &self.name
+    }
+
+    fn room_slug(&self) -> Option<&str> {
+        self.slug.as_deref()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IpcRoomKind {

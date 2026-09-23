@@ -271,7 +271,7 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     let list = server
         .rpc(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
         .await;
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 14);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 16);
     let open = server.rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
         "name":"agent_room_open_session","arguments":{"sessionKey":SESSION,"displayName":"HTTP test"}
     }})).await;
@@ -416,7 +416,7 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let result = common::rpc_result(response).await;
-    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 14);
+    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 16);
     let response = server
         .client
         .post(&server.url)

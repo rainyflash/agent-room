@@ -481,7 +481,7 @@ function ConnectionInvite({
             <p role="status">{t('agentInvite.cli.missing')}</p>
           ) : null}
           {mode === 'cli' && skillHost !== null ? (
-            <SkillSetup host={skillHost} hostLabel={skillHostLabel} />
+            <SkillSetup host={skillHost} hostLabel={skillHostLabel} roomName={room?.roomName} />
           ) : null}
           <details className="agent-invite__advanced">
             <summary>{t('agentInvite.advanced')}</summary>
@@ -551,7 +551,11 @@ function ConnectionInvite({
                       }
                     />
                     {host === 'claude-code' && skillHost !== null ? (
-                      <SkillSetup host={skillHost} hostLabel={skillHostLabel} />
+                      <SkillSetup
+                        host={skillHost}
+                        hostLabel={skillHostLabel}
+                        roomName={room?.roomName}
+                      />
                     ) : null}
                   </>
                 ) : (
@@ -734,9 +738,12 @@ function HostSetup({
 function SkillSetup({
   host,
   hostLabel,
+  roomName,
 }: {
   readonly host: AgentHostKind;
   readonly hostLabel: string;
+  /** 当前房间；装好技能后提示用户以后直接说房间名，不必再复制。 */
+  readonly roomName?: string | undefined;
 }) {
   const { t } = useTranslation();
   const controller = useDesktopRuntimeController();
@@ -747,10 +754,20 @@ function SkillSetup({
   return (
     <div className="agent-invite__setup agent-invite__skill">
       {status?.state === 'current' ? (
-        <p className="agent-invite__success" role="status">
-          <CircleCheckBig aria-hidden="true" />
-          {t('agentInvite.skill.current', { host: hostLabel })}
-        </p>
+        <>
+          <p className="agent-invite__success" role="status">
+            <CircleCheckBig aria-hidden="true" />
+            {t('agentInvite.skill.current', { host: hostLabel })}
+          </p>
+          <p className="agent-invite__say">
+            {t('agentInvite.skill.sayHint', { host: hostLabel })}{' '}
+            <q>
+              {roomName === undefined
+                ? t('agentInvite.skill.sayLobby')
+                : t('agentInvite.skill.sayRoom', { room: roomName })}
+            </q>
+          </p>
+        </>
       ) : (
         <>
           <p>{t('agentInvite.skill.description', { host: hostLabel })}</p>

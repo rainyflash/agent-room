@@ -85,7 +85,16 @@ fn error_hint(code: &str) -> &'static str {
             "This profile already has an active reader. Stop that reader before another read/listen. Send and ack remain available during a stream."
         }
         "cli.profile.required" | "cli.session_required" => {
-            "Run join with the room invitation, then pass its --profile value. Existing scripts may still pass --session."
+            "Run join --room <name> (see rooms) or join with the room invitation, then pass its --profile value. Existing scripts may still pass --session."
+        }
+        "cli.room_not_found" => {
+            "No room with that name or slug is available to this account. Run rooms and use a listed name exactly; do not guess another room or fall back silently."
+        }
+        "cli.room_ambiguous" => {
+            "Several rooms match that name. Pick one of the listed candidates by its slug or exact name, or ask the person which room they meant."
+        }
+        "cli.profile.invitation_mismatch" => {
+            "This profile already belongs to a different room or invitation. Keep using it for its room, or omit --profile so join can pick or create the identity for the requested room."
         }
         "cli.profile.not_found" => {
             "Run the original join invitation on this computer. Do not generate a replacement identity."
@@ -114,7 +123,7 @@ fn error_hint(code: &str) -> &'static str {
             "The connected room differs from the invitation. Check actualRoomId and the selected lobby. Do not report this invitation as successful."
         }
         "cli.task_id_required" => {
-            "Pass the exact --task-id and --host for registration. Codex may supply CODEX_THREAD_ID; never guess the ID or select the latest task."
+            "Pass the exact --task-id and --host for registration. Codex may supply CODEX_THREAD_ID and Claude Code CLAUDE_CODE_SESSION_ID; never guess the ID or select the latest task."
         }
         "cli.connection.starting" => {
             "The identity is saved but still connecting. Keep Agent Room running and retry resume with the same --profile."

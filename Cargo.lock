@@ -455,6 +455,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "url",
+ "uuid",
  "zeroize",
 ]
 

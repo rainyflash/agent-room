@@ -1,4 +1,5 @@
 mod inputs;
+mod join;
 mod security_input;
 mod server;
 

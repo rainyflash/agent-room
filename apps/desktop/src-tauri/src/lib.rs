@@ -34,7 +34,7 @@ use receiver_runtime::{
 };
 mod webview_migration;
 
-use agent_room_host_adapters::{HostConfigurator, HostContext};
+use agent_room_host_adapters::{HostConfigurator, HostContext, HostKind, SkillState};
 use commands::{
     DesktopRuntime, desktop_agent_recovery, desktop_agent_recovery_sessions,
     desktop_apply_agent_host, desktop_begin_human_authentication,
@@ -238,8 +238,11 @@ fn setup_runtime(
     });
     let host_context = HostContext::from_environment(mcp_executable)
         .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?
-        .with_skill_source(bundled_skill_source(app));
+        .with_skill_source(bundled_skill_source(app))
+        .with_skill_cli(commands::installed_cli().ok().flatten());
     let hosts = Arc::new(HostConfigurator::system(host_context));
+    let skill_hosts = hosts.clone();
+    tauri::async_runtime::spawn_blocking(move || refresh_installed_skill(&skill_hosts));
     app.manage(DesktopRuntime {
         bridge,
         receivers,
@@ -291,6 +294,25 @@ fn installed_mcp_executable() -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err("安装包缺少 agent-room-mcp".to_owned())
+    }
+}
+
+/// 用户装过的技能跟着桌面端保持最新：新版带来新技能、或本机命令前缀变了时直接覆盖。
+/// 没装过的不替用户装。
+fn refresh_installed_skill(hosts: &HostConfigurator) {
+    match hosts.skill_status(HostKind::ClaudeCode) {
+        Ok(status) if status.state == SkillState::Outdated => {
+            match hosts.install_skill(HostKind::ClaudeCode) {
+                Ok(_) => tracing::info!("已把 Claude Code 的 agent-room 技能更新到本版"),
+                Err(failure) => {
+                    tracing::warn!(error_code = failure.code(), "更新 Claude Code 技能失败");
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(failure) => {
+            tracing::warn!(error_code = failure.code(), "读取 Claude Code 技能状态失败");
+        }
     }
 }
 

@@ -323,6 +323,11 @@ describe('AgentInviteDialog', () => {
     fireEvent.click(update);
     await screen.findByText(/The agent-room skill is installed for Claude Code/u);
     expect(runtime.installSkill).toHaveBeenCalledWith('claude-code');
+    // 装好后提示下次直接说房间名，不必复制。
+    expect(
+      screen.getByText(/Next time, skip the copying and just tell Claude Code/u),
+    ).toBeVisible();
+    expect(screen.getByText('Join “Builders Exchange” in Agent Room')).toBeVisible();
     // 技能就绪后上一次复制作废，按钮回到「复制」；等它回来再点，覆盖率运行下时序更慢。
     fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {

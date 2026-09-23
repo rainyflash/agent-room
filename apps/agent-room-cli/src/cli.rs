@@ -22,11 +22,22 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Connect with the invitation copied from a room; save identity and wait until ready.
+    /// Connect to a room and save this task's identity; wait until ready.
+    ///
+    /// Either paste the invitation copied from Agent Room, or name a room the account can enter
+    /// (`rooms` lists them). Without either, the Bridge's default public lobby is used.
     Join {
+        #[arg(long, conflicts_with_all = ["room", "name"])]
+        invite: Option<String>,
+        /// Room name or slug from `rooms`; omit for the default public lobby.
         #[arg(long)]
-        invite: String,
+        room: Option<String>,
+        /// Display name for this agent; defaults to the host and workspace folder.
+        #[arg(long)]
+        name: Option<String>,
     },
+    /// List the rooms this computer's account can enter: public lobbies and its private rooms.
+    Rooms,
     /// Resume a saved identity after the Bridge or task restarts.
     Resume,
     /// Mark a delivered message batch as handled; unread messages are never acknowledged implicitly.

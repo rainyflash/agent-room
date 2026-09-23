@@ -28,6 +28,23 @@ pub struct OpenSessionInput {
     pub room: Option<SessionRoomInput>,
 }
 
+/// 列房间不需要参数；闭合对象让宿主传错字段时立即失败，而不是被忽略。
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListRoomsInput {}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JoinInput {
+    /// 要进入的房间：`agent_room_list_rooms` 里的 name 或 slug；省略就进默认公开大厅。
+    #[schemars(length(max = 256))]
+    pub room: Option<String>,
+    /// 这个人物在房间里的显示名；省略时用宿主与工作目录生成。同一任务重跑时省略即可复用人物。
+    /// 显示名会原样出现在房间里，须由用户授权。
+    #[schemars(length(min = 1, max = 128))]
+    pub display_name: Option<String>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionRoomInput {
@@ -44,7 +61,7 @@ impl From<OpenSessionInput> for IpcOpenHostSessionRequest {
                 .room
                 .map(|room| agent_room_bridge_ipc::IpcHostRoomTarget {
                     catalog_id: room.catalog_id,
-                    room_id: room.room_id,
+                    room_id: Some(room.room_id),
                 }),
         }
     }

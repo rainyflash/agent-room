@@ -86,8 +86,13 @@ impl State {
     }
 }
 
-/// 与 Bridge 的运行目录同样只对当前用户开放：数据根可能由日志先建出来，Bridge 随后会检查它的权限。
-fn create_private_directories(path: &Path) -> io::Result<()> {
+/// 与 Bridge 的运行目录同样只对当前用户开放：数据根可能由日志、CLI 或 MCP 先建出来，
+/// Bridge 随后会检查它的权限。
+///
+/// # Errors
+///
+/// 目录建不出来时返回底层 I/O 错误。
+pub fn create_private_directories(path: &Path) -> io::Result<()> {
     if path.is_dir() {
         return Ok(());
     }

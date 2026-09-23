@@ -128,7 +128,8 @@ impl HostAgentRuntimeFactory {
                 lobby_catalog_id,
                 room: request
                     .room
-                    .map(|target| MatrixRoomReference::new(target.room_id))
+                    .and_then(|target| target.room_id)
+                    .map(MatrixRoomReference::new)
                     .transpose()
                     .map_err(|_| host_failure("bridge.host_session.room_invalid", false))?,
             },
@@ -308,7 +309,7 @@ mod tests {
         );
         let invited = agent_room_bridge_ipc::IpcHostRoomTarget {
             catalog_id: uuid::Uuid::now_v7().to_string(),
-            room_id: "!invited:test.invalid".into(),
+            room_id: Some("!invited:test.invalid".into()),
         };
         assert_eq!(
             resolve_lobby_catalog(Some(&invited), Some(catalog), &Lobbies(vec![]), None)

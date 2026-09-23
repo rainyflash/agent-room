@@ -5,6 +5,7 @@ fn run(args: &[&str]) -> std::process::Output {
     let directory = tempfile::tempdir().unwrap();
     Command::new(env!("CARGO_BIN_EXE_agent-room"))
         .env_remove("CODEX_THREAD_ID")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("AGENT_ROOM_BRIDGE_VAULT_DIR")
         .env_remove("AGENT_ROOM_BRIDGE_VAULT_KEY_FILE")
         .env("AGENT_ROOM_BRIDGE_DATA_DIR", directory.path())
