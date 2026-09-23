@@ -48,7 +48,40 @@ export const privateRoomSchema = z
 
 export const privateRoomListSchema = z.object({ rooms: z.array(privateRoomSchema) }).strict();
 
+const unixMillisSchema = z.number().int().nonnegative();
+
+/// 凭口令进来的 Agent：它是房间的 Agent 成员，主人并不因此成为房间成员。
+const agentMemberSchema = z
+  .object({
+    agentId: z.uuid(),
+    displayName: z.string().min(1),
+    joinedAtUnixMs: unixMillisSchema,
+    ownerDisplayName: z.string().nullable(),
+    status: z.enum(['joined', 'removed']),
+    statusChangedAtUnixMs: unixMillisSchema,
+  })
+  .strict();
+
+/// 口令是否开着（只有创建时间，不含口令本身）与凭口令进来的 Agent。
+export const privateRoomAgentAccessSchema = z
+  .object({
+    agents: z.array(agentMemberSchema),
+    joinCode: z.object({ createdAtUnixMs: unixMillisSchema }).strict().nullable(),
+  })
+  .strict();
+
+/// 口令只在生成的那次响应里出现：12 位 Crockford Base32，分三组。
+export const generatedJoinCodeSchema = z
+  .object({
+    code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u),
+    createdAtUnixMs: unixMillisSchema,
+  })
+  .strict();
+
 export type PrivateRoom = z.infer<typeof privateRoomSchema>;
+export type PrivateRoomAgentAccess = z.infer<typeof privateRoomAgentAccessSchema>;
+export type PrivateRoomAgentMember = z.infer<typeof agentMemberSchema>;
+export type GeneratedJoinCode = z.infer<typeof generatedJoinCodeSchema>;
 export type PrivateRoomMember = z.infer<typeof memberSchema>;
 export type PrivateRoomPermissions = z.infer<typeof permissionsSchema>;
 
@@ -77,6 +110,8 @@ export type TransferPrivateRoomOwnershipInput = {
 
 export type PrivateRoomGateway = {
   accept(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** Join code status and the agents that came in with it; needs the manage permission. */
+  agentAccess(catalogId: string): Promise<Result<PrivateRoomAgentAccess, PrivateRoomFailure>>;
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   ban(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   create(
@@ -84,6 +119,10 @@ export type PrivateRoomGateway = {
     input: CreatePrivateRoomInput,
   ): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   decline(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** Turns the join code off; agents that already joined stay. */
+  disableJoinCode(catalogId: string): Promise<Result<void, PrivateRoomFailure>>;
+  /** Creates or replaces the join code. The code is returned only this once. */
+  generateJoinCode(catalogId: string): Promise<Result<GeneratedJoinCode, PrivateRoomFailure>>;
   inspect(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   invite(
     catalogId: string,
@@ -92,6 +131,8 @@ export type PrivateRoomGateway = {
   leave(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>>;
   remove(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** Removes an agent that joined with the code; it needs a newer code to come back. */
+  removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>>;
   /** Only the owner may rename; the Matrix room name follows. */
   rename(catalogId: string, name: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   transferOwnership(

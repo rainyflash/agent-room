@@ -1,10 +1,14 @@
 import { z } from 'zod';
 
 import {
+  generatedJoinCodeSchema,
+  privateRoomAgentAccessSchema,
   privateRoomListSchema,
   privateRoomSchema,
   type CreatePrivateRoomInput,
+  type GeneratedJoinCode,
   type PrivateRoom,
+  type PrivateRoomAgentAccess,
   type PrivateRoomFailure,
   type PrivateRoomGateway,
   type PrivateRoomInvitationInput,
@@ -132,6 +136,36 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     });
   }
 
+  agentAccess(catalogId: string): Promise<Result<PrivateRoomAgentAccess, PrivateRoomFailure>> {
+    return this.#request(
+      this.#agentAccessPath(catalogId),
+      { method: 'GET' },
+      privateRoomAgentAccessSchema,
+    );
+  }
+
+  generateJoinCode(catalogId: string): Promise<Result<GeneratedJoinCode, PrivateRoomFailure>> {
+    return this.#request(
+      `${this.#agentAccessPath(catalogId)}/code`,
+      { method: 'PUT' },
+      generatedJoinCodeSchema,
+    );
+  }
+
+  disableJoinCode(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(`${this.#agentAccessPath(catalogId)}/code`, { method: 'DELETE' });
+  }
+
+  removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  #agentAccessPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/agent-access`;
+  }
+
   #membership(
     catalogId: string,
     action: 'accept' | 'decline' | 'leave',
@@ -150,10 +184,28 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     return this.#request(path, init, privateRoomSchema);
   }
 
-  async #request<T>(
+  #request<T>(
     path: string,
     init: RequestInit,
     schema: z.ZodType<T>,
+  ): Promise<Result<T, PrivateRoomFailure>> {
+    return this.#exchange(path, init, async (response) => {
+      const parsed = schema.safeParse(await response.json());
+      return parsed.success
+        ? ok(parsed.data)
+        : err({ code: 'private_room.invalid_response', retryable: false });
+    });
+  }
+
+  /** Writes that answer 204 without a body. */
+  #send(path: string, init: RequestInit): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#exchange(path, init, () => Promise.resolve(ok(undefined)));
+  }
+
+  async #exchange<T>(
+    path: string,
+    init: RequestInit,
+    read: (response: Response) => Promise<Result<T, PrivateRoomFailure>>,
   ): Promise<Result<T, PrivateRoomFailure>> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => {
@@ -175,11 +227,7 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
       if (!response.ok) {
         return err(await readFailure(response));
       }
-      const body: unknown = await response.json();
-      const parsed = schema.safeParse(body);
-      return parsed.success
-        ? ok(parsed.data)
-        : err({ code: 'private_room.invalid_response', retryable: false });
+      return await read(response);
     } catch {
       return err({ code: 'private_room.unreachable', retryable: true });
     } finally {

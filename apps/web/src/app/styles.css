@@ -2369,6 +2369,135 @@
   gap: 0.35rem;
 }
 
+.private-room-agent-access {
+  padding: 1.25rem 0;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.private-room-agent-access__status {
+  margin: 0.5rem 0;
+  color: var(--ar-ink-72);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.private-room-agent-access__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0.2rem;
+}
+
+.private-room-join-code {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  margin: 0.5rem 0 0.75rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
+  background: var(--color-paper);
+  box-shadow: var(--ar-press-small);
+}
+
+.private-room-join-code__value {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.private-room-join-code__value code {
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.private-room-join-code > small {
+  color: var(--ar-ink-72);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.private-room-join-code .private-room-agent-access__actions {
+  margin-bottom: 0;
+}
+
+.private-room-join-code__failed {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--color-alert);
+  font-size: 12px;
+}
+
+.private-room-join-code__failed > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.private-room-join-code details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--ar-ink-72);
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+
+.private-room-join-code details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.private-room-join-code details > summary > svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 160ms ease;
+}
+
+.private-room-join-code details[open] > summary > svg {
+  transform: rotate(180deg);
+}
+
+.private-room-join-code pre {
+  margin: 0.45rem 0 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 12px;
+  background: var(--ar-surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.private-room-agent-access__agents {
+  padding: 0;
+  margin: 0.9rem 0 0;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  list-style: none;
+}
+
+.private-room-agent-access__agents > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.private-room-agent-access__agents .private-room-member__identity {
+  min-width: 0;
+}
+
+.private-room-agent-access__agents .private-room-member__identity strong {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
 .private-room-operation {
   display: flex;
   align-items: center;
