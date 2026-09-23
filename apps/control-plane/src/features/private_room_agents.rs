@@ -10,9 +10,10 @@ use agent_room_application::{
     private_rooms::{
         AgentAccessView, GeneratedJoinCode, InspectAgentAccess, ManageJoinCode,
         PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
+        ResolveJoinCode,
     },
 };
-use agent_room_domain::ids::{AgentId, AgentInstanceId, RoomCatalogId};
+use agent_room_domain::ids::{AgentId, RoomCatalogId};
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
@@ -80,10 +81,8 @@ pub(crate) fn router(state: PrivateRoomAgentHttpState) -> Router {
             "/private-rooms/{catalog_id}/agent-access/agents/{agent_id}",
             delete(remove_agent),
         )
-        .route(
-            "/agents/{agent_id}/instances/{instance_id}/join-codes/redeem",
-            post(redeem),
-        )
+        .route("/join-codes/resolve", post(resolve))
+        .route("/agents/{agent_id}/join-codes/redeem", post(redeem))
         .layer(DefaultBodyLimit::max(MAX_AGENT_ACCESS_BODY_BYTES))
         .with_state(state)
 }
@@ -287,50 +286,91 @@ async fn remove_agent(
     )
 }
 
-async fn redeem(
+/// 只查看口令对应的房间，不让任何 Agent 加入；接入方据此选定人物后再兑换。
+async fn resolve(
     State(state): State<PrivateRoomAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
-    Path((agent, instance)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let request_target = format!("/agents/{agent}/instances/{instance}/join-codes/redeem");
-    let Ok(agent_id) = parse_uuid_v7(&agent).map(AgentId::from_uuid) else {
-        return invalid_resource(correlation_id);
-    };
-    let Ok(agent_instance_id) = parse_uuid_v7(&instance).map(AgentInstanceId::from_uuid) else {
-        return invalid_resource(correlation_id);
-    };
-    let Ok(body_text) = std::str::from_utf8(&body) else {
-        return invalid_body(correlation_id);
-    };
-    let actor = match authenticate_signed_device_request(
-        state.devices.as_ref(),
-        state.secrets.as_ref(),
+    let (actor, code) = match signed_code(
+        &state,
         &headers,
-        "POST",
-        &request_target,
-        body_text,
+        "/join-codes/resolve",
+        &body,
         correlation_id,
     )
     .await
     {
-        Ok(actor) => actor,
+        Ok(request) => request,
         Err(response) => return response,
     };
-    let Ok(body) = serde_json::from_slice::<RedeemBody>(&body) else {
-        return invalid_body(correlation_id);
+    room_response(
+        state.access.resolve(ResolveJoinCode { actor, code }).await,
+        correlation_id,
+    )
+}
+
+async fn redeem(
+    State(state): State<PrivateRoomAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(agent): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Ok(agent_id) = parse_uuid_v7(&agent).map(AgentId::from_uuid) else {
+        return invalid_resource(correlation_id);
     };
-    match state
-        .access
-        .redeem(RedeemJoinCode {
-            actor,
-            agent_id,
-            agent_instance_id,
-            code: body.code,
-        })
-        .await
-    {
+    let target = format!("/agents/{agent}/join-codes/redeem");
+    let (actor, code) = match signed_code(&state, &headers, &target, &body, correlation_id).await {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    room_response(
+        state
+            .access
+            .redeem(RedeemJoinCode {
+                actor,
+                agent_id,
+                code,
+            })
+            .await,
+        correlation_id,
+    )
+}
+
+/// 设备签名的口令请求：先核对签名，再解析只含 `code` 的正文。
+async fn signed_code(
+    state: &PrivateRoomAgentHttpState,
+    headers: &HeaderMap,
+    request_target: &str,
+    body: &Bytes,
+    correlation_id: CorrelationId,
+) -> Result<(agent_room_application::devices::AuthenticatedDevice, String), Response> {
+    let Ok(body_text) = std::str::from_utf8(body) else {
+        return Err(invalid_body(correlation_id));
+    };
+    let actor = authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        headers,
+        "POST",
+        request_target,
+        body_text,
+        correlation_id,
+    )
+    .await?;
+    let Ok(body) = serde_json::from_slice::<RedeemBody>(body) else {
+        return Err(invalid_body(correlation_id));
+    };
+    Ok((actor, body.code))
+}
+
+fn room_response(
+    result: agent_room_application::private_rooms::AgentAccessResult<RedeemedRoom>,
+    correlation_id: CorrelationId,
+) -> Response {
+    match result {
         Ok(room) => {
             no_store((StatusCode::OK, Json(RedeemedRoomResponse::from(room))).into_response())
         }

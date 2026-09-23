@@ -7,7 +7,7 @@ pub use agent_access::{
     AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
     GeneratedJoinCode, InspectAgentAccess, ManageJoinCode, PrivateRoomAgentAccessDependencies,
     PrivateRoomAgentAccessService, PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom,
-    RemoveAgentMember,
+    RemoveAgentMember, ResolveJoinCode,
 };
 pub use failure::{
     PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,

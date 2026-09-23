@@ -17,13 +17,13 @@ use agent_room_application::{
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
         GeneratedJoinCode, InspectAgentAccess, ManageJoinCode, PrivateRoomAgentAccessUseCases,
-        RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
+        RedeemJoinCode, RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::{
     devices::Device,
     identity::Principal,
-    ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId},
     join_codes::{PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     private_rooms::PrivateRoomPermissions,
     rooms::MatrixRoomReference,
@@ -47,13 +47,13 @@ const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 const OWNER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
 const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
-const INSTANCE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e45";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 
 #[derive(Default)]
 struct FakeAccess {
     calls: Mutex<Vec<String>>,
     redeemed: Mutex<Option<RedeemJoinCode>>,
+    resolved: Mutex<Option<ResolveJoinCode>>,
     redeem_failure: Mutex<Option<AgentAccessFailureKind>>,
 }
 
@@ -127,6 +127,11 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         Box::pin(async { Ok(()) })
     }
 
+    fn resolve(&self, request: ResolveJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
+        *self.resolved.lock().unwrap() = Some(request);
+        Box::pin(async { Ok(room()) })
+    }
+
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
         *self.redeemed.lock().unwrap() = Some(request);
         let failure = *self.redeem_failure.lock().unwrap();
@@ -134,13 +139,16 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             if let Some(kind) = failure {
                 return Err(failure_of(kind));
             }
-            Ok(RedeemedRoom {
-                catalog_id: catalog_id(),
-                matrix_room_id: MatrixRoomReference::new("!project:matrix.test".to_owned())
-                    .unwrap(),
-                name: "项目室".to_owned(),
-            })
+            Ok(room())
         })
+    }
+}
+
+fn room() -> RedeemedRoom {
+    RedeemedRoom {
+        catalog_id: catalog_id(),
+        matrix_room_id: MatrixRoomReference::new("!project:matrix.test".to_owned()).unwrap(),
+        name: "项目室".to_owned(),
     }
 }
 
@@ -207,6 +215,7 @@ impl AuthenticationUseCases for FakeAuthentication {
 #[derive(Default)]
 struct FakeDevices {
     expected_body: Mutex<Option<String>>,
+    expected_target: Mutex<Option<String>>,
 }
 
 impl DeviceAuthorizationUseCases for FakeDevices {
@@ -224,9 +233,11 @@ impl DeviceAuthorizationUseCases for FakeDevices {
         assert_eq!(request.access_token.expose(), "device-access-token");
         assert_eq!(request.proof.device_id(), device_id());
         assert_eq!(request.proof.method(), "POST");
+        let target = self.expected_target.lock().unwrap().clone();
         assert_eq!(
-            request.proof.request_target(),
-            format!("/agents/{AGENT_UUID}/instances/{INSTANCE_UUID}/join-codes/redeem")
+            Some(request.proof.request_target().to_owned()),
+            target,
+            "签名覆盖的路径"
         );
         let expected = self
             .expected_body
@@ -349,13 +360,12 @@ async fn 生成与停用口令_移出_agent_都要求可信来源() {
 }
 
 #[tokio::test]
-async fn 设备签名兑换口令_转发设备_agent_实例与口令() {
+async fn 设备签名查看与兑换口令_转发设备_agent_与口令() {
     let access = Arc::new(FakeAccess::default());
-    let devices = Arc::new(FakeDevices::default());
     let body = json!({"code": "k7p3 q9xw 2dma"}).to_string();
-    *devices.expected_body.lock().unwrap() = Some(body.clone());
+    let devices = devices_for(&redeem_path(), &body);
     let response = app(access.clone(), devices)
-        .oneshot(signed(&body))
+        .oneshot(signed(&redeem_path(), &body))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -365,9 +375,21 @@ async fn 设备签名兑换口令_转发设备_agent_实例与口令() {
     assert_eq!(room["name"], "项目室");
     let redeemed = access.redeemed.lock().unwrap().clone().expect("转发了请求");
     assert_eq!(redeemed.agent_id, agent_id());
-    assert_eq!(redeemed.agent_instance_id, instance_id());
     assert_eq!(redeemed.actor.device_id, device_id());
     assert_eq!(redeemed.code, "k7p3 q9xw 2dma");
+
+    // 只查看房间：同样要求设备签名，转发设备与口令。
+    let body = json!({"code": "K7P3-Q9XW-2DMA"}).to_string();
+    let devices = devices_for("/join-codes/resolve", &body);
+    let response = app(access.clone(), devices)
+        .oneshot(signed("/join-codes/resolve", &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_of(response).await["name"], "项目室");
+    let resolved = access.resolved.lock().unwrap().clone().expect("转发了查看");
+    assert_eq!(resolved.actor.device_id, device_id());
+    assert_eq!(resolved.code, "K7P3-Q9XW-2DMA");
 }
 
 #[tokio::test]
@@ -396,10 +418,12 @@ async fn 兑换失败映射成稳定错误码_限流带重试时间() {
     ] {
         let access = Arc::new(FakeAccess::default());
         *access.redeem_failure.lock().unwrap() = Some(kind);
-        let devices = Arc::new(FakeDevices::default());
         let body = json!({"code": "K7P3-Q9XW-2DMA"}).to_string();
-        *devices.expected_body.lock().unwrap() = Some(body.clone());
-        let response = app(access, devices).oneshot(signed(&body)).await.unwrap();
+        let devices = devices_for(&redeem_path(), &body);
+        let response = app(access, devices)
+            .oneshot(signed(&redeem_path(), &body))
+            .await
+            .unwrap();
         assert_eq!(response.status(), status, "{code}");
         if kind == AgentAccessFailureKind::RateLimited {
             assert!(response.headers().contains_key(header::RETRY_AFTER));
@@ -408,11 +432,10 @@ async fn 兑换失败映射成稳定错误码_限流带重试时间() {
     }
     // 正文里有多余字段直接拒绝，不进用例。
     let access = Arc::new(FakeAccess::default());
-    let devices = Arc::new(FakeDevices::default());
     let body = json!({"code": "K7P3-Q9XW-2DMA", "room": "x"}).to_string();
-    *devices.expected_body.lock().unwrap() = Some(body.clone());
+    let devices = devices_for(&redeem_path(), &body);
     let response = app(access.clone(), devices)
-        .oneshot(signed(&body))
+        .oneshot(signed(&redeem_path(), &body))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -444,12 +467,21 @@ fn web(method: Method, suffix: &str, origin: bool) -> Request<Body> {
     request.body(Body::empty()).unwrap()
 }
 
-fn signed(body: &str) -> Request<Body> {
+fn redeem_path() -> String {
+    format!("/agents/{AGENT_UUID}/join-codes/redeem")
+}
+
+fn devices_for(target: &str, body: &str) -> Arc<FakeDevices> {
+    let devices = Arc::new(FakeDevices::default());
+    *devices.expected_body.lock().unwrap() = Some(body.to_owned());
+    *devices.expected_target.lock().unwrap() = Some(target.to_owned());
+    devices
+}
+
+fn signed(path: &str, body: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
-        .uri(format!(
-            "/agents/{AGENT_UUID}/instances/{INSTANCE_UUID}/join-codes/redeem"
-        ))
+        .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, "Bearer device-access-token")
         .header("x-agent-room-device-id", DEVICE_UUID)
@@ -478,10 +510,6 @@ fn device_id() -> DeviceId {
 
 fn agent_id() -> AgentId {
     AgentId::from_uuid(Uuid::parse_str(AGENT_UUID).unwrap())
-}
-
-fn instance_id() -> AgentInstanceId {
-    AgentInstanceId::from_uuid(Uuid::parse_str(INSTANCE_UUID).unwrap())
 }
 
 fn catalog_id() -> RoomCatalogId {

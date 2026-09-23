@@ -819,7 +819,7 @@ fn build_private_room_agent_access(
         PrivateRoomAgentAccessDependencies {
             rooms: dependencies.repositories.clone(),
             access: dependencies.repositories.clone(),
-            lobby_access: dependencies.repositories.clone(),
+            memberships: dependencies.repositories.clone(),
             matrix: dependencies.matrix_identities.clone(),
             secrets: dependencies.secrets.clone(),
             clock: dependencies.system_runtime.clone(),

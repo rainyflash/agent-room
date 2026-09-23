@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use agent_room_domain::{
     DomainError,
-    ids::{AgentId, AgentInstanceId, RoomCatalogId},
+    ids::{AgentId, RoomCatalogId},
     join_codes::{PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     private_rooms::{PrivateRoomMembershipStatus, PrivateRoomPermissions},
     rooms::MatrixRoomReference,
@@ -17,7 +17,7 @@ use crate::{
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        AgentLobbyAccessRepository, Clock, JoinCodeAttemptPolicy, MatrixFailure, MatrixFailureKind,
+        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, MatrixFailure, MatrixFailureKind,
         MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord,
         PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
         SecretFactory,
@@ -96,12 +96,18 @@ pub struct RemoveAgentMember {
     pub agent_id: AgentId,
 }
 
-/// 本机 Agent 凭口令加入：设备、Agent 与实例必须对得上，和入场同一条规则。
+/// 查看口令对应的房间，不让任何 Agent 加入。接入方据此选定在这个房间里用哪个人物，再兑换。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveJoinCode {
+    pub actor: AuthenticatedDevice,
+    pub code: String,
+}
+
+/// 让一个 Agent 凭口令加入：调用的设备所属账号必须是这个 Agent 的主人或操作者。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedeemJoinCode {
     pub actor: AuthenticatedDevice,
     pub agent_id: AgentId,
-    pub agent_instance_id: AgentInstanceId,
     pub code: String,
 }
 
@@ -117,7 +123,7 @@ pub struct GeneratedJoinCode {
     pub record: PrivateRoomJoinCodeRecord,
 }
 
-/// 口令兑换出的房间，Agent 随后按它入场。
+/// 口令对应的房间，Agent 随后按它入场。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedeemedRoom {
     pub catalog_id: RoomCatalogId,
@@ -140,13 +146,15 @@ pub trait PrivateRoomAgentAccessUseCases: Send + Sync {
 
     fn remove_agent(&self, request: RemoveAgentMember) -> PortFuture<'_, AgentAccessResult<()>>;
 
+    fn resolve(&self, request: ResolveJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>>;
+
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>>;
 }
 
 pub struct PrivateRoomAgentAccessDependencies {
     pub rooms: Arc<dyn PrivateRoomStore>,
     pub access: Arc<dyn PrivateRoomAgentAccessStore>,
-    pub lobby_access: Arc<dyn AgentLobbyAccessRepository>,
+    pub memberships: Arc<dyn AgentMembershipRepository>,
     pub matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
@@ -156,7 +164,7 @@ pub struct PrivateRoomAgentAccessDependencies {
 pub struct PrivateRoomAgentAccessService {
     rooms: Arc<dyn PrivateRoomStore>,
     access: Arc<dyn PrivateRoomAgentAccessStore>,
-    lobby_access: Arc<dyn AgentLobbyAccessRepository>,
+    memberships: Arc<dyn AgentMembershipRepository>,
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
@@ -168,7 +176,7 @@ impl PrivateRoomAgentAccessService {
         Self {
             rooms: dependencies.rooms,
             access: dependencies.access,
-            lobby_access: dependencies.lobby_access,
+            memberships: dependencies.memberships,
             matrix: dependencies.matrix,
             secrets: dependencies.secrets,
             clock: dependencies.clock,
@@ -265,71 +273,29 @@ impl PrivateRoomAgentAccessService {
         Ok(())
     }
 
+    async fn resolve_internal(&self, request: ResolveJoinCode) -> AgentAccessResult<RedeemedRoom> {
+        const OPERATION: &str = "private_room.join_code.resolve";
+        let (_, snapshot) = self
+            .checked_code(&request.actor, &request.code, OPERATION)
+            .await?;
+        Ok(redeemed_room(&snapshot))
+    }
+
     async fn redeem_internal(&self, request: RedeemJoinCode) -> AgentAccessResult<RedeemedRoom> {
         const OPERATION: &str = "private_room.join_code.redeem";
-        let now = self.clock.now();
-        if request.actor.access_token_expires_at <= now {
-            return Err(AgentAccessFailure::new(
-                OPERATION,
-                AgentAccessFailureKind::Forbidden,
-            ));
-        }
-        let access = self
-            .lobby_access
-            .find_lobby_access(request.agent_instance_id)
+        let memberships = self
+            .memberships
+            .find_memberships(request.agent_id)
             .await
             .map_err(|error| repository(OPERATION, &error))?
             .ok_or_else(|| AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::NotFound))?;
-        if !access.active
-            || access.agent_id != request.agent_id
-            || access.device_id != request.actor.device_id
-        {
-            return Err(AgentAccessFailure::new(
-                OPERATION,
-                AgentAccessFailureKind::Forbidden,
-            ));
-        }
-        let caller = format!("device:{}", request.actor.device_id);
-        if let Some(retry_at) = self
-            .access
-            .join_code_retry_at(&caller, now, self.attempts)
-            .await
-            .map_err(|error| repository(OPERATION, &error))?
-        {
-            return Err(AgentAccessFailure::rate_limited(OPERATION, retry_at));
-        }
-        // 格式不对多半是抄错，不算一次猜测；格式对但不存在才计入失败次数。
-        let code = PrivateRoomJoinCode::parse(&request.code).map_err(|_| {
-            AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::InvalidRequest)
-        })?;
-        let digest = self.secrets.digest(code.normalized());
-        let Some(record) = self
-            .access
-            .find_join_code(&digest)
-            .await
-            .map_err(|error| repository(OPERATION, &error))?
-        else {
-            self.access
-                .record_join_code_failure(&caller, now, self.attempts)
-                .await
-                .map_err(|error| repository(OPERATION, &error))?;
-            return Err(AgentAccessFailure::new(
-                OPERATION,
-                AgentAccessFailureKind::NotFound,
-            ));
-        };
-        let snapshot = self
-            .rooms
-            .find_by_catalog(record.catalog_id)
-            .await
-            .map_err(|error| repository(OPERATION, &error))?
-            .ok_or_else(|| AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::NotFound))?;
-        if !snapshot.room().admits_agent_member(true) {
-            return Err(AgentAccessFailure::new(
-                OPERATION,
-                AgentAccessFailureKind::Conflict,
-            ));
-        }
+        // 能给这个 Agent 注册实例的人（主人或操作者），才能带它凭口令进房间。
+        memberships
+            .ensure_can_register_instance(request.actor.account.principal.id())
+            .map_err(|error| domain(OPERATION, &error))?;
+        let (record, snapshot) = self
+            .checked_code(&request.actor, &request.code, OPERATION)
+            .await?;
         // 被移出的 Agent 只能用移出之后生成的新口令再进来。
         let previous = self
             .access
@@ -346,14 +312,73 @@ impl PrivateRoomAgentAccessService {
             ));
         }
         self.access
-            .admit_agent(record.catalog_id, request.agent_id, record.permissions, now)
+            .admit_agent(
+                record.catalog_id,
+                request.agent_id,
+                record.permissions,
+                self.clock.now(),
+            )
             .await
             .map_err(|error| repository(OPERATION, &error))?;
-        Ok(RedeemedRoom {
-            catalog_id: record.catalog_id,
-            matrix_room_id: snapshot.instance().matrix_room_id().clone(),
-            name: snapshot.catalog().name().to_owned(),
-        })
+        Ok(redeemed_room(&snapshot))
+    }
+
+    /// 设备有效、没被限流、口令格式对且存在、房间还在使用中。格式不对多半是抄错，不算一次猜测；
+    /// 格式对但不存在才计入这台设备的失败次数。
+    async fn checked_code(
+        &self,
+        actor: &AuthenticatedDevice,
+        code: &str,
+        operation: &'static str,
+    ) -> AgentAccessResult<(PrivateRoomJoinCodeRecord, PrivateRoomSnapshot)> {
+        let now = self.clock.now();
+        if actor.access_token_expires_at <= now {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::Forbidden,
+            ));
+        }
+        let caller = format!("device:{}", actor.device_id);
+        if let Some(retry_at) = self
+            .access
+            .join_code_retry_at(&caller, now, self.attempts)
+            .await
+            .map_err(|error| repository(operation, &error))?
+        {
+            return Err(AgentAccessFailure::rate_limited(operation, retry_at));
+        }
+        let code = PrivateRoomJoinCode::parse(code).map_err(|_| {
+            AgentAccessFailure::new(operation, AgentAccessFailureKind::InvalidRequest)
+        })?;
+        let digest = self.secrets.digest(code.normalized());
+        let Some(record) = self
+            .access
+            .find_join_code(&digest)
+            .await
+            .map_err(|error| repository(operation, &error))?
+        else {
+            self.access
+                .record_join_code_failure(&caller, now, self.attempts)
+                .await
+                .map_err(|error| repository(operation, &error))?;
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::NotFound,
+            ));
+        };
+        let snapshot = self
+            .rooms
+            .find_by_catalog(record.catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
+        if !snapshot.room().admits_agent_member(true) {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::Conflict,
+            ));
+        }
+        Ok((record, snapshot))
     }
 
     /// 操作者看得见这个房间（受邀或已加入），并且有管理 Agent 口令的权限。
@@ -421,8 +446,20 @@ impl PrivateRoomAgentAccessUseCases for PrivateRoomAgentAccessService {
         Box::pin(self.remove_internal(request))
     }
 
+    fn resolve(&self, request: ResolveJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
+        Box::pin(self.resolve_internal(request))
+    }
+
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
         Box::pin(self.redeem_internal(request))
+    }
+}
+
+fn redeemed_room(snapshot: &PrivateRoomSnapshot) -> RedeemedRoom {
+    RedeemedRoom {
+        catalog_id: snapshot.catalog().id(),
+        matrix_room_id: snapshot.instance().matrix_room_id().clone(),
+        name: snapshot.catalog().name().to_owned(),
     }
 }
 

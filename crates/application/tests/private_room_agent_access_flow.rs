@@ -10,22 +10,22 @@ use agent_room_application::{
     devices::AuthenticatedDevice,
     persistence::RepositoryResult,
     ports::{
-        AgentLobbyAccessRecord, AgentLobbyAccessRepository, Clock, JoinCodeAttemptPolicy,
-        MatrixResult, MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount,
-        PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore,
-        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
-        PrivateRoomSnapshot, PrivateRoomStore, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue,
+        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, MatrixResult, MatrixRoomId,
+        MatrixUserId, PortFuture, PrincipalAccount, PrivateMatrixMembership,
+        PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
     },
     private_rooms::{
         AgentAccessFailureKind, InspectAgentAccess, ManageJoinCode,
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RemoveAgentMember,
+        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::{
+    agents::AgentMemberships,
     identity::Principal,
-    ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId},
+    ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId},
     join_codes::{PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus, PrivateRoomPermissions,
@@ -147,29 +147,62 @@ async fn 凭口令加入后记为_agent_成员并返回房间() {
 }
 
 #[tokio::test]
-async fn 设备与实例对不上时拒绝且不计猜测次数() {
+async fn 只能带自己的_agent_进来_且不计猜测次数() {
     let fixture = Fixture::new();
     let generated = fixture
         .service
         .generate_code(manage(owner()))
         .await
         .expect("生成口令");
+    // 设备所属账号不是这个 Agent 的主人或操作者。
     let mut request = redeem_request(generated.code.normalized());
-    request.actor.device_id = DeviceId::from_uuid(Uuid::from_u128(404));
+    request.actor.account.principal = Principal::new(speaker());
     let failure = fixture
         .service
         .redeem(request)
         .await
-        .expect_err("别的设备不能借用这个实例");
+        .expect_err("不能带别人的 Agent 进来");
     assert_eq!(failure.kind(), AgentAccessFailureKind::Forbidden);
     let mut request = redeem_request(generated.code.normalized());
     request.agent_id = AgentId::from_uuid(Uuid::from_u128(405));
     assert_eq!(
         fixture.service.redeem(request).await.unwrap_err().kind(),
-        AgentAccessFailureKind::Forbidden
+        AgentAccessFailureKind::NotFound
     );
     assert_eq!(fixture.store.failures(), 0);
     assert_eq!(fixture.store.status(agent_id()), None);
+}
+
+#[tokio::test]
+async fn 查看口令对应的房间不会让任何_agent_加入_猜错同样计次() {
+    let fixture = Fixture::new();
+    let generated = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .expect("生成口令");
+    let room = fixture
+        .service
+        .resolve(ResolveJoinCode {
+            actor: redeem_request("").actor,
+            code: generated.code.display(),
+        })
+        .await
+        .expect("查看房间");
+    assert_eq!(room.catalog_id, catalog_id());
+    assert_eq!(room.matrix_room_id, matrix_room());
+    assert_eq!(room.name, "项目室");
+    assert_eq!(fixture.store.status(agent_id()), None, "只看不加入");
+    let wrong = fixture
+        .service
+        .resolve(ResolveJoinCode {
+            actor: redeem_request("").actor,
+            code: "0000-0000-0000".to_owned(),
+        })
+        .await
+        .expect_err("猜错");
+    assert_eq!(wrong.kind(), AgentAccessFailureKind::NotFound);
+    assert_eq!(fixture.store.failures(), 1);
 }
 
 #[tokio::test]
@@ -340,7 +373,7 @@ impl Fixture {
         let service = PrivateRoomAgentAccessService::new(PrivateRoomAgentAccessDependencies {
             rooms: Arc::new(FixedRooms(snapshot(room))),
             access: store.clone(),
-            lobby_access: Arc::new(FixedLobbyAccess),
+            memberships: Arc::new(FixedMemberships),
             matrix: matrix.clone(),
             secrets: Arc::new(CountingSecrets(Mutex::new(0))),
             clock: clock.clone(),
@@ -379,7 +412,6 @@ fn redeem_request(code: &str) -> RedeemJoinCode {
             access_token_expires_at: UtcMillis::new(i64::MAX).unwrap(),
         },
         agent_id: agent_id(),
-        agent_instance_id: instance_id(),
         code: code.to_owned(),
     }
 }
@@ -481,10 +513,6 @@ fn agent_id() -> AgentId {
     AgentId::from_uuid(Uuid::from_u128(30))
 }
 
-fn instance_id() -> AgentInstanceId {
-    AgentInstanceId::from_uuid(Uuid::from_u128(31))
-}
-
 fn device_id() -> DeviceId {
     DeviceId::from_uuid(Uuid::from_u128(32))
 }
@@ -573,29 +601,17 @@ impl PrivateRoomStore for FixedRooms {
     }
 }
 
-struct FixedLobbyAccess;
+/// 这个 Agent 的主人是凭口令带它进来的人。
+struct FixedMemberships;
 
-impl AgentLobbyAccessRepository for FixedLobbyAccess {
-    fn find_lobby_access(
+impl AgentMembershipRepository for FixedMemberships {
+    fn find_memberships(
         &self,
-        agent_instance_id: AgentInstanceId,
-    ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>> {
-        let record = (agent_instance_id == instance_id()).then(|| AgentLobbyAccessRecord {
-            agent_id: agent_id(),
-            agent_instance_id,
-            device_id: device_id(),
-            principal_id: outsider(),
-            matrix_user_id: MatrixUserId::new("@_agent_scout:matrix.test").unwrap(),
-            active: true,
-        });
-        Box::pin(async move { Ok(record) })
-    }
-    fn find_public_lobby_room<'a>(
-        &'a self,
-        _catalog_id: RoomCatalogId,
-        _matrix_room_id: &'a MatrixRoomReference,
-    ) -> PortFuture<'a, RepositoryResult<Option<RoomInstanceId>>> {
-        Box::pin(async { unreachable!("口令不找公共大厅") })
+        agent: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentMemberships>>> {
+        let found = (agent == agent_id())
+            .then(|| AgentMemberships::with_initial_owner(agent, outsider(), time(NOW - 60_000)));
+        Box::pin(async move { Ok(found) })
     }
 }
 
