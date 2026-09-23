@@ -80,7 +80,7 @@ impl MessageSyncFailure {
         }
     }
 
-    const fn projection_store(failure: MessageProjectionStoreFailure) -> Self {
+    pub(super) const fn projection_store(failure: MessageProjectionStoreFailure) -> Self {
         Self {
             kind: MessageSyncFailureKind::ProjectionStore,
             submission_store: None,
@@ -122,7 +122,7 @@ pub struct MessageSyncDependencies {
 
 pub struct MessageSyncService {
     authenticator: Arc<dyn MessageEventAuthenticator>,
-    projections: Arc<dyn MessageTimelineProjectionStore>,
+    pub(super) projections: Arc<dyn MessageTimelineProjectionStore>,
     submissions: Arc<dyn MessageSubmissionRepository>,
 }
 
@@ -168,62 +168,21 @@ impl MessageSyncService {
             .iter()
             .filter(|room| room.kind() == MatrixRoomSyncKind::Joined)
         {
-            if room.timeline_limited() {
+            // 只有已经在跟的房间才算“漏了消息”；第一次同步到的房间本来就只取最近一段。
+            if room.timeline_limited()
+                && self
+                    .projections
+                    .room_has_messages(room.room_id())
+                    .await
+                    .map_err(MessageSyncFailure::projection_store)?
+            {
                 gaps.push(MessageTimelineGap {
                     room_id: room.room_id().clone(),
                     previous_batch: room.previous_batch().cloned(),
                 });
             }
-            for event in room.timeline() {
-                if event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE {
-                    // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是发送方扣下了房间密钥。
-                    issues.push(issue(
-                        room.room_id(),
-                        event,
-                        MessageSyncIssueReason::Undecryptable,
-                    ));
-                    continue;
-                }
-                if !is_message_event(event) {
-                    continue;
-                }
-                match parse_pending_message(room.room_id(), event) {
-                    Ok(pending) => {
-                        let decision = match &pending.authentication {
-                            Some(authentication) => self
-                                .authenticator
-                                .authenticate(
-                                    authentication.agent_id,
-                                    authentication.instance_id,
-                                    authentication.origin_server_timestamp,
-                                    &authentication.canonical_event,
-                                    &authentication.signature,
-                                )
-                                .await
-                                .map_err(MessageSyncFailure::authentication)?,
-                            None => MessageAuthenticationDecision::Trusted,
-                        };
-                        match decision {
-                            MessageAuthenticationDecision::Trusted => {
-                                mutations.push(pending.mutation);
-                            }
-                            MessageAuthenticationDecision::TrustedHistoricalRevoked => {
-                                let mut mutation = pending.mutation;
-                                mutation.mark_instance_revoked_after_event();
-                                mutations.push(mutation);
-                            }
-                            _ => {
-                                issues.push(issue(
-                                    room.room_id(),
-                                    event,
-                                    authentication_issue(decision),
-                                ));
-                            }
-                        }
-                    }
-                    Err(reason) => issues.push(issue(room.room_id(), event, reason)),
-                }
-            }
+            self.project_room_events(room.room_id(), room.timeline(), &mut mutations, &mut issues)
+                .await?;
         }
 
         let outcome = MessageSyncOutcome {
@@ -242,6 +201,60 @@ impl MessageSyncService {
             .await
             .map_err(MessageSyncFailure::projection_store)?;
         Ok(outcome)
+    }
+
+    /// 验证一个房间的一串时间线事件：可信的变成投影写入，坏事件逐条隔离。
+    /// 同步和补缺口共用这一套，补回来的消息与实时收到的消息经过同样的验签。
+    pub(super) async fn project_room_events(
+        &self,
+        room_id: &MatrixRoomId,
+        events: &[MatrixTimelineEvent],
+        mutations: &mut Vec<MessageProjectionMutation>,
+        issues: &mut Vec<MessageSyncIssue>,
+    ) -> Result<(), MessageSyncFailure> {
+        for event in events {
+            if event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE {
+                // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是发送方扣下了房间密钥。
+                issues.push(issue(room_id, event, MessageSyncIssueReason::Undecryptable));
+                continue;
+            }
+            if !is_message_event(event) {
+                continue;
+            }
+            match parse_pending_message(room_id, event) {
+                Ok(pending) => {
+                    let decision = match &pending.authentication {
+                        Some(authentication) => self
+                            .authenticator
+                            .authenticate(
+                                authentication.agent_id,
+                                authentication.instance_id,
+                                authentication.origin_server_timestamp,
+                                &authentication.canonical_event,
+                                &authentication.signature,
+                            )
+                            .await
+                            .map_err(MessageSyncFailure::authentication)?,
+                        None => MessageAuthenticationDecision::Trusted,
+                    };
+                    match decision {
+                        MessageAuthenticationDecision::Trusted => {
+                            mutations.push(pending.mutation);
+                        }
+                        MessageAuthenticationDecision::TrustedHistoricalRevoked => {
+                            let mut mutation = pending.mutation;
+                            mutation.mark_instance_revoked_after_event();
+                            mutations.push(mutation);
+                        }
+                        _ => {
+                            issues.push(issue(room_id, event, authentication_issue(decision)));
+                        }
+                    }
+                }
+                Err(reason) => issues.push(issue(room_id, event, reason)),
+            }
+        }
+        Ok(())
     }
 
     async fn reconcile_submissions(

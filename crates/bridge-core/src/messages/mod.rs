@@ -1,4 +1,5 @@
 mod automation;
+mod backfill;
 mod chat;
 pub use chat::validate_chat;
 mod content;
@@ -15,6 +16,7 @@ pub use automation::{
     AutomationAuthorizationFailureKind, AutomationAuthorizationGateway,
     AutomationAuthorizationRequest, AutomationAuthorizationResult,
 };
+pub use backfill::{MessageBackfillOutcome, MessageBackfillSource};
 pub use content::{
     DownloadedMessageContent, MessageContentReadFailure, MessageContentReadFailureKind,
     MessageContentReadGateway, MessageContentReadRequest, OpenMessageContentDependencies,
@@ -48,11 +50,11 @@ pub use ports::{
     MessageSubmissionRepository, MessageSubmissionState,
 };
 pub use projection::{
-    MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError,
-    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
-    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageSyncIssueReason,
-    MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailure,
-    MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-    ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-    ProjectedMessageRevision,
+    MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery,
+    MessagePreviewQueryError, MessageProjectionBatch, MessageProjectionMutation,
+    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageSyncIssue,
+    MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
+    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    ProjectedMessagePreview, ProjectedMessageRevision,
 };

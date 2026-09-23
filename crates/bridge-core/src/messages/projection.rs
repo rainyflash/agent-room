@@ -214,6 +214,49 @@ pub struct MessageTimelineGap {
     pub previous_batch: Option<MatrixBackfillToken>,
 }
 
+/// 同步时一次来得太多、没有收全的一段时间线，等着往回补。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingTimelineGap {
+    /// 发现缺口的那次同步，补回时的隔离记录也挂在它名下。
+    pub sync_token: MatrixSyncToken,
+    pub room_id: MatrixRoomId,
+    pub previous_batch: MatrixBackfillToken,
+}
+
+/// 补回一段缺口：事件已按时间先后排好并走过与同步相同的校验；写入即结清这段缺口。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageBackfillBatch {
+    gap: PendingTimelineGap,
+    mutations: Vec<MessageProjectionMutation>,
+    issues: Vec<MessageSyncIssue>,
+}
+
+impl MessageBackfillBatch {
+    pub const fn new(
+        gap: PendingTimelineGap,
+        mutations: Vec<MessageProjectionMutation>,
+        issues: Vec<MessageSyncIssue>,
+    ) -> Self {
+        Self {
+            gap,
+            mutations,
+            issues,
+        }
+    }
+
+    pub const fn gap(&self) -> &PendingTimelineGap {
+        &self.gap
+    }
+
+    pub fn mutations(&self) -> &[MessageProjectionMutation] {
+        &self.mutations
+    }
+
+    pub fn issues(&self) -> &[MessageSyncIssue] {
+        &self.issues
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageProjectionBatch {
     next_batch: MatrixSyncToken,
@@ -289,6 +332,31 @@ pub trait MessageTimelineProjectionStore: Send + Sync {
     fn sync_cursor(
         &self,
     ) -> PortFuture<'_, Result<Option<MatrixSyncToken>, MessageProjectionStoreFailure>>;
+
+    /// 这个房间是否已经记下过消息。第一次同步到的房间没有“漏掉的消息”，缺口不必往回补。
+    fn room_has_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<bool, MessageProjectionStoreFailure>>;
+
+    /// 这些事件里已经记下（投影或隔离）过的那些；往回补时碰到它们就说明缺口接上了。
+    fn known_events<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_ids: &'a [MatrixEventId],
+    ) -> PortFuture<'a, Result<Vec<MatrixEventId>, MessageProjectionStoreFailure>>;
+
+    /// 还没补的缺口，先记下的先补。
+    fn pending_gaps(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<PendingTimelineGap>, MessageProjectionStoreFailure>>;
+
+    /// 原子写入补回的事件与隔离记录，并结清这段缺口；不改同步游标。
+    fn apply_backfill<'a>(
+        &'a self,
+        batch: &'a MessageBackfillBatch,
+    ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>>;
 }
 
 const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;

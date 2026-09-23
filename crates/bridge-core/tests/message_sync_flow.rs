@@ -4,19 +4,21 @@ use std::sync::{
 };
 
 use agent_room_application::ports::{
-    DeviceProofVerifier, DeviceSignature, MatrixBackfillToken, MatrixEventId, MatrixEventType,
-    MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken,
-    MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, PortFuture,
+    DeviceProofVerifier, DeviceSignature, MatrixBackfillPage, MatrixBackfillRequest,
+    MatrixBackfillToken, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind,
+    MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
+    PortFuture,
 };
 use agent_room_bridge_core::messages::{
     MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,
-    MessageEventAuthenticator, MessageProjectionBatch, MessageProjectionMutation,
-    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageStoreFailure,
-    MessageStoreFailureKind, MessageSubmissionClaim, MessageSubmissionClaimOutcome,
-    MessageSubmissionFingerprint, MessageSubmissionKind, MessageSubmissionRecord,
-    MessageSubmissionRepository, MessageSubmissionState, MessageSyncDependencies,
-    MessageSyncFailureKind, MessageSyncIssueReason, MessageSyncService,
-    MessageTimelineProjectionStore, ProjectedActorInstanceVerification,
+    MessageBackfillBatch, MessageBackfillSource, MessageEventAuthenticator, MessageProjectionBatch,
+    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageStoreFailure, MessageStoreFailureKind, MessageSubmissionClaim,
+    MessageSubmissionClaimOutcome, MessageSubmissionFingerprint, MessageSubmissionKind,
+    MessageSubmissionRecord, MessageSubmissionRepository, MessageSubmissionState,
+    MessageSyncDependencies, MessageSyncFailureKind, MessageSyncIssueReason, MessageSyncService,
+    MessageTimelineProjectionStore, PendingTimelineGap, ProjectedActorInstanceVerification,
 };
 use agent_room_domain::{
     devices::DevicePublicSigningKey,
@@ -71,7 +73,26 @@ impl MessageEventAuthenticator for 验签认证器 {
 #[derive(Default)]
 struct 记录投影存储 {
     batches: Mutex<Vec<MessageProjectionBatch>>,
+    backfills: Mutex<Vec<MessageBackfillBatch>>,
     fail: AtomicBool,
+}
+
+impl 记录投影存储 {
+    /// 同步与补缺口写下的全部投影事件（按写入顺序）。
+    fn projected(&self) -> Vec<(MatrixRoomId, MatrixEventId)> {
+        let mut events = Vec::new();
+        for batch in self.batches.lock().expect("投影记录锁可用").iter() {
+            for mutation in batch.mutations() {
+                events.push((mutation.room_id().clone(), mutation.event_id().clone()));
+            }
+        }
+        for batch in self.backfills.lock().expect("补缺口记录锁可用").iter() {
+            for mutation in batch.mutations() {
+                events.push((mutation.room_id().clone(), mutation.event_id().clone()));
+            }
+        }
+        events
+    }
 }
 
 impl MessageTimelineProjectionStore for 记录投影存储 {
@@ -104,6 +125,281 @@ impl MessageTimelineProjectionStore for 记录投影存储 {
             .map(|batch| batch.next_batch().clone());
         Box::pin(async move { Ok(cursor) })
     }
+
+    fn room_has_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<bool, MessageProjectionStoreFailure>> {
+        let known = self.projected().iter().any(|(room, _)| room == room_id);
+        Box::pin(async move { Ok(known) })
+    }
+
+    fn known_events<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_ids: &'a [MatrixEventId],
+    ) -> PortFuture<'a, Result<Vec<MatrixEventId>, MessageProjectionStoreFailure>> {
+        let projected = self.projected();
+        let known = event_ids
+            .iter()
+            .filter(|id| {
+                projected
+                    .iter()
+                    .any(|(room, event)| room == room_id && event == *id)
+            })
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(known) })
+    }
+
+    fn pending_gaps(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<PendingTimelineGap>, MessageProjectionStoreFailure>> {
+        let resolved = self
+            .backfills
+            .lock()
+            .expect("补缺口记录锁可用")
+            .iter()
+            .map(|batch| batch.gap().clone())
+            .collect::<Vec<_>>();
+        let pending = self
+            .batches
+            .lock()
+            .expect("投影记录锁可用")
+            .iter()
+            .flat_map(|batch| {
+                batch.gaps().iter().filter_map(|gap| {
+                    gap.previous_batch
+                        .clone()
+                        .map(|previous_batch| PendingTimelineGap {
+                            sync_token: batch.next_batch().clone(),
+                            room_id: gap.room_id.clone(),
+                            previous_batch,
+                        })
+                })
+            })
+            .filter(|gap| !resolved.contains(gap))
+            .take(usize::from(limit))
+            .collect();
+        Box::pin(async move { Ok(pending) })
+    }
+
+    fn apply_backfill<'a>(
+        &'a self,
+        batch: &'a MessageBackfillBatch,
+    ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
+        self.backfills
+            .lock()
+            .expect("补缺口记录锁可用")
+            .push(batch.clone());
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// 按预先排好的页往回翻时间线，并记下每次从哪个令牌开始翻。
+#[derive(Default)]
+struct 往回翻页源 {
+    pages: Mutex<std::collections::VecDeque<MatrixResult<MatrixBackfillPage>>>,
+    requests: Mutex<Vec<String>>,
+}
+
+impl MessageBackfillSource for 往回翻页源 {
+    fn backfill_page<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        self.requests
+            .lock()
+            .expect("请求记录锁可用")
+            .push(request.from().as_str().to_owned());
+        let page = self
+            .pages
+            .lock()
+            .expect("页锁可用")
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(MatrixFailure::new(
+                    MatrixOperation::Backfill,
+                    MatrixFailureKind::NotFound,
+                ))
+            });
+        Box::pin(async move { page })
+    }
+}
+
+fn backfill_token(value: &str) -> MatrixBackfillToken {
+    MatrixBackfillToken::new(value).expect("往回翻页令牌有效")
+}
+
+fn human_chat(event_id: &str, text: &str) -> MatrixTimelineEvent {
+    let mut payload = preview_payload(
+        Uuid::now_v7(),
+        room_id().as_str(),
+        "2026-09-05T12:00:00.000Z",
+        None,
+    );
+    payload["schemaVersion"] = json!("2.0");
+    payload["eventType"] = json!("io.github.rainyflash.agentroom.message.preview.v2");
+    payload["actor"] = json!({"kind": "human", "principalId": Uuid::now_v7(), "displayName": "小雨", "matrixUserId": ACTOR_MATRIX_ID});
+    payload["preview"]["contentType"] = json!("text/plain");
+    payload["content"]["mediaType"] = json!("text/plain");
+    payload["preview"]["conversation"] = json!({"text": text, "mentions": []});
+    timeline_event(
+        event_id,
+        "io.github.rainyflash.agentroom.message.preview.v2",
+        payload,
+        None,
+    )
+}
+
+fn limited_sync(
+    token: &str,
+    previous_batch: &str,
+    events: Vec<MatrixTimelineEvent>,
+) -> MatrixSyncBatch {
+    MatrixSyncBatch::new(
+        MatrixSyncToken::new(token).expect("游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            true,
+            Some(backfill_token(previous_batch)),
+            events,
+            Vec::new(),
+        )],
+    )
+}
+
+fn event_ids(events: &[(MatrixRoomId, MatrixEventId)]) -> Vec<&str> {
+    events.iter().map(|(_, event)| event.as_str()).collect()
+}
+
+#[tokio::test]
+async fn 离线期间漏掉的消息按时间先后补回_接上已有消息就停() {
+    let fixture = 测试夹具::new();
+    let service = fixture.service();
+    let source = 往回翻页源::default();
+    // 第一次同步到这个房间：本来就只取最近一段，不算漏消息，不记缺口。
+    let first = service
+        .process(&limited_sync("s1", "p0", vec![human_chat("$ev-a", "一")]))
+        .await
+        .expect("可同步");
+    assert_eq!(first.timeline_gaps, 0);
+    // 离线太久：这次同步只带最近一条，中间几条要往回补。
+    let second = service
+        .process(&limited_sync("s2", "p1", vec![human_chat("$ev-e", "五")]))
+        .await
+        .expect("可同步");
+    assert_eq!(second.timeline_gaps, 1);
+    source.pages.lock().expect("页锁可用").extend([
+        Ok(MatrixBackfillPage::new(
+            backfill_token("p1"),
+            Some(backfill_token("p2")),
+            vec![human_chat("$ev-d", "四"), human_chat("$ev-c", "三")],
+        )),
+        Ok(MatrixBackfillPage::new(
+            backfill_token("p2"),
+            Some(backfill_token("p3")),
+            vec![
+                human_chat("$ev-b", "二"),
+                human_chat("$ev-a", "一"),
+                human_chat("$ev-z", "更早"),
+            ],
+        )),
+    ]);
+    let outcome = service.fill_gaps(&source).await.expect("可补缺口");
+    assert_eq!(outcome.filled_gaps, 1);
+    assert_eq!(outcome.accepted_events, 3);
+    assert_eq!(outcome.truncated_gaps, 0);
+    assert_eq!(
+        *source.requests.lock().expect("请求记录锁可用"),
+        ["p1", "p2"]
+    );
+    // 补回的消息按时间先后排在已收到的之后；碰到已有的 $a 就停，更早的不会重复写入。
+    assert_eq!(
+        event_ids(&fixture.projections.projected()),
+        ["$ev-a", "$ev-e", "$ev-b", "$ev-c", "$ev-d"]
+    );
+    // 缺口已结清：再来一轮什么都不做。
+    let again = service.fill_gaps(&source).await.expect("可补缺口");
+    assert_eq!(again.filled_gaps, 0);
+    assert_eq!(source.requests.lock().expect("请求记录锁可用").len(), 2);
+}
+
+#[tokio::test]
+async fn 暂时读不到的缺口留到下一轮_不让读的放弃_翻到上限就停() {
+    let fixture = 测试夹具::new();
+    let service = fixture.service();
+    let source = 往回翻页源::default();
+    service
+        .process(&limited_sync("s1", "p0", vec![human_chat("$ev-a", "一")]))
+        .await
+        .expect("可同步");
+    service
+        .process(&limited_sync("s2", "p1", vec![human_chat("$ev-z", "最新")]))
+        .await
+        .expect("可同步");
+    source
+        .pages
+        .lock()
+        .expect("页锁可用")
+        .push_back(Err(MatrixFailure::new(
+            MatrixOperation::Backfill,
+            MatrixFailureKind::Timeout,
+        )));
+    let deferred = service.fill_gaps(&source).await.expect("可补缺口");
+    assert_eq!(deferred.deferred_gaps, 1);
+    assert_eq!(deferred.filled_gaps, 0);
+    // 下一轮：一直翻不到已有消息，翻满五页就停，只补回这五页。
+    for page in 0..5 {
+        source
+            .pages
+            .lock()
+            .expect("页锁可用")
+            .push_back(Ok(MatrixBackfillPage::new(
+                backfill_token(&format!("q{page}")),
+                Some(backfill_token(&format!("q{}", page + 1))),
+                vec![human_chat(&format!("$gap-{page}"), "中间")],
+            )));
+    }
+    let truncated = service.fill_gaps(&source).await.expect("可补缺口");
+    assert_eq!(truncated.filled_gaps, 1);
+    assert_eq!(truncated.truncated_gaps, 1);
+    assert_eq!(truncated.accepted_events, 5);
+    assert_eq!(
+        event_ids(&fixture.projections.projected())[2..],
+        ["$gap-4", "$gap-3", "$gap-2", "$gap-1", "$gap-0"]
+    );
+    // 房间不让读了（例如已离开）：放弃这段缺口，不再每轮重试。
+    service
+        .process(&limited_sync(
+            "s3",
+            "r1",
+            vec![human_chat("$ev-y", "又来一条")],
+        ))
+        .await
+        .expect("可同步");
+    source
+        .pages
+        .lock()
+        .expect("页锁可用")
+        .push_back(Err(MatrixFailure::new(
+            MatrixOperation::Backfill,
+            MatrixFailureKind::Forbidden,
+        )));
+    let given_up = service.fill_gaps(&source).await.expect("可补缺口");
+    assert_eq!(given_up.filled_gaps, 1);
+    assert_eq!(given_up.accepted_events, 0);
+    assert_eq!(
+        service
+            .fill_gaps(&source)
+            .await
+            .expect("可补缺口")
+            .filled_gaps,
+        0
+    );
 }
 
 #[derive(Default)]
@@ -259,7 +555,8 @@ async fn 同步按_matrix_顺序投影并逐条隔离坏事件() {
         .expect("坏事件不拖垮批次");
     assert_eq!(outcome.accepted_events, 2);
     assert_eq!(outcome.isolated_events, 2);
-    assert_eq!(outcome.timeline_gaps, 1);
+    // 第一次同步到这个房间，本来就只取最近一段：不算漏了消息，不记缺口。
+    assert_eq!(outcome.timeline_gaps, 0);
     assert_eq!(outcome.reconciled_submissions, 1);
     assert_eq!(fixture.submissions.observations.load(Ordering::SeqCst), 1);
 

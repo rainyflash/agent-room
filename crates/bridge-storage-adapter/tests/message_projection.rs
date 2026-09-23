@@ -6,12 +6,12 @@ use agent_room_application::ports::{
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessageContentSourceQuery, MessagePreviewQuery, MessageProjectionBatch,
-        MessageProjectionMutation, MessageProjectionStoreFailureKind, MessageSyncIssue,
-        MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
-        MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-        ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-        ProjectedMessageRevision,
+        MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewQuery,
+        MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailureKind,
+        MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
+        MessageTimelineProjectionStore, MessageTimelineQueryFailureKind,
+        MessageTimelineQueryRepository, PendingTimelineGap, ProjectedActorInstanceVerification,
+        ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
 use agent_room_bridge_storage_adapter::{
@@ -609,6 +609,108 @@ async fn has_content_source(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tokio::test]
+async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下的事件能认出() {
+    let (_temporary, store, inspector) = open_store().await;
+    // 房间还没有任何消息时，不算“漏了消息”。
+    assert!(!store.room_has_messages(&room_id()).await.expect("可查询"));
+    let gap_token = MatrixBackfillToken::new("backfill-gap").expect("回填游标有效");
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("sync-1"),
+            vec![preview_mutation(
+                "$latest:matrix.test",
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                2_000,
+                "最新一条",
+                1,
+                Some(2_000),
+            )],
+            vec![MessageSyncIssue {
+                room_id: room_id(),
+                event_id: Some(event_id("$broken:matrix.test")),
+                reason: MessageSyncIssueReason::Undecryptable,
+            }],
+            vec![
+                MessageTimelineGap {
+                    room_id: room_id(),
+                    previous_batch: Some(gap_token.clone()),
+                },
+                // 没有往回翻令牌的缺口补不了，不会交给补缺口流程。
+                MessageTimelineGap {
+                    room_id: room_id(),
+                    previous_batch: None,
+                },
+            ],
+        ))
+        .await
+        .expect("同步批次可写入");
+    assert!(store.room_has_messages(&room_id()).await.expect("可查询"));
+    assert_eq!(
+        store
+            .known_events(
+                &room_id(),
+                &[
+                    event_id("$latest:matrix.test"),
+                    event_id("$broken:matrix.test"),
+                    event_id("$unknown:matrix.test"),
+                ],
+            )
+            .await
+            .expect("可查询"),
+        [
+            event_id("$latest:matrix.test"),
+            event_id("$broken:matrix.test")
+        ]
+    );
+    let gaps = store.pending_gaps(16).await.expect("可查询");
+    assert_eq!(
+        gaps,
+        [PendingTimelineGap {
+            sync_token: sync_token("sync-1"),
+            room_id: room_id(),
+            previous_batch: gap_token,
+        }]
+    );
+
+    store
+        .apply_backfill(&MessageBackfillBatch::new(
+            gaps[0].clone(),
+            vec![preview_mutation(
+                "$missed:matrix.test",
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                1_000,
+                "离线时漏掉的一条",
+                2,
+                Some(1_000),
+            )],
+            vec![MessageSyncIssue {
+                room_id: room_id(),
+                event_id: Some(event_id("$forged:matrix.test")),
+                reason: MessageSyncIssueReason::InvalidSignature,
+            }],
+        ))
+        .await
+        .expect("补回的事件可写入");
+    assert!(store.pending_gaps(16).await.expect("可查询").is_empty());
+    // 补回的消息按到达顺序排在后面，收件箱把它当作新到的消息。
+    let order = sqlx::query_scalar::<_, String>(
+        "SELECT event_id FROM message_projection_event ORDER BY sequence ASC",
+    )
+    .fetch_all(&inspector)
+    .await
+    .expect("可查询");
+    assert_eq!(order, ["$latest:matrix.test", "$missed:matrix.test"]);
+    assert_eq!(
+        scalar_count(&inspector, "SELECT COUNT(*) FROM message_sync_issue").await,
+        2
+    );
+    // 补缺口不动同步游标。
+    assert_eq!(current_cursor(&inspector).await.as_deref(), Some("sync-1"));
+}
+
 fn preview_mutation(
     event: &str,
     message_id: MessageId,
