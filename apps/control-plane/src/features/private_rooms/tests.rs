@@ -13,7 +13,7 @@ use agent_room_application::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
         ListPrivateRoomsForAccount, PrivateRoomMembershipAction, PrivateRoomResult,
-        PrivateRoomUseCases, TransferPrivateRoomOwnership,
+        PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -203,6 +203,16 @@ impl PrivateRoomUseCases for FakeRooms {
         request: ArchivePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         self.record(call("archive", request.catalog_id, None, None))
+    }
+
+    fn rename(
+        &self,
+        request: RenamePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        self.record(ObservedCall {
+            name: Some(request.name),
+            ..call("rename", request.catalog_id, None, None)
+        })
     }
 }
 
@@ -413,6 +423,48 @@ async fn 房主转移和归档明确要求近期认证() {
     let calls = rooms.calls.lock().expect("房间记录锁可用");
     assert_eq!(calls[0].operation, "transfer");
     assert_eq!(calls[1].operation, "archive");
+}
+
+#[tokio::test]
+async fn 改名只需活动会话且拒绝多余字段() {
+    let rooms = Arc::new(FakeRooms::new());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let app = test_router(rooms.clone(), authentication.clone());
+    let renamed = app
+        .clone()
+        .oneshot(request(
+            Method::PUT,
+            &format!("/private-rooms/{CATALOG_UUID}/name"),
+            &json!({ "name": "Design review" }),
+            true,
+            false,
+        ))
+        .await
+        .expect("改名路由可调用");
+    assert_eq!(renamed.status(), StatusCode::OK);
+    let rejected = app
+        .oneshot(request(
+            Method::PUT,
+            &format!("/private-rooms/{CATALOG_UUID}/name"),
+            &json!({ "name": "x", "owner": OWNER_UUID }),
+            true,
+            false,
+        ))
+        .await
+        .expect("改名路由可调用");
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        authentication
+            .calls
+            .lock()
+            .expect("认证记录锁可用")
+            .as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
+    );
+    let calls = rooms.calls.lock().expect("房间记录锁可用");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].operation, "rename");
+    assert_eq!(calls[0].name.as_deref(), Some("Design review"));
 }
 
 #[tokio::test]

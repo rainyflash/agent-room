@@ -86,6 +86,12 @@ impl PermissionsBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct RenameRoomBody {
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct TransferOwnershipBody {
     pub(super) target_principal_id: String,
     pub(super) former_owner_permissions: PermissionsBody,

@@ -8,6 +8,7 @@ import {
   Crown,
   LoaderCircle,
   LogOut,
+  PencilLine,
   UserMinus,
   UserPlus,
 } from 'lucide-react';
@@ -95,7 +96,18 @@ export function PrivateRoomGovernance({
 
       <div className="private-room-governance__summary">
         <div>
-          <strong>{room.name}</strong>
+          {owner ? (
+            <RenameForm
+              disabled={mutation.isPending}
+              key={room.name}
+              name={room.name}
+              onRename={(name) => {
+                run({ execute: async () => await rooms.rename(room.catalogId, name) });
+              }}
+            />
+          ) : (
+            <strong>{room.name}</strong>
+          )}
           <span>{room.catalogId}</span>
         </div>
         <dl>
@@ -316,6 +328,52 @@ export function PrivateRoomGovernance({
         )}
       </footer>
     </section>
+  );
+}
+
+/** 房主改房间名；名字变了（保存成功或别处改过）就用 key 重建，草稿跟着复位。 */
+function RenameForm({
+  disabled,
+  name,
+  onRename,
+}: {
+  readonly disabled: boolean;
+  readonly name: string;
+  readonly onRename: (name: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(name);
+  const next = draft.trim();
+  const changed = next.length > 0 && next !== name;
+  return (
+    <form
+      className="private-room-rename"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (changed) onRename(next);
+      }}
+    >
+      <label className="private-room-field">
+        <span>{t('privateRooms.governance.rename.label')}</span>
+        <input
+          disabled={disabled}
+          maxLength={128}
+          onChange={(event) => {
+            setDraft(event.target.value);
+          }}
+          value={draft}
+        />
+      </label>
+      <Button
+        disabled={disabled || !changed}
+        icon={<PencilLine aria-hidden="true" />}
+        size="compact"
+        tone="ghost"
+        type="submit"
+      >
+        {t('privateRooms.action.rename')}
+      </Button>
+    </form>
   );
 }
 

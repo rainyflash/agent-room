@@ -92,6 +92,8 @@ export type PrivateRoomGateway = {
   leave(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>>;
   remove(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** Only the owner may rename; the Matrix room name follows. */
+  rename(catalogId: string, name: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   transferOwnership(
     catalogId: string,
     input: TransferPrivateRoomOwnershipInput,

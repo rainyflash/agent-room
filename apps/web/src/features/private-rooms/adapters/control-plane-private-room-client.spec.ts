@@ -73,6 +73,28 @@ describe('ControlPlanePrivateRoomClient', () => {
     });
   });
 
+  it('改名用 PUT 发送名字并返回权威房间', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(Response.json({ ...ROOM, name: 'Design review' }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    const result = await client.rename(ROOM.catalogId, 'Design review');
+
+    expect(result.ok ? result.value.name : null).toBe('Design review');
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/name`),
+      expect.objectContaining({
+        body: JSON.stringify({ name: 'Design review' }),
+        credentials: 'include',
+        method: 'PUT',
+      }),
+    );
+  });
+
   it('保留结构化失败与关联标识', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

@@ -376,6 +376,15 @@ mod tests {
         ) -> PortFuture<'a, RepositoryResult<()>> {
             Box::pin(async { unreachable!("授权不写私人房间") })
         }
+
+        fn rename<'a>(
+            &'a self,
+            _catalog_id: RoomCatalogId,
+            _name: &'a str,
+            _changed_at: UtcMillis,
+        ) -> PortFuture<'a, RepositoryResult<()>> {
+            Box::pin(async { unreachable!("授权不改房间名") })
+        }
     }
 
     struct StubDirectSessions {

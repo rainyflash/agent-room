@@ -2221,6 +2221,18 @@
   display: block;
 }
 
+.private-room-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.private-room-rename .private-room-field {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
 .private-room-governance__summary > div > span {
   margin-top: 0.3rem;
   color: var(--ar-muted);

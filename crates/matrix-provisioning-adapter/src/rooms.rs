@@ -380,6 +380,39 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         })
     }
 
+    fn set_name<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        name: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::SendStateEvent;
+            let endpoint = endpoint_with_segments(
+                &self.homeserver_url,
+                &[
+                    "_matrix",
+                    "client",
+                    "v3",
+                    "rooms",
+                    room_id.as_str(),
+                    "state",
+                    "m.room.name",
+                    "",
+                ],
+                operation,
+            )?;
+            let response = self
+                .client
+                .put(endpoint)
+                .bearer_auth(self.access_token.expose())
+                .json(&serde_json::json!({ "name": name }))
+                .send()
+                .await
+                .map_err(|error| map_transport_error(operation, &error))?;
+            expect_empty_success(response, operation).await
+        })
+    }
+
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
             let operation = MatrixOperation::ArchiveRoom;

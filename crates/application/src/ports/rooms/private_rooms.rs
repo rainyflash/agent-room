@@ -115,6 +115,13 @@ pub trait PrivateRoomMatrixGateway: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>>;
+
+    /// 设置 Matrix 房间名（`m.room.name`），客户端里显示的房间名跟着变。重复设置同名幂等。
+    fn set_name<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        name: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +238,16 @@ impl PrivateRoomSnapshot {
         &self.room
     }
 
+    /// 换上新名字的同一个房间。
+    ///
+    /// # Errors
+    ///
+    /// 新名字不满足房间名规则时返回错误。
+    pub fn renaming(self, name: String) -> DomainResult<Self> {
+        let catalog = self.catalog.renamed(name)?;
+        Self::new(catalog, self.instance, self.room)
+    }
+
     /// 用新的权限聚合重建生命周期一致的组合快照。
     ///
     /// 房主与归档状态只有一个事实源：`PrivateRoom`。目录和实例只是同一事务中的持久化投影。
@@ -317,6 +334,14 @@ pub trait PrivateRoomStore: Send + Sync {
         &'a self,
         room: &'a PrivateRoom,
         expected_version: AggregateVersion,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 改房间目录上的名字；与成员版本无关，不动成员与权限。
+    fn rename<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        name: &'a str,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>>;
 }

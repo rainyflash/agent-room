@@ -17,9 +17,9 @@ use agent_room_application::{
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
-        GovernPrivateRoomMember, ListPrivateRooms, PrivateRoomDependencies, PrivateRoomFailureKind,
-        PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomService,
-        PrivateRoomUseCases, TransferPrivateRoomOwnership,
+        GovernPrivateRoomMember, InspectPrivateRoom, ListPrivateRooms, PrivateRoomDependencies,
+        PrivateRoomFailureKind, PrivateRoomInvitation, PrivateRoomMembershipAction,
+        PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -392,6 +392,86 @@ async fn 归档先锁死_matrix_消息再原子归档产品状态() {
     assert_eq!(archived.instance().state().as_str(), "archived");
 }
 
+#[tokio::test]
+async fn 房主改名先改_matrix_房间名再写目录_同名不重复写() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    fixture.clear_events();
+
+    let renamed = fixture
+        .service
+        .rename(RenamePrivateRoom {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            name: "  Design review  ".to_owned(),
+        })
+        .await
+        .expect("房主可以改名");
+    assert_eq!(renamed.catalog().name(), "Design review");
+    assert_eq!(fixture.events(), vec!["matrix.set_name", "store.rename"]);
+    assert_eq!(
+        fixture
+            .matrix
+            .room_name
+            .lock()
+            .expect("房间名锁正常")
+            .as_deref(),
+        Some("Design review")
+    );
+    assert_eq!(
+        fixture
+            .service
+            .inspect(InspectPrivateRoom {
+                actor: fixture.owner_actor(),
+                catalog_id: fixture.catalog,
+            })
+            .await
+            .expect("可查看")
+            .catalog()
+            .name(),
+        "Design review"
+    );
+
+    // 同名不再写任何地方。
+    fixture.clear_events();
+    fixture
+        .service
+        .rename(RenamePrivateRoom {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            name: "Design review".to_owned(),
+        })
+        .await
+        .expect("同名幂等");
+    assert!(fixture.events().is_empty());
+}
+
+#[tokio::test]
+async fn 只有房主能改名且名字不能为空() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    fixture.clear_events();
+    let forbidden = fixture
+        .service
+        .rename(RenamePrivateRoom {
+            actor: fixture.member_action().actor,
+            catalog_id: fixture.catalog,
+            name: "Taken over".to_owned(),
+        })
+        .await
+        .expect_err("成员不能改名");
+    assert_eq!(forbidden.kind(), PrivateRoomFailureKind::Forbidden);
+    let empty = fixture
+        .service
+        .rename(RenamePrivateRoom {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            name: "   ".to_owned(),
+        })
+        .await
+        .expect_err("空名字无效");
+    assert_eq!(empty.kind(), PrivateRoomFailureKind::InvalidRequest);
+    assert!(fixture.events().is_empty());
+}
+
 struct Fixture {
     service: PrivateRoomService,
     store: Arc<TestStore>,
@@ -633,6 +713,28 @@ impl PrivateRoomStore for TestStore {
             Ok(())
         })
     }
+
+    fn rename<'a>(
+        &'a self,
+        _catalog_id: RoomCatalogId,
+        name: &'a str,
+        _changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            self.events.lock().expect("事件锁正常").push("store.rename");
+            let mut stored = self.snapshot.lock().expect("快照锁正常");
+            let current = stored
+                .as_ref()
+                .ok_or_else(|| repository_error("test.rename", RepositoryErrorKind::NotFound))?;
+            *stored = Some(
+                current
+                    .clone()
+                    .renaming(name.to_owned())
+                    .expect("测试快照应一致"),
+            );
+            Ok(())
+        })
+    }
 }
 
 struct TestMatrix {
@@ -640,6 +742,7 @@ struct TestMatrix {
     creation: Mutex<Option<PrivateMatrixRoomCreation>>,
     memberships: Mutex<BTreeMap<String, PrivateMatrixMembership>>,
     speaking: Mutex<BTreeMap<String, bool>>,
+    room_name: Mutex<Option<String>>,
 }
 
 impl TestMatrix {
@@ -649,6 +752,7 @@ impl TestMatrix {
             creation: Mutex::new(None),
             memberships: Mutex::new(BTreeMap::new()),
             speaking: Mutex::new(BTreeMap::new()),
+            room_name: Mutex::new(None),
         }
     }
 
@@ -789,6 +893,18 @@ impl PrivateRoomMatrixGateway for TestMatrix {
     fn archive<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
             self.record("matrix.archive");
+            Ok(())
+        })
+    }
+
+    fn set_name<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        name: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            self.record("matrix.set_name");
+            *self.room_name.lock().expect("房间名锁正常") = Some(name.to_owned());
             Ok(())
         })
     }

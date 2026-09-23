@@ -653,6 +653,20 @@ impl PrivateRoom {
         Ok(true)
     }
 
+    /// 只有房主能给还在使用中的房间改名。
+    ///
+    /// # Errors
+    ///
+    /// 不是房主，或房间已归档时返回错误。
+    pub fn authorize_rename(&self, actor: PrincipalId) -> DomainResult<()> {
+        if actor != self.owner_principal_id {
+            return Err(DomainError::Forbidden {
+                action: "修改私人房间名称",
+            });
+        }
+        self.ensure_active("renamed")
+    }
+
     /// 归档房间，重复归档保持幂等。
     ///
     /// # Errors

@@ -271,6 +271,15 @@ impl PrivateRoomStore for 固定私人房间仓储 {
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async { unreachable!("入场不得修改成员事实") })
     }
+
+    fn rename<'a>(
+        &'a self,
+        _catalog_id: RoomCatalogId,
+        _name: &'a str,
+        _changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("入场不得改房间名") })
+    }
 }
 
 /// 记录受邀的 Matrix 身份与发言授予，并可模拟 Agent 已经在房间内的重连情形。
@@ -355,6 +364,14 @@ impl PrivateRoomMatrixGateway for 记录私人Matrix {
     }
     fn archive<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async { unreachable!("入场不得归档房间") })
+    }
+
+    fn set_name<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _name: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!("入场不得改房间名") })
     }
 }
 

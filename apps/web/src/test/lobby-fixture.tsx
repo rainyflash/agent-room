@@ -504,6 +504,7 @@ const privateRooms: PrivateRoomGateway = {
   leave: unavailablePrivateRoom,
   list: () => Promise.resolve(ok([])),
   remove: unavailablePrivateRoom,
+  rename: unavailablePrivateRoom,
   transferOwnership: unavailablePrivateRoom,
   updatePermissions: unavailablePrivateRoom,
 };

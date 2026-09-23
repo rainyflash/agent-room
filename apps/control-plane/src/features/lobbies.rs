@@ -1230,6 +1230,13 @@ mod tests {
         ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
             unreachable!("大厅路由不归档房间")
         }
+
+        fn rename(
+            &self,
+            _request: agent_room_application::private_rooms::RenamePrivateRoom,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不改房间名")
+        }
     }
 
     fn entry_request(body: &str, include_proof: bool) -> Request<Body> {
