@@ -26,9 +26,7 @@ impl LocalIpcEndpoint {
         #[cfg(unix)]
         let endpoint = {
             let _ = installation_id;
-            Self {
-                platform_path: runtime_root.join("bridge.sock"),
-            }
+            Self::from_runtime_root(runtime_root)
         };
         #[cfg(not(any(windows, unix)))]
         let endpoint = {
@@ -38,6 +36,14 @@ impl LocalIpcEndpoint {
             }
         };
         endpoint
+    }
+
+    /// Unix 套接字只由运行目录决定，不需要先读取安装身份。
+    #[cfg(unix)]
+    pub(crate) fn from_runtime_root(runtime_root: &Path) -> Self {
+        Self {
+            platform_path: runtime_root.join("bridge.sock"),
+        }
     }
 
     /// Recover a socket left behind by an interrupted Bridge process.

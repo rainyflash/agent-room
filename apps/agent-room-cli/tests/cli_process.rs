@@ -106,12 +106,13 @@ fn 发送必须明确声明用户授权或自动授权且失败有稳定退出�
     assert_eq!(output.status.code(), Some(4));
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["ok"], false);
-    assert!(
-        result["error"]["code"]
-            .as_str()
-            .unwrap()
-            .starts_with("bridge.ipc.credentials_")
-    );
+    let code = result["error"]["code"].as_str().unwrap();
+    // Unix 先连 Bridge 再读凭据；Windows 的管道名取自安装身份，要先读凭据。
+    if cfg!(unix) {
+        assert_eq!(code, "bridge.ipc.bridge_unavailable");
+    } else {
+        assert!(code.starts_with("bridge.ipc.credentials_"));
+    }
 }
 
 #[test]
@@ -137,6 +138,14 @@ fn 新命令进程能读取加密凭据且配置缺失不回退钥匙串() {
         .write(IPC_SHARED_SECRET_ACCOUNT, &URL_SAFE_NO_PAD.encode([8; 32]))
         .unwrap();
     for complete in [true, false] {
+        // Unix 上先连上 Bridge 才读凭据：配置缺失时用一个只接受连接的套接字顶替 Bridge，
+        // 读取才会发生，才能看到它不回退钥匙串。
+        #[cfg(unix)]
+        let _bridge = (!complete).then(|| {
+            let runtime = root.path().join("runtime");
+            std::fs::create_dir_all(&runtime).unwrap();
+            std::os::unix::net::UnixListener::bind(runtime.join("bridge.sock")).unwrap()
+        });
         let mut command = Command::new(env!("CARGO_BIN_EXE_agent-room"));
         command
             .env("AGENT_ROOM_BRIDGE_DATA_DIR", root.path())

@@ -44,6 +44,12 @@ If the local connection has stopped and reconnecting does not help, choose **Re-
 
 If the desktop app was closed abruptly, for example ended from Task Manager, the Bridge it started notices, finishes its work, and exits on its own. The next desktop start waits for it and then starts its own Bridge; meanwhile the desktop shows **Checking local connection**. If another Bridge process is still running after five minutes, the connection stops with `desktop.bridge.other_instance_running`, and the desktop still starts its own Bridge as soon as that process exits. Re-authorizing does not help here: end the leftover `agent-room-bridge` process in Task Manager or Activity Monitor, or restart the computer.
 
+## macOS keeps asking for the login keychain password
+
+The Bridge keeps the credentials of its local connection in the login keychain, and the desktop, the MCP server and the `agent-room` CLI read them to reach the Bridge. Older releases created them so that only the Bridge could read them: macOS asked for the login keychain password every time another Agent Room program read them, and **Allow** let a single read through. Current releases list the desktop, MCP and CLI of the same installation when the Bridge creates these credentials, and a Bridge started after the update rewrites the ones an older Bridge left, with the same values. Nothing needs to be deleted from the keychain by hand.
+
+The Bridge's other secrets stay readable by the Bridge alone. If a dialog asks for an item named `dev.agent-room.bridge` on behalf of any program other than Agent Room, `agent-room-bridge`, `agent-room-mcp` or `agent-room`, choose **Deny**: no other program needs these secrets.
+
 ## A lobby remains empty or loading
 
 Check the Control plane and Matrix signals separately. A room may exist in the control plane while its Matrix timeline is reconnecting. Retry the failed boundary rather than reinstalling the desktop application. Public lobby entry is provisioned by the cloud entry flow and does not require a Bridge.

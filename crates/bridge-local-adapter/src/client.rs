@@ -101,19 +101,24 @@ impl LocalBridgeClient {
         method: IpcMethod,
     ) -> Result<IpcResponse, LocalBridgeClientFailure> {
         let required_scope = method.required_scope();
+        // Unix 套接字的路径与安装身份无关，先确认有 Bridge 在监听再读取凭据。Bridge 写好 IPC 凭据
+        // 才开始监听，macOS 上读到的因此总是它重写过、本机程序可以直接读取的凭据，而不是旧版
+        // Bridge 留下、读取时会弹窗要钥匙串密码的那份。Windows 的管道名取自安装身份，只能先读凭据。
+        #[cfg(unix)]
+        let stream = self
+            .connect(&LocalIpcEndpoint::from_runtime_root(&self.runtime_root))
+            .await?;
         let credentials = self
             .credentials
             .load()
             .map_err(LocalBridgeClientFailure::credential)?;
-        let endpoint =
-            LocalIpcEndpoint::from_installation(&self.runtime_root, credentials.installation_id());
-        let name = endpoint
-            .to_name()
-            .map_err(|_| LocalBridgeClientFailure::endpoint())?;
-        let stream = timeout(self.connect_timeout, Stream::connect(name))
-            .await
-            .map_err(|_| LocalBridgeClientFailure::timeout())?
-            .map_err(|_| LocalBridgeClientFailure::unavailable())?;
+        #[cfg(not(unix))]
+        let stream = self
+            .connect(&LocalIpcEndpoint::from_installation(
+                &self.runtime_root,
+                credentials.installation_id(),
+            ))
+            .await?;
         let mut client = timeout(
             self.operation_timeout,
             IpcClientSession::authenticate(stream, &credentials, self.caller, [required_scope]),
@@ -122,6 +127,19 @@ impl LocalBridgeClient {
         .map_err(|_| LocalBridgeClientFailure::timeout())?
         .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))?;
         self.request(&mut client, method).await
+    }
+
+    async fn connect(
+        &self,
+        endpoint: &LocalIpcEndpoint,
+    ) -> Result<Stream, LocalBridgeClientFailure> {
+        let name = endpoint
+            .to_name()
+            .map_err(|_| LocalBridgeClientFailure::endpoint())?;
+        timeout(self.connect_timeout, Stream::connect(name))
+            .await
+            .map_err(|_| LocalBridgeClientFailure::timeout())?
+            .map_err(|_| LocalBridgeClientFailure::unavailable())
     }
 
     async fn request<S>(

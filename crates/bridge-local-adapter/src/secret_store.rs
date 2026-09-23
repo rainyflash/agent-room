@@ -73,13 +73,24 @@ impl LocalSecretStore {
     /// # Errors
     /// Reports invalid input, key or storage failures. Never writes plaintext files.
     pub fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
-        self.validate_account(account)?;
-        if value.len() > 65_536 {
-            return Err(SecretStoreFailure::Configuration);
-        }
+        self.validate_value(account, value)?;
         match self.backend.as_ref().map_err(|failure| *failure)? {
             Backend::Encrypted(store) => store.write(&self.service, account, value),
             Backend::System(store) => store.write(account, value),
+        }
+    }
+
+    /// Writes a value that the desktop, MCP and CLI installed next to this program also read.
+    /// The macOS keychain then lets them read it without asking for the login password; see
+    /// [`SystemCredentialStore::write_shared`]. Other stores do not tell programs apart.
+    ///
+    /// # Errors
+    /// Reports invalid input, key or storage failures. Never writes plaintext files.
+    pub fn write_shared(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
+        self.validate_value(account, value)?;
+        match self.backend.as_ref().map_err(|failure| *failure)? {
+            Backend::Encrypted(store) => store.write(&self.service, account, value),
+            Backend::System(store) => store.write_shared(account, value),
         }
     }
 
@@ -91,6 +102,14 @@ impl LocalSecretStore {
             Backend::Encrypted(store) => store.delete(&self.service, account),
             Backend::System(store) => store.delete(account),
         }
+    }
+
+    fn validate_value(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
+        self.validate_account(account)?;
+        if value.len() > 65_536 {
+            return Err(SecretStoreFailure::Configuration);
+        }
+        Ok(())
     }
 
     fn validate_account(&self, account: &str) -> Result<(), SecretStoreFailure> {
