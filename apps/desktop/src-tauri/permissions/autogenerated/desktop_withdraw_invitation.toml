@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-withdraw-invitation"
+description = "Enables the desktop_withdraw_invitation command without any pre-configured scope."
+commands.allow = ["desktop_withdraw_invitation"]
+
+[[permission]]
+identifier = "deny-desktop-withdraw-invitation"
+description = "Denies the desktop_withdraw_invitation command without any pre-configured scope."
+commands.deny = ["desktop_withdraw_invitation"]

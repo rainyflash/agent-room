@@ -657,6 +657,12 @@
           "markdownDescription": "Enables the desktop_notify command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_offer_invitation command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-offer-invitation",
+          "markdownDescription": "Enables the desktop_offer_invitation command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_open_authorization command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-open-authorization",
@@ -745,6 +751,12 @@
           "type": "string",
           "const": "allow-desktop-skill-status",
           "markdownDescription": "Enables the desktop_skill_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_withdraw_invitation command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-withdraw-invitation",
+          "markdownDescription": "Enables the desktop_withdraw_invitation command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_agent_recovery command without any pre-configured scope.",
@@ -849,6 +861,12 @@
           "markdownDescription": "Denies the desktop_notify command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_offer_invitation command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-offer-invitation",
+          "markdownDescription": "Denies the desktop_offer_invitation command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_open_authorization command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-open-authorization",
@@ -937,6 +955,12 @@
           "type": "string",
           "const": "deny-desktop-skill-status",
           "markdownDescription": "Denies the desktop_skill_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_withdraw_invitation command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-withdraw-invitation",
+          "markdownDescription": "Denies the desktop_withdraw_invitation command without any pre-configured scope."
         },
         {
           "description": "This permission set configures if your\napplication can enable or disable auto\nstarting the application on boot.\n\n#### Granted Permissions\n\nIt allows all to check, enable and\ndisable the automatic start on boot.\n\n\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-is-enabled`",

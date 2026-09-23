@@ -353,6 +353,51 @@ pub(crate) async fn desktop_host_session_diagnostics()
     }
 }
 
+/// 接入面板把准备好的人物挂在 Bridge 上，Agent 只说“接入”就能接上；面板开着时定期续期。
+/// 这个人物已经开出会话时 Bridge 不再挂出去，返回空。
+#[tauri::command]
+pub(crate) async fn desktop_offer_invitation(
+    invitation: agent_room_bridge_ipc::IpcOpenHostSessionRequest,
+) -> Result<Option<agent_room_bridge_ipc::IpcPendingInvitation>, DesktopCommandFailure> {
+    invitation_call(agent_room_bridge_ipc::IpcMethod::OfferInvitation(
+        invitation,
+    ))
+    .await
+}
+
+/// 面板关闭时撤回自己挂的那份邀请。
+#[tauri::command]
+pub(crate) async fn desktop_withdraw_invitation(
+    session_key: String,
+) -> Result<(), DesktopCommandFailure> {
+    invitation_call(agent_room_bridge_ipc::IpcMethod::WithdrawInvitation(
+        agent_room_bridge_ipc::IpcWithdrawInvitationRequest { session_key },
+    ))
+    .await
+    .map(|_| ())
+}
+
+async fn invitation_call(
+    method: agent_room_bridge_ipc::IpcMethod,
+) -> Result<Option<agent_room_bridge_ipc::IpcPendingInvitation>, DesktopCommandFailure> {
+    let config = DesktopBridgeConfig::from_environment()?;
+    let client = LocalBridgeClient::desktop_shell_with_secure_storage_service(
+        config.runtime_root(),
+        config.secure_storage_service(),
+    );
+    match client
+        .invoke(method)
+        .await
+        .map_err(|failure| DesktopCommandFailure::new(failure.code(), failure.retryable()))?
+    {
+        agent_room_bridge_ipc::IpcResponse::Invitation { invitation } => Ok(invitation),
+        _ => Err(DesktopCommandFailure::new(
+            "desktop.invitation.invalid_response",
+            false,
+        )),
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_configure_agent_runtime(

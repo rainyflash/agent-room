@@ -35,6 +35,8 @@
     "allow-desktop-lobby-snapshot",
     "allow-desktop-agent-recovery-sessions",
     "allow-desktop-host-session-diagnostics",
+    "allow-desktop-offer-invitation",
+    "allow-desktop-withdraw-invitation",
     "allow-desktop-agent-recovery",
     "allow-desktop-receiver-list",
     "allow-desktop-receiver-configure",

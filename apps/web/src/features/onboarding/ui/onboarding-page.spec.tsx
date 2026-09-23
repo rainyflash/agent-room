@@ -96,6 +96,8 @@ beforeEach(() => {
     checkSkill: vi.fn(),
     installSkill: vi.fn(),
     readHostSessions: vi.fn(() => Promise.resolve(ok([]))),
+    offerInvitation: vi.fn(() => Promise.resolve(ok(null))),
+    withdrawInvitation: vi.fn(),
     dismissFailure: vi.fn(),
     failure: null,
     hosts: [],

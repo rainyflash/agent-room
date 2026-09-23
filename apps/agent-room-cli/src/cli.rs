@@ -25,7 +25,8 @@ pub(crate) enum Command {
     /// Connect to a room and save this task's identity; wait until ready.
     ///
     /// Either paste the invitation copied from Agent Room, or name a room the account can enter
-    /// (`rooms` lists them). Without either, the Bridge's default public lobby is used.
+    /// (`rooms` lists them). Without either, takes the character waiting in the desktop app's
+    /// invite dialog, else returns to this task's last character, else the default public lobby.
     Join {
         #[arg(long, conflicts_with_all = ["room", "name"])]
         invite: Option<String>,
