@@ -330,7 +330,8 @@ export const pendingInvitationSchema = z
     invitation: z
       .object({
         sessionKey: z.uuidv7(),
-        displayName: z.string().min(1).max(128),
+        // 面板里的人没定名字时不带，接上的 Agent 自己起名。
+        displayName: z.string().min(1).max(128).optional(),
         room: z
           .object({ catalogId: z.uuidv7(), roomId: z.string().min(1).max(512).optional() })
           .strict()

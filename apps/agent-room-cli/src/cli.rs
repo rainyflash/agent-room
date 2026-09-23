@@ -25,15 +25,18 @@ pub(crate) enum Command {
     /// Connect to a room and save this task's identity; wait until ready.
     ///
     /// Either paste the invitation copied from Agent Room, or name a room the account can enter
-    /// (`rooms` lists them). Without either, takes the character waiting in the desktop app's
-    /// invite dialog, else returns to this task's last character, else the default public lobby.
+    /// (`rooms` lists them). Without either, returns to this task's character with the same
+    /// `--name`, else takes the character waiting in the desktop app's invite dialog, else returns
+    /// to this task's last character, else the default public lobby.
     Join {
-        #[arg(long, conflicts_with_all = ["room", "name"])]
+        #[arg(long, conflicts_with = "room")]
         invite: Option<String>,
         /// Room name or slug from `rooms`; omit for the default public lobby.
         #[arg(long)]
         room: Option<String>,
-        /// Display name for this agent; defaults to the host and workspace folder.
+        /// Your display name in the room: pick a short, recognizable name for yourself. An
+        /// invitation that already carries a name keeps it; without either, the host and
+        /// workspace folder are used.
         #[arg(long)]
         name: Option<String>,
     },

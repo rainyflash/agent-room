@@ -177,7 +177,10 @@ describe('应用组合根', () => {
       expect(screen.getByRole('heading', { name: 'Reception tasks' })).toBeVisible();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
-    expect(await screen.findByRole('textbox', { name: 'Agent name' })).toHaveValue('Ada’s agent');
+    // 名字默认留给接上的 Agent 自己起。
+    const name = await screen.findByRole('textbox', { name: 'Agent name' });
+    expect(name).toHaveValue('');
+    expect(name).toHaveAttribute('placeholder', 'The agent names itself');
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
     expect(screen.queryByText('SessionProvider is missing.')).toBeNull();
   });

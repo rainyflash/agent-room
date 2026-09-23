@@ -621,7 +621,13 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         };
         invitation.map(|pending| pending.invitation)
     };
-    let offered = request("面板里的人物");
+    // 面板没定名字：接上的 Agent 用自己起的名字开会话，同样用掉这份邀请。
+    let opened = request("Scout");
+    let offered = agent_room_bridge_ipc::IpcInvitationOffer {
+        session_key: opened.session_key.clone(),
+        display_name: None,
+        room: None,
+    };
     assert_eq!(
         pending(
             handler
@@ -643,7 +649,9 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         );
     }
     handler
-        .dispatch(IpcMethod::OpenHostSession(offered.clone()))
+        .dispatch(IpcMethod::OpenHostSession(
+            offered.open_request(|| opened.display_name.clone()),
+        ))
         .await
         .expect("用邀请开出会话");
     assert_eq!(

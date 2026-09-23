@@ -574,9 +574,10 @@ fn validate_identity_text(value: &str, maximum_length: usize) -> Result<(), ()> 
     Ok(())
 }
 
+/// 按字符数限长，与数据库的 `length()` 一致；按字节算会丢掉较长的中文名。
 fn valid_display_name(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= MAX_DISPLAY_NAME_LENGTH
+        && value.chars().count() <= MAX_DISPLAY_NAME_LENGTH
         && !value.chars().any(char::is_control)
 }
 
@@ -631,5 +632,19 @@ mod tests {
 
         assert_eq!(identity.display_name(), None);
         assert_eq!(identity.locale(), None);
+    }
+
+    #[test]
+    fn 较长的中文名按字符数保留() {
+        let name = "长".repeat(100);
+        let identity = VerifiedOidcIdentity::new(
+            "https://issuer.example",
+            "stable-subject",
+            Some(name.clone()),
+            None,
+            None,
+        )
+        .expect("稳定主体键有效");
+        assert_eq!(identity.display_name(), Some(name.as_str()));
     }
 }

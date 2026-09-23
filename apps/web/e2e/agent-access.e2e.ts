@@ -28,7 +28,10 @@ for (const width of [1440, 390]) {
     const invitation: unknown = JSON.parse(
       Buffer.from(invitationToken ?? '', 'base64url').toString('utf8'),
     );
-    expect(invitation).toMatchObject({ displayName: 'Fixture operator’s agent', version: 1 });
+    // 名字留给 Agent 自己起：邀请里不带名字，说明里请它用 --name 起一个。
+    expect(invitation).toMatchObject({ version: 1 });
+    expect(invitation).not.toHaveProperty('displayName');
+    expect(clipboard).toContain('Add --name "…" to this command');
     const profileId = /--profile ([0-9a-f-]{36})/u.exec(clipboard)?.[1];
     expect(profileId).toBeDefined();
     expect(clipboard).toContain('untrusted input');
@@ -46,8 +49,19 @@ for (const width of [1440, 390]) {
     await expect(dialog.getByText('“Scout” is in the room')).toHaveCount(0);
     await dialog.getByLabel('Saved characters').selectOption(profileId ?? '');
     await expect(dialog.getByText('“Scout” is in the room')).toBeVisible();
+    // 它接上时自己起名 Scout；再复制这个人物的说明就带上这个名字，重连时不会换名字。
+    await expect(dialog.getByLabel('Agent name')).toHaveValue('Scout');
     await dialog.getByRole('button', { name: 'Copy connection instructions' }).click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(clipboard);
+    const reconnect = await page.evaluate(() => navigator.clipboard.readText());
+    expect(/--profile ([0-9a-f-]{36})/u.exec(reconnect)?.[1]).toBe(profileId);
+    const named: unknown = JSON.parse(
+      Buffer.from(
+        /join --invite ([A-Za-z0-9_-]+)/u.exec(reconnect)?.[1] ?? '',
+        'base64url',
+      ).toString('utf8'),
+    );
+    expect(named).toMatchObject({ displayName: 'Scout', version: 1 });
+    expect(reconnect).not.toContain('Add --name "…" to this command');
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(dialog).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`agent-access-${String(width)}.png`) });

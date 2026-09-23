@@ -2649,9 +2649,9 @@ mod tests {
 
     #[test]
     fn 挂邀请只属于桌面_查看等待中的邀请只给接入的_agent() {
-        let invitation = agent_room_bridge_ipc::IpcOpenHostSessionRequest {
+        let invitation = agent_room_bridge_ipc::IpcInvitationOffer {
             session_key: Uuid::now_v7().to_string(),
-            display_name: "面板里的人物".into(),
+            display_name: Some("面板里的人物".into()),
             room: None,
         };
         let offer_method = IpcMethod::OfferInvitation(invitation.clone());

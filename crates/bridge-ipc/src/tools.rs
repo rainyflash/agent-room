@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcOpenHostSessionRequest,
-    IpcPendingInvitation, IpcWithdrawInvitationRequest, limits,
+    IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcInvitationOffer,
+    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ pub enum IpcMethod {
     /// 这台设备的账号能进的房间，供 CLI/MCP 按名字解析房间；不需要先开会话。
     ListRooms,
     /// 桌面端接入面板把准备好的人物挂在 Bridge 上等 Agent 来接；同一时间只挂一份，后挂的替换先挂的。
-    OfferInvitation(IpcOpenHostSessionRequest),
+    OfferInvitation(IpcInvitationOffer),
     /// 面板关闭时撤回自己挂的那份。
     WithdrawInvitation(IpcWithdrawInvitationRequest),
     /// 不带邀请的 join 查看正在等待的人物；用它开出会话时这份邀请才被用掉。
@@ -130,7 +130,8 @@ impl IpcMethod {
             Self::WithdrawInvitation(request) => request.validate(),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
-            Self::OpenHostSession(request) | Self::OfferInvitation(request) => request.validate(),
+            Self::OpenHostSession(request) => request.validate(),
+            Self::OfferInvitation(offer) => offer.validate(),
             Self::CloseHostSession(request) => request.validate(),
             Self::RegisterReception(request) => request.validate(),
             Self::ReceptionControl(request) => {
