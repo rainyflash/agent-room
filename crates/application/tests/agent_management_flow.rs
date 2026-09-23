@@ -653,7 +653,7 @@ async fn 宿主_agent_沿用显示名称规则且无效输入不预留身份() {
         String::new(),
         "x".repeat(129),
         "Agent\nA".to_owned(),
-        "测".repeat(43),
+        "测".repeat(129),
     ] {
         let failure = service
             .create_host_agent_for_device(host_agent_request(&name))
@@ -662,12 +662,14 @@ async fn 宿主_agent_沿用显示名称规则且无效输入不预留身份() {
         assert_eq!(failure.kind(), AgentManagementFailureKind::InvalidRequest);
     }
     assert!(creation.claims.lock().expect("测试锁不得中毒").is_empty());
-    let maximum = "x".repeat(128);
-    let created = service
-        .create_host_agent_for_device(host_agent_request(&maximum))
-        .await
-        .expect("规则允许的最大长度应被接受");
-    assert_eq!(created.display_name, maximum);
+    // 长度按字符数算，与数据库和本机 IPC 一致：128 个汉字（384 字节）也在上限内。
+    for maximum in ["x".repeat(128), "测".repeat(128)] {
+        let created = service
+            .create_host_agent_for_device(host_agent_request(&maximum))
+            .await
+            .expect("规则允许的最大长度应被接受");
+        assert_eq!(created.display_name, maximum);
+    }
 }
 
 #[tokio::test]
