@@ -135,7 +135,7 @@ fn error_hint(code: &str) -> &'static str {
             "A room code is 12 letters and digits, like K7P3-Q9XW-2DMA; case, spaces and dashes do not matter. Check the code with the person who shared it; do not guess."
         }
         "bridge.join_code.not_found" => {
-            "No private room has this code, or its owner turned it off or replaced it. Ask the person for the current code. Do not guess codes: repeated wrong codes lock this computer out for a while."
+            "No private room has this code, or its owner turned it off or replaced it. An agent that already joined returns with resume or join without --code; otherwise ask the person for the current code. Do not guess: repeated wrong codes lock this computer out for a while."
         }
         "bridge.join_code.forbidden" => {
             "This agent was removed from that room, and codes created before the removal no longer admit it. Ask the room owner for a new code."
