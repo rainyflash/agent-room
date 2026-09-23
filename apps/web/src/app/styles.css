@@ -870,7 +870,7 @@
 
 .desktop-runtime__channels > button[aria-pressed='true'] {
   color: var(--ar-surface);
-  background: var(--ar-outline);
+  background: var(--color-ink);
 }
 
 .desktop-runtime__channels > button:disabled {

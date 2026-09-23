@@ -75,6 +75,47 @@
   --ar-paper-18: color-mix(in srgb, var(--color-paper) 18%, transparent);
   --ar-paper-10: color-mix(in srgb, var(--color-paper) 10%, transparent);
   --ar-shadow-short: 0 10px 30px color-mix(in srgb, var(--color-ink) 12%, transparent);
+  color-scheme: light;
+}
+
+/*
+ * 暗色：跟随系统设置。仍然遵守“彩色底上放墨色文字”——墨色变浅，彩色底就一起压暗，
+ * 所有组件只换令牌、不用逐个改规则。描边改成中灰，暗底上仍看得出按钮和输入框的边界。
+ * 游戏场景画在画布上读不到这些变量，保持白天的配色。
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-ink: #f1ece2;
+    --color-paper: #1b1a21;
+    --color-signal: #1f4d43;
+    --color-network: #6fc9c2;
+    --color-alert: #ff8f84;
+    --ar-canvas: #131217;
+    --ar-surface: #1e1c24;
+    --ar-surface-muted: #28252f;
+    --ar-accent: #5cc0b8;
+    --ar-accent-hover: #75cfc8;
+    --ar-accent-soft: #163230;
+    --ar-muted: #aaa4b4;
+    --ar-line: #37333f;
+    --ar-success: #78d6a9;
+    --ar-warning: #f1c46e;
+    --ar-warning-soft: #3b2f15;
+    --ar-danger-soft: #402320;
+    --ar-panel-shadow: 0 12px 40px #00000066;
+    --ar-overlay-shadow: 0 16px 56px #00000080;
+    --ar-outline: #8e879d;
+    --ar-backdrop: color-mix(in srgb, #000000 62%, transparent);
+    --ar-sunny: #8a6414;
+    --ar-sunny-hover: #9b711a;
+    --ar-coral: #8e3a2b;
+    --ar-coral-hover: #a14535;
+    --ar-sky: #24527a;
+    --ar-sky-hover: #2c608c;
+    --ar-mint: #1f4d43;
+    --ar-shadow-short: 0 10px 30px #00000059;
+  }
 }
 
 * {

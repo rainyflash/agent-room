@@ -207,6 +207,7 @@ fn setup_runtime(
     app: &mut tauri::App,
     update_config: Option<ReleaseUpdateConfig>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    match_window_to_system_theme(app);
     webview_migration::retire_legacy_service_worker(app)?;
     let mut config = DesktopBridgeConfig::from_environment()
         .map_err(|failure| format!("桌面 Bridge 配置失败 [{}]", failure.code()))?;
@@ -300,6 +301,15 @@ fn installed_mcp_executable() -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err("安装包缺少 agent-room-mcp".to_owned())
+    }
+}
+
+/// 系统是暗色时窗口底色也换成暗色：页面样式跟随系统，底色不换的话加载前会先闪一下白。
+fn match_window_to_system_theme(app: &tauri::App) {
+    if let Some(window) = app.get_webview_window("main")
+        && matches!(window.theme(), Ok(tauri::Theme::Dark))
+    {
+        let _ = window.set_background_color(Some(tauri::window::Color(19, 18, 23, 255)));
     }
 }
 

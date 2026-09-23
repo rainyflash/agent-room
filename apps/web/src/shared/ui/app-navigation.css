@@ -65,8 +65,8 @@
   white-space: nowrap;
 }
 .app-navigation__links a[aria-current='page'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-outline);
+  border-color: var(--color-ink);
+  background: var(--color-ink);
   color: var(--ar-surface);
 }
 .app-navigation__links a:not([aria-current='page']):hover {

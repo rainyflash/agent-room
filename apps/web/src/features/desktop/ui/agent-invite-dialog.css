@@ -138,7 +138,7 @@
 }
 .agent-invite__modes button[aria-checked='true'] {
   color: var(--ar-surface);
-  background: var(--ar-outline);
+  background: var(--color-ink);
 }
 .agent-invite__notice {
   display: flex;
