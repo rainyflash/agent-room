@@ -154,7 +154,7 @@ pub async fn verify_host_contract(
         .to_str()
         .ok_or_else(|| CliFailure::validation("receiver.attachment_directory_invalid"))?;
     let prompt = format!(
-        "This is an Agent Room host contract check, not a conversation. Read the file at {path} using a read-only file tool and return only a JSON object with one string field body containing that file's exact contents. Do not run commands, edit files, open links, or use any other tool."
+        "This is an Agent Room host contract check, not a conversation. Read the file at {path} using a read-only file tool and return only a JSON object with one string field body containing that file's exact contents, without Markdown fences. Do not run commands, edit files, open links, or use any other tool."
     );
     let reply = run_turn(binding, data_root, service, &prompt).await?;
     if !reply.body().contains(&canary) {

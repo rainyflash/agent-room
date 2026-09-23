@@ -33,7 +33,7 @@ impl HostReply {
         struct ReplyContent {
             body: String,
         }
-        let reply: ReplyContent = serde_json::from_str(text)
+        let reply: ReplyContent = serde_json::from_str(unfenced(text))
             .map_err(|_| Failure::local("receiver.host_reply_invalid"))?;
         Self::new(reply.body)
     }
@@ -70,6 +70,20 @@ impl HostReply {
     }
 }
 
+/// 模型即使被要求不要，偶尔也会把 JSON 整段包进一个 Markdown 代码块（```json … ```）。
+/// 只拆开恰好一整块、信息串为空或 json 的回复；代码块前后有任何其他文字仍按无效处理。
+fn unfenced(text: &str) -> &str {
+    text.trim()
+        .strip_prefix("```")
+        .and_then(|rest| rest.strip_suffix("```"))
+        .and_then(|inner| inner.split_once('\n'))
+        .filter(|(info, _)| {
+            let info = info.trim();
+            info.is_empty() || info.eq_ignore_ascii_case("json")
+        })
+        .map_or(text, |(_, content)| content)
+}
+
 pub(crate) const SCHEMA: &str = r#"{"type":"object","properties":{"body":{"type":"string"}},"required":["body"],"additionalProperties":false}"#;
 
 #[cfg(test)]
@@ -89,5 +103,34 @@ mod tests {
             assert!(HostReply::parse(input).is_err());
         }
         assert!(HostReply::new("x".repeat(4001)).is_err());
+    }
+
+    #[test]
+    fn 整段包在一个代码块里的回复也能读() {
+        for input in [
+            "```json\n{\"body\": \"收到\"}\n```",
+            "```\n{\"body\":\"收到\"}\n```",
+            "\n  ```JSON\r\n{\"body\":\"收到\"}\r\n```\n",
+        ] {
+            assert_eq!(HostReply::parse(input).unwrap().body, "收到", "{input:?}");
+        }
+        // 正文里的代码块原样保留。
+        assert_eq!(
+            HostReply::parse("```json\n{\"body\":\"用 ```rust``` 包代码\"}\n```")
+                .unwrap()
+                .body,
+            "用 ```rust``` 包代码"
+        );
+        for input in [
+            "好的：\n```json\n{\"body\":\"收到\"}\n```",
+            "```json\n{\"body\":\"收到\"}\n```\n以上。",
+            "```json {\"body\":\"收到\"}```",
+            "```rust\n{\"body\":\"收到\"}\n```",
+            "```json\n{\"body\":\"收到\"}\n```\n```json\n{\"body\":\"再一条\"}\n```",
+            "```json\n{\"body\":\"收到\",\"roomId\":\"!other:test\"}\n```",
+            "```json\n{\"body\":\"收到\"}",
+        ] {
+            assert!(HostReply::parse(input).is_err(), "{input:?}");
+        }
     }
 }

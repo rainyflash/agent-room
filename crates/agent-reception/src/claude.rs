@@ -153,6 +153,11 @@ mod tests {
         assert!(confirm_turn(format!("{init}\n{result}").as_bytes(), "task-a").is_ok());
         assert!(confirm_turn(result.to_string().as_bytes(), "task-a").is_err());
         assert!(confirm_turn(format!("{init}\n{result}").as_bytes(), "task-b").is_err());
+        // Opus 宿主在契约检查里实际这样回复过。
+        let mut fenced = result.clone();
+        fenced["result"] = json!("```json\n{\"body\": \"hello\"}\n```");
+        let reply = confirm_turn(format!("{init}\n{fenced}").as_bytes(), "task-a").unwrap();
+        assert_eq!(reply.body(), "hello");
         result["permission_denials"] =
             json!([{"tool_name":"mcp__agent_room__agent_room_send_message"}]);
         assert!(confirm_turn(format!("{init}\n{result}").as_bytes(), "task-a").is_err());
