@@ -28,6 +28,7 @@ import {
   type PrivateRoomMember,
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
+import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-create-flow';
 import type { Result } from '@/shared/result';
@@ -280,6 +281,10 @@ export function PrivateRoomGovernance({
           ))}
         </ol>
       </div>
+
+      {canManage && room.status === 'active' ? (
+        <PrivateRoomAgentAccess room={room} rooms={rooms} />
+      ) : null}
 
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
       {mutation.isPending ? (

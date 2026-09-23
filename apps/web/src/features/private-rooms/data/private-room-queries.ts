@@ -17,3 +17,17 @@ export function privateRoomListQueryOptions(gateway: PrivateRoomGateway, account
 export function usePrivateRoomList(gateway: PrivateRoomGateway, accountId?: string) {
   return useQuery(privateRoomListQueryOptions(gateway, accountId));
 }
+
+export const privateRoomAgentAccessQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'agent-access', catalogId] as const;
+
+/** 口令状态与凭口令进来的 Agent；只有能管理房间的人查得到。 */
+export function usePrivateRoomAgentAccess(gateway: PrivateRoomGateway, catalogId: string) {
+  return useQuery({
+    queryKey: privateRoomAgentAccessQueryKey(catalogId),
+    queryFn: async () => await gateway.agentAccess(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}

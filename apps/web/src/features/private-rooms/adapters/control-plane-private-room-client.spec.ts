@@ -95,6 +95,80 @@ describe('ControlPlanePrivateRoomClient', () => {
     );
   });
 
+  it('Agent 口令：查看只有创建时间，生成时才拿到口令，停用与移出没有正文', async () => {
+    const agentId = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          agents: [
+            {
+              agentId,
+              displayName: 'Scout',
+              joinedAtUnixMs: 1_700_000_000_000,
+              ownerDisplayName: null,
+              status: 'joined',
+              statusChangedAtUnixMs: 1_700_000_000_000,
+            },
+          ],
+          joinCode: { createdAtUnixMs: 1_700_000_000_000 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: 1_700_000_100_000 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const base = `https://control.agent-room.test/private-rooms/${ROOM.catalogId}/agent-access`;
+
+    const access = await client.agentAccess(ROOM.catalogId);
+    expect(access.ok ? access.value.agents[0]?.displayName : null).toBe('Scout');
+    expect(access.ok ? access.value.joinCode : null).toEqual({
+      createdAtUnixMs: 1_700_000_000_000,
+    });
+    const generated = await client.generateJoinCode(ROOM.catalogId);
+    expect(generated).toEqual({
+      ok: true,
+      value: { code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: 1_700_000_100_000 },
+    });
+    expect(await client.disableJoinCode(ROOM.catalogId)).toEqual({ ok: true, value: undefined });
+    expect(await client.removeCodeAgent(ROOM.catalogId, agentId)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    for (const [index, [path, method]] of [
+      [base, 'GET'],
+      [`${base}/code`, 'PUT'],
+      [`${base}/code`, 'DELETE'],
+      [`${base}/agents/${agentId}`, 'DELETE'],
+    ].entries()) {
+      expect(fetch).toHaveBeenNthCalledWith(
+        index + 1,
+        new URL(path ?? ''),
+        expect.objectContaining({ credentials: 'include', method }),
+      );
+    }
+  });
+
+  it('不是口令格式的生成结果当作无效响应', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(Response.json({ code: 'OIL0-UUUU-0000', createdAtUnixMs: 1 }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.generateJoinCode(ROOM.catalogId)).toEqual({
+      error: { code: 'private_room.invalid_response', retryable: false },
+      ok: false,
+    });
+  });
+
   it('保留结构化失败与关联标识', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
