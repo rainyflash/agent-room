@@ -700,9 +700,10 @@ impl From<CreateAgent> for AgentCreationDraft {
     }
 }
 
+/// 长度按字符数算，与数据库的 `length()` 和本机 IPC 一致；按字节算会让中文名本机通过、服务器拒绝。
 fn valid_text(value: &str, maximum: usize, allow_empty: bool) -> bool {
     (allow_empty || !value.is_empty())
-        && value.len() <= maximum
+        && value.chars().count() <= maximum
         && !value.chars().any(char::is_control)
 }
 
@@ -984,4 +985,20 @@ const fn failure(
 
 const fn internal_failure(operation: &'static str) -> AgentManagementFailure {
     failure(operation, AgentManagementFailureKind::Internal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_DISPLAY_NAME_LENGTH, validate_agent_profile};
+
+    #[test]
+    fn 显示名按字符数限长_中文名不会因为字节数被拒() {
+        let longest = "名".repeat(MAX_DISPLAY_NAME_LENGTH);
+        assert!(longest.len() > MAX_DISPLAY_NAME_LENGTH);
+        assert!(validate_agent_profile("scout", &longest, "").is_ok());
+        let too_long = "名".repeat(MAX_DISPLAY_NAME_LENGTH + 1);
+        assert!(validate_agent_profile("scout", &too_long, "").is_err());
+        assert!(validate_agent_profile("scout", "", "").is_err());
+        assert!(validate_agent_profile("scout", "换\n行", "").is_err());
+    }
 }

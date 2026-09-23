@@ -24,29 +24,70 @@ pub struct IpcHostRoomTarget {
 impl IpcOpenHostSessionRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         validate_session_id(&self.session_key)?;
-        if let Some(room) = &self.room {
-            validate_session_id(&room.catalog_id)?;
-            if let Some(room_id) = &room.room_id {
-                agent_room_domain::rooms::MatrixRoomReference::new(room_id.clone())
-                    .map_err(|_| failure("bridge.ipc.room_invalid"))?;
-            }
-        }
-        if self.display_name.trim() != self.display_name
-            || self.display_name.is_empty()
-            || self.display_name.chars().count() > 128
-            || self.display_name.chars().any(char::is_control)
-        {
-            return Err(failure("bridge.ipc.session_name_invalid"));
-        }
-        Ok(())
+        validate_room(self.room.as_ref())?;
+        validate_display_name(&self.display_name)
     }
+}
+
+/// 桌面端接入面板挂在 Bridge 上的邀请。名字可以不定：由接上的 Agent 自己起。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcInvitationOffer {
+    pub session_key: String,
+    /// 面板里的人定下的名字；为空时用接上的 Agent 自己起的名字。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<IpcHostRoomTarget>,
+}
+
+impl IpcInvitationOffer {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_session_id(&self.session_key)?;
+        validate_room(self.room.as_ref())?;
+        self.display_name
+            .as_deref()
+            .map_or(Ok(()), validate_display_name)
+    }
+
+    /// 接上这份邀请的会话请求：面板定了名字就用它，否则用 Agent 自己起的。
+    #[must_use]
+    pub fn open_request(&self, chosen: impl FnOnce() -> String) -> IpcOpenHostSessionRequest {
+        IpcOpenHostSessionRequest {
+            session_key: self.session_key.clone(),
+            display_name: self.display_name.clone().unwrap_or_else(chosen),
+            room: self.room.clone(),
+        }
+    }
+}
+
+fn validate_room(room: Option<&IpcHostRoomTarget>) -> Result<(), IpcMethodValidationFailure> {
+    if let Some(room) = room {
+        validate_session_id(&room.catalog_id)?;
+        if let Some(room_id) = &room.room_id {
+            agent_room_domain::rooms::MatrixRoomReference::new(room_id.clone())
+                .map_err(|_| failure("bridge.ipc.room_invalid"))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_display_name(name: &str) -> Result<(), IpcMethodValidationFailure> {
+    if name.trim() != name
+        || name.is_empty()
+        || name.chars().count() > 128
+        || name.chars().any(char::is_control)
+    {
+        return Err(failure("bridge.ipc.session_name_invalid"));
+    }
+    Ok(())
 }
 
 /// 桌面端接入面板挂在 Bridge 上、等 Agent 来接的人物。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcPendingInvitation {
-    pub invitation: IpcOpenHostSessionRequest,
+    pub invitation: IpcInvitationOffer,
     /// 还有多久失效；面板开着时会定期续期。
     pub expires_in_ms: u64,
 }
@@ -218,11 +259,45 @@ mod tests {
     }
 
     #[test]
-    fn 等待接入的三个方法各有权限且不能包进会话() {
-        let invitation = IpcOpenHostSessionRequest {
+    fn 等待接入的邀请可以不定名字_开会话时面板定的名字优先() {
+        let unnamed = IpcInvitationOffer {
             room: None,
             session_key: Uuid::now_v7().to_string(),
-            display_name: "调试人物".into(),
+            display_name: None,
+        };
+        assert!(
+            IpcMethod::OfferInvitation(unnamed.clone())
+                .validate()
+                .is_ok()
+        );
+        let encoded = serde_json::to_value(&unnamed).expect("可编码");
+        assert!(encoded.get("displayName").is_none(), "{encoded}");
+        let request = unnamed.open_request(|| "Scout".into());
+        assert_eq!(request.display_name, "Scout");
+        assert!(request.validate().is_ok());
+        let named = IpcInvitationOffer {
+            display_name: Some("面板里的名字".into()),
+            ..unnamed.clone()
+        };
+        assert_eq!(
+            named.open_request(|| "Scout".into()).display_name,
+            "面板里的名字"
+        );
+        for name in ["", " 前后有空格 ", "换\n行"] {
+            let invalid = IpcInvitationOffer {
+                display_name: Some(name.into()),
+                ..unnamed.clone()
+            };
+            assert!(IpcMethod::OfferInvitation(invalid).validate().is_err());
+        }
+    }
+
+    #[test]
+    fn 等待接入的三个方法各有权限且不能包进会话() {
+        let invitation = IpcInvitationOffer {
+            room: None,
+            session_key: Uuid::now_v7().to_string(),
+            display_name: Some("调试人物".into()),
         };
         let offer = IpcMethod::OfferInvitation(invitation.clone());
         assert!(offer.validate().is_ok());

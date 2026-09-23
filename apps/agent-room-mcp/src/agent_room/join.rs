@@ -133,6 +133,31 @@ impl JoinIdentities {
         });
     }
 
+    /// 这个任务里叫这个名字的人物，优先最近进的房间；找到了就把它记成最近进的。
+    pub(crate) fn named(&self, task_id: Option<&str>, name: &str) -> Option<JoinIdentity> {
+        self.update(task_id, |joins| {
+            let key = joins
+                .last
+                .clone()
+                .filter(|key| {
+                    joins
+                        .rooms
+                        .get(key)
+                        .is_some_and(|identity| identity.display_name == name)
+                })
+                .or_else(|| {
+                    joins
+                        .rooms
+                        .iter()
+                        .find(|(_, identity)| identity.display_name == name)
+                        .map(|(key, _)| key.clone())
+                })?;
+            let identity = joins.rooms.get(&key).cloned();
+            joins.last = Some(key);
+            identity
+        })
+    }
+
     /// 这个任务最近进的房间和人物。
     pub(crate) fn last(&self, task_id: Option<&str>) -> Option<JoinIdentity> {
         self.update(task_id, |joins| {

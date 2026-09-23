@@ -14,6 +14,8 @@ use std::{
 pub(crate) struct Invitation {
     pub(crate) version: u8,
     pub(crate) session_key: String,
+    /// 应用里复制出来的邀请可以不带名字，由接上的 Agent 自己起；存进档案的邀请总有名字。
+    #[serde(default)]
     pub(crate) display_name: String,
     pub(crate) room_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,15 +23,20 @@ pub(crate) struct Invitation {
 }
 
 impl Invitation {
-    pub(crate) fn decode(encoded: &str) -> Result<Self> {
+    /// `chosen` 是 Agent 自己起的名字（`--name`）：邀请里有人定了名字就用邀请的，
+    /// 两边都没有才用宿主与工作区生成。
+    pub(crate) fn decode(encoded: &str, chosen: Option<&str>) -> Result<Self> {
         if encoded.len() > 4096 {
             return Err(Failure::validation("cli.invitation_invalid"));
         }
         let bytes = URL_SAFE_NO_PAD
             .decode(encoded)
             .map_err(|_| Failure::validation("cli.invitation_invalid"))?;
-        let invite: Self = serde_json::from_slice(&bytes)
+        let mut invite: Self = serde_json::from_slice(&bytes)
             .map_err(|_| Failure::validation("cli.invitation_invalid"))?;
+        if invite.display_name.is_empty() {
+            invite.display_name = chosen.map_or_else(default_display_name, str::to_owned);
+        }
         invite.validate()?;
         Ok(invite)
     }
@@ -258,7 +265,13 @@ impl ProfileStore {
     }
 
     /// 这个宿主任务最近用过的人物（按档案最后写入的时间）：只说“接入”时回到上次的房间。
-    pub(crate) fn latest_bound(root: &Path, service: &str, task_id: &str) -> Option<String> {
+    /// 带了名字就只找叫这个名字的人物。
+    pub(crate) fn latest_bound(
+        root: &Path,
+        service: &str,
+        task_id: &str,
+        display_name: Option<&str>,
+    ) -> Option<String> {
         let entries = fs::read_dir(root.join("cli-profiles")).ok()?;
         entries
             .filter_map(std::result::Result::ok)
@@ -271,7 +284,8 @@ impl ProfileStore {
                 (profile.invitation.session_key == key
                     && validate_key(&key).is_ok()
                     && profile.bridge_service == service
-                    && profile.task_id.as_deref() == Some(task_id))
+                    && profile.task_id.as_deref() == Some(task_id)
+                    && display_name.is_none_or(|name| name == profile.invitation.display_name))
                 .then_some((modified, key))
             })
             .max()
@@ -422,19 +436,53 @@ mod tests {
     fn 邀请接受中文并拒绝额外凭据字段和非法版本() {
         let original = invitation();
         let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&original).unwrap());
-        assert_eq!(Invitation::decode(&encoded).unwrap(), original);
+        assert_eq!(Invitation::decode(&encoded, None).unwrap(), original);
+        // 邀请里有人定了名字，Agent 自己起的名字不覆盖它。
+        assert_eq!(
+            Invitation::decode(&encoded, Some("Scout"))
+                .unwrap()
+                .display_name,
+            "调试 Agent"
+        );
         let mut value = serde_json::to_value(original).unwrap();
         value["token"] = "not-allowed".into();
         assert!(
-            Invitation::decode(&URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap()))
-                .is_err()
+            Invitation::decode(
+                &URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap()),
+                None
+            )
+            .is_err()
         );
         value.as_object_mut().unwrap().remove("token");
         value["version"] = 2.into();
         assert!(
-            Invitation::decode(&URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap()))
-                .is_err()
+            Invitation::decode(
+                &URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap()),
+                None
+            )
+            .is_err()
         );
+    }
+
+    #[test]
+    fn 不带名字的邀请由_agent_自己起名_没起就用宿主与工作区() {
+        let mut value = serde_json::to_value(invitation()).unwrap();
+        value.as_object_mut().unwrap().remove("displayName");
+        let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap());
+        assert_eq!(
+            Invitation::decode(&encoded, Some("Scout"))
+                .unwrap()
+                .display_name,
+            "Scout"
+        );
+        assert_eq!(
+            Invitation::decode(&encoded, None).unwrap().display_name,
+            default_display_name()
+        );
+        // 自己起的名字同样要是 1 到 128 个可见字符。
+        assert!(Invitation::decode(&encoded, Some(" 前后空格 ")).is_err());
+        assert!(Invitation::decode(&encoded, Some(&"名".repeat(129))).is_err());
+        assert!(Invitation::decode(&encoded, Some(&"名".repeat(128))).is_ok());
     }
 
     #[test]

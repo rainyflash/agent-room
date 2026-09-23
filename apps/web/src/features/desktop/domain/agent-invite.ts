@@ -16,6 +16,7 @@ export const agentInviteHosts: readonly AgentInviteHost[] = [
  */
 export type AgentInviteIdentity = {
   readonly sessionKey: string;
+  /** 空串表示由接上的 Agent 自己起名；它接入后记下实际的名字。 */
   readonly displayName: string;
   readonly ownerId: string | null;
   readonly room?: {
@@ -55,6 +56,11 @@ export function normalizeInviteDisplayName(value: string): string | null {
   if (trimmed.length === 0 || codePointCount(trimmed) > DISPLAY_NAME_MAX) return null;
   if (controlCharacters.test(trimmed)) return null;
   return trimmed;
+}
+
+/** 名字可以留空交给 Agent 自己起：空白返回空串，不合法时返回 null。 */
+export function normalizeOptionalInviteName(value: string): string | null {
+  return value.trim() === '' ? '' : normalizeInviteDisplayName(value);
 }
 
 /** 与 MCP 的 `length(max = 128)` 一致：按 Unicode 码点计数，而不是 UTF-16 单元。 */

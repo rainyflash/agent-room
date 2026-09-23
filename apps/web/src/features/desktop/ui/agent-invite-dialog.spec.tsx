@@ -278,7 +278,10 @@ describe('AgentInviteDialog', () => {
     const first = renderDialog(value);
     await readyToCopy();
     expect(screen.queryByRole('button', { name: 'Set up Codex in one click' })).toBeNull();
-    expect(screen.getByLabelText('Agent name')).toHaveValue('Ada’s agent');
+    // 名字默认留给 Agent 自己起：邀请里不带名字，说明里请它用 --name 起一个。
+    const name = screen.getByLabelText('Agent name');
+    expect(name).toHaveValue('');
+    expect(name).toHaveAttribute('placeholder', 'The agent names itself');
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await screen.findByText('Copied. Paste it to your agent.');
     const prompt = copied(writeText, 0);
@@ -287,9 +290,9 @@ describe('AgentInviteDialog', () => {
     expect(invitationIn(prompt)).toEqual({
       version: 1,
       sessionKey: key,
-      displayName: 'Ada’s agent',
       roomId: room.roomId,
     });
+    expect(prompt).toContain('Add --name "…" to this command with a short, recognizable name');
     expect(prompt).toContain("& 'C:\\Agent Room\\agent-room.exe'");
     expect(prompt).toContain('ack --event');
     expect(prompt).toContain('single command blocks silently until a message arrives');
@@ -354,7 +357,7 @@ describe('AgentInviteDialog', () => {
     expect(profileIn(short)).toBe(profileIn(long));
   });
 
-  it('面板开着就挂出这个人物：一句“接入 Agent Room”即可，Agent 接上后锁定名字，关闭时撤回', async () => {
+  it('面板开着就挂出这个人物：一句“接入 Agent Room”即可，记下 Agent 自己起的名字，关闭时撤回', async () => {
     let sessions: HostSessionDiagnostics[] = [];
     const runtime = gateway({
       installed: ['claude-code'],
@@ -369,7 +372,8 @@ describe('AgentInviteDialog', () => {
     });
     const offered = runtime.offerInvitation.mock.calls[0]?.[0];
     expect(offered?.sessionKey).toMatch(uuidV7);
-    expect(offered?.displayName).toBe('Ada’s agent');
+    // 名字留给接上的 Agent 自己起。
+    expect(offered?.displayName).toBeUndefined();
     // 这个房间没有目录信息，就不带房间，由 Bridge 走默认大厅。
     expect(offered?.room).toBeUndefined();
     expect(await screen.findByText('Join Agent Room')).toBeVisible();
@@ -377,10 +381,10 @@ describe('AgentInviteDialog', () => {
       screen.getByText(/tell an agent that already has the skill or MCP set up/u),
     ).toBeVisible();
 
-    // Agent 说了“接入”，用这个人物开出了会话。
+    // Agent 说了“接入”，用自己起的名字接上了这个人物。
     sessions = [
       {
-        displayName: 'Ada’s agent',
+        displayName: 'Scout',
         session: {
           sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
           state: 'ready',
@@ -393,19 +397,31 @@ describe('AgentInviteDialog', () => {
         lastMessageSentAgoMs: null,
       },
     ];
-    await screen.findByText('“Ada’s agent” is in the room', undefined, { timeout: 5_000 });
-    expect(screen.getByLabelText('Agent name')).toBeDisabled();
+    await screen.findByText('“Scout” is in the room', undefined, { timeout: 5_000 });
+    const name = screen.getByLabelText('Agent name');
+    expect(name).toBeDisabled();
+    expect(name).toHaveValue('Scout');
+    // 记下它实际用的名字：以后恢复这个人物时沿用同一个名字。
+    await waitFor(() => {
+      expect(readInviteHistory(window.localStorage, owner.principalId).identities[0]).toMatchObject(
+        { sessionKey: offered?.sessionKey, displayName: 'Scout' },
+      );
+    });
     view.unmount();
     expect(runtime.withdrawInvitation).toHaveBeenCalledWith(offered?.sessionKey);
   }, 15_000);
 
-  it('空名字不能复制；复制后锁定身份，切换协议不会创建另一个人物', async () => {
+  it('名字可以留空交给 Agent；复制后锁定身份，切换协议不会创建另一个人物', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ installed: ['codex', 'cursor'] }).value);
     await readyToCopy();
     const name = screen.getByLabelText('Agent name');
+    // 只有空格等于没填：由 Agent 自己起名，仍可复制。
     fireEvent.change(name, { target: { value: '   ' } });
+    expect(name).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+    fireEvent.change(name, { target: { value: 'Sc\u0007out' } });
     expect(name).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
     fireEvent.change(name, { target: { value: 'Scout' } });
@@ -428,11 +444,16 @@ describe('AgentInviteDialog', () => {
     expect(copied(writeText, 1)).toContain('displayName = Scout');
     fireEvent.click(screen.getByRole('button', { name: 'Invite another agent' }));
     expect(screen.getByLabelText('Agent name')).toBeEnabled();
+    expect(screen.getByLabelText('Agent name')).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(3);
     });
     expect(copied(writeText, 2)).not.toContain('sessionKey = ' + key);
+    // 没填名字：请 Agent 用自己起的名字，而不是替它编一个。
+    expect(copied(writeText, 2)).toContain(
+      'displayName = <a short, recognizable name you pick for yourself>',
+    );
   });
 
   it('只有携带本次 sessionKey 的会话才算进入房间，然后可以完成', async () => {

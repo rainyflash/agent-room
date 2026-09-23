@@ -6,10 +6,10 @@ import type { DesktopRuntimeSnapshot } from './desktop-runtime';
 const identitySchema = z
   .object({
     sessionKey: z.uuidv7(),
+    // 空名字表示由 Agent 自己起；它接入后面板会把实际的名字补记下来。
     displayName: z
       .string()
       .trim()
-      .min(1)
       .refine((value) => Array.from(value).length <= 128)
       .refine((value) => !/[\p{Cc}]/u.test(value)),
     ownerId: z.string().nullable(),
@@ -90,7 +90,7 @@ export function encodeCliInvitation(
     JSON.stringify({
       version: 1,
       sessionKey: identity.sessionKey,
-      displayName: identity.displayName,
+      ...(identity.displayName === '' ? {} : { displayName: identity.displayName }),
       roomId,
       ...(catalogId === undefined ? {} : { catalogId }),
     }),

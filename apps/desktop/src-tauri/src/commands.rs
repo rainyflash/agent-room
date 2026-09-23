@@ -357,7 +357,7 @@ pub(crate) async fn desktop_host_session_diagnostics()
 /// 这个人物已经开出会话时 Bridge 不再挂出去，返回空。
 #[tauri::command]
 pub(crate) async fn desktop_offer_invitation(
-    invitation: agent_room_bridge_ipc::IpcOpenHostSessionRequest,
+    invitation: agent_room_bridge_ipc::IpcInvitationOffer,
 ) -> Result<Option<agent_room_bridge_ipc::IpcPendingInvitation>, DesktopCommandFailure> {
     invitation_call(agent_room_bridge_ipc::IpcMethod::OfferInvitation(
         invitation,

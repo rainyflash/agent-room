@@ -3,14 +3,14 @@
 
 use std::{sync::Mutex, time::Duration};
 
-use agent_room_bridge_ipc::{IpcOpenHostSessionRequest, IpcPendingInvitation};
+use agent_room_bridge_ipc::{IpcInvitationOffer, IpcPendingInvitation};
 use tokio::time::Instant;
 
 pub(crate) const INVITATION_LIFETIME: Duration = Duration::from_mins(10);
 
 pub(crate) struct InvitationSlot {
     lifetime: Duration,
-    slot: Mutex<Option<(IpcOpenHostSessionRequest, Instant)>>,
+    slot: Mutex<Option<(IpcInvitationOffer, Instant)>>,
 }
 
 impl Default for InvitationSlot {
@@ -28,7 +28,7 @@ impl InvitationSlot {
     }
 
     /// 挂上或续期；后挂的替换先挂的。
-    pub(crate) fn offer(&self, invitation: IpcOpenHostSessionRequest) -> IpcPendingInvitation {
+    pub(crate) fn offer(&self, invitation: IpcInvitationOffer) -> IpcPendingInvitation {
         *self.lock() = Some((invitation.clone(), Instant::now() + self.lifetime));
         IpcPendingInvitation {
             invitation,
@@ -64,7 +64,7 @@ impl InvitationSlot {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<(IpcOpenHostSessionRequest, Instant)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<(IpcInvitationOffer, Instant)>> {
         self.slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -79,15 +79,15 @@ fn millis(duration: Duration) -> u64 {
 mod tests {
     use std::time::Duration;
 
-    use agent_room_bridge_ipc::IpcOpenHostSessionRequest;
+    use agent_room_bridge_ipc::IpcInvitationOffer;
     use uuid::Uuid;
 
     use super::InvitationSlot;
 
-    fn invitation(name: &str) -> IpcOpenHostSessionRequest {
-        IpcOpenHostSessionRequest {
+    fn invitation(name: &str) -> IpcInvitationOffer {
+        IpcInvitationOffer {
             session_key: Uuid::now_v7().to_string(),
-            display_name: name.to_owned(),
+            display_name: Some(name.to_owned()),
             room: None,
         }
     }

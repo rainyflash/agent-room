@@ -21,6 +21,7 @@ import {
   agentInviteHosts,
   defaultInviteHost,
   normalizeInviteDisplayName,
+  normalizeOptionalInviteName,
   projectInviteStatus,
   type AgentInviteHost,
   type AgentInviteIdentity,
@@ -207,12 +208,10 @@ function ConnectionInvite({
   const [chosenHost, setChosenHost] = useState<AgentInviteHost | null>(null);
   const host = chosenHost ?? defaultInviteHost(controller.hosts);
   const hostLabel = host === 'other' ? t('agentInvite.host.other') : hostLabels[host];
+  // 名字默认留给接上的 Agent 自己起；面板里的人填了名字才用这个名字。
   const makeIdentity = (): AgentInviteIdentity => ({
     sessionKey: uuid.next(),
-    displayName:
-      owner === null
-        ? t('agentInvite.cli.anonymous')
-        : t('agentInvite.cli.name', { owner: owner.displayName }),
+    displayName: '',
     ownerId,
     room: currentRoom,
   });
@@ -254,9 +253,9 @@ function ConnectionInvite({
   }, [skillHost, checkSkill]);
   const skillSetup = skillHost === null ? undefined : controller.skillSetup[skillHost];
   const skillCurrent = skillSetup?.phase === 'ready' && skillSetup.status.state === 'current';
+  const nameReady = validName && normalizeOptionalInviteName(identity.displayName) !== null;
   const canCopy =
-    validName &&
-    normalizeInviteDisplayName(identity.displayName) !== null &&
+    nameReady &&
     (!controller.available ||
       (localReady &&
         (mode === 'cli'
@@ -315,16 +314,18 @@ function ConnectionInvite({
   // 不必复制。复制的说明用的是同一个人物，两条路不会多出人物；Agent 接上后不再续期，关闭时撤回。
   const { offerInvitation, withdrawInvitation } = controller;
   const [offeredAt, setOfferedAt] = useState<number | null>(null);
-  const offerName = validName ? normalizeInviteDisplayName(identity.displayName) : null;
+  const offerName =
+    identity.displayName === ''
+      ? undefined
+      : (normalizeInviteDisplayName(identity.displayName) ?? undefined);
   const offerRoomCatalog = room?.catalogId;
   const offerRoomId = room?.roomId;
   const awaitingAgent = status.kind === 'waiting';
   useEffect(() => {
-    if (!controller.available || !localReady || offerName === null || !awaitingAgent)
-      return undefined;
+    if (!controller.available || !localReady || !nameReady || !awaitingAgent) return undefined;
     const invitation: InvitationOffer = {
       sessionKey: identity.sessionKey,
-      displayName: offerName,
+      ...(offerName === undefined ? {} : { displayName: offerName }),
       ...(offerRoomCatalog === undefined
         ? {}
         : {
@@ -353,6 +354,7 @@ function ConnectionInvite({
   }, [
     controller.available,
     localReady,
+    nameReady,
     offerName,
     identity.sessionKey,
     offerRoomCatalog,
@@ -361,11 +363,21 @@ function ConnectionInvite({
     offerInvitation,
     withdrawInvitation,
   ]);
+  // 名字交给 Agent 起的人物，接上后记下它实际用的名字：恢复这个人物时必须沿用同一个名字。
+  const arrivedName = status.kind === 'waiting' ? null : status.displayName;
+  useEffect(() => {
+    if (arrivedName === null || identity.displayName !== '') return;
+    const named = { ...identity, displayName: arrivedName };
+    setIdentity(named);
+    if (storage !== null && saveInviteHistory(storage, named))
+      setHistory(readInviteHistory(storage, ownerId));
+  }, [arrivedName, identity, storage, ownerId]);
   const startedAt = copiedAt ?? offeredAt;
   const inviteRoomId = room?.roomId;
+  const readyName = status.kind === 'ready' ? status.displayName : null;
   useEffect(() => {
     if (
-      status.kind !== 'ready' ||
+      readyName === null ||
       diagnosticsFailure !== null ||
       invitedAgentId == null ||
       inviteRoomId === undefined ||
@@ -376,35 +388,29 @@ function ConnectionInvite({
       agentId: invitedAgentId,
       roomId: inviteRoomId,
       startedAt,
-      displayName: identity.displayName,
+      displayName: readyName,
     });
-  }, [
-    status.kind,
-    diagnosticsFailure,
-    invitedAgentId,
-    inviteRoomId,
-    startedAt,
-    identity.displayName,
-    onConnected,
-  ]);
+  }, [readyName, diagnosticsFailure, invitedAgentId, inviteRoomId, startedAt, onConnected]);
   const roomLine =
     room === null
       ? t('agentInvite.prompt.roomDefault')
       : t('agentInvite.prompt.roomKnown', { roomId: room.roomId, roomName: room.roomName });
   const invocation = cliInvocation(cliConfiguration, controller.snapshot?.platform ?? 'unknown');
   const scope = invocation + ' --profile ' + identity.sessionKey;
+  const joinCommand =
+    invocation +
+    ' join --invite ' +
+    encodeCliInvitation(identity, room?.roomId ?? null, room?.catalogId);
+  const agentNames = identity.displayName === '';
   const prompt =
     mode === 'cli'
       ? t(skillCurrent ? 'agentInvite.cli.promptWithSkill' : 'agentInvite.cli.prompt', {
-          command:
-            invocation +
-            ' join --invite ' +
-            encodeCliInvitation(identity, room?.roomId ?? null, room?.catalogId),
+          command: agentNames ? joinCommand + '\n' + t('agentInvite.cli.nameChoice') : joinCommand,
           scope,
           room: roomLine,
         })
       : t('agentInvite.prompt', {
-          displayName: identity.displayName,
+          displayName: agentNames ? t('agentInvite.prompt.nameChoice') : identity.displayName,
           room: roomLine,
           sessionKey: identity.sessionKey,
           target:
@@ -499,7 +505,10 @@ function ConnectionInvite({
                 <option value="">{t('agentInvite.identity.new')}</option>
                 {history.identities.map((entry) => (
                   <option key={entry.sessionKey} value={entry.sessionKey}>
-                    {entry.displayName} · {entry.sessionKey.slice(-6)}
+                    {entry.displayName === ''
+                      ? t('agentInvite.identity.unnamed')
+                      : entry.displayName}{' '}
+                    · {entry.sessionKey.slice(-6)}
                   </option>
                 ))}
               </select>
@@ -508,6 +517,7 @@ function ConnectionInvite({
           <NameField
             key={identity.sessionKey}
             initial={identity.displayName}
+            arrived={arrivedName}
             disabled={restored || copiedAt !== null || !awaitingAgent}
             onValidityChange={setValidName}
             onCommit={(displayName) => {
@@ -875,13 +885,16 @@ function SkillSetup({
   );
 }
 
+/** 名字可以留空交给 Agent 自己起；Agent 接上后显示它实际用的名字。 */
 function NameField({
   initial,
+  arrived = null,
   onCommit,
   disabled = false,
   onValidityChange,
 }: {
   readonly initial: string;
+  readonly arrived?: string | null;
   readonly onCommit: (displayName: string) => void;
   readonly disabled?: boolean;
   readonly onValidityChange?: (valid: boolean) => void;
@@ -889,7 +902,7 @@ function NameField({
   const { t } = useTranslation();
   const id = useId();
   const [draft, setDraft] = useState(initial);
-  const normalized = normalizeInviteDisplayName(draft);
+  const normalized = normalizeOptionalInviteName(draft);
   return (
     <div className="agent-invite__name">
       <label htmlFor={id}>{t('agentInvite.name')}</label>
@@ -904,12 +917,13 @@ function NameField({
         }}
         onChange={(event) => {
           setDraft(event.target.value);
-          const next = normalizeInviteDisplayName(event.target.value);
+          const next = normalizeOptionalInviteName(event.target.value);
           onValidityChange?.(next !== null);
           if (next !== null) onCommit(next);
         }}
+        placeholder={t('agentInvite.name.placeholder')}
         type="text"
-        value={draft}
+        value={arrived ?? draft}
       />
       <small className={normalized === null ? 'agent-invite__error' : undefined} id={`${id}-hint`}>
         {normalized === null ? t('agentInvite.name.invalid') : t('agentInvite.name.hint')}

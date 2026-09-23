@@ -21,7 +21,8 @@ pub struct OpenSessionInput {
     /// 当前宿主任务独有的稳定 UUIDv7；重试或恢复此任务必须复用，不得与其他任务共用。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_key: String,
-    /// 用户授权接入的 Agent 显示名；同一 sessionKey 重试必须使用同一名称。
+    /// 你在房间里的显示名：邀请里给了名字就原样使用，没给就用你给自己起的名字；
+    /// 同一 sessionKey 重试必须使用同一名称。
     #[schemars(length(min = 1, max = 128))]
     pub display_name: String,
     /// Optional exact public room from the invitation. Unavailable/full rooms fail without fallback.
@@ -39,8 +40,9 @@ pub struct JoinInput {
     /// 要进入的房间：`agent_room_list_rooms` 里的 name 或 slug；省略就进默认公开大厅。
     #[schemars(length(max = 256))]
     pub room: Option<String>,
-    /// 这个人物在房间里的显示名；省略时用宿主与工作目录生成。同一任务重跑时省略即可复用人物。
-    /// 显示名会原样出现在房间里，须由用户授权。
+    /// 你在房间里的显示名，由你给自己起：简短好认。第一次接入时给出；同一任务之后用同一个名字
+    /// 或省略都会回到同一人物。省略且没有已保存的人物时用宿主与工作目录生成；面板里的人给邀请
+    /// 定了名字时以那个为准。
     #[schemars(length(min = 1, max = 128))]
     pub display_name: Option<String>,
 }

@@ -687,7 +687,7 @@ struct JoinBridge {
     rooms: Vec<IpcRoomSummary>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     connected_room: Mutex<String>,
-    pending: Mutex<Option<IpcOpenHostSessionRequest>>,
+    pending: Mutex<Option<agent_room_bridge_ipc::IpcInvitationOffer>>,
 }
 
 impl JoinBridge {
@@ -910,9 +910,9 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
         room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
         room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
     ]));
-    let waiting = IpcOpenHostSessionRequest {
+    let waiting = agent_room_bridge_ipc::IpcInvitationOffer {
         session_key: uuid::Uuid::now_v7().to_string(),
-        display_name: "面板里起的名字".into(),
+        display_name: Some("面板里起的名字".into()),
         room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
             catalog_id: uuid::Uuid::now_v7().to_string(),
             room_id: Some("!game:test.invalid".into()),
@@ -933,7 +933,7 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     assert_eq!(invited["target"]["roomId"], "!game:test.invalid");
     assert_eq!(
         bridge.opened.lock().unwrap().as_slice(),
-        std::slice::from_ref(&waiting)
+        &[waiting.open_request(|| unreachable!("面板定了名字"))]
     );
     assert!(bridge.pending.lock().unwrap().is_none());
 
@@ -954,18 +954,36 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     assert_eq!(back["identity"], "reused");
     assert_eq!(back["sessionKey"], lobby["sessionKey"]);
 
-    // 给了名字或房间就不接面板的邀请。
-    let other = IpcOpenHostSessionRequest {
+    // 面板又挂了一份没定名字的邀请：用已有的名字说“接入”回到自己的人物，邀请留给别的 Agent。
+    let other = agent_room_bridge_ipc::IpcInvitationOffer {
         session_key: uuid::Uuid::now_v7().to_string(),
-        ..waiting
+        display_name: None,
+        room: None,
     };
     *bridge.pending.lock().unwrap() = Some(other.clone());
     harness
-        .send(join(304, json!({"displayName": "另起的名字"})))
+        .send(join(304, json!({"displayName": "Scout"})))
+        .await;
+    let returning = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(returning["identity"], "reused", "{returning}");
+    assert_eq!(returning["sessionKey"], lobby["sessionKey"]);
+    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&other));
+    // 指了房间就按名字进，也不接面板的邀请。
+    harness
+        .send(join(305, json!({"room": "Lobby", "displayName": "Pilot"})))
+        .await;
+    let elsewhere = harness.receive().await["result"]["structuredContent"].clone();
+    assert_ne!(elsewhere["sessionKey"], other.session_key.as_str());
+    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&other));
+    // 起了个新名字、没指房间：接上面板的邀请，名字用自己起的。
+    harness
+        .send(join(306, json!({"displayName": "另起的名字"})))
         .await;
     let named = harness.receive().await["result"]["structuredContent"].clone();
-    assert_ne!(named["sessionKey"], other.session_key.as_str());
-    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&other));
+    assert_eq!(named["identity"], "invited", "{named}");
+    assert_eq!(named["sessionKey"], other.session_key.as_str());
+    assert_eq!(named["displayName"], "另起的名字");
+    assert!(bridge.pending.lock().unwrap().is_none());
     harness.stop().await;
 }
 

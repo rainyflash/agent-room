@@ -1,15 +1,15 @@
 use super::*;
 use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
-    IpcAgentSummary, IpcHostSessionState, IpcHostSessionSummary, IpcOpenHostSessionRequest,
-    IpcRoomMembership,
+    IpcAgentSummary, IpcHostSessionState, IpcHostSessionSummary, IpcInvitationOffer,
+    IpcOpenHostSessionRequest, IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
 
 struct Bridge {
     summary: Mutex<IpcSelfSummary>,
     rooms: Mutex<Vec<IpcRoomSummary>>,
-    pending: Mutex<Option<IpcOpenHostSessionRequest>>,
+    pending: Mutex<Option<IpcInvitationOffer>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
@@ -262,9 +262,9 @@ async fn 房间名不存在或有歧义时不接入并列出候选() {
 async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重复接() {
     let directory = tempfile::tempdir().unwrap();
     let bridge = Bridge::new();
-    let waiting = IpcOpenHostSessionRequest {
+    let waiting = IpcInvitationOffer {
         session_key: uuid::Uuid::now_v7().to_string(),
-        display_name: "面板里起的名字".into(),
+        display_name: Some("面板里起的名字".into()),
         room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
             catalog_id: uuid::Uuid::now_v7().to_string(),
             room_id: Some("!room:test.invalid".into()),
@@ -276,7 +276,7 @@ async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重�
         .unwrap();
     assert_eq!(
         bridge.opened.lock().unwrap().as_slice(),
-        std::slice::from_ref(&waiting)
+        &[waiting.open_request(|| unreachable!("面板定了名字"))]
     );
     let saved = saved_profiles(directory.path());
     assert_eq!(saved.len(), 1);
@@ -287,23 +287,100 @@ async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重�
         waiting.room.as_ref().map(|room| room.catalog_id.clone())
     );
     assert!(bridge.pending.lock().unwrap().is_none());
-    // 指了房间或名字就是按名字接入，不去接面板的邀请。
-    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    // 面板没定名字：带上自己起的名字说“接入”，接上的就是这份邀请，名字用 Agent 起的。
+    let unnamed = IpcInvitationOffer {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: None,
+        room: None,
+    };
+    *bridge.pending.lock().unwrap() = Some(unnamed.clone());
     run(
         &bridge,
         directory.path(),
         "test",
         None,
-        join(None, Some("另起的名字")),
+        join(None, Some("Scout")),
     )
     .await
     .unwrap();
-    let opened = bridge.opened.lock().unwrap();
+    let opened = bridge.opened.lock().unwrap().clone();
     assert_eq!(opened.len(), 2);
-    assert_ne!(opened[1].session_key, waiting.session_key);
-    assert!(opened[1].room.is_none());
-    drop(opened);
+    assert_eq!(opened[1].session_key, unnamed.session_key);
+    assert_eq!(opened[1].display_name, "Scout");
+    assert!(bridge.pending.lock().unwrap().is_none());
+    // 指了房间就是按名字接入，不去接面板的邀请。
+    bridge
+        .rooms
+        .lock()
+        .unwrap()
+        .push(room(IpcRoomKind::PublicLobby, "Agent Room Global", None));
+    *bridge.pending.lock().unwrap() = Some(unnamed.clone());
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("Agent Room Global"), Some("Pilot")),
+    )
+    .await
+    .unwrap();
+    let opened = bridge.opened.lock().unwrap().clone();
+    assert_eq!(opened.len(), 3);
+    assert_ne!(opened[2].session_key, unnamed.session_key);
+    assert_eq!(opened[2].display_name, "Pilot");
     assert!(bridge.pending.lock().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn 带名字接入时这个任务已有同名人物就回到它_面板的邀请留给别的_agent() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    let task = uuid::Uuid::now_v7().to_string();
+    let saved = Profile::new(
+        Invitation::for_room(
+            uuid::Uuid::now_v7().to_string(),
+            "Scout".into(),
+            &RoomTarget::DEFAULT_LOBBY,
+        ),
+        "test",
+        Some(task.clone()),
+    );
+    ProfileStore::open(directory.path(), &saved.invitation.session_key)
+        .unwrap()
+        .save(&saved)
+        .unwrap();
+    let waiting = IpcInvitationOffer {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: None,
+        room: None,
+    };
+    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    let select = |name: Option<&str>| {
+        let command = join(None, name);
+        let bridge = &bridge;
+        let root = directory.path();
+        let task = task.clone();
+        async move { select_identity(bridge, root, "test", None, Some(&task), &command).await }
+    };
+    let returning = select(Some("Scout")).await.unwrap();
+    assert_eq!(returning.key, saved.invitation.session_key);
+    assert!(returning.invitation.is_none() && returning.join.is_none());
+    // 换个名字就是新人物：接上面板的邀请，名字用自己起的。
+    let invited = select(Some("Pilot")).await.unwrap();
+    assert_eq!(invited.key, waiting.session_key);
+    assert_eq!(invited.invitation.unwrap().display_name, "Pilot");
+    // 不带名字时面板的邀请优先于这个任务上次的人物。
+    let bare = select(None).await.unwrap();
+    assert_eq!(bare.key, waiting.session_key);
+    assert_eq!(
+        bare.invitation.unwrap().display_name,
+        default_display_name()
+    );
+    *bridge.pending.lock().unwrap() = None;
+    assert_eq!(
+        select(None).await.unwrap().key,
+        saved.invitation.session_key
+    );
 }
 
 #[test]
@@ -329,7 +406,7 @@ fn 只说接入且没有等待中的邀请时回到这个任务最近用过的�
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(
-        ProfileStore::latest_bound(directory.path(), "test", &task),
+        ProfileStore::latest_bound(directory.path(), "test", &task, None),
         Some(profiles[1].invitation.session_key.clone())
     );
     // 早先的人物刚被用过（例如 ack），就轮到它。
@@ -339,15 +416,29 @@ fn 只说接入且没有等待中的邀请时回到这个任务最近用过的�
         .save(&profiles[0])
         .unwrap();
     assert_eq!(
-        ProfileStore::latest_bound(directory.path(), "test", &task),
+        ProfileStore::latest_bound(directory.path(), "test", &task, None),
         Some(profiles[0].invitation.session_key.clone())
     );
+    // 带了名字只找叫这个名字的人物。
     assert_eq!(
-        ProfileStore::latest_bound(directory.path(), "other", &task),
+        ProfileStore::latest_bound(directory.path(), "test", &task, Some("Game")),
+        Some(profiles[1].invitation.session_key.clone())
+    );
+    assert_eq!(
+        ProfileStore::latest_bound(directory.path(), "test", &task, Some("Other")),
         None
     );
     assert_eq!(
-        ProfileStore::latest_bound(directory.path(), "test", &uuid::Uuid::now_v7().to_string()),
+        ProfileStore::latest_bound(directory.path(), "other", &task, None),
+        None
+    );
+    assert_eq!(
+        ProfileStore::latest_bound(
+            directory.path(),
+            "test",
+            &uuid::Uuid::now_v7().to_string(),
+            None
+        ),
         None
     );
 }
