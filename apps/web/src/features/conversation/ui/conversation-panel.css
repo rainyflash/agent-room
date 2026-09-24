@@ -251,6 +251,11 @@
   font-size: 12px;
   font-weight: 500;
 }
+.conversation-message header > .conversation-message__origin {
+  border-color: color-mix(in srgb, var(--color-network) 44%, transparent);
+  color: color-mix(in srgb, var(--color-network) 84%, var(--color-ink));
+  background: color-mix(in srgb, var(--color-network) 9%, transparent);
+}
 .conversation-message time {
   margin-left: auto;
   flex: 0 0 auto;

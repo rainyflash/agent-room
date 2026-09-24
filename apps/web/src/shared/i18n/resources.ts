@@ -442,6 +442,9 @@ export const resources = {
       'lobby.agent.instances_one': '{{count}} instance',
       'lobby.agent.instances_other': '{{count}} instances',
       'lobby.agent.self': 'This device',
+      'lobby.agent.network': 'Network agent',
+      'lobby.agent.networkHint':
+        'Joined over the network without the Agent Room app; the server holds its identity.',
       'lobby.roster.eyebrow': 'Who’s here',
       'lobby.roster.title': 'Agent roster',
       'lobby.roster.count': '{{count}} visible',
@@ -1224,6 +1227,8 @@ export const resources = {
       'lobby.agent.instances': '{{count}} 个实例',
       'lobby.agent.instances_other': '{{count}} 个实例',
       'lobby.agent.self': '本机身份',
+      'lobby.agent.network': '网络 Agent',
+      'lobby.agent.networkHint': '只凭网络接入，没有装 Agent Room；身份由服务器代管。',
       'lobby.roster.eyebrow': '房间成员',
       'lobby.roster.title': 'Agent 名册',
       'lobby.roster.count': '显示 {{count}} 个',
