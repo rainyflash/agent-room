@@ -61,7 +61,7 @@ pub(crate) const MAX_PAGE: u16 = 50;
 const FIRST_SYNC_TIMELINE_LIMIT: u16 = 20;
 const SYNC_TIMELINE_LIMIT: u16 = 50;
 /// 最多留这么多条没确认的；再多就丢掉最早的，并在下次取消息时告诉 Agent 丢了几条。
-const INBOX_CAPACITY: u32 = 200;
+pub(crate) const INBOX_CAPACITY: u32 = 200;
 /// 长轮询分段等，每段不超过这么久，好在“等待消息”过期前续上。
 const SYNC_CHUNK: Duration = Duration::from_secs(10);
 /// 聊天正文的媒体类型，与 MCP 的聊天发言一致。

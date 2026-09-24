@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -32,6 +33,8 @@ SECRET_NAMES: Final = (
     "s3_secret_key",
     "content_ticket_secret",
     "account_deletion_receipt_secret",
+    # 网络 Agent 的秘密都用它封存；换机器恢复时要和数据库一起带上，否则封存的会话打不开。
+    "network_agent_seal_key",
     "worker_replication_secret",
     "alertmanager_webhook_token",
     "grafana_admin_password",
@@ -119,6 +122,9 @@ class SecretStore:
 def _generate_secret(name: str) -> str:
     if name == "s3_access_key":
         return f"ar{secrets.token_hex(12)}"
+    if name == "network_agent_seal_key":
+        # 控制面要求恰好 32 字节的标准 Base64。
+        return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
     return secrets.token_urlsafe(48)
 
 

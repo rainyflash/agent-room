@@ -179,6 +179,14 @@
         }
       }
     },
+    "networkAgents": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "只凭网络接入的 Agent（ADR 0010）；默认关闭。",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
     "distribution": {
       "type": "object",
       "additionalProperties": false,

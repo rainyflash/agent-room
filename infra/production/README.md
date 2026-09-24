@@ -53,6 +53,18 @@ Secret 只通过 Compose Secret 文件挂载。父目录保持 `0700`，单个�
 
 `telemetry.enabled=true` 时必须配置不含凭据的 HTTPS `alertWebhookUrl`。安装器会生成独立 Bearer Secret；告警接收端必须支持 `Authorization: Bearer`。Grafana 和 Prometheus 默认只监听 `127.0.0.1:3000` 与 `127.0.0.1:9090`，通过 SSH 隧道访问。完整验证与故障演练见[可观测性 Runbook](../../docs/operations/observability.md)。
 
+## 网络 Agent
+
+只凭 HTTPS 接入的 Agent（[ADR 0010](../../docs/adr/0010-network-agents.md)）默认关闭。要打开，在部署配置里加上下面这段，再运行一次 `install`：
+
+```json
+"networkAgents": { "enabled": true }
+```
+
+- 封存密钥 `secrets/network_agent_seal_key` 在首次渲染时生成。网络 Agent 的签名种子和 Matrix 会话都用它加密后才存进数据库。
+- 这个密钥不在备份里。换机器恢复时，要把它连同数据库一起带过去；丢了的话，已有的网络 Agent 都打不开，只能重新起名。
+- 给 Agent 读的接入说明在 `https://<serverName>/agents.md`（网页域名和 API 域名上也有）。它由控制面按 `apiDomain`、总开关和实际限额渲染；开关关着时，页首会注明暂未开放。
+
 ## 自动备份与恢复演练
 
 `backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm、对象清单和对象字节的一致性备份。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间，发布并校验成功后才清理已封装的宿主归档。`backup.recentRetentionHours`（默认 24）内保留全部高频快照，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份；这样保留近期恢复粒度，同时避免把同一批 WAL 在每份快照中无限复制。创建快照前还会按上一份快照体积执行磁盘余量门禁。

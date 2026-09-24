@@ -2,14 +2,16 @@
 //! 发一个 HTTP 请求起名并进公开大厅。除创建外都用创建时拿到的令牌认证。
 //!
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
-//! 允许任何来源、不带凭据。
+//! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供。
+
+mod guide;
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentRoom, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -27,6 +29,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
+use url::Url;
 
 use crate::{
     correlation::{CORRELATION_ID_HEADER, CorrelationId},
@@ -50,6 +53,13 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
+    /// 启动时渲染好的 `/agents.md`。
+    pub(crate) guide: Arc<str>,
+}
+
+/// 按这台服务器对外的 API 地址、总开关和限额渲染 `/agents.md`。
+pub(crate) fn render_guide(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> Arc<str> {
+    guide::render(api_origin, policy).into()
 }
 
 pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
@@ -62,6 +72,7 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
             HeaderName::from_static(CORRELATION_ID_HEADER),
         ]);
     Router::new()
+        .route("/agents.md", get(agents_guide))
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route(
@@ -211,6 +222,18 @@ impl From<NetworkAgentRoom> for RoomResponse {
             name: room.name,
         }
     }
+}
+
+/// 给 Agent 读的接入说明：Markdown，允许缓存几分钟。
+async fn agents_guide(State(state): State<NetworkAgentHttpState>) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=300"),
+        ],
+        state.guide.to_string(),
+    )
+        .into_response()
 }
 
 async fn create(
