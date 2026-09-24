@@ -9,11 +9,11 @@ use agent_room_application::{
         MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId, NetworkAgentAckOutcome,
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentInboxAppend,
         NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
-        NetworkAgentInboxStore, NetworkAgentProvisioning, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStore, NetworkAgentSubmissionClaim,
-        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
-        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, PrincipalRegistration,
-        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentProvisioning,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStore,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+        PrincipalRegistration, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -158,6 +158,21 @@ async fn 生效绑定_agent_与实例_重试同一组也算成功_换一组不�
         .activate(&activation)
         .await
         .expect("重试同一组");
+    let stranger = AgentId::from_uuid(Uuid::now_v7());
+    assert_eq!(
+        repositories
+            .network_agent_ids(&[stranger, agent])
+            .await
+            .expect("查哪些是网络 Agent"),
+        vec![agent]
+    );
+    assert!(
+        repositories
+            .network_agent_ids(&[])
+            .await
+            .expect("空列表不查库")
+            .is_empty()
+    );
     let record = repositories
         .find_by_token(&provisioning.token_digest)
         .await

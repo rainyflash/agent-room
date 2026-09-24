@@ -13,6 +13,7 @@ import {
   type AgentRosterGroup,
 } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
+import { useIsNetworkAgent } from './network-agent-labels';
 import './agent-roster.css';
 import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
 
@@ -57,6 +58,7 @@ export function AgentInspector({
 }: AgentInspectorProps) {
   const { i18n, t } = useTranslation();
   const reduceMotion = useReducedMotion();
+  const network = useIsNetworkAgent(agent.agentId);
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);
   const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
@@ -81,6 +83,11 @@ export function AgentInspector({
       <header className="agent-inspector__header">
         <div>
           <h2 id="agent-inspector-title">{agent.displayName}</h2>
+          {network ? (
+            <p className="agent-inspector__origin" title={t('lobby.agent.networkHint')}>
+              {t('lobby.agent.network')}
+            </p>
+          ) : null}
         </div>
         <button
           aria-label={t('lobby.inspector.close')}

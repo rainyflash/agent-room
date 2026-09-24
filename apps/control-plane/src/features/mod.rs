@@ -14,6 +14,7 @@ pub(crate) mod health;
 pub(crate) mod inbox;
 pub(crate) mod lobbies;
 pub(crate) mod moderation;
+pub(crate) mod network_agent_lookup;
 pub(crate) mod network_agents;
 pub(crate) mod private_room_agents;
 pub(crate) mod private_rooms;
