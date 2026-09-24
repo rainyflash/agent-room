@@ -166,11 +166,13 @@ pub(crate) struct ContentConfig {
     pub(crate) cleanup_batch: u16,
 }
 
-/// 只凭网络接入的 Agent（ADR 0010）。总开关默认关闭；打开时必须配封存密钥。
+/// 只凭网络接入的 Agent（ADR 0010）。总开关默认关闭；打开时必须配封存密钥和对外的 API 地址。
 #[derive(Clone)]
 pub(crate) struct NetworkAgentConfig {
     pub(crate) enabled: bool,
     pub(crate) seal_key: Option<NetworkAgentSealKey>,
+    /// 写进 `/agents.md` 的 API 地址，例如 `https://api.agentroom.chat`。
+    pub(crate) public_api_origin: Option<Url>,
 }
 
 #[derive(Clone)]
@@ -211,6 +213,7 @@ fn read_network_agent_config(
 ) -> Result<NetworkAgentConfig, ConfigError> {
     const ENABLED: &str = "AGENT_ROOM_NETWORK_AGENTS_ENABLED";
     const SEAL_KEY: &str = "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY";
+    const PUBLIC_API_ORIGIN: &str = "AGENT_ROOM_PUBLIC_API_ORIGIN";
     let enabled = match read_optional(source, ENABLED).as_deref().map(str::trim) {
         None | Some("false") => false,
         Some("true") => true,
@@ -233,7 +236,20 @@ fn read_network_agent_config(
     if enabled && seal_key.is_none() {
         return Err(ConfigError::Missing { name: SEAL_KEY });
     }
-    Ok(NetworkAgentConfig { enabled, seal_key })
+    let public_api_origin = read_optional(source, PUBLIC_API_ORIGIN)
+        .map(|value| parse_origin(PUBLIC_API_ORIGIN, value.trim()))
+        .transpose()?;
+    // Agent 照着说明里的地址接入，开关打开时必须知道对外的 API 地址。
+    if enabled && public_api_origin.is_none() {
+        return Err(ConfigError::Missing {
+            name: PUBLIC_API_ORIGIN,
+        });
+    }
+    Ok(NetworkAgentConfig {
+        enabled,
+        seal_key,
+        public_api_origin,
+    })
 }
 
 fn read_account_lifecycle_config(
@@ -1158,15 +1174,38 @@ mod tests {
         environment
             .0
             .insert("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", key.to_owned());
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Missing {
+                name: "AGENT_ROOM_PUBLIC_API_ORIGIN"
+            })
+        ));
+
+        environment.0.insert(
+            "AGENT_ROOM_PUBLIC_API_ORIGIN",
+            "https://api.agent-room.example".to_owned(),
+        );
         let enabled = ControlPlaneConfig::from_source(&environment).expect("开关与密钥有效");
         assert!(enabled.network_agents.enabled);
         assert!(enabled.network_agents.seal_key.is_some());
         assert!(!format!("{:?}", enabled.network_agents.seal_key).contains(key));
+        assert_eq!(
+            enabled
+                .network_agents
+                .public_api_origin
+                .as_ref()
+                .map(url::Url::as_str),
+            Some("https://api.agent-room.example/")
+        );
 
         for (name, value) in [
             ("AGENT_ROOM_NETWORK_AGENTS_ENABLED", "yes"),
             ("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", "c2hvcnQ="),
             ("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", "not base64 at all"),
+            (
+                "AGENT_ROOM_PUBLIC_API_ORIGIN",
+                "https://api.agent-room.example/v1",
+            ),
         ] {
             let mut environment = valid_environment();
             environment.0.insert(name, value.to_owned());
@@ -1193,6 +1232,10 @@ mod tests {
         environment.0.insert(
             "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE",
             path.to_string_lossy().into_owned(),
+        );
+        environment.0.insert(
+            "AGENT_ROOM_PUBLIC_API_ORIGIN",
+            "https://api.agent-room.example".to_owned(),
         );
 
         let config = ControlPlaneConfig::from_source(&environment).expect("文件 Secret 有效");

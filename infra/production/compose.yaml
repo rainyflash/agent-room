@@ -513,9 +513,13 @@ services:
       AGENT_ROOM_OPERATIONAL_METRICS_INTERVAL_MS: '15000'
       AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS: '5000'
       AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn
+      AGENT_ROOM_NETWORK_AGENTS_ENABLED: ${AGENT_ROOM_NETWORK_AGENTS_ENABLED:-false}
+      AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE: /run/secrets/network_agent_seal_key
+      AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}
     secrets:
       - agent_room_db_runtime_password
       - account_deletion_receipt_secret
+      - network_agent_seal_key
       - content_ticket_secret
       - keycloak_web_client_secret
       - s3_access_key
@@ -607,6 +611,8 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/content_ticket_secret
   account_deletion_receipt_secret:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/account_deletion_receipt_secret
+  network_agent_seal_key:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/network_agent_seal_key
   migration_database_url:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/migration_database_url
   alertmanager_webhook_token:

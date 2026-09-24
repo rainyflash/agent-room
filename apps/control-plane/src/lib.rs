@@ -810,6 +810,7 @@ fn build_network_agent_routes(
         provisioning,
     )?;
     let key = config.network_agents.seal_key.as_ref();
+    let policy = NetworkAgentPolicy::default_limits(config.network_agents.enabled);
     let service = NetworkAgentService::new(NetworkAgentDependencies {
         store: dependencies.repositories.clone(),
         sealer: Arc::new(AesGcmNetworkAgentSealer::new(key)),
@@ -826,7 +827,7 @@ fn build_network_agent_routes(
         clock: dependencies.system_runtime.clone(),
         identifiers: dependencies.system_runtime.clone(),
         pause: dependencies.system_runtime.clone(),
-        policy: NetworkAgentPolicy::default_limits(config.network_agents.enabled),
+        policy,
         matrix_server_name: config.authentication.matrix_server_name.clone(),
     });
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
@@ -854,6 +855,10 @@ fn build_network_agent_routes(
             messaging: Arc::new(gateway),
             sources: Arc::new(NetworkSourceDigester::new(key)),
             clock: dependencies.system_runtime.clone(),
+            guide: features::network_agents::render_guide(
+                config.network_agents.public_api_origin.as_ref(),
+                &policy,
+            ),
         },
     ))
 }
