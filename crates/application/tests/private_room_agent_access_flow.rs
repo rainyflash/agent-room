@@ -17,7 +17,7 @@ use agent_room_application::{
         SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailureKind, InspectAgentAccess, ManageJoinCode,
+        AgentAccessFailureKind, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
         PrivateRoomAgentAccessUseCases, RedeemJoinCode, RemoveAgentMember, ResolveJoinCode,
     },
@@ -184,7 +184,7 @@ async fn 查看口令对应的房间不会让任何_agent_加入_猜错同样计
     let room = fixture
         .service
         .resolve(ResolveJoinCode {
-            actor: redeem_request("").actor,
+            caller: JoinCodeCaller::Device(redeem_request("").actor),
             code: generated.code.display(),
         })
         .await
@@ -196,7 +196,7 @@ async fn 查看口令对应的房间不会让任何_agent_加入_猜错同样计
     let wrong = fixture
         .service
         .resolve(ResolveJoinCode {
-            actor: redeem_request("").actor,
+            caller: JoinCodeCaller::Device(redeem_request("").actor),
             code: "0000-0000-0000".to_owned(),
         })
         .await
@@ -242,6 +242,48 @@ async fn 格式不对不算猜测_猜错到上限后限流_窗口过后恢复() 
         .redeem(redeem_request(generated.code.normalized()))
         .await
         .expect("窗口过后可以再试");
+}
+
+#[tokio::test]
+async fn 网络_agent_猜错按来源计数_与本机设备和别的来源分开() {
+    let fixture = Fixture::new();
+    let generated = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .expect("生成口令");
+    let resolve = |source: u8, code: String| {
+        fixture.service.resolve(ResolveJoinCode {
+            caller: JoinCodeCaller::NetworkSource([source; 32]),
+            code,
+        })
+    };
+    for _ in 0..3 {
+        let wrong = resolve(7, "0000-0000-0000".to_owned())
+            .await
+            .expect_err("猜错");
+        assert_eq!(wrong.kind(), AgentAccessFailureKind::NotFound);
+    }
+    assert_eq!(
+        fixture.store.callers(),
+        [format!("network-source:{}", "07".repeat(32))],
+        "按来源计数，不落到任何设备上"
+    );
+    let limited = resolve(7, generated.code.display())
+        .await
+        .expect_err("这个来源猜错到了上限");
+    assert_eq!(limited.kind(), AgentAccessFailureKind::RateLimited);
+
+    // 别的来源、本机设备都不受影响。
+    let room = resolve(8, generated.code.display())
+        .await
+        .expect("换个来源可以");
+    assert_eq!(room.catalog_id, catalog_id());
+    fixture
+        .service
+        .redeem(redeem_request(generated.code.normalized()))
+        .await
+        .expect("本机设备照常兑换");
 }
 
 #[tokio::test]
@@ -735,6 +777,10 @@ impl MemoryAccessStore {
             .values()
             .map(|(_, count)| *count)
             .sum()
+    }
+
+    fn callers(&self) -> Vec<String> {
+        self.attempts.lock().unwrap().keys().cloned().collect()
     }
 }
 

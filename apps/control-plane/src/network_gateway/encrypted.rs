@@ -65,6 +65,15 @@ pub(crate) trait EncryptedSessions: Send + Sync {
         request: &'a NetworkAgentSyncRequest,
     ) -> PortFuture<'a, Result<MatrixSyncBatch, NetworkGatewayFailure>>;
 
+    /// 进加密房间之前：打开客户端，从收件箱的位置同步一次（上传设备密钥与一次性密钥；结果留给
+    /// 下一次长轮询），再建好加密身份与密钥备份。没建好就报暂时不可用：这时进去，别人发的消息
+    /// 它会解不开。
+    fn prepare<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+        since: Option<MatrixSyncToken>,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>>;
+
     /// 停用后关掉它的客户端。
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()>;
 
@@ -157,6 +166,28 @@ impl EncryptedClients {
         tokio::spawn(client.sync(request))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
+    }
+
+    async fn prepare_internal(
+        &self,
+        session: &NetworkAgentSession,
+        since: Option<MatrixSyncToken>,
+    ) -> Result<(), NetworkGatewayFailure> {
+        let timeout = DurationMillis::new(1).map_err(|_| NetworkGatewayFailure::Internal)?;
+        let request = MatrixSyncRequest::new(since, timeout, false)
+            .map_err(|_| NetworkGatewayFailure::Internal)?;
+        let client = self.client(session).await?;
+        tokio::spawn(client.clone().sync(request))
+            .await
+            .map_err(|_| NetworkGatewayFailure::Internal)??;
+        let ready = tokio::spawn(client.establish_now())
+            .await
+            .map_err(|_| NetworkGatewayFailure::Internal)?;
+        if ready {
+            Ok(())
+        } else {
+            Err(NetworkGatewayFailure::Unavailable)
+        }
     }
 
     async fn client(
@@ -349,23 +380,37 @@ impl OpenClient {
         Ok(batch)
     }
 
-    /// 建立加密身份并开启服务器端密钥备份；没建成只记日志，隔一会儿再试，不挡收消息。
+    /// 同步之后在后台建立加密身份并开启服务器端密钥备份；没建成只记日志，隔一会儿再试，不挡收消息。
     async fn ensure_identity(self: Arc<Self>) {
         // 拿不到锁说明另一次正在建。
         let Ok(mut retry_at) = self.identity.try_lock() else {
             return;
         };
-        if self.identity_ready.load(Ordering::Acquire)
-            || retry_at.is_some_and(|at| Instant::now() < at)
-        {
+        if retry_at.is_some_and(|at| Instant::now() < at) {
             return;
         }
-        if self.establish_identity().await && self.ensure_backup().await {
+        self.set_up_identity(&mut retry_at).await;
+    }
+
+    /// 进加密房间之前要身份立刻就绪：不看退避；另一次正在建时等它建完。
+    async fn establish_now(self: Arc<Self>) -> bool {
+        let mut retry_at = self.identity.lock().await;
+        self.set_up_identity(&mut retry_at).await
+    }
+
+    /// 拿着身份锁调用：建好就记下，没建好就记下次可以再试的时刻。
+    async fn set_up_identity(&self, retry_at: &mut Option<Instant>) -> bool {
+        if self.identity_ready.load(Ordering::Acquire) {
+            return true;
+        }
+        let ready = self.establish_identity().await && self.ensure_backup().await;
+        if ready {
             self.identity_ready.store(true, Ordering::Release);
             *retry_at = None;
         } else {
             *retry_at = Some(Instant::now() + IDENTITY_RETRY);
         }
+        ready
     }
 
     async fn establish_identity(&self) -> bool {
@@ -483,11 +528,243 @@ impl EncryptedSessions for EncryptedClients {
         Box::pin(self.sync_internal(session, request))
     }
 
+    fn prepare<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+        since: Option<MatrixSyncToken>,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
+        Box::pin(self.prepare_internal(session, since))
+    }
+
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()> {
         Box::pin(self.forget_internal(id))
     }
 
     fn evict_idle(&self) -> PortFuture<'_, usize> {
         Box::pin(self.evict_idle_internal())
+    }
+}
+
+#[cfg(test)]
+mod real_dependency_tests {
+    use std::sync::{Arc, Mutex};
+
+    use agent_room_application::{
+        network_agents::{
+            CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
+            NetworkAgentEncryptionSecrets, NetworkAgentLobby, NetworkAgentPendingExit,
+            NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession,
+            NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        },
+        ports::{
+            MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+            MatrixAgentUserRegistration, MatrixDeviceId, NetworkAgentSyncRequest, PortFuture,
+            SecretFactory, SecretValue,
+        },
+    };
+    use agent_room_domain::{
+        ids::{AgentId, AgentInstanceId, NetworkAgentId, PrincipalId},
+        time::UtcMillis,
+    };
+    use agent_room_identity_adapter::SecureSecretFactory;
+    use uuid::Uuid;
+
+    use super::{EncryptedClients, EncryptedSessions};
+    use crate::config::ControlPlaneConfig;
+
+    /// 只管加密秘密的网络 Agent 用例：存储口令第一次要用时生成，恢复凭据照存。
+    #[derive(Default)]
+    struct Vault {
+        passphrase: Mutex<Option<SecretValue>>,
+        recovery: Mutex<Option<SecretValue>>,
+    }
+
+    impl Vault {
+        fn recovery(&self) -> Option<SecretValue> {
+            self.recovery.lock().unwrap().clone()
+        }
+    }
+
+    impl NetworkAgentUseCases for Vault {
+        fn create(
+            &self,
+            _request: CreateNetworkAgent,
+        ) -> PortFuture<'_, NetworkAgentResult<CreatedNetworkAgent>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn me<'a>(
+            &'a self,
+            _token: &'a str,
+        ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentView>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn disable<'a>(&'a self, _token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn session<'a>(
+            &'a self,
+            _token: &'a str,
+        ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn take_message_quota(
+            &self,
+            _id: NetworkAgentId,
+        ) -> PortFuture<'_, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn pending_exits(
+            &self,
+            _limit: u32,
+        ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentPendingExit>>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn mark_rooms_left(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn admit<'a>(
+            &'a self,
+            _token: &'a str,
+            _room: NetworkAgentRoomRequest,
+            _source_digest: [u8; 32],
+        ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentAdmission>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn enter<'a>(
+            &'a self,
+            _token: &'a str,
+            _target: NetworkAgentTarget,
+        ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn mark_encrypted(
+            &self,
+            _id: NetworkAgentId,
+        ) -> PortFuture<'_, NetworkAgentResult<UtcMillis>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn encryption_secrets(
+            &self,
+            _id: NetworkAgentId,
+        ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>> {
+            let store_passphrase = self
+                .passphrase
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| SecureSecretFactory.generate().unwrap())
+                .clone();
+            let recovery_credential = self.recovery();
+            Box::pin(async move {
+                Ok(NetworkAgentEncryptionSecrets {
+                    store_passphrase,
+                    recovery_credential,
+                })
+            })
+        }
+
+        fn store_recovery_credential<'a>(
+            &'a self,
+            _id: NetworkAgentId,
+            credential: &'a SecretValue,
+        ) -> PortFuture<'a, NetworkAgentResult<()>> {
+            *self.recovery.lock().unwrap() = Some(credential.clone());
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
+    async fn 真实_synapse_上加密客户端建好身份与密钥备份_关掉重开后沿用同一套() {
+        let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
+        let identities =
+            crate::build_matrix_identity_provisioner(&config, config.dependencies.timeout)
+                .expect("Application Service 配置有效");
+        // 与网络 Agent 一样：一个新的 Agent Matrix 用户，一台 AR_<实例> 设备。
+        let agent_id = AgentId::from_uuid(Uuid::now_v7());
+        let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
+        let user_id = identities
+            .ensure_user(&MatrixAgentUserRegistration::new(
+                MatrixAgentLocalpart::from_agent_id(agent_id),
+            ))
+            .await
+            .expect("注册 Agent 的 Matrix 用户");
+        let device_id = format!("AR_{}", instance_id.as_uuid().simple());
+        let matrix = identities
+            .issue_device_session(
+                &MatrixAgentDeviceSessionRequest::new(
+                    user_id.clone(),
+                    MatrixDeviceId::new(device_id.clone()).unwrap(),
+                    "网络 Agent 加密客户端验收".to_owned(),
+                )
+                .unwrap(),
+            )
+            .await
+            .expect("签发设备会话");
+        let session = NetworkAgentSession {
+            network_agent_id: NetworkAgentId::from_uuid(Uuid::now_v7()),
+            principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
+            agent_id,
+            agent_instance_id: instance_id,
+            display_name: "Cipher".to_owned(),
+            agent_matrix_user_id: user_id.as_str().to_owned(),
+            matrix_access_token: matrix.access_token().clone(),
+            instance_signing_seed: SecretValue::new("unused-in-this-test").unwrap(),
+            rooms: Vec::new(),
+            matrix_device_id: device_id,
+            encrypted_since: Some(UtcMillis::new(1).unwrap()),
+        };
+        let vault = Arc::new(Vault::default());
+        let store = tempfile::tempdir().expect("加密存储目录");
+        let clients = EncryptedClients::new(
+            vault.clone(),
+            Arc::new(SecureSecretFactory),
+            config.dependencies.matrix_base_url.as_str(),
+            store.path().to_path_buf(),
+        )
+        .expect("matrix-sdk 配置有效");
+
+        clients
+            .prepare(&session, None)
+            .await
+            .expect("加密身份与密钥备份就绪");
+        let credential = vault.recovery().expect("开备份之前先封存了恢复凭据");
+
+        // 关掉再打开同一个存储：身份与备份都在，不再生成新的恢复凭据；收消息照常。
+        clients.forget(session.network_agent_id).await;
+        clients
+            .prepare(&session, None)
+            .await
+            .expect("重开后仍然就绪");
+        assert_eq!(vault.recovery(), Some(credential));
+        clients
+            .sync(
+                &session,
+                &NetworkAgentSyncRequest {
+                    since: None,
+                    timeout_millis: 0,
+                    timeline_limit: 20,
+                },
+            )
+            .await
+            .expect("加密客户端同步");
+        clients.forget(session.network_agent_id).await;
     }
 }

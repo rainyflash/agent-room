@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentFailureKind};
+use agent_room_application::network_agents::{
+    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomRequest,
+};
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -55,7 +57,7 @@ async fn rpc(app: axum::Router, body: &Value, bearer: Option<&str>) -> Value {
 }
 
 #[tokio::test]
-async fn 协商后列出七个工具_说明里写明令牌用法与安全边界() {
+async fn 协商后列出八个工具_说明里写明令牌用法_口令与安全边界() {
     let app = app(
         Arc::new(FakeAgents::default()),
         Arc::new(FakeMessaging::default()),
@@ -71,6 +73,7 @@ async fn 协商后列出七个工具_说明里写明令牌用法与安全边界(
     .await;
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
+    assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
     assert!(instructions.contains("不可信"));
 
     let list = rpc(
@@ -90,6 +93,7 @@ async fn 协商后列出七个工具_说明里写明令牌用法与安全边界(
         names,
         [
             "agent_room_ack",
+            "agent_room_enter_room",
             "agent_room_get_self",
             "agent_room_join",
             "agent_room_leave",
@@ -124,8 +128,77 @@ async fn 起名进大厅返回令牌_来源按转发地址算() {
     let created = agents.created();
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].name, "Scout");
-    assert_eq!(created[0].room, None);
+    assert_eq!(created[0].room, NetworkAgentRoomRequest::Lobby(None));
     assert_ne!(created[0].source_digest, [0; 32]);
+}
+
+#[tokio::test]
+async fn 凭口令起名_再进一个房间_大厅与口令只能给一个() {
+    let agents = Arc::new(FakeAgents::default());
+    let messaging = Arc::new(FakeMessaging::default());
+
+    let joined = rpc(
+        app(agents.clone(), messaging.clone()),
+        &call(
+            "agent_room_join",
+            &json!({"name": "Scout", "code": "K7P3-Q9XW-2DMA"}),
+        ),
+        None,
+    )
+    .await;
+    assert_ne!(joined["result"]["isError"], true, "{joined}");
+    assert_eq!(
+        agents.created()[0].room,
+        NetworkAgentRoomRequest::Code("K7P3-Q9XW-2DMA".to_owned())
+    );
+
+    let entered = rpc(
+        app(agents.clone(), messaging.clone()),
+        &call(
+            "agent_room_enter_room",
+            &json!({"token": TOKEN, "room": "general"}),
+        ),
+        None,
+    )
+    .await;
+    assert_ne!(entered["result"]["isError"], true, "{entered}");
+    assert_eq!(
+        entered["result"]["structuredContent"]["room"]["matrixRoomId"],
+        "!lobby:matrix.test"
+    );
+    let calls = messaging.entered.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, TOKEN);
+    assert_eq!(
+        calls[0].1,
+        NetworkAgentRoomRequest::Lobby(Some("general".to_owned()))
+    );
+    assert_ne!(calls[0].2, [0; 32]);
+
+    for (tool, arguments) in [
+        (
+            "agent_room_join",
+            json!({"name": "Scout", "room": "general", "code": "K7P3-Q9XW-2DMA"}),
+        ),
+        (
+            "agent_room_enter_room",
+            json!({"token": TOKEN, "room": "general", "code": "K7P3-Q9XW-2DMA"}),
+        ),
+    ] {
+        let failed = rpc(
+            app(agents.clone(), messaging.clone()),
+            &call(tool, &arguments),
+            None,
+        )
+        .await;
+        assert_eq!(failed["result"]["isError"], true, "{tool}");
+        assert_eq!(
+            failed["result"]["structuredContent"]["code"], "network_agent.invalid_request",
+            "{tool}"
+        );
+    }
+    assert_eq!(agents.created().len(), 1, "写错的不交给网关");
+    assert_eq!(messaging.entered.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

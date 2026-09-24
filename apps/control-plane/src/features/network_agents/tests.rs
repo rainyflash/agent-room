@@ -5,9 +5,10 @@ use std::{
 
 use agent_room_application::{
     network_agents::{
-        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentEncryptionSecrets,
-        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentLobby, NetworkAgentPendingExit,
-        NetworkAgentResult, NetworkAgentRoom, NetworkAgentSession, NetworkAgentUseCases,
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
+        NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
+        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
         NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
@@ -100,6 +101,7 @@ impl NetworkAgentUseCases for FakeAgents {
                         .unwrap(),
                     name: "Agent Room 大厅".to_owned(),
                 },
+                entered: true,
             })
         })
     }
@@ -169,6 +171,27 @@ impl NetworkAgentUseCases for FakeAgents {
         })
     }
 
+    fn admit<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: NetworkAgentRoomRequest,
+        _source_digest: [u8; 32],
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentAdmission>> {
+        unreachable!("路由测试里进房间走替身网关")
+    }
+
+    fn enter<'a>(
+        &'a self,
+        _token: &'a str,
+        _target: NetworkAgentTarget,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>> {
+        unreachable!("路由测试里进房间走替身网关")
+    }
+
+    fn mark_encrypted(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<UtcMillis>> {
+        unreachable!("路由测试里进房间走替身网关")
+    }
+
     fn encryption_secrets(
         &self,
         _id: NetworkAgentId,
@@ -185,9 +208,11 @@ impl NetworkAgentUseCases for FakeAgents {
     }
 }
 
-/// 网关替身：记下收到的令牌与参数，按预设回答。
+/// 网关替身：记下收到的令牌与参数，按预设回答。创建像真网关一样交给用例替身。
 #[derive(Default)]
 pub(super) struct FakeMessaging {
+    agents: Mutex<Option<Arc<FakeAgents>>>,
+    pub(super) entered: Mutex<Vec<(String, NetworkAgentRoomRequest, [u8; 32])>>,
     pub(super) waits: Mutex<Vec<(String, Duration, u16)>>,
     pub(super) acks: Mutex<Vec<(String, String)>>,
     pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
@@ -204,6 +229,38 @@ impl FakeMessaging {
 }
 
 impl NetworkAgentMessaging for FakeMessaging {
+    fn create(
+        &self,
+        request: CreateNetworkAgent,
+    ) -> PortFuture<'_, Result<CreatedNetworkAgent, NetworkGatewayFailure>> {
+        let agents = self
+            .agents
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("app_with 接上了用例替身");
+        Box::pin(async move {
+            agents
+                .create(request)
+                .await
+                .map_err(NetworkGatewayFailure::Agent)
+        })
+    }
+
+    fn enter_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: NetworkAgentRoomRequest,
+        source_digest: [u8; 32],
+    ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+        self.entered
+            .lock()
+            .unwrap()
+            .push((token.to_owned(), room, source_digest));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or_else(|| Ok(lobby()), Err) })
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -316,6 +373,7 @@ pub(super) fn app_with(
     now: i64,
 ) -> axum::Router {
     let key = NetworkAgentSealKey::from_bytes([7; 32]);
+    *messaging.agents.lock().unwrap() = Some(agents.clone());
     router(NetworkAgentHttpState {
         agents,
         messaging,
@@ -392,8 +450,105 @@ async fn 起名进大厅_令牌只在创建时返回_允许任何来源但不带
     let created = agents.created();
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].name, "Scout");
-    assert_eq!(created[0].room.as_deref(), Some("general"));
+    assert_eq!(
+        created[0].room,
+        NetworkAgentRoomRequest::Lobby(Some("general".to_owned()))
+    );
     assert_ne!(created[0].source_digest, [0; 32]);
+}
+
+#[tokio::test]
+async fn 凭口令创建_口令原样交给网关_不进大厅() {
+    let agents = Arc::new(FakeAgents::default());
+    let response = app(agents.clone())
+        .oneshot(create_request(
+            r#"{"name":"Scout","code":"K7P3-Q9XW-2DMA"}"#,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        agents.created()[0].room,
+        NetworkAgentRoomRequest::Code("K7P3-Q9XW-2DMA".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn 再进一个房间交给网关_带上令牌与来源_大厅或口令只能给一个() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let app = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging.clone(),
+        1_758_600_000_000,
+    );
+    let enter = |body: &'static str| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/network-agents/me/rooms")
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", "198.51.100.7")
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    let response = app
+        .clone()
+        .oneshot(enter(r#"{"code":"K7P3-Q9XW-2DMA"}"#))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "room": {
+                "catalogId": CATALOG_UUID,
+                "matrixRoomId": "!lobby:matrix.test",
+                "name": "Agent Room 大厅",
+            },
+        })
+    );
+    for body in [r#"{"room":"general"}"#, "{}"] {
+        let response = app.clone().oneshot(enter(body)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{body}");
+    }
+    let entered = messaging.entered.lock().unwrap().clone();
+    assert_eq!(
+        entered
+            .iter()
+            .map(|(token, room, _)| (token.as_str(), room.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                TOKEN,
+                NetworkAgentRoomRequest::Code("K7P3-Q9XW-2DMA".to_owned())
+            ),
+            (
+                TOKEN,
+                NetworkAgentRoomRequest::Lobby(Some("general".to_owned()))
+            ),
+            (TOKEN, NetworkAgentRoomRequest::Lobby(None)),
+        ]
+    );
+    assert_ne!(entered[0].2, [0; 32], "猜错按来源计数，要带上来源");
+
+    for body in [r#"{"room":"general","code":"K7P3-Q9XW-2DMA"}"#, "not json"] {
+        let response = app.clone().oneshot(enter(body)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body_json(response).await["code"],
+            "network_agent.invalid_request"
+        );
+    }
+    assert_eq!(
+        messaging.entered.lock().unwrap().len(),
+        3,
+        "写错的不交给网关"
+    );
 }
 
 #[tokio::test]
@@ -405,7 +560,10 @@ async fn 省略房间就交给用例选默认大厅() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::CREATED);
-    assert_eq!(agents.created()[0].room, None);
+    assert_eq!(
+        agents.created()[0].room,
+        NetworkAgentRoomRequest::Lobby(None)
+    );
 }
 
 #[tokio::test]
@@ -445,7 +603,7 @@ async fn 请求体不是约定的_json_时说明该怎么写_且不调用用例(
     let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(25 * 1_024));
     for body in [
         "not json",
-        r#"{"name":"Scout","code":"K7P3-Q9XW-2DMA"}"#,
+        r#"{"name":"Scout","room":"general","code":"K7P3-Q9XW-2DMA"}"#,
         r#"{"room":"general"}"#,
         oversized.as_str(),
     ] {
@@ -479,6 +637,11 @@ async fn 失败按稳定错误码映射_限流带_retry_after_找不到大厅时
             NetworkAgentFailure::new(NetworkAgentFailureKind::NameUnavailable),
             StatusCode::CONFLICT,
             "network_agent.name_unavailable",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::CodeInvalid),
+            StatusCode::NOT_FOUND,
+            "network_agent.code_invalid",
         ),
         (
             NetworkAgentFailure::new(NetworkAgentFailureKind::CapacityReached),

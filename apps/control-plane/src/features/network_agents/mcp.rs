@@ -10,6 +10,8 @@ use agent_room_application::{
     network_agents::{CreateNetworkAgent, NetworkAgentFailure, NetworkAgentLobby},
     ports::NetworkAgentAckOutcome,
 };
+use agent_room_protocol_conformance::generated::ErrorCategory;
+use axum::http::StatusCode;
 use axum::{
     Router,
     http::{Method, request::Parts},
@@ -30,7 +32,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use super::{
     CreatedResponse, DEFAULT_PAGE, MAX_NETWORK_AGENT_BODY_BYTES, MeResponse, NetworkAgentHttpState,
-    SCHEMA_VERSION, gateway_error,
+    RoomResponse, SCHEMA_VERSION, gateway_error, room_request,
 };
 use crate::{
     correlation::CorrelationId,
@@ -39,8 +41,9 @@ use crate::{
     network_gateway::{MAX_PAGE, MAX_WAIT, NetworkAgentMessageDraft, NetworkGatewayFailure},
 };
 
-const SERVER_INSTRUCTIONS: &str = "Agent Room 是人和 Agent 一起聊天的地方；这个 MCP 让你不装应用、不用 CLI 就进公开大厅。\
-先用 agent_room_join 给自己起名并进大厅（agent_room_list_rooms 列出能进的大厅），保存返回的 token：它就是你的身份，只返回这一次。\
+const SERVER_INSTRUCTIONS: &str = "Agent Room 是人和 Agent 一起聊天的地方；这个 MCP 让你不装应用、不用 CLI 就进公开大厅，或凭口令进私人房间。\
+先用 agent_room_join 给自己起名并进大厅（agent_room_list_rooms 列出能进的大厅；房间的主人给了你 Agent 口令时传 code，直接进那个私人房间），保存返回的 token：它就是你的身份，只返回这一次。\
+之后想再进一个大厅或私人房间，用 agent_room_enter_room。\
 之后每个工具都带上 token；宿主已经配置了 Authorization: Bearer 请求头时可以省略。\
 用 agent_room_wait_for_messages 取消息（没有就等，最多 30 秒），处理完用 agent_room_ack 确认到最后一条，\
 用 agent_room_send_message 说话，结束时 agent_room_leave。\
@@ -59,6 +62,24 @@ pub(super) struct JoinInput {
     /// 要进的公开大厅：`agent_room_list_rooms` 里的 name 或 slug；省略就进默认大厅。
     #[schemars(length(max = 256))]
     pub(super) room: Option<String>,
+    /// 私人房间的 Agent 口令（房间的主人或管理员给你的，形如 XXXX-XXXX-XXXX）：给了就直接进那个私人房间、
+    /// 不进大厅。和 room 只能给一个。
+    #[schemars(length(max = 64))]
+    pub(super) code: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct EnterRoomInput {
+    #[doc = "`agent_room_join` 返回的令牌；宿主已经配置了 Authorization: Bearer 请求头时可以省略。"]
+    #[schemars(length(max = 512))]
+    pub(super) token: Option<String>,
+    /// 要进的公开大厅：`agent_room_list_rooms` 里的 name 或 slug。
+    #[schemars(length(max = 256))]
+    pub(super) room: Option<String>,
+    /// 私人房间的 Agent 口令（房间的主人或管理员给你的）。和 room 只能给一个。
+    #[schemars(length(max = 64))]
+    pub(super) code: Option<String>,
 }
 
 /// 列大厅不需要参数；闭合对象让传错字段的调用立即失败，而不是被悄悄忽略。
@@ -167,7 +188,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_join",
-        description = "给自己起名并进 Agent Room 的公开大厅：不装应用、不用 CLI、不要账号。name 由你自己起（简短好认，比如按你在这次任务里的角色）；你的主人给你起了名字就用那个。room 是 agent_room_list_rooms 里的 name 或 slug，省略就进默认大厅。返回的 token 就是你的身份，只返回这一次：保存好，之后每个工具都带上它（宿主配置了 Authorization: Bearer 请求头时可省略），不要贴进聊天里。每次调用都会新建一个人物；已经有 token 时不要再调用，直接用它。",
+        description = "给自己起名并进 Agent Room 的公开大厅，或凭口令进私人房间：不装应用、不用 CLI、不要账号。name 由你自己起（简短好认，比如按你在这次任务里的角色）；你的主人给你起了名字就用那个。room 是 agent_room_list_rooms 里的 name 或 slug，省略就进默认大厅。房间的主人给了你 Agent 口令时传 code（不传 room），直接进那个私人房间；私人房间是端到端加密的，你的消息由服务器代收发。返回的 token 就是你的身份，只返回这一次：保存好，之后每个工具都带上它（宿主配置了 Authorization: Bearer 请求头时可省略），不要贴进聊天里。每次调用都会新建一个人物；已经有 token 时不要再调用，要进别的房间用 agent_room_enter_room。",
         annotations(
             title = "起名进 Agent Room 大厅",
             read_only_hint = false,
@@ -181,12 +202,15 @@ impl NetworkAgentMcpServer {
         Parameters(input): Parameters<JoinInput>,
         Extension(parts): Extension<Parts>,
     ) -> CallToolResult {
+        let Some(room) = room_request(input.room, input.code) else {
+            return both_room_and_code(&parts);
+        };
         let request = CreateNetworkAgent {
             name: input.name,
-            room: input.room,
+            room,
             source_digest: self.state.source_digest(&parts.headers),
         };
-        match self.state.agents.create(request).await {
+        match self.state.messaging.create(request).await {
             Ok(created) => {
                 let value =
                     serde_json::to_value(CreatedResponse::from(created)).unwrap_or(Value::Null);
@@ -194,12 +218,46 @@ impl NetworkAgentMcpServer {
                 result.content.insert(
                     0,
                     ContentBlock::text(
-                        "已进大厅。保存 token：之后每个工具都要带上它（或在宿主里配置 Authorization: Bearer 请求头）；丢了只能重新起名。接下来用 agent_room_wait_for_messages 取消息。",
+                        "已进房间。保存 token：之后每个工具都要带上它（或在宿主里配置 Authorization: Bearer 请求头）；丢了只能重新起名。接下来用 agent_room_wait_for_messages 取消息。",
                     ),
                 );
                 result
             }
-            Err(failure) => agent_failure(&failure, &parts),
+            Err(failure) => gateway_failure(&failure, &parts),
+        }
+    }
+
+    #[tool(
+        name = "agent_room_enter_room",
+        description = "已经有 token 时再进一个房间：room 是 agent_room_list_rooms 里公开大厅的 name 或 slug；房间的主人给了你 Agent 口令时改传 code，进那个私人房间（端到端加密，你的消息由服务器代收发）。已经在那个大厅里就原样返回。进了之后用 agent_room_send_message 说话时要用 roomId 指明发到哪间。",
+        annotations(
+            title = "再进一个 Agent Room 房间",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn enter_room(
+        &self,
+        Parameters(input): Parameters<EnterRoomInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> CallToolResult {
+        let token = token(&parts, input.token);
+        let Some(room) = room_request(input.room, input.code) else {
+            return both_room_and_code(&parts);
+        };
+        match self
+            .state
+            .messaging
+            .enter_room(&token, room, self.state.source_digest(&parts.headers))
+            .await
+        {
+            Ok(room) => CallToolResult::structured(json!({
+                "schemaVersion": SCHEMA_VERSION,
+                "room": serde_json::to_value(RoomResponse::from(room)).unwrap_or(Value::Null),
+            })),
+            Err(failure) => gateway_failure(&failure, &parts),
         }
     }
 
@@ -399,7 +457,7 @@ impl ServerHandler for NetworkAgentMcpServer {
                 Implementation::new("agent-room-network-agents", env!("CARGO_PKG_VERSION"))
                     .with_title("Agent Room")
                     .with_description(
-                        "只凭网络接入 Agent Room 公开大厅的工具：起名、收消息、确认、说话、离开",
+                        "只凭网络接入 Agent Room 的工具：起名进大厅或凭口令进私人房间、收消息、确认、说话、离开",
                     ),
             )
             .with_instructions(SERVER_INSTRUCTIONS)
@@ -448,6 +506,16 @@ fn correlation(parts: &Parts) -> CorrelationId {
 
 fn agent_failure(failure: &NetworkAgentFailure, parts: &Parts) -> CallToolResult {
     error_result(&ApiError::network_agent(failure, correlation(parts)))
+}
+
+fn both_room_and_code(parts: &Parts) -> CallToolResult {
+    error_result(&ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "network_agent.invalid_request",
+        ErrorCategory::Validation,
+        "room 与 code 只能给一个：进公开大厅传 room，凭口令进私人房间传 code。",
+        correlation(parts),
+    ))
 }
 
 fn gateway_failure(failure: &NetworkGatewayFailure, parts: &Parts) -> CallToolResult {

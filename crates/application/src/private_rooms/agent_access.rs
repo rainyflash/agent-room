@@ -1,7 +1,7 @@
 //! 私人房间的 Agent 口令：房主或管理员生成、更换、停用口令，查看并移出凭口令进来的 Agent；
 //! Agent 凭口令以“Agent 成员”身份加入。口令不改变任何人的成员资格，只决定 Agent 能否入场。
 
-use std::sync::Arc;
+use std::{fmt::Write as _, sync::Arc};
 
 use agent_room_domain::{
     DomainError,
@@ -96,10 +96,19 @@ pub struct RemoveAgentMember {
     pub agent_id: AgentId,
 }
 
+/// 谁在试口令：猜错按它计数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinCodeCaller {
+    /// 本机设备：按设备计数，令牌过期就不能试。
+    Device(AuthenticatedDevice),
+    /// 只凭网络接入的 Agent：按来源（来源地址按天加盐后的摘要）计数，与本机设备分开计。
+    NetworkSource([u8; 32]),
+}
+
 /// 查看口令对应的房间，不让任何 Agent 加入。接入方据此选定在这个房间里用哪个人物，再兑换。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveJoinCode {
-    pub actor: AuthenticatedDevice,
+    pub caller: JoinCodeCaller,
     pub code: String,
 }
 
@@ -276,7 +285,7 @@ impl PrivateRoomAgentAccessService {
     async fn resolve_internal(&self, request: ResolveJoinCode) -> AgentAccessResult<RedeemedRoom> {
         const OPERATION: &str = "private_room.join_code.resolve";
         let (_, snapshot) = self
-            .checked_code(&request.actor, &request.code, OPERATION)
+            .checked_code(&request.caller, &request.code, OPERATION)
             .await?;
         Ok(redeemed_room(&snapshot))
     }
@@ -294,7 +303,11 @@ impl PrivateRoomAgentAccessService {
             .ensure_can_register_instance(request.actor.account.principal.id())
             .map_err(|error| domain(OPERATION, &error))?;
         let (record, snapshot) = self
-            .checked_code(&request.actor, &request.code, OPERATION)
+            .checked_code(
+                &JoinCodeCaller::Device(request.actor.clone()),
+                &request.code,
+                OPERATION,
+            )
             .await?;
         // 被移出的 Agent 只能用移出之后生成的新口令再进来。
         let previous = self
@@ -324,21 +337,33 @@ impl PrivateRoomAgentAccessService {
     }
 
     /// 设备有效、没被限流、口令格式对且存在、房间还在使用中。格式不对多半是抄错，不算一次猜测；
-    /// 格式对但不存在才计入这台设备的失败次数。
+    /// 格式对但不存在才计入调用方的失败次数。
     async fn checked_code(
         &self,
-        actor: &AuthenticatedDevice,
+        caller: &JoinCodeCaller,
         code: &str,
         operation: &'static str,
     ) -> AgentAccessResult<(PrivateRoomJoinCodeRecord, PrivateRoomSnapshot)> {
         let now = self.clock.now();
-        if actor.access_token_expires_at <= now {
-            return Err(AgentAccessFailure::new(
-                operation,
-                AgentAccessFailureKind::Forbidden,
-            ));
-        }
-        let caller = format!("device:{}", actor.device_id);
+        let caller = match caller {
+            JoinCodeCaller::Device(actor) => {
+                if actor.access_token_expires_at <= now {
+                    return Err(AgentAccessFailure::new(
+                        operation,
+                        AgentAccessFailureKind::Forbidden,
+                    ));
+                }
+                format!("device:{}", actor.device_id)
+            }
+            JoinCodeCaller::NetworkSource(digest) => {
+                digest
+                    .iter()
+                    .fold(String::from("network-source:"), |mut caller, byte| {
+                        let _ = write!(caller, "{byte:02x}");
+                        caller
+                    })
+            }
+        };
         if let Some(retry_at) = self
             .access
             .join_code_retry_at(&caller, now, self.attempts)

@@ -1,5 +1,5 @@
 //! 只凭网络接入的 Agent（ADR 0010、`specs/network-agents/design.md`）：不装应用、不用 CLI，
-//! 发一个 HTTP 请求起名并进公开大厅。除创建外都用创建时拿到的令牌认证。
+//! 发一个 HTTP 请求起名并进公开大厅，或凭口令进私人房间。除创建外都用创建时拿到的令牌认证。
 //!
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
 //! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供；
@@ -13,8 +13,8 @@ use std::{net::IpAddr, sync::Arc, time::Duration};
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentRoomRequest,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -80,6 +80,7 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/rooms", get(rooms))
         .route("/v1/network-agents/me", get(me).delete(disable))
+        .route("/v1/network-agents/me/rooms", post(enter_room))
         .route(
             "/v1/network-agents/me/messages",
             get(wait_for_messages).post(send_message),
@@ -98,6 +99,25 @@ struct CreateBody {
     /// 公开大厅的名字或 slug；省略就进默认公开大厅。
     #[serde(default)]
     room: Option<String>,
+    /// 私人房间的 Agent 口令；和 `room` 只能给一个。
+    #[serde(default)]
+    code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EnterRoomBody {
+    #[serde(default)]
+    room: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EnteredResponse {
+    schema_version: u8,
+    room: RoomResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -276,28 +296,80 @@ async fn create(
     headers: HeaderMap,
     body: Result<Json<CreateBody>, JsonRejection>,
 ) -> Response {
-    let Ok(Json(body)) = body else {
+    let Some((name, room)) = body
+        .ok()
+        .and_then(|Json(body)| Some((body.name, room_request(body.room, body.code)?)))
+    else {
         return no_store(
             ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"name\": 名字, \"room\": 可选的公开大厅名}。",
+                "请求体应为 JSON 对象：{\"name\": 名字, \"room\": 可选的公开大厅名, \"code\": 可选的私人房间口令}；room 与 code 只能给一个。",
                 correlation_id,
             )
             .into_response(),
         );
     };
     let request = CreateNetworkAgent {
-        name: body.name,
-        room: body.room,
+        name,
+        room,
         source_digest: state.source_digest(&headers),
     };
-    match state.agents.create(request).await {
+    match state.messaging.create(request).await {
         Ok(created) => {
             no_store((StatusCode::CREATED, Json(CreatedResponse::from(created))).into_response())
         }
-        Err(failure) => no_store(ApiError::network_agent(&failure, correlation_id).into_response()),
+        Err(failure) => gateway_failure(&failure, correlation_id),
+    }
+}
+
+/// 已有的网络 Agent 再进一个房间：公开大厅按名字或 slug，私人房间凭口令；已经在那个大厅里就原样返回。
+async fn enter_room(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Result<Json<EnterRoomBody>, JsonRejection>,
+) -> Response {
+    let Some(room) = body
+        .ok()
+        .and_then(|Json(body)| room_request(body.room, body.code))
+    else {
+        return no_store(
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "network_agent.invalid_request",
+                ErrorCategory::Validation,
+                "请求体应为 JSON 对象：{\"room\": 公开大厅名} 或 {\"code\": 私人房间口令}，只能给一个。",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state
+        .messaging
+        .enter_room(token, room, state.source_digest(&headers))
+        .await
+    {
+        Ok(room) => no_store(
+            Json(EnteredResponse {
+                schema_version: SCHEMA_VERSION,
+                room: RoomResponse::from(room),
+            })
+            .into_response(),
+        ),
+        Err(failure) => gateway_failure(&failure, correlation_id),
+    }
+}
+
+/// `room` 与 `code` 只能给一个；都不给就是默认公开大厅。
+fn room_request(room: Option<String>, code: Option<String>) -> Option<NetworkAgentRoomRequest> {
+    match (room, code) {
+        (Some(_), Some(_)) => None,
+        (room, None) => Some(NetworkAgentRoomRequest::Lobby(room)),
+        (None, Some(code)) => Some(NetworkAgentRoomRequest::Code(code)),
     }
 }
 
