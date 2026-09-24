@@ -23,13 +23,14 @@ use agent_room_application::{
         AgentInstanceVerificationRepository, Clock, ContentAccessMode, ContentAccessPolicy,
         DeviceSignature, MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixEventType,
         MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-        MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
-        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
-        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxEntry,
-        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
-        NetworkAgentRoomRecord, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
-        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        NetworkAgentSyncRequest, PortFuture, SecretValue,
+        MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken,
+        MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome,
+        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
+        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
+        NetworkAgentMatrixGateway, NetworkAgentRoomRecord, NetworkAgentSubmissionClaim,
+        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
+        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
+        PortFuture, SecretValue,
     },
 };
 use agent_room_domain::{
@@ -538,6 +539,7 @@ struct ScriptedMatrix {
     tokens: Mutex<Vec<String>>,
     sent: Mutex<Vec<(MatrixRoomId, MatrixEvent)>>,
     send_failures: Mutex<VecDeque<MatrixFailureKind>>,
+    states: Mutex<Vec<(String, Value)>>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
 }
@@ -614,6 +616,24 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         Box::pin(async move { result })
     }
 
+    fn send_state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        assert_eq!(
+            event.event_type().as_str(),
+            "io.github.rainyflash.agentroom.agent.status.v1"
+        );
+        assert_eq!(event.state_key().as_str(), OWN_INSTANCE);
+        let mut states = self.states.lock().unwrap();
+        states.push((room_id.as_str().to_owned(), event.content().clone()));
+        let event_id = MatrixEventId::new(format!("$status-{}:matrix.test", states.len())).unwrap();
+        Box::pin(async move { Ok(event_id) })
+    }
+
     fn leave<'a>(
         &'a self,
         _access_token: &'a SecretValue,
@@ -671,11 +691,15 @@ impl AgentInstanceSignatureVerifier for FakeSignatures {
     }
 }
 
-struct FixedClock;
+/// 跟着 tokio 的时间走：暂停时间的测试里，等待多久，钟就走多久。
+struct TokioClock {
+    started: tokio::time::Instant,
+}
 
-impl Clock for FixedClock {
+impl Clock for TokioClock {
     fn now(&self) -> UtcMillis {
-        UtcMillis::new(1_758_600_000_000).unwrap()
+        let elapsed = i64::try_from(self.started.elapsed().as_millis()).unwrap();
+        UtcMillis::new(1_758_600_000_000 + elapsed).unwrap()
     }
 }
 
@@ -708,7 +732,9 @@ fn harness_in(rooms: &[&str]) -> Harness {
         content: content.clone(),
         verification: Arc::new(KnownInstances),
         signatures: Arc::new(FakeSignatures),
-        clock: Arc::new(FixedClock),
+        clock: Arc::new(TokioClock {
+            started: tokio::time::Instant::now(),
+        }),
     });
     Harness {
         gateway,
@@ -1605,4 +1631,66 @@ async fn 自己发出去还不确定的_同步时按事务_id_对上() {
         harness.submissions.state(pending.submission),
         Some(NetworkAgentSubmissionState::Accepted)
     );
+}
+
+// ---------- 在线状态 ----------
+
+#[tokio::test(start_paused = true)]
+async fn 长轮询期间在每个房间发等待消息_十五秒内续上_停用时先发离线() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    harness
+        .matrix
+        .push(Step::Batch(Ok(batch("s1", Vec::new()))));
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .await
+        .unwrap();
+    assert!(
+        harness.matrix.states.lock().unwrap().is_empty(),
+        "第一次同步不等，也就不说在等"
+    );
+
+    let started = tokio::time::Instant::now();
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+
+    // 每段最多等 10 秒：三段各发一次，每次两个房间。
+    let requests = harness.matrix.requests();
+    assert_eq!(
+        requests[1..]
+            .iter()
+            .map(|request| request.timeout_millis)
+            .collect::<Vec<_>>(),
+        [10_000, 10_000, 10_000]
+    );
+    let states = harness.matrix.states.lock().unwrap().clone();
+    assert_eq!(states.len(), 6);
+    assert_eq!(
+        states
+            .iter()
+            .map(|(room, _)| room.as_str())
+            .collect::<Vec<_>>(),
+        [ROOM, SECOND_ROOM, ROOM, SECOND_ROOM, ROOM, SECOND_ROOM]
+    );
+    let first = &states[0].1;
+    assert_eq!(first["status"], "idle");
+    assert_eq!(first["actor"]["instanceId"], OWN_INSTANCE);
+    assert_eq!(
+        first["actor"]["agent"]["matrixUserId"],
+        matrix_user(OWN_AGENT)
+    );
+    assert_eq!(first["listeningUntil"], "2025-09-23T04:00:15.000Z");
+    assert!(first["signature"].as_str().is_some());
+    assert_eq!(states[2].1["listeningUntil"], "2025-09-23T04:00:25.000Z");
+
+    harness.gateway.leave_and_disable(TOKEN).await.unwrap();
+    let states = harness.matrix.states.lock().unwrap().clone();
+    let offline = &states[states.len() - 1].1;
+    assert_eq!(offline["status"], "offline");
+    assert_eq!(offline["listeningUntil"], Value::Null);
 }

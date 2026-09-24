@@ -1486,6 +1486,136 @@ def approve_device_grant(environment: Mapping[str, str], device_code: str) -> No
     )
 
 
+NETWORK_AGENT_API: Final = "http://127.0.0.1:8090/v1/network-agents"
+
+
+def network_agent_request(
+    method: str,
+    path: str,
+    *,
+    token: str | None = None,
+    body: Mapping[str, object] | None = None,
+    timeout_seconds: float = 60,
+) -> tuple[int, dict[str, object] | None]:
+    """像只会发 HTTP 的 Agent 一样调用网络 Agent 接口；返回状态码与 JSON。"""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    request = Request(f"{NETWORK_AGENT_API}{path}", data=data, method=method)
+    request.add_header("Accept", "application/json")
+    # 控制面只信最后一跳写的来源地址；这里模拟 Caddy 写入的公网地址。
+    request.add_header("X-Forwarded-For", "198.51.100.24")
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+            return response.status, (json.loads(raw) if raw else None)
+    except HTTPError as error:
+        raw = error.read()
+        return error.code, (json.loads(raw) if raw else None)
+
+
+def wait_for_network_agent_message(
+    token: str, event_id: str, *, timeout_seconds: float
+) -> dict[str, object]:
+    """长轮询取消息并逐条确认，直到收到指定事件。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status, page = network_agent_request("GET", "/me/messages?wait=10&limit=50", token=token)
+        if status != 200 or page is None:
+            raise VerticalFailure(f"网络 Agent 取消息失败：HTTP {status}。")
+        messages = page.get("messages")
+        if not isinstance(messages, list):
+            raise VerticalFailure("网络 Agent 的消息列表格式不对。")
+        for item in messages:
+            message = require_object(item, "网络 Agent 收到的消息")
+            if message.get("eventId") == event_id:
+                return message
+        if messages:
+            last = require_object(messages[-1], "网络 Agent 收到的消息")
+            network_agent_request(
+                "POST", "/me/ack", token=token, body={"eventId": require_text(last.get("eventId"), "事件 ID")}
+            )
+    raise VerticalFailure(f"网络 Agent 没有在 {timeout_seconds:.0f} 秒内收到本机 Agent 的消息。")
+
+
+def verify_network_agent_workflow(
+    *, sender_bridge: AuthorizedBridgeRuntime, redactor: LogRedactor
+) -> dict[str, str]:
+    """只凭 HTTP 的网络 Agent 与本机 Bridge 上的 Agent 在同一大厅里一来一回，双方都验签。"""
+    sender_session = require_bridge_session(sender_bridge)
+    room_id = sender_session["matrixRoomId"]
+    status, created = network_agent_request(
+        "POST", "", body={"name": "Vertical Net Scout", "room": CATALOG_SLUG}
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"网络 Agent 创建失败：HTTP {status}。")
+    token = require_text(created.get("token"), "网络 Agent 令牌")
+    agent_id = require_text(created.get("agentId"), "网络 Agent 的 Agent ID")
+    joined = require_object(created.get("room"), "网络 Agent 所在房间")
+    if joined.get("matrixRoomId") != room_id:
+        raise VerticalFailure("网络 Agent 没有进入与本机 Agent 相同的大厅分片。")
+    status, me = network_agent_request("GET", "/me", token=token)
+    if status != 200 or me is None or me.get("agentId") != agent_id:
+        raise VerticalFailure("网络 Agent 查看自己失败。")
+    # 第一次取消息只建立同步位置并带回最近的上下文，全部确认掉。
+    status, first = network_agent_request("GET", "/me/messages?wait=0&limit=50", token=token)
+    if status != 200 or first is None:
+        raise VerticalFailure(f"网络 Agent 第一次取消息失败：HTTP {status}。")
+    context = first.get("messages")
+    if isinstance(context, list) and context:
+        last = require_object(context[-1], "网络 Agent 收到的消息")
+        network_agent_request(
+            "POST", "/me/ack", token=token, body={"eventId": require_text(last.get("eventId"), "事件 ID")}
+        )
+
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        client = transport.bind_session(sender_session["sessionId"])
+        message = send_mcp_vertical_message(client, room_id)
+        received = wait_for_network_agent_message(token, message["eventId"], timeout_seconds=90)
+        actor = require_object(received.get("actor"), "消息作者")
+        if actor.get("kind") != "agent" or received.get("title") != message["title"]:
+            raise VerticalFailure("网络 Agent 收到的消息与本机 Agent 发出的不一致。")
+        reply_text = f"Network agent reply to {message['submissionId'][-8:]}."
+        status, sent = network_agent_request(
+            "POST",
+            "/me/messages",
+            token=token,
+            body={
+                "text": reply_text,
+                "replyTo": require_text(received.get("messageId"), "消息 ID"),
+            },
+        )
+        if status != 201 or sent is None or sent.get("status") != "sent":
+            raise VerticalFailure(f"网络 Agent 发言没有得到 Matrix 确认：HTTP {status}。")
+        reply_event = require_text(sent.get("eventId"), "网络 Agent 发言的事件 ID")
+        # 本机 Bridge 只把验签通过的消息放进预览：看到它就说明签名与实例登记都对。
+        preview = wait_for_mcp_preview(
+            client,
+            room_id=room_id,
+            submission={"eventId": reply_event, "title": reply_text},
+            timeout_seconds=45,
+        )
+        reply_actor = require_object(preview.get("actor"), "网络 Agent 发言的作者")
+        agent = require_object(reply_actor.get("agent"), "网络 Agent 发言的 Agent")
+        if agent.get("agentId") != agent_id or reply_actor.get("provenance") != "autonomous_agent":
+            raise VerticalFailure("本机 Agent 看到的网络 Agent 发言身份不对。")
+
+    status, acknowledged = network_agent_request(
+        "POST", "/me/ack", token=token, body={"eventId": message["eventId"]}
+    )
+    if status != 200 or acknowledged is None or acknowledged.get("acknowledged") is not True:
+        raise VerticalFailure("网络 Agent 确认消息失败。")
+    status, _ = network_agent_request("DELETE", "/me", token=token)
+    if status != 204:
+        raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
+    status, _ = network_agent_request("GET", "/me", token=token)
+    if status != 401:
+        raise VerticalFailure("停用后的网络 Agent 令牌仍然可用。")
+    return {"token": token, "agentId": agent_id, "replyEventId": reply_event}
+
+
 def verify_mcp_workflow(
     *,
     target_bridge: AuthorizedBridgeRuntime,

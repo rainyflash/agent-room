@@ -6,8 +6,9 @@ use std::{collections::BTreeMap, time::Duration};
 use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillToken, MatrixEvent, MatrixEventId, MatrixEventType,
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
-    MatrixUserId, NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
+    MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
+    MatrixTransactionId, MatrixUserId, NetworkAgentMatrixGateway, NetworkAgentSyncRequest,
+    PortFuture, SecretValue,
 };
 use reqwest::{Client, Url, redirect::Policy};
 use serde::Deserialize;
@@ -164,6 +165,40 @@ impl MatrixAgentSessionClient {
         ))
     }
 
+    async fn send_state_event_internal(
+        &self,
+        access_token: &SecretValue,
+        room_id: &MatrixRoomId,
+        event: &MatrixStateEvent,
+    ) -> MatrixResult<MatrixEventId> {
+        let operation = MatrixOperation::SendStateEvent;
+        let url = self.room_endpoint(
+            room_id,
+            &[
+                "state",
+                event.event_type().as_str(),
+                event.state_key().as_str(),
+            ],
+            operation,
+        )?;
+        let response = self
+            .client
+            .put(url)
+            .bearer_auth(access_token.expose())
+            .json(event.content())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if !status.is_success() {
+            let error = decode_matrix_error(&body, operation)?;
+            return Err(map_matrix_error(operation, status, &error));
+        }
+        let accepted: EventIdResponse = decode_json(&body, operation)?;
+        MatrixEventId::new(accepted.event_id).map_err(|_| invalid_response(operation))
+    }
+
     async fn leave_internal(
         &self,
         access_token: &SecretValue,
@@ -213,6 +248,15 @@ impl NetworkAgentMatrixGateway for MatrixAgentSessionClient {
         event: &'a MatrixEvent,
     ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
         Box::pin(self.send_event_internal(access_token, room_id, event))
+    }
+
+    fn send_state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
+        Box::pin(self.send_state_event_internal(access_token, room_id, event))
     }
 
     fn leave<'a>(
@@ -565,6 +609,40 @@ mod tests {
             "/_matrix/client/v3/rooms/!lobby:matrix.test/send/io.github.rainyflash.agentroom.message.preview.v1/agent-room-message-0198"
         );
         assert_eq!(seen[0].2, json!({"schemaVersion": "1.0"}));
+    }
+
+    #[tokio::test]
+    async fn 在线状态写成房间状态_状态键逐段编码() {
+        let (url, seen) =
+            serve_writes((StatusCode::OK, json!({"event_id": "$status:matrix.test"}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        let event = agent_room_application::ports::MatrixStateEvent::new(
+            agent_room_application::ports::MatrixEventType::new(
+                "io.github.rainyflash.agentroom.agent.status.v1",
+            )
+            .unwrap(),
+            agent_room_application::ports::MatrixStateKey::new(
+                "0198b601-77a1-7bb8-83eb-a8fe68c97e52",
+            )
+            .unwrap(),
+            json!({"status": "idle"}),
+        )
+        .unwrap();
+
+        let event_id = client
+            .send_state_event(&token(), &room(), &event)
+            .await
+            .expect("写进去了");
+
+        assert_eq!(event_id.as_str(), "$status:matrix.test");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].0, "PUT");
+        assert_eq!(
+            seen[0].1,
+            "/_matrix/client/v3/rooms/!lobby:matrix.test/state/io.github.rainyflash.agentroom.agent.status.v1/0198b601-77a1-7bb8-83eb-a8fe68c97e52"
+        );
+        assert_eq!(seen[0].2, json!({"status": "idle"}));
     }
 
     #[tokio::test]

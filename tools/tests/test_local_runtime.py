@@ -1,3 +1,4 @@
+import base64
 import os
 from pathlib import Path
 import tempfile
@@ -33,6 +34,29 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_本地控制面打开网络_agent_封存密钥是派生的_32_字节(self) -> None:
+        environment = control_plane_runtime_environment(
+            REQUIRED_VALUES,
+            enable_telemetry=False,
+            matrix_lifecycle_token_file=self.lifecycle_token,
+        )
+        self.assertEqual(environment["AGENT_ROOM_NETWORK_AGENTS_ENABLED"], "true")
+        key = base64.b64decode(environment["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"], validate=True)
+        self.assertEqual(len(key), 32)
+        self.assertNotIn(
+            REQUIRED_VALUES["CONTENT_TICKET_SECRET"],
+            environment["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"],
+        )
+        again = control_plane_runtime_environment(
+            REQUIRED_VALUES,
+            enable_telemetry=False,
+            matrix_lifecycle_token_file=self.lifecycle_token,
+        )
+        self.assertEqual(
+            again["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"],
+            environment["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"],
+        )
 
     def test_遥测开关不会残留旧端点(self) -> None:
         with patch.dict(

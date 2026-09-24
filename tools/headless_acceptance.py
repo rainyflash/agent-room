@@ -69,14 +69,20 @@ def accept() -> None:
                 principal_id=agent["principalId"], redactor=redactor)
             if result["agentInstanceId"] != identity["agentInstanceId"]:
                 raise v.VerticalFailure("Server restart changed the Agent instance.")
+            network = v.verify_network_agent_workflow(sender_bridge=sender, redactor=redactor)
             v.run_checked([str(v.runtime_binary("agent-room")), "doctor"], environment=target.environment)
         logs = tuple(v.LOG_ROOT.glob("*.log"))
-        v.verify_sanitized_logs(logs, redactor, additional_secrets=tuple(runtime.device_code for runtime in runtimes))
+        v.verify_sanitized_logs(
+            logs,
+            redactor,
+            additional_secrets=(*(runtime.device_code for runtime in runtimes), network["token"]),
+        )
     report = v.ROOT / "artifacts" / "agent-runtime-live.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps({"platform":"linux", "vaultRestored":True, "identityPreserved":True,
         "gracefulRestart":True, "crashRecovered":True,
         "matrixRecoveryGeneration":recovery, "matrixDeliveryTested":True, "replyMessageId":result["replyMessageId"],
+        "networkAgentRoundTrip":True, "networkAgentReplyEventId":network["replyEventId"],
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
 

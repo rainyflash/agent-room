@@ -32,8 +32,10 @@ use agent_room_bridge_core::{
         MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
         MessageStoreFailureKind, MessageSyncDependencies, MessageSyncService, SendMessageRequest,
     },
+    status::{AgentStatusIntent, HostAgentState},
 };
 use agent_room_domain::{
+    agent_lifecycle::RECEPTION_FRESHNESS_MS,
     content::{ContentEncryptionMode, ContentMediaType},
     ids::{AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
     messages::{
@@ -45,6 +47,7 @@ use serde_json::Value;
 use tokio::{sync::Notify, time::Instant};
 use uuid::{Uuid, Version};
 
+mod presence;
 mod projection;
 mod speaking;
 #[cfg(test)]
@@ -59,6 +62,8 @@ const FIRST_SYNC_TIMELINE_LIMIT: u16 = 20;
 const SYNC_TIMELINE_LIMIT: u16 = 50;
 /// 最多留这么多条没确认的；再多就丢掉最早的，并在下次取消息时告诉 Agent 丢了几条。
 const INBOX_CAPACITY: u32 = 200;
+/// 长轮询分段等，每段不超过这么久，好在“等待消息”过期前续上。
+const SYNC_CHUNK: Duration = Duration::from_secs(10);
 /// 聊天正文的媒体类型，与 MCP 的聊天发言一致。
 const CHAT_MEDIA_TYPE: &str = "text/plain";
 /// 摘要取正文压缩空白后的前 500 个字符，标题再取摘要的前 120 个，与 MCP 的聊天发言一致。
@@ -167,6 +172,7 @@ pub(crate) struct NetworkGateway {
     signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     clock: Arc<dyn Clock>,
     polls: LongPolls,
+    presence: presence::Presence,
 }
 
 impl NetworkGateway {
@@ -181,6 +187,7 @@ impl NetworkGateway {
             signatures: dependencies.signatures,
             clock: dependencies.clock,
             polls: LongPolls::default(),
+            presence: presence::Presence::default(),
         }
     }
 
@@ -258,6 +265,15 @@ impl NetworkGateway {
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
+        // 先说一声下线，离开房间之后就写不了房间状态了。
+        self.presence
+            .publish(
+                &self.matrix,
+                &self.clock,
+                &session,
+                &AgentStatusIntent::new(HostAgentState::Disconnected, None),
+            )
+            .await;
         for room in &session.rooms {
             if let Ok(room_id) = MatrixRoomId::new(room.matrix_room_id.as_str())
                 && self
@@ -275,7 +291,30 @@ impl NetworkGateway {
         self.agents
             .disable(token)
             .await
-            .map_err(NetworkGatewayFailure::Agent)
+            .map_err(NetworkGatewayFailure::Agent)?;
+        self.presence.forget(session.network_agent_id).await;
+        Ok(())
+    }
+
+    /// 发“等待消息”：`listeningUntil` 最多为当前时间加 15 秒，也不超过这次还要等的时间。
+    async fn announce_listening(&self, session: &NetworkAgentSession, remaining: Duration) {
+        let now = self.clock.now();
+        let freshness = u64::try_from(RECEPTION_FRESHNESS_MS).unwrap_or(0);
+        let window = u64::try_from(remaining.as_millis())
+            .unwrap_or(u64::MAX)
+            .min(freshness);
+        let Some(until) = agent_room_domain::time::DurationMillis::new(window.max(1))
+            .ok()
+            .and_then(|window| now.checked_add(window).ok())
+        else {
+            return;
+        };
+        let intent = AgentStatusIntent::new(HostAgentState::Available, None)
+            .with_last_polled_at(Some(now))
+            .with_listening_until(Some(until));
+        self.presence
+            .publish(&self.matrix, &self.clock, session, &intent)
+            .await;
     }
 
     fn submissions_for(&self, session: &NetworkAgentSession) -> speaking::AgentSubmissions {
@@ -313,12 +352,17 @@ impl NetworkGateway {
             if !page.entries.is_empty() || (remaining.is_zero() && !first) {
                 return Ok(messages(page));
             }
+            let chunk = remaining.min(SYNC_CHUNK);
+            if !first {
+                // 要等了：告诉房间里的人它在等消息。每一段最多等 10 秒，好在 15 秒内续上。
+                self.announce_listening(&session, remaining).await;
+            }
             let request = NetworkAgentSyncRequest {
                 since: page.sync_token.clone(),
                 timeout_millis: if first {
                     0
                 } else {
-                    u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX)
+                    u64::try_from(chunk.as_millis()).unwrap_or(u64::MAX)
                 },
                 timeline_limit: if first {
                     FIRST_SYNC_TIMELINE_LIMIT
