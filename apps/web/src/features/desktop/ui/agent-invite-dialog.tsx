@@ -42,6 +42,7 @@ import type {
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
+import { NetworkAgentInvite } from './network-agent-invite';
 import './agent-invite-dialog.css';
 import { useOptionalAppServices } from '@/app/app-services';
 import { InviteReplyProgress } from './invite-reply-progress';
@@ -457,6 +458,7 @@ function ConnectionInvite({
   };
   return (
     <div className="agent-invite__body">
+      {controller.available ? null : <NetworkAgentInvite room={currentRoom} />}
       {controller.available ? (
         <LocalConnectionNotice />
       ) : (
@@ -714,6 +716,15 @@ function ConnectionInvite({
           <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
         </li>
       </ol>
+      {controller.available ? (
+        <details className="agent-invite__network-other">
+          <summary>
+            <ChevronDown aria-hidden="true" />
+            {t('agentInvite.network.otherWay')}
+          </summary>
+          <NetworkAgentInvite room={currentRoom} />
+        </details>
+      ) : null}
     </div>
   );
 }
