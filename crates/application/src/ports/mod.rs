@@ -24,7 +24,7 @@ pub use network_agents::{
     NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
     NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLookup, NetworkAgentMatrixGateway,
     NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStore,
+    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
     NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
     NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
     NetworkAgentSyncRequest, RateWindowDecision, RateWindowPolicy, SealedSecret,

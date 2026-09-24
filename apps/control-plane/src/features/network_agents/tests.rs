@@ -6,8 +6,8 @@ use std::{
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentResult, NetworkAgentRoom, NetworkAgentSession, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom, NetworkAgentSession,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
 };
@@ -128,6 +128,21 @@ impl NetworkAgentUseCases for FakeAgents {
 
     fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
         unreachable!("路由测试里发言走替身网关")
+    }
+
+    fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn pending_exits(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentPendingExit>>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn mark_rooms_left(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        unreachable!("路由不做定时清理")
     }
 }
 

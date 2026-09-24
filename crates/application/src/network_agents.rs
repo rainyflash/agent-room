@@ -29,9 +29,9 @@ use crate::{
         Clock, IdentifierFactory, MatrixAgentLocalpart, NetworkAgentActivation,
         NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStore, PortFuture,
-        PrincipalAccount, RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery,
-        SecretFactory, SecretValue,
+        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
+        NetworkAgentStore, PortFuture, PrincipalAccount, RateWindowDecision, RateWindowPolicy,
+        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -45,6 +45,12 @@ const CAPABILITY_VERSION: &str = "1.0";
 const ACTOR_LIFETIME_MILLIS: u64 = 5 * 60 * 1_000;
 /// 同名时最多试到 ` 20`，再撞上就请 Agent 换个名字。
 const MAX_NAME_NUMBER: u32 = 20;
+/// 30 天没有活动的网络 Agent 自动停用，放开全站名额。
+const IDLE_LIFETIME_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
+/// 创建一个小时还没建好，说明中途断了：停用，放开名字与名额。
+const PROVISIONING_TIMEOUT_MILLIS: i64 = 60 * 60 * 1_000;
+/// 定时清理每轮最多停用这么多个。
+const STALE_BATCH: u32 = 100;
 /// 大厅正在准备房间时最多等这么多次。
 const MAX_LOBBY_ATTEMPTS: usize = 3;
 
@@ -127,6 +133,15 @@ pub struct NetworkAgentSession {
     /// 实例签名种子（编码后）：替 Agent 签发言与状态。
     pub instance_signing_seed: SecretValue,
     pub rooms: Vec<NetworkAgentRoomRecord>,
+}
+
+/// 已停用、还没离开房间的网络 Agent。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkAgentPendingExit {
+    /// 会话打得开：先发“已离线”、离开这些房间，再记为已离开。
+    Session(NetworkAgentSession),
+    /// 秘密缺失或解不开（例如封存密钥换了），没法替它离开；调用方记日志后记为已离开，免得每轮都卡住。
+    Unopenable(NetworkAgentId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +229,19 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 发一条之前记一次：每分钟、每天各有上限，超了告诉 Agent 什么时候能再发。
     fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
+
+    /// 定时清理：停用闲置超过 30 天的与卡在创建中超过一小时的网络 Agent，返回停用了几个。
+    fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>>;
+
+    /// 已停用、还没离开房间的网络 Agent（运维停用、闲置停用，或自己停用时没离开成的），
+    /// 一次最多 `limit` 个。不看总开关，也不记活动。
+    fn pending_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentPendingExit>>>;
+
+    /// 离开了所有房间（或没法离开）之后记一笔，定时清理就不再找它。
+    fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -504,7 +532,24 @@ impl NetworkAgentService {
             .record_activity(record.id, self.clock.now())
             .await
             .map_err(repository)?;
-        Ok(NetworkAgentSession {
+        Ok(self.session_of(
+            record,
+            (agent_id, agent_instance_id),
+            matrix_access_token,
+            instance_signing_seed,
+            rooms,
+        ))
+    }
+
+    fn session_of(
+        &self,
+        record: NetworkAgentRecord,
+        (agent_id, agent_instance_id): (AgentId, AgentInstanceId),
+        matrix_access_token: SecretValue,
+        instance_signing_seed: SecretValue,
+        rooms: Vec<NetworkAgentRoomRecord>,
+    ) -> NetworkAgentSession {
+        NetworkAgentSession {
             network_agent_id: record.id,
             principal_id: record.principal_id,
             agent_id,
@@ -518,7 +563,7 @@ impl NetworkAgentService {
             matrix_access_token,
             instance_signing_seed,
             rooms,
-        })
+        }
     }
 
     /// 取出并解封一个秘密；缺失说明记录不完整，解不开说明密钥或密文出了问题，都不是令牌的错。
@@ -527,18 +572,87 @@ impl NetworkAgentService {
         id: NetworkAgentId,
         kind: NetworkAgentSecretKind,
     ) -> NetworkAgentResult<SecretValue> {
-        let sealed = self
-            .store
-            .find_secret(id, kind)
-            .await
-            .map_err(repository)?
-            .ok_or_else(internal)?;
-        self.sealer
+        match self.read_secret(id, kind).await? {
+            OpenedSecret::Secret(secret) => Ok(secret),
+            OpenedSecret::Missing => Err(internal()),
+            OpenedSecret::Unsealable => Err(dependency()),
+        }
+    }
+
+    /// 库不可用是错误；秘密缺失或解不开如实说明，由调用方决定怎么办。
+    async fn read_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+    ) -> NetworkAgentResult<OpenedSecret> {
+        let Some(sealed) = self.store.find_secret(id, kind).await.map_err(repository)? else {
+            return Ok(OpenedSecret::Missing);
+        };
+        Ok(self
+            .sealer
             .open(id, kind, &sealed)
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .and_then(|text| SecretValue::new(text).ok())
-            .ok_or_else(dependency)
+            .map_or(OpenedSecret::Unsealable, OpenedSecret::Secret))
+    }
+
+    async fn disable_stale_internal(&self) -> NetworkAgentResult<usize> {
+        let now = self.clock.now();
+        let before = |millis: i64| UtcMillis::new(now.value() - millis).map_err(|_| internal());
+        let cutoff = NetworkAgentStaleCutoff {
+            idle_before: before(IDLE_LIFETIME_MILLIS)?,
+            provisioning_before: before(PROVISIONING_TIMEOUT_MILLIS)?,
+        };
+        let disabled = self
+            .store
+            .disable_stale(cutoff, now, STALE_BATCH)
+            .await
+            .map_err(repository)?;
+        Ok(disabled.len())
+    }
+
+    async fn pending_exits_internal(
+        &self,
+        limit: u32,
+    ) -> NetworkAgentResult<Vec<NetworkAgentPendingExit>> {
+        let records = self.store.pending_exits(limit).await.map_err(repository)?;
+        let mut exits = Vec::with_capacity(records.len());
+        for record in records {
+            exits.push(self.pending_exit(record).await?);
+        }
+        Ok(exits)
+    }
+
+    async fn pending_exit(
+        &self,
+        record: NetworkAgentRecord,
+    ) -> NetworkAgentResult<NetworkAgentPendingExit> {
+        let id = record.id;
+        let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
+        else {
+            return Ok(NetworkAgentPendingExit::Unopenable(id));
+        };
+        let OpenedSecret::Secret(matrix_access_token) = self
+            .read_secret(id, NetworkAgentSecretKind::MatrixAccessToken)
+            .await?
+        else {
+            return Ok(NetworkAgentPendingExit::Unopenable(id));
+        };
+        let OpenedSecret::Secret(instance_signing_seed) = self
+            .read_secret(id, NetworkAgentSecretKind::InstanceSigningSeed)
+            .await?
+        else {
+            return Ok(NetworkAgentPendingExit::Unopenable(id));
+        };
+        let rooms = self.store.rooms(id).await.map_err(repository)?;
+        Ok(NetworkAgentPendingExit::Session(self.session_of(
+            record,
+            (agent_id, agent_instance_id),
+            matrix_access_token,
+            instance_signing_seed,
+            rooms,
+        )))
     }
 
     async fn take_message_quota_internal(&self, id: NetworkAgentId) -> NetworkAgentResult<()> {
@@ -756,6 +870,33 @@ impl NetworkAgentUseCases for NetworkAgentService {
     fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
         Box::pin(self.take_message_quota_internal(id))
     }
+
+    fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {
+        Box::pin(self.disable_stale_internal())
+    }
+
+    fn pending_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentPendingExit>>> {
+        Box::pin(self.pending_exits_internal(limit))
+    }
+
+    fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        Box::pin(async move {
+            self.store
+                .mark_rooms_left(id, self.clock.now())
+                .await
+                .map_err(repository)
+        })
+    }
+}
+
+/// 读一个封存秘密的结果。
+enum OpenedSecret {
+    Secret(SecretValue),
+    Missing,
+    Unsealable,
 }
 
 fn hex(bytes: &[u8]) -> String {
