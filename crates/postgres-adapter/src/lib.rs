@@ -14,6 +14,7 @@ mod handoffs;
 mod inbox;
 mod migrations;
 mod moderation;
+mod network_agents;
 mod outbox;
 mod principals;
 mod projections;

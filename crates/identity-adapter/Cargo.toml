@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 agent-room-application.workspace = true
 agent-room-domain.workspace = true
+aes-gcm.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true

@@ -36,6 +36,7 @@ define_id!(AccountDeletionJobId);
 define_id!(LoginAttemptId);
 define_id!(WebSessionId);
 define_id!(DeviceId);
+define_id!(NetworkAgentId);
 define_id!(DeviceTokenFamilyId);
 define_id!(DeviceAccessTokenId);
 define_id!(DeviceRefreshTokenId);

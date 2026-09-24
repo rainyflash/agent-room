@@ -24,6 +24,7 @@ use agent_room_application::{
         TargetedHandoffFailureKind,
     },
     moderation::{ModerationFailure, ModerationFailureKind},
+    network_agents::{NetworkAgentFailure, NetworkAgentFailureKind},
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         ContentAuthorizationFailure, ContentAuthorizationFailureKind, ContentScanFailureKind,
@@ -685,6 +686,88 @@ impl ApiError {
         Self::new(status, code, category, message, correlation_id)
     }
 
+    /// 网络 Agent 的调用方多半是模型：消息写明下一步怎么做，找不到房间时列出能进的公开大厅。
+    pub(crate) fn network_agent(
+        failure: &NetworkAgentFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            NetworkAgentFailureKind::Disabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "network_agent.disabled",
+                ErrorCategory::DependencyUnavailable,
+                "这台服务器没有开放网络 Agent 接入。",
+            ),
+            NetworkAgentFailureKind::InvalidName => (
+                StatusCode::BAD_REQUEST,
+                "network_agent.name_invalid",
+                ErrorCategory::Validation,
+                "名字须为 1 到 64 个字符、不含控制字符，也不能用平台或管理者的名字。",
+            ),
+            NetworkAgentFailureKind::NameUnavailable => (
+                StatusCode::CONFLICT,
+                "network_agent.name_unavailable",
+                ErrorCategory::Conflict,
+                "同名的网络 Agent 太多了，请换个名字。",
+            ),
+            NetworkAgentFailureKind::RoomNotFound => {
+                let mut error = Self::new(
+                    StatusCode::NOT_FOUND,
+                    "network_agent.room_not_found",
+                    ErrorCategory::Validation,
+                    "没有这个公开大厅；details.rooms 列出了能进的大厅，省略 room 就进默认大厅。",
+                    correlation_id,
+                );
+                error.envelope.details.insert(
+                    "rooms".to_owned(),
+                    serde_json::Value::from(failure.rooms().to_vec()),
+                );
+                log_network_agent_failure(failure, correlation_id);
+                return error;
+            }
+            NetworkAgentFailureKind::RateLimited => {
+                let error = Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "network_agent.rate_limited",
+                    ErrorCategory::Transient,
+                    "创建得太频繁了，请按 Retry-After 等一会儿再试。",
+                    correlation_id,
+                );
+                log_network_agent_failure(failure, correlation_id);
+                return match failure.retry_at() {
+                    Some(retry_at) => error.retry_after_seconds(seconds_until(retry_at)),
+                    None => error,
+                };
+            }
+            NetworkAgentFailureKind::CapacityReached => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "network_agent.capacity_reached",
+                ErrorCategory::Transient,
+                "同时在线的网络 Agent 已满，请稍后再试。",
+            ),
+            NetworkAgentFailureKind::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "network_agent.unauthorized",
+                ErrorCategory::Authentication,
+                "令牌缺失、不对或已停用；请带上创建时拿到的 Authorization: Bearer <token>，或重新创建。",
+            ),
+            NetworkAgentFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "network_agent.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "服务器的依赖暂时不可用，请稍后用同样的请求重试。",
+            ),
+            NetworkAgentFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "network_agent.internal",
+                ErrorCategory::Transient,
+                "网络 Agent 服务发生内部错误。",
+            ),
+        };
+        log_network_agent_failure(failure, correlation_id);
+        Self::new(status, code, category, message, correlation_id)
+    }
+
     pub(crate) fn direct_session(
         failure: DirectSessionFailure,
         correlation_id: CorrelationId,
@@ -1272,6 +1355,14 @@ fn log_agent_access_failure(failure: AgentAccessFailure, correlation_id: Correla
         operation = failure.operation(),
         failure = ?failure.kind(),
         "Agent 口令请求失败"
+    );
+}
+
+fn log_network_agent_failure(failure: &NetworkAgentFailure, correlation_id: CorrelationId) {
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        failure = ?failure.kind(),
+        "网络 Agent 请求失败"
     );
 }
 

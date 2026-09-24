@@ -10,6 +10,7 @@ mod identity;
 mod inbox;
 mod matrix;
 mod moderation;
+mod network_agents;
 mod notifications;
 mod outbox;
 mod projections;
@@ -17,6 +18,12 @@ mod rooms;
 mod runtime;
 
 pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
+pub use network_agents::{
+    GeneratedSigningKey, NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentKeyFactory,
+    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentSecretKind,
+    NetworkAgentSecretSealer, NetworkAgentStore, RateWindowDecision, RateWindowPolicy,
+    SealedSecret, SecretSealingFailure,
+};
 use std::{future::Future, pin::Pin};
 
 pub use accounts::{

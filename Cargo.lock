@@ -369,6 +369,7 @@ dependencies = [
 name = "agent-room-identity-adapter"
 version = "0.1.0-alpha.50"
 dependencies = [
+ "aes-gcm",
  "agent-room-application",
  "agent-room-domain",
  "axum",

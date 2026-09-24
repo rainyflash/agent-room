@@ -1,7 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agent_room_application::{
-    ports::{Clock, IdentifierFactory, ModerationIdentifierFactory},
+    ports::{Clock, IdentifierFactory, ModerationIdentifierFactory, NetworkAgentPause, PortFuture},
     rooms::{LobbyProvisioningIdentifierFactory, RoomReservationIdentifierFactory},
 };
 use agent_room_domain::{
@@ -15,6 +15,9 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use uuid::Uuid;
+
+/// 大厅正在准备房间时，网络 Agent 的创建请求最多等这么久再试一次，免得请求挂太久。
+const MAX_NETWORK_AGENT_PAUSE: Duration = Duration::from_secs(3);
 
 pub(crate) struct SystemRuntime;
 
@@ -133,5 +136,14 @@ impl ModerationIdentifierFactory for SystemRuntime {
 
     fn moderation_audit_event_id(&self) -> AuditEventId {
         AuditEventId::from_uuid(Uuid::now_v7())
+    }
+}
+
+impl NetworkAgentPause for SystemRuntime {
+    fn until(&self, at: UtcMillis) -> PortFuture<'_, ()> {
+        let remaining = at.value().saturating_sub(self.now().value()).max(0);
+        let wait = Duration::from_millis(u64::try_from(remaining).unwrap_or(0))
+            .min(MAX_NETWORK_AGENT_PAUSE);
+        Box::pin(tokio::time::sleep(wait))
     }
 }

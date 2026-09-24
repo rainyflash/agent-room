@@ -1,6 +1,8 @@
 use std::{env, fmt, fs, net::SocketAddr, sync::Arc, time::Duration};
 
 use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
+use agent_room_identity_adapter::{NETWORK_AGENT_SEAL_KEY_BYTES, NetworkAgentSealKey};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use thiserror::Error;
 use url::Url;
 use uuid::{Uuid, Version};
@@ -164,6 +166,13 @@ pub(crate) struct ContentConfig {
     pub(crate) cleanup_batch: u16,
 }
 
+/// 只凭网络接入的 Agent（ADR 0010）。总开关默认关闭；打开时必须配封存密钥。
+#[derive(Clone)]
+pub(crate) struct NetworkAgentConfig {
+    pub(crate) enabled: bool,
+    pub(crate) seal_key: Option<NetworkAgentSealKey>,
+}
+
 #[derive(Clone)]
 pub(crate) struct ControlPlaneConfig {
     pub(crate) bind_address: SocketAddr,
@@ -173,6 +182,7 @@ pub(crate) struct ControlPlaneConfig {
     pub(crate) account_lifecycle: AccountLifecycleConfig,
     pub(crate) lobby: LobbyConfig,
     pub(crate) content: ContentConfig,
+    pub(crate) network_agents: NetworkAgentConfig,
     pub(crate) observability: ObservabilityConfig,
 }
 
@@ -190,9 +200,40 @@ impl ControlPlaneConfig {
             account_lifecycle: read_account_lifecycle_config(source)?,
             lobby: read_lobby_config(source)?,
             content: read_content_config(source)?,
+            network_agents: read_network_agent_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_network_agent_config(
+    source: &impl EnvironmentSource,
+) -> Result<NetworkAgentConfig, ConfigError> {
+    const ENABLED: &str = "AGENT_ROOM_NETWORK_AGENTS_ENABLED";
+    const SEAL_KEY: &str = "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY";
+    let enabled = match read_optional(source, ENABLED).as_deref().map(str::trim) {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(ConfigError::invalid(ENABLED, "只接受 true 或 false")),
+    };
+    // 配了就校验，哪怕开关还关着：打开前先把密钥备好，不至于打开那一刻才发现格式不对。
+    let seal_key = read_optional_secret(source, SEAL_KEY)?
+        .map(|value| {
+            STANDARD
+                .decode(value.trim())
+                .ok()
+                .and_then(|bytes| <[u8; NETWORK_AGENT_SEAL_KEY_BYTES]>::try_from(bytes).ok())
+                .map(NetworkAgentSealKey::from_bytes)
+                .ok_or(ConfigError::invalid(
+                    SEAL_KEY,
+                    "必须是 32 字节的标准 Base64",
+                ))
+        })
+        .transpose()?;
+    if enabled && seal_key.is_none() {
+        return Err(ConfigError::Missing { name: SEAL_KEY });
+    }
+    Ok(NetworkAgentConfig { enabled, seal_key })
 }
 
 fn read_account_lifecycle_config(
@@ -555,6 +596,20 @@ fn read_required_secret(
         return Err(ConfigError::invalid(name, "必须是非空且长度受限的值"));
     }
     Ok(value)
+}
+
+/// 值与 `_FILE` 都没配时返回 `None`；配了其一就按必需 Secret 的规则读取与校验。
+fn read_optional_secret(
+    source: &impl EnvironmentSource,
+    name: &'static str,
+) -> Result<Option<String>, ConfigError> {
+    let configured = read_optional(source, name).is_some()
+        || source
+            .read(&format!("{name}_FILE"))
+            .is_some_and(|value| !value.trim().is_empty());
+    configured
+        .then(|| read_required_secret(source, name))
+        .transpose()
 }
 
 fn read_secret_file(name: &'static str, path: &str) -> Result<String, ConfigError> {
@@ -1080,6 +1135,69 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn 网络_agent_总开关默认关闭_打开时必须配_32_字节封存密钥() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert!(!config.network_agents.enabled);
+        assert!(config.network_agents.seal_key.is_none());
+
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_NETWORK_AGENTS_ENABLED", "true".to_owned());
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Missing {
+                name: "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"
+            })
+        ));
+
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+        environment
+            .0
+            .insert("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", key.to_owned());
+        let enabled = ControlPlaneConfig::from_source(&environment).expect("开关与密钥有效");
+        assert!(enabled.network_agents.enabled);
+        assert!(enabled.network_agents.seal_key.is_some());
+        assert!(!format!("{:?}", enabled.network_agents.seal_key).contains(key));
+
+        for (name, value) in [
+            ("AGENT_ROOM_NETWORK_AGENTS_ENABLED", "yes"),
+            ("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", "c2hvcnQ="),
+            ("AGENT_ROOM_NETWORK_AGENT_SEAL_KEY", "not base64 at all"),
+        ] {
+            let mut environment = valid_environment();
+            environment.0.insert(name, value.to_owned());
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid { name: invalid, .. }) if invalid == name
+                ),
+                "{name}={value} 应当被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn 网络_agent_封存密钥可以从只读文件加载() {
+        let directory = tempfile::tempdir().expect("可创建临时目录");
+        let path = directory.path().join("network-agent-seal-key");
+        std::fs::write(&path, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\n")
+            .expect("可写入测试 Secret");
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_NETWORK_AGENTS_ENABLED", "true".to_owned());
+        environment.0.insert(
+            "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE",
+            path.to_string_lossy().into_owned(),
+        );
+
+        let config = ControlPlaneConfig::from_source(&environment).expect("文件 Secret 有效");
+
+        assert!(config.network_agents.seal_key.is_some());
     }
 
     #[tokio::test]

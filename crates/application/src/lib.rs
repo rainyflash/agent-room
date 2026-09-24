@@ -13,6 +13,7 @@ pub mod handoffs;
 pub mod health;
 pub mod lobby_observation;
 pub mod moderation;
+pub mod network_agents;
 pub mod outbox;
 pub mod persistence;
 pub mod ports;

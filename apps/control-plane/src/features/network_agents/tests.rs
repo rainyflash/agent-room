@@ -1,0 +1,436 @@
+use std::sync::{Arc, Mutex};
+
+use agent_room_application::{
+    network_agents::{
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
+        NetworkAgentResult, NetworkAgentRoom, NetworkAgentUseCases, NetworkAgentView,
+    },
+    ports::{Clock, PortFuture, SecretValue},
+};
+use agent_room_domain::{
+    ids::{AgentId, NetworkAgentId, RoomCatalogId},
+    rooms::MatrixRoomReference,
+    time::UtcMillis,
+};
+use agent_room_identity_adapter::{NetworkAgentSealKey, NetworkSourceDigester};
+use axum::{
+    body::{Body, to_bytes},
+    http::{Method, Request, StatusCode, header},
+    middleware,
+};
+use serde_json::{Value, json};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+use super::{NetworkAgentHttpState, router};
+
+const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
+const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
+const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
+const TOKEN: &str = "network-agent-token";
+
+#[derive(Default)]
+struct FakeAgents {
+    created: Mutex<Vec<CreateNetworkAgent>>,
+    tokens: Mutex<Vec<String>>,
+    failure: Mutex<Option<NetworkAgentFailure>>,
+}
+
+impl FakeAgents {
+    fn failing(failure: NetworkAgentFailure) -> Arc<Self> {
+        let agents = Arc::new(Self::default());
+        *agents.failure.lock().unwrap() = Some(failure);
+        agents
+    }
+
+    fn created(&self) -> Vec<CreateNetworkAgent> {
+        self.created.lock().unwrap().clone()
+    }
+
+    fn tokens(&self) -> Vec<String> {
+        self.tokens.lock().unwrap().clone()
+    }
+
+    fn authenticate(&self, token: &str) -> NetworkAgentResult<()> {
+        self.tokens.lock().unwrap().push(token.to_owned());
+        if let Some(failure) = self.failure.lock().unwrap().clone() {
+            return Err(failure);
+        }
+        if token == TOKEN {
+            Ok(())
+        } else {
+            Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::Unauthorized,
+            ))
+        }
+    }
+}
+
+impl NetworkAgentUseCases for FakeAgents {
+    fn create(
+        &self,
+        request: CreateNetworkAgent,
+    ) -> PortFuture<'_, NetworkAgentResult<CreatedNetworkAgent>> {
+        self.created.lock().unwrap().push(request.clone());
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move {
+            if let Some(failure) = failure {
+                return Err(failure);
+            }
+            Ok(CreatedNetworkAgent {
+                network_agent_id: NetworkAgentId::from_uuid(uuid(NETWORK_AGENT_UUID)),
+                agent_id: agent_id(),
+                display_name: format!("{} 2", request.name),
+                token: SecretValue::new(TOKEN).unwrap(),
+                room: NetworkAgentRoom {
+                    catalog_id: RoomCatalogId::from_uuid(uuid(CATALOG_UUID)),
+                    matrix_room_id: MatrixRoomReference::new("!lobby:matrix.test".to_owned())
+                        .unwrap(),
+                    name: "Agent Room 大厅".to_owned(),
+                },
+            })
+        })
+    }
+
+    fn me<'a>(&'a self, token: &'a str) -> PortFuture<'a, NetworkAgentResult<NetworkAgentView>> {
+        let result = self.authenticate(token).map(|()| NetworkAgentView {
+            network_agent_id: NetworkAgentId::from_uuid(uuid(NETWORK_AGENT_UUID)),
+            agent_id: agent_id(),
+            display_name: "Scout".to_owned(),
+            created_at: time(1_700_000_000_000),
+        });
+        Box::pin(async move { result })
+    }
+
+    fn disable<'a>(&'a self, token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>> {
+        let result = self.authenticate(token);
+        Box::pin(async move { result })
+    }
+}
+
+struct FixedClock(i64);
+
+impl Clock for FixedClock {
+    fn now(&self) -> UtcMillis {
+        time(self.0)
+    }
+}
+
+fn uuid(value: &str) -> Uuid {
+    Uuid::parse_str(value).unwrap()
+}
+
+fn agent_id() -> AgentId {
+    AgentId::from_uuid(uuid(AGENT_UUID))
+}
+
+fn time(value: i64) -> UtcMillis {
+    UtcMillis::new(value).unwrap()
+}
+
+fn app_at(agents: Arc<FakeAgents>, now: i64) -> axum::Router {
+    let key = NetworkAgentSealKey::from_bytes([7; 32]);
+    router(NetworkAgentHttpState {
+        agents,
+        sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
+        clock: Arc::new(FixedClock(now)),
+    })
+    .layer(middleware::from_fn(crate::correlation::attach))
+}
+
+fn app(agents: Arc<FakeAgents>) -> axum::Router {
+    app_at(agents, 1_758_600_000_000)
+}
+
+fn create_request(body: &str, forwarded_for: Option<&str>) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/network-agents")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ORIGIN, "https://some-agent-host.example");
+    if let Some(value) = forwarded_for {
+        request = request.header("x-forwarded-for", value);
+    }
+    request.body(Body::from(body.to_owned())).unwrap()
+}
+
+fn me_request(method: Method, token: Option<&str>) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri("/v1/network-agents/me");
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+async fn body_json(response: axum::response::Response) -> Value {
+    serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1_024).await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn 起名进大厅_令牌只在创建时返回_允许任何来源但不带凭据() {
+    let agents = Arc::new(FakeAgents::default());
+    let response = app(agents.clone())
+        .oneshot(create_request(
+            r#"{"name":"Scout","room":"general"}"#,
+            Some("203.0.113.9"),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let headers = response.headers().clone();
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "agentId": AGENT_UUID,
+            "displayName": "Scout 2",
+            "token": TOKEN,
+            "room": {
+                "catalogId": CATALOG_UUID,
+                "matrixRoomId": "!lobby:matrix.test",
+                "name": "Agent Room 大厅",
+            },
+        })
+    );
+    let created = agents.created();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].name, "Scout");
+    assert_eq!(created[0].room.as_deref(), Some("general"));
+    assert_ne!(created[0].source_digest, [0; 32]);
+}
+
+#[tokio::test]
+async fn 省略房间就交给用例选默认大厅() {
+    let agents = Arc::new(FakeAgents::default());
+    let response = app(agents.clone())
+        .oneshot(create_request(r#"{"name":"Scout"}"#, None))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(agents.created()[0].room, None);
+}
+
+#[tokio::test]
+async fn 来源取最后一跳_ipv6_按_64_位网段归并_隔天就对不上() {
+    async fn digest(forwarded_for: &str, now: i64) -> [u8; 32] {
+        let agents = Arc::new(FakeAgents::default());
+        app_at(agents.clone(), now)
+            .oneshot(create_request(r#"{"name":"Scout"}"#, Some(forwarded_for)))
+            .await
+            .unwrap();
+        agents.created()[0].source_digest
+    }
+    let day = 1_758_600_000_000;
+    let direct = digest("198.51.100.7", day).await;
+
+    // 客户端自己塞的前几个值不算数，只认离控制面最近的那一跳。
+    assert_eq!(digest("10.0.0.1, 198.51.100.7", day).await, direct);
+    assert_eq!(digest("::ffff:198.51.100.7", day).await, direct);
+    assert_ne!(digest("198.51.100.8", day).await, direct);
+    assert_ne!(
+        digest("198.51.100.7", day + 24 * 60 * 60 * 1_000).await,
+        direct
+    );
+    assert_eq!(
+        digest("2001:db8:1:2:aaaa::1", day).await,
+        digest("2001:db8:1:2:bbbb::2", day).await
+    );
+    assert_ne!(
+        digest("2001:db8:1:2::1", day).await,
+        digest("2001:db8:1:3::1", day).await
+    );
+}
+
+#[tokio::test]
+async fn 请求体不是约定的_json_时说明该怎么写_且不调用用例() {
+    let agents = Arc::new(FakeAgents::default());
+    let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(5 * 1_024));
+    for body in [
+        "not json",
+        r#"{"name":"Scout","code":"K7P3-Q9XW-2DMA"}"#,
+        r#"{"room":"general"}"#,
+        oversized.as_str(),
+    ] {
+        let response = app(agents.clone())
+            .oneshot(create_request(body, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body_json(response).await["code"],
+            "network_agent.invalid_request"
+        );
+    }
+    assert!(agents.created().is_empty());
+}
+
+#[tokio::test]
+async fn 失败按稳定错误码映射_限流带_retry_after_找不到大厅时列出候选() {
+    let cases = [
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.disabled",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::InvalidName),
+            StatusCode::BAD_REQUEST,
+            "network_agent.name_invalid",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::NameUnavailable),
+            StatusCode::CONFLICT,
+            "network_agent.name_unavailable",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::CapacityReached),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.capacity_reached",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.dependency_unavailable",
+        ),
+        (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::Internal),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "network_agent.internal",
+        ),
+    ];
+    for (failure, status, code) in cases {
+        let response = app(FakeAgents::failing(failure))
+            .oneshot(create_request(r#"{"name":"Scout"}"#, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{code}");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(body_json(response).await["code"], code);
+    }
+
+    let response = app(FakeAgents::failing(NetworkAgentFailure::rate_limited(
+        time(4_102_444_800_000),
+    )))
+    .oneshot(create_request(r#"{"name":"Scout"}"#, None))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key(header::RETRY_AFTER));
+    let body = body_json(response).await;
+    assert_eq!(body["code"], "network_agent.rate_limited");
+    assert_eq!(body["retryable"], true);
+
+    let response = app(FakeAgents::failing(NetworkAgentFailure::room_not_found(
+        vec!["Agent Room 大厅".to_owned(), "Rust 夜谈".to_owned()],
+    )))
+    .oneshot(create_request(r#"{"name":"Scout","room":"nope"}"#, None))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = body_json(response).await;
+    assert_eq!(body["code"], "network_agent.room_not_found");
+    assert_eq!(
+        body["details"]["rooms"],
+        json!(["Agent Room 大厅", "Rust 夜谈"])
+    );
+}
+
+#[tokio::test]
+async fn 查看自己要带令牌_没带也交给用例判断() {
+    let agents = Arc::new(FakeAgents::default());
+    let response = app(agents.clone())
+        .oneshot(me_request(Method::GET, Some(TOKEN)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "agentId": AGENT_UUID,
+            "displayName": "Scout",
+            "createdAtUnixMs": 1_700_000_000_000_i64,
+        })
+    );
+
+    for token in [None, Some("wrong-token")] {
+        let response = app(agents.clone())
+            .oneshot(me_request(Method::GET, token))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body_json(response).await["code"],
+            "network_agent.unauthorized"
+        );
+    }
+    assert_eq!(agents.tokens(), [TOKEN, "", "wrong-token"]);
+}
+
+#[tokio::test]
+async fn 总开关关着时没带令牌也回答已关闭() {
+    let agents = FakeAgents::failing(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+    for method in [Method::GET, Method::DELETE] {
+        let response = app(agents.clone())
+            .oneshot(me_request(method, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_json(response).await["code"], "network_agent.disabled");
+    }
+}
+
+#[tokio::test]
+async fn 停用成功返回_204() {
+    let agents = Arc::new(FakeAgents::default());
+    let response = app(agents.clone())
+        .oneshot(me_request(Method::DELETE, Some(TOKEN)))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(agents.tokens(), [TOKEN]);
+}
+
+#[tokio::test]
+async fn 浏览器预检允许任何来源_但不允许携带凭据() {
+    let response = app(Arc::new(FakeAgents::default()))
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/v1/network-agents")
+                .header(header::ORIGIN, "https://some-agent-host.example")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+    assert!(
+        !response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+    );
+}
+
+/// 给根路由的组合测试用：一个总是回答“已关闭”的网络 Agent 路由。
+pub(crate) fn disabled_router() -> axum::Router {
+    let key = NetworkAgentSealKey::from_bytes([7; 32]);
+    router(NetworkAgentHttpState {
+        agents: FakeAgents::failing(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled)),
+        sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
+        clock: Arc::new(FixedClock(1_758_600_000_000)),
+    })
+}

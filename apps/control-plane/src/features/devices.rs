@@ -199,7 +199,7 @@ async fn registration_request(
     .map_err(|_| {
         ApiError::invalid_request("device.invalid_possession_signature", correlation_id)
     })?;
-    let platform = DevicePlatform::try_from(body.platform.as_str())
+    let platform = DevicePlatform::parse_client(body.platform.as_str())
         .map_err(|_| ApiError::invalid_request("device.invalid_platform", correlation_id))?;
     let authorization = VerifiedDeviceAuthorization::new(
         verified_assertion,
