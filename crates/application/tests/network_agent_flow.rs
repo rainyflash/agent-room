@@ -14,8 +14,8 @@ use agent_room_application::{
         RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
     },
     network_agents::{
-        CreateNetworkAgent, NetworkAgentDependencies, NetworkAgentFailureKind, NetworkAgentPolicy,
-        NetworkAgentService, NetworkAgentUseCases,
+        CreateNetworkAgent, NetworkAgentDependencies, NetworkAgentFailureKind,
+        NetworkAgentPendingExit, NetworkAgentPolicy, NetworkAgentService, NetworkAgentUseCases,
     },
     persistence::RepositoryResult,
     ports::{
@@ -23,10 +23,11 @@ use agent_room_application::{
         MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation, NetworkAgentBeginOutcome,
         NetworkAgentKeyFactory, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
         NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
-        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
-        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue, StoredAgentInstanceRegistration,
+        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry,
+        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
+        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        StoredAgentInstanceRegistration,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -65,6 +66,8 @@ struct StoredAgent {
     device_platform: DevicePlatform,
     device_trust: DeviceTrustState,
     secrets: Vec<(NetworkAgentSecretKind, SealedSecret)>,
+    /// 停用后离开了所有房间（或从没进过）。
+    rooms_left: bool,
 }
 
 #[derive(Default)]
@@ -127,6 +130,7 @@ impl NetworkAgentStore for MemoryStore {
                 device_platform: provisioning.device.platform(),
                 device_trust: provisioning.device.trust_state(),
                 secrets: provisioning.secrets.clone(),
+                rooms_left: false,
             });
             NetworkAgentBeginOutcome::Created
         };
@@ -208,8 +212,11 @@ impl NetworkAgentStore for MemoryStore {
 
     fn disable(&self, id: NetworkAgentId, _at: UtcMillis) -> PortFuture<'_, RepositoryResult<()>> {
         let mut agents = self.agents.lock().unwrap();
-        if let Some(agent) = agents.iter_mut().find(|agent| agent.record.id == id) {
+        if let Some(agent) = agents.iter_mut().find(|agent| {
+            agent.record.id == id && agent.record.status != NetworkAgentStatus::Disabled
+        }) {
             agent.record.status = NetworkAgentStatus::Disabled;
+            agent.rooms_left = agent.record.agent_instance_id.is_none();
         }
         Box::pin(async { Ok(()) })
     }
@@ -265,6 +272,63 @@ impl NetworkAgentStore for MemoryStore {
             .map(|(_, room)| room.clone())
             .collect();
         Box::pin(async move { Ok(rooms) })
+    }
+
+    fn disable_stale(
+        &self,
+        cutoff: NetworkAgentStaleCutoff,
+        _at: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>> {
+        let mut agents = self.agents.lock().unwrap();
+        let mut disabled = Vec::new();
+        for agent in agents.iter_mut() {
+            let stale = match agent.record.status {
+                NetworkAgentStatus::Active => agent.record.last_active_at < cutoff.idle_before,
+                NetworkAgentStatus::Provisioning => {
+                    agent.record.created_at < cutoff.provisioning_before
+                }
+                NetworkAgentStatus::Disabled => false,
+            };
+            if stale && disabled.len() < usize::try_from(limit).unwrap() {
+                agent.record.status = NetworkAgentStatus::Disabled;
+                agent.rooms_left = agent.record.agent_instance_id.is_none();
+                disabled.push(agent.record.id);
+            }
+        }
+        Box::pin(async move { Ok(disabled) })
+    }
+
+    fn pending_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRecord>>> {
+        let pending = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|agent| {
+                agent.record.status == NetworkAgentStatus::Disabled && !agent.rooms_left
+            })
+            .take(usize::try_from(limit).unwrap())
+            .map(|agent| agent.record.clone())
+            .collect();
+        Box::pin(async move { Ok(pending) })
+    }
+
+    fn mark_rooms_left(
+        &self,
+        id: NetworkAgentId,
+        _at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let mut agents = self.agents.lock().unwrap();
+        if let Some(agent) = agents.iter_mut().find(|agent| {
+            agent.record.id == id && agent.record.status == NetworkAgentStatus::Disabled
+        }) {
+            agent.rooms_left = true;
+        }
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -937,6 +1001,79 @@ async fn 取会话要生效中的令牌_封存的会话打不开时报依赖不�
             .unwrap_err()
             .kind(),
         NetworkAgentFailureKind::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn 三十天没活动的自动停用_有活动就不算闲置_停用后等着替它离开房间() {
+    const DAY: i64 = 24 * 60 * 60 * 1_000;
+    let harness = Harness::generous();
+    let idle = harness.create("Idle", None).await.unwrap();
+    let busy = harness.create("Busy", None).await.unwrap();
+    harness.runtime.advance(20 * DAY);
+    harness.service.session(busy.token.expose()).await.unwrap();
+    harness.runtime.advance(10 * DAY);
+    assert_eq!(
+        harness.service.disable_stale().await.unwrap(),
+        0,
+        "刚好三十天还不算"
+    );
+
+    harness.runtime.advance(1);
+    assert_eq!(harness.service.disable_stale().await.unwrap(), 1);
+    assert_eq!(
+        harness
+            .service
+            .session(idle.token.expose())
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized
+    );
+    harness.service.session(busy.token.expose()).await.unwrap();
+
+    let exits = harness.service.pending_exits(10).await.unwrap();
+    let [NetworkAgentPendingExit::Session(session)] = exits.as_slice() else {
+        panic!("停用的要等着离开房间：{exits:?}");
+    };
+    assert_eq!(session.network_agent_id, idle.network_agent_id);
+    assert_eq!(session.display_name, "Idle");
+    assert_eq!(session.rooms.len(), 1, "带上它进过的大厅");
+    harness
+        .service
+        .mark_rooms_left(idle.network_agent_id)
+        .await
+        .unwrap();
+    assert!(harness.service.pending_exits(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn 停用后会话打不开的_如实告诉清理方() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+    {
+        let mut agents = harness.store.agents.lock().unwrap();
+        let stored = agents
+            .iter_mut()
+            .find(|agent| agent.record.id == created.network_agent_id)
+            .unwrap();
+        for (kind, sealed) in &mut stored.secrets {
+            if *kind == NetworkAgentSecretKind::InstanceSigningSeed {
+                sealed.bytes = b"tampered".to_vec();
+            }
+        }
+    }
+    harness
+        .service
+        .disable(created.token.expose())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        harness.service.pending_exits(10).await.unwrap(),
+        [NetworkAgentPendingExit::Unopenable(
+            created.network_agent_id
+        )]
     );
 }
 

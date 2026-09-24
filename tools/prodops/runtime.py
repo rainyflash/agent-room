@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .backup import BackupCoordinator, BackupManifest, BackupRepository
 from .config import DeploymentConfig
+from .network_agents import disable_statement
 from .render import DeploymentPaths, render_deployment
 from .restore import (
     DatabaseRestoreEvidence,
@@ -560,6 +561,44 @@ class ProductionRuntime:
         )
         if not isinstance(version.get("server"), dict):
             raise ProductionRuntimeError("Matrix 联邦版本入口没有返回 server 对象。")
+
+    def disable_network_agent(self, target: str) -> tuple[str, ...]:
+        """停用一个网络 Agent：令牌立即作废，控制面的定时清理约一分钟内让它离开所有房间。
+
+        返回被停用的“ID 名字”；没有找到还在用的就返回空。
+        """
+        statement = disable_statement(target)
+        if self.config.database.mode != "embedded":
+            raise ProductionRuntimeError(
+                f"外部数据库请由数据库管理员在控制面数据库里执行：{statement};"
+            )
+        output = self._run(
+            [
+                *self.compose_command(),
+                "exec",
+                "-T",
+                "--user",
+                "postgres",
+                "postgres",
+                "psql",
+                "--username",
+                "agent_room_bootstrap",
+                "--dbname",
+                self.config.database.control_database,
+                "--tuples-only",
+                "--no-align",
+                "--set",
+                "ON_ERROR_STOP=1",
+                "--command",
+                statement,
+            ],
+            capture=True,
+        )
+        return tuple(
+            line.strip()
+            for line in output.splitlines()
+            if line.strip() and not line.startswith("UPDATE ")
+        )
 
     def compose_command(self) -> list[str]:
         return [

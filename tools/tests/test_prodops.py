@@ -12,6 +12,7 @@ from unittest.mock import patch
 import uuid
 
 from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
+from tools.prodops.network_agents import NetworkAgentTargetError, disable_statement
 from tools.prodops.render import (
     CONTAINER_CONFIG_DIRECTORY_MODE,
     CONTAINER_CONFIG_FILE_MODE,
@@ -20,7 +21,11 @@ from tools.prodops.render import (
     _generated_config_digest,
     render_deployment,
 )
-from tools.prodops.runtime import ProductionRuntime, _meets_nominal_memory
+from tools.prodops.runtime import (
+    ProductionRuntime,
+    ProductionRuntimeError,
+    _meets_nominal_memory,
+)
 from tools.prodops.secrets import (
     CONTAINER_SECRET_FILE_MODE,
     SECRET_DIRECTORY_MODE,
@@ -476,6 +481,28 @@ class ProductionRenderingTests(unittest.TestCase):
         bare = caddyfile.split(f"\n{self.config.public.server_name} {{\n", 1)[1]
         self.assertLess(bare.index("handle /agents.md"), bare.index("redir https://"))
 
+    def test_network_agent_disable_runs_in_embedded_postgres_and_reports_who(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        with patch.object(
+            ProductionRuntime,
+            "_run",
+            return_value="0198b601-77a1-7bb8-83eb-a8fe68c97e50 Spammer\nUPDATE 1\n",
+        ) as run:
+            disabled = runtime.disable_network_agent("spammer")
+
+        self.assertEqual(disabled, ("0198b601-77a1-7bb8-83eb-a8fe68c97e50 Spammer",))
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["docker", "compose"])
+        exec_at = command.index("exec")
+        self.assertEqual(command[exec_at : exec_at + 6], ["exec", "-T", "--user", "postgres", "postgres", "psql"])
+        self.assertEqual(command[command.index("--dbname") + 1], "agent_room")
+        self.assertIn("lower(display_name) = lower('spammer')", command[-1])
+
+        external = json.loads(EXTERNAL_EXAMPLE.read_text(encoding="utf-8"))
+        runtime = ProductionRuntime(DeploymentConfig.from_mapping(external), self.paths)
+        with self.assertRaisesRegex(ProductionRuntimeError, "数据库管理员"):
+            runtime.disable_network_agent("0198b601-77a1-7bb8-83eb-a8fe68c97e50")
+
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value["capacity"]["synapseWorkers"] = 2
@@ -752,6 +779,29 @@ class ProductionRenderingTests(unittest.TestCase):
             stat.S_IMODE(token_file.stat().st_mode),
             CONTAINER_SECRET_FILE_MODE,
         )
+
+
+class NetworkAgentDisableStatementTests(unittest.TestCase):
+    def test_id_matches_network_agent_or_its_agent(self) -> None:
+        statement = disable_statement(" 0198B601-77A1-7BB8-83EB-A8FE68C97E50 ")
+
+        self.assertIn(
+            "(id = '0198b601-77a1-7bb8-83eb-a8fe68c97e50' "
+            "OR agent_id = '0198b601-77a1-7bb8-83eb-a8fe68c97e50')",
+            statement,
+        )
+        self.assertIn("AND status <> 'disabled'", statement)
+        self.assertIn("RETURNING", statement)
+
+    def test_name_is_case_insensitive_and_quoted(self) -> None:
+        statement = disable_statement("O'Brien Bot")
+
+        self.assertIn("lower(display_name) = lower('O''Brien Bot')", statement)
+
+    def test_rejects_names_that_could_escape_the_literal(self) -> None:
+        for target in ("", "   ", "x" * 65, "evil\\", "line\nbreak", "bell\x07"):
+            with self.subTest(target=target), self.assertRaises(NetworkAgentTargetError):
+                disable_statement(target)
 
 
 if __name__ == "__main__":

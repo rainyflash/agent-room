@@ -9,11 +9,11 @@ use agent_room_application::{
         MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId, NetworkAgentAckOutcome,
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentInboxAppend,
         NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
-        NetworkAgentInboxStore, NetworkAgentProvisioning, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStore, NetworkAgentSubmissionClaim,
-        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
-        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, PrincipalRegistration,
-        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentInboxStore, NetworkAgentProvisioning, NetworkAgentRecord,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+        PrincipalRegistration, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -563,6 +563,99 @@ async fn 发言记录按提交_id_幂等_换内容就冲突_状态只往前走()
             .state,
         NetworkAgentSubmissionState::Bound
     );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 闲置与卡在创建中的被停用_有实例的等着离开房间_记下离开后不再找它() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    // 用远早于其他测试的时间，免得清理碰到并行测试的行。
+    let past = |offset: i64| UtcMillis::new(1_500_000_000_000 + offset).expect("时间有效");
+    let active = |name: &'static str, last_active: i64| {
+        let repositories = &repositories;
+        let pool = database.runtime.clone();
+        async move {
+            let provisioning = provisioning(&unique_name(name), past(0));
+            repositories.begin(&provisioning).await.expect("写入");
+            let (agent, instance) = seed_agent_instance(
+                &pool,
+                provisioning.principal.principal.id(),
+                provisioning.device.id(),
+            )
+            .await;
+            repositories
+                .activate(&NetworkAgentActivation {
+                    id: provisioning.id,
+                    agent_id: agent,
+                    agent_instance_id: instance,
+                    matrix_access_token: sealed(3),
+                    activated_at: past(0),
+                })
+                .await
+                .expect("生效");
+            repositories
+                .record_activity(provisioning.id, past(last_active))
+                .await
+                .expect("记活动");
+            provisioning
+        }
+    };
+    let idle = active("Idle", 10).await;
+    let recent = active("Recent", 5_000).await;
+    let stuck = provisioning(&unique_name("Stuck"), past(0));
+    repositories.begin(&stuck).await.expect("写入");
+    let fresh = provisioning(&unique_name("Fresh"), past(5_000));
+    repositories.begin(&fresh).await.expect("写入");
+    let cutoff = NetworkAgentStaleCutoff {
+        idle_before: past(1_000),
+        provisioning_before: past(1_000),
+    };
+
+    let mut disabled = repositories
+        .disable_stale(cutoff, past(6_000), 100)
+        .await
+        .expect("停用闲置与卡住的");
+    disabled.sort_by_key(|id| id.as_uuid());
+    let mut expected = vec![idle.id, stuck.id];
+    expected.sort_by_key(|id| id.as_uuid());
+    assert_eq!(disabled, expected);
+    assert!(
+        repositories
+            .disable_stale(cutoff, past(6_000), 100)
+            .await
+            .expect("再清理一次")
+            .is_empty()
+    );
+    let pending =
+        |ids: Vec<NetworkAgentRecord>| ids.into_iter().map(|record| record.id).collect::<Vec<_>>();
+    let waiting = pending(repositories.pending_exits(1_000).await.expect("待离开"));
+    assert!(waiting.contains(&idle.id), "有实例的要等着离开房间");
+    assert!(!waiting.contains(&stuck.id), "没建好实例的从没进过房间");
+    assert!(!waiting.contains(&recent.id) && !waiting.contains(&fresh.id));
+
+    repositories
+        .disable(recent.id, past(7_000))
+        .await
+        .expect("自己停用");
+    repositories
+        .mark_rooms_left(idle.id, past(7_000))
+        .await
+        .expect("记下已离开");
+    repositories
+        .mark_rooms_left(fresh.id, past(7_000))
+        .await
+        .expect("没停用的不记");
+    let waiting = pending(repositories.pending_exits(1_000).await.expect("待离开"));
+    assert!(!waiting.contains(&idle.id));
+    assert!(waiting.contains(&recent.id));
+    let fresh_record = repositories
+        .find_by_token(&fresh.token_digest)
+        .await
+        .expect("按令牌找")
+        .expect("找得到");
+    assert_eq!(fresh_record.status, NetworkAgentStatus::Provisioning);
     database.close().await;
 }
 

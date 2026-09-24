@@ -47,6 +47,9 @@ use serde_json::Value;
 use tokio::{sync::Notify, time::Instant};
 use uuid::{Uuid, Version};
 
+pub(crate) use cleanup::NetworkAgentCleanupOutcome;
+
+mod cleanup;
 mod presence;
 mod projection;
 mod speaking;
@@ -258,22 +261,47 @@ impl NetworkGateway {
         })
     }
 
-    /// 尽量离开所有房间，再作废令牌。离开失败不挡作废：令牌作废才是停用的关键。
+    /// 尽量离开所有房间，再作废令牌。离开失败不挡作废：令牌作废才是停用的关键，
+    /// 没离开成的房间由定时清理补上。
     async fn leave_and_disable_internal(&self, token: &str) -> Result<(), NetworkGatewayFailure> {
         let session = self
             .agents
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
-        // 先说一声下线，离开房间之后就写不了房间状态了。
+        let left = self.leave_rooms(&session).await;
+        self.agents
+            .disable(token)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        self.presence.forget(session.network_agent_id).await;
+        if left
+            && self
+                .agents
+                .mark_rooms_left(session.network_agent_id)
+                .await
+                .is_err()
+        {
+            tracing::warn!(
+                network_agent.id = %session.network_agent_id,
+                "网络 Agent 已经离开房间但没记下来，定时清理会再确认一次"
+            );
+        }
+        Ok(())
+    }
+
+    /// 先说一声下线（离开之后就写不了房间状态了），再离开每个房间。
+    /// 都离开了（或本来就不在里面）才返回 true。
+    async fn leave_rooms(&self, session: &NetworkAgentSession) -> bool {
         self.presence
             .publish(
                 &self.matrix,
                 &self.clock,
-                &session,
+                session,
                 &AgentStatusIntent::new(HostAgentState::Disconnected, None),
             )
             .await;
+        let mut left = true;
         for room in &session.rooms {
             if let Ok(room_id) = MatrixRoomId::new(room.matrix_room_id.as_str())
                 && self
@@ -284,16 +312,12 @@ impl NetworkGateway {
             {
                 tracing::warn!(
                     network_agent.id = %session.network_agent_id,
-                    "网络 Agent 停用时没能离开房间，令牌照样作废"
+                    "网络 Agent 没能离开房间，稍后由定时清理再试"
                 );
+                left = false;
             }
         }
-        self.agents
-            .disable(token)
-            .await
-            .map_err(NetworkGatewayFailure::Agent)?;
-        self.presence.forget(session.network_agent_id).await;
-        Ok(())
+        left
     }
 
     /// 发“等待消息”：`listeningUntil` 最多为当前时间加 15 秒，也不超过这次还要等的时间。

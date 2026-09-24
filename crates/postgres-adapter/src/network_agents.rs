@@ -4,8 +4,9 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentProvisioning,
-        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStore,
-        PortFuture, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, RateWindowDecision,
+        RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -226,10 +227,14 @@ impl NetworkAgentStore for PostgresRepositories {
     fn disable(&self, id: NetworkAgentId, at: UtcMillis) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "network_agent.disable";
+            // 没建好实例的从没进过房间，停用时就记为已离开，定时清理不必再管它。
             sqlx::query(
                 r"UPDATE agent_room.network_agent
                      SET status = 'disabled',
-                         disabled_at = greatest(created_at, to_timestamp($2::double precision / 1000.0))
+                         disabled_at = greatest(created_at, to_timestamp($2::double precision / 1000.0)),
+                         rooms_left_at = CASE WHEN agent_instance_id IS NULL
+                             THEN greatest(created_at, to_timestamp($2::double precision / 1000.0))
+                         END
                    WHERE id = $1 AND status <> 'disabled'",
             )
             .bind(id.as_uuid())
@@ -325,6 +330,90 @@ impl NetworkAgentStore for PostgresRepositories {
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>> {
         Box::pin(self.network_agent_rooms(id))
+    }
+
+    fn disable_stale(
+        &self,
+        cutoff: NetworkAgentStaleCutoff,
+        at: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>> {
+        Box::pin(async move {
+            let operation = "network_agent.disable_stale";
+            // 几个控制面副本同时清理时各拿各的，互不等待。
+            let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+                r"WITH stale AS (
+                      SELECT id FROM agent_room.network_agent
+                       WHERE (status = 'active'
+                              AND last_active_at < to_timestamp($1::double precision / 1000.0))
+                          OR (status = 'provisioning'
+                              AND created_at < to_timestamp($2::double precision / 1000.0))
+                       ORDER BY last_active_at
+                       LIMIT $4
+                       FOR UPDATE SKIP LOCKED
+                  )
+                  UPDATE agent_room.network_agent agent
+                     SET status = 'disabled',
+                         disabled_at = greatest(agent.created_at, to_timestamp($3::double precision / 1000.0)),
+                         rooms_left_at = CASE WHEN agent.agent_instance_id IS NULL
+                             THEN greatest(agent.created_at, to_timestamp($3::double precision / 1000.0))
+                         END
+                    FROM stale
+                   WHERE agent.id = stale.id
+               RETURNING agent.id",
+            )
+            .bind(cutoff.idle_before.value())
+            .bind(cutoff.provisioning_before.value())
+            .bind(at.value())
+            .bind(i64::from(limit))
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(ids.into_iter().map(NetworkAgentId::from_uuid).collect())
+        })
+    }
+
+    fn pending_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRecord>>> {
+        Box::pin(async move {
+            let operation = "network_agent.pending_exits";
+            let query = format!(
+                "SELECT {RECORD_COLUMNS} FROM agent_room.network_agent \
+                  WHERE status = 'disabled' AND rooms_left_at IS NULL \
+                  ORDER BY disabled_at LIMIT $1"
+            );
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(i64::from(limit))
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_record(row, operation))
+                .collect()
+        })
+    }
+
+    fn mark_rooms_left(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "network_agent.mark_rooms_left";
+            sqlx::query(
+                r"UPDATE agent_room.network_agent
+                     SET rooms_left_at = greatest(disabled_at, to_timestamp($2::double precision / 1000.0))
+                   WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NULL",
+            )
+            .bind(id.as_uuid())
+            .bind(at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(())
+        })
     }
 }
 

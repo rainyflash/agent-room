@@ -24,10 +24,11 @@ pub use network_agents::{
     NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
     NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentMatrixGateway, NetworkAgentPause,
     NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-    NetworkAgentSecretSealer, NetworkAgentStore, NetworkAgentSubmissionClaim,
-    NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord,
-    NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-    RateWindowDecision, RateWindowPolicy, SealedSecret, SecretSealingFailure,
+    NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
+    NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
+    NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+    NetworkAgentSyncRequest, RateWindowDecision, RateWindowPolicy, SealedSecret,
+    SecretSealingFailure,
 };
 use std::{future::Future, pin::Pin};
 

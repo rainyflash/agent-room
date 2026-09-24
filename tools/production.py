@@ -35,12 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
             "backup-schedule-render",
             "backup-schedule-verify",
             "restore-drill",
+            "network-agent-disable",
             "down",
         ),
     )
     parser.add_argument("--config", type=Path, required=True, help="部署 JSON 配置")
     parser.add_argument("--state-dir", type=Path, required=True, help="持久状态与 Secret 目录")
     parser.add_argument("--backup-id", help="要校验或恢复的备份 ID")
+    parser.add_argument(
+        "--network-agent",
+        help="要停用的网络 Agent：网络 Agent ID、它的 Agent ID，或还在用的名字",
+    )
     return parser
 
 
@@ -100,6 +105,14 @@ def main() -> int:
                     f"隔离恢复演练通过：{report.backup_id}，"
                     f"耗时 {report.duration_seconds:.3f} 秒。"
                 )
+            case "network-agent-disable":
+                if not arguments.network_agent:
+                    raise ValueError("network-agent-disable 必须提供 --network-agent。")
+                disabled = runtime.disable_network_agent(arguments.network_agent)
+                if not disabled:
+                    raise ValueError("没有找到还在用的这个网络 Agent。")
+                for line in disabled:
+                    print(f"已停用网络 Agent：{line}。令牌已作废，约一分钟内离开所有房间。")
             case "down":
                 runtime.down()
             case _:
