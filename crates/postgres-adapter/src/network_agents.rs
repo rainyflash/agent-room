@@ -4,8 +4,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentProvisioning,
-        NetworkAgentRecord, NetworkAgentSecretKind, NetworkAgentStore, PortFuture,
-        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStore,
+        PortFuture, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -310,6 +310,21 @@ impl NetworkAgentStore for PostgresRepositories {
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(decision)
         })
+    }
+
+    fn record_room<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(self.record_network_agent_room(id, room))
+    }
+
+    fn rooms(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>> {
+        Box::pin(self.network_agent_rooms(id))
     }
 }
 

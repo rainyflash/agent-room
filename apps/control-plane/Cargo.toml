@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 agent-room-a2a-adapter.workspace = true
 agent-room-application.workspace = true
+agent-room-bridge-core.workspace = true
+agent-room-bridge-ipc.workspace = true
 agent-room-content-adapter.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
@@ -40,6 +42,7 @@ uuid.workspace = true
 [dev-dependencies]
 sha2.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tower.workspace = true
 
 [lints]

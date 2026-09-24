@@ -23,8 +23,8 @@ use agent_room_bridge_core::{
         MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
         OpenMessageContentRequest, OpenMessageContentService, OpenedMessageBody,
-        ProjectedMessageActor, ProjectedMessagePreview, ProtectMessageBodyFailure,
-        ProtectMessageBodyFailureKind, ProtectMessageBodyRequest, SendMessageRequest,
+        ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
+        ProtectMessageBodyRequest, SendMessageRequest,
     },
     presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
     status::{
@@ -32,12 +32,15 @@ use agent_room_bridge_core::{
         StatusPublicationOutcome,
     },
 };
+use agent_room_bridge_ipc::previews::{
+    actor_summary as ipc_actor, agent_summary as ipc_agent, content_reference as ipc_content,
+    preview_summary as ipc_preview,
+};
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcAgentSummary, IpcApproveHandoffRequest, IpcConsumedHandoff,
-    IpcConsumedTargetedHandoff, IpcContentReference, IpcDeclinedHandoff,
-    IpcDeclinedTargetedHandoff, IpcErrorCategory, IpcGetPresenceRequest, IpcHandoffPermission,
-    IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
-    IpcHumanHandoffSource, IpcListHandoffsRequest, IpcListPreviewsRequest,
+    IpcApproveHandoffRequest, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
+    IpcDeclinedHandoff, IpcDeclinedTargetedHandoff, IpcErrorCategory, IpcGetPresenceRequest,
+    IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus,
+    IpcHandoffSubmission, IpcHumanHandoffSource, IpcListHandoffsRequest, IpcListPreviewsRequest,
     IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
     IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest,
     IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage,
@@ -56,9 +59,8 @@ use agent_room_domain::{
         MessageSubmissionId, PrincipalId,
     },
     messages::{
-        MessageContentReference, MessageLanguage, MessagePreview, MessageProvenance,
-        MessageRelation, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
-        MessageTitle,
+        MessageLanguage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlag,
+        MessageRiskFlags, MessageSensitivity, MessageSummary, MessageTitle,
     },
     rooms::MatrixRoomReference,
     time::UtcMillis,
@@ -1311,15 +1313,6 @@ fn requested_room(
     Ok(requested)
 }
 
-fn ipc_agent(identity: &BridgeAgentIdentity) -> IpcAgentSummary {
-    IpcAgentSummary {
-        agent_id: identity.agent_id().to_string(),
-        display_name: identity.display_name().to_owned(),
-        matrix_user_id: identity.matrix_user_id().as_str().to_owned(),
-        avatar_url: identity.avatar_url().map(str::to_owned),
-    }
-}
-
 const fn ipc_work_status(status: AgentWorkStatus) -> IpcWorkStatus {
     match status {
         AgentWorkStatus::Offline => IpcWorkStatus::Offline,
@@ -1345,74 +1338,6 @@ const fn map_presence_projection_failure(
             IpcErrorCategory::Internal,
             false,
         ),
-    }
-}
-
-fn ipc_actor(actor: &ProjectedMessageActor) -> IpcActorSummary {
-    match actor {
-        ProjectedMessageActor::Agent {
-            identity,
-            provenance,
-            ..
-        } => IpcActorSummary::Agent {
-            agent: ipc_agent(identity),
-            instance_id: identity.agent_instance_id().to_string(),
-            provenance: ipc_provenance(*provenance),
-        },
-        ProjectedMessageActor::Human {
-            principal_id,
-            display_name,
-            matrix_user_id,
-            avatar_url,
-        } => IpcActorSummary::Human {
-            principal_id: principal_id.to_string(),
-            display_name: display_name.clone(),
-            matrix_user_id: matrix_user_id.as_str().to_owned(),
-            avatar_url: avatar_url.clone(),
-        },
-    }
-}
-
-fn ipc_preview(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSummary {
-    IpcMessagePreviewSummary {
-        conversation: preview.preview.conversation().map(|chat| {
-            agent_room_bridge_ipc::IpcConversationMessage {
-                attachment_name: chat.attachment_name().map(str::to_owned),
-                text: chat.text().to_owned(),
-                mentions: chat.mentions().to_vec(),
-            }
-        }),
-        reply_to_message_id: preview.relation.map(|relation| match relation {
-            MessageRelation::ReplyTo(id) => id.to_string(),
-        }),
-        message_id: preview.message_id.to_string(),
-        event_id: preview.event_id.as_str().to_owned(),
-        room_id: preview.room_id.as_str().to_owned(),
-        actor: ipc_actor(&preview.actor),
-        created_at_unix_ms: preview.created_at.value(),
-        title: preview.preview.title().as_str().to_owned(),
-        summary: preview.preview.summary().as_str().to_owned(),
-        content: ipc_content(&preview.content, preview.preview.content_type().as_str()),
-        language: preview
-            .preview
-            .language()
-            .map(|value| value.as_str().to_owned()),
-        sensitivity: ipc_sensitivity(preview.preview.sensitivity()),
-        risk_flags: preview
-            .preview
-            .risk_flags()
-            .iter()
-            .map(|flag| flag.as_str().to_owned())
-            .collect(),
-    }
-}
-
-fn ipc_content(content: &MessageContentReference, media_type: &str) -> IpcContentReference {
-    IpcContentReference {
-        content_id: content.content_id().to_string(),
-        digest_sha256: encode_hex(content.digest().as_bytes()),
-        media_type: media_type.to_owned(),
-        size_bytes: content.size_bytes(),
     }
 }
 
@@ -1505,22 +1430,6 @@ fn content_commit_is_unknown(failure: MessagePublicationFailure) -> bool {
         && failure
             .content_failure()
             .is_some_and(|failure| failure.kind() == MessageContentFailureKind::UnknownCommit)
-}
-
-const fn ipc_provenance(value: MessageProvenance) -> IpcMessageProvenance {
-    match value {
-        MessageProvenance::Human => IpcMessageProvenance::Human,
-        MessageProvenance::HumanConfirmedAgent => IpcMessageProvenance::HumanConfirmedAgent,
-        MessageProvenance::AutonomousAgent => IpcMessageProvenance::AutonomousAgent,
-    }
-}
-
-const fn ipc_sensitivity(value: MessageSensitivity) -> IpcMessageSensitivity {
-    match value {
-        MessageSensitivity::Normal => IpcMessageSensitivity::Normal,
-        MessageSensitivity::Sensitive => IpcMessageSensitivity::Sensitive,
-        MessageSensitivity::Restricted => IpcMessageSensitivity::Restricted,
-    }
 }
 
 fn encode_hex(bytes: &[u8]) -> String {

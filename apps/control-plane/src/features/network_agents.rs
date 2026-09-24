@@ -4,19 +4,23 @@
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
 //! 允许任何来源、不带凭据。
 
-use std::{net::IpAddr, sync::Arc};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use agent_room_application::{
     network_agents::{
-        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentUseCases, NetworkAgentView,
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
+        NetworkAgentRoom, NetworkAgentUseCases, NetworkAgentView,
     },
-    ports::Clock,
+    ports::{Clock, NetworkAgentAckOutcome},
 };
 use agent_room_identity_adapter::NetworkSourceDigester;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Extension, State, rejection::JsonRejection},
+    extract::{
+        DefaultBodyLimit, Extension, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, HeaderName, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -28,15 +32,19 @@ use crate::{
     correlation::{CORRELATION_ID_HEADER, CorrelationId},
     error::ApiError,
     features::{authentication::no_store, devices::bearer_secret},
+    network_gateway::{MAX_PAGE, MAX_WAIT, NetworkAgentMessaging, NetworkGatewayFailure},
 };
 
 const MAX_NETWORK_AGENT_BODY_BYTES: usize = 4 * 1_024;
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const SCHEMA_VERSION: u8 = 1;
+/// 取消息时不说一次取几条，就取这么多。
+const DEFAULT_PAGE: u16 = 20;
 
 #[derive(Clone)]
 pub(crate) struct NetworkAgentHttpState {
     pub(crate) agents: Arc<dyn NetworkAgentUseCases>,
+    pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
 }
@@ -53,6 +61,8 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
     Router::new()
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/me", get(me).delete(disable))
+        .route("/v1/network-agents/me/messages", get(wait_for_messages))
+        .route("/v1/network-agents/me/ack", post(acknowledge))
         .layer(DefaultBodyLimit::max(MAX_NETWORK_AGENT_BODY_BYTES))
         .layer(cors)
         .with_state(state)
@@ -94,6 +104,44 @@ struct MeResponse {
     agent_id: String,
     display_name: String,
     created_at_unix_ms: i64,
+    rooms: Vec<RoomResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MessagesQuery {
+    /// 没有新消息时最多等几秒，0 表示只看一眼；超过上限按上限算。
+    #[serde(default)]
+    wait: Option<u64>,
+    #[serde(default)]
+    limit: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MessagesResponse {
+    schema_version: u8,
+    /// 最早的在前；形状与 CLI、MCP 看到的消息预览一致。
+    messages: Vec<serde_json::Value>,
+    /// 还没确认的总数，可能多于这一次取到的。
+    pending: u64,
+    /// 收件箱满了丢掉的条数，确认之后清零。
+    dropped: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AckBody {
+    event_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AckResponse {
+    schema_version: u8,
+    /// 这一条在收件箱里、已经确认到它为止；为 false 时它不在收件箱里（可能早就确认过了）。
+    acknowledged: bool,
+    pending: u64,
 }
 
 impl From<CreatedNetworkAgent> for CreatedResponse {
@@ -103,11 +151,7 @@ impl From<CreatedNetworkAgent> for CreatedResponse {
             agent_id: created.agent_id.to_string(),
             display_name: created.display_name,
             token: created.token.expose().to_owned(),
-            room: RoomResponse {
-                catalog_id: created.room.catalog_id.to_string(),
-                matrix_room_id: created.room.matrix_room_id.as_str().to_owned(),
-                name: created.room.name,
-            },
+            room: RoomResponse::from(created.room),
         }
     }
 }
@@ -119,6 +163,17 @@ impl From<NetworkAgentView> for MeResponse {
             agent_id: view.agent_id.to_string(),
             display_name: view.display_name,
             created_at_unix_ms: view.created_at.value(),
+            rooms: view.rooms.into_iter().map(RoomResponse::from).collect(),
+        }
+    }
+}
+
+impl From<NetworkAgentRoom> for RoomResponse {
+    fn from(room: NetworkAgentRoom) -> Self {
+        Self {
+            catalog_id: room.catalog_id.to_string(),
+            matrix_room_id: room.matrix_room_id.as_str().to_owned(),
+            name: room.name,
         }
     }
 }
@@ -180,6 +235,105 @@ async fn disable(
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(failure) => no_store(ApiError::network_agent(&failure, correlation_id).into_response()),
     }
+}
+
+/// 取还没确认的消息：有就立刻返回，没有就等到来了新消息或等满 `wait` 秒。
+async fn wait_for_messages(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    query: Result<Query<MessagesQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return no_store(
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "network_agent.invalid_request",
+                ErrorCategory::Validation,
+                "查询参数只有 wait（0 到 30 秒）和 limit（1 到 50 条）。",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    };
+    let wait = query.wait.map_or(MAX_WAIT, |seconds| {
+        Duration::from_secs(seconds).min(MAX_WAIT)
+    });
+    let limit = query.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.messaging.wait_for_messages(token, wait, limit).await {
+        Ok(batch) => no_store(
+            Json(MessagesResponse {
+                schema_version: SCHEMA_VERSION,
+                messages: batch.messages,
+                pending: batch.pending,
+                dropped: batch.dropped,
+            })
+            .into_response(),
+        ),
+        Err(failure) => gateway_failure(&failure, correlation_id),
+    }
+}
+
+/// 确认处理到这一条（含）为止；之前的都不会再收到。
+async fn acknowledge(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Result<Json<AckBody>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return invalid_event(correlation_id);
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.messaging.acknowledge(token, &body.event_id).await {
+        Ok(outcome) => {
+            let (acknowledged, pending) = match outcome {
+                NetworkAgentAckOutcome::Acknowledged { pending } => (true, pending),
+                NetworkAgentAckOutcome::NotPending { pending } => (false, pending),
+            };
+            no_store(
+                Json(AckResponse {
+                    schema_version: SCHEMA_VERSION,
+                    acknowledged,
+                    pending,
+                })
+                .into_response(),
+            )
+        }
+        Err(failure) => gateway_failure(&failure, correlation_id),
+    }
+}
+
+fn gateway_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationId) -> Response {
+    match failure {
+        NetworkGatewayFailure::Agent(failure) => {
+            no_store(ApiError::network_agent(failure, correlation_id).into_response())
+        }
+        NetworkGatewayFailure::Unavailable => no_store(
+            ApiError::network_agent(
+                &NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable),
+                correlation_id,
+            )
+            .into_response(),
+        ),
+        NetworkGatewayFailure::InvalidEvent => invalid_event(correlation_id),
+    }
+}
+
+fn invalid_event(correlation_id: CorrelationId) -> Response {
+    no_store(
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "network_agent.invalid_request",
+            ErrorCategory::Validation,
+            "请求体应为 JSON 对象：{\"eventId\": 收到的消息里的 eventId}。",
+            correlation_id,
+        )
+        .into_response(),
+    )
 }
 
 impl NetworkAgentHttpState {

@@ -5,6 +5,7 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod network_gateway;
 mod observability;
 mod operational_metrics;
 mod runtime;
@@ -62,12 +63,14 @@ use agent_room_application::{
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
     AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant, DiscoveredOidcGateway,
-    Ed25519DeviceProofVerifier, Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer,
-    NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
+    Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
+    Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer, NetworkSourceDigester,
+    OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
-    MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
-    SynapseAccountLifecycleConfiguration, SynapseAccountLifecycleGateway,
+    MatrixAgentSessionClient, MatrixApplicationServiceConfiguration,
+    MatrixApplicationServiceProvisioner, SynapseAccountLifecycleConfiguration,
+    SynapseAccountLifecycleGateway,
 };
 use agent_room_postgres_adapter::PostgresRepositories;
 use axum::{
@@ -378,7 +381,7 @@ async fn build_identity_router(
         content_authorizer,
     };
     let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
-    let open_routes = build_network_agent_routes(config, &agent_dependencies)?;
+    let open_routes = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -783,6 +786,7 @@ fn build_agent_collaboration_http_states(
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
 fn build_network_agent_routes(
     config: &ControlPlaneConfig,
+    request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
 ) -> Result<Router, StartupError> {
     let provisioning = build_lobby_provisioning(
@@ -818,9 +822,27 @@ fn build_network_agent_routes(
         policy: NetworkAgentPolicy::default_limits(config.network_agents.enabled),
         matrix_server_name: config.authentication.matrix_server_name.clone(),
     });
+    let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
+        Arc::new(service);
+    // 用网络 Agent 自己的 Matrix 会话同步：请求期限覆盖一次长轮询，连接期限沿用依赖配置。
+    let matrix = MatrixAgentSessionClient::new(
+        config.dependencies.matrix_base_url.as_str(),
+        request_timeout.min(Duration::from_secs(10)),
+    )
+    .map_err(|error| StartupError::new("startup.invalid_matrix_config", error.to_string()))?;
+    let gateway =
+        network_gateway::NetworkGateway::new(network_gateway::NetworkGatewayDependencies {
+            agents: agents.clone(),
+            inbox: dependencies.repositories.clone(),
+            matrix: Arc::new(matrix),
+            verification: dependencies.repositories.clone(),
+            signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+            clock: dependencies.system_runtime.clone(),
+        });
     Ok(features::network_agents::router(
         features::network_agents::NetworkAgentHttpState {
-            agents: Arc::new(service),
+            agents,
+            messaging: Arc::new(gateway),
             sources: Arc::new(NetworkSourceDigester::new(key)),
             clock: dependencies.system_runtime.clone(),
         },

@@ -4,15 +4,20 @@ use std::fmt;
 
 use agent_room_domain::{
     devices::Device,
-    ids::{AgentId, AgentInstanceId, DeviceId, NetworkAgentId, PrincipalId},
+    ids::{
+        AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
+    },
     network_agents::NetworkAgentStatus,
+    rooms::MatrixRoomReference,
     time::{DurationMillis, UtcMillis},
 };
+use serde_json::Value;
 
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        PortFuture, PrincipalRegistration, SecretDigest, SecretGenerationFailure, SecretValue,
+        MatrixEventId, MatrixResult, MatrixRoomId, MatrixSyncBatch, MatrixSyncToken, PortFuture,
+        PrincipalRegistration, SecretDigest, SecretGenerationFailure, SecretValue,
     },
 };
 
@@ -185,6 +190,148 @@ pub trait NetworkAgentStore: Send + Sync {
         now: UtcMillis,
         policy: RateWindowPolicy,
     ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>>;
+
+    /// 记下网络 Agent 进了哪个房间；重复记同一个房间不改最初的时间。
+    fn record_room<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 进过的房间，先进的在前。
+    fn rooms(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>>;
+}
+
+/// 网络 Agent 所在的一个房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentRoomRecord {
+    pub catalog_id: RoomCatalogId,
+    pub matrix_room_id: MatrixRoomReference,
+    pub joined_at: UtcMillis,
+}
+
+/// 同步到的一条变化，按时间线顺序写进收件箱。
+#[derive(Debug, Clone, PartialEq)]
+pub enum NetworkAgentInboxChange {
+    /// 验签通过的新消息；同一事件重复同步到时只留第一次。
+    Message(NetworkAgentInboxMessage),
+    /// 作者改了还没确认的那条：用新字段覆盖预览里的同名字段。
+    Replace {
+        room_id: MatrixRoomId,
+        message_id: MessageId,
+        actor_key: String,
+        patch: Value,
+    },
+    /// 作者撤回了还没确认的那条：直接从收件箱拿掉。
+    Redact {
+        room_id: MatrixRoomId,
+        message_id: MessageId,
+        actor_key: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkAgentInboxMessage {
+    pub event_id: MatrixEventId,
+    pub room_id: MatrixRoomId,
+    pub message_id: MessageId,
+    /// 作者的稳定标识（Agent ID 或 `human:<Matrix 用户>`），修订只认同一作者。
+    pub actor_key: String,
+    /// 与 CLI、MCP 看到的形状一致的消息预览。
+    pub preview: Value,
+}
+
+/// 一次同步的结果：从 `expected_sync_token` 同步到 `next_sync_token`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkAgentInboxAppend {
+    pub id: NetworkAgentId,
+    /// 同步开始时的位置；和库里的对不上说明另一次同步已经写过，这次作废。
+    pub expected_sync_token: Option<MatrixSyncToken>,
+    pub next_sync_token: MatrixSyncToken,
+    pub changes: Vec<NetworkAgentInboxChange>,
+    pub received_at: UtcMillis,
+    /// 最多保留这么多条没确认的；再多就丢掉最早的并计数。
+    pub capacity: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentInboxAppendOutcome {
+    Applied {
+        appended: u32,
+    },
+    /// 位置已被另一次同步推进，这批没写。
+    Stale,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkAgentInboxEntry {
+    pub sequence: u64,
+    pub event_id: MatrixEventId,
+    pub preview: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkAgentInboxPage {
+    pub sync_token: Option<MatrixSyncToken>,
+    /// 最早的在前。
+    pub entries: Vec<NetworkAgentInboxEntry>,
+    /// 还没确认的总数（可能多于这一页）。
+    pub pending: u64,
+    /// 收件箱满了丢掉的条数，下次确认后清零。
+    pub dropped: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentAckOutcome {
+    /// 确认到这一条为止，返回还剩多少条没确认。
+    Acknowledged { pending: u64 },
+    /// 收件箱里没有这一条：可能早就确认过了。
+    NotPending { pending: u64 },
+}
+
+/// 网络 Agent 的收件箱：只有显式确认才往前走。
+pub trait NetworkAgentInboxStore: Send + Sync {
+    /// 读还没确认的前 `limit` 条，以及当前同步位置。
+    fn pending(
+        &self,
+        id: NetworkAgentId,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<NetworkAgentInboxPage>>;
+
+    /// 原子写入一次同步的结果并推进同步位置。
+    fn append<'a>(
+        &'a self,
+        append: &'a NetworkAgentInboxAppend,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentInboxAppendOutcome>>;
+
+    /// 确认到这一条（含）为止，确认过的从收件箱删掉。
+    fn acknowledge<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>>;
+}
+
+/// 一次同步请求。服务器最多等 `timeout_millis` 就返回，哪怕没有新消息；0 表示立即返回。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentSyncRequest {
+    pub since: Option<MatrixSyncToken>,
+    pub timeout_millis: u64,
+    /// 每个房间最多带回多少条时间线事件；第一次同步只带最近几条做上下文。
+    pub timeline_limit: u16,
+}
+
+/// 用网络 Agent 自己的 Matrix 会话（访问令牌由服务器封存保管）访问 Matrix。
+pub trait NetworkAgentMatrixGateway: Send + Sync {
+    /// 只同步 Agent Room 的消息事件，不同步状态、回执与在线信息。
+    fn sync<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        request: &'a NetworkAgentSyncRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSyncBatch>>;
 }
 
 /// 服务器生成的 Ed25519 签名密钥：种子只在封存前短暂存在。
