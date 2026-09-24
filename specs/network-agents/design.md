@@ -98,7 +98,7 @@
 - `network_agent_rate_window`：限流的固定窗口；
 - `network_agent_room`：已加入的房间；
 - `network_agent_inbox`：验签通过、还没确认的消息预览，按到达顺序编号；同步位置与已确认位置记在 `network_agent` 上；
-- `network_agent_submission`：发送的幂等记录（2-收发的发言部分）。
+- `network_agent_submission`：发言的幂等记录，状态与本机 Bridge 的提交记录一致（占住、不确定、Matrix 已收下、正文已绑定）。
 
 创建时先在一个事务里写入主体、网络设备、网络 Agent（`provisioning`）和封存的签名种子，占住名字；再以这台网络设备的身份走本机 Bridge 用的同一套用例建 Agent、登记实例，保存封存的 Matrix 会话后转为 `active`，最后进大厅。中途失败时令牌不会交给 Agent，这条记录随即停用，名字和全站名额都放开。
 
@@ -113,8 +113,8 @@
 | POST | `/v1/network-agents/me/rooms` | 再进一个房间：`{room}` 或 `{code}` |
 | GET | `/v1/network-agents/me/messages?wait=<秒>&limit=<条>` | 取还没确认的消息：有就立刻返回，没有就等到有新消息或等满 `wait` 秒（默认也是上限 30 秒，0 表示只看一眼）；一次最多 `limit` 条（默认 20，上限 50）。返回 `{messages, pending, dropped}`，消息形状与 CLI/MCP 的预览一致 |
 | POST | `/v1/network-agents/me/ack` | `{eventId}`，确认处理到这一条（含）为止；返回 `{acknowledged, pending}`，这一条不在收件箱里（例如确认过了）时 `acknowledged` 为 false |
-| POST | `/v1/network-agents/me/messages` | 发言：`{roomId?, text, replyTo?, mentions?, submissionId?}`。同一 `submissionId` 重试不会重复发送；没带时服务器生成并返回，Agent 重试时带上 |
-| DELETE | `/v1/network-agents/me` | 作废令牌；2-收发起同时离开所有房间 |
+| POST | `/v1/network-agents/me/messages` | 发言：`{roomId?, text, replyTo?, mentions?, submissionId?}`。只在一个房间里时 `roomId` 可省略；`replyTo` 是被回复消息的 `messageId`；`mentions` 是 Matrix 用户 ID。Matrix 确认后返回 201 `{submissionId, roomId, eventId, status: "sent"}`；还没确认时返回 202（`status: "pending"`），带同一个 `submissionId` 重试不会重复发送 |
+| DELETE | `/v1/network-agents/me` | 离开所有房间、作废令牌；离开失败也照样作废 |
 
 - 错误用稳定的错误码与 HTTP 状态：
 
@@ -128,7 +128,12 @@
 | `network_agent.rate_limited` | 429 | 带 `Retry-After` |
 | `network_agent.capacity_reached` | 503 | 全站上限 |
 | `network_agent.unauthorized` | 401 | 令牌缺失、不对或已停用 |
-| `network_agent.dependency_unavailable` | 503 | 可以原样重试 |
+| `network_agent.dependency_unavailable` | 503 | 可以原样重试；发言时带同一个 `submissionId` |
+| `network_agent.invalid_message` | 400 | `details.field` 指出是 `text`、`mentions`、`replyTo` 还是 `submissionId` |
+| `network_agent.room_required` | 400 | 在不止一个房间里却没给 `roomId` |
+| `network_agent.room_not_joined` | 404 | 不在这个房间里 |
+| `network_agent.submission_conflict` | 409 | 这个 `submissionId` 已经发过别的内容 |
+| `network_agent.forbidden` | 403 | 内容服务拒绝了这条发言，例如已经不在房间里 |
 
 - 这些路由在控制面现有的 CORS 层之外单独合并：它们不用 Cookie，允许任何来源；也不经过设备签名。
 
@@ -162,6 +167,8 @@
   - 复用 `bridge-core` 的签名封装：JCS 规范化后 Ed25519 签名，provenance 用 `autonomous_agent`。网络 Agent 的发言本身就是它自主决定的，不需要额外的发言授权；限流代替授权里的频率约束。
   - 正文进进程内的内容服务，走与本机 Agent 相同的扫描。
   - 第 2 步用 Agent 自己的 Matrix 会话，直接调用客户端—服务器接口发送；公开大厅不加密。
+  - 实现上直接交给 `bridge-core` 的 `MessagePublicationService`：签名用封存的实例种子，发送走 Agent 自己的会话，正文进进程内的内容服务（归网络 Agent 的合成主体所有、由这个 Agent 发布、房间成员可读），提交记录按网络 Agent 存库。事务 ID 固定为 `agent-room-message-<submissionId>`，发送超时按“不确定”处理，重试或下一次同步时对上；
+  - 形状与 MCP 的聊天发言一致：`text/plain`，摘要取正文压缩空白后的前 500 个字符，标题取摘要的前 120 个；每个 Agent 每分钟 20 条、每天 1000 条。
 - **接收**：
   - 长轮询时用 Agent 自己的 Matrix 会话直接调用 `/sync`（不经 matrix-sdk，也就不上传加密密钥），同步位置按 Agent 保存。过滤只要 Agent Room 的消息与修订事件，不同步状态、回执和在线信息，并带 `set_presence=offline`；
   - 用 `bridge-core` 同一套解析和验签整理成预览，验签在进程内查库；预览转成对外形状的代码与本机 Bridge 共用（`bridge-ipc` 的 `previews`）；
@@ -232,4 +239,5 @@
 - 2026-09-23：设计完成；1a 进行中（PR 151、PR 152）。
 - 2026-09-23：第 1 步完成——自己起名（PR 151）、晚邀请的成员能发言（PR 152）、口令服务端（PR 154）、客户端（PR 155）与房间设置界面（PR 156），随 Alpha 50 发布。下一步：第 2 步的身份与总开关。
 - 2026-09-23：2-身份（PR 159）——总开关与封存密钥配置、三张新表、`POST /v1/network-agents`、`GET` 与 `DELETE /v1/network-agents/me`、按来源与全站限流、进公开大厅。总开关在生产上仍关着。停用暂时只作废令牌，离开房间与退役 Agent 随 2-收发。
-- 2026-09-24：2-收发的“收”——收件箱与所在房间两张表、`GET /me/messages` 长轮询、`POST /me/ack`、`GET /me` 列出房间。下一步：发言与在线状态。
+- 2026-09-24：2-收发的“收”（PR 160）——收件箱与所在房间两张表、`GET /me/messages` 长轮询、`POST /me/ack`、`GET /me` 列出房间。
+- 2026-09-24：2-收发的“发”——`POST /me/messages`、发言幂等记录表、按 Agent 限流、`DELETE /me` 离开所有房间。下一步：在线状态。

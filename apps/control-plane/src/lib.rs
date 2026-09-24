@@ -162,6 +162,7 @@ struct AgentFeatureDependencies {
     devices: Arc<DeviceAuthorizationService>,
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
     content_authorizer: Arc<dyn ContentMembershipAuthorizer>,
+    content: Arc<dyn agent_room_application::content::ContentUseCases>,
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -353,8 +354,13 @@ async fn build_identity_router(
             desktop_origins: &authentication_config.desktop_origins,
         })
         .await?;
-    let (content_routes, content_cleanup, matrix_authority, content_authorizer) =
-        content_runtime.into_parts();
+    let content_runtime::ContentRuntime {
+        routes: content_routes,
+        cleanup: content_cleanup,
+        matrix_authority,
+        authorizer: content_authorizer,
+        use_cases: content_use_cases,
+    } = content_runtime;
     let account_lifecycle = build_account_lifecycle_service(
         &config.account_lifecycle,
         repositories.clone(),
@@ -379,6 +385,7 @@ async fn build_identity_router(
         devices: devices.clone(),
         matrix_authority,
         content_authorizer,
+        content: content_use_cases,
     };
     let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
     let open_routes = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
@@ -834,7 +841,9 @@ fn build_network_agent_routes(
         network_gateway::NetworkGateway::new(network_gateway::NetworkGatewayDependencies {
             agents: agents.clone(),
             inbox: dependencies.repositories.clone(),
+            submissions: dependencies.repositories.clone(),
             matrix: Arc::new(matrix),
+            content: dependencies.content.clone(),
             verification: dependencies.repositories.clone(),
             signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             clock: dependencies.system_runtime.clone(),

@@ -244,6 +244,12 @@ impl ApiError {
         from_mapping(mapping, correlation_id)
     }
 
+    /// 在 `details` 里补一项，给调用方（多半是模型）指出是哪一项出了问题。
+    pub(crate) fn with_detail(mut self, key: &str, value: serde_json::Value) -> Self {
+        self.envelope.details.insert(key.to_owned(), value);
+        self
+    }
+
     fn retry_after_seconds(mut self, seconds: u64) -> Self {
         self.envelope.retryable = true;
         self.envelope.retry_after_seconds = Some(seconds);
@@ -730,7 +736,7 @@ impl ApiError {
                     StatusCode::TOO_MANY_REQUESTS,
                     "network_agent.rate_limited",
                     ErrorCategory::Transient,
-                    "创建得太频繁了，请按 Retry-After 等一会儿再试。",
+                    "太频繁了，请按 Retry-After 等一会儿再试。",
                     correlation_id,
                 );
                 log_network_agent_failure(failure, correlation_id);

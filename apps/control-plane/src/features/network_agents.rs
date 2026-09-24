@@ -32,10 +32,13 @@ use crate::{
     correlation::{CORRELATION_ID_HEADER, CorrelationId},
     error::ApiError,
     features::{authentication::no_store, devices::bearer_secret},
-    network_gateway::{MAX_PAGE, MAX_WAIT, NetworkAgentMessaging, NetworkGatewayFailure},
+    network_gateway::{
+        MAX_PAGE, MAX_WAIT, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGatewayFailure,
+    },
 };
 
-const MAX_NETWORK_AGENT_BODY_BYTES: usize = 4 * 1_024;
+/// 一条聊天最多 4000 个字符，按最宽的 UTF-8 算也放得下。
+const MAX_NETWORK_AGENT_BODY_BYTES: usize = 20 * 1_024;
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const SCHEMA_VERSION: u8 = 1;
 /// 取消息时不说一次取几条，就取这么多。
@@ -61,7 +64,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
     Router::new()
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/me", get(me).delete(disable))
-        .route("/v1/network-agents/me/messages", get(wait_for_messages))
+        .route(
+            "/v1/network-agents/me/messages",
+            get(wait_for_messages).post(send_message),
+        )
         .route("/v1/network-agents/me/ack", post(acknowledge))
         .layer(DefaultBodyLimit::max(MAX_NETWORK_AGENT_BODY_BYTES))
         .layer(cors)
@@ -127,6 +133,35 @@ struct MessagesResponse {
     pending: u64,
     /// 收件箱满了丢掉的条数，确认之后清零。
     dropped: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SendBody {
+    /// Matrix 房间 ID；只在一个房间里时可以省略。
+    #[serde(default)]
+    room_id: Option<String>,
+    text: String,
+    /// 回复的那条消息的 messageId。
+    #[serde(default)]
+    reply_to: Option<String>,
+    /// 提及的 Matrix 用户 ID，最多 8 个。
+    #[serde(default)]
+    mentions: Vec<String>,
+    /// UUIDv7；重试时带上同一个就不会重复发送。
+    #[serde(default)]
+    submission_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SentResponse {
+    schema_version: u8,
+    submission_id: String,
+    room_id: String,
+    /// Matrix 还没确认时为空：带同一个 submissionId 重试即可，不会重复发送。
+    event_id: Option<String>,
+    status: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,7 +258,7 @@ async fn me(
     }
 }
 
-/// 停用：令牌立即作废。重复停用、令牌已作废都不会再成功，只会得到“未认证”。
+/// 停用：离开所有房间，令牌立即作废。之后再用这个令牌只会得到“未认证”。
 async fn disable(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -231,9 +266,63 @@ async fn disable(
 ) -> Response {
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
-    match state.agents.disable(token).await {
+    match state.messaging.leave_and_disable(token).await {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
-        Err(failure) => no_store(ApiError::network_agent(&failure, correlation_id).into_response()),
+        Err(failure) => gateway_failure(&failure, correlation_id),
+    }
+}
+
+/// 发一条聊天。Matrix 已确认时返回 201 与 eventId；还没确认时返回 202，带同一个 submissionId
+/// 重试即可，不会重复发送。
+async fn send_message(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Result<Json<SendBody>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return no_store(
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "network_agent.invalid_request",
+                ErrorCategory::Validation,
+                "请求体应为 JSON 对象：{\"text\": 要说的话, \"roomId\"、\"replyTo\"、\"mentions\"、\"submissionId\" 可选}。",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    let draft = NetworkAgentMessageDraft {
+        room_id: body.room_id,
+        text: body.text,
+        reply_to: body.reply_to,
+        mentions: body.mentions,
+        submission_id: body.submission_id,
+    };
+    match state.messaging.send_message(token, draft).await {
+        Ok(sent) => {
+            let (status, label) = if sent.event.is_some() {
+                (StatusCode::CREATED, "sent")
+            } else {
+                (StatusCode::ACCEPTED, "pending")
+            };
+            no_store(
+                (
+                    status,
+                    Json(SentResponse {
+                        schema_version: SCHEMA_VERSION,
+                        submission_id: sent.submission.to_string(),
+                        room_id: sent.room,
+                        event_id: sent.event,
+                        status: label,
+                    }),
+                )
+                    .into_response(),
+            )
+        }
+        Err(failure) => gateway_failure(&failure, correlation_id),
     }
 }
 
@@ -320,7 +409,63 @@ fn gateway_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationI
             .into_response(),
         ),
         NetworkGatewayFailure::InvalidEvent => invalid_event(correlation_id),
+        NetworkGatewayFailure::InvalidMessage(field) => no_store(
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "network_agent.invalid_message",
+                ErrorCategory::Validation,
+                "text 须为 1 到 4000 个字符；mentions 最多 8 个 Matrix 用户 ID；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
+                correlation_id,
+            )
+            .with_detail("field", serde_json::Value::from(*field))
+            .into_response(),
+        ),
+        NetworkGatewayFailure::RoomRequired => simple(
+            StatusCode::BAD_REQUEST,
+            "network_agent.room_required",
+            "你在不止一个房间里，请用 roomId 指明发到哪间；GET /v1/network-agents/me 列出了你所在的房间。",
+            correlation_id,
+        ),
+        NetworkGatewayFailure::RoomNotJoined => simple(
+            StatusCode::NOT_FOUND,
+            "network_agent.room_not_joined",
+            "你不在这个房间里；GET /v1/network-agents/me 列出了你所在的房间。",
+            correlation_id,
+        ),
+        NetworkGatewayFailure::SubmissionConflict => simple(
+            StatusCode::CONFLICT,
+            "network_agent.submission_conflict",
+            "这个 submissionId 已经用来发过别的内容；发新消息请换一个或省略它。",
+            correlation_id,
+        ),
+        NetworkGatewayFailure::Forbidden => simple(
+            StatusCode::FORBIDDEN,
+            "network_agent.forbidden",
+            "服务器拒绝了这条发言，可能你已经不在这个房间里。",
+            correlation_id,
+        ),
+        NetworkGatewayFailure::Internal => no_store(
+            ApiError::network_agent(
+                &NetworkAgentFailure::new(NetworkAgentFailureKind::Internal),
+                correlation_id,
+            )
+            .into_response(),
+        ),
     }
+}
+
+fn simple(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    correlation_id: CorrelationId,
+) -> Response {
+    let category = match status {
+        StatusCode::FORBIDDEN => ErrorCategory::Authorization,
+        StatusCode::CONFLICT => ErrorCategory::Conflict,
+        _ => ErrorCategory::Validation,
+    };
+    no_store(ApiError::new(status, code, category, message, correlation_id).into_response())
 }
 
 fn invalid_event(correlation_id: CorrelationId) -> Response {

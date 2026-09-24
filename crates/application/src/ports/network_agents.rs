@@ -5,7 +5,8 @@ use std::fmt;
 use agent_room_domain::{
     devices::Device,
     ids::{
-        AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
+        AgentId, AgentInstanceId, DeviceId, MessageId, MessageSubmissionId, NetworkAgentId,
+        PrincipalId, RoomCatalogId,
     },
     network_agents::NetworkAgentStatus,
     rooms::MatrixRoomReference,
@@ -16,8 +17,9 @@ use serde_json::Value;
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        MatrixEventId, MatrixResult, MatrixRoomId, MatrixSyncBatch, MatrixSyncToken, PortFuture,
-        PrincipalRegistration, SecretDigest, SecretGenerationFailure, SecretValue,
+        MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixResult, MatrixRoomId,
+        MatrixSyncBatch, MatrixSyncToken, MatrixTransactionId, PortFuture, PrincipalRegistration,
+        SecretDigest, SecretGenerationFailure, SecretValue,
     },
 };
 
@@ -332,6 +334,144 @@ pub trait NetworkAgentMatrixGateway: Send + Sync {
         access_token: &'a SecretValue,
         request: &'a NetworkAgentSyncRequest,
     ) -> PortFuture<'a, MatrixResult<MatrixSyncBatch>>;
+
+    /// 以 Agent 自己的身份发一条消息事件；同一事务 ID 重发不会重复。
+    fn send_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>>;
+
+    /// 离开房间；已经不在里面也算成功。
+    fn leave<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+/// 网络 Agent 发出的一次提交是哪一种。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentSubmissionKind {
+    Preview,
+    Replace,
+    Redact,
+}
+
+impl NetworkAgentSubmissionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Replace => "replace",
+            Self::Redact => "redact",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "preview" => Some(Self::Preview),
+            "replace" => Some(Self::Replace),
+            "redact" => Some(Self::Redact),
+            _ => None,
+        }
+    }
+}
+
+/// 一次提交走到哪一步：占住、不知道 Matrix 收没收到、Matrix 已收下、正文已绑定到事件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentSubmissionState {
+    Claimed,
+    SubmitUnknown,
+    Accepted,
+    Bound,
+}
+
+impl NetworkAgentSubmissionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claimed => "claimed",
+            Self::SubmitUnknown => "submit_unknown",
+            Self::Accepted => "accepted",
+            Self::Bound => "bound",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "claimed" => Some(Self::Claimed),
+            "submit_unknown" => Some(Self::SubmitUnknown),
+            "accepted" => Some(Self::Accepted),
+            "bound" => Some(Self::Bound),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentSubmissionClaim {
+    pub submission_id: MessageSubmissionId,
+    pub kind: NetworkAgentSubmissionKind,
+    /// 这次提交内容的摘要：同一个提交 ID 换了内容就是冲突。
+    pub fingerprint: [u8; 32],
+    pub transaction_id: MatrixTransactionId,
+    pub claimed_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentSubmissionRecord {
+    pub submission_id: MessageSubmissionId,
+    pub kind: NetworkAgentSubmissionKind,
+    pub fingerprint: [u8; 32],
+    pub transaction_id: MatrixTransactionId,
+    pub state: NetworkAgentSubmissionState,
+    pub event_id: Option<MatrixEventId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkAgentSubmissionClaimOutcome {
+    Created(NetworkAgentSubmissionRecord),
+    Existing(NetworkAgentSubmissionRecord),
+}
+
+/// 网络 Agent 发言的幂等记录，语义与本机 Bridge 的提交记录一致，只是按网络 Agent 分开存。
+pub trait NetworkAgentSubmissionStore: Send + Sync {
+    /// 占住一个提交 ID；已经有了就原样返回，内容对不上时返回冲突。
+    fn claim<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        claim: &'a NetworkAgentSubmissionClaim,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentSubmissionClaimOutcome>>;
+
+    /// 发出去但不知道 Matrix 收没收到（只从“占住”转过来）。
+    fn mark_submit_unknown(
+        &self,
+        id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+    ) -> PortFuture<'_, RepositoryResult<NetworkAgentSubmissionRecord>>;
+
+    /// Matrix 收下了，记下事件 ID；已经绑定的不回退。
+    fn mark_accepted<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentSubmissionRecord>>;
+
+    /// 正文已绑定到事件，这次提交完成。
+    fn mark_bound(
+        &self,
+        id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+    ) -> PortFuture<'_, RepositoryResult<NetworkAgentSubmissionRecord>>;
+
+    /// 同步时看到自己发的事件：按事务 ID 找到那次提交并记为已收下。
+    fn observe_transaction<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        transaction_id: &'a MatrixTransactionId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, RepositoryResult<Option<NetworkAgentSubmissionRecord>>>;
 }
 
 /// 服务器生成的 Ed25519 签名密钥：种子只在封存前短暂存在。

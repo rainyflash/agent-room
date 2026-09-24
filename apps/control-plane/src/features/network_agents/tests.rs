@@ -27,12 +27,17 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::{NetworkAgentHttpState, router};
-use crate::network_gateway::{NetworkAgentMessages, NetworkAgentMessaging, NetworkGatewayFailure};
+use crate::network_gateway::{
+    NetworkAgentMessageDraft, NetworkAgentMessages, NetworkAgentMessaging, NetworkAgentSentMessage,
+    NetworkGatewayFailure,
+};
+use agent_room_domain::ids::MessageSubmissionId;
 
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
 const TOKEN: &str = "network-agent-token";
+const SUBMISSION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";
 
 #[derive(Default)]
 struct FakeAgents {
@@ -119,6 +124,10 @@ impl NetworkAgentUseCases for FakeAgents {
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
         unreachable!("路由测试里收消息走替身网关")
     }
+
+    fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        unreachable!("路由测试里发言走替身网关")
+    }
 }
 
 /// 网关替身：记下收到的令牌与参数，按预设回答。
@@ -126,6 +135,8 @@ impl NetworkAgentUseCases for FakeAgents {
 struct FakeMessaging {
     waits: Mutex<Vec<(String, Duration, u16)>>,
     acks: Mutex<Vec<(String, String)>>,
+    drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
+    disabled: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -180,6 +191,35 @@ impl NetworkAgentMessaging for FakeMessaging {
                 None => Ok(NetworkAgentAckOutcome::NotPending { pending: 3 }),
             }
         })
+    }
+
+    fn send_message<'a>(
+        &'a self,
+        token: &'a str,
+        draft: NetworkAgentMessageDraft,
+    ) -> PortFuture<'a, Result<NetworkAgentSentMessage, NetworkGatewayFailure>> {
+        let pending = draft.text == "还没确认";
+        self.drafts.lock().unwrap().push((token.to_owned(), draft));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move {
+            if let Some(failure) = failure {
+                return Err(failure);
+            }
+            Ok(NetworkAgentSentMessage {
+                submission: MessageSubmissionId::from_uuid(uuid(SUBMISSION_UUID)),
+                room: "!lobby:matrix.test".to_owned(),
+                event: (!pending).then(|| "$sent:matrix.test".to_owned()),
+            })
+        })
+    }
+
+    fn leave_and_disable<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
+        self.disabled.lock().unwrap().push(token.to_owned());
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(()), Err) })
     }
 }
 
@@ -339,7 +379,7 @@ async fn 来源取最后一跳_ipv6_按_64_位网段归并_隔天就对不上() 
 #[tokio::test]
 async fn 请求体不是约定的_json_时说明该怎么写_且不调用用例() {
     let agents = Arc::new(FakeAgents::default());
-    let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(5 * 1_024));
+    let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(25 * 1_024));
     for body in [
         "not json",
         r#"{"name":"Scout","code":"K7P3-Q9XW-2DMA"}"#,
@@ -470,9 +510,11 @@ async fn 查看自己要带令牌_没带也交给用例判断() {
 
 #[tokio::test]
 async fn 总开关关着时没带令牌也回答已关闭() {
-    let agents = FakeAgents::failing(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+    let disabled = NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled);
+    let agents = FakeAgents::failing(disabled.clone());
+    let messaging = FakeMessaging::failing(NetworkGatewayFailure::Agent(disabled));
     for method in [Method::GET, Method::DELETE] {
-        let response = app(agents.clone())
+        let response = app_with(agents.clone(), messaging.clone(), 1_758_600_000_000)
             .oneshot(me_request(method, None))
             .await
             .unwrap();
@@ -482,15 +524,19 @@ async fn 总开关关着时没带令牌也回答已关闭() {
 }
 
 #[tokio::test]
-async fn 停用成功返回_204() {
-    let agents = Arc::new(FakeAgents::default());
-    let response = app(agents.clone())
-        .oneshot(me_request(Method::DELETE, Some(TOKEN)))
-        .await
-        .unwrap();
+async fn 停用交给网关离开房间并作废令牌_成功返回_204() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging.clone(),
+        1_758_600_000_000,
+    )
+    .oneshot(me_request(Method::DELETE, Some(TOKEN)))
+    .await
+    .unwrap();
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(agents.tokens(), [TOKEN]);
+    assert_eq!(*messaging.disabled.lock().unwrap(), [TOKEN]);
 }
 
 #[tokio::test]
@@ -718,5 +764,143 @@ async fn 网关失败按稳定错误码回答() {
         .await
         .unwrap();
         assert_eq!(response.status(), status, "{code}");
+    }
+}
+
+fn send_request(body: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/network-agents/me/messages")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn 发言确认后返回_201_还没确认时返回_202() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging.clone(),
+        1_758_600_000_000,
+    )
+    .oneshot(send_request(
+        r#"{"text":"大家好","roomId":"!lobby:matrix.test","replyTo":"0198b601-77a1-7bb8-83eb-a8fe68c97e60","mentions":["@_agent_x:matrix.test"],"submissionId":"0198b601-77a1-7bb8-83eb-a8fe68c97e53"}"#,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "submissionId": SUBMISSION_UUID,
+            "roomId": "!lobby:matrix.test",
+            "eventId": "$sent:matrix.test",
+            "status": "sent",
+        })
+    );
+    let drafts = messaging.drafts.lock().unwrap().clone();
+    assert_eq!(
+        drafts[0],
+        (
+            TOKEN.to_owned(),
+            NetworkAgentMessageDraft {
+                room_id: Some("!lobby:matrix.test".to_owned()),
+                text: "大家好".to_owned(),
+                reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e60".to_owned()),
+                mentions: vec!["@_agent_x:matrix.test".to_owned()],
+                submission_id: Some(SUBMISSION_UUID.to_owned()),
+            }
+        )
+    );
+
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging,
+        1_758_600_000_000,
+    )
+    .oneshot(send_request(r#"{"text":"还没确认"}"#))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = body_json(response).await;
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["eventId"], Value::Null);
+}
+
+#[tokio::test]
+async fn 发言的请求体或内容不对时说明该怎么改() {
+    for body in [
+        "not json",
+        r#"{"message":"hi"}"#,
+        r#"{"text":"hi","extra":1}"#,
+    ] {
+        let response = app(Arc::new(FakeAgents::default()))
+            .oneshot(send_request(body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body_json(response).await["code"],
+            "network_agent.invalid_request"
+        );
+    }
+
+    for (failure, status, code) in [
+        (
+            NetworkGatewayFailure::InvalidMessage("mentions"),
+            StatusCode::BAD_REQUEST,
+            "network_agent.invalid_message",
+        ),
+        (
+            NetworkGatewayFailure::RoomRequired,
+            StatusCode::BAD_REQUEST,
+            "network_agent.room_required",
+        ),
+        (
+            NetworkGatewayFailure::RoomNotJoined,
+            StatusCode::NOT_FOUND,
+            "network_agent.room_not_joined",
+        ),
+        (
+            NetworkGatewayFailure::SubmissionConflict,
+            StatusCode::CONFLICT,
+            "network_agent.submission_conflict",
+        ),
+        (
+            NetworkGatewayFailure::Forbidden,
+            StatusCode::FORBIDDEN,
+            "network_agent.forbidden",
+        ),
+        (
+            NetworkGatewayFailure::Internal,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "network_agent.internal",
+        ),
+        (
+            NetworkGatewayFailure::Agent(NetworkAgentFailure::rate_limited(time(
+                4_102_444_800_000,
+            ))),
+            StatusCode::TOO_MANY_REQUESTS,
+            "network_agent.rate_limited",
+        ),
+    ] {
+        let response = app_with(
+            Arc::new(FakeAgents::default()),
+            FakeMessaging::failing(failure),
+            1_758_600_000_000,
+        )
+        .oneshot(send_request(r#"{"text":"hi"}"#))
+        .await
+        .unwrap();
+        assert_eq!(response.status(), status, "{code}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], code);
+        if code == "network_agent.invalid_message" {
+            assert_eq!(body["details"]["field"], "mentions");
+        }
     }
 }
