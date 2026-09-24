@@ -11,6 +11,9 @@
 //!
 //! 第一次同步后在后台建立加密身份（交叉签名自己的网络设备），并开启服务器端密钥备份：恢复凭据先
 //! 封存入库再开启，所以不会出现备份开好了、凭据却没存下的情况。
+//!
+//! 发言也由这个客户端发出（3d）：加密房间里正文先用正文密钥加密，事件由客户端用房间密钥加密。
+//! 客户端只能在认识的房间里发言，所以准备好时、进了房间之后都完整同步一次。
 
 use std::{
     collections::HashMap,
@@ -25,9 +28,9 @@ use std::{
 use agent_room_application::{
     network_agents::{NetworkAgentSession, NetworkAgentUseCases},
     ports::{
-        MatrixDeviceId, MatrixFailureKind, MatrixGateway, MatrixSession, MatrixSessionMetadata,
-        MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixUserId, NetworkAgentSyncRequest,
-        PortFuture, SecretFactory,
+        MatrixDeviceId, MatrixFailureKind, MatrixGateway, MatrixRoomAuthorityGateway,
+        MatrixSession, MatrixSessionMetadata, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+        MatrixUserId, NetworkAgentSyncRequest, PortFuture, SecretFactory,
     },
 };
 use agent_room_bridge_core::{
@@ -36,12 +39,14 @@ use agent_room_bridge_core::{
         MatrixIdentityState, MatrixSecurityCommand, MatrixSecurityFailure, MatrixSecurityGateway,
         MatrixSecurityResult,
     },
+    messages::MessageBodyProtectionService,
 };
 use agent_room_domain::{ids::NetworkAgentId, time::DurationMillis};
 use agent_room_matrix_adapter::{
     MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkConfigurationError,
     MatrixSdkStoreConfiguration,
 };
+use agent_room_message_crypto_adapter::{AesGcmMessageContentCipher, MessageContentRootKey};
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 
 use super::NetworkGatewayFailure;
@@ -65,20 +70,40 @@ pub(crate) trait EncryptedSessions: Send + Sync {
         request: &'a NetworkAgentSyncRequest,
     ) -> PortFuture<'a, Result<MatrixSyncBatch, NetworkGatewayFailure>>;
 
-    /// 进加密房间之前：打开客户端，从收件箱的位置同步一次（上传设备密钥与一次性密钥；结果留给
-    /// 下一次长轮询），再建好加密身份与密钥备份。没建好就报暂时不可用：这时进去，别人发的消息
-    /// 它会解不开。
+    /// 进加密房间之前：打开客户端并完整同步一次（认识所有已加入的房间，上传设备密钥与一次性
+    /// 密钥），再建好加密身份与密钥备份。没建好就报暂时不可用：这时进去，别人发的消息它会解不开。
     fn prepare<'a>(
         &'a self,
         session: &'a NetworkAgentSession,
-        since: Option<MatrixSyncToken>,
     ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>>;
+
+    /// 完整同步一次，让客户端认识所有已加入的房间，包括刚进的。结果留给还没有同步位置的第一次
+    /// 长轮询。
+    fn refresh<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>>;
+
+    /// 以这个 Agent 的加密客户端发言要用的几样。
+    fn speaker<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<EncryptedSpeaker, NetworkGatewayFailure>>;
 
     /// 停用后关掉它的客户端。
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()>;
 
     /// 关掉闲置太久的客户端，返回关了几个。
     fn evict_idle(&self) -> PortFuture<'_, usize>;
+}
+
+/// 以加密客户端发言：发事件、看房间加不加密、确认身份就绪并刷新成员身份、加密正文。
+#[derive(Clone)]
+pub(crate) struct EncryptedSpeaker {
+    pub(crate) matrix: Arc<dyn MatrixGateway>,
+    pub(crate) authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    pub(crate) security: Arc<dyn MatrixSecurityGateway>,
+    pub(crate) protection: Arc<MessageBodyProtectionService>,
 }
 
 pub(crate) struct EncryptedClients {
@@ -111,7 +136,9 @@ struct OpenClient {
     agents: Arc<dyn NetworkAgentUseCases>,
     secrets: Arc<dyn SecretFactory>,
     gateway: Arc<dyn MatrixGateway>,
+    authority: Arc<dyn MatrixRoomAuthorityGateway>,
     security: Arc<dyn MatrixSecurityGateway>,
+    protection: Arc<MessageBodyProtectionService>,
     /// 上一次同步；拿着这把锁同步，所以同一时刻只有一次。
     last_sync: Mutex<Option<ProcessedSync>>,
     /// 拿着这把锁建身份；里面是没建成时下一次可以再试的时刻。
@@ -163,7 +190,7 @@ impl EncryptedClients {
         let request = MatrixSyncRequest::new(request.since.clone(), timeout, false)
             .map_err(|_| NetworkGatewayFailure::Internal)?;
         let client = self.client(session).await?;
-        tokio::spawn(client.sync(request))
+        tokio::spawn(client.sync(request, true))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
     }
@@ -171,13 +198,9 @@ impl EncryptedClients {
     async fn prepare_internal(
         &self,
         session: &NetworkAgentSession,
-        since: Option<MatrixSyncToken>,
     ) -> Result<(), NetworkGatewayFailure> {
-        let timeout = DurationMillis::new(1).map_err(|_| NetworkGatewayFailure::Internal)?;
-        let request = MatrixSyncRequest::new(since, timeout, false)
-            .map_err(|_| NetworkGatewayFailure::Internal)?;
         let client = self.client(session).await?;
-        tokio::spawn(client.clone().sync(request))
+        tokio::spawn(client.clone().sync(full_sync()?, false))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)??;
         let ready = tokio::spawn(client.establish_now())
@@ -188,6 +211,30 @@ impl EncryptedClients {
         } else {
             Err(NetworkGatewayFailure::Unavailable)
         }
+    }
+
+    async fn refresh_internal(
+        &self,
+        session: &NetworkAgentSession,
+    ) -> Result<(), NetworkGatewayFailure> {
+        let client = self.client(session).await?;
+        tokio::spawn(client.sync(full_sync()?, false))
+            .await
+            .map_err(|_| NetworkGatewayFailure::Internal)?
+            .map(|_| ())
+    }
+
+    async fn speaker_internal(
+        &self,
+        session: &NetworkAgentSession,
+    ) -> Result<EncryptedSpeaker, NetworkGatewayFailure> {
+        let client = self.client(session).await?;
+        Ok(EncryptedSpeaker {
+            matrix: client.gateway.clone(),
+            authority: client.authority.clone(),
+            security: client.security.clone(),
+            protection: client.protection.clone(),
+        })
     }
 
     async fn client(
@@ -243,6 +290,16 @@ impl EncryptedClients {
             .encryption_secrets(id)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
+        // 与本机 Bridge 一样用 32 字节的正文根密钥；封存的是一段随机文本，取它的 SHA-256。
+        let root_key = MessageContentRootKey::from_bytes(
+            *self
+                .secrets
+                .digest(secrets.content_root_key.expose())
+                .as_bytes(),
+        );
+        let protection = Arc::new(MessageBodyProtectionService::new(Arc::new(
+            AesGcmMessageContentCipher::new(root_key),
+        )));
         let store = MatrixSdkStoreConfiguration::encrypted_sqlite(
             self.root.join(id.to_string()).join("matrix-store"),
             secrets.store_passphrase,
@@ -290,7 +347,9 @@ impl EncryptedClients {
             agents: self.agents.clone(),
             secrets: self.secrets.clone(),
             gateway: connection.matrix_gateway_handle(),
+            authority: connection.room_authority_gateway_handle(),
             security: connection.security_gateway_handle(),
+            protection,
             last_sync: Mutex::new(None),
             identity: Mutex::new(None),
             identity_ready: AtomicBool::new(false),
@@ -342,15 +401,19 @@ impl OpenClient {
             .elapsed()
     }
 
+    /// 同步一次。`replay` 时从上次的起点再来就直接给上次的结果；完整同步要真的同步，让客户端认识
+    /// 刚进的房间。
     async fn sync(
         self: Arc<Self>,
         request: MatrixSyncRequest,
+        replay: bool,
     ) -> Result<MatrixSyncBatch, NetworkGatewayFailure> {
         let mut last = self.last_sync.lock().await;
         if self.conflicted.load(Ordering::Acquire) {
             return Err(NetworkGatewayFailure::Unavailable);
         }
-        if let Some((since, batch)) = last.as_ref()
+        if replay
+            && let Some((since, batch)) = last.as_ref()
             && since.as_ref() == request.since()
         {
             return Ok(batch.clone());
@@ -531,9 +594,22 @@ impl EncryptedSessions for EncryptedClients {
     fn prepare<'a>(
         &'a self,
         session: &'a NetworkAgentSession,
-        since: Option<MatrixSyncToken>,
     ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
-        Box::pin(self.prepare_internal(session, since))
+        Box::pin(self.prepare_internal(session))
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
+        Box::pin(self.refresh_internal(session))
+    }
+
+    fn speaker<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<EncryptedSpeaker, NetworkGatewayFailure>> {
+        Box::pin(self.speaker_internal(session))
     }
 
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()> {
@@ -543,6 +619,12 @@ impl EncryptedSessions for EncryptedClients {
     fn evict_idle(&self) -> PortFuture<'_, usize> {
         Box::pin(self.evict_idle_internal())
     }
+}
+
+/// 完整同步：不带起点，只看一眼。
+fn full_sync() -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
+    let timeout = DurationMillis::new(1).map_err(|_| NetworkGatewayFailure::Internal)?;
+    MatrixSyncRequest::new(None, timeout, false).map_err(|_| NetworkGatewayFailure::Internal)
 }
 
 #[cfg(test)]
@@ -558,24 +640,30 @@ mod real_dependency_tests {
         },
         ports::{
             MatrixAgentDeviceSessionRequest, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-            MatrixAgentUserRegistration, MatrixDeviceId, NetworkAgentSyncRequest, PortFuture,
-            SecretFactory, SecretValue,
+            MatrixAgentUserRegistration, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
+            MatrixEventType, MatrixRoomEncryption, MatrixRoomPreset, MatrixRoomVisibility,
+            MatrixTransactionId, MatrixUserId, NetworkAgentSyncRequest, PortFuture, SecretFactory,
+            SecretValue,
         },
     };
+    use agent_room_bridge_core::messages::ProtectMessageBodyRequest;
     use agent_room_domain::{
-        ids::{AgentId, AgentInstanceId, NetworkAgentId, PrincipalId},
+        content::{ContentEncryptionMode, ContentMediaType},
+        ids::{AgentId, AgentInstanceId, MessageSubmissionId, NetworkAgentId, PrincipalId},
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
+    use serde_json::json;
     use uuid::Uuid;
 
     use super::{EncryptedClients, EncryptedSessions};
     use crate::config::ControlPlaneConfig;
 
-    /// 只管加密秘密的网络 Agent 用例：存储口令第一次要用时生成，恢复凭据照存。
+    /// 只管加密秘密的网络 Agent 用例：存储口令与正文根密钥第一次要用时生成，恢复凭据照存。
     #[derive(Default)]
     struct Vault {
         passphrase: Mutex<Option<SecretValue>>,
+        root_key: Mutex<Option<SecretValue>>,
         recovery: Mutex<Option<SecretValue>>,
     }
 
@@ -671,10 +759,17 @@ mod real_dependency_tests {
                 .unwrap()
                 .get_or_insert_with(|| SecureSecretFactory.generate().unwrap())
                 .clone();
+            let content_root_key = self
+                .root_key
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| SecureSecretFactory.generate().unwrap())
+                .clone();
             let recovery_credential = self.recovery();
             Box::pin(async move {
                 Ok(NetworkAgentEncryptionSecrets {
                     store_passphrase,
+                    content_root_key,
                     recovery_credential,
                 })
             })
@@ -690,14 +785,11 @@ mod real_dependency_tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
-    async fn 真实_synapse_上加密客户端建好身份与密钥备份_关掉重开后沿用同一套() {
-        let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
+    /// 与网络 Agent 一样：一个新的 Agent Matrix 用户，一台 AR_<实例> 设备。
+    async fn network_session(config: &ControlPlaneConfig) -> NetworkAgentSession {
         let identities =
-            crate::build_matrix_identity_provisioner(&config, config.dependencies.timeout)
+            crate::build_matrix_identity_provisioner(config, config.dependencies.timeout)
                 .expect("Application Service 配置有效");
-        // 与网络 Agent 一样：一个新的 Agent Matrix 用户，一台 AR_<实例> 设备。
         let agent_id = AgentId::from_uuid(Uuid::now_v7());
         let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
         let user_id = identities
@@ -718,7 +810,7 @@ mod real_dependency_tests {
             )
             .await
             .expect("签发设备会话");
-        let session = NetworkAgentSession {
+        NetworkAgentSession {
             network_agent_id: NetworkAgentId::from_uuid(Uuid::now_v7()),
             principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
             agent_id,
@@ -730,7 +822,72 @@ mod real_dependency_tests {
             rooms: Vec::new(),
             matrix_device_id: device_id,
             encrypted_since: Some(UtcMillis::new(1).unwrap()),
-        };
+        }
+    }
+
+    /// 在自己建的加密房间里发一条：完整同步后认识这个房间，身份就绪、成员身份刷新过，
+    /// 正文先加密，事件由客户端用房间密钥加密后发出。
+    async fn send_in_new_encrypted_room(clients: &EncryptedClients, session: &NetworkAgentSession) {
+        let speaker = clients.speaker(session).await.expect("发言要用的几样");
+        let room = speaker
+            .matrix
+            .create_room(
+                &MatrixCreateRoom::new(
+                    Some("网络 Agent 加密发言验收".to_owned()),
+                    None,
+                    MatrixRoomVisibility::Private,
+                    MatrixRoomPreset::PrivateChat,
+                    false,
+                    Vec::new(),
+                )
+                .unwrap()
+                .with_end_to_end_encryption(),
+            )
+            .await
+            .expect("建加密房间");
+        clients.refresh(session).await.expect("完整同步");
+        let user_id = MatrixUserId::new(session.agent_matrix_user_id.clone()).unwrap();
+        let authority = speaker
+            .authority
+            .inspect_room_authority(&room, &user_id)
+            .await
+            .expect("房间状态");
+        assert_eq!(authority.encryption(), MatrixRoomEncryption::EndToEnd);
+        speaker
+            .security
+            .ensure_room_ready(&room)
+            .await
+            .expect("加密房间就绪");
+        let body = speaker
+            .protection
+            .protect(&ProtectMessageBodyRequest {
+                submission_id: MessageSubmissionId::from_uuid(Uuid::now_v7()),
+                room_id: &room,
+                room_encryption: MatrixRoomEncryption::EndToEnd,
+                media_type: &ContentMediaType::new("text/plain".to_owned()).unwrap(),
+                plaintext: b"only for the room",
+                expires_at: None,
+            })
+            .expect("正文加密");
+        assert_eq!(body.encryption_mode(), ContentEncryptionMode::ClientE2ee);
+        let event = MatrixEvent::new(
+            MatrixEventType::new("io.github.rainyflash.agentroom.message.preview.v1").unwrap(),
+            MatrixTransactionId::new(Uuid::now_v7().to_string()).unwrap(),
+            json!({"content": {"encryption": {"probe": true}}}),
+        )
+        .unwrap();
+        speaker
+            .matrix
+            .send_event(&room, &event)
+            .await
+            .expect("由客户端加密发出");
+    }
+
+    #[tokio::test]
+    #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
+    async fn 真实_synapse_上加密客户端建好身份与密钥备份_关掉重开后沿用同一套_能在加密房间发言() {
+        let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
+        let session = network_session(&config).await;
         let vault = Arc::new(Vault::default());
         let store = tempfile::tempdir().expect("加密存储目录");
         let clients = EncryptedClients::new(
@@ -742,17 +899,14 @@ mod real_dependency_tests {
         .expect("matrix-sdk 配置有效");
 
         clients
-            .prepare(&session, None)
+            .prepare(&session)
             .await
             .expect("加密身份与密钥备份就绪");
         let credential = vault.recovery().expect("开备份之前先封存了恢复凭据");
 
         // 关掉再打开同一个存储：身份与备份都在，不再生成新的恢复凭据；收消息照常。
         clients.forget(session.network_agent_id).await;
-        clients
-            .prepare(&session, None)
-            .await
-            .expect("重开后仍然就绪");
+        clients.prepare(&session).await.expect("重开后仍然就绪");
         assert_eq!(vault.recovery(), Some(credential));
         clients
             .sync(
@@ -765,6 +919,8 @@ mod real_dependency_tests {
             )
             .await
             .expect("加密客户端同步");
+
+        send_in_new_encrypted_room(&clients, &session).await;
         clients.forget(session.network_agent_id).await;
     }
 }

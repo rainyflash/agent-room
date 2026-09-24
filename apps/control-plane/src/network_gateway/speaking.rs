@@ -1,6 +1,7 @@
 //! 网络 Agent 发言：交给本机 Bridge 同一个发布服务去签名、上传正文、发到 Matrix、绑定正文。
 //! 这里只是把服务要的几个端口接到服务器这一侧：签名用封存的实例种子，发送用 Agent 自己的
-//! Matrix 会话，正文直接进进程内的内容服务，提交记录按网络 Agent 存进数据库。
+//! Matrix 会话（进过加密房间的用它的加密客户端），正文直接进进程内的内容服务，提交记录按网络
+//! Agent 存进数据库。
 
 use std::sync::Arc;
 
@@ -13,8 +14,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         Clock, ContentAccessMode, ContentByteStream, DeviceSignature, MatrixAcceptedEvent,
-        MatrixEvent, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixResult, MatrixRoomId,
-        MatrixTransactionId, NetworkAgentMatrixGateway, NetworkAgentSubmissionClaim,
+        MatrixEvent, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixResult,
+        MatrixRoomId, MatrixTransactionId, NetworkAgentMatrixGateway, NetworkAgentSubmissionClaim,
         NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
         NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         PortFuture, SecretValue,
@@ -84,15 +85,37 @@ impl MessageEventPublisher for SessionPublisher {
             self.matrix
                 .send_event(&self.access_token, room_id, event)
                 .await
-                .map_err(|failure| {
-                    // 请求发出去后超时，Matrix 可能已经收下：按“不知道”处理，用同一个事务 ID 重发不会重复。
-                    if failure.kind() == MatrixFailureKind::Timeout {
-                        MatrixFailure::new(failure.operation(), MatrixFailureKind::UnknownCommit)
-                    } else {
-                        failure
-                    }
-                })
+                .map_err(unknown_commit_on_timeout)
         })
+    }
+}
+
+/// 以进过加密房间的 Agent 的加密客户端发出事件：加密房间里由它加密。
+pub(super) struct ClientPublisher {
+    pub(super) matrix: Arc<dyn MatrixGateway>,
+}
+
+impl MessageEventPublisher for ClientPublisher {
+    fn publish<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
+        Box::pin(async move {
+            self.matrix
+                .send_event(room_id, event)
+                .await
+                .map_err(unknown_commit_on_timeout)
+        })
+    }
+}
+
+/// 请求发出去后超时，Matrix 可能已经收下：按“不知道”处理，用同一个事务 ID 重发不会重复。
+fn unknown_commit_on_timeout(failure: MatrixFailure) -> MatrixFailure {
+    if failure.kind() == MatrixFailureKind::Timeout {
+        MatrixFailure::new(failure.operation(), MatrixFailureKind::UnknownCommit)
+    } else {
+        failure
     }
 }
 

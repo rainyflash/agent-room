@@ -24,17 +24,27 @@ use agent_room_application::{
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRecord,
         AgentInstanceVerificationRepository, Clock, ContentAccessMode, ContentAccessPolicy,
-        DeviceSignature, MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixEventType,
-        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-        MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken,
-        MatrixTimelineEvent, MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome,
-        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
-        NetworkAgentMatrixGateway, NetworkAgentRoomRecord, NetworkAgentSubmissionClaim,
-        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
-        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-        PortFuture, SecretValue,
+        DeviceSignature, MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest,
+        MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType,
+        MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixPowerLevel,
+        MatrixReceipt, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
+        MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomSync,
+        MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
+        MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
+        NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
+        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentRoomRecord,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+        NetworkAgentSyncRequest, PortFuture, SecretValue,
     },
+};
+use agent_room_bridge_core::{
+    matrix_recovery::{MatrixRecoveryCommand, MatrixRecoveryResult},
+    matrix_security::{
+        MatrixSecurityCommand, MatrixSecurityFailure, MatrixSecurityGateway, MatrixSecurityResult,
+    },
+    messages::MessageBodyProtectionService,
 };
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
@@ -50,13 +60,14 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use agent_room_identity_adapter::Ed25519DeviceSigningKey;
+use agent_room_message_crypto_adapter::{AesGcmMessageContentCipher, MessageContentRootKey};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    EncryptedSessions, NetworkAgentCleanupOutcome, NetworkAgentMessageDraft, NetworkAgentMessaging,
-    NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
+    EncryptedSessions, EncryptedSpeaker, NetworkAgentCleanupOutcome, NetworkAgentMessageDraft,
+    NetworkAgentMessaging, NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
 };
 
 const TOKEN: &str = "network-agent-token";
@@ -430,7 +441,12 @@ fn content_object(request: &BeginContentUploadRequest) -> ContentObject {
         byte_length: request.byte_length,
         media_type: request.media_type.clone(),
         encryption_mode: request.encryption_mode,
-        scan_state: ContentScanState::Clean,
+        // 客户端密文服务端看不到，不扫描。
+        scan_state: if request.encryption_mode == ContentEncryptionMode::ClientE2ee {
+            ContentScanState::NotApplicable
+        } else {
+            ContentScanState::Clean
+        },
         lifecycle_state: ContentLifecycleState::Uploading,
         expires_at: None,
         created_at: UtcMillis::new(1).unwrap(),
@@ -831,9 +847,13 @@ impl AgentInstanceSignatureVerifier for FakeSignatures {
 struct FakeEncrypted {
     batches: Mutex<VecDeque<Result<MatrixSyncBatch, NetworkGatewayFailure>>>,
     requests: Mutex<Vec<(NetworkAgentId, NetworkAgentSyncRequest)>>,
-    /// 准备时带的会话里进加密房间的时刻，与从哪个位置同步。
-    prepared: Mutex<Vec<(Option<UtcMillis>, Option<String>)>>,
+    /// 准备时带的会话里进加密房间的时刻。
+    prepared: Mutex<Vec<Option<UtcMillis>>>,
     prepare_failure: Mutex<Option<NetworkGatewayFailure>>,
+    /// 完整同步了几次。
+    refreshed: Mutex<u32>,
+    /// 发言用的加密客户端替身。
+    client: Arc<FakeClient>,
     forgotten: Mutex<Vec<NetworkAgentId>>,
     /// 下一轮清理时关掉几个闲置的。
     idle: Mutex<usize>,
@@ -875,15 +895,35 @@ impl EncryptedSessions for FakeEncrypted {
     fn prepare<'a>(
         &'a self,
         session: &'a NetworkAgentSession,
-        since: Option<MatrixSyncToken>,
     ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
         self.log.lock().unwrap().push("prepare".to_owned());
-        self.prepared.lock().unwrap().push((
-            session.encrypted_since,
-            since.map(|token| token.as_str().to_owned()),
-        ));
+        self.prepared.lock().unwrap().push(session.encrypted_since);
         let failure = self.prepare_failure.lock().unwrap().clone();
         Box::pin(async move { failure.map_or(Ok(()), Err) })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
+        self.log.lock().unwrap().push("refresh".to_owned());
+        *self.refreshed.lock().unwrap() += 1;
+        Box::pin(async { Ok(()) })
+    }
+
+    fn speaker<'a>(
+        &'a self,
+        _session: &'a NetworkAgentSession,
+    ) -> PortFuture<'a, Result<EncryptedSpeaker, NetworkGatewayFailure>> {
+        let speaker = EncryptedSpeaker {
+            matrix: self.client.clone(),
+            authority: self.client.clone(),
+            security: self.client.clone(),
+            protection: Arc::new(MessageBodyProtectionService::new(Arc::new(
+                AesGcmMessageContentCipher::new(MessageContentRootKey::from_bytes([7; 32])),
+            ))),
+        };
+        Box::pin(async move { Ok(speaker) })
     }
 
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()> {
@@ -894,6 +934,154 @@ impl EncryptedSessions for FakeEncrypted {
     fn evict_idle(&self) -> PortFuture<'_, usize> {
         let idle = std::mem::take(&mut *self.idle.lock().unwrap());
         Box::pin(async move { idle })
+    }
+}
+
+/// 加密客户端替身：发事件、说房间加不加密、按顺序给出“房间就绪”的结果（给完之后都算就绪）。
+struct FakeClient {
+    metadata: MatrixSessionMetadata,
+    encryption: Mutex<MatrixRoomEncryption>,
+    readiness: Mutex<VecDeque<Result<(), MatrixSecurityFailure>>>,
+    ensured: Mutex<u32>,
+    sent: Mutex<Vec<(MatrixRoomId, MatrixEvent)>>,
+}
+
+impl Default for FakeClient {
+    fn default() -> Self {
+        Self {
+            metadata: MatrixSessionMetadata::new(
+                MatrixUserId::new(matrix_user(OWN_AGENT)).unwrap(),
+                MatrixDeviceId::new(format!("AR_{}", uuid(OWN_INSTANCE).simple())).unwrap(),
+            ),
+            encryption: Mutex::new(MatrixRoomEncryption::EndToEnd),
+            readiness: Mutex::new(VecDeque::new()),
+            ensured: Mutex::new(0),
+            sent: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl MatrixGateway for FakeClient {
+    fn metadata(&self) -> &MatrixSessionMetadata {
+        &self.metadata
+    }
+
+    fn sync_once<'a>(
+        &'a self,
+        _request: &'a MatrixSyncRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSyncBatch>> {
+        unreachable!("同步走 EncryptedSessions 替身")
+    }
+
+    fn create_room<'a>(
+        &'a self,
+        _request: &'a MatrixCreateRoom,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
+        unreachable!("网络 Agent 不建房间")
+    }
+
+    fn resolve_room_alias<'a>(
+        &'a self,
+        _alias_localpart: &'a MatrixRoomAliasLocalpart,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomId>> {
+        unreachable!("网络 Agent 不解析别名")
+    }
+
+    fn invite<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        unreachable!("网络 Agent 不邀请")
+    }
+
+    fn join<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
+        unreachable!("进房间走用例")
+    }
+
+    fn leave<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
+        unreachable!("离开走轻量客户端")
+    }
+
+    fn send_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
+        self.sent
+            .lock()
+            .unwrap()
+            .push((room_id.clone(), event.clone()));
+        let accepted = MatrixAcceptedEvent::new(
+            event.transaction_id().clone(),
+            MatrixEventId::new(format!(
+                "$encrypted-{}:matrix.test",
+                event.transaction_id().as_str()
+            ))
+            .unwrap(),
+        );
+        Box::pin(async move { Ok(accepted) })
+    }
+
+    fn send_state_event<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
+        unreachable!("在线状态走轻量客户端")
+    }
+
+    fn send_receipt<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _receipt: &'a MatrixReceipt,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        unreachable!("网络 Agent 不发回执")
+    }
+
+    fn backfill<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        unreachable!("网络 Agent 不回填")
+    }
+}
+
+impl MatrixRoomAuthorityGateway for FakeClient {
+    fn inspect_room_authority<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
+        let authority = MatrixRoomAuthority::joined(MatrixPowerLevel::Finite(50))
+            .with_encryption(*self.encryption.lock().unwrap());
+        Box::pin(async move { Ok(authority) })
+    }
+}
+
+impl MatrixSecurityGateway for FakeClient {
+    fn recover(
+        &self,
+        _command: MatrixRecoveryCommand,
+    ) -> PortFuture<'_, Result<MatrixRecoveryResult, MatrixSecurityFailure>> {
+        unreachable!("身份由加密客户端自己建")
+    }
+
+    fn ensure_room_ready<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<(), MatrixSecurityFailure>> {
+        *self.ensured.lock().unwrap() += 1;
+        let ready = self.readiness.lock().unwrap().pop_front().unwrap_or(Ok(()));
+        Box::pin(async move { ready })
+    }
+
+    fn execute(
+        &self,
+        _command: MatrixSecurityCommand,
+    ) -> PortFuture<'_, Result<MatrixSecurityResult, MatrixSecurityFailure>> {
+        unreachable!("身份由加密客户端自己建")
     }
 }
 
@@ -1949,13 +2137,12 @@ async fn 凭口令创建时先切到加密客户端建好身份再进房间_之�
     assert_eq!(created.room, private_room());
     assert_eq!(
         harness.agents.log(),
-        ["create", "mark_encrypted", "prepare", "enter"],
-        "身份建好之前不进：房间密钥只发给由主人交叉签名的设备"
+        ["create", "mark_encrypted", "prepare", "enter", "refresh"],
+        "身份建好之前不进：房间密钥只发给由主人交叉签名的设备；进了之后同步一次，进来就能发言"
     );
     assert_eq!(
         *harness.encrypted.prepared.lock().unwrap(),
-        [(Some(UtcMillis::new(42).unwrap()), None)],
-        "新建的还没有同步位置"
+        [Some(UtcMillis::new(42).unwrap())]
     );
     assert_eq!(
         *harness.agents.entered.lock().unwrap(),
@@ -2062,11 +2249,13 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
     assert_eq!(private, private_room());
     assert_eq!(
         *harness.encrypted.prepared.lock().unwrap(),
-        [(Some(UtcMillis::new(42).unwrap()), Some("s1".to_owned()))],
-        "从收件箱的位置接着同步"
+        [Some(UtcMillis::new(42).unwrap())]
     );
     let log = harness.agents.log();
-    assert_eq!(log[log.len() - 3..], ["mark_encrypted", "prepare", "enter"]);
+    assert_eq!(
+        log[log.len() - 4..],
+        ["mark_encrypted", "prepare", "enter", "refresh"]
+    );
 
     assert_eq!(
         harness
@@ -2138,20 +2327,89 @@ async fn 切到加密客户端时正在进行的长轮询立刻返回_免得轻�
 }
 
 #[tokio::test(start_paused = true)]
-async fn 进过加密房间的_agent_暂时不发言_免得明文进了加密房间() {
+async fn 进过加密房间的_agent_在加密房间里由加密客户端发言_正文先加密() {
     let harness = harness();
     *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
 
+    let sent = harness
+        .gateway
+        .send_message(TOKEN, draft("只说给房间里的人"))
+        .await
+        .expect("发出去了");
+
+    assert!(sent.event.unwrap().starts_with("$encrypted-"));
+    assert!(harness.matrix.sent().is_empty(), "不走轻量客户端");
+    let client = &harness.encrypted.client;
     assert_eq!(
-        harness
-            .gateway
-            .send_message(TOKEN, draft("你好"))
-            .await
-            .unwrap_err(),
-        NetworkGatewayFailure::Unavailable
+        *client.ensured.lock().unwrap(),
+        1,
+        "先确认身份就绪、刷新成员身份"
     );
+    let events = client.sent.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0.as_str(), ROOM);
+    assert!(
+        events[0].1.content()["content"].get("encryption").is_some(),
+        "正文的密钥随事件走，由客户端加密"
+    );
+    let uploads = harness.content.uploads.lock().unwrap().clone();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(
+        uploads[0].0.encryption_mode,
+        ContentEncryptionMode::ClientE2ee
+    );
+    assert_ne!(uploads[0].1, "只说给房间里的人".as_bytes(), "存的是密文");
+    assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 加密客户端还不认识刚进的房间时完整同步一次再发() {
+    let harness = harness();
+    *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
+    harness
+        .encrypted
+        .client
+        .readiness
+        .lock()
+        .unwrap()
+        .push_back(Err(MatrixSecurityFailure::NotJoined));
+
+    harness
+        .gateway
+        .send_message(TOKEN, draft("刚进来"))
+        .await
+        .expect("同步之后发出去了");
+
+    assert_eq!(*harness.encrypted.refreshed.lock().unwrap(), 1);
+    assert_eq!(*harness.encrypted.client.ensured.lock().unwrap(), 2);
+    assert_eq!(harness.encrypted.client.sent.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 进过加密房间的_agent_在公开大厅也由加密客户端发出_正文照常交给内容服务() {
+    let harness = harness();
+    *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
+    *harness.encrypted.client.encryption.lock().unwrap() = MatrixRoomEncryption::Unencrypted;
+
+    harness
+        .gateway
+        .send_message(TOKEN, draft("大厅里的话"))
+        .await
+        .expect("发出去了");
+
+    assert_eq!(
+        *harness.encrypted.client.ensured.lock().unwrap(),
+        0,
+        "公开房间不用确认加密身份"
+    );
+    assert_eq!(harness.encrypted.client.sent.lock().unwrap().len(), 1);
     assert!(harness.matrix.sent().is_empty());
-    assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 0);
+    let uploads = harness.content.uploads.lock().unwrap().clone();
+    assert_eq!(
+        uploads[0].0.encryption_mode,
+        ContentEncryptionMode::ServerSide
+    );
+    assert_eq!(uploads[0].1, "大厅里的话".as_bytes());
 }
 
 #[tokio::test]
