@@ -234,6 +234,8 @@ function ConnectionInvite({
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const [slow, setSlow] = useState(false);
+  // 桌面端的网络接入收起时不渲染，也就不去查公开大厅目录。
+  const [networkOpen, setNetworkOpen] = useState(false);
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const localReady = localConnectionReady(phase);
   const cliConfiguration = controller.snapshot?.cliConfiguration ?? null;
@@ -717,12 +719,17 @@ function ConnectionInvite({
         </li>
       </ol>
       {controller.available ? (
-        <details className="agent-invite__network-other">
-          <summary>
+        <details className="agent-invite__network-other" open={networkOpen}>
+          <summary
+            onClick={(event) => {
+              event.preventDefault();
+              setNetworkOpen((open) => !open);
+            }}
+          >
             <ChevronDown aria-hidden="true" />
             {t('agentInvite.network.otherWay')}
           </summary>
-          <NetworkAgentInvite room={currentRoom} />
+          {networkOpen ? <NetworkAgentInvite room={currentRoom} /> : null}
         </details>
       ) : null}
     </div>

@@ -290,7 +290,7 @@ describe('AgentInviteDialog', () => {
   it('桌面端把只凭网络接入收在其他方式里', async () => {
     renderDialog(gateway().value);
     await readyToCopy();
-    expect(screen.queryByRole('button', { name: 'Copy for any agent' })).not.toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Copy for any agent' })).toBeNull();
     fireEvent.click(screen.getByText('Or: just use the internet'));
     expect(screen.getByRole('button', { name: 'Copy for any agent' })).toBeVisible();
   });

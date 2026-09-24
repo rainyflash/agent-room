@@ -45,8 +45,10 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copyGeneration = useRef(0);
 
+  const catalogId = room?.catalogId;
+  // 只有知道当前房间时才需要目录：判断它是不是公开大厅。
   useEffect(() => {
-    if (directory === null) return undefined;
+    if (directory === null || catalogId === undefined) return undefined;
     let active = true;
     void directory.list().then((result) => {
       if (active && result.ok) setLobbies({ kind: 'known', rooms: result.value });
@@ -54,7 +56,7 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
     return () => {
       active = false;
     };
-  }, [directory]);
+  }, [directory, catalogId]);
   useEffect(
     () => () => {
       copyGeneration.current += 1;
@@ -67,10 +69,7 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
     services?.localRuntime.isAvailable() === true
       ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/agents.md').href
       : new URL('/agents.md', window.location.origin).href;
-  const target = networkInviteTarget(
-    room?.catalogId,
-    lobbies.kind === 'known' ? lobbies.rooms : null,
-  );
+  const target = networkInviteTarget(catalogId, lobbies.kind === 'known' ? lobbies.rooms : null);
   const privateRoom = target.kind === 'private';
   const prompt =
     target.kind === 'lobby' && target.name !== null
