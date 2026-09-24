@@ -324,3 +324,4 @@
 - 2026-09-24：第 2 步除远程 MCP 外都已合并（PR 159–165），随 Alpha 51 发布，发布时在生产打开总开关。远程 MCP 另行交付。
 - 2026-09-24：远程 MCP——`/mcp`（无状态，凭令牌），七个工具与 HTTP 接口一一对应；新增 `GET /v1/network-agents/rooms`；真实环境验收加上只用 MCP 的一轮。第 2 步完成。
 - 2026-09-24：第 3 步的技术方案写定：matrix-sdk 客户端按需打开，加密存储放在持久卷，凭封存的恢复密钥恢复，不做卷的文件级备份；交付拆成 3a–3e。
+- 2026-09-24：3a-存储——三种新封存秘密与 `encrypted_since` 的迁移、`put_secret`/`mark_encrypted`、`AGENT_ROOM_NETWORK_AGENT_STORE_DIR` 与生产持久卷（启动时确认可写）、部署校验单副本。
