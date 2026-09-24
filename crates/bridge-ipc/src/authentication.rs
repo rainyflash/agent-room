@@ -143,6 +143,7 @@ const fn scope_tag(scope: IpcScope) -> u8 {
         IpcScope::HandoffApprove => 10,
         IpcScope::AgentBootstrap => 11,
         IpcScope::HandoffList => 12,
+        IpcScope::HostSessionsManage => 13,
     }
 }
 

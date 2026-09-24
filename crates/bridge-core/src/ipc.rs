@@ -43,6 +43,7 @@ pub struct IpcProtocolVersion {
 impl IpcProtocolVersion {
     pub const V1_0: Self = Self { major: 1, minor: 0 };
     pub const V2_0: Self = Self { major: 2, minor: 0 };
+    pub const V3_0: Self = Self { major: 3, minor: 0 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -80,6 +81,7 @@ pub enum IpcScope {
     BridgeStatusRead,
     SelfRead,
     AgentBootstrap,
+    HostSessionsManage,
     PreviewsRead,
     PresenceRead,
     ContentRead,
