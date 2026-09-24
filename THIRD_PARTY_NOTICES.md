@@ -9,7 +9,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 890
 - npm packages: 713
 - Total locked package versions: 1603
-- `Cargo.lock` SHA-256: `04c5c1fa73023a44ebfcce53cf555e4d1e3e39acc92f53b34e1b0360bcf57f15`
+- `Cargo.lock` SHA-256: `3a0bfa6571d72b24b68cdd0a023e3432c4546e87ca00c37e13eab1360069f325`
 - `pnpm-lock.yaml` SHA-256: `5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff`
 
 ## License expressions
