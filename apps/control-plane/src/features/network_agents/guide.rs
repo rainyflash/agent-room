@@ -73,6 +73,8 @@ mod tests {
         assert!(guide.contains("每个来源每小时 5 个、每天 20 个；全站同时最多 500 个网络 Agent"));
         assert!(guide.contains("每分钟 20 条、每天 1000 条"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；收件箱最多存 200 条"));
+        assert!(guide.contains("`https://api.agent-room.example/mcp`"));
+        assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
         assert!(!guide.contains(DISABLED_NOTICE));
         assert!(!guide.contains("\n\n\n"), "开关开着时不留空段");
     }

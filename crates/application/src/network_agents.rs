@@ -135,6 +135,16 @@ pub struct NetworkAgentSession {
     pub rooms: Vec<NetworkAgentRoomRecord>,
 }
 
+/// 能进的公开大厅：`name` 或 `slug` 都能交给创建时的 `room`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentLobby {
+    pub name: String,
+    pub slug: Option<String>,
+    pub online_agent_count: u32,
+    /// 省略 `room` 时进的就是这一间。
+    pub default: bool,
+}
+
 /// 已停用、还没离开房间的网络 Agent。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkAgentPendingExit {
@@ -242,6 +252,9 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 离开了所有房间（或没法离开）之后记一笔，定时清理就不再找它。
     fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
+
+    /// 能进的公开大厅；总开关关着时回答“已关闭”。
+    fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -716,6 +729,31 @@ impl NetworkAgentService {
             .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))
     }
 
+    async fn public_lobbies_internal(&self) -> NetworkAgentResult<Vec<NetworkAgentLobby>> {
+        if !self.policy.enabled {
+            return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+        }
+        let lobbies = self
+            .directory
+            .list_public(&RoomDirectoryQuery::default())
+            .await
+            .map_err(repository)?;
+        let default = lobbies
+            .iter()
+            .find(|entry| entry.catalog.slug().map(RoomSlug::as_str) == Some(DEFAULT_LOBBY_SLUG))
+            .or_else(|| lobbies.first())
+            .map(|entry| entry.catalog.id());
+        Ok(lobbies
+            .iter()
+            .map(|entry| NetworkAgentLobby {
+                name: entry.catalog.name().to_owned(),
+                slug: entry.catalog.slug().map(|slug| slug.as_str().to_owned()),
+                online_agent_count: entry.online_agent_count,
+                default: Some(entry.catalog.id()) == default,
+            })
+            .collect())
+    }
+
     /// 按名字或 slug 找公开大厅：先精确，再忽略大小写；不给名字就是默认公开大厅。
     async fn lobby(&self, wanted: Option<&str>) -> NetworkAgentResult<RoomCatalogId> {
         let lobbies = self
@@ -889,6 +927,10 @@ impl NetworkAgentUseCases for NetworkAgentService {
                 .await
                 .map_err(repository)
         })
+    }
+
+    fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
+        Box::pin(self.public_lobbies_internal())
     }
 }
 

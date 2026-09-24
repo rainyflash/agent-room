@@ -6,8 +6,8 @@ use std::{
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom, NetworkAgentSession,
-        NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentSession, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
 };
@@ -37,28 +37,28 @@ use agent_room_domain::ids::MessageSubmissionId;
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
-const TOKEN: &str = "network-agent-token";
+pub(super) const TOKEN: &str = "network-agent-token";
 const SUBMISSION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";
 
 #[derive(Default)]
-struct FakeAgents {
+pub(super) struct FakeAgents {
     created: Mutex<Vec<CreateNetworkAgent>>,
     tokens: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkAgentFailure>>,
 }
 
 impl FakeAgents {
-    fn failing(failure: NetworkAgentFailure) -> Arc<Self> {
+    pub(super) fn failing(failure: NetworkAgentFailure) -> Arc<Self> {
         let agents = Arc::new(Self::default());
         *agents.failure.lock().unwrap() = Some(failure);
         agents
     }
 
-    fn created(&self) -> Vec<CreateNetworkAgent> {
+    pub(super) fn created(&self) -> Vec<CreateNetworkAgent> {
         self.created.lock().unwrap().clone()
     }
 
-    fn tokens(&self) -> Vec<String> {
+    pub(super) fn tokens(&self) -> Vec<String> {
         self.tokens.lock().unwrap().clone()
     }
 
@@ -144,20 +144,43 @@ impl NetworkAgentUseCases for FakeAgents {
     fn mark_rooms_left(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
         unreachable!("路由不做定时清理")
     }
+
+    fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move {
+            if let Some(failure) = failure {
+                return Err(failure);
+            }
+            Ok(vec![
+                NetworkAgentLobby {
+                    name: "Agent Room 大厅".to_owned(),
+                    slug: Some("agent-room-global".to_owned()),
+                    online_agent_count: 3,
+                    default: true,
+                },
+                NetworkAgentLobby {
+                    name: "Rust 夜谈".to_owned(),
+                    slug: Some("rust-night".to_owned()),
+                    online_agent_count: 0,
+                    default: false,
+                },
+            ])
+        })
+    }
 }
 
 /// 网关替身：记下收到的令牌与参数，按预设回答。
 #[derive(Default)]
-struct FakeMessaging {
-    waits: Mutex<Vec<(String, Duration, u16)>>,
-    acks: Mutex<Vec<(String, String)>>,
-    drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
-    disabled: Mutex<Vec<String>>,
+pub(super) struct FakeMessaging {
+    pub(super) waits: Mutex<Vec<(String, Duration, u16)>>,
+    pub(super) acks: Mutex<Vec<(String, String)>>,
+    pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
+    pub(super) disabled: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
 impl FakeMessaging {
-    fn failing(failure: NetworkGatewayFailure) -> Arc<Self> {
+    pub(super) fn failing(failure: NetworkGatewayFailure) -> Arc<Self> {
         let messaging = Arc::new(Self::default());
         *messaging.failure.lock().unwrap() = Some(failure);
         messaging
@@ -271,7 +294,11 @@ fn app_at(agents: Arc<FakeAgents>, now: i64) -> axum::Router {
     app_with(agents, Arc::new(FakeMessaging::default()), now)
 }
 
-fn app_with(agents: Arc<FakeAgents>, messaging: Arc<FakeMessaging>, now: i64) -> axum::Router {
+pub(super) fn app_with(
+    agents: Arc<FakeAgents>,
+    messaging: Arc<FakeMessaging>,
+    now: i64,
+) -> axum::Router {
     let key = NetworkAgentSealKey::from_bytes([7; 32]);
     router(NetworkAgentHttpState {
         agents,
@@ -965,4 +992,39 @@ async fn 发言的请求体或内容不对时说明该怎么改() {
             assert_eq!(body["details"]["field"], "mentions");
         }
     }
+}
+
+#[tokio::test]
+async fn 不带令牌也能列出能进的公开大厅_标出默认的那间() {
+    let response = app(Arc::new(FakeAgents::default()))
+        .oneshot(
+            Request::builder()
+                .uri("/v1/network-agents/rooms")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = body_json(response).await;
+    assert_eq!(body["schemaVersion"], 1);
+    assert_eq!(body["rooms"][0]["slug"], "agent-room-global");
+    assert_eq!(body["rooms"][0]["default"], true);
+    assert_eq!(body["rooms"][1]["name"], "Rust 夜谈");
+    assert_eq!(body["rooms"][1]["onlineAgentCount"], 0);
+
+    let disabled = disabled_router()
+        .layer(middleware::from_fn(crate::correlation::attach))
+        .oneshot(
+            Request::builder()
+                .uri("/v1/network-agents/rooms")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body_json(disabled).await["code"], "network_agent.disabled");
 }

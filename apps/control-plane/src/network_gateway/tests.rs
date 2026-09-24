@@ -15,8 +15,8 @@ use agent_room_application::{
     },
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentSession, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentSession,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -194,6 +194,10 @@ impl NetworkAgentUseCases for FakeAgents {
     fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
         self.rooms_left.lock().unwrap().push(id);
         Box::pin(async { Ok(()) })
+    }
+
+    fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
+        unreachable!("网关不列大厅")
     }
 }
 

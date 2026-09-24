@@ -1616,6 +1616,105 @@ def verify_network_agent_workflow(
     return {"token": token, "agentId": agent_id, "replyEventId": reply_event}
 
 
+NETWORK_AGENT_MCP: Final = "http://127.0.0.1:8090/mcp"
+
+
+def network_agent_mcp_call(
+    name: str,
+    arguments: Mapping[str, object],
+    *,
+    token: str | None = None,
+    request_id: int = 1,
+) -> dict[str, object]:
+    """像只会用 MCP 的宿主一样调用远程 MCP：Streamable HTTP、无状态，每次调用都是独立的请求。"""
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": dict(arguments)},
+        }
+    ).encode("utf-8")
+    request = Request(NETWORK_AGENT_MCP, data=body, method="POST")
+    request.add_header("Content-Type", "application/json")
+    request.add_header("Accept", "application/json, text/event-stream")
+    request.add_header("MCP-Protocol-Version", "2025-06-18")
+    # 控制面只信最后一跳写的来源地址；这里模拟 Caddy 写入的公网地址。
+    request.add_header("X-Forwarded-For", "198.51.100.25")
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    with urlopen(request, timeout=60) as response:
+        text = response.read().decode("utf-8")
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            payload = json.loads(line.removeprefix("data:").strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("id") == request_id:
+            return require_object(payload.get("result"), f"远程 MCP {name} 的结果")
+    return require_object(json.loads(text).get("result"), f"远程 MCP {name} 的结果")
+
+
+def network_agent_mcp_content(result: Mapping[str, object], step: str) -> dict[str, object]:
+    if result.get("isError") is True:
+        raise VerticalFailure(f"远程 MCP {step}失败：{result.get('structuredContent')}")
+    return require_object(result.get("structuredContent"), f"远程 MCP {step}的结果")
+
+
+def verify_network_agent_mcp(*, room_id: str) -> dict[str, str]:
+    """只会用 MCP 的网络 Agent：列大厅、起名进大厅、看自己、取消息、说话、离开，都走真实控制面。"""
+    rooms = network_agent_mcp_content(network_agent_mcp_call("agent_room_list_rooms", {}), "列大厅")
+    lobbies = rooms.get("rooms")
+    if not isinstance(lobbies, list) or not any(
+        isinstance(lobby, dict) and lobby.get("default") is True for lobby in lobbies
+    ):
+        raise VerticalFailure("远程 MCP 没有列出默认大厅。")
+    # 与 HTTP 那一轮一样进本机 Agent 所在的验收大厅；省略 room 会进默认大厅，那是另一间。
+    created = network_agent_mcp_content(
+        network_agent_mcp_call(
+            "agent_room_join", {"name": "Vertical MCP Scout", "room": CATALOG_SLUG}
+        ),
+        "起名进大厅",
+    )
+    token = require_text(created.get("token"), "远程 MCP 网络 Agent 令牌")
+    agent_id = require_text(created.get("agentId"), "远程 MCP 网络 Agent 的 Agent ID")
+    joined = require_object(created.get("room"), "远程 MCP 网络 Agent 所在房间")
+    if joined.get("matrixRoomId") != room_id:
+        raise VerticalFailure("远程 MCP 网络 Agent 没有进入本机 Agent 所在的大厅分片。")
+    # 宿主配置不了请求头时，令牌放在工具参数里。
+    me = network_agent_mcp_content(
+        network_agent_mcp_call("agent_room_get_self", {"token": token}), "查看自己"
+    )
+    if me.get("agentId") != agent_id:
+        raise VerticalFailure("远程 MCP 查看自己得到的不是同一个 Agent。")
+    network_agent_mcp_content(
+        network_agent_mcp_call("agent_room_wait_for_messages", {"waitSeconds": 0}, token=token),
+        "取消息",
+    )
+    submission_id = new_uuid_v7()
+    arguments = {"text": "Network agent over MCP says hello.", "submissionId": submission_id}
+    sent = network_agent_mcp_content(
+        network_agent_mcp_call("agent_room_send_message", arguments, token=token), "说话"
+    )
+    if sent.get("status") == "pending":
+        sent = network_agent_mcp_content(
+            network_agent_mcp_call("agent_room_send_message", arguments, token=token), "重试说话"
+        )
+    if sent.get("status") != "sent" or sent.get("submissionId") != submission_id:
+        raise VerticalFailure(f"远程 MCP 发言没有得到 Matrix 确认：{sent}。")
+    event_id = require_text(sent.get("eventId"), "远程 MCP 发言的事件 ID")
+    network_agent_mcp_content(network_agent_mcp_call("agent_room_leave", {}, token=token), "离开")
+    after = network_agent_mcp_call("agent_room_get_self", {}, token=token)
+    content = after.get("structuredContent")
+    if after.get("isError") is not True or not isinstance(content, dict) or content.get(
+        "code"
+    ) != "network_agent.unauthorized":
+        raise VerticalFailure("离开后远程 MCP 的令牌仍然可用。")
+    return {"token": token, "agentId": agent_id, "eventId": event_id}
+
+
 def verify_mcp_workflow(
     *,
     target_bridge: AuthorizedBridgeRuntime,
