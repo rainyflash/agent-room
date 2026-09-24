@@ -2,16 +2,19 @@
 //! 发一个 HTTP 请求起名并进公开大厅。除创建外都用创建时拿到的令牌认证。
 //!
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
-//! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供。
+//! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供；
+//! `/mcp` 是同一套能力的远程 MCP。
 
 mod guide;
+mod mcp;
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -71,9 +74,11 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
             header::RETRY_AFTER,
             HeaderName::from_static(CORRELATION_ID_HEADER),
         ]);
+    let mcp = mcp::router(state.clone());
     Router::new()
         .route("/agents.md", get(agents_guide))
         .route("/v1/network-agents", post(create))
+        .route("/v1/network-agents/rooms", get(rooms))
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route(
             "/v1/network-agents/me/messages",
@@ -83,6 +88,7 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_NETWORK_AGENT_BODY_BYTES))
         .layer(cors)
         .with_state(state)
+        .merge(mcp)
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +118,34 @@ struct RoomResponse {
     catalog_id: String,
     matrix_room_id: String,
     name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoomsResponse {
+    schema_version: u8,
+    rooms: Vec<LobbyResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LobbyResponse {
+    name: String,
+    slug: Option<String>,
+    online_agent_count: u32,
+    /// 省略 `room` 时进的就是这一间。
+    default: bool,
+}
+
+impl From<NetworkAgentLobby> for LobbyResponse {
+    fn from(lobby: NetworkAgentLobby) -> Self {
+        Self {
+            name: lobby.name,
+            slug: lobby.slug,
+            online_agent_count: lobby.online_agent_count,
+            default: lobby.default,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -263,6 +297,23 @@ async fn create(
         Ok(created) => {
             no_store((StatusCode::CREATED, Json(CreatedResponse::from(created))).into_response())
         }
+        Err(failure) => no_store(ApiError::network_agent(&failure, correlation_id).into_response()),
+    }
+}
+
+/// 能进的公开大厅，不用令牌；`name` 或 `slug` 都能交给创建时的 `room`。
+async fn rooms(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+) -> Response {
+    match state.agents.public_lobbies().await {
+        Ok(lobbies) => no_store(
+            Json(RoomsResponse {
+                schema_version: SCHEMA_VERSION,
+                rooms: lobbies.into_iter().map(LobbyResponse::from).collect(),
+            })
+            .into_response(),
+        ),
         Err(failure) => no_store(ApiError::network_agent(&failure, correlation_id).into_response()),
     }
 }
@@ -420,29 +471,26 @@ async fn acknowledge(
 }
 
 fn gateway_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationId) -> Response {
+    no_store(gateway_error(failure, correlation_id).into_response())
+}
+
+/// 网关失败对应的稳定错误码；HTTP 接口与远程 MCP 共用。
+fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId) -> ApiError {
     match failure {
-        NetworkGatewayFailure::Agent(failure) => {
-            no_store(ApiError::network_agent(failure, correlation_id).into_response())
-        }
-        NetworkGatewayFailure::Unavailable => no_store(
-            ApiError::network_agent(
-                &NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable),
-                correlation_id,
-            )
-            .into_response(),
+        NetworkGatewayFailure::Agent(failure) => ApiError::network_agent(failure, correlation_id),
+        NetworkGatewayFailure::Unavailable => ApiError::network_agent(
+            &NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable),
+            correlation_id,
         ),
-        NetworkGatewayFailure::InvalidEvent => invalid_event(correlation_id),
-        NetworkGatewayFailure::InvalidMessage(field) => no_store(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "network_agent.invalid_message",
-                ErrorCategory::Validation,
-                "text 须为 1 到 4000 个字符；mentions 最多 8 个 Matrix 用户 ID；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
-                correlation_id,
-            )
-            .with_detail("field", serde_json::Value::from(*field))
-            .into_response(),
-        ),
+        NetworkGatewayFailure::InvalidEvent => invalid_event_error(correlation_id),
+        NetworkGatewayFailure::InvalidMessage(field) => ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "network_agent.invalid_message",
+            ErrorCategory::Validation,
+            "text 须为 1 到 4000 个字符；mentions 最多 8 个 Matrix 用户 ID；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
+            correlation_id,
+        )
+        .with_detail("field", serde_json::Value::from(*field)),
         NetworkGatewayFailure::RoomRequired => simple(
             StatusCode::BAD_REQUEST,
             "network_agent.room_required",
@@ -467,12 +515,9 @@ fn gateway_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationI
             "服务器拒绝了这条发言，可能你已经不在这个房间里。",
             correlation_id,
         ),
-        NetworkGatewayFailure::Internal => no_store(
-            ApiError::network_agent(
-                &NetworkAgentFailure::new(NetworkAgentFailureKind::Internal),
-                correlation_id,
-            )
-            .into_response(),
+        NetworkGatewayFailure::Internal => ApiError::network_agent(
+            &NetworkAgentFailure::new(NetworkAgentFailureKind::Internal),
+            correlation_id,
         ),
     }
 }
@@ -482,25 +527,26 @@ fn simple(
     code: &str,
     message: &str,
     correlation_id: CorrelationId,
-) -> Response {
+) -> ApiError {
     let category = match status {
         StatusCode::FORBIDDEN => ErrorCategory::Authorization,
         StatusCode::CONFLICT => ErrorCategory::Conflict,
         _ => ErrorCategory::Validation,
     };
-    no_store(ApiError::new(status, code, category, message, correlation_id).into_response())
+    ApiError::new(status, code, category, message, correlation_id)
 }
 
 fn invalid_event(correlation_id: CorrelationId) -> Response {
-    no_store(
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "network_agent.invalid_request",
-            ErrorCategory::Validation,
-            "请求体应为 JSON 对象：{\"eventId\": 收到的消息里的 eventId}。",
-            correlation_id,
-        )
-        .into_response(),
+    no_store(invalid_event_error(correlation_id).into_response())
+}
+
+fn invalid_event_error(correlation_id: CorrelationId) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "network_agent.invalid_request",
+        ErrorCategory::Validation,
+        "请求体应为 JSON 对象：{\"eventId\": 收到的消息里的 eventId}。",
+        correlation_id,
     )
 }
 

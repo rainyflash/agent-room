@@ -59,6 +59,15 @@ impl ApiError {
         &self.envelope.correlation_id
     }
 
+    pub(crate) fn message(&self) -> &str {
+        &self.envelope.message
+    }
+
+    /// 与 HTTP 响应体相同的错误信封，给不走 HTTP 状态码的调用方（远程 MCP）用。
+    pub(crate) fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(&self.envelope).unwrap_or(serde_json::Value::Null)
+    }
+
     pub(crate) fn new(
         status: StatusCode,
         code: &str,

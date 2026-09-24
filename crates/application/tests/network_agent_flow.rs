@@ -1078,6 +1078,28 @@ async fn 停用后会话打不开的_如实告诉清理方() {
 }
 
 #[tokio::test]
+async fn 列出能进的公开大厅_标出默认的那间_总开关关着时回答已关闭() {
+    let harness = Harness::enabled();
+
+    let lobbies = harness.service.public_lobbies().await.unwrap();
+
+    assert!(!lobbies.is_empty());
+    assert_eq!(
+        lobbies.iter().filter(|lobby| lobby.default).count(),
+        1,
+        "{lobbies:?}"
+    );
+    let default = lobbies.iter().find(|lobby| lobby.default).unwrap();
+    assert_eq!(default.slug.as_deref(), Some("agent-room-global"));
+
+    let disabled = Harness::new(NetworkAgentPolicy::default_limits(false));
+    assert_eq!(
+        disabled.service.public_lobbies().await.unwrap_err().kind(),
+        NetworkAgentFailureKind::Disabled
+    );
+}
+
+#[tokio::test]
 async fn 按名字或短名找公开大厅_忽略大小写_找不到时列出候选() {
     let harness = Harness::generous();
 

@@ -70,12 +70,19 @@ def accept() -> None:
             if result["agentInstanceId"] != identity["agentInstanceId"]:
                 raise v.VerticalFailure("Server restart changed the Agent instance.")
             network = v.verify_network_agent_workflow(sender_bridge=sender, redactor=redactor)
+            network_mcp = v.verify_network_agent_mcp(
+                room_id=v.require_bridge_session(sender)["matrixRoomId"]
+            )
             v.run_checked([str(v.runtime_binary("agent-room")), "doctor"], environment=target.environment)
         logs = tuple(v.LOG_ROOT.glob("*.log"))
         v.verify_sanitized_logs(
             logs,
             redactor,
-            additional_secrets=(*(runtime.device_code for runtime in runtimes), network["token"]),
+            additional_secrets=(
+                *(runtime.device_code for runtime in runtimes),
+                network["token"],
+                network_mcp["token"],
+            ),
         )
     report = v.ROOT / "artifacts" / "agent-runtime-live.json"
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -83,6 +90,7 @@ def accept() -> None:
         "gracefulRestart":True, "crashRecovered":True,
         "matrixRecoveryGeneration":recovery, "matrixDeliveryTested":True, "replyMessageId":result["replyMessageId"],
         "networkAgentRoundTrip":True, "networkAgentReplyEventId":network["replyEventId"],
+        "networkAgentMcpRoundTrip":True, "networkAgentMcpEventId":network_mcp["eventId"],
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
 
