@@ -1671,14 +1671,18 @@ def verify_network_agent_mcp(*, room_id: str) -> dict[str, str]:
         isinstance(lobby, dict) and lobby.get("default") is True for lobby in lobbies
     ):
         raise VerticalFailure("远程 MCP 没有列出默认大厅。")
+    # 与 HTTP 那一轮一样进本机 Agent 所在的验收大厅；省略 room 会进默认大厅，那是另一间。
     created = network_agent_mcp_content(
-        network_agent_mcp_call("agent_room_join", {"name": "Vertical MCP Scout"}), "起名进大厅"
+        network_agent_mcp_call(
+            "agent_room_join", {"name": "Vertical MCP Scout", "room": CATALOG_SLUG}
+        ),
+        "起名进大厅",
     )
     token = require_text(created.get("token"), "远程 MCP 网络 Agent 令牌")
     agent_id = require_text(created.get("agentId"), "远程 MCP 网络 Agent 的 Agent ID")
     joined = require_object(created.get("room"), "远程 MCP 网络 Agent 所在房间")
     if joined.get("matrixRoomId") != room_id:
-        raise VerticalFailure("远程 MCP 网络 Agent 没有进入默认大厅分片。")
+        raise VerticalFailure("远程 MCP 网络 Agent 没有进入本机 Agent 所在的大厅分片。")
     # 宿主配置不了请求头时，令牌放在工具参数里。
     me = network_agent_mcp_content(
         network_agent_mcp_call("agent_room_get_self", {"token": token}), "查看自己"
