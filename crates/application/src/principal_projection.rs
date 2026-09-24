@@ -62,6 +62,31 @@ pub(crate) fn principal_registration(
     }
 }
 
+/// 网络 Agent 的合成主体：颁发者固定，主体标识是网络 Agent 的 ID，显示名就是 Agent 的名字。
+/// Matrix 用户 ID 按同一规则算出，但这个用户从不注册、也不会被邀请进任何房间。
+pub(crate) fn network_agent_registration(
+    id: PrincipalId,
+    subject: &str,
+    display_name: &str,
+    registered_at: UtcMillis,
+    matrix_server_name: &str,
+) -> PrincipalRegistration {
+    let issuer = agent_room_domain::network_agents::NETWORK_AGENT_ISSUER;
+    PrincipalRegistration {
+        principal: Principal::new(id),
+        oidc_issuer: issuer.to_owned(),
+        oidc_subject: subject.to_owned(),
+        matrix_user_id: format!(
+            "@{}:{matrix_server_name}",
+            matrix_localpart(issuer, subject)
+        ),
+        display_name: display_name.to_owned(),
+        avatar_content_id: None,
+        locale: DEFAULT_LOCALE.to_owned(),
+        registered_at,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::matrix_localpart;

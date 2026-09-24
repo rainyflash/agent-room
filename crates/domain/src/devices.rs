@@ -13,6 +13,8 @@ pub enum DevicePlatform {
     MacOs,
     Linux,
     Web,
+    /// 服务器替只凭网络接入的 Agent 保管的设备；客户端不能注册成这个平台。
+    Network,
 }
 
 impl DevicePlatform {
@@ -22,6 +24,22 @@ impl DevicePlatform {
             Self::MacOs => "macos",
             Self::Linux => "linux",
             Self::Web => "web",
+            Self::Network => "network",
+        }
+    }
+
+    /// 客户端注册设备时声明的平台。`network` 只由服务器为网络 Agent 创建。
+    ///
+    /// # Errors
+    ///
+    /// 未知平台或 `network` 时返回错误。
+    pub fn parse_client(value: &str) -> Result<Self, DomainError> {
+        match Self::try_from(value)? {
+            Self::Network => Err(DomainError::Validation {
+                field: "device_platform",
+                reason: "客户端不能注册网络设备",
+            }),
+            platform => Ok(platform),
         }
     }
 }
@@ -35,6 +53,7 @@ impl TryFrom<&str> for DevicePlatform {
             "macos" => Ok(Self::MacOs),
             "linux" => Ok(Self::Linux),
             "web" => Ok(Self::Web),
+            "network" => Ok(Self::Network),
             _ => Err(DomainError::Validation {
                 field: "device_platform",
                 reason: "包含未知平台",

@@ -13,6 +13,7 @@ pub mod ids;
 pub mod join_codes;
 pub mod messages;
 pub mod moderation;
+pub mod network_agents;
 pub mod policy;
 pub mod private_rooms;
 pub mod reception;

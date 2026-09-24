@@ -31,9 +31,14 @@ use tokio::sync::OnceCell;
 use zeroize::Zeroizing;
 
 mod device_grant;
+mod network_agents;
 
 pub use device_grant::{
     DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, OidcDeviceGrantConfigurationError,
+};
+pub use network_agents::{
+    AesGcmNetworkAgentSealer, Ed25519NetworkAgentKeyFactory, NETWORK_AGENT_SEAL_KEY_BYTES,
+    NetworkAgentSealKey, NetworkSourceDigester,
 };
 
 const SECRET_ENTROPY_BYTES: usize = 32;

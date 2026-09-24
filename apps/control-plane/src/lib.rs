@@ -44,6 +44,7 @@ use agent_room_application::{
     health::ReadinessService,
     lobby_observation::PublicLobbyObservationService,
     moderation::{ModerationDependencies, ModerationService},
+    network_agents::{NetworkAgentDependencies, NetworkAgentPolicy, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
         MatrixUserId, SecretValue,
@@ -60,9 +61,9 @@ use agent_room_application::{
 };
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
-    DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519DeviceProofVerifier,
-    HmacAccountDeletionReceiptIssuer, OidcAdapterConfig, OidcDeviceGrantConfig,
-    SecureSecretFactory,
+    AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant, DiscoveredOidcGateway,
+    Ed25519DeviceProofVerifier, Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer,
+    NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixApplicationServiceConfiguration, MatrixApplicationServiceProvisioner,
@@ -111,6 +112,8 @@ pub(crate) struct AppState {
 
 struct IdentityRuntime {
     routes: Router,
+    /// 不用 Cookie 的公开接口（网络 Agent），合并在带凭据的 CORS 之外。
+    open_routes: Router,
     content_cleanup: content_cleanup::ContentCleanupWorker,
     account_deletion: account_deletion::AccountDeletionRuntime,
     operational_metrics: operational_metrics::OperationalMetricsRuntime,
@@ -197,6 +200,7 @@ pub async fn run() -> Result<(), StartupError> {
     };
     let IdentityRuntime {
         routes,
+        open_routes,
         content_cleanup,
         account_deletion,
         operational_metrics,
@@ -204,6 +208,7 @@ pub async fn run() -> Result<(), StartupError> {
     let app = build_router(
         runtime.readiness.clone(),
         routes,
+        open_routes,
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
         metrics,
@@ -235,6 +240,7 @@ pub async fn run() -> Result<(), StartupError> {
 fn build_router(
     readiness: Arc<ReadinessService>,
     feature_routes: Router,
+    open_routes: Router,
     frontend_origin: &url::Url,
     desktop_origins: &DesktopOrigins,
     metrics: TelemetryMetrics,
@@ -283,6 +289,8 @@ fn build_router(
         })
         .merge(feature_routes)
         .layer(cors)
+        // 这些路由自带不带凭据、允许任何来源的 CORS，不能套上面那层。
+        .merge(open_routes)
         .layer(middleware::from_fn_with_state(
             metrics,
             telemetry_metrics::record_http_request,
@@ -370,6 +378,7 @@ async fn build_identity_router(
         content_authorizer,
     };
     let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
+    let open_routes = build_network_agent_routes(config, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -380,6 +389,7 @@ async fn build_identity_router(
     );
     Ok(IdentityRuntime {
         routes,
+        open_routes,
         content_cleanup,
         account_deletion,
         operational_metrics,
@@ -768,6 +778,53 @@ fn build_agent_collaboration_http_states(
             ),
         },
     })
+}
+
+/// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
+fn build_network_agent_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Router, StartupError> {
+    let provisioning = build_lobby_provisioning(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    )?;
+    let lobbies = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        provisioning,
+    )?;
+    let key = config.network_agents.seal_key.as_ref();
+    let service = NetworkAgentService::new(NetworkAgentDependencies {
+        store: dependencies.repositories.clone(),
+        sealer: Arc::new(AesGcmNetworkAgentSealer::new(key)),
+        keys: Arc::new(Ed25519NetworkAgentKeyFactory),
+        agents: build_agent_management(
+            dependencies.repositories.clone(),
+            dependencies.secrets.clone(),
+            dependencies.system_runtime.clone(),
+            dependencies.matrix_identities.clone(),
+        ),
+        lobbies,
+        directory: dependencies.repositories.clone(),
+        secrets: dependencies.secrets.clone(),
+        clock: dependencies.system_runtime.clone(),
+        identifiers: dependencies.system_runtime.clone(),
+        pause: dependencies.system_runtime.clone(),
+        policy: NetworkAgentPolicy::default_limits(config.network_agents.enabled),
+        matrix_server_name: config.authentication.matrix_server_name.clone(),
+    });
+    Ok(features::network_agents::router(
+        features::network_agents::NetworkAgentHttpState {
+            agents: Arc::new(service),
+            sources: Arc::new(NetworkSourceDigester::new(key)),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ))
 }
 
 fn build_handoff_access_service(
@@ -1278,6 +1335,7 @@ mod tests {
         build_router(
             Arc::new(readiness),
             axum::Router::new(),
+            axum::Router::new(),
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
@@ -1490,6 +1548,62 @@ mod tests {
             Some(&HeaderValue::from_static("https://evil.example"))
         );
     }
+
+    #[tokio::test]
+    async fn 网络_agent_接口在带凭据的_cors_之外_任何来源都能调用但不带凭据() {
+        let readiness = ReadinessService::new(vec![
+            probe(DependencyKind::PostgreSql, Ok(())),
+            probe(DependencyKind::Matrix, Ok(())),
+            probe(DependencyKind::ObjectStore, Ok(())),
+        ])
+        .expect("测试探针配置有效");
+        let router = build_router(
+            Arc::new(readiness),
+            axum::Router::new(),
+            crate::features::network_agents::tests::disabled_router(),
+            &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
+            &DesktopOrigins::for_tests(),
+            TelemetryMetrics::new(),
+        )
+        .expect("测试 CORS 配置有效");
+
+        let preflight = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/v1/network-agents")
+                    .header(header::ORIGIN, "https://some-agent-host.example")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(
+            preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("*"))
+        );
+        assert!(
+            !preflight
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/network-agents/me")
+                    .header(header::ORIGIN, "https://some-agent-host.example")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers().contains_key(CORRELATION_ID_HEADER));
+        assert_eq!(body_json(response).await["code"], "network_agent.disabled");
+    }
 }
 
 #[cfg(test)]
@@ -1515,6 +1629,7 @@ mod real_dependency_tests {
             Url::parse("https://app.agent-room.test").expect("测试前端 Origin 有效");
         let response = build_router(
             runtime.readiness.clone(),
+            axum::Router::new(),
             axum::Router::new(),
             &frontend_origin,
             &DesktopOrigins::for_tests(),

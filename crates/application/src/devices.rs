@@ -419,6 +419,12 @@ impl DeviceAuthorizationService {
         request: RegisterDevice,
     ) -> DeviceAuthorizationResult<DeviceCredentials> {
         validate_device_label(&request.label)?;
+        if request.platform == DevicePlatform::Network {
+            return Err(failure(
+                "device.register",
+                DeviceAuthorizationFailureKind::InvalidRequest,
+            ));
+        }
         let now = self.clock.now();
         validate_device_authorization_time(request.authorization.issued_at(), now, &self.policy)?;
         let registration_message = canonical_device_registration_message(
