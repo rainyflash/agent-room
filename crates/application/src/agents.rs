@@ -479,9 +479,8 @@ impl AgentManagementService {
         )
         .map_err(|error| map_domain_failure(operation, &error))?;
         let instance_id = self.identifiers.agent_instance_id();
-        let matrix_device_id =
-            AgentMatrixDeviceId::new(format!("AR_{}", instance_id.as_uuid().simple()))
-                .map_err(|error| map_domain_failure(operation, &error))?;
+        let matrix_device_id = AgentMatrixDeviceId::new(instance_matrix_device_id(instance_id))
+            .map_err(|error| map_domain_failure(operation, &error))?;
         let instance = AgentInstance::register(
             instance_id,
             request.agent_id,
@@ -662,6 +661,11 @@ impl AgentManagementUseCases for AgentManagementService {
     fn delete_agent(&self, request: DeleteAgent) -> PortFuture<'_, AgentManagementResult<()>> {
         Box::pin(self.delete_agent_internal(request))
     }
+}
+
+/// 实例的 Matrix 设备：注册实例时按这个规则取名，网络 Agent 恢复加密客户端时也按它找回。
+pub(crate) fn instance_matrix_device_id(instance_id: AgentInstanceId) -> String {
+    format!("AR_{}", instance_id.as_uuid().simple())
 }
 
 fn validate_agent_profile(

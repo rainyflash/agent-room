@@ -1080,6 +1080,99 @@ async fn 三十天没活动的自动停用_有活动就不算闲置_停用后等
 }
 
 #[tokio::test]
+async fn 加密存储口令第一次要用时生成并封存_之后不变_解不开时不覆盖() {
+    let harness = Harness::enabled();
+    let created = harness.create("Cipher", None).await.unwrap();
+    let id = created.network_agent_id;
+
+    let first = harness.service.encryption_secrets(id).await.unwrap();
+    assert_eq!(first.recovery_credential, None);
+    let again = harness.service.encryption_secrets(id).await.unwrap();
+    assert_eq!(again.store_passphrase, first.store_passphrase);
+    let stored = harness.store.with(id, |agent| {
+        agent
+            .secrets
+            .iter()
+            .find(|(kind, _)| *kind == NetworkAgentSecretKind::MatrixStorePassphrase)
+            .map(|(_, sealed)| sealed.clone())
+            .unwrap()
+    });
+    assert_eq!(
+        sealed_text(&stored),
+        format!(
+            "sealed:{id}:matrix_store_passphrase:{}",
+            first.store_passphrase.expose()
+        ),
+        "交给存储的是封存后的值"
+    );
+
+    let credential = SecretValue::new("recovery-passphrase-for-backup").unwrap();
+    harness
+        .service
+        .store_recovery_credential(id, &credential)
+        .await
+        .unwrap();
+    assert_eq!(
+        harness
+            .service
+            .encryption_secrets(id)
+            .await
+            .unwrap()
+            .recovery_credential,
+        Some(credential)
+    );
+
+    // 库里的口令被改过：解不开就报依赖不可用，也不生成新的去覆盖。
+    {
+        let mut agents = harness.store.agents.lock().unwrap();
+        let stored = agents
+            .iter_mut()
+            .find(|agent| agent.record.id == id)
+            .unwrap();
+        for (kind, sealed) in &mut stored.secrets {
+            if *kind == NetworkAgentSecretKind::MatrixStorePassphrase {
+                sealed.bytes = b"tampered".to_vec();
+            }
+        }
+    }
+    assert_eq!(
+        harness
+            .service
+            .encryption_secrets(id)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::DependencyUnavailable
+    );
+    let untouched = harness.store.with(id, |agent| {
+        agent
+            .secrets
+            .iter()
+            .filter(|(kind, _)| *kind == NetworkAgentSecretKind::MatrixStorePassphrase)
+            .map(|(_, sealed)| sealed.bytes.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(untouched, [b"tampered".to_vec()]);
+}
+
+#[tokio::test]
+async fn 会话带上实例的_matrix_设备与进加密房间的时刻() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+    let session = harness
+        .service
+        .session(created.token.expose())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        session.matrix_device_id,
+        format!("AR_{}", session.agent_instance_id.as_uuid().simple())
+    );
+    assert_eq!(session.encrypted_since, None);
+}
+
+#[tokio::test]
 async fn 停用后会话打不开的_如实告诉清理方() {
     let harness = Harness::enabled();
     let created = harness.create("Scout", None).await.unwrap();

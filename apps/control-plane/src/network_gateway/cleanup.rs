@@ -1,5 +1,6 @@
 //! 定时清理（ADR 0010 的治理）：停用 30 天没活动的与卡在创建中的网络 Agent，再替已停用、
 //! 还没离开房间的网络 Agent 离开。后者包括运维停用的、闲置停用的，以及自己停用时没离开成的。
+//! 顺带关掉闲置太久的加密客户端。
 
 use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentPendingExit};
 
@@ -18,6 +19,8 @@ pub(crate) struct NetworkAgentCleanupOutcome {
     pub(crate) abandoned: usize,
     /// 有房间没离开成、下一轮再试的。
     pub(crate) retrying: usize,
+    /// 关掉的闲置加密客户端。
+    pub(crate) closed: usize,
 }
 
 impl NetworkGateway {
@@ -33,6 +36,7 @@ impl NetworkGateway {
                     let id = session.network_agent_id;
                     let left = self.leave_rooms(&session).await;
                     self.presence.forget(id).await;
+                    self.close_encrypted(id).await;
                     if left {
                         self.agents.mark_rooms_left(id).await?;
                         outcome.left += 1;
@@ -45,10 +49,14 @@ impl NetworkGateway {
                         network_agent.id = %id,
                         "停用的网络 Agent 会话打不开，没法替它离开房间；不再重试"
                     );
+                    self.close_encrypted(id).await;
                     self.agents.mark_rooms_left(id).await?;
                     outcome.abandoned += 1;
                 }
             }
+        }
+        if let Some(encrypted) = &self.encrypted {
+            outcome.closed = encrypted.evict_idle().await;
         }
         Ok(outcome)
     }

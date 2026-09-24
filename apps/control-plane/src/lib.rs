@@ -825,6 +825,31 @@ fn prepare_network_agent_store(directory: &std::path::Path) -> Result<(), Startu
     Ok(())
 }
 
+/// 进过加密房间的网络 Agent 用的 matrix-sdk 客户端（第 3 步）。总开关关着时不建；
+/// 开着时配置已经保证有存储目录。
+fn build_encrypted_clients(
+    config: &ControlPlaneConfig,
+    agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases>,
+    secrets: Arc<SecureSecretFactory>,
+) -> Result<Option<Arc<dyn network_gateway::EncryptedSessions>>, StartupError> {
+    let Some(directory) = config
+        .network_agents
+        .store_dir
+        .as_ref()
+        .filter(|_| config.network_agents.enabled)
+    else {
+        return Ok(None);
+    };
+    let clients = network_gateway::EncryptedClients::new(
+        agents,
+        secrets,
+        config.dependencies.matrix_base_url.as_str(),
+        directory.clone(),
+    )
+    .map_err(|error| StartupError::new("startup.invalid_matrix_config", error.to_string()))?;
+    Ok(Some(Arc::new(clients)))
+}
+
 /// 网络 Agent 的公开路由，以及总开关打开时才运行的定时清理。
 struct NetworkAgentRuntime {
     routes: Router,
@@ -878,6 +903,7 @@ fn build_network_agent_routes(
     });
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
         Arc::new(service);
+    let encrypted = build_encrypted_clients(config, agents.clone(), dependencies.secrets.clone())?;
     // 用网络 Agent 自己的 Matrix 会话同步：请求期限覆盖一次长轮询，连接期限沿用依赖配置。
     let matrix = MatrixAgentSessionClient::new(
         config.dependencies.matrix_base_url.as_str(),
@@ -894,6 +920,7 @@ fn build_network_agent_routes(
             verification: dependencies.repositories.clone(),
             signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             clock: dependencies.system_runtime.clone(),
+            encrypted,
         },
     ));
     let cleanup = config

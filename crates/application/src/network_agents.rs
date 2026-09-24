@@ -133,6 +133,19 @@ pub struct NetworkAgentSession {
     /// 实例签名种子（编码后）：替 Agent 签发言与状态。
     pub instance_signing_seed: SecretValue,
     pub rooms: Vec<NetworkAgentRoomRecord>,
+    /// 实例的 Matrix 设备（`AR_<实例>`）；加密房间里的密钥发给这台设备。
+    pub matrix_device_id: String,
+    /// 第一次进加密房间的时刻；有值时它所有房间都改由 matrix-sdk 客户端收发。
+    pub encrypted_since: Option<UtcMillis>,
+}
+
+/// 进加密房间要用的秘密（第 3 步）。只在进程内传递，调试输出里不出现内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentEncryptionSecrets {
+    /// matrix-sdk 加密存储的口令：第一次要用时生成并封存，之后不变。
+    pub store_passphrase: SecretValue,
+    /// 服务器端密钥备份的恢复凭据；还没开启备份时为空。
+    pub recovery_credential: Option<SecretValue>,
 }
 
 /// 能进的公开大厅：`name` 或 `slug` 都能交给创建时的 `room`。
@@ -149,7 +162,7 @@ pub struct NetworkAgentLobby {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkAgentPendingExit {
     /// 会话打得开：先发“已离线”、离开这些房间，再记为已离开。
-    Session(NetworkAgentSession),
+    Session(Box<NetworkAgentSession>),
     /// 秘密缺失或解不开（例如封存密钥换了），没法替它离开；调用方记日志后记为已离开，免得每轮都卡住。
     Unopenable(NetworkAgentId),
 }
@@ -255,6 +268,20 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 能进的公开大厅；总开关关着时回答“已关闭”。
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>>;
+
+    /// 进加密房间要用的秘密：存储口令缺了就生成并封存；恢复凭据有就带上。
+    /// 秘密在库里却解不开时报依赖不可用，绝不重新生成去覆盖：那会让已有的加密存储再也打不开。
+    fn encryption_secrets(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>>;
+
+    /// 开启服务器端密钥备份之前，先封存要用的恢复凭据；备份开好了凭据却没存下，就再也恢复不了。
+    fn store_recovery_credential<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        credential: &'a SecretValue,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -576,7 +603,56 @@ impl NetworkAgentService {
             matrix_access_token,
             instance_signing_seed,
             rooms,
+            matrix_device_id: crate::agents::instance_matrix_device_id(agent_instance_id),
+            encrypted_since: record.encrypted_since,
         }
+    }
+
+    async fn encryption_secrets_internal(
+        &self,
+        id: NetworkAgentId,
+    ) -> NetworkAgentResult<NetworkAgentEncryptionSecrets> {
+        let store_passphrase = match self
+            .read_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase)
+            .await?
+        {
+            OpenedSecret::Secret(secret) => secret,
+            OpenedSecret::Missing => {
+                let secret = self.secrets.generate().map_err(|_| dependency())?;
+                self.put_text_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase, &secret)
+                    .await?;
+                secret
+            }
+            OpenedSecret::Unsealable => return Err(dependency()),
+        };
+        let recovery_credential = match self
+            .read_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey)
+            .await?
+        {
+            OpenedSecret::Secret(secret) => Some(secret),
+            OpenedSecret::Missing => None,
+            OpenedSecret::Unsealable => return Err(dependency()),
+        };
+        Ok(NetworkAgentEncryptionSecrets {
+            store_passphrase,
+            recovery_credential,
+        })
+    }
+
+    async fn put_text_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+        secret: &SecretValue,
+    ) -> NetworkAgentResult<()> {
+        let sealed = self
+            .sealer
+            .seal(id, kind, secret.expose().as_bytes())
+            .map_err(|_| dependency())?;
+        self.store
+            .put_secret(id, kind, &sealed, self.clock.now())
+            .await
+            .map_err(repository)
     }
 
     /// 取出并解封一个秘密；缺失说明记录不完整，解不开说明密钥或密文出了问题，都不是令牌的错。
@@ -659,13 +735,13 @@ impl NetworkAgentService {
             return Ok(NetworkAgentPendingExit::Unopenable(id));
         };
         let rooms = self.store.rooms(id).await.map_err(repository)?;
-        Ok(NetworkAgentPendingExit::Session(self.session_of(
+        Ok(NetworkAgentPendingExit::Session(Box::new(self.session_of(
             record,
             (agent_id, agent_instance_id),
             matrix_access_token,
             instance_signing_seed,
             rooms,
-        )))
+        ))))
     }
 
     async fn take_message_quota_internal(&self, id: NetworkAgentId) -> NetworkAgentResult<()> {
@@ -931,6 +1007,21 @@ impl NetworkAgentUseCases for NetworkAgentService {
 
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
         Box::pin(self.public_lobbies_internal())
+    }
+
+    fn encryption_secrets(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>> {
+        Box::pin(self.encryption_secrets_internal(id))
+    }
+
+    fn store_recovery_credential<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        credential: &'a SecretValue,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(self.put_text_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey, credential))
     }
 }
 
