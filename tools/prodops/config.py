@@ -131,6 +131,13 @@ class IdentityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class NetworkAgentsConfig:
+    """只凭网络接入的 Agent（ADR 0010）的总开关；默认关闭。"""
+
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DistributionConfig:
     windows_download_url: str | None
     macos_download_url: str | None
@@ -148,6 +155,7 @@ class DeploymentConfig:
     telemetry: TelemetryConfig
     identity: IdentityConfig
     distribution: DistributionConfig
+    network_agents: NetworkAgentsConfig
 
     @classmethod
     def from_mapping(cls, value: object) -> "DeploymentConfig":
@@ -166,6 +174,7 @@ class DeploymentConfig:
                 "telemetry",
                 "identity",
                 "distribution",
+                "networkAgents",
             },
             "根配置",
         )
@@ -189,6 +198,7 @@ class DeploymentConfig:
             telemetry=_parse_telemetry(root.get("telemetry")),
             identity=_parse_identity(root.get("identity")),
             distribution=_parse_distribution(root.get("distribution")),
+            network_agents=_parse_network_agents(root.get("networkAgents")),
         )
 
     @property
@@ -421,6 +431,17 @@ def _parse_identity(value: object) -> IdentityConfig:
         raise DeploymentConfigError("开放邮箱注册必须配置 identity.registration.smtp。")
     smtp = _parse_smtp(smtp_value)
     return IdentityConfig(RegistrationConfig(mode=mode, smtp=smtp))
+
+
+def _parse_network_agents(value: object) -> NetworkAgentsConfig:
+    if value is None:
+        return NetworkAgentsConfig(enabled=False)
+    source = _mapping(value, "networkAgents")
+    _reject_unknown(source, {"enabled"}, "networkAgents")
+    enabled = source.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise DeploymentConfigError("networkAgents.enabled 必须是 true 或 false。")
+    return NetworkAgentsConfig(enabled=enabled)
 
 
 def _parse_distribution(value: object) -> DistributionConfig:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import base64
 from pathlib import Path
 import stat
 import tempfile
@@ -153,6 +154,21 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(config.identity.registration.mode, "closed")
         self.assertIsNone(config.identity.registration.smtp)
 
+    def test_network_agents_are_off_unless_explicitly_enabled(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        self.assertFalse(DeploymentConfig.from_mapping(value).network_agents.enabled)
+
+        value["networkAgents"] = {"enabled": True}
+        self.assertTrue(DeploymentConfig.from_mapping(value).network_agents.enabled)
+
+        value["networkAgents"] = {"enabled": "true"}
+        with self.assertRaisesRegex(DeploymentConfigError, "networkAgents.enabled"):
+            DeploymentConfig.from_mapping(value)
+
+        value["networkAgents"] = {"enabled": True, "maxLiveAgents": 10}
+        with self.assertRaises(DeploymentConfigError):
+            DeploymentConfig.from_mapping(value)
+
     def test_distribution_url_is_optional_and_requires_https(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         distribution = DeploymentConfig.from_mapping(value).distribution
@@ -225,6 +241,14 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(self.secrets.read("agent_room_db_runtime_password"), first)
         self.assertEqual(uuid.UUID(self.secrets.read("content_matrix_agent_id")).version, 7)
 
+    def test_network_agent_seal_key_is_32_random_bytes_in_standard_base64(self) -> None:
+        key = self.secrets.read("network_agent_seal_key")
+
+        self.assertEqual(len(base64.b64decode(key, validate=True)), 32)
+        other = SecretStore(Path(self.temporary.name) / "other-secrets")
+        other.initialize()
+        self.assertNotEqual(other.read("network_agent_seal_key"), key)
+
     def test_derived_secret_write_is_idempotent_and_replaceable(self) -> None:
         self.secrets.write_derived("migration_database_url", "first")
         self.secrets.write_derived("migration_database_url", "first")
@@ -273,6 +297,8 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("AGENT_ROOM_IDENTITY_REGISTRATION_MODE=closed", environment)
+        self.assertIn("AGENT_ROOM_NETWORK_AGENTS_ENABLED=false", environment)
+        self.assertNotIn(self.secrets.read("network_agent_seal_key"), environment)
         self.assertIn("AGENT_ROOM_WINDOWS_DOWNLOAD_URL=", environment)
         self.assertIn("AGENT_ROOM_MACOS_DOWNLOAD_URL=", environment)
         digest_line = next(
@@ -422,6 +448,33 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("rewrite * /auth/oidc/callback", caddyfile)
         self.assertIn(f"{self.config.public.api_domain} {{", caddyfile)
         self.assertIn("reverse_proxy control-plane:8090", caddyfile)
+
+    def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {"enabled": True}
+        render_deployment(DeploymentConfig.from_mapping(value), self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("AGENT_ROOM_NETWORK_AGENTS_ENABLED=true", environment)
+        self.assertIn(
+            "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE: /run/secrets/network_agent_seal_key",
+            compose,
+        )
+        self.assertIn(
+            "AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}", compose
+        )
+        # 裸域名和网页域名上的 /agents.md 都由控制面按实际地址渲染；裸域名的其余路径仍跳转到网页。
+        for domain in (self.config.public.server_name, self.config.public.app_domain):
+            block = caddyfile.split(f"\n{domain} {{\n", 1)[1].split("\n}\n", 1)[0]
+            self.assertIn(
+                "\thandle /agents.md {\n\t\treverse_proxy control-plane:8090\n\t}", block
+            )
+        bare = caddyfile.split(f"\n{self.config.public.server_name} {{\n", 1)[1]
+        self.assertLess(bare.index("handle /agents.md"), bare.index("redir https://"))
 
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

@@ -210,6 +210,9 @@ def _compose_environment(
         "AGENT_ROOM_MATRIX_DOMAIN": public.matrix_domain,
         "AGENT_ROOM_IDENTITY_DOMAIN": public.identity_domain,
         "AGENT_ROOM_IDENTITY_REGISTRATION_MODE": config.identity.registration.mode,
+        "AGENT_ROOM_NETWORK_AGENTS_ENABLED": (
+            "true" if config.network_agents.enabled else "false"
+        ),
         "AGENT_ROOM_WINDOWS_DOWNLOAD_URL": config.distribution.windows_download_url or "",
         "AGENT_ROOM_MACOS_DOWNLOAD_URL": config.distribution.macos_download_url or "",
         "AGENT_ROOM_DB_HOST": database.host,
@@ -581,6 +584,9 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t\trespond /.well-known/matrix/client `{{"m.homeserver":{{"base_url":"{public.matrix_origin}"}}}}` 200
 \t\trespond 404
 \t}}
+\thandle /agents.md {{
+\t\treverse_proxy control-plane:8090
+\t}}
 \thandle {{
 \t\tredir https://{public.app_domain}{{uri}} 302
 \t}}
@@ -597,6 +603,9 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t}}
 \thandle /_agent-room/healthz {{
 \t\trespond 200
+\t}}
+\thandle /agents.md {{
+\t\treverse_proxy control-plane:8090
 \t}}
 \thandle {BROWSER_OIDC_CALLBACK_PATH} {{
 \t\trewrite * /auth/oidc/callback

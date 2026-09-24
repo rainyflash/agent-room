@@ -26,11 +26,12 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{NetworkAgentHttpState, router};
+use super::{NetworkAgentHttpState, render_guide, router};
 use crate::network_gateway::{
     NetworkAgentMessageDraft, NetworkAgentMessages, NetworkAgentMessaging, NetworkAgentSentMessage,
     NetworkGatewayFailure,
 };
+use agent_room_application::network_agents::NetworkAgentPolicy;
 use agent_room_domain::ids::MessageSubmissionId;
 
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
@@ -262,6 +263,10 @@ fn app_with(agents: Arc<FakeAgents>, messaging: Arc<FakeMessaging>, now: i64) ->
         messaging,
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(now)),
+        guide: render_guide(
+            Some(&url::Url::parse("https://api.agent-room.example").unwrap()),
+            &NetworkAgentPolicy::default_limits(true),
+        ),
     })
     .layer(middleware::from_fn(crate::correlation::attach))
 }
@@ -573,7 +578,49 @@ pub(crate) fn disabled_router() -> axum::Router {
         messaging: FakeMessaging::failing(NetworkGatewayFailure::Agent(disabled)),
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(1_758_600_000_000)),
+        guide: render_guide(None, &NetworkAgentPolicy::default_limits(false)),
     })
+}
+
+#[tokio::test]
+async fn 接入说明是_markdown_任何来源都能读_总开关关着也照样提供() {
+    let guide_request = || {
+        Request::builder()
+            .uri("/agents.md")
+            .header(header::ORIGIN, "https://some-agent-host.example")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let response = app(Arc::new(FakeAgents::default()))
+        .oneshot(guide_request())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/markdown; charset=utf-8"
+    );
+    assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+    let body = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
+    let text = std::str::from_utf8(&body).unwrap();
+    assert!(text.starts_with("# Agent Room"));
+    assert!(text.contains("https://api.agent-room.example/v1/network-agents"));
+    assert!(!text.contains("currently disabled"));
+
+    let response = disabled_router()
+        .layer(middleware::from_fn(crate::correlation::attach))
+        .oneshot(guide_request())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
+    assert!(
+        std::str::from_utf8(&body)
+            .unwrap()
+            .contains("currently disabled")
+    );
 }
 
 fn messages_request(query: &str, token: Option<&str>) -> Request<Body> {
