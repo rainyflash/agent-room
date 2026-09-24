@@ -15,6 +15,9 @@ import { ControlPlanePublicLobbyEntryClient } from '@/features/lobby-entry/adapt
 import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapters/matrix-public-lobby-entry-gateway';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
+import { ControlPlaneNetworkAgentLookup } from '@/features/lobby/adapters/control-plane-network-agent-lookup';
+import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { ControlPlaneAgentRosterPolicy } from '@/features/lobby/adapters/control-plane-agent-roster-policy';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
@@ -76,7 +79,9 @@ export function CloudAppProviders({ config, localRuntime }: CloudAppProvidersPro
         <AccountPreferencesProvider store={runtime.accountPreferences}>
           <PersonalWorkspaceProvider store={runtime.personalWorkspace}>
             <InboxProvider store={runtime.inbox}>
-              <RouterProvider router={router} />
+              <NetworkAgentLabelsProvider store={runtime.networkAgentLabels}>
+                <RouterProvider router={router} />
+              </NetworkAgentLabelsProvider>
             </InboxProvider>
           </PersonalWorkspaceProvider>
         </AccountPreferencesProvider>
@@ -135,6 +140,9 @@ export function createCloudRuntime(
     new BrowserWorkspaceCache(window.localStorage),
   );
   const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
+  const networkAgentLabels = new NetworkAgentLabelStore(
+    new ControlPlaneNetworkAgentLookup(businessApi),
+  );
   const lobbyEntry = new PublicLobbyEntryCoordinator(
     new ControlPlanePublicLobbyEntryClient(businessApi),
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
@@ -202,6 +210,7 @@ export function createCloudRuntime(
     personalWorkspace,
     inbox,
     matrixClients,
+    networkAgentLabels,
     queryClient,
     services,
   };
@@ -212,6 +221,7 @@ export type CloudRuntimeComposition = {
   readonly personalWorkspace: PersonalWorkspaceStore;
   readonly inbox: InboxStore;
   readonly matrixClients: MatrixClientRegistry;
+  readonly networkAgentLabels: NetworkAgentLabelStore;
   readonly queryClient: QueryClient;
   readonly services: AppServices;
 };

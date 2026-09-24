@@ -11,6 +11,8 @@ import type {
   MessagePublisher,
 } from '@/features/messages/domain/publication';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
+import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -22,7 +24,11 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
-function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
+function harness(
+  unknown = false,
+  messages: readonly RoomMessageSignal[] = [],
+  labels: NetworkAgentLabelStore | null = null,
+) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
       ok(
@@ -60,17 +66,24 @@ function harness(unknown = false, messages: readonly RoomMessageSignal[] = []) {
         }),
       ),
   };
+  const panel = (
+    <ConversationPanel
+      messages={messages}
+      publisher={publisher}
+      roomId={roomId}
+      roomName="Lobby"
+      state="ready"
+      participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
+      submissionIds={{ next: () => submissionId }}
+    />
+  );
   render(
     <I18nextProvider i18n={i18n}>
-      <ConversationPanel
-        messages={messages}
-        publisher={publisher}
-        roomId={roomId}
-        roomName="Lobby"
-        state="ready"
-        participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
-        submissionIds={{ next: () => submissionId }}
-      />
+      {labels === null ? (
+        panel
+      ) : (
+        <NetworkAgentLabelsProvider store={labels}>{panel}</NetworkAgentLabelsProvider>
+      )}
     </I18nextProvider>,
   );
   return { publish, reconcile };
@@ -235,6 +248,59 @@ describe('人与 Agent 直接聊天', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('网络 Agent 的消息头标出“网络 Agent”，别的 Agent 仍标“Agent”', async () => {
+    const message = (id: string, agent: string): RoomMessageSignal => ({
+      actor: {
+        agentId: agent,
+        instanceId: agent,
+        displayName: 'Ada',
+        kind: 'agent',
+        matrixUserId: agentId,
+        provenance: 'autonomous_agent',
+      },
+      messageId: id,
+      matrixEventId: `$${id}`,
+      roomId,
+      lifecycle: 'active',
+      edited: false,
+      endToEndEncrypted: false,
+      serverTimestamp: 1_000,
+      signatureStatus: 'instance_verified',
+      content: null,
+      preview: {
+        title: id,
+        summary: id,
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text: `Hello from ${id}`, mentions: [] },
+      },
+    });
+    const network = '01990d9e-8400-7000-8000-000000000021';
+    const local = '01990d9e-8400-7000-8000-000000000022';
+    const labels = new NetworkAgentLabelStore(
+      { lookup: (ids) => Promise.resolve(ok(new Set(ids.filter((id) => id === network)))) },
+      {
+        schedule: (task) => {
+          task();
+        },
+      },
+    );
+    harness(false, [message('net', network), message('bridge', local)], labels);
+
+    const header = (id: string) => {
+      const article = document.querySelector(`[data-conversation-message-id="${id}"]`);
+      const found = article?.querySelector('header');
+      if (!(found instanceof HTMLElement)) throw new Error(`missing header for ${id}`);
+      return found;
+    };
+    await waitFor(() => {
+      expect(header('net')).toHaveTextContent('Network agent');
+    });
+    expect(header('bridge')).not.toHaveTextContent('Network agent');
+    expect(header('bridge')).toHaveTextContent('Agent');
   });
 
   it('只有参与了回复关系的消息才显示「查看回复话题」', () => {

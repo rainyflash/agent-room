@@ -4296,6 +4296,22 @@ p.message-dock__headline {
   letter-spacing: -0.045em;
 }
 
+.agent-inspector__origin {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  padding: 0.05rem 0.38rem;
+  margin: 0.45rem 0 0;
+  border: 1px solid color-mix(in srgb, var(--color-network) 44%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--color-network) 84%, var(--color-ink));
+  background: color-mix(in srgb, var(--color-network) 9%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+}
+
 .agent-inspector__status {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

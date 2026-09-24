@@ -414,6 +414,12 @@ fn personal_routes(
         repository: dependencies.repositories.clone(),
         authentication: dependencies.authentication.clone(),
     })
+    .merge(features::network_agent_lookup::router(
+        features::network_agent_lookup::NetworkAgentLookupHttpState {
+            lookup: dependencies.repositories.clone(),
+            authentication: dependencies.authentication.clone(),
+        },
+    ))
     .merge(features::reception::router(
         features::reception::ReceptionHttpState {
             repository: dependencies.repositories.clone(),

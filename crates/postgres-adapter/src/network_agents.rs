@@ -3,9 +3,10 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentProvisioning,
-        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStore,
-        PortFuture, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentLookup,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentStore, PortFuture, RateWindowDecision,
+        RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -325,6 +326,32 @@ impl NetworkAgentStore for PostgresRepositories {
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>> {
         Box::pin(self.network_agent_rooms(id))
+    }
+}
+
+impl NetworkAgentLookup for PostgresRepositories {
+    fn network_agent_ids<'a>(
+        &'a self,
+        candidates: &'a [AgentId],
+    ) -> PortFuture<'a, RepositoryResult<Vec<AgentId>>> {
+        Box::pin(async move {
+            if candidates.is_empty() {
+                return Ok(Vec::new());
+            }
+            let operation = "network_agent.lookup";
+            let candidates: Vec<uuid::Uuid> =
+                candidates.iter().copied().map(AgentId::as_uuid).collect();
+            // `network_agent.agent_id` 有唯一索引；停用的网络 Agent 也算。
+            let found: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT agent_id FROM agent_room.network_agent \
+                 WHERE agent_id = ANY($1) ORDER BY agent_id",
+            )
+            .bind(&candidates)
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(found.into_iter().map(AgentId::from_uuid).collect())
+        })
     }
 }
 
