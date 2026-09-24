@@ -20,15 +20,15 @@ use agent_room_application::{
     },
     persistence::RepositoryResult,
     ports::{
-        Clock, GeneratedSigningKey, IdentifierFactory, MatrixDeviceId, MatrixSession,
-        MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation, NetworkAgentBeginOutcome,
-        NetworkAgentKeyFactory, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry,
-        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
-        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretSealingFailure, SecretValue,
-        StoredAgentInstanceRegistration,
+        AgentInstanceManagementRecord, Clock, GeneratedSigningKey, IdentifierFactory,
+        MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation,
+        NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
+        NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
+        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue, StoredAgentInstanceRegistration,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
@@ -177,6 +177,20 @@ impl NetworkAgentStore for MemoryStore {
             .unwrap()
             .iter()
             .find(|agent| &agent.token_digest == digest)
+            .map(|agent| agent.record.clone());
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn find(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>> {
+        let found = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|agent| agent.record.id == id)
             .map(|agent| agent.record.clone());
         Box::pin(async move { Ok(found) })
     }
@@ -425,6 +439,7 @@ impl NetworkAgentKeyFactory for CountingKeys {
 struct FakeAgents {
     host_agents: Mutex<Vec<CreateHostAgentForDevice>>,
     instances: Mutex<Vec<RegisterAgentInstance>>,
+    rotations: Mutex<Vec<RotateAgentInstanceMatrixSession>>,
 }
 
 impl AgentManagementUseCases for FakeAgents {
@@ -510,11 +525,66 @@ impl AgentManagementUseCases for FakeAgents {
         })
     }
 
+    /// 加密存储重建时换设备会话：同一台设备，新的访问令牌。
     fn rotate_instance_matrix_session(
         &self,
-        _request: RotateAgentInstanceMatrixSession,
+        request: RotateAgentInstanceMatrixSession,
     ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
-        unreachable!("创建时不轮换会话")
+        let registered = self
+            .instances
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|instance| {
+                AgentInstanceId::from_uuid(instance.request_id.as_uuid()) == request.instance_id
+            })
+            .cloned()
+            .expect("换会话的实例登记过");
+        let agent = registered_agent(registered.agent_id, "网络 Agent");
+        let instance = AgentInstance::restore(
+            request.instance_id,
+            registered.agent_id,
+            request.actor.device_id,
+            AdapterBindingId::from_uuid(Uuid::now_v7()),
+            registered.public_signing_key.clone(),
+            AgentMatrixDeviceId::new(format!("AR_{}", request.instance_id.as_uuid().simple()))
+                .unwrap(),
+            AgentInstanceStatus::Connecting,
+            None,
+        )
+        .unwrap();
+        let rotations = {
+            let mut rotations = self.rotations.lock().unwrap();
+            rotations.push(request);
+            rotations.len()
+        };
+        Box::pin(async move {
+            Ok(RotatedAgentInstanceMatrixSession {
+                instance: AgentInstanceManagementRecord {
+                    instance,
+                    agent_matrix_user_id: agent.matrix_user_id.clone(),
+                    agent_display_name: agent.display_name.clone(),
+                    agent_avatar_content_id: None,
+                    adapter_type: "network".to_owned(),
+                    capability_version: "1.0".to_owned(),
+                    device_label: "Agent Room 网络 Agent".to_owned(),
+                    device_platform: DevicePlatform::Network,
+                    device_trust_state: DeviceTrustState::Verified,
+                    created_at: UtcMillis::new(START).unwrap(),
+                    last_seen_at: None,
+                    revoked_at: None,
+                    matrix_device_revoked_at: None,
+                },
+                matrix_session: MatrixSession::new(
+                    MatrixSessionMetadata::new(
+                        MatrixUserId::new(agent.matrix_user_id).unwrap(),
+                        MatrixDeviceId::new("AR_NETWORK").unwrap(),
+                    ),
+                    SecretValue::new(format!("{MATRIX_TOKEN}-rotated-{rotations}")).unwrap(),
+                    None,
+                ),
+            })
+        })
     }
 
     fn change_membership(
@@ -1930,4 +2000,48 @@ async fn 记下第一次进加密房间的时刻_之后不改_会话随之带上
         .await
         .unwrap();
     assert_eq!(session.encrypted_since, Some(first));
+}
+
+#[tokio::test]
+async fn 加密存储重建时同一台设备换会话_封存新的访问令牌_停用的不换() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+    let id = created.network_agent_id;
+    let record = harness.store.only();
+
+    let token = harness.service.rotate_matrix_session(id).await.unwrap();
+
+    assert_eq!(token.expose(), format!("{MATRIX_TOKEN}-rotated-1"));
+    let rotations = harness.agents.rotations.lock().unwrap().clone();
+    assert_eq!(rotations.len(), 1);
+    assert_eq!(rotations[0].instance_id, record.agent_instance_id.unwrap());
+    assert_eq!(
+        rotations[0].actor.device_id, record.device_id,
+        "以它自己的网络设备换"
+    );
+    let session = harness
+        .service
+        .session(created.token.expose())
+        .await
+        .unwrap();
+    assert_eq!(
+        session.matrix_access_token, token,
+        "之后的会话用新的访问令牌"
+    );
+
+    harness
+        .service
+        .disable(created.token.expose())
+        .await
+        .unwrap();
+    assert_eq!(
+        harness
+            .service
+            .rotate_matrix_session(id)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized
+    );
+    assert_eq!(harness.agents.rotations.lock().unwrap().len(), 1);
 }

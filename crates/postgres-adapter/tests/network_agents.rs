@@ -75,6 +75,17 @@ async fn 一个事务写入主体设备与秘密_没停用的不重名_停用后
     assert_eq!(record.display_name, name);
     assert_eq!(record.agent_id, None);
     assert_eq!(
+        repositories.find(first.id).await.expect("按 ID 找"),
+        Some(record.clone())
+    );
+    assert_eq!(
+        repositories
+            .find(NetworkAgentId::from_uuid(Uuid::now_v7()))
+            .await
+            .expect("按 ID 找"),
+        None
+    );
+    assert_eq!(
         repositories
             .find_secret(first.id, NetworkAgentSecretKind::InstanceSigningSeed)
             .await

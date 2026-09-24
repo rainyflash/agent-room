@@ -297,6 +297,12 @@ impl NetworkAgentUseCases for FakeAgents {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         unreachable!("网关测试里的加密客户端是替身")
     }
+    fn rotate_matrix_session(
+        &self,
+        _id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<SecretValue>> {
+        unreachable!("网关测试里的加密客户端是替身")
+    }
 }
 
 /// 与 Postgres 实现同样语义的提交记录。

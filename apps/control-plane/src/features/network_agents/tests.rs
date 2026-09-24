@@ -206,6 +206,12 @@ impl NetworkAgentUseCases for FakeAgents {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         unreachable!("路由不打开加密客户端")
     }
+    fn rotate_matrix_session(
+        &self,
+        _id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<SecretValue>> {
+        unreachable!("路由不打开加密客户端")
+    }
 }
 
 /// 网关替身：记下收到的令牌与参数，按预设回答。创建像真网关一样交给用例替身。

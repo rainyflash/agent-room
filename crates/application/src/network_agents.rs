@@ -25,7 +25,10 @@ use serde_json::Map;
 
 use crate::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
-    agents::{AgentManagementUseCases, CreateHostAgentForDevice, RegisterAgentInstance},
+    agents::{
+        AgentManagementUseCases, CreateHostAgentForDevice, RegisterAgentInstance,
+        RotateAgentInstanceMatrixSession,
+    },
     devices::AuthenticatedDevice,
     persistence::RepositoryError,
     ports::{
@@ -339,6 +342,13 @@ pub trait NetworkAgentUseCases: Send + Sync {
         id: NetworkAgentId,
         credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 加密存储丢了或与 Matrix 设备对不上时：在 Matrix 上删掉这台设备（连同它上传过的密钥），
+    /// 同一台设备重新签发会话，封存新的访问令牌并交回。只对生效中的网络 Agent。
+    fn rotate_matrix_session(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<SecretValue>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -855,6 +865,32 @@ impl NetworkAgentService {
         })
     }
 
+    async fn rotate_matrix_session_internal(
+        &self,
+        id: NetworkAgentId,
+    ) -> NetworkAgentResult<SecretValue> {
+        let record = self
+            .store
+            .find(id)
+            .await
+            .map_err(repository)?
+            .filter(|record| record.status == NetworkAgentStatus::Active)
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))?;
+        let instance_id = record.agent_instance_id.ok_or_else(internal)?;
+        let rotated = self
+            .agents
+            .rotate_instance_matrix_session(RotateAgentInstanceMatrixSession {
+                actor: self.actor_of(&record, self.clock.now())?,
+                instance_id,
+            })
+            .await
+            .map_err(|_| dependency())?;
+        let token = rotated.matrix_session.access_token().clone();
+        self.put_text_secret(id, NetworkAgentSecretKind::MatrixAccessToken, &token)
+            .await?;
+        Ok(token)
+    }
+
     /// 读一个第一次要用时才生成的秘密：缺了就生成并封存；在库里却解不开时报依赖不可用，
     /// 绝不重新生成去覆盖。
     async fn generated_secret(
@@ -1283,6 +1319,13 @@ impl NetworkAgentUseCases for NetworkAgentService {
         credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.put_text_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey, credential))
+    }
+
+    fn rotate_matrix_session(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<SecretValue>> {
+        Box::pin(self.rotate_matrix_session_internal(id))
     }
 }
 

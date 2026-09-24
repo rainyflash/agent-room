@@ -178,6 +178,11 @@ pub trait NetworkAgentStore: Send + Sync {
         digest: &'a SecretDigest,
     ) -> PortFuture<'a, RepositoryResult<Option<NetworkAgentRecord>>>;
 
+    fn find(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>>;
+
     fn find_secret(
         &self,
         id: NetworkAgentId,
