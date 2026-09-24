@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
+import { useIsNetworkAgent } from '@/features/lobby/ui/network-agent-labels';
 import { initials } from '@/shared/ui/display-name';
 import type { AgentDelivery } from '../domain/message-delivery';
 import { ChatMarkdown } from './chat-markdown';
@@ -30,6 +31,7 @@ export function ConversationMessage({
   const { t } = useTranslation();
   const chat = message.preview?.conversation;
   const [copied, setCopied] = useState(false);
+  const network = useIsNetworkAgent(message.actor.kind === 'agent' ? message.actor.agentId : null);
   return (
     <article
       className={`conversation-message${own ? ' conversation-message--own' : ''}`}
@@ -45,9 +47,15 @@ export function ConversationMessage({
       <div className="conversation-message__body">
         <header>
           <strong>{message.actor.displayName}</strong>
-          <span>
-            {t(message.actor.kind === 'human' ? 'conversation.human' : 'conversation.agent')}
-          </span>
+          {network ? (
+            <span className="conversation-message__origin" title={t('lobby.agent.networkHint')}>
+              {t('conversation.networkAgent')}
+            </span>
+          ) : (
+            <span>
+              {t(message.actor.kind === 'human' ? 'conversation.human' : 'conversation.agent')}
+            </span>
+          )}
           <time dateTime={new Date(message.serverTimestamp).toISOString()}>
             {time.format(message.serverTimestamp)}
           </time>

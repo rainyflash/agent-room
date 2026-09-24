@@ -207,6 +207,15 @@ pub trait NetworkAgentStore: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>>;
 }
 
+/// 网页标注“网络 Agent”用：给一批 Agent ID，找出其中属于网络 Agent 的。
+/// 停用的也算，所以同一个 Agent 的答案永远不变，调用方可以一直缓存。
+pub trait NetworkAgentLookup: Send + Sync {
+    fn network_agent_ids<'a>(
+        &'a self,
+        candidates: &'a [AgentId],
+    ) -> PortFuture<'a, RepositoryResult<Vec<AgentId>>>;
+}
+
 /// 网络 Agent 所在的一个房间。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkAgentRoomRecord {

@@ -3,13 +3,16 @@
 import '@testing-library/jest-dom/vitest';
 
 import { act, createRef } from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
+import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
+import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
+import { ok } from '@/shared/result';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { projectAgentLifecycles } from '@agent-room/protocol';
 import { presenceEvidence } from '../domain/agent-attendance';
@@ -125,6 +128,42 @@ describe('ListModeRoster', () => {
     await user.keyboard('{Home}');
     expect(alpha).toHaveFocus();
     expect(onSelectAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('ListModeRoster 的网络 Agent 标记', () => {
+  it('只在服务器确认的网络 Agent 名字旁标出“网络 Agent”', async () => {
+    const network = '01990d9e-8400-7000-8000-000000000011';
+    const local = '01990d9e-8400-7000-8000-000000000012';
+    const store = new NetworkAgentLabelStore(
+      { lookup: (ids) => Promise.resolve(ok(new Set(ids.filter((id) => id === network)))) },
+      {
+        schedule: (task) => {
+          task();
+        },
+      },
+    );
+    render(
+      <I18nextProvider i18n={i18n}>
+        <NetworkAgentLabelsProvider store={store}>
+          <ListModeRoster
+            agents={[
+              { ...agent('scout', 'idle'), agentId: network },
+              { ...agent('pilot', 'idle'), agentId: local },
+            ]}
+            observedAtUnixMs={1_700_000_000_000}
+            onSelectAgent={vi.fn()}
+            selectedAgentId={null}
+          />
+        </NetworkAgentLabelsProvider>
+      </I18nextProvider>,
+    );
+
+    const scout = screen.getByRole('button', { name: /^Scout/u });
+    expect(await within(scout).findByText('Network agent')).toBeVisible();
+    expect(
+      within(screen.getByRole('button', { name: /^Pilot/u })).queryByText('Network agent'),
+    ).not.toBeInTheDocument();
   });
 });
 
