@@ -5,6 +5,7 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
 mod operational_metrics;
@@ -120,6 +121,8 @@ struct IdentityRuntime {
     content_cleanup: content_cleanup::ContentCleanupWorker,
     account_deletion: account_deletion::AccountDeletionRuntime,
     operational_metrics: operational_metrics::OperationalMetricsRuntime,
+    /// 只在网络 Agent 总开关打开时运行。
+    network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
 
 struct AgentFeatureHttpStates {
@@ -208,6 +211,7 @@ pub async fn run() -> Result<(), StartupError> {
         content_cleanup,
         account_deletion,
         operational_metrics,
+        network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
         runtime.readiness.clone(),
@@ -231,6 +235,9 @@ pub async fn run() -> Result<(), StartupError> {
     content_cleanup.shutdown().await;
     account_deletion.shutdown().await;
     operational_metrics.shutdown().await;
+    if let Some(worker) = network_agent_cleanup {
+        worker.shutdown().await;
+    }
     runtime.shutdown().await;
     observability.shutdown();
     result.map_err(|error| {
@@ -388,7 +395,7 @@ async fn build_identity_router(
         content: content_use_cases,
     };
     let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
-    let open_routes = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
+    let network_agents = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -399,10 +406,11 @@ async fn build_identity_router(
     );
     Ok(IdentityRuntime {
         routes,
-        open_routes,
+        open_routes: network_agents.routes,
         content_cleanup,
         account_deletion,
         operational_metrics,
+        network_agent_cleanup: network_agents.cleanup,
     })
 }
 
@@ -796,12 +804,18 @@ fn build_agent_collaboration_http_states(
     })
 }
 
+/// 网络 Agent 的公开路由，以及总开关打开时才运行的定时清理。
+struct NetworkAgentRuntime {
+    routes: Router,
+    cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
+}
+
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
 fn build_network_agent_routes(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
-) -> Result<Router, StartupError> {
+) -> Result<NetworkAgentRuntime, StartupError> {
     let provisioning = build_lobby_provisioning(
         &config.lobby,
         dependencies.repositories.clone(),
@@ -844,8 +858,8 @@ fn build_network_agent_routes(
         request_timeout.min(Duration::from_secs(10)),
     )
     .map_err(|error| StartupError::new("startup.invalid_matrix_config", error.to_string()))?;
-    let gateway =
-        network_gateway::NetworkGateway::new(network_gateway::NetworkGatewayDependencies {
+    let gateway = Arc::new(network_gateway::NetworkGateway::new(
+        network_gateway::NetworkGatewayDependencies {
             agents: agents.clone(),
             inbox: dependencies.repositories.clone(),
             submissions: dependencies.repositories.clone(),
@@ -854,19 +868,24 @@ fn build_network_agent_routes(
             verification: dependencies.repositories.clone(),
             signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             clock: dependencies.system_runtime.clone(),
-        });
-    Ok(features::network_agents::router(
-        features::network_agents::NetworkAgentHttpState {
+        },
+    ));
+    let cleanup = config
+        .network_agents
+        .enabled
+        .then(|| network_agent_cleanup::NetworkAgentCleanupWorker::start(gateway.clone()));
+    let routes =
+        features::network_agents::router(features::network_agents::NetworkAgentHttpState {
             agents,
-            messaging: Arc::new(gateway),
+            messaging: gateway,
             sources: Arc::new(NetworkSourceDigester::new(key)),
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(
                 config.network_agents.public_api_origin.as_ref(),
                 &policy,
             ),
-        },
-    ))
+        });
+    Ok(NetworkAgentRuntime { routes, cleanup })
 }
 
 fn build_handoff_access_service(

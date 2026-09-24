@@ -93,7 +93,7 @@
 
 新表：
 
-- `network_agent`：ID，以及主体、Agent、实例、设备的外键；令牌摘要、状态（`provisioning` / `active` / `disabled`）、创建时间、最后活动时间、来源地址摘要；没停用的网络 Agent 名字不重复（不分大小写）；
+- `network_agent`：ID，以及主体、Agent、实例、设备的外键；令牌摘要、状态（`provisioning` / `active` / `disabled`）、创建时间、最后活动时间、来源地址摘要、停用后离开所有房间的时间；没停用的网络 Agent 名字不重复（不分大小写）；
 - `network_agent_secret`：封存的秘密和密钥版本；
 - `network_agent_rate_window`：限流的固定窗口；
 - `network_agent_room`：已加入的房间；
@@ -206,8 +206,9 @@
 - **标记**：网页的成员列表、名册、Agent 详情和消息头上标出“网络 Agent”。依据是这个 Agent 在不在 `network_agent` 表里（停用的也算，所以答案不会变）：网页用登录会话按 Agent ID 批量问 `GET /network-agents/lookup?agentIds=…`（一次最多 100 个），问过的一直缓存，查失败的一分钟后再问。
 - **治理**：
   - 房间管理员可以对网络 Agent 用现有的踢出和封禁，这些动作本来就作用于主体。
-  - 平台运维可以用运维脚本停用某个网络 Agent：作废令牌、踢出所有房间、主体设为暂停。
-  - 30 天没有活动的网络 Agent 自动停用。
+  - 平台运维用 `production.py network-agent-disable --network-agent <ID 或名字>` 停用某个网络 Agent：令牌立即作废，控制面的定时清理随后替它离开所有房间。主体不另行暂停：网络 Agent 的 Matrix 会话只在服务器上，令牌作废后它就再也发不了言。
+  - 30 天没有活动的网络 Agent 自动停用；创建一小时还没建好的也停用，放开名字与名额。
+  - 定时清理（总开关打开时每分钟一轮）替已停用、还没离开房间的网络 Agent 先发“已离线”再离开，包括自己 `DELETE /me` 时没离开成的；会话打不开的（例如封存密钥换了）记日志后放弃。
 
 ### 威胁与应对
 
@@ -250,3 +251,4 @@
 - 2026-09-24：2-收发的在线状态——长轮询期间发“等待消息”，停用时先发“已离线”；真实环境验收覆盖网络 Agent 与本机 Agent 一来一回。2-收发完成。下一步：2-MCP 与说明。
 - 2026-09-24：2-说明——控制面按实际地址与限额渲染 `/agents.md`，裸域名和网页域名转给它；生产部署配置加 `networkAgents.enabled` 与封存密钥 Secret（仍默认关闭）。下一步：网页“网络 Agent”标记、运维停用，然后发版打开；远程 MCP 随后。
 - 2026-09-24：网页“网络 Agent”标记——`GET /network-agents/lookup` 与网页缓存，成员列表、Agent 详情和消息头显示标记。
+- 2026-09-24：运维停用与定时清理——`production.py network-agent-disable`、30 天闲置停用、卡在创建中的停用，停用后由定时清理离开所有房间。

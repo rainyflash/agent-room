@@ -15,7 +15,8 @@ use agent_room_application::{
     },
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentResult, NetworkAgentSession, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentSession, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -52,8 +53,8 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGateway, NetworkGatewayDependencies,
-    NetworkGatewayFailure,
+    NetworkAgentCleanupOutcome, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGateway,
+    NetworkGatewayDependencies, NetworkGatewayFailure,
 };
 
 const TOKEN: &str = "network-agent-token";
@@ -77,6 +78,10 @@ struct FakeAgents {
     quota: Mutex<Option<NetworkAgentFailure>>,
     quota_taken: Mutex<u32>,
     disabled: Mutex<Vec<String>>,
+    /// 定时清理：停用了几个闲置的、待离开的有哪些、记为已离开的有哪些。
+    stale: Mutex<usize>,
+    exits: Mutex<Vec<NetworkAgentPendingExit>>,
+    rooms_left: Mutex<Vec<NetworkAgentId>>,
 }
 
 impl FakeAgents {
@@ -97,6 +102,23 @@ impl FakeAgents {
             quota: Mutex::new(None),
             quota_taken: Mutex::new(0),
             disabled: Mutex::new(Vec::new()),
+            stale: Mutex::new(0),
+            exits: Mutex::new(Vec::new()),
+            rooms_left: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn own_session(&self) -> NetworkAgentSession {
+        NetworkAgentSession {
+            network_agent_id: network_agent_id(),
+            principal_id: PrincipalId::from_uuid(uuid(PRINCIPAL)),
+            agent_id: agent(OWN_AGENT),
+            agent_instance_id: instance(OWN_INSTANCE),
+            display_name: "Scout".to_owned(),
+            agent_matrix_user_id: matrix_user(OWN_AGENT),
+            matrix_access_token: SecretValue::new("syt_scout").unwrap(),
+            instance_signing_seed: self.seed.clone(),
+            rooms: self.rooms.clone(),
         }
     }
 }
@@ -123,17 +145,7 @@ impl NetworkAgentUseCases for FakeAgents {
         token: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
         let result = if token == TOKEN {
-            Ok(NetworkAgentSession {
-                network_agent_id: network_agent_id(),
-                principal_id: PrincipalId::from_uuid(uuid(PRINCIPAL)),
-                agent_id: agent(OWN_AGENT),
-                agent_instance_id: instance(OWN_INSTANCE),
-                display_name: "Scout".to_owned(),
-                agent_matrix_user_id: matrix_user(OWN_AGENT),
-                matrix_access_token: SecretValue::new("syt_scout").unwrap(),
-                instance_signing_seed: self.seed.clone(),
-                rooms: self.rooms.clone(),
-            })
+            Ok(self.own_session())
         } else {
             Err(NetworkAgentFailure::new(
                 NetworkAgentFailureKind::Unauthorized,
@@ -150,6 +162,38 @@ impl NetworkAgentUseCases for FakeAgents {
             Ok(())
         };
         Box::pin(async move { result })
+    }
+
+    fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {
+        let stale = std::mem::take(&mut *self.stale.lock().unwrap());
+        Box::pin(async move { Ok(stale) })
+    }
+
+    fn pending_exits(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentPendingExit>>> {
+        let left = self.rooms_left.lock().unwrap().clone();
+        let exits = self
+            .exits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|exit| {
+                let id = match exit {
+                    NetworkAgentPendingExit::Session(session) => session.network_agent_id,
+                    NetworkAgentPendingExit::Unopenable(id) => *id,
+                };
+                !left.contains(&id)
+            })
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(exits) })
+    }
+
+    fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        self.rooms_left.lock().unwrap().push(id);
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -1562,16 +1606,24 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
 }
 
 #[tokio::test]
-async fn 停用时离开所有房间再作废令牌_离开失败也照样作废() {
+async fn 停用时离开所有房间再作废令牌_离开失败也照样作废_留给定时清理() {
     let two_rooms = harness_in(&[ROOM, SECOND_ROOM]);
     two_rooms.gateway.leave_and_disable(TOKEN).await.unwrap();
     assert_eq!(*two_rooms.matrix.left.lock().unwrap(), [ROOM, SECOND_ROOM]);
     assert_eq!(*two_rooms.agents.disabled.lock().unwrap(), [TOKEN]);
+    assert_eq!(
+        *two_rooms.agents.rooms_left.lock().unwrap(),
+        [network_agent_id()]
+    );
 
     let failing = harness();
     *failing.matrix.leave_fails.lock().unwrap() = true;
     failing.gateway.leave_and_disable(TOKEN).await.unwrap();
     assert_eq!(*failing.agents.disabled.lock().unwrap(), [TOKEN]);
+    assert!(
+        failing.agents.rooms_left.lock().unwrap().is_empty(),
+        "没离开成的不记，定时清理再试"
+    );
 
     assert_eq!(
         failing
@@ -1582,6 +1634,55 @@ async fn 停用时离开所有房间再作废令牌_离开失败也照样作废(
         NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
             NetworkAgentFailureKind::Unauthorized
         ))
+    );
+}
+
+#[tokio::test]
+async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离开成的下轮再试() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
+    *harness.agents.stale.lock().unwrap() = 2;
+    *harness.agents.exits.lock().unwrap() = vec![
+        NetworkAgentPendingExit::Session(harness.agents.own_session()),
+        NetworkAgentPendingExit::Unopenable(lost),
+    ];
+    *harness.matrix.leave_fails.lock().unwrap() = true;
+
+    let first = harness.gateway.clean_up().await.unwrap();
+
+    assert_eq!(
+        first,
+        NetworkAgentCleanupOutcome {
+            disabled: 2,
+            left: 0,
+            abandoned: 1,
+            retrying: 1,
+        }
+    );
+    assert_eq!(*harness.agents.rooms_left.lock().unwrap(), [lost]);
+    let states = harness.matrix.states.lock().unwrap().clone();
+    assert!(
+        states.iter().all(|(_, state)| state["status"] == "offline") && states.len() == 2,
+        "离开前先在每个房间发“已离线”：{states:?}"
+    );
+
+    *harness.matrix.leave_fails.lock().unwrap() = false;
+    let second = harness.gateway.clean_up().await.unwrap();
+
+    assert_eq!(
+        second,
+        NetworkAgentCleanupOutcome {
+            left: 1,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *harness.agents.rooms_left.lock().unwrap(),
+        [lost, network_agent_id()]
+    );
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome::default()
     );
 }
 

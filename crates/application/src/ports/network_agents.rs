@@ -205,6 +205,36 @@ pub trait NetworkAgentStore: Send + Sync {
         &self,
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>>;
+
+    /// 停用闲置太久的、以及卡在创建中太久的网络 Agent，一次最多 `limit` 个；返回停用了哪些。
+    fn disable_stale(
+        &self,
+        cutoff: NetworkAgentStaleCutoff,
+        at: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>>;
+
+    /// 已停用、还没离开房间的网络 Agent，最早停用的在前。没建好实例就停用的不在其中：
+    /// 它们从没进过房间，停用时就记为已离开。
+    fn pending_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRecord>>>;
+
+    /// 记下已经离开了所有房间；只对已停用的生效，记过的不改。
+    fn mark_rooms_left(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
+}
+
+/// 定时清理的界线：最后活动早于 `idle_before` 的生效中网络 Agent，以及创建早于
+/// `provisioning_before` 却还没建好的，都停用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkAgentStaleCutoff {
+    pub idle_before: UtcMillis,
+    pub provisioning_before: UtcMillis,
 }
 
 /// 网页标注“网络 Agent”用：给一批 Agent ID，找出其中属于网络 Agent 的。
