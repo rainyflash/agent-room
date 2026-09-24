@@ -7,7 +7,7 @@ use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::network_gateway::{NetworkAgentCleanupOutcome, NetworkGateway};
 
-const INTERVAL: Duration = Duration::from_secs(60);
+const INTERVAL: Duration = Duration::from_mins(1);
 
 pub(crate) struct NetworkAgentCleanupWorker {
     stop: Option<oneshot::Sender<()>>,

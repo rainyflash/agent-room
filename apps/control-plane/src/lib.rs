@@ -395,8 +395,7 @@ async fn build_identity_router(
         content: content_use_cases,
     };
     let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
-    let (open_routes, network_agent_cleanup) =
-        build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
+    let network_agents = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -407,11 +406,11 @@ async fn build_identity_router(
     );
     Ok(IdentityRuntime {
         routes,
-        open_routes,
+        open_routes: network_agents.routes,
         content_cleanup,
         account_deletion,
         operational_metrics,
-        network_agent_cleanup,
+        network_agent_cleanup: network_agents.cleanup,
     })
 }
 
@@ -799,19 +798,18 @@ fn build_agent_collaboration_http_states(
     })
 }
 
+/// 网络 Agent 的公开路由，以及总开关打开时才运行的定时清理。
+struct NetworkAgentRuntime {
+    routes: Router,
+    cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
+}
+
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
-/// 网络 Agent 的公开路由；总开关打开时还带上定时清理。
 fn build_network_agent_routes(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
-) -> Result<
-    (
-        Router,
-        Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
-    ),
-    StartupError,
-> {
+) -> Result<NetworkAgentRuntime, StartupError> {
     let provisioning = build_lobby_provisioning(
         &config.lobby,
         dependencies.repositories.clone(),
@@ -881,7 +879,7 @@ fn build_network_agent_routes(
                 &policy,
             ),
         });
-    Ok((routes, cleanup))
+    Ok(NetworkAgentRuntime { routes, cleanup })
 }
 
 fn build_handoff_access_service(
