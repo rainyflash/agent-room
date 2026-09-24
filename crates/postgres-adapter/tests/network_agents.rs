@@ -1,12 +1,15 @@
 //! 网络 Agent 的真实数据库往返：一个事务写入主体、设备与秘密，没停用的不重名，
-//! 生效绑定 Agent 与实例，停用后名字空出来，固定窗口计数。
+//! 生效绑定 Agent 与实例，停用后名字空出来，固定窗口计数；进过的房间与收件箱。
 
 use std::env;
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentProvisioning,
+        MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
+        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentInboxAppend,
+        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
+        NetworkAgentInboxStore, NetworkAgentProvisioning, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentStore, PrincipalRegistration, RateWindowDecision,
         RateWindowPolicy, SealedSecret, SecretDigest,
     },
@@ -14,11 +17,15 @@ use agent_room_application::{
 use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
     identity::Principal,
-    ids::{AgentId, AgentInstanceId, DeviceId, NetworkAgentId, PrincipalId},
+    ids::{
+        AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
+    },
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
+    rooms::MatrixRoomReference,
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
+use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -252,6 +259,286 @@ async fn 固定窗口到上限拒绝_窗口过后重新计数() {
         RateWindowDecision::Limited { .. }
     ));
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 进过的房间只记一次_按进入先后列出() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Rover"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let catalog = default_lobby(&database.runtime).await;
+    let first = room_record(catalog, "!first:matrix.test", time(10));
+    let second = room_record(catalog, "!second:matrix.test", time(20));
+
+    repositories
+        .record_room(provisioning.id, &first)
+        .await
+        .expect("记房间");
+    repositories
+        .record_room(provisioning.id, &second)
+        .await
+        .expect("记第二个房间");
+    repositories
+        .record_room(
+            provisioning.id,
+            &room_record(catalog, "!first:matrix.test", time(30)),
+        )
+        .await
+        .expect("重复记不报错");
+
+    assert_eq!(
+        repositories.rooms(provisioning.id).await.expect("列房间"),
+        [first, second]
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 收件箱按到达编号_同一事件只收一次_只有作者能改_位置对不上不写() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Scribe"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let edited = MessageId::from_uuid(Uuid::now_v7());
+    let withdrawn = MessageId::from_uuid(Uuid::now_v7());
+    let kept = MessageId::from_uuid(Uuid::now_v7());
+
+    let empty = repositories.pending(id, 10).await.expect("读收件箱");
+    assert_eq!(empty.sync_token, None);
+    assert!(empty.entries.is_empty());
+
+    let first = append(
+        id,
+        None,
+        "s1",
+        vec![
+            message("$a:matrix.test", edited, "ranger", "原话"),
+            message("$b:matrix.test", withdrawn, "ranger", "撤回的话"),
+            message("$c:matrix.test", kept, "ranger", "留着"),
+            // 同一事件重复同步到只收一次。
+            message("$a:matrix.test", edited, "ranger", "原话"),
+            NetworkAgentInboxChange::Replace {
+                room_id: room(),
+                message_id: edited,
+                actor_key: "ranger".to_owned(),
+                patch: json!({"title": "改过的话", "conversation": {"text": "改过的话", "mentions": []}}),
+            },
+            NetworkAgentInboxChange::Redact {
+                room_id: room(),
+                message_id: withdrawn,
+                actor_key: "ranger".to_owned(),
+            },
+            // 不是作者，改不了也撤不了。
+            NetworkAgentInboxChange::Redact {
+                room_id: room(),
+                message_id: kept,
+                actor_key: "impostor".to_owned(),
+            },
+        ],
+        10,
+    );
+    assert_eq!(
+        repositories.append(&first).await.expect("写入同步结果"),
+        NetworkAgentInboxAppendOutcome::Applied { appended: 3 }
+    );
+    // 位置对不上的旧同步不写。
+    assert_eq!(
+        repositories
+            .append(&append(
+                id,
+                None,
+                "s1-late",
+                vec![message(
+                    "$z:matrix.test",
+                    MessageId::from_uuid(Uuid::now_v7()),
+                    "ranger",
+                    "迟到"
+                )],
+                10
+            ))
+            .await
+            .expect("写入"),
+        NetworkAgentInboxAppendOutcome::Stale
+    );
+
+    let page = repositories.pending(id, 10).await.expect("读收件箱");
+    assert_eq!(
+        page.sync_token.as_ref().map(MatrixSyncToken::as_str),
+        Some("s1")
+    );
+    assert_eq!(page.pending, 2);
+    assert_eq!(
+        texts(
+            &page
+                .entries
+                .iter()
+                .map(|entry| entry.preview.clone())
+                .collect::<Vec<_>>()
+        ),
+        ["改过的话", "留着"]
+    );
+    assert_eq!(page.entries[0].preview["title"], "改过的话");
+    assert_eq!(page.entries[0].preview["eventId"], "$a:matrix.test");
+    assert!(page.entries[0].sequence < page.entries[1].sequence);
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 收件箱满了丢最早的并计数_确认删到哪条_确认后计数清零() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Keeper"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let early = vec![
+        message(
+            "$e0:matrix.test",
+            MessageId::from_uuid(Uuid::now_v7()),
+            "ranger",
+            "早一",
+        ),
+        message(
+            "$e1:matrix.test",
+            MessageId::from_uuid(Uuid::now_v7()),
+            "ranger",
+            "早二",
+        ),
+    ];
+    repositories
+        .append(&append(id, None, "s1", early, 3))
+        .await
+        .expect("写入");
+
+    let overflow = (0..3)
+        .map(|index| {
+            message(
+                &format!("$o{index}:matrix.test"),
+                MessageId::from_uuid(Uuid::now_v7()),
+                "ranger",
+                &format!("第 {index} 条"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        repositories
+            .append(&append(id, Some("s1"), "s2", overflow, 3))
+            .await
+            .expect("写入"),
+        NetworkAgentInboxAppendOutcome::Applied { appended: 3 }
+    );
+    let page = repositories.pending(id, 10).await.expect("读收件箱");
+    assert_eq!(page.pending, 3);
+    assert_eq!(page.dropped, 2);
+    assert_eq!(
+        texts(
+            &page
+                .entries
+                .iter()
+                .map(|entry| entry.preview.clone())
+                .collect::<Vec<_>>()
+        ),
+        ["第 0 条", "第 1 条", "第 2 条"]
+    );
+
+    assert_eq!(
+        repositories
+            .acknowledge(id, &MatrixEventId::new("$o1:matrix.test").unwrap())
+            .await
+            .expect("确认"),
+        NetworkAgentAckOutcome::Acknowledged { pending: 1 }
+    );
+    assert_eq!(
+        repositories
+            .acknowledge(id, &MatrixEventId::new("$o0:matrix.test").unwrap())
+            .await
+            .expect("确认过的再确认"),
+        NetworkAgentAckOutcome::NotPending { pending: 1 }
+    );
+    let page = repositories.pending(id, 10).await.expect("读收件箱");
+    assert_eq!(page.dropped, 0);
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].event_id.as_str(), "$o2:matrix.test");
+    database.close().await;
+}
+
+fn unique_name(prefix: &str) -> String {
+    format!("{prefix} {}", &Uuid::now_v7().simple().to_string()[..8])
+}
+
+async fn default_lobby(pool: &PgPool) -> RoomCatalogId {
+    let id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM agent_room.room_catalog_entry WHERE slug = 'agent-room-global'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("默认公开大厅由迁移创建");
+    RoomCatalogId::from_uuid(id)
+}
+
+fn room_record(catalog: RoomCatalogId, room_id: &str, at: UtcMillis) -> NetworkAgentRoomRecord {
+    NetworkAgentRoomRecord {
+        catalog_id: catalog,
+        matrix_room_id: MatrixRoomReference::new(room_id.to_owned()).expect("房间 ID 有效"),
+        joined_at: at,
+    }
+}
+
+fn room() -> MatrixRoomId {
+    MatrixRoomId::new("!lobby:matrix.test").expect("房间 ID 有效")
+}
+
+fn message(
+    event_id: &str,
+    message_id: MessageId,
+    actor_key: &str,
+    text: &str,
+) -> NetworkAgentInboxChange {
+    NetworkAgentInboxChange::Message(NetworkAgentInboxMessage {
+        event_id: MatrixEventId::new(event_id).expect("事件 ID 有效"),
+        room_id: room(),
+        message_id,
+        actor_key: actor_key.to_owned(),
+        preview: json!({
+            "eventId": event_id,
+            "messageId": message_id.to_string(),
+            "title": text,
+            "conversation": {"text": text, "mentions": []},
+        }),
+    })
+}
+
+fn append(
+    id: NetworkAgentId,
+    expected: Option<&str>,
+    next: &str,
+    changes: Vec<NetworkAgentInboxChange>,
+    capacity: u32,
+) -> NetworkAgentInboxAppend {
+    NetworkAgentInboxAppend {
+        id,
+        expected_sync_token: expected.map(|token| MatrixSyncToken::new(token).expect("位置有效")),
+        next_sync_token: MatrixSyncToken::new(next).expect("位置有效"),
+        changes,
+        received_at: time(40),
+        capacity,
+    }
+}
+
+fn texts(previews: &[Value]) -> Vec<String> {
+    previews
+        .iter()
+        .map(|preview| {
+            preview["conversation"]["text"]
+                .as_str()
+                .expect("有正文")
+                .to_owned()
+        })
+        .collect()
 }
 
 fn provisioning(name: &str, at: UtcMillis) -> NetworkAgentProvisioning {

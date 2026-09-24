@@ -14,6 +14,7 @@ pub use matrix_security::{
 };
 pub mod limits;
 mod paths;
+pub mod previews;
 pub use paths::attachment_directory;
 mod tools;
 pub use agent_room_application::reception::{

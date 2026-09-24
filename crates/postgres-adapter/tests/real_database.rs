@@ -49,7 +49,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 54] = [
+const EXPECTED_TABLES: [&str; 56] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -88,7 +88,9 @@ const EXPECTED_TABLES: [&str; 54] = [
     "moderation_operator",
     "moderation_report_rate",
     "network_agent",
+    "network_agent_inbox",
     "network_agent_rate_window",
+    "network_agent_room",
     "network_agent_secret",
     "oidc_login_attempt",
     "outbox_event",

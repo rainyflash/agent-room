@@ -19,10 +19,13 @@ mod runtime;
 
 pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
 pub use network_agents::{
-    GeneratedSigningKey, NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentKeyFactory,
-    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentSecretKind,
-    NetworkAgentSecretSealer, NetworkAgentStore, RateWindowDecision, RateWindowPolicy,
-    SealedSecret, SecretSealingFailure,
+    GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentBeginOutcome,
+    NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
+    NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
+    NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentMatrixGateway, NetworkAgentPause,
+    NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+    NetworkAgentSecretSealer, NetworkAgentStore, NetworkAgentSyncRequest, RateWindowDecision,
+    RateWindowPolicy, SealedSecret, SecretSealingFailure,
 };
 use std::{future::Future, pin::Pin};
 

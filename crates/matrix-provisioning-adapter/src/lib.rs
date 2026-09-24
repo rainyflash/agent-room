@@ -17,6 +17,7 @@ use thiserror::Error;
 
 mod accounts;
 mod agent_roster;
+mod agent_sessions;
 mod moderation;
 mod rooms;
 
@@ -24,6 +25,7 @@ pub use accounts::{
     SynapseAccountLifecycleConfiguration, SynapseAccountLifecycleConfigurationError,
     SynapseAccountLifecycleGateway,
 };
+pub use agent_sessions::MatrixAgentSessionClient;
 pub use rooms::MatrixApplicationServiceRoomMembership;
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1_024;
@@ -401,9 +403,18 @@ async fn read_limited_body(
     response: Response,
     operation: MatrixOperation,
 ) -> MatrixResult<Vec<u8>> {
+    read_body_within(response, operation, MAX_RESPONSE_BYTES).await
+}
+
+/// 边读边数，超过 `limit` 字节就放弃，不把整段读进内存再判断。
+async fn read_body_within(
+    response: Response,
+    operation: MatrixOperation,
+    limit: usize,
+) -> MatrixResult<Vec<u8>> {
     if response
         .content_length()
-        .is_some_and(|length| length > u64::try_from(MAX_RESPONSE_BYTES).unwrap_or(u64::MAX))
+        .is_some_and(|length| length > u64::try_from(limit).unwrap_or(u64::MAX))
     {
         return Err(invalid_response(operation));
     }
@@ -416,7 +427,7 @@ async fn read_limited_body(
             .len()
             .checked_add(chunk.len())
             .ok_or_else(|| invalid_response(operation))?;
-        if next_length > MAX_RESPONSE_BYTES {
+        if next_length > limit {
             return Err(invalid_response(operation));
         }
         body.extend_from_slice(&chunk);

@@ -11,8 +11,8 @@ use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
     identity::Principal,
     ids::{
-        AgentCreationRequestId, AgentId, AgentInstanceRegistrationRequestId, NetworkAgentId,
-        RoomCatalogId,
+        AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
+        NetworkAgentId, RoomCatalogId,
     },
     network_agents::{NetworkAgentName, NetworkAgentStatus},
     rooms::{MatrixRoomReference, RoomSlug},
@@ -28,9 +28,9 @@ use crate::{
     ports::{
         Clock, IdentifierFactory, NetworkAgentActivation, NetworkAgentBeginOutcome,
         NetworkAgentKeyFactory, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStore, PortFuture,
-        PrincipalAccount, RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery,
-        SecretFactory, SecretValue,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+        NetworkAgentStore, PortFuture, PrincipalAccount, RateWindowDecision, RateWindowPolicy,
+        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -102,6 +102,19 @@ pub struct NetworkAgentView {
     pub agent_id: AgentId,
     pub display_name: String,
     pub created_at: UtcMillis,
+    /// 所在的房间，先进的在前。
+    pub rooms: Vec<NetworkAgentRoom>,
+}
+
+/// 网关代网络 Agent 收发时用的身份与 Matrix 会话。只在进程内传递，调试输出里不出现令牌。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentSession {
+    pub network_agent_id: NetworkAgentId,
+    pub agent_id: AgentId,
+    pub agent_instance_id: AgentInstanceId,
+    pub display_name: String,
+    pub matrix_access_token: SecretValue,
+    pub rooms: Vec<NetworkAgentRoomRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +193,12 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 停用：令牌立即作废，之后再用它只会得到“未认证”。
     fn disable<'a>(&'a self, token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 凭令牌取出网关代它收发要用的身份与 Matrix 会话，并记一次活动。
+    fn session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -409,6 +428,17 @@ impl NetworkAgentService {
         let room = self
             .enter(&actor, agent.agent.id(), agent_instance_id, catalog)
             .await?;
+        self.store
+            .record_room(
+                id,
+                &NetworkAgentRoomRecord {
+                    catalog_id: room.catalog_id,
+                    matrix_room_id: room.matrix_room_id.clone(),
+                    joined_at: self.clock.now(),
+                },
+            )
+            .await
+            .map_err(repository)?;
         Ok((agent.agent.id(), room))
     }
 
@@ -419,11 +449,64 @@ impl NetworkAgentService {
             .record_activity(record.id, self.clock.now())
             .await
             .map_err(repository)?;
+        let mut rooms = Vec::new();
+        for room in self.store.rooms(record.id).await.map_err(repository)? {
+            let name = self
+                .directory
+                .find_catalog(room.catalog_id)
+                .await
+                .map_err(repository)?
+                .map_or_else(String::new, |catalog| catalog.name().to_owned());
+            rooms.push(NetworkAgentRoom {
+                catalog_id: room.catalog_id,
+                matrix_room_id: room.matrix_room_id,
+                name,
+            });
+        }
         Ok(NetworkAgentView {
             network_agent_id: record.id,
             agent_id,
             display_name: record.display_name,
             created_at: record.created_at,
+            rooms,
+        })
+    }
+
+    async fn session_internal(&self, token: &str) -> NetworkAgentResult<NetworkAgentSession> {
+        let record = self.authenticated(token).await?;
+        let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
+        else {
+            return Err(internal());
+        };
+        let sealed = self
+            .store
+            .find_secret(record.id, NetworkAgentSecretKind::MatrixAccessToken)
+            .await
+            .map_err(repository)?
+            .ok_or_else(internal)?;
+        let matrix_access_token = self
+            .sealer
+            .open(
+                record.id,
+                NetworkAgentSecretKind::MatrixAccessToken,
+                &sealed,
+            )
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| SecretValue::new(text).ok())
+            .ok_or_else(dependency)?;
+        let rooms = self.store.rooms(record.id).await.map_err(repository)?;
+        self.store
+            .record_activity(record.id, self.clock.now())
+            .await
+            .map_err(repository)?;
+        Ok(NetworkAgentSession {
+            network_agent_id: record.id,
+            agent_id,
+            agent_instance_id,
+            display_name: record.display_name,
+            matrix_access_token,
+            rooms,
         })
     }
 
@@ -536,7 +619,7 @@ impl NetworkAgentService {
         &self,
         actor: &AuthenticatedDevice,
         agent_id: AgentId,
-        agent_instance_id: agent_room_domain::ids::AgentInstanceId,
+        agent_instance_id: AgentInstanceId,
         catalog_id: RoomCatalogId,
     ) -> NetworkAgentResult<NetworkAgentRoom> {
         let mut catalog_id = catalog_id;
@@ -607,6 +690,13 @@ impl NetworkAgentUseCases for NetworkAgentService {
 
     fn disable<'a>(&'a self, token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.disable_internal(token))
+    }
+
+    fn session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
+        Box::pin(self.session_internal(token))
     }
 }
 

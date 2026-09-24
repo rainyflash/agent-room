@@ -22,11 +22,11 @@ use agent_room_application::{
         Clock, GeneratedSigningKey, IdentifierFactory, MatrixDeviceId, MatrixSession,
         MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation, NetworkAgentBeginOutcome,
         NetworkAgentKeyFactory, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStore, PortFuture,
-        PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, RateWindowDecision,
-        RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery, SealedSecret,
-        SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
-        StoredAgentInstanceRegistration,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+        NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
+        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue, StoredAgentInstanceRegistration,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -71,6 +71,7 @@ struct StoredAgent {
 struct MemoryStore {
     agents: Mutex<Vec<StoredAgent>>,
     windows: Mutex<HashMap<String, (UtcMillis, u32)>>,
+    rooms: Mutex<Vec<(NetworkAgentId, NetworkAgentRoomRecord)>>,
 }
 
 impl MemoryStore {
@@ -234,6 +235,36 @@ impl NetworkAgentStore for MemoryStore {
             RateWindowDecision::Allowed
         };
         Box::pin(async move { Ok(decision) })
+    }
+
+    fn record_room<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        let mut rooms = self.rooms.lock().unwrap();
+        if !rooms
+            .iter()
+            .any(|(agent, known)| *agent == id && known.matrix_room_id == room.matrix_room_id)
+        {
+            rooms.push((id, room.clone()));
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn rooms(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>> {
+        let rooms = self
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(agent, _)| *agent == id)
+            .map(|(_, room)| room.clone())
+            .collect();
+        Box::pin(async move { Ok(rooms) })
     }
 }
 
@@ -833,6 +864,70 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     let me = harness.service.me("token-1").await.expect("令牌有效");
     assert_eq!(me.display_name, "Scout");
     assert_eq!(me.agent_id, created.agent_id);
+    // 进过的大厅记在它名下，查看自己时带着房间名。
+    assert_eq!(me.rooms, std::slice::from_ref(&created.room));
+
+    // 网关收发时取出的会话：Matrix 令牌是解封后的原文。
+    let session = harness.service.session("token-1").await.expect("会话");
+    assert_eq!(session.network_agent_id, created.network_agent_id);
+    assert_eq!(session.agent_id, created.agent_id);
+    assert_eq!(session.agent_instance_id, instance_id);
+    assert_eq!(session.display_name, "Scout");
+    assert_eq!(session.matrix_access_token.expose(), MATRIX_TOKEN);
+    assert_eq!(session.rooms.len(), 1);
+    assert_eq!(session.rooms[0].catalog_id, catalog_id(2));
+    assert_eq!(session.rooms[0].matrix_room_id, created.room.matrix_room_id);
+}
+
+#[tokio::test]
+async fn 取会话要生效中的令牌_封存的会话打不开时报依赖不可用() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+
+    for wrong in ["", "token-2"] {
+        assert_eq!(
+            harness.service.session(wrong).await.unwrap_err().kind(),
+            NetworkAgentFailureKind::Unauthorized
+        );
+    }
+
+    // 库里的密文被改过：解不开就不给会话，也不当成令牌错误。
+    {
+        let mut agents = harness.store.agents.lock().unwrap();
+        let stored = agents
+            .iter_mut()
+            .find(|agent| agent.record.id == created.network_agent_id)
+            .unwrap();
+        for (kind, sealed) in &mut stored.secrets {
+            if *kind == NetworkAgentSecretKind::MatrixAccessToken {
+                sealed.bytes = b"tampered".to_vec();
+            }
+        }
+    }
+    assert_eq!(
+        harness
+            .service
+            .session(created.token.expose())
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::DependencyUnavailable
+    );
+
+    harness
+        .service
+        .disable(created.token.expose())
+        .await
+        .unwrap();
+    assert_eq!(
+        harness
+            .service
+            .session(created.token.expose())
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized
+    );
 }
 
 #[tokio::test]
@@ -911,6 +1006,10 @@ async fn 总开关关着时一律回答已关闭且不碰存储() {
     for token in ["", "token-1"] {
         assert_eq!(
             harness.service.me(token).await.unwrap_err().kind(),
+            NetworkAgentFailureKind::Disabled
+        );
+        assert_eq!(
+            harness.service.session(token).await.unwrap_err().kind(),
             NetworkAgentFailureKind::Disabled
         );
         assert_eq!(

@@ -272,6 +272,8 @@ version = "0.1.0-alpha.50"
 dependencies = [
  "agent-room-a2a-adapter",
  "agent-room-application",
+ "agent-room-bridge-core",
+ "agent-room-bridge-ipc",
  "agent-room-content-adapter",
  "agent-room-domain",
  "agent-room-identity-adapter",
