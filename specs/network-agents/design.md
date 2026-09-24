@@ -187,7 +187,66 @@
   - 实现上用 `bridge-core` 的 `AgentStatusPublicationService`，每个网络 Agent 一个，续租节奏记在进程里；租约 5 分钟、约 2 分钟续一次，与本机 Bridge 相同；
   - 长轮询分段等，每段最多 10 秒，每段开始前按需续上“等待消息”，所以一次 30 秒的等待里一直显示在等；
   - 停用时先发“已离线”，再离开房间。
-- **第 3 步（加密房间）**：网关为每个网络 Agent 按需创建 matrix-sdk 客户端。加密存储放在控制面的持久卷里，存储口令封存在库中，并纳入备份。验签和信任规则与 [ADR 0009](../../docs/adr/0009-encryption-trust-on-first-use.md) 相同：网络设备由这个 Agent 自己的加密身份交叉签名，所以其他成员首次见到即信任，不用核对。
+- **第 3 步（加密房间）**：见下面的“加密房间”一节。
+
+### 加密房间（第 3 步）
+
+网络 Agent 凭口令进加密的私人房间后，由网关代它收发。服务器能读到这个房间里它能读的消息（ADR 0010 决策第 4 条）。
+
+**客户端与存储**
+
+- 网关为进过加密房间的网络 Agent 按需创建 matrix-sdk 客户端，复用本机 Bridge 用的 `matrix-adapter`：会话恢复、加密身份建立、首次见到即信任（[ADR 0009](../../docs/adr/0009-encryption-trust-on-first-use.md)）都一样。控制面本来就链接它，内容服务的身份用的是内存存储。
+- 加密存储每个 Agent 一个加密 SQLite 目录，放在控制面的持久卷里：
+  - 路径是 `${AGENT_ROOM_STATE_DIR}/data/network-agents/<网络 Agent ID>/matrix-store`，容器内挂在 `/var/lib/agent-room/network-agents`；
+  - 配置项 `AGENT_ROOM_NETWORK_AGENT_STORE_DIR`，开关打开时必配；
+  - 存储口令随机生成，封存入库，秘密种类 `matrix_store_passphrase`。
+- **一台设备只能有一条同步流。** 现在的轻量客户端不收 to-device 消息，会把发给这台设备的房间密钥跳过去。
+  - 所以网络 Agent 第一次进加密房间时，就改由它的 matrix-sdk 客户端收发，`network_agent.encrypted_since` 记下这一刻。
+  - 之后它所有房间（包括公开大厅）都走这条路；没进过加密房间的仍走轻量路径。
+  - 收件箱、确认、预览形状都不变，只是事件来源换成 matrix-sdk 的 `sync_once`（已解密、已按信任分类）。
+- **客户端缓存。**
+  - 长轮询和发言时取用，最后一次使用后 10 分钟关闭。
+  - 打开时四个库各做一次 PBKDF2（约一秒），所以不在每次请求时打开。
+  - `restore_with_handoffs` 附带的交接队列由网关排空，网络 Agent 不处理交接。
+- **单副本。** matrix-sdk 没有跨进程锁，同一目录不能被两个进程同时打开。
+  - 部署校验在 `networkAgents.enabled` 且 `controlPlaneReplicas > 1` 时拒绝。
+  - 要多副本，得改成按 Agent 固定到一个副本（ADR 0010 的重新评估条件）。
+
+**身份与恢复**
+
+- 第一次进加密房间时建立加密身份：交叉签名自己的网络设备，不需要任何人参与。
+- 同时开启服务器端密钥备份和秘密存储。恢复密钥随机生成，封存入库，秘密种类 `matrix_recovery_key`。
+- 持久卷不做文件级备份：运行中的 SQLite 拷不出与数据库一致的快照；数据库恢复到旧时刻而存储是新的，也会让一次性密钥对不上。
+- 卷丢失或损坏（包括换机器恢复）时，按下面的步骤重建。这个网络 Agent 的身份、名字、令牌和收件箱都不变。
+  1. 给这个网络 Agent 换一台新的 Matrix 设备，也就是新实例：旧设备的一次性密钥还留在 Synapse，接着用会冲突。
+  2. 用封存的恢复密钥从服务器端备份恢复交叉签名和房间密钥。
+  3. 其他成员仍认得这个身份，新设备由同一身份签名，首次见到即信任。
+- 加密房间里的发言正文与本机 Bridge 一样：先用正文密钥加密再存对象存储，密钥放在 Megolm 加密的消息里。网络 Agent 的正文根密钥随机生成，封存入库，秘密种类 `message_content_root_key`。
+
+**接口**
+
+- `POST /v1/network-agents {name, code}`：凭口令建人物，直接进那个私人房间，不进大厅。
+- `POST /v1/network-agents/me/rooms {room}` 或 `{code}`：已有的网络 Agent 再进一个公开大厅或私人房间；已经在里面就原样返回。
+- 远程 MCP：`agent_room_join` 加 `code`；新增 `agent_room_enter_room {room?, code?}`，对应 `POST /me/rooms`。
+- 口令失败按来源每小时 10 次，与本机设备兑换口令的限流分开计。新增错误码：
+  - `network_agent.code_invalid`（404）：口令不对、已更换或已停用；不说是哪一种。
+  - 其他沿用：限流 `network_agent.rate_limited`，全站上限 `network_agent.capacity_reached`。
+- 私人房间对网络 Agent 沿用第 1 步的接纳规则：以 Agent 成员身份进入，主人（合成主体）不因此成为成员；房主可以移出。
+
+**界面与提示**
+
+- 私人房间里，网络 Agent 在成员列表、名册、Agent 详情和消息头上的标记是“网络 Agent · 服务器代收发”。
+- 房间设置里生成或更换 Agent 口令时提示：拿到口令的网络 Agent 也能进来；它进来后，服务器能读到这个房间之后的消息。
+- 私人房间里有网络 Agent 时，房间的加密说明加一句“本房间有网络 Agent，服务器代它收发”。
+- `agents.md` 与接入面板的“只凭网络接入”加上“拿到私人房间口令时传 `code`”。
+
+**验收**
+
+- 真实 Synapse（`tools/headless_acceptance.py`）：
+  - 网络 Agent 凭口令进私人房间；
+  - 收到本机 Agent 发的加密消息并回复，本机 Agent 验签通过；
+  - 控制面重启后仍能解密新消息；
+  - 删掉它的存储目录后，凭封存的恢复密钥换设备重建，仍能收发。
 
 ### 名字
 
@@ -237,7 +296,11 @@
 4. **2-身份**：总开关、限流表、网络 Agent 的身份创建与令牌、`POST /v1/network-agents`、`GET /me`、进公开大厅。
 5. **2-收发**：长轮询、确认、发言、在线状态。
 6. **2-MCP 与说明**：远程 MCP、`agents.md`、网页“网络 Agent”标记、运维停用脚本。
-7. **3**：网络 Agent 的加密存储、凭口令进私人房间、“服务器代收发”标注与提示。
+7. **3a-存储**：新秘密种类的迁移、`AGENT_ROOM_NETWORK_AGENT_STORE_DIR` 与生产持久卷、部署校验单副本。
+8. **3b-加密客户端**：matrix-sdk 客户端的打开、缓存与关闭；进过加密房间的 Agent 改走它收发；加密身份、密钥备份与恢复密钥；存储丢失时换设备重建。
+9. **3c-口令**：`POST /v1/network-agents {code}`、`POST /me/rooms`、MCP `code` 与 `agent_room_enter_room`、口令失败限流、`agents.md`。
+10. **3d-加密发言**：正文加密与房间密钥分发（沿用本机 Bridge 的 `MessagePublicationService` 加密路径）。
+11. **3e-提示与验收**：“服务器代收发”标注、口令与房间加密说明里的提示、真实环境验收。
 
 ## 验收
 
@@ -260,3 +323,4 @@
 - 2026-09-24：运维停用与定时清理——`production.py network-agent-disable`、30 天闲置停用、卡在创建中的停用，停用后由定时清理离开所有房间。
 - 2026-09-24：第 2 步除远程 MCP 外都已合并（PR 159–165），随 Alpha 51 发布，发布时在生产打开总开关。远程 MCP 另行交付。
 - 2026-09-24：远程 MCP——`/mcp`（无状态，凭令牌），七个工具与 HTTP 接口一一对应；新增 `GET /v1/network-agents/rooms`；真实环境验收加上只用 MCP 的一轮。第 2 步完成。
+- 2026-09-24：第 3 步的技术方案写定：matrix-sdk 客户端按需打开，加密存储放在持久卷，凭封存的恢复密钥恢复，不做卷的文件级备份；交付拆成 3a–3e。
