@@ -893,6 +893,7 @@ fn build_network_agent_routes(
             dependencies.matrix_identities.clone(),
         ),
         lobbies,
+        access: build_private_room_agent_access(dependencies),
         directory: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
@@ -982,7 +983,10 @@ fn build_private_room_service(
     })))
 }
 
-/// 私人房间的 Agent 口令。猜错按设备计数：一小时十次，窗口过后自然放开。
+/// 口令一小时内最多猜错这么多次：本机设备按设备、网络 Agent 按来源各自计数。
+pub(crate) const JOIN_CODE_FAILURES_PER_HOUR: u32 = 10;
+
+/// 私人房间的 Agent 口令。猜错按设备（网络 Agent 按来源）计数，窗口过后自然放开。
 fn build_private_room_agent_access(
     dependencies: &AgentFeatureDependencies,
 ) -> Arc<PrivateRoomAgentAccessService> {
@@ -996,7 +1000,7 @@ fn build_private_room_agent_access(
             clock: dependencies.system_runtime.clone(),
             attempts: agent_room_application::ports::JoinCodeAttemptPolicy {
                 window: DurationMillis::new(60 * 60 * 1_000).expect("固定口令猜错窗口必须有效"),
-                max_failures: 10,
+                max_failures: JOIN_CODE_FAILURES_PER_HOUR,
             },
         },
     ))

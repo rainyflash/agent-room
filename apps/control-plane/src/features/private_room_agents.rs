@@ -8,7 +8,7 @@ use agent_room_application::{
     devices::DeviceAuthorizationUseCases,
     ports::{PrivateRoomAgentMemberRecord, SecretFactory},
     private_rooms::{
-        AgentAccessView, GeneratedJoinCode, InspectAgentAccess, ManageJoinCode,
+        AgentAccessView, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
         PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
         ResolveJoinCode,
     },
@@ -306,7 +306,13 @@ async fn resolve(
         Err(response) => return response,
     };
     room_response(
-        state.access.resolve(ResolveJoinCode { actor, code }).await,
+        state
+            .access
+            .resolve(ResolveJoinCode {
+                caller: JoinCodeCaller::Device(actor),
+                code,
+            })
+            .await,
         correlation_id,
     )
 }

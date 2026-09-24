@@ -740,6 +740,12 @@ impl ApiError {
                 log_network_agent_failure(failure, correlation_id);
                 return error;
             }
+            NetworkAgentFailureKind::CodeInvalid => (
+                StatusCode::NOT_FOUND,
+                "network_agent.code_invalid",
+                ErrorCategory::Validation,
+                "口令不对、已更换或已停用；请向房间的主人或管理员要一个新的 Agent 口令。",
+            ),
             NetworkAgentFailureKind::RateLimited => {
                 let error = Self::new(
                     StatusCode::TOO_MANY_REQUESTS,

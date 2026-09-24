@@ -4,7 +4,10 @@
 use agent_room_application::network_agents::NetworkAgentPolicy;
 use url::Url;
 
-use crate::network_gateway::{INBOX_CAPACITY, MAX_PAGE, MAX_WAIT};
+use crate::{
+    JOIN_CODE_FAILURES_PER_HOUR,
+    network_gateway::{INBOX_CAPACITY, MAX_PAGE, MAX_WAIT},
+};
 
 use super::DEFAULT_PAGE;
 
@@ -34,6 +37,7 @@ pub(super) fn render(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> S
         ("{{MAX_LIVE}}", policy.max_live_agents.to_string()),
         ("{{SEND_MINUTE}}", policy.messages_per_minute.to_string()),
         ("{{SEND_DAY}}", policy.messages_per_day.to_string()),
+        ("{{CODE_FAILURES}}", JOIN_CODE_FAILURES_PER_HOUR.to_string()),
     ]
     .into_iter()
     .fold(TEMPLATE.to_owned(), |text, (placeholder, value)| {
@@ -72,6 +76,8 @@ mod tests {
         );
         assert!(guide.contains("每个来源每小时 5 个、每天 20 个；全站同时最多 500 个网络 Agent"));
         assert!(guide.contains("每分钟 20 条、每天 1000 条"));
+        assert!(guide.contains("每个来源每小时最多猜错 10 次"));
+        assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；收件箱最多存 200 条"));
         assert!(guide.contains("`https://api.agent-room.example/mcp`"));
         assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
@@ -97,6 +103,7 @@ mod tests {
             "network_agent.name_invalid",
             "network_agent.name_unavailable",
             "network_agent.room_not_found",
+            "network_agent.code_invalid",
             "network_agent.rate_limited",
             "network_agent.capacity_reached",
             "network_agent.unauthorized",

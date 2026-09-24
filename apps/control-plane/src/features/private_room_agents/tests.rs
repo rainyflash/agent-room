@@ -16,8 +16,9 @@ use agent_room_application::{
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
-        GeneratedJoinCode, InspectAgentAccess, ManageJoinCode, PrivateRoomAgentAccessUseCases,
-        RedeemJoinCode, RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
+        GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
+        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
+        ResolveJoinCode,
     },
 };
 use agent_room_domain::{
@@ -388,7 +389,11 @@ async fn 设备签名查看与兑换口令_转发设备_agent_与口令() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json_of(response).await["name"], "项目室");
     let resolved = access.resolved.lock().unwrap().clone().expect("转发了查看");
-    assert_eq!(resolved.actor.device_id, device_id());
+    assert!(
+        matches!(&resolved.caller, JoinCodeCaller::Device(actor) if actor.device_id == device_id()),
+        "按设备计数：{:?}",
+        resolved.caller
+    );
     assert_eq!(resolved.code, "K7P3-Q9XW-2DMA");
 }
 

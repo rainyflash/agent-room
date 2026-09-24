@@ -1,9 +1,12 @@
 //! 网络 Agent 的网关（ADR 0010，2-收发）：服务器用 Agent 自己的 Matrix 会话替它同步房间，
 //! 用本机 Bridge 同一套解析与验签把消息整理成预览，放进它的收件箱。Agent 凭令牌长轮询取，
 //! 只有显式确认才往前走。一个 Agent 同时只有一次长轮询，新来的会让旧的立刻空手返回。
+//!
+//! 进房间也由网关统筹（第 3 步）：私人房间都是端到端加密的，凭口令放行之后，先把 Agent 切到
+//! 加密客户端、建好加密身份，再进去。
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
@@ -13,7 +16,11 @@ use std::{
 
 use agent_room_application::{
     content::ContentUseCases,
-    network_agents::{NetworkAgentFailure, NetworkAgentSession, NetworkAgentUseCases},
+    network_agents::{
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentFailure,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget,
+        NetworkAgentUseCases,
+    },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
         MatrixRoomId, MatrixSyncBatch, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
@@ -128,8 +135,23 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) dropped: u64,
 }
 
-/// 网络 Agent 收消息的接口；HTTP 层只认这个，便于单独测试。
+/// 网络 Agent 进房间与收发消息的接口；HTTP 接口与远程 MCP 只认这个，便于单独测试。
 pub(crate) trait NetworkAgentMessaging: Send + Sync {
+    /// 起名并进房间：公开大厅直接进；凭口令的私人房间先让加密客户端就绪再进。
+    /// 进不去时停用刚建的人物，令牌不交出去。
+    fn create(
+        &self,
+        request: CreateNetworkAgent,
+    ) -> PortFuture<'_, Result<CreatedNetworkAgent, NetworkGatewayFailure>>;
+
+    /// 已有的网络 Agent 再进一个房间；已经在那个公开大厅里就原样返回。
+    fn enter_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: NetworkAgentRoomRequest,
+        source_digest: [u8; 32],
+    ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>>;
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -179,6 +201,8 @@ pub(crate) struct NetworkGateway {
     signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     clock: Arc<dyn Clock>,
     encrypted: Option<Arc<dyn EncryptedSessions>>,
+    /// 这个进程刚切到加密客户端的：切之前取的会话里还没有 `encrypted_since`。
+    switched: Mutex<HashSet<NetworkAgentId>>,
     polls: LongPolls,
     presence: presence::Presence,
 }
@@ -195,6 +219,7 @@ impl NetworkGateway {
             signatures: dependencies.signatures,
             clock: dependencies.clock,
             encrypted: dependencies.encrypted,
+            switched: Mutex::new(HashSet::new()),
             polls: LongPolls::default(),
             presence: presence::Presence::default(),
         }
@@ -211,6 +236,11 @@ impl NetworkGateway {
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
+        // 加密房间里的发言要由加密客户端加密后发出（3d）。在那之前，进过加密房间的 Agent
+        // 不发言，免得明文进了加密房间。
+        if self.is_encrypted(&session) {
+            return Err(NetworkGatewayFailure::Unavailable);
+        }
         let room = session_room(&session, draft.room_id.as_deref())?;
         let submission_id = submission_id(draft.submission_id.as_deref())?;
         let request = chat_request(&session, submission_id, room.clone(), draft)?;
@@ -421,13 +451,139 @@ impl NetworkGateway {
         }
     }
 
+    /// 起名并进房间。凭口令的私人房间只放行了：先切到加密客户端再进；进不去就停用刚建的人物。
+    async fn create_internal(
+        &self,
+        request: CreateNetworkAgent,
+    ) -> Result<CreatedNetworkAgent, NetworkGatewayFailure> {
+        let mut created = self
+            .agents
+            .create(request)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        if created.entered {
+            return Ok(created);
+        }
+        match self
+            .enter_private(created.token.expose(), created.room.clone())
+            .await
+        {
+            Ok(room) => {
+                created.room = room;
+                created.entered = true;
+                Ok(created)
+            }
+            Err(failure) => {
+                // 令牌不会交给 Agent，这个人物也就没用了：停用它，放开名字与全站名额。
+                if self.agents.disable(created.token.expose()).await.is_err() {
+                    tracing::warn!(
+                        network_agent.id = %created.network_agent_id,
+                        "凭口令创建时没进去房间，停用也没成；它不会再有活动，闲置清理会停用它"
+                    );
+                }
+                self.close_encrypted(created.network_agent_id).await;
+                Err(failure)
+            }
+        }
+    }
+
+    async fn enter_room_internal(
+        &self,
+        token: &str,
+        room: NetworkAgentRoomRequest,
+        source_digest: [u8; 32],
+    ) -> Result<NetworkAgentRoom, NetworkGatewayFailure> {
+        match self
+            .agents
+            .admit(token, room, source_digest)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?
+        {
+            NetworkAgentAdmission::AlreadyIn(room) => Ok(room),
+            NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
+                self.enter_private(token, room).await
+            }
+            NetworkAgentAdmission::Admitted(target) => self
+                .agents
+                .enter(token, target)
+                .await
+                .map_err(NetworkGatewayFailure::Agent),
+        }
+    }
+
+    /// 私人房间都是端到端加密的：先切到加密客户端、建好加密身份，再进去。房间密钥只发给由
+    /// 主人交叉签名的设备，身份没建好就先进，别人这时发的消息它会解不开。
+    async fn enter_private(
+        &self,
+        token: &str,
+        room: NetworkAgentRoom,
+    ) -> Result<NetworkAgentRoom, NetworkGatewayFailure> {
+        let session = self
+            .agents
+            .session(token)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        self.switch_to_encrypted(session).await?;
+        self.agents
+            .enter(token, NetworkAgentTarget::Private(room))
+            .await
+            .map_err(NetworkGatewayFailure::Agent)
+    }
+
+    /// 切到加密客户端。先在内存里记下，并让正在进行的长轮询立刻返回：之后的同步都走加密客户端，
+    /// 轻量客户端不会再把发给这台设备的房间密钥跳过去。再记入库，让加密客户端从收件箱的位置
+    /// 同步一次（上传设备密钥与一次性密钥），并建好加密身份与密钥备份。
+    async fn switch_to_encrypted(
+        &self,
+        mut session: NetworkAgentSession,
+    ) -> Result<(), NetworkGatewayFailure> {
+        let id = session.network_agent_id;
+        let Some(encrypted) = &self.encrypted else {
+            tracing::error!(
+                network_agent.id = %id,
+                "要进加密房间，但加密客户端没有配置"
+            );
+            return Err(NetworkGatewayFailure::Unavailable);
+        };
+        self.switched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id);
+        self.polls.supersede(id);
+        if session.encrypted_since.is_none() {
+            session.encrypted_since = Some(
+                self.agents
+                    .mark_encrypted(id)
+                    .await
+                    .map_err(NetworkGatewayFailure::Agent)?,
+            );
+        }
+        let since = self
+            .inbox
+            .pending(id, 1)
+            .await
+            .map_err(|_| NetworkGatewayFailure::Unavailable)?
+            .sync_token;
+        encrypted.prepare(&session, since).await
+    }
+
+    /// 进过加密房间：库里记过，或这个进程刚把它切过去（会话是切之前取的）。
+    fn is_encrypted(&self, session: &NetworkAgentSession) -> bool {
+        session.encrypted_since.is_some()
+            || self
+                .switched
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&session.network_agent_id)
+    }
+
     /// 进过加密房间的 Agent 由它的 matrix-sdk 客户端同步，其余的走轻量客户端。
     async fn sync(
         &self,
         session: &NetworkAgentSession,
         request: &NetworkAgentSyncRequest,
     ) -> Result<MatrixSyncBatch, NetworkGatewayFailure> {
-        if session.encrypted_since.is_none() {
+        if !self.is_encrypted(session) {
             return self
                 .matrix
                 .sync(&session.matrix_access_token, request)
@@ -499,6 +655,22 @@ impl NetworkGateway {
 }
 
 impl NetworkAgentMessaging for NetworkGateway {
+    fn create(
+        &self,
+        request: CreateNetworkAgent,
+    ) -> PortFuture<'_, Result<CreatedNetworkAgent, NetworkGatewayFailure>> {
+        Box::pin(self.create_internal(request))
+    }
+
+    fn enter_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: NetworkAgentRoomRequest,
+        source_digest: [u8; 32],
+    ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+        Box::pin(self.enter_room_internal(token, room, source_digest))
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -695,6 +867,18 @@ impl LongPolls {
             agent,
             id,
             notify,
+        }
+    }
+
+    /// 让这个 Agent 正在进行的长轮询立刻空手返回。
+    fn supersede(&self, agent: NetworkAgentId) {
+        let previous = self
+            .active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&agent);
+        if let Some((_, previous)) = previous {
+            previous.notify_one();
         }
     }
 }
