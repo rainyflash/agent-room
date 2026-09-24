@@ -174,6 +174,15 @@ class ProductionConfigTests(unittest.TestCase):
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(value)
 
+    def test_network_agents_require_a_single_control_plane_replica(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["capacity"]["controlPlaneReplicas"] = 2
+        DeploymentConfig.from_mapping(value)
+
+        value["networkAgents"] = {"enabled": True}
+        with self.assertRaisesRegex(DeploymentConfigError, "controlPlaneReplicas 必须为 1"):
+            DeploymentConfig.from_mapping(value)
+
     def test_distribution_url_is_optional_and_requires_https(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         distribution = DeploymentConfig.from_mapping(value).distribution
@@ -472,6 +481,17 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn(
             "AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}", compose
         )
+        self.assertIn(
+            "AGENT_ROOM_NETWORK_AGENT_STORE_DIR: /var/lib/agent-room/network-agents", compose
+        )
+        self.assertIn(
+            "- ${AGENT_ROOM_STATE_DIR}/data/network-agents:/var/lib/agent-room/network-agents",
+            compose,
+        )
+        store = self.paths.data / "network-agents"
+        self.assertTrue(store.is_dir())
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(store.stat().st_mode), PRIVATE_DIRECTORY_MODE)
         # 裸域名和网页域名上的 /agents.md 都由控制面按实际地址渲染；裸域名的其余路径仍跳转到网页。
         for domain in (self.config.public.server_name, self.config.public.app_domain):
             block = caddyfile.split(f"\n{domain} {{\n", 1)[1].split("\n}\n", 1)[0]

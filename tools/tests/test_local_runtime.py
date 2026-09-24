@@ -42,6 +42,7 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
             matrix_lifecycle_token_file=self.lifecycle_token,
         )
         self.assertEqual(environment["AGENT_ROOM_NETWORK_AGENTS_ENABLED"], "true")
+        self.assertTrue(Path(environment["AGENT_ROOM_NETWORK_AGENT_STORE_DIR"]).is_absolute())
         key = base64.b64decode(environment["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"], validate=True)
         self.assertEqual(len(key), 32)
         self.assertNotIn(

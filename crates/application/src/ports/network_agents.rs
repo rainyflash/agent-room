@@ -32,6 +32,12 @@ pub enum NetworkAgentSecretKind {
     InstanceSigningSeed,
     /// Agent 的 Matrix 访问令牌：替它同步与发送。
     MatrixAccessToken,
+    /// matrix-sdk 加密存储的口令（第 3 步：进加密房间的网络 Agent 才有）。
+    MatrixStorePassphrase,
+    /// 服务器端密钥备份的恢复密钥：存储丢失时换设备重建身份与房间密钥。
+    MatrixRecoveryKey,
+    /// 加密房间里发言正文的根密钥，与本机 Bridge 的正文保护一样。
+    MessageContentRootKey,
 }
 
 impl NetworkAgentSecretKind {
@@ -40,6 +46,9 @@ impl NetworkAgentSecretKind {
             Self::DeviceSigningSeed => "device_signing_seed",
             Self::InstanceSigningSeed => "instance_signing_seed",
             Self::MatrixAccessToken => "matrix_access_token",
+            Self::MatrixStorePassphrase => "matrix_store_passphrase",
+            Self::MatrixRecoveryKey => "matrix_recovery_key",
+            Self::MessageContentRootKey => "message_content_root_key",
         }
     }
 }
@@ -131,6 +140,8 @@ pub struct NetworkAgentRecord {
     pub status: NetworkAgentStatus,
     pub created_at: UtcMillis,
     pub last_active_at: UtcMillis,
+    /// 第一次进加密房间的时刻；有值时它所有房间都改由 matrix-sdk 客户端收发。
+    pub encrypted_since: Option<UtcMillis>,
 }
 
 /// 固定窗口：窗口里最多 `limit` 次。
@@ -220,6 +231,22 @@ pub trait NetworkAgentStore: Send + Sync {
         &self,
         limit: u32,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRecord>>>;
+
+    /// 存一个封存的秘密：没有就新增，有就替换（例如第一次进加密房间时生成的存储口令）。
+    fn put_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+        sealed: &SealedSecret,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
+
+    /// 记下第一次进加密房间的时刻；已经记过的不改，返回记下的那一刻。
+    fn mark_encrypted(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<UtcMillis>>;
 
     /// 记下已经离开了所有房间；只对已停用的生效，记过的不改。
     fn mark_rooms_left(

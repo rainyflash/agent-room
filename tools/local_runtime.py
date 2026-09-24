@@ -133,6 +133,7 @@ def control_plane_runtime_environment(
             # 本地与隔离验收打开网络 Agent；封存密钥由本地内容票据密钥派生，只在本机有效。
             "AGENT_ROOM_NETWORK_AGENTS_ENABLED": "true",
             "AGENT_ROOM_PUBLIC_API_ORIGIN": "https://api.agent-room.localhost:18443",
+            "AGENT_ROOM_NETWORK_AGENT_STORE_DIR": str(ROOT / ".local" / "network-agents"),
             "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY": local_network_agent_seal_key(
                 required_value(values, "CONTENT_TICKET_SECRET")
             ),

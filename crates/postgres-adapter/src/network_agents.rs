@@ -28,7 +28,8 @@ const LIVE_NAME_INDEX: &str = "network_agent_live_name_unique";
 const RECORD_COLUMNS: &str = r"
     id, principal_id, device_id, agent_id, agent_instance_id, display_name, status,
     floor(extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms,
-    floor(extract(epoch FROM last_active_at) * 1000)::bigint AS last_active_at_ms";
+    floor(extract(epoch FROM last_active_at) * 1000)::bigint AS last_active_at_ms,
+    floor(extract(epoch FROM encrypted_since) * 1000)::bigint AS encrypted_since_ms";
 
 impl NetworkAgentStore for PostgresRepositories {
     fn begin(
@@ -395,6 +396,64 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
+    fn put_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+        sealed: &SealedSecret,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let sealed = sealed.clone();
+        Box::pin(async move {
+            let operation = "network_agent.put_secret";
+            sqlx::query(
+                r"INSERT INTO agent_room.network_agent_secret
+                      (network_agent_id, kind, sealed, key_version, updated_at)
+                  VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))
+                  ON CONFLICT (network_agent_id, kind) DO UPDATE
+                     SET sealed = EXCLUDED.sealed,
+                         key_version = EXCLUDED.key_version,
+                         updated_at = EXCLUDED.updated_at",
+            )
+            .bind(id.as_uuid())
+            .bind(kind.as_str())
+            .bind(sealed.bytes.as_slice())
+            .bind(i16::try_from(sealed.key_version).map_err(|_| corrupt_data(operation))?)
+            .bind(at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(())
+        })
+    }
+
+    fn mark_encrypted(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<UtcMillis>> {
+        Box::pin(async move {
+            let operation = "network_agent.mark_encrypted";
+            let since: Option<i64> = sqlx::query_scalar(
+                r"UPDATE agent_room.network_agent
+                     SET encrypted_since = coalesce(
+                         encrypted_since,
+                         greatest(created_at, to_timestamp($2::double precision / 1000.0))
+                     )
+                   WHERE id = $1
+               RETURNING floor(extract(epoch FROM encrypted_since) * 1000)::bigint",
+            )
+            .bind(id.as_uuid())
+            .bind(at.value())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let since = since
+                .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
+            UtcMillis::new(since).map_err(|error| map_domain_error(operation, &error))
+        })
+    }
+
     fn mark_rooms_left(
         &self,
         id: NetworkAgentId,
@@ -546,6 +605,7 @@ fn decode_record(row: &PgRow, operation: &'static str) -> RepositoryResult<Netwo
     let status: String = decode_column(row, "status", operation)?;
     let created_at: i64 = decode_column(row, "created_at_ms", operation)?;
     let last_active_at: i64 = decode_column(row, "last_active_at_ms", operation)?;
+    let encrypted_since: Option<i64> = decode_column(row, "encrypted_since_ms", operation)?;
     Ok(NetworkAgentRecord {
         id: NetworkAgentId::from_uuid(id),
         principal_id: PrincipalId::from_uuid(principal_id),
@@ -558,6 +618,10 @@ fn decode_record(row: &PgRow, operation: &'static str) -> RepositoryResult<Netwo
         created_at: UtcMillis::new(created_at)
             .map_err(|error| map_domain_error(operation, &error))?,
         last_active_at: UtcMillis::new(last_active_at)
+            .map_err(|error| map_domain_error(operation, &error))?,
+        encrypted_since: encrypted_since
+            .map(UtcMillis::new)
+            .transpose()
             .map_err(|error| map_domain_error(operation, &error))?,
     })
 }

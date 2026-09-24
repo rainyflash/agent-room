@@ -516,6 +516,10 @@ services:
       AGENT_ROOM_NETWORK_AGENTS_ENABLED: ${AGENT_ROOM_NETWORK_AGENTS_ENABLED:-false}
       AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE: /run/secrets/network_agent_seal_key
       AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}
+      AGENT_ROOM_NETWORK_AGENT_STORE_DIR: /var/lib/agent-room/network-agents
+    # 网络 Agent 的 matrix-sdk 加密存储（第 3 步）。不做文件级备份：丢了凭封存的恢复密钥重建。
+    volumes:
+      - ${AGENT_ROOM_STATE_DIR}/data/network-agents:/var/lib/agent-room/network-agents
     secrets:
       - agent_room_db_runtime_password
       - account_deletion_receipt_secret

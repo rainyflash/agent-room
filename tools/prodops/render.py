@@ -19,6 +19,8 @@ CONTAINER_CONFIG_DIRECTORY_MODE: Final = 0o555
 CONTAINER_CONFIG_FILE_MODE: Final = 0o444
 BROWSER_CONTROL_PLANE_PATH_PREFIX: Final = "/_agent-room/api"
 BROWSER_OIDC_CALLBACK_PATH: Final = "/connect/finalize"
+# 控制面镜像里的用户（infra/production/Containerfile.control-plane）。
+CONTROL_PLANE_UID: Final = 10001
 PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
@@ -74,6 +76,13 @@ class DeploymentPaths:
             self.data / "synapse",
         ):
             directory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
+
+        # 网络 Agent 的加密存储：控制面容器以 10001 运行，目录只给它。
+        network_agents = self.data / "network-agents"
+        network_agents.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
+        network_agents.chmod(PRIVATE_DIRECTORY_MODE)
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            os.chown(network_agents, CONTROL_PLANE_UID, CONTROL_PLANE_UID)
 
         # PostgreSQL 18 会先降权，再进入主版本子目录；挂载根只允许遍历，实际数据目录仍为 0700。
         postgres_mount_parent = self.data / "postgres"

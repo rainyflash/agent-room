@@ -124,6 +124,7 @@ impl NetworkAgentStore for MemoryStore {
                     status: NetworkAgentStatus::Provisioning,
                     created_at: provisioning.created_at,
                     last_active_at: provisioning.created_at,
+                    encrypted_since: None,
                 },
                 token_digest: provisioning.token_digest,
                 principal: provisioning.principal.clone(),
@@ -315,6 +316,37 @@ impl NetworkAgentStore for MemoryStore {
             .map(|agent| agent.record.clone())
             .collect();
         Box::pin(async move { Ok(pending) })
+    }
+
+    fn put_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+        sealed: &SealedSecret,
+        _at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let mut agents = self.agents.lock().unwrap();
+        let agent = agents
+            .iter_mut()
+            .find(|agent| agent.record.id == id)
+            .unwrap();
+        agent.secrets.retain(|(stored, _)| *stored != kind);
+        agent.secrets.push((kind, sealed.clone()));
+        Box::pin(async { Ok(()) })
+    }
+
+    fn mark_encrypted(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<UtcMillis>> {
+        let mut agents = self.agents.lock().unwrap();
+        let agent = agents
+            .iter_mut()
+            .find(|agent| agent.record.id == id)
+            .unwrap();
+        let since = *agent.record.encrypted_since.get_or_insert(at);
+        Box::pin(async move { Ok(since) })
     }
 
     fn mark_rooms_left(

@@ -187,18 +187,26 @@ class DeploymentConfig:
         if not PROJECT_NAME.fullmatch(project_name):
             raise DeploymentConfigError("projectName 必须是安全的 Compose 项目名。")
 
+        capacity = _parse_capacity(root.get("capacity"))
+        network_agents = _parse_network_agents(root.get("networkAgents"))
+        # 网络 Agent 的 matrix-sdk 加密存储没有跨进程锁，同一目录不能被两个控制面副本同时打开。
+        if network_agents.enabled and capacity.control_plane_replicas > 1:
+            raise DeploymentConfigError(
+                "打开 networkAgents 时 capacity.controlPlaneReplicas 必须为 1："
+                "网络 Agent 的加密存储不能被多个副本同时打开。"
+            )
         return cls(
             schema_version=schema_version,
             project_name=project_name,
             public=_parse_public(root.get("public")),
             database=_parse_database(root.get("database")),
             object_store=_parse_object_store(root.get("objectStore")),
-            capacity=_parse_capacity(root.get("capacity")),
+            capacity=capacity,
             backup=_parse_backup(root.get("backup"), root.get("database")),
             telemetry=_parse_telemetry(root.get("telemetry")),
             identity=_parse_identity(root.get("identity")),
             distribution=_parse_distribution(root.get("distribution")),
-            network_agents=_parse_network_agents(root.get("networkAgents")),
+            network_agents=network_agents,
         )
 
     @property
