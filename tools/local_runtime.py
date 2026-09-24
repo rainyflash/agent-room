@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from enum import StrEnum
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -128,6 +130,11 @@ def control_plane_runtime_environment(
             "AGENT_ROOM_MATRIX_SERVER_NAME": "matrix.agent-room.localhost",
             "AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS": "5000",
             "AGENT_ROOM_LOG_FILTER": "agent_room_control_plane=info,sqlx=warn",
+            # 本地与隔离验收打开网络 Agent；封存密钥由本地内容票据密钥派生，只在本机有效。
+            "AGENT_ROOM_NETWORK_AGENTS_ENABLED": "true",
+            "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY": local_network_agent_seal_key(
+                required_value(values, "CONTENT_TICKET_SECRET")
+            ),
         }
     )
     if enable_telemetry:
@@ -141,6 +148,14 @@ def control_plane_runtime_environment(
         environment.pop("AGENT_ROOM_OTLP_TRACES_ENDPOINT", None)
         environment.pop("AGENT_ROOM_OTLP_METRICS_ENDPOINT", None)
     return environment
+
+
+def local_network_agent_seal_key(local_secret: str) -> str:
+    """从本地内容票据密钥派生 32 字节的网络 Agent 封存密钥（标准 Base64）。"""
+    digest = hashlib.sha256(
+        b"agent-room:local-network-agent-seal-key:v1\0" + local_secret.encode("utf-8")
+    ).digest()
+    return base64.b64encode(digest).decode("ascii")
 
 
 def bridge_runtime_environment(

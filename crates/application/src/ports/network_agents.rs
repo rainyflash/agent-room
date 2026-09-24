@@ -18,8 +18,8 @@ use crate::{
     persistence::RepositoryResult,
     ports::{
         MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixResult, MatrixRoomId,
-        MatrixSyncBatch, MatrixSyncToken, MatrixTransactionId, PortFuture, PrincipalRegistration,
-        SecretDigest, SecretGenerationFailure, SecretValue,
+        MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken, MatrixTransactionId, PortFuture,
+        PrincipalRegistration, SecretDigest, SecretGenerationFailure, SecretValue,
     },
 };
 
@@ -342,6 +342,14 @@ pub trait NetworkAgentMatrixGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         event: &'a MatrixEvent,
     ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>>;
+
+    /// 以 Agent 自己的身份写一条房间状态（在线状态用）。
+    fn send_state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixStateEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixEventId>>;
 
     /// 离开房间；已经不在里面也算成功。
     fn leave<'a>(
