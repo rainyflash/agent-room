@@ -804,6 +804,27 @@ fn build_agent_collaboration_http_states(
     })
 }
 
+/// 网络 Agent 的加密存储目录（第 3 步）：启动时就确认它在、可写，不等到第一个 Agent 进加密房间才发现。
+fn prepare_network_agent_store(directory: &std::path::Path) -> Result<(), StartupError> {
+    let unavailable = |error: std::io::Error| {
+        StartupError::new(
+            "startup.network_agent_store_unavailable",
+            format!("网络 Agent 的加密存储目录不可用：{:?}", error.kind()),
+        )
+    };
+    std::fs::create_dir_all(directory).map_err(unavailable)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+            .map_err(unavailable)?;
+    }
+    let probe = directory.join(format!(".write-probe-{}", std::process::id()));
+    std::fs::write(&probe, b"ok").map_err(unavailable)?;
+    std::fs::remove_file(&probe).map_err(unavailable)?;
+    Ok(())
+}
+
 /// 网络 Agent 的公开路由，以及总开关打开时才运行的定时清理。
 struct NetworkAgentRuntime {
     routes: Router,
@@ -816,6 +837,11 @@ fn build_network_agent_routes(
     request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
 ) -> Result<NetworkAgentRuntime, StartupError> {
+    if config.network_agents.enabled
+        && let Some(directory) = &config.network_agents.store_dir
+    {
+        prepare_network_agent_store(directory)?;
+    }
     let provisioning = build_lobby_provisioning(
         &config.lobby,
         dependencies.repositories.clone(),

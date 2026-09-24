@@ -1,4 +1,10 @@
-use std::{env, fmt, fs, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    env, fmt, fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
 use agent_room_identity_adapter::{NETWORK_AGENT_SEAL_KEY_BYTES, NetworkAgentSealKey};
@@ -173,6 +179,8 @@ pub(crate) struct NetworkAgentConfig {
     pub(crate) seal_key: Option<NetworkAgentSealKey>,
     /// 写进 `/agents.md` 的 API 地址，例如 `https://api.agentroom.chat`。
     pub(crate) public_api_origin: Option<Url>,
+    /// 网络 Agent 的 matrix-sdk 加密存储（第 3 步），每个 Agent 一个子目录；开关打开时必配。
+    pub(crate) store_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -214,6 +222,7 @@ fn read_network_agent_config(
     const ENABLED: &str = "AGENT_ROOM_NETWORK_AGENTS_ENABLED";
     const SEAL_KEY: &str = "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY";
     const PUBLIC_API_ORIGIN: &str = "AGENT_ROOM_PUBLIC_API_ORIGIN";
+    const STORE_DIR: &str = "AGENT_ROOM_NETWORK_AGENT_STORE_DIR";
     let enabled = match read_optional(source, ENABLED).as_deref().map(str::trim) {
         None | Some("false") => false,
         Some("true") => true,
@@ -245,10 +254,24 @@ fn read_network_agent_config(
             name: PUBLIC_API_ORIGIN,
         });
     }
+    let store_dir = read_optional(source, STORE_DIR)
+        .map(|value| {
+            let path = PathBuf::from(value.trim());
+            if Path::is_absolute(&path) {
+                Ok(path)
+            } else {
+                Err(ConfigError::invalid(STORE_DIR, "必须是绝对路径"))
+            }
+        })
+        .transpose()?;
+    if enabled && store_dir.is_none() {
+        return Err(ConfigError::Missing { name: STORE_DIR });
+    }
     Ok(NetworkAgentConfig {
         enabled,
         seal_key,
         public_api_origin,
+        store_dir,
     })
 }
 
@@ -1185,6 +1208,18 @@ mod tests {
             "AGENT_ROOM_PUBLIC_API_ORIGIN",
             "https://api.agent-room.example".to_owned(),
         );
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Missing {
+                name: "AGENT_ROOM_NETWORK_AGENT_STORE_DIR"
+            })
+        ));
+
+        let store = tempfile::tempdir().expect("可创建临时目录");
+        environment.0.insert(
+            "AGENT_ROOM_NETWORK_AGENT_STORE_DIR",
+            store.path().to_string_lossy().into_owned(),
+        );
         let enabled = ControlPlaneConfig::from_source(&environment).expect("开关与密钥有效");
         assert!(enabled.network_agents.enabled);
         assert!(enabled.network_agents.seal_key.is_some());
@@ -1205,6 +1240,10 @@ mod tests {
             (
                 "AGENT_ROOM_PUBLIC_API_ORIGIN",
                 "https://api.agent-room.example/v1",
+            ),
+            (
+                "AGENT_ROOM_NETWORK_AGENT_STORE_DIR",
+                "relative/network-agents",
             ),
         ] {
             let mut environment = valid_environment();
@@ -1236,6 +1275,14 @@ mod tests {
         environment.0.insert(
             "AGENT_ROOM_PUBLIC_API_ORIGIN",
             "https://api.agent-room.example".to_owned(),
+        );
+        environment.0.insert(
+            "AGENT_ROOM_NETWORK_AGENT_STORE_DIR",
+            directory
+                .path()
+                .join("network-agents")
+                .to_string_lossy()
+                .into_owned(),
         );
 
         let config = ControlPlaneConfig::from_source(&environment).expect("文件 Secret 有效");

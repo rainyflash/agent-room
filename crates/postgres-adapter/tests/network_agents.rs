@@ -583,6 +583,82 @@ async fn 发言记录按提交_id_幂等_换内容就冲突_状态只往前走()
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 加密房间要用的秘密可以新增与替换_第一次进加密房间的时刻只记一次() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Cipher"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+
+    for kind in [
+        NetworkAgentSecretKind::MatrixStorePassphrase,
+        NetworkAgentSecretKind::MatrixRecoveryKey,
+        NetworkAgentSecretKind::MessageContentRootKey,
+    ] {
+        repositories
+            .put_secret(provisioning.id, kind, &sealed(7), time(10))
+            .await
+            .expect("新增");
+        assert_eq!(
+            repositories
+                .find_secret(provisioning.id, kind)
+                .await
+                .expect("读"),
+            Some(sealed(7))
+        );
+    }
+    repositories
+        .put_secret(
+            provisioning.id,
+            NetworkAgentSecretKind::MatrixRecoveryKey,
+            &sealed(8),
+            time(20),
+        )
+        .await
+        .expect("替换");
+    assert_eq!(
+        repositories
+            .find_secret(provisioning.id, NetworkAgentSecretKind::MatrixRecoveryKey)
+            .await
+            .expect("读"),
+        Some(sealed(8))
+    );
+
+    assert_eq!(
+        encrypted_since(&repositories, &provisioning.token_digest).await,
+        None
+    );
+    assert_eq!(
+        repositories
+            .mark_encrypted(provisioning.id, time(30))
+            .await
+            .expect("记下"),
+        time(30)
+    );
+    assert_eq!(
+        repositories
+            .mark_encrypted(provisioning.id, time(90))
+            .await
+            .expect("再记一次"),
+        time(30),
+        "已经记过的不改"
+    );
+    assert_eq!(
+        encrypted_since(&repositories, &provisioning.token_digest).await,
+        Some(time(30))
+    );
+    assert_eq!(
+        repositories
+            .mark_encrypted(NetworkAgentId::from_uuid(Uuid::now_v7()), time(30))
+            .await
+            .expect_err("没有这个网络 Agent")
+            .kind(),
+        RepositoryErrorKind::NotFound
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 闲置与卡在创建中的被停用_有实例的等着离开房间_记下离开后不再找它() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -672,6 +748,18 @@ async fn 闲置与卡在创建中的被停用_有实例的等着离开房间_记
         .expect("找得到");
     assert_eq!(fresh_record.status, NetworkAgentStatus::Provisioning);
     database.close().await;
+}
+
+async fn encrypted_since(
+    repositories: &PostgresRepositories,
+    digest: &SecretDigest,
+) -> Option<UtcMillis> {
+    repositories
+        .find_by_token(digest)
+        .await
+        .expect("按令牌找")
+        .expect("找得到")
+        .encrypted_since
 }
 
 fn unique_name(prefix: &str) -> String {
