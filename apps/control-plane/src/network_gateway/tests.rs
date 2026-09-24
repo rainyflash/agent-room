@@ -14,9 +14,9 @@ use agent_room_application::{
         RedactContentOutcome, RedactContentRequest, RedactContentResult,
     },
     network_agents::{
-        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentSession,
-        NetworkAgentUseCases, NetworkAgentView,
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentEncryptionSecrets,
+        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentLobby, NetworkAgentPendingExit,
+        NetworkAgentResult, NetworkAgentSession, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -53,8 +53,8 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    NetworkAgentCleanupOutcome, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGateway,
-    NetworkGatewayDependencies, NetworkGatewayFailure,
+    EncryptedSessions, NetworkAgentCleanupOutcome, NetworkAgentMessageDraft, NetworkAgentMessaging,
+    NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
 };
 
 const TOKEN: &str = "network-agent-token";
@@ -82,6 +82,8 @@ struct FakeAgents {
     stale: Mutex<usize>,
     exits: Mutex<Vec<NetworkAgentPendingExit>>,
     rooms_left: Mutex<Vec<NetworkAgentId>>,
+    /// 进过加密房间的时刻；有值时网关改用加密客户端同步。
+    encrypted_since: Mutex<Option<UtcMillis>>,
 }
 
 impl FakeAgents {
@@ -105,6 +107,7 @@ impl FakeAgents {
             stale: Mutex::new(0),
             exits: Mutex::new(Vec::new()),
             rooms_left: Mutex::new(Vec::new()),
+            encrypted_since: Mutex::new(None),
         }
     }
 
@@ -119,6 +122,8 @@ impl FakeAgents {
             matrix_access_token: SecretValue::new("syt_scout").unwrap(),
             instance_signing_seed: self.seed.clone(),
             rooms: self.rooms.clone(),
+            matrix_device_id: format!("AR_{}", uuid(OWN_INSTANCE).simple()),
+            encrypted_since: *self.encrypted_since.lock().unwrap(),
         }
     }
 }
@@ -198,6 +203,21 @@ impl NetworkAgentUseCases for FakeAgents {
 
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
         unreachable!("网关不列大厅")
+    }
+
+    fn encryption_secrets(
+        &self,
+        _id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>> {
+        unreachable!("网关测试里的加密客户端是替身")
+    }
+
+    fn store_recovery_credential<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        _credential: &'a SecretValue,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("网关测试里的加密客户端是替身")
     }
 }
 
@@ -739,6 +759,58 @@ impl AgentInstanceSignatureVerifier for FakeSignatures {
     }
 }
 
+/// 加密客户端替身：记下同步请求，按顺序给出结果；用完之后按请求的超时等一会儿再返回空批次。
+#[derive(Default)]
+struct FakeEncrypted {
+    batches: Mutex<VecDeque<Result<MatrixSyncBatch, NetworkGatewayFailure>>>,
+    requests: Mutex<Vec<(NetworkAgentId, NetworkAgentSyncRequest)>>,
+    forgotten: Mutex<Vec<NetworkAgentId>>,
+    /// 下一轮清理时关掉几个闲置的。
+    idle: Mutex<usize>,
+}
+
+impl FakeEncrypted {
+    fn requests(&self) -> Vec<(NetworkAgentId, NetworkAgentSyncRequest)> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl EncryptedSessions for FakeEncrypted {
+    fn sync<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+        request: &'a NetworkAgentSyncRequest,
+    ) -> PortFuture<'a, Result<MatrixSyncBatch, NetworkGatewayFailure>> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push((session.network_agent_id, request.clone()));
+        let next = self.batches.lock().unwrap().pop_front();
+        let since = request
+            .since
+            .as_ref()
+            .map_or_else(|| "e0".to_owned(), |token| token.as_str().to_owned());
+        let timeout = request.timeout_millis;
+        Box::pin(async move {
+            if let Some(result) = next {
+                return result;
+            }
+            tokio::time::sleep(Duration::from_millis(timeout)).await;
+            Ok(batch(&since, Vec::new()))
+        })
+    }
+
+    fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()> {
+        self.forgotten.lock().unwrap().push(id);
+        Box::pin(async {})
+    }
+
+    fn evict_idle(&self) -> PortFuture<'_, usize> {
+        let idle = std::mem::take(&mut *self.idle.lock().unwrap());
+        Box::pin(async move { idle })
+    }
+}
+
 /// 跟着 tokio 的时间走：暂停时间的测试里，等待多久，钟就走多久。
 struct TokioClock {
     started: tokio::time::Instant,
@@ -760,6 +832,7 @@ struct Harness {
     submissions: Arc<MemorySubmissions>,
     content: Arc<FakeContent>,
     matrix: Arc<ScriptedMatrix>,
+    encrypted: Arc<FakeEncrypted>,
 }
 
 fn harness() -> Harness {
@@ -767,11 +840,16 @@ fn harness() -> Harness {
 }
 
 fn harness_in(rooms: &[&str]) -> Harness {
+    build_harness(rooms, true)
+}
+
+fn build_harness(rooms: &[&str], encrypted_clients: bool) -> Harness {
     let agents = Arc::new(FakeAgents::in_rooms(rooms));
     let inbox = Arc::new(MemoryInbox::default());
     let submissions = Arc::new(MemorySubmissions::default());
     let content = Arc::new(FakeContent::default());
     let matrix = Arc::new(ScriptedMatrix::default());
+    let encrypted = Arc::new(FakeEncrypted::default());
     let gateway = NetworkGateway::new(NetworkGatewayDependencies {
         agents: agents.clone(),
         inbox: inbox.clone(),
@@ -783,6 +861,7 @@ fn harness_in(rooms: &[&str]) -> Harness {
         clock: Arc::new(TokioClock {
             started: tokio::time::Instant::now(),
         }),
+        encrypted: encrypted_clients.then(|| encrypted.clone() as Arc<dyn EncryptedSessions>),
     });
     Harness {
         gateway,
@@ -791,6 +870,7 @@ fn harness_in(rooms: &[&str]) -> Harness {
         submissions,
         content,
         matrix,
+        encrypted,
     }
 }
 
@@ -1641,13 +1721,122 @@ async fn 停用时离开所有房间再作废令牌_离开失败也照样作废_
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn 进过加密房间的_agent_改由加密客户端同步_收件箱照旧() {
+    let harness = harness();
+    *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
+    harness
+        .encrypted
+        .batches
+        .lock()
+        .unwrap()
+        .push_back(Ok(batch(
+            "e1",
+            vec![chat(
+                "$secret:matrix.test",
+                other(),
+                Uuid::now_v7(),
+                "只有房间里的人看得到",
+                [1; 64],
+            )],
+        )));
+
+    let first = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .expect("取到消息");
+
+    assert_eq!(texts(&first.messages), ["只有房间里的人看得到"]);
+    let requests = harness.encrypted.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, network_agent_id());
+    assert_eq!(requests[0].1.since, None);
+    assert_eq!(requests[0].1.timeout_millis, 0);
+    assert_eq!(harness.inbox.sync_token().as_deref(), Some("e1"));
+
+    // 确认之后接着从加密客户端给的位置等；轻量客户端始终不碰它，
+    // 否则会把发给这台设备的房间密钥一并跳过去。
+    harness
+        .gateway
+        .acknowledge(TOKEN, "$secret:matrix.test")
+        .await
+        .unwrap();
+    let next = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .await
+        .unwrap();
+    assert!(next.messages.is_empty());
+    let requests = harness.encrypted.requests();
+    assert_eq!(
+        requests
+            .last()
+            .unwrap()
+            .1
+            .since
+            .as_ref()
+            .map(MatrixSyncToken::as_str),
+        Some("e1")
+    );
+    assert!(harness.matrix.requests().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 加密客户端没配置时如实报暂时不可用_不退回轻量客户端() {
+    let harness = build_harness(&[ROOM], false);
+    *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
+
+    assert_eq!(
+        harness
+            .gateway
+            .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::Unavailable
+    );
+    assert!(harness.matrix.requests().is_empty());
+}
+
+#[tokio::test]
+async fn 停用与定时清理时关掉加密客户端_闲置的也关掉() {
+    let disabled = harness();
+    disabled.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert_eq!(
+        *disabled.encrypted.forgotten.lock().unwrap(),
+        [network_agent_id()]
+    );
+
+    let cleanup = harness();
+    let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
+    *cleanup.agents.exits.lock().unwrap() = vec![
+        NetworkAgentPendingExit::Session(Box::new(cleanup.agents.own_session())),
+        NetworkAgentPendingExit::Unopenable(lost),
+    ];
+    *cleanup.encrypted.idle.lock().unwrap() = 2;
+
+    assert_eq!(
+        cleanup.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            left: 1,
+            abandoned: 1,
+            closed: 2,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *cleanup.encrypted.forgotten.lock().unwrap(),
+        [network_agent_id(), lost]
+    );
+}
+
 #[tokio::test]
 async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离开成的下轮再试() {
     let harness = harness_in(&[ROOM, SECOND_ROOM]);
     let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
     *harness.agents.stale.lock().unwrap() = 2;
     *harness.agents.exits.lock().unwrap() = vec![
-        NetworkAgentPendingExit::Session(harness.agents.own_session()),
+        NetworkAgentPendingExit::Session(Box::new(harness.agents.own_session())),
         NetworkAgentPendingExit::Unopenable(lost),
     ];
     *harness.matrix.leave_fails.lock().unwrap() = true;
@@ -1661,6 +1850,7 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
             left: 0,
             abandoned: 1,
             retrying: 1,
+            closed: 0,
         }
     );
     assert_eq!(*harness.agents.rooms_left.lock().unwrap(), [lost]);

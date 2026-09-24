@@ -48,8 +48,10 @@ use tokio::{sync::Notify, time::Instant};
 use uuid::{Uuid, Version};
 
 pub(crate) use cleanup::NetworkAgentCleanupOutcome;
+pub(crate) use encrypted::{EncryptedClients, EncryptedSessions};
 
 mod cleanup;
+mod encrypted;
 mod presence;
 mod projection;
 mod speaking;
@@ -163,6 +165,8 @@ pub(crate) struct NetworkGatewayDependencies {
     pub(crate) verification: Arc<dyn AgentInstanceVerificationRepository>,
     pub(crate) signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     pub(crate) clock: Arc<dyn Clock>,
+    /// 进过加密房间的 Agent 用的 matrix-sdk 客户端；总开关关着时没有。
+    pub(crate) encrypted: Option<Arc<dyn EncryptedSessions>>,
 }
 
 pub(crate) struct NetworkGateway {
@@ -174,6 +178,7 @@ pub(crate) struct NetworkGateway {
     verification: Arc<dyn AgentInstanceVerificationRepository>,
     signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     clock: Arc<dyn Clock>,
+    encrypted: Option<Arc<dyn EncryptedSessions>>,
     polls: LongPolls,
     presence: presence::Presence,
 }
@@ -189,6 +194,7 @@ impl NetworkGateway {
             verification: dependencies.verification,
             signatures: dependencies.signatures,
             clock: dependencies.clock,
+            encrypted: dependencies.encrypted,
             polls: LongPolls::default(),
             presence: presence::Presence::default(),
         }
@@ -275,6 +281,7 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         self.presence.forget(session.network_agent_id).await;
+        self.close_encrypted(session.network_agent_id).await;
         if left
             && self
                 .agents
@@ -395,9 +402,7 @@ impl NetworkGateway {
                 },
             };
             let batch = tokio::select! {
-                result = self.matrix.sync(&session.matrix_access_token, &request) => {
-                    result.map_err(|_| NetworkGatewayFailure::Unavailable)?
-                }
+                result = self.sync(&session, &request) => result?,
                 () = poll.superseded() => return Ok(messages(page)),
             };
             let changes = self.changes(&session, &batch).await?;
@@ -413,6 +418,37 @@ impl NetworkGateway {
                 })
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+        }
+    }
+
+    /// 进过加密房间的 Agent 由它的 matrix-sdk 客户端同步，其余的走轻量客户端。
+    async fn sync(
+        &self,
+        session: &NetworkAgentSession,
+        request: &NetworkAgentSyncRequest,
+    ) -> Result<MatrixSyncBatch, NetworkGatewayFailure> {
+        if session.encrypted_since.is_none() {
+            return self
+                .matrix
+                .sync(&session.matrix_access_token, request)
+                .await
+                .map_err(|_| NetworkGatewayFailure::Unavailable);
+        }
+        // 不能退回轻量客户端：它同步时会把发给这台设备的房间密钥一并跳过。
+        let Some(encrypted) = &self.encrypted else {
+            tracing::error!(
+                network_agent.id = %session.network_agent_id,
+                "网络 Agent 进过加密房间，但加密客户端没有配置"
+            );
+            return Err(NetworkGatewayFailure::Unavailable);
+        };
+        encrypted.sync(session, request).await
+    }
+
+    /// 停用后关掉它的加密客户端（如果开着）。
+    async fn close_encrypted(&self, id: NetworkAgentId) {
+        if let Some(encrypted) = &self.encrypted {
+            encrypted.forget(id).await;
         }
     }
 

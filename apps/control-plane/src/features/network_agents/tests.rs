@@ -5,9 +5,10 @@ use std::{
 
 use agent_room_application::{
     network_agents::{
-        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentSession, NetworkAgentUseCases, NetworkAgentView,
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentEncryptionSecrets,
+        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentLobby, NetworkAgentPendingExit,
+        NetworkAgentResult, NetworkAgentRoom, NetworkAgentSession, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
 };
@@ -166,6 +167,21 @@ impl NetworkAgentUseCases for FakeAgents {
                 },
             ])
         })
+    }
+
+    fn encryption_secrets(
+        &self,
+        _id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>> {
+        unreachable!("路由不打开加密客户端")
+    }
+
+    fn store_recovery_credential<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        _credential: &'a SecretValue,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("路由不打开加密客户端")
     }
 }
 

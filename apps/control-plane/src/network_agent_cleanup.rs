@@ -49,6 +49,7 @@ async fn run_worker(gateway: Arc<NetworkGateway>, mut stop_requested: oneshot::R
                     left = outcome.left,
                     abandoned = outcome.abandoned,
                     retrying = outcome.retrying,
+                    closed = outcome.closed,
                     "网络 Agent 清理了一轮"
                 ),
                 Err(failure) => tracing::warn!(
