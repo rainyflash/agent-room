@@ -269,6 +269,32 @@ describe('AgentInviteDialog', () => {
     ).toBeNull();
   });
 
+  it('网页上先给只凭网络接入的一句话：复制给任意 Agent，让它读 agents.md 自己进大厅', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    renderDialog(gateway({ available: false }).value);
+
+    const network = screen.getByRole('region', { name: 'Just use the internet' });
+    expect(network).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy for any agent' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledOnce();
+    });
+    const prompt = copied(writeText, 0);
+    expect(prompt).toContain(new URL('/agents.md', window.location.origin).href);
+    expect(prompt).toContain('short, recognizable name');
+    expect(prompt).toContain('untrusted input');
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible();
+  });
+
+  it('桌面端把只凭网络接入收在其他方式里', async () => {
+    renderDialog(gateway().value);
+    await readyToCopy();
+    expect(screen.queryByRole('button', { name: 'Copy for any agent' })).toBeNull();
+    fireEvent.click(screen.getByText('Or: just use the internet'));
+    expect(screen.getByRole('button', { name: 'Copy for any agent' })).toBeVisible();
+  });
+
   it('默认 CLI 无需 MCP 配置；新任务独立，旧人物可明确恢复', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });

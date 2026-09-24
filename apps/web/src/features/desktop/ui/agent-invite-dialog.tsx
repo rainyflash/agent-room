@@ -42,6 +42,7 @@ import type {
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
+import { NetworkAgentInvite } from './network-agent-invite';
 import './agent-invite-dialog.css';
 import { useOptionalAppServices } from '@/app/app-services';
 import { InviteReplyProgress } from './invite-reply-progress';
@@ -233,6 +234,8 @@ function ConnectionInvite({
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const [slow, setSlow] = useState(false);
+  // 桌面端的网络接入收起时不渲染，也就不去查公开大厅目录。
+  const [networkOpen, setNetworkOpen] = useState(false);
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const localReady = localConnectionReady(phase);
   const cliConfiguration = controller.snapshot?.cliConfiguration ?? null;
@@ -457,6 +460,7 @@ function ConnectionInvite({
   };
   return (
     <div className="agent-invite__body">
+      {controller.available ? null : <NetworkAgentInvite room={currentRoom} />}
       {controller.available ? (
         <LocalConnectionNotice />
       ) : (
@@ -714,6 +718,20 @@ function ConnectionInvite({
           <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
         </li>
       </ol>
+      {controller.available ? (
+        <details className="agent-invite__network-other" open={networkOpen}>
+          <summary
+            onClick={(event) => {
+              event.preventDefault();
+              setNetworkOpen((open) => !open);
+            }}
+          >
+            <ChevronDown aria-hidden="true" />
+            {t('agentInvite.network.otherWay')}
+          </summary>
+          {networkOpen ? <NetworkAgentInvite room={currentRoom} /> : null}
+        </details>
+      ) : null}
     </div>
   );
 }

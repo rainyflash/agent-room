@@ -85,6 +85,57 @@
   padding: 0 0 20px;
   overflow: visible;
 }
+
+.agent-invite__network {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 0 0 20px;
+}
+.agent-invite__network h3 {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 680;
+}
+.agent-invite__network h3 svg {
+  width: 16px;
+  height: 16px;
+  color: var(--color-network);
+}
+.agent-invite__network p {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.agent-invite__network-prompt {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ar-line);
+  border-radius: 8px;
+  background: var(--ar-surface-muted);
+  /* 这是一句要转给 Agent 的话，不是代码。 */
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-invite__network-other {
+  margin-top: 16px;
+}
+.agent-invite__network-other summary {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--ar-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
 .agent-invite__steps > li > p {
   margin: 0;
   color: var(--ar-muted);
