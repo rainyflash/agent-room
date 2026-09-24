@@ -4,8 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use agent_room_application::ports::{
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, MatrixEventId,
-    MatrixRoomId, MatrixSyncToken, MatrixTransactionId, NetworkAgentInboxChange,
-    NetworkAgentInboxMessage, PortFuture,
+    MatrixRoomId, MatrixSyncToken, NetworkAgentInboxChange, NetworkAgentInboxMessage, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_verification::{
@@ -14,15 +13,13 @@ use agent_room_bridge_core::{
     },
     messages::{
         MessageBackfillBatch, MessageProjectionBatch, MessageProjectionMutation,
-        MessageProjectionStoreFailure, MessageStoreFailure, MessageStoreFailureKind,
-        MessageSubmissionClaim, MessageSubmissionClaimOutcome, MessageSubmissionRecord,
-        MessageSubmissionRepository, MessageTimelineProjectionStore, PendingTimelineGap,
+        MessageProjectionStoreFailure, MessageTimelineProjectionStore, PendingTimelineGap,
         ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
 use agent_room_bridge_ipc::previews::preview_summary;
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, MessageSubmissionId},
+    ids::{AgentId, AgentInstanceId},
     messages::MessageRevisionKind,
 };
 use serde_json::{Map, Value};
@@ -126,53 +123,6 @@ impl AgentInstanceVerificationGateway for InstanceVerification {
                 )),
             }
         })
-    }
-}
-
-/// 收消息时同步服务只用它对账“自己发出去、还不知道有没有成功”的提交；网络 Agent 在这一步
-/// 还不发言，所以什么都对不上。
-pub(super) struct NoSubmissions;
-
-const fn unavailable() -> MessageStoreFailure {
-    MessageStoreFailure::new(MessageStoreFailureKind::Unavailable)
-}
-
-impl MessageSubmissionRepository for NoSubmissions {
-    fn claim<'a>(
-        &'a self,
-        _claim: &'a MessageSubmissionClaim,
-    ) -> PortFuture<'a, Result<MessageSubmissionClaimOutcome, MessageStoreFailure>> {
-        Box::pin(async { Err(unavailable()) })
-    }
-
-    fn mark_submit_unknown(
-        &self,
-        _submission_id: MessageSubmissionId,
-    ) -> PortFuture<'_, Result<MessageSubmissionRecord, MessageStoreFailure>> {
-        Box::pin(async { Err(unavailable()) })
-    }
-
-    fn mark_accepted<'a>(
-        &'a self,
-        _submission_id: MessageSubmissionId,
-        _event_id: &'a MatrixEventId,
-    ) -> PortFuture<'a, Result<MessageSubmissionRecord, MessageStoreFailure>> {
-        Box::pin(async { Err(unavailable()) })
-    }
-
-    fn mark_bound(
-        &self,
-        _submission_id: MessageSubmissionId,
-    ) -> PortFuture<'_, Result<MessageSubmissionRecord, MessageStoreFailure>> {
-        Box::pin(async { Err(unavailable()) })
-    }
-
-    fn observe_transaction<'a>(
-        &'a self,
-        _transaction_id: &'a MatrixTransactionId,
-        _event_id: &'a MatrixEventId,
-    ) -> PortFuture<'a, Result<Option<MessageSubmissionRecord>, MessageStoreFailure>> {
-        Box::pin(async { Ok(None) })
     }
 }
 

@@ -1,41 +1,64 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use agent_room_application::{
+    content::{
+        BeginContentUploadOutcome, BeginContentUploadRequest, BeginContentUploadResult,
+        BindContentEventOutcome, BindContentEventRequest, BindContentEventResult,
+        CompleteContentUploadOutcome, CompleteContentUploadRequest, CompleteContentUploadResult,
+        ContentUseCases, IssueContentReadTicketRequest, IssueContentReadTicketResult,
+        IssuedContentReadTicket, OpenContentRequest, OpenContentResult, OpenedVerifiedContent,
+        RedactContentOutcome, RedactContentRequest, RedactContentResult,
+    },
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentResult, NetworkAgentSession, NetworkAgentUseCases, NetworkAgentView,
     },
-    persistence::RepositoryResult,
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRecord,
-        AgentInstanceVerificationRepository, Clock, DeviceSignature, MatrixEventId,
-        MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
-        MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken,
-        MatrixTimelineEvent, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
+        AgentInstanceVerificationRepository, Clock, ContentAccessMode, ContentAccessPolicy,
+        DeviceSignature, MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixEventType,
+        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+        MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
+        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
         NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxEntry,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
+        NetworkAgentRoomRecord, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentSyncRequest, PortFuture, SecretValue,
     },
 };
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
-    ids::{AgentId, AgentInstanceId, MessageId, NetworkAgentId},
+    content::{
+        ContentEncryptionMode, ContentLifecycleState, ContentObject, ContentObjectFields,
+        ContentScanState, ContentStorageKey,
+    },
+    ids::{
+        AgentId, AgentInstanceId, MessageId, MessageSubmissionId, NetworkAgentId, PrincipalId,
+        RoomCatalogId,
+    },
+    rooms::MatrixRoomReference,
     time::UtcMillis,
 };
+use agent_room_identity_adapter::Ed25519DeviceSigningKey;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    NetworkAgentMessaging, NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
+    NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGateway, NetworkGatewayDependencies,
+    NetworkGatewayFailure,
 };
 
 const TOKEN: &str = "network-agent-token";
 const ROOM: &str = "!lobby:matrix.test";
+const SECOND_ROOM: &str = "!second:matrix.test";
+const PRINCIPAL: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";
 const NETWORK_AGENT: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const OWN_AGENT: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const OWN_INSTANCE: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
@@ -46,7 +69,36 @@ const FORGED_SIGNATURE: [u8; 64] = [0xFF; 64];
 
 // ---------- 假实现 ----------
 
-struct FakeAgents;
+/// 网关看到的网络 Agent：令牌对上就给会话，发言额度可以设成已用完，停用的令牌记下来。
+struct FakeAgents {
+    seed: SecretValue,
+    rooms: Vec<NetworkAgentRoomRecord>,
+    quota: Mutex<Option<NetworkAgentFailure>>,
+    quota_taken: Mutex<u32>,
+    disabled: Mutex<Vec<String>>,
+}
+
+impl FakeAgents {
+    fn in_rooms(rooms: &[&str]) -> Self {
+        Self {
+            seed: Ed25519DeviceSigningKey::generate()
+                .unwrap()
+                .encoded_seed()
+                .unwrap(),
+            rooms: rooms
+                .iter()
+                .map(|room| NetworkAgentRoomRecord {
+                    catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
+                    matrix_room_id: MatrixRoomReference::new((*room).to_owned()).unwrap(),
+                    joined_at: UtcMillis::new(1).unwrap(),
+                })
+                .collect(),
+            quota: Mutex::new(None),
+            quota_taken: Mutex::new(0),
+            disabled: Mutex::new(Vec::new()),
+        }
+    }
+}
 
 impl NetworkAgentUseCases for FakeAgents {
     fn create(
@@ -60,8 +112,9 @@ impl NetworkAgentUseCases for FakeAgents {
         unreachable!("网关不查看自己")
     }
 
-    fn disable<'a>(&'a self, _token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>> {
-        unreachable!("网关不停用")
+    fn disable<'a>(&'a self, token: &'a str) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.disabled.lock().unwrap().push(token.to_owned());
+        Box::pin(async { Ok(()) })
     }
 
     fn session<'a>(
@@ -71,11 +124,14 @@ impl NetworkAgentUseCases for FakeAgents {
         let result = if token == TOKEN {
             Ok(NetworkAgentSession {
                 network_agent_id: network_agent_id(),
+                principal_id: PrincipalId::from_uuid(uuid(PRINCIPAL)),
                 agent_id: agent(OWN_AGENT),
                 agent_instance_id: instance(OWN_INSTANCE),
                 display_name: "Scout".to_owned(),
+                agent_matrix_user_id: matrix_user(OWN_AGENT),
                 matrix_access_token: SecretValue::new("syt_scout").unwrap(),
-                rooms: Vec::new(),
+                instance_signing_seed: self.seed.clone(),
+                rooms: self.rooms.clone(),
             })
         } else {
             Err(NetworkAgentFailure::new(
@@ -83,6 +139,244 @@ impl NetworkAgentUseCases for FakeAgents {
             ))
         };
         Box::pin(async move { result })
+    }
+
+    fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        let result = if let Some(failure) = self.quota.lock().unwrap().clone() {
+            Err(failure)
+        } else {
+            *self.quota_taken.lock().unwrap() += 1;
+            Ok(())
+        };
+        Box::pin(async move { result })
+    }
+}
+
+/// 与 Postgres 实现同样语义的提交记录。
+#[derive(Default)]
+struct MemorySubmissions {
+    records: Mutex<HashMap<MessageSubmissionId, NetworkAgentSubmissionRecord>>,
+}
+
+impl MemorySubmissions {
+    fn state(&self, submission_id: MessageSubmissionId) -> Option<NetworkAgentSubmissionState> {
+        self.records
+            .lock()
+            .unwrap()
+            .get(&submission_id)
+            .map(|record| record.state)
+    }
+}
+
+fn conflict() -> RepositoryError {
+    RepositoryError::new("test.submission", RepositoryErrorKind::Conflict)
+}
+
+impl NetworkAgentSubmissionStore for MemorySubmissions {
+    fn claim<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        claim: &'a NetworkAgentSubmissionClaim,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentSubmissionClaimOutcome>> {
+        let mut records = self.records.lock().unwrap();
+        let outcome = match records.get(&claim.submission_id) {
+            Some(existing)
+                if existing.kind == claim.kind
+                    && existing.fingerprint == claim.fingerprint
+                    && existing.transaction_id == claim.transaction_id =>
+            {
+                Ok(NetworkAgentSubmissionClaimOutcome::Existing(
+                    existing.clone(),
+                ))
+            }
+            Some(_) => Err(conflict()),
+            None => {
+                let record = NetworkAgentSubmissionRecord {
+                    submission_id: claim.submission_id,
+                    kind: claim.kind,
+                    fingerprint: claim.fingerprint,
+                    transaction_id: claim.transaction_id.clone(),
+                    state: NetworkAgentSubmissionState::Claimed,
+                    event_id: None,
+                };
+                records.insert(claim.submission_id, record.clone());
+                Ok(NetworkAgentSubmissionClaimOutcome::Created(record))
+            }
+        };
+        Box::pin(async move { outcome })
+    }
+
+    fn mark_submit_unknown(
+        &self,
+        _id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+    ) -> PortFuture<'_, RepositoryResult<NetworkAgentSubmissionRecord>> {
+        let mut records = self.records.lock().unwrap();
+        let record = records.get_mut(&submission_id).unwrap();
+        if record.state == NetworkAgentSubmissionState::Claimed {
+            record.state = NetworkAgentSubmissionState::SubmitUnknown;
+        }
+        let record = record.clone();
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn mark_accepted<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentSubmissionRecord>> {
+        let mut records = self.records.lock().unwrap();
+        let record = records.get_mut(&submission_id).unwrap();
+        let result = if record
+            .event_id
+            .as_ref()
+            .is_some_and(|existing| existing != event_id)
+        {
+            Err(conflict())
+        } else {
+            if record.state != NetworkAgentSubmissionState::Bound {
+                record.state = NetworkAgentSubmissionState::Accepted;
+                record.event_id = Some(event_id.clone());
+            }
+            Ok(record.clone())
+        };
+        Box::pin(async move { result })
+    }
+
+    fn mark_bound(
+        &self,
+        _id: NetworkAgentId,
+        submission_id: MessageSubmissionId,
+    ) -> PortFuture<'_, RepositoryResult<NetworkAgentSubmissionRecord>> {
+        let mut records = self.records.lock().unwrap();
+        let record = records.get_mut(&submission_id).unwrap();
+        record.state = NetworkAgentSubmissionState::Bound;
+        let record = record.clone();
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn observe_transaction<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        transaction_id: &'a MatrixTransactionId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, RepositoryResult<Option<NetworkAgentSubmissionRecord>>> {
+        let mut records = self.records.lock().unwrap();
+        let found = records
+            .values_mut()
+            .find(|record| &record.transaction_id == transaction_id)
+            .map(|record| {
+                if record.state != NetworkAgentSubmissionState::Bound {
+                    record.state = NetworkAgentSubmissionState::Accepted;
+                    record.event_id = Some(event_id.clone());
+                }
+                record.clone()
+            });
+        Box::pin(async move { Ok(found) })
+    }
+}
+
+/// 进程内内容服务的替身：记下谁以什么身份上传了什么、绑到了哪个事件。
+#[derive(Default)]
+struct FakeContent {
+    uploads: Mutex<Vec<(BeginContentUploadRequest, Vec<u8>)>>,
+    bindings: Mutex<Vec<BindContentEventRequest>>,
+}
+
+fn content_object(request: &BeginContentUploadRequest) -> ContentObject {
+    let id = agent_room_domain::ids::ContentId::from_uuid(request.request_id.as_uuid());
+    ContentObject::begin_upload(ContentObjectFields {
+        id,
+        owner_principal_id: request.owner_principal_id,
+        storage_key: ContentStorageKey::new(format!("content/{id}/opaque-random-suffix")).unwrap(),
+        digest: request.digest,
+        byte_length: request.byte_length,
+        media_type: request.media_type.clone(),
+        encryption_mode: request.encryption_mode,
+        scan_state: ContentScanState::Clean,
+        lifecycle_state: ContentLifecycleState::Uploading,
+        expires_at: None,
+        created_at: UtcMillis::new(1).unwrap(),
+        deleted_at: None,
+    })
+    .unwrap()
+}
+
+impl ContentUseCases for FakeContent {
+    fn begin_upload(
+        &self,
+        request: BeginContentUploadRequest,
+    ) -> PortFuture<'_, BeginContentUploadResult<BeginContentUploadOutcome>> {
+        let content = content_object(&request);
+        let policy = ContentAccessPolicy::new(
+            content.id(),
+            request.matrix_room_id.clone(),
+            request.access_mode,
+            UtcMillis::new(1).unwrap(),
+        );
+        self.uploads.lock().unwrap().push((request, Vec::new()));
+        Box::pin(async move {
+            Ok(BeginContentUploadOutcome::Created {
+                content,
+                access_policy: policy,
+            })
+        })
+    }
+
+    fn complete_upload(
+        &self,
+        request: CompleteContentUploadRequest,
+    ) -> PortFuture<'_, CompleteContentUploadResult<CompleteContentUploadOutcome>> {
+        Box::pin(async move {
+            use futures_util::StreamExt as _;
+            let mut body = Vec::new();
+            let mut stream = request.body;
+            while let Some(chunk) = stream.next().await {
+                body.extend_from_slice(&chunk.unwrap());
+            }
+            let mut uploads = self.uploads.lock().unwrap();
+            let (begun, bytes) = uploads.last_mut().unwrap();
+            *bytes = body;
+            let mut content = content_object(begun);
+            content.activate().unwrap();
+            Ok(CompleteContentUploadOutcome::Activated(content))
+        })
+    }
+
+    fn bind_event(
+        &self,
+        request: BindContentEventRequest,
+    ) -> PortFuture<'_, BindContentEventResult<BindContentEventOutcome>> {
+        let policy = ContentAccessPolicy::new(
+            request.content_id,
+            request.matrix_room_id.clone(),
+            ContentAccessMode::RoomMember,
+            UtcMillis::new(1).unwrap(),
+        );
+        self.bindings.lock().unwrap().push(request);
+        Box::pin(async move { Ok(BindContentEventOutcome::Bound(policy)) })
+    }
+
+    fn redact(
+        &self,
+        _request: RedactContentRequest,
+    ) -> PortFuture<'_, RedactContentResult<RedactContentOutcome>> {
+        unreachable!("网络 Agent 这一步不撤回")
+    }
+
+    fn issue_read_ticket(
+        &self,
+        _request: IssueContentReadTicketRequest,
+    ) -> PortFuture<'_, IssueContentReadTicketResult<IssuedContentReadTicket>> {
+        unreachable!("网关不签读取票据")
+    }
+
+    fn open(
+        &self,
+        _request: OpenContentRequest,
+    ) -> PortFuture<'_, OpenContentResult<OpenedVerifiedContent>> {
+        unreachable!("网关不读正文")
     }
 }
 
@@ -235,12 +529,17 @@ enum Step {
     Block(Arc<Notify>),
 }
 
-/// 按顺序给出同步结果；用完之后按请求的超时等一会儿再返回空批次。
+/// 按顺序给出同步结果；用完之后按请求的超时等一会儿再返回空批次。发言按事务 ID 去重，
+/// 像 Synapse 一样：同一事务 ID 重发拿到同一个事件 ID。
 #[derive(Default)]
 struct ScriptedMatrix {
     steps: Mutex<VecDeque<Step>>,
     requests: Mutex<Vec<NetworkAgentSyncRequest>>,
     tokens: Mutex<Vec<String>>,
+    sent: Mutex<Vec<(MatrixRoomId, MatrixEvent)>>,
+    send_failures: Mutex<VecDeque<MatrixFailureKind>>,
+    left: Mutex<Vec<String>>,
+    leave_fails: Mutex<bool>,
 }
 
 impl ScriptedMatrix {
@@ -250,6 +549,10 @@ impl ScriptedMatrix {
 
     fn requests(&self) -> Vec<NetworkAgentSyncRequest> {
         self.requests.lock().unwrap().clone()
+    }
+
+    fn sent(&self) -> Vec<(MatrixRoomId, MatrixEvent)> {
+        self.sent.lock().unwrap().clone()
     }
 }
 
@@ -283,6 +586,49 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
                 }
             }
         })
+    }
+
+    fn send_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        self.sent
+            .lock()
+            .unwrap()
+            .push((room_id.clone(), event.clone()));
+        let failure = self.send_failures.lock().unwrap().pop_front();
+        let result = match failure {
+            Some(kind) => Err(MatrixFailure::new(MatrixOperation::SendEvent, kind)),
+            None => Ok(MatrixAcceptedEvent::new(
+                event.transaction_id().clone(),
+                MatrixEventId::new(format!(
+                    "$sent-{}:matrix.test",
+                    event.transaction_id().as_str()
+                ))
+                .unwrap(),
+            )),
+        };
+        Box::pin(async move { result })
+    }
+
+    fn leave<'a>(
+        &'a self,
+        _access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        self.left.lock().unwrap().push(room_id.as_str().to_owned());
+        let result = if *self.leave_fails.lock().unwrap() {
+            Err(MatrixFailure::new(
+                MatrixOperation::Leave,
+                MatrixFailureKind::DependencyUnavailable,
+            ))
+        } else {
+            Ok(())
+        };
+        Box::pin(async move { result })
     }
 }
 
@@ -337,24 +683,39 @@ impl Clock for FixedClock {
 
 struct Harness {
     gateway: NetworkGateway,
+    agents: Arc<FakeAgents>,
     inbox: Arc<MemoryInbox>,
+    submissions: Arc<MemorySubmissions>,
+    content: Arc<FakeContent>,
     matrix: Arc<ScriptedMatrix>,
 }
 
 fn harness() -> Harness {
+    harness_in(&[ROOM])
+}
+
+fn harness_in(rooms: &[&str]) -> Harness {
+    let agents = Arc::new(FakeAgents::in_rooms(rooms));
     let inbox = Arc::new(MemoryInbox::default());
+    let submissions = Arc::new(MemorySubmissions::default());
+    let content = Arc::new(FakeContent::default());
     let matrix = Arc::new(ScriptedMatrix::default());
     let gateway = NetworkGateway::new(NetworkGatewayDependencies {
-        agents: Arc::new(FakeAgents),
+        agents: agents.clone(),
         inbox: inbox.clone(),
+        submissions: submissions.clone(),
         matrix: matrix.clone(),
+        content: content.clone(),
         verification: Arc::new(KnownInstances),
         signatures: Arc::new(FakeSignatures),
         clock: Arc::new(FixedClock),
     });
     Harness {
         gateway,
+        agents,
         inbox,
+        submissions,
+        content,
         matrix,
     }
 }
@@ -875,4 +1236,373 @@ async fn 收件箱满了丢掉最早的并告诉_agent_丢了几条() {
     assert_eq!(received.pending, 200);
     assert_eq!(received.dropped, 5);
     assert_eq!(received.messages[0]["conversation"]["text"], "第 5 条");
+}
+
+// ---------- 发言 ----------
+
+fn draft(text: &str) -> NetworkAgentMessageDraft {
+    NetworkAgentMessageDraft {
+        room_id: None,
+        text: text.to_owned(),
+        reply_to: None,
+        mentions: Vec::new(),
+        submission_id: None,
+    }
+}
+
+#[tokio::test]
+async fn 发言走本机_bridge_同一套发布_正文进内容服务_签名后发出_再绑定到事件() {
+    let harness = harness();
+    let reply_to = Uuid::now_v7();
+    let sent = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                reply_to: Some(reply_to.to_string()),
+                mentions: vec![matrix_user(OTHER_AGENT)],
+                ..draft("  大家好，\n我是 Scout。  ")
+            },
+        )
+        .await
+        .expect("发出去了");
+
+    assert_eq!(sent.room, ROOM);
+    let event_id = sent.event.clone().expect("Matrix 已确认");
+    assert_eq!(sent.submission.as_uuid().get_version_num(), 7);
+
+    let events = harness.matrix.sent();
+    assert_eq!(events.len(), 1);
+    let (room, event) = &events[0];
+    assert_eq!(room.as_str(), ROOM);
+    assert_eq!(
+        event.event_type().as_str(),
+        "io.github.rainyflash.agentroom.message.preview.v1"
+    );
+    assert_eq!(
+        event.transaction_id().as_str(),
+        format!("agent-room-message-{}", sent.submission)
+    );
+    assert_eq!(
+        event_id,
+        format!("$sent-{}:matrix.test", event.transaction_id().as_str())
+    );
+    let content = event.content();
+    assert_eq!(content["id"], sent.submission.to_string());
+    assert_eq!(content["roomId"], ROOM);
+    assert_eq!(content["actor"]["agent"]["agentId"], OWN_AGENT);
+    assert_eq!(content["actor"]["agent"]["displayName"], "Scout");
+    assert_eq!(
+        content["actor"]["agent"]["matrixUserId"],
+        matrix_user(OWN_AGENT)
+    );
+    assert_eq!(content["actor"]["instanceId"], OWN_INSTANCE);
+    assert_eq!(content["actor"]["provenance"], "autonomous_agent");
+    assert_eq!(
+        content["preview"]["conversation"]["text"],
+        "  大家好，\n我是 Scout。  "
+    );
+    assert_eq!(
+        content["preview"]["conversation"]["mentions"],
+        json!([matrix_user(OTHER_AGENT)])
+    );
+    assert_eq!(content["preview"]["title"], "大家好， 我是 Scout。");
+    assert_eq!(content["preview"]["contentType"], "text/plain");
+    assert_eq!(content["relation"]["targetMessageId"], reply_to.to_string());
+    assert!(
+        content["signature"]
+            .as_str()
+            .is_some_and(|value| value.len() == 86)
+    );
+
+    // 正文归网络 Agent 的合成主体所有，由这个 Agent 发布，房间成员可读。
+    let uploads = harness.content.uploads.lock().unwrap();
+    assert_eq!(uploads.len(), 1);
+    let (begun, bytes) = &uploads[0];
+    assert_eq!(
+        begun.owner_principal_id,
+        PrincipalId::from_uuid(uuid(PRINCIPAL))
+    );
+    assert_eq!(begun.actor_agent_id, Some(agent(OWN_AGENT)));
+    assert_eq!(begun.matrix_room_id.as_str(), ROOM);
+    assert_eq!(begun.access_mode, ContentAccessMode::RoomMember);
+    assert_eq!(begun.encryption_mode, ContentEncryptionMode::ServerSide);
+    assert_eq!(bytes.as_slice(), "  大家好，\n我是 Scout。  ".as_bytes());
+    assert_eq!(
+        content["content"]["contentId"],
+        begun.request_id.to_string()
+    );
+
+    let bindings = harness.content.bindings.lock().unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].matrix_event_id.as_str(), event_id);
+    assert_eq!(
+        harness.submissions.state(sent.submission),
+        Some(NetworkAgentSubmissionState::Bound)
+    );
+    assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn 同一个_submission_id_重试不重复发送_换了内容就冲突() {
+    let harness = harness();
+    let submission = Uuid::now_v7().to_string();
+    let first = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission.clone()),
+                ..draft("只说一次")
+            },
+        )
+        .await
+        .unwrap();
+    let again = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission.clone()),
+                ..draft("只说一次")
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(again, first);
+    assert_eq!(harness.matrix.sent().len(), 1, "没有重复发送");
+
+    let conflict = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission),
+                ..draft("换了说法")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(conflict, NetworkGatewayFailure::SubmissionConflict);
+}
+
+#[tokio::test]
+async fn matrix_没回话时返回待确认_带同一个_submission_id_重试就发出去() {
+    let harness = harness();
+    harness
+        .matrix
+        .send_failures
+        .lock()
+        .unwrap()
+        .push_back(MatrixFailureKind::Timeout);
+    let submission = Uuid::now_v7().to_string();
+    let pending = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission.clone()),
+                ..draft("可能已经发出去了")
+            },
+        )
+        .await
+        .expect("不知道结果也不算失败");
+    assert_eq!(pending.event, None);
+    assert_eq!(
+        harness.submissions.state(pending.submission),
+        Some(NetworkAgentSubmissionState::SubmitUnknown)
+    );
+
+    let retried = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission),
+                ..draft("可能已经发出去了")
+            },
+        )
+        .await
+        .unwrap();
+    assert!(retried.event.is_some());
+    let sent = harness.matrix.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].1.transaction_id(), sent[1].1.transaction_id());
+}
+
+#[tokio::test]
+async fn 房间要说清楚_不在的房间不能发() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(TOKEN, draft("发到哪？"))
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::RoomRequired
+    );
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(
+                TOKEN,
+                NetworkAgentMessageDraft {
+                    room_id: Some("!elsewhere:matrix.test".to_owned()),
+                    ..draft("我不在那儿")
+                },
+            )
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::RoomNotJoined
+    );
+    let sent = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                room_id: Some(SECOND_ROOM.to_owned()),
+                ..draft("发到第二间")
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(sent.room, SECOND_ROOM);
+}
+
+#[tokio::test]
+async fn 内容不合规时说明是哪一项_限流时什么都不发() {
+    let harness = harness();
+    let cases = [
+        (draft("   "), "text"),
+        (draft(&"字".repeat(4_001)), "text"),
+        (
+            NetworkAgentMessageDraft {
+                mentions: (0..9)
+                    .map(|index| format!("@user{index}:matrix.test"))
+                    .collect(),
+                ..draft("太多提及")
+            },
+            "mentions",
+        ),
+        (
+            NetworkAgentMessageDraft {
+                mentions: vec!["not-a-user".to_owned()],
+                ..draft("提及格式不对")
+            },
+            "mentions",
+        ),
+        (
+            NetworkAgentMessageDraft {
+                reply_to: Some("not-a-uuid".to_owned()),
+                ..draft("回复谁？")
+            },
+            "replyTo",
+        ),
+        (
+            NetworkAgentMessageDraft {
+                submission_id: Some(Uuid::new_v4().to_string()),
+                ..draft("不是 UUIDv7")
+            },
+            "submissionId",
+        ),
+    ];
+    for (draft, field) in cases {
+        assert_eq!(
+            harness
+                .gateway
+                .send_message(TOKEN, draft)
+                .await
+                .unwrap_err(),
+            NetworkGatewayFailure::InvalidMessage(field),
+            "{field}"
+        );
+    }
+
+    *harness.agents.quota.lock().unwrap() = Some(NetworkAgentFailure::rate_limited(
+        UtcMillis::new(1_758_600_060_000).unwrap(),
+    ));
+    let limited = harness
+        .gateway
+        .send_message(TOKEN, draft("太快了"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        limited,
+        NetworkGatewayFailure::Agent(failure) if failure.kind() == NetworkAgentFailureKind::RateLimited
+    ));
+    assert!(harness.matrix.sent().is_empty());
+    assert!(harness.content.uploads.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn 停用时离开所有房间再作废令牌_离开失败也照样作废() {
+    let two_rooms = harness_in(&[ROOM, SECOND_ROOM]);
+    two_rooms.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert_eq!(*two_rooms.matrix.left.lock().unwrap(), [ROOM, SECOND_ROOM]);
+    assert_eq!(*two_rooms.agents.disabled.lock().unwrap(), [TOKEN]);
+
+    let failing = harness();
+    *failing.matrix.leave_fails.lock().unwrap() = true;
+    failing.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert_eq!(*failing.agents.disabled.lock().unwrap(), [TOKEN]);
+
+    assert_eq!(
+        failing
+            .gateway
+            .leave_and_disable("wrong")
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+            NetworkAgentFailureKind::Unauthorized
+        ))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 自己发出去还不确定的_同步时按事务_id_对上() {
+    let harness = harness();
+    harness
+        .matrix
+        .send_failures
+        .lock()
+        .unwrap()
+        .push_back(MatrixFailureKind::Timeout);
+    let pending = harness
+        .gateway
+        .send_message(TOKEN, draft("到底发出去没有"))
+        .await
+        .unwrap();
+    let (_, sent) = harness.matrix.sent().remove(0);
+    let mut echoed = chat(
+        "$echo:matrix.test",
+        own(),
+        pending.submission.as_uuid(),
+        "到底发出去没有",
+        [1; 64],
+    );
+    echoed = MatrixTimelineEvent::new(
+        echoed.event_id().cloned(),
+        echoed.sender().cloned(),
+        echoed.event_type().clone(),
+        None,
+        Some(sent.transaction_id().clone()),
+        echoed.origin_server_timestamp(),
+        echoed.content().clone(),
+    )
+    .unwrap();
+    harness
+        .matrix
+        .push(Step::Batch(Ok(batch("s1", vec![echoed]))));
+
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        harness.submissions.state(pending.submission),
+        Some(NetworkAgentSubmissionState::Accepted)
+    );
 }

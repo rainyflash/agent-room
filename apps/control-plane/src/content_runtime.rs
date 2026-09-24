@@ -47,28 +47,12 @@ const AUTHORITY_DEVICE_ID: &str = "AR_CONTENT_AUTHORITY";
 const AUTHORITY_DEVICE_NAME: &str = "Agent Room 内容授权服务";
 
 pub(crate) struct ContentRuntime {
-    routes: Router,
-    cleanup: ContentCleanupWorker,
-    matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
-    authorizer: Arc<dyn ContentMembershipAuthorizer>,
-}
-
-impl ContentRuntime {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Router,
-        ContentCleanupWorker,
-        Arc<dyn MatrixRoomAuthorityGateway>,
-        Arc<dyn ContentMembershipAuthorizer>,
-    ) {
-        (
-            self.routes,
-            self.cleanup,
-            self.matrix_authority,
-            self.authorizer,
-        )
-    }
+    pub(crate) routes: Router,
+    pub(crate) cleanup: ContentCleanupWorker,
+    pub(crate) matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
+    pub(crate) authorizer: Arc<dyn ContentMembershipAuthorizer>,
+    /// 网络 Agent 的正文在进程内直接上传，与 HTTP 上传走同一套用例。
+    pub(crate) use_cases: Arc<dyn ContentUseCases>,
 }
 
 pub(crate) struct ContentRuntimeDependencies<'a> {
@@ -151,7 +135,7 @@ pub(crate) async fn initialize(
             })?;
     let state = ContentHttpState::new(
         ContentHttpDependencies {
-            content: application.use_cases,
+            content: application.use_cases.clone(),
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
@@ -164,6 +148,7 @@ pub(crate) async fn initialize(
         cleanup,
         matrix_authority: authority,
         authorizer,
+        use_cases: application.use_cases,
     })
 }
 

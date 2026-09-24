@@ -12,7 +12,7 @@ use agent_room_domain::{
     identity::Principal,
     ids::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
-        NetworkAgentId, RoomCatalogId,
+        NetworkAgentId, PrincipalId, RoomCatalogId,
     },
     network_agents::{NetworkAgentName, NetworkAgentStatus},
     rooms::{MatrixRoomReference, RoomSlug},
@@ -26,11 +26,12 @@ use crate::{
     devices::AuthenticatedDevice,
     persistence::RepositoryError,
     ports::{
-        Clock, IdentifierFactory, NetworkAgentActivation, NetworkAgentBeginOutcome,
-        NetworkAgentKeyFactory, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStore, PortFuture, PrincipalAccount, RateWindowDecision, RateWindowPolicy,
-        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+        Clock, IdentifierFactory, MatrixAgentLocalpart, NetworkAgentActivation,
+        NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStore, PortFuture,
+        PrincipalAccount, RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery,
+        SecretFactory, SecretValue,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -54,16 +55,21 @@ pub struct NetworkAgentPolicy {
     pub creations_per_source_per_hour: u32,
     pub creations_per_source_per_day: u32,
     pub max_live_agents: u64,
+    pub messages_per_minute: u32,
+    pub messages_per_day: u32,
 }
 
 impl NetworkAgentPolicy {
-    /// 设计文档里的初始值：每个来源每小时 5 个、每天 20 个；全站同时 500 个。
+    /// 设计文档里的初始值：每个来源每小时建 5 个、每天 20 个，全站同时 500 个；
+    /// 每个网络 Agent 每分钟发 20 条、每天 1000 条。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
             creations_per_source_per_hour: 5,
             creations_per_source_per_day: 20,
             max_live_agents: 500,
+            messages_per_minute: 20,
+            messages_per_day: 1_000,
         }
     }
 }
@@ -106,14 +112,20 @@ pub struct NetworkAgentView {
     pub rooms: Vec<NetworkAgentRoom>,
 }
 
-/// 网关代网络 Agent 收发时用的身份与 Matrix 会话。只在进程内传递，调试输出里不出现令牌。
+/// 网关代网络 Agent 收发时用的身份、Matrix 会话与签名种子。只在进程内传递，调试输出里不出现秘密。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkAgentSession {
     pub network_agent_id: NetworkAgentId,
+    /// 网络 Agent 的合成主体：它发的正文归这个主体所有。
+    pub principal_id: PrincipalId,
     pub agent_id: AgentId,
     pub agent_instance_id: AgentInstanceId,
     pub display_name: String,
+    /// Agent 自己的 Matrix 用户，发言与验签都认它。
+    pub agent_matrix_user_id: String,
     pub matrix_access_token: SecretValue,
+    /// 实例签名种子（编码后）：替 Agent 签发言与状态。
+    pub instance_signing_seed: SecretValue,
     pub rooms: Vec<NetworkAgentRoomRecord>,
 }
 
@@ -199,6 +211,9 @@ pub trait NetworkAgentUseCases: Send + Sync {
         &'a self,
         token: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>>;
+
+    /// 发一条之前记一次：每分钟、每天各有上限，超了告诉 Agent 什么时候能再发。
+    fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
 }
 
 pub struct NetworkAgentDependencies {
@@ -478,23 +493,12 @@ impl NetworkAgentService {
         else {
             return Err(internal());
         };
-        let sealed = self
-            .store
-            .find_secret(record.id, NetworkAgentSecretKind::MatrixAccessToken)
-            .await
-            .map_err(repository)?
-            .ok_or_else(internal)?;
         let matrix_access_token = self
-            .sealer
-            .open(
-                record.id,
-                NetworkAgentSecretKind::MatrixAccessToken,
-                &sealed,
-            )
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .and_then(|text| SecretValue::new(text).ok())
-            .ok_or_else(dependency)?;
+            .open_secret(record.id, NetworkAgentSecretKind::MatrixAccessToken)
+            .await?;
+        let instance_signing_seed = self
+            .open_secret(record.id, NetworkAgentSecretKind::InstanceSigningSeed)
+            .await?;
         let rooms = self.store.rooms(record.id).await.map_err(repository)?;
         self.store
             .record_activity(record.id, self.clock.now())
@@ -502,12 +506,73 @@ impl NetworkAgentService {
             .map_err(repository)?;
         Ok(NetworkAgentSession {
             network_agent_id: record.id,
+            principal_id: record.principal_id,
             agent_id,
             agent_instance_id,
             display_name: record.display_name,
+            agent_matrix_user_id: format!(
+                "@{}:{}",
+                MatrixAgentLocalpart::from_agent_id(agent_id).as_str(),
+                self.matrix_server_name
+            ),
             matrix_access_token,
+            instance_signing_seed,
             rooms,
         })
+    }
+
+    /// 取出并解封一个秘密；缺失说明记录不完整，解不开说明密钥或密文出了问题，都不是令牌的错。
+    async fn open_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+    ) -> NetworkAgentResult<SecretValue> {
+        let sealed = self
+            .store
+            .find_secret(id, kind)
+            .await
+            .map_err(repository)?
+            .ok_or_else(internal)?;
+        self.sealer
+            .open(id, kind, &sealed)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| SecretValue::new(text).ok())
+            .ok_or_else(dependency)
+    }
+
+    async fn take_message_quota_internal(&self, id: NetworkAgentId) -> NetworkAgentResult<()> {
+        if !self.policy.enabled {
+            return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+        }
+        let agent = id.as_uuid().simple().to_string();
+        for (window, limit, label) in [
+            (60_000_u64, self.policy.messages_per_minute, "minute"),
+            (86_400_000_u64, self.policy.messages_per_day, "day"),
+        ] {
+            self.take(&format!("send:{label}:{agent}"), window, limit)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// 在一个固定窗口里记一次；到上限时告诉调用方窗口什么时候结束。
+    async fn take(&self, bucket: &str, window: u64, limit: u32) -> NetworkAgentResult<()> {
+        let policy = RateWindowPolicy {
+            window: DurationMillis::new(window).map_err(|_| internal())?,
+            limit,
+        };
+        match self
+            .store
+            .take(bucket, self.clock.now(), policy)
+            .await
+            .map_err(repository)?
+        {
+            RateWindowDecision::Allowed => Ok(()),
+            RateWindowDecision::Limited { retry_at } => {
+                Err(NetworkAgentFailure::rate_limited(retry_at))
+            }
+        }
     }
 
     async fn disable_internal(&self, token: &str) -> NetworkAgentResult<()> {
@@ -597,19 +662,8 @@ impl NetworkAgentService {
                 "day",
             ),
         ] {
-            let bucket = format!("create:{label}:{source}");
-            let policy = RateWindowPolicy {
-                window: DurationMillis::new(window).map_err(|_| internal())?,
-                limit,
-            };
-            if let RateWindowDecision::Limited { retry_at } = self
-                .store
-                .take(&bucket, self.clock.now(), policy)
-                .await
-                .map_err(repository)?
-            {
-                return Err(NetworkAgentFailure::rate_limited(retry_at));
-            }
+            self.take(&format!("create:{label}:{source}"), window, limit)
+                .await?;
         }
         Ok(())
     }
@@ -697,6 +751,10 @@ impl NetworkAgentUseCases for NetworkAgentService {
         token: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
         Box::pin(self.session_internal(token))
+    }
+
+    fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        Box::pin(self.take_message_quota_internal(id))
     }
 }
 

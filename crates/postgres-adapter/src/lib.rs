@@ -15,6 +15,7 @@ mod inbox;
 mod migrations;
 mod moderation;
 mod network_agent_inbox;
+mod network_agent_submissions;
 mod network_agents;
 mod outbox;
 mod principals;

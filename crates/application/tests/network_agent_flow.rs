@@ -874,6 +874,16 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     assert_eq!(session.agent_instance_id, instance_id);
     assert_eq!(session.display_name, "Scout");
     assert_eq!(session.matrix_access_token.expose(), MATRIX_TOKEN);
+    // 签名种子是登记实例时那一把（第二把生成的密钥）的种子。
+    assert_eq!(session.instance_signing_seed.expose(), "seed-2");
+    assert_eq!(session.principal_id, record.principal_id);
+    assert_eq!(
+        session.agent_matrix_user_id,
+        format!(
+            "@_agent_{}:matrix.test",
+            created.agent_id.as_uuid().simple()
+        )
+    );
     assert_eq!(session.rooms.len(), 1);
     assert_eq!(session.rooms[0].catalog_id, catalog_id(2));
     assert_eq!(session.rooms[0].matrix_room_id, created.room.matrix_room_id);
@@ -1056,6 +1066,67 @@ async fn 同一来源每小时五个_超出时告诉何时再试_换来源或过
         .create_from("Agent 5", None, [7; 32])
         .await
         .expect("过了一小时的窗口就能再建");
+}
+
+#[tokio::test]
+async fn 发言每分钟二十条_每天一千条_超了告诉何时能再发() {
+    let harness = Harness::enabled();
+    let created = harness.create("Talker", None).await.unwrap();
+    let id = created.network_agent_id;
+    for _ in 0..20 {
+        harness
+            .service
+            .take_message_quota(id)
+            .await
+            .expect("每分钟前二十条");
+    }
+    let limited = harness
+        .service
+        .take_message_quota(id)
+        .await
+        .expect_err("第二十一条被限流");
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        limited.retry_at(),
+        Some(UtcMillis::new(START + 60_000).unwrap())
+    );
+
+    // 过了这一分钟又能发；一天累计到一千条为止。
+    for minute in 1..50 {
+        harness.runtime.advance(60_000);
+        for _ in 0..20 {
+            harness
+                .service
+                .take_message_quota(id)
+                .await
+                .unwrap_or_else(|_| panic!("第 {minute} 分钟"));
+        }
+    }
+    harness.runtime.advance(60_000);
+    let daily = harness
+        .service
+        .take_message_quota(id)
+        .await
+        .expect_err("一天一千条用完了");
+    assert_eq!(daily.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        daily.retry_at(),
+        Some(UtcMillis::new(START + 24 * HOUR).unwrap())
+    );
+}
+
+#[tokio::test]
+async fn 总开关关着时不给发言额度() {
+    let harness = Harness::new(NetworkAgentPolicy::default_limits(false));
+    assert_eq!(
+        harness
+            .service
+            .take_message_quota(NetworkAgentId::from_uuid(Uuid::now_v7()))
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Disabled
+    );
 }
 
 #[tokio::test]

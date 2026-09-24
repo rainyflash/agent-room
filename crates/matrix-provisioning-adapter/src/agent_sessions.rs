@@ -4,10 +4,10 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixBackfillToken, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind,
-    MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind,
-    MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
-    NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
+    MatrixAcceptedEvent, MatrixBackfillToken, MatrixEvent, MatrixEventId, MatrixEventType,
+    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync,
+    MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
+    MatrixUserId, NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
 };
 use reqwest::{Client, Url, redirect::Policy};
 use serde::Deserialize;
@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     MatrixApplicationServiceConfigurationError, decode_json, decode_matrix_error, invalid_response,
-    map_matrix_error, map_transport_error, read_body_within, validate_homeserver_url,
+    map_matrix_error, map_transport_error, read_body_within, read_limited_body,
+    validate_homeserver_url,
 };
 
 /// 一次同步最多读这么多字节；时间线按条数限量，正常远小于这个数。
@@ -106,6 +107,96 @@ impl MatrixAgentSessionClient {
     }
 }
 
+impl MatrixAgentSessionClient {
+    /// 房间 ID、事件类型、事务 ID 都按路径段编码，不会拼出别的路径。
+    fn room_endpoint(
+        &self,
+        room_id: &MatrixRoomId,
+        tail: &[&str],
+        operation: MatrixOperation,
+    ) -> MatrixResult<Url> {
+        let mut url = self
+            .homeserver_url
+            .join("_matrix/client/v3/rooms/")
+            .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?;
+        url.path_segments_mut()
+            .map_err(|()| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?
+            .pop_if_empty()
+            .push(room_id.as_str())
+            .extend(tail);
+        Ok(url)
+    }
+
+    async fn send_event_internal(
+        &self,
+        access_token: &SecretValue,
+        room_id: &MatrixRoomId,
+        event: &MatrixEvent,
+    ) -> MatrixResult<MatrixAcceptedEvent> {
+        let operation = MatrixOperation::SendEvent;
+        let url = self.room_endpoint(
+            room_id,
+            &[
+                "send",
+                event.event_type().as_str(),
+                event.transaction_id().as_str(),
+            ],
+            operation,
+        )?;
+        let response = self
+            .client
+            .put(url)
+            .bearer_auth(access_token.expose())
+            .json(event.content())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if !status.is_success() {
+            let error = decode_matrix_error(&body, operation)?;
+            return Err(map_matrix_error(operation, status, &error));
+        }
+        let accepted: EventIdResponse = decode_json(&body, operation)?;
+        Ok(MatrixAcceptedEvent::new(
+            event.transaction_id().clone(),
+            MatrixEventId::new(accepted.event_id).map_err(|_| invalid_response(operation))?,
+        ))
+    }
+
+    async fn leave_internal(
+        &self,
+        access_token: &SecretValue,
+        room_id: &MatrixRoomId,
+    ) -> MatrixResult<()> {
+        let operation = MatrixOperation::Leave;
+        let url = self.room_endpoint(room_id, &["leave"], operation)?;
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(access_token.expose())
+            .json(&json!({}))
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if status.is_success() {
+            return Ok(());
+        }
+        let error = decode_matrix_error(&body, operation)?;
+        let failure = map_matrix_error(operation, status, &error);
+        // 已经不在房间里（或房间已不存在）也算离开了。
+        if matches!(
+            failure.kind(),
+            MatrixFailureKind::Forbidden | MatrixFailureKind::NotFound
+        ) {
+            return Ok(());
+        }
+        Err(failure)
+    }
+}
+
 impl NetworkAgentMatrixGateway for MatrixAgentSessionClient {
     fn sync<'a>(
         &'a self,
@@ -114,6 +205,28 @@ impl NetworkAgentMatrixGateway for MatrixAgentSessionClient {
     ) -> PortFuture<'a, MatrixResult<MatrixSyncBatch>> {
         Box::pin(self.sync_internal(access_token, request))
     }
+
+    fn send_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event: &'a MatrixEvent,
+    ) -> PortFuture<'a, MatrixResult<MatrixAcceptedEvent>> {
+        Box::pin(self.send_event_internal(access_token, room_id, event))
+    }
+
+    fn leave<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(self.leave_internal(access_token, room_id))
+    }
+}
+
+#[derive(Deserialize)]
+struct EventIdResponse {
+    event_id: String,
 }
 
 /// 只要已加入房间里的消息事件：不要状态、回执、输入提示、账户数据和在线信息。
@@ -381,6 +494,113 @@ mod tests {
             .expect_err("令牌失效");
 
         assert_eq!(failure.kind(), MatrixFailureKind::Unauthenticated);
+    }
+
+    /// 发言与离开的模拟服务器：记下方法、路径（未解码）与请求体，按预设回答。
+    async fn serve_writes(
+        response: (StatusCode, Value),
+    ) -> (String, Arc<Mutex<Vec<(String, String, Value)>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        let response = Arc::new(response);
+        let app = Router::new().fallback(move |request: axum::extract::Request| {
+            let recorded = recorded.clone();
+            let response = response.clone();
+            async move {
+                let method = request.method().to_string();
+                let path = request.uri().path().to_owned();
+                let body = axum::body::to_bytes(request.into_body(), 64 * 1_024)
+                    .await
+                    .unwrap();
+                let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                recorded.lock().unwrap().push((method, path, body));
+                (response.0, Json(response.1.clone()))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("可以监听本机端口");
+        let address = listener.local_addr().expect("有本机地址");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("测试服务器运行");
+        });
+        (format!("http://{address}"), seen)
+    }
+
+    fn room() -> agent_room_application::ports::MatrixRoomId {
+        agent_room_application::ports::MatrixRoomId::new("!lobby:matrix.test").unwrap()
+    }
+
+    #[tokio::test]
+    async fn 以_agent_自己的身份发事件_路径逐段编码_事务_id_固定() {
+        let (url, seen) =
+            serve_writes((StatusCode::OK, json!({"event_id": "$sent:matrix.test"}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        let event = agent_room_application::ports::MatrixEvent::new(
+            agent_room_application::ports::MatrixEventType::new(
+                "io.github.rainyflash.agentroom.message.preview.v1",
+            )
+            .unwrap(),
+            agent_room_application::ports::MatrixTransactionId::new("agent-room-message-0198")
+                .unwrap(),
+            json!({"schemaVersion": "1.0"}),
+        )
+        .unwrap();
+
+        let accepted = client
+            .send_event(&token(), &room(), &event)
+            .await
+            .expect("发出去了");
+
+        assert_eq!(accepted.event_id().as_str(), "$sent:matrix.test");
+        assert_eq!(
+            accepted.transaction_id().as_str(),
+            "agent-room-message-0198"
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].0, "PUT");
+        assert_eq!(
+            seen[0].1,
+            "/_matrix/client/v3/rooms/!lobby:matrix.test/send/io.github.rainyflash.agentroom.message.preview.v1/agent-room-message-0198"
+        );
+        assert_eq!(seen[0].2, json!({"schemaVersion": "1.0"}));
+    }
+
+    #[tokio::test]
+    async fn 离开房间_已经不在里面也算成功() {
+        let (url, seen) = serve_writes((StatusCode::OK, json!({}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        client.leave(&token(), &room()).await.expect("离开了");
+        assert_eq!(
+            seen.lock().unwrap()[0].1,
+            "/_matrix/client/v3/rooms/!lobby:matrix.test/leave"
+        );
+
+        let (url, _) = serve_writes((
+            StatusCode::FORBIDDEN,
+            json!({"errcode": "M_FORBIDDEN", "error": "User not in room"}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        client
+            .leave(&token(), &room())
+            .await
+            .expect("不在里面也算离开");
+
+        let (url, _) = serve_writes((
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errcode": "M_UNKNOWN", "error": "down"}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client.leave(&token(), &room()).await.unwrap_err().kind(),
+            MatrixFailureKind::DependencyUnavailable
+        );
     }
 
     #[test]

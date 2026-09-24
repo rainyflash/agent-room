@@ -6,12 +6,14 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
+        MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId, NetworkAgentAckOutcome,
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentInboxAppend,
         NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
         NetworkAgentInboxStore, NetworkAgentProvisioning, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStore, PrincipalRegistration, RateWindowDecision,
-        RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentSecretKind, NetworkAgentStore, NetworkAgentSubmissionClaim,
+        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
+        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, PrincipalRegistration,
+        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -463,6 +465,104 @@ async fn 收件箱满了丢最早的并计数_确认删到哪条_确认后计数
     assert_eq!(page.dropped, 0);
     assert_eq!(page.entries.len(), 1);
     assert_eq!(page.entries[0].event_id.as_str(), "$o2:matrix.test");
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 发言记录按提交_id_幂等_换内容就冲突_状态只往前走() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Speaker"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let submission = agent_room_domain::ids::MessageSubmissionId::from_uuid(Uuid::now_v7());
+    let claim = NetworkAgentSubmissionClaim {
+        submission_id: submission,
+        kind: NetworkAgentSubmissionKind::Preview,
+        fingerprint: [5; 32],
+        transaction_id: MatrixTransactionId::new(format!("agent-room-message-{submission}"))
+            .expect("事务 ID 有效"),
+        claimed_at: time(10),
+    };
+
+    let created = repositories.claim(id, &claim).await.expect("占住");
+    let NetworkAgentSubmissionClaimOutcome::Created(record) = created else {
+        panic!("第一次应当新建");
+    };
+    assert_eq!(record.state, NetworkAgentSubmissionState::Claimed);
+    assert!(matches!(
+        repositories.claim(id, &claim).await.expect("重试"),
+        NetworkAgentSubmissionClaimOutcome::Existing(_)
+    ));
+    let conflict = repositories
+        .claim(
+            id,
+            &NetworkAgentSubmissionClaim {
+                fingerprint: [6; 32],
+                ..claim.clone()
+            },
+        )
+        .await
+        .expect_err("换了内容");
+    assert_eq!(conflict.kind(), RepositoryErrorKind::Conflict);
+
+    // 发出去没回话，后来同步时按事务 ID 对上。
+    assert_eq!(
+        repositories
+            .mark_submit_unknown(id, submission)
+            .await
+            .expect("记为不确定")
+            .state,
+        NetworkAgentSubmissionState::SubmitUnknown
+    );
+    let event = MatrixEventId::new("$sent:matrix.test").expect("事件 ID 有效");
+    let observed = repositories
+        .observe_transaction(id, &claim.transaction_id, &event)
+        .await
+        .expect("对账")
+        .expect("找得到");
+    assert_eq!(observed.state, NetworkAgentSubmissionState::Accepted);
+    assert_eq!(observed.event_id.as_ref(), Some(&event));
+    assert_eq!(
+        repositories
+            .observe_transaction(
+                id,
+                &MatrixTransactionId::new("agent-room-message-other").expect("事务 ID 有效"),
+                &event,
+            )
+            .await
+            .expect("对账"),
+        None
+    );
+    let other_event = MatrixEventId::new("$other:matrix.test").expect("事件 ID 有效");
+    assert_eq!(
+        repositories
+            .mark_accepted(id, submission, &other_event)
+            .await
+            .expect_err("事件 ID 不能换")
+            .kind(),
+        RepositoryErrorKind::Conflict
+    );
+    let bound = repositories.mark_bound(id, submission).await.expect("绑定");
+    assert_eq!(bound.state, NetworkAgentSubmissionState::Bound);
+    // 已经绑定的不回退。
+    assert_eq!(
+        repositories
+            .mark_accepted(id, submission, &event)
+            .await
+            .expect("重复确认")
+            .state,
+        NetworkAgentSubmissionState::Bound
+    );
+    assert_eq!(
+        repositories
+            .mark_submit_unknown(id, submission)
+            .await
+            .expect("不回退")
+            .state,
+        NetworkAgentSubmissionState::Bound
+    );
     database.close().await;
 }
 
