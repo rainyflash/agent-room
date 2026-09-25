@@ -509,11 +509,8 @@ impl OpenClient {
         if self.conflicted.load(Ordering::Acquire) {
             return Err(NetworkGatewayFailure::Unavailable);
         }
-        if replay
-            && let Some((since, batch)) = last.as_ref()
-            && since.as_ref() == request.since()
-        {
-            return Ok(batch.clone());
+        if replay && let Some(batch) = replayable(last.as_ref(), request.since()) {
+            return Ok(batch);
         }
         let batch = self.gateway.sync_once(&request).await.map_err(|failure| {
             if failure.kind() == MatrixFailureKind::CryptographicIdentityConflict {
@@ -723,10 +720,59 @@ fn store_dir(root: &Path, id: NetworkAgentId) -> PathBuf {
     root.join(id.to_string()).join("matrix-store")
 }
 
+/// 从同一位置再同步时直接给上次的结果，免得 SDK 把同一段 to-device 消息再处理一遍。
+/// 上次没往前走（超时了、什么都没有，服务器原样给回起点）就不给：那一段什么也没处理，
+/// 真的再同步一次才能收到之后的消息和房间密钥；否则会一直拿同一个空结果，长轮询空转。
+fn replayable(
+    last: Option<&ProcessedSync>,
+    since: Option<&MatrixSyncToken>,
+) -> Option<MatrixSyncBatch> {
+    let (last_since, batch) = last?;
+    (last_since.as_ref() == since && last_since.as_ref() != Some(batch.next_batch()))
+        .then(|| batch.clone())
+}
+
 /// 完整同步：不带起点，只看一眼。
 fn full_sync() -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
     let timeout = DurationMillis::new(1).map_err(|_| NetworkGatewayFailure::Internal)?;
     MatrixSyncRequest::new(None, timeout, false).map_err(|_| NetworkGatewayFailure::Internal)
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use agent_room_application::ports::{MatrixSyncBatch, MatrixSyncToken};
+
+    use super::replayable;
+
+    fn token(value: &str) -> MatrixSyncToken {
+        MatrixSyncToken::new(value).expect("同步位置有效")
+    }
+
+    fn batch(next: &str) -> MatrixSyncBatch {
+        MatrixSyncBatch::new(token(next), Vec::new())
+    }
+
+    #[test]
+    fn 从同一位置再同步时给上次往前走过的结果() {
+        let last = (Some(token("s1")), batch("s2"));
+        assert_eq!(
+            replayable(Some(&last), Some(&token("s1"))).map(|b| b.next_batch().clone()),
+            Some(token("s2"))
+        );
+        // 第一次同步（没有起点）同样可以重放。
+        let first = (None, batch("s1"));
+        assert!(replayable(Some(&first), None).is_some());
+    }
+
+    #[test]
+    fn 上次原地不动或起点不同都要真的同步() {
+        // 超时、什么都没有：服务器原样给回起点。重放它会一直拿同一个空结果，长轮询空转。
+        let stalled = (Some(token("s1")), batch("s1"));
+        assert!(replayable(Some(&stalled), Some(&token("s1"))).is_none());
+        let moved_on = (Some(token("s1")), batch("s2"));
+        assert!(replayable(Some(&moved_on), Some(&token("s2"))).is_none());
+        assert!(replayable(None, Some(&token("s1"))).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -1045,6 +1091,13 @@ mod real_dependency_tests {
     #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
     async fn 真实_synapse_上加密客户端建好身份与密钥备份_重开沿用_存储丢了换设备恢复_都能在加密房间发言()
      {
+        // 失败时能看到网关与 matrix-sdk 说了什么。
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "agent_room_control_plane=debug,agent_room_matrix_adapter=debug,matrix_sdk=info,matrix_sdk_crypto=info",
+            ))
+            .with_test_writer()
+            .try_init();
         let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
         let (session, rotator, device) = network_session(&config).await;
         let vault = Arc::new(Vault::new(rotator, device));

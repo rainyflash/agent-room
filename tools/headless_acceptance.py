@@ -50,7 +50,7 @@ def accept() -> None:
         catalog = v.seed_public_catalog()
         redactor = v.LogRedactor(environment)
         with v.IsolatedBridgeState(vault=True), v.ProcessStack() as processes:
-            v.start_control_plane(processes, environment, redactor)
+            control_plane = v.start_control_plane(processes, environment, redactor)
             v.start_web(processes, redactor)
             agent = v.bootstrap_agent(environment)
             runtimes = []
@@ -73,6 +73,11 @@ def accept() -> None:
             network_mcp = v.verify_network_agent_mcp(
                 room_id=v.require_bridge_session(sender)["matrixRoomId"]
             )
+            # 放在最后：这一轮会重启控制面。
+            private = v.verify_private_room_network_agent(
+                sender_bridge=sender, processes=processes, control_plane=control_plane,
+                environment=environment, redactor=redactor,
+            )
             v.run_checked([str(v.runtime_binary("agent-room")), "doctor"], environment=target.environment)
         logs = tuple(v.LOG_ROOT.glob("*.log"))
         v.verify_sanitized_logs(
@@ -82,6 +87,8 @@ def accept() -> None:
                 *(runtime.device_code for runtime in runtimes),
                 network["token"],
                 network_mcp["token"],
+                private["token"],
+                private["code"],
             ),
         )
     report = v.ROOT / "artifacts" / "agent-runtime-live.json"
@@ -91,6 +98,9 @@ def accept() -> None:
         "matrixRecoveryGeneration":recovery, "matrixDeliveryTested":True, "replyMessageId":result["replyMessageId"],
         "networkAgentRoundTrip":True, "networkAgentReplyEventId":network["replyEventId"],
         "networkAgentMcpRoundTrip":True, "networkAgentMcpEventId":network_mcp["eventId"],
+        "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
+        "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
+        "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
 

@@ -13,11 +13,20 @@ use tracing_subscriber::{
 const LOG_FILENAME: &str = "bridge.log";
 const STDERR_FILTER: &str = "agent_room_bridge=warn";
 const FILE_FILTER: &str = "agent_room_bridge=info";
+/// 排查时可以换掉文件日志的过滤规则（例如加上 matrix-sdk 的密钥分享）；不设就用默认的。
+const FILE_FILTER_OVERRIDE: &str = "AGENT_ROOM_BRIDGE_LOG_FILTER";
 
 /// 日志文件的位置：`<数据根>/logs/bridge.log`。
 #[must_use]
 pub(crate) fn log_file_path(data_root: &Path) -> PathBuf {
     bridge_log_root(data_root).join(LOG_FILENAME)
+}
+
+fn file_filter(configured: Option<String>) -> EnvFilter {
+    configured
+        .filter(|filter| !filter.trim().is_empty())
+        .and_then(|filter| EnvFilter::try_new(filter).ok())
+        .unwrap_or_else(|| EnvFilter::new(FILE_FILTER))
 }
 
 /// 安装日志订阅者。文件打不开时只写 stderr，返回值说明文件日志是否可用。
@@ -35,7 +44,7 @@ pub(crate) fn install() -> Option<PathBuf> {
         tracing_subscriber::fmt::layer()
             .with_writer(move || file.clone())
             .with_ansi(false)
-            .with_filter(EnvFilter::new(FILE_FILTER))
+            .with_filter(file_filter(std::env::var(FILE_FILTER_OVERRIDE).ok()))
     });
     tracing_subscriber::registry()
         .with(stderr)
@@ -46,11 +55,22 @@ pub(crate) fn install() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::log_file_path;
+    use super::{FILE_FILTER, file_filter, log_file_path};
 
     #[test]
     fn 日志文件在数据根的_logs_目录下() {
         let root = std::path::Path::new("root");
         assert_eq!(log_file_path(root), root.join("logs").join("bridge.log"));
+    }
+
+    #[test]
+    fn 文件日志过滤规则可以换掉_空的或写错的用默认() {
+        assert_eq!(
+            file_filter(Some("agent_room_bridge=debug".to_owned())).to_string(),
+            "agent_room_bridge=debug"
+        );
+        for fallback in [None, Some("  ".to_owned()), Some("=[".to_owned())] {
+            assert_eq!(file_filter(fallback).to_string(), FILE_FILTER);
+        }
     }
 }

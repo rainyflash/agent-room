@@ -442,13 +442,18 @@ impl NetworkGateway {
                     SYNC_TIMELINE_LIMIT
                 },
             };
+            let started = Instant::now();
             let batch = tokio::select! {
                 result = self.sync(&session, &request) => result?,
                 () = poll.superseded() => return Ok(messages(page)),
             };
+            let elapsed_ms = started.elapsed().as_millis();
             let changes = self.changes(&session, &batch).await?;
+            let change_count = changes.len();
+            let since = page.sync_token.clone();
             // 位置对不上说明另一次同步已经写过（例如被取代的旧长轮询），下一轮从新位置接着来。
-            self.inbox
+            let outcome = self
+                .inbox
                 .append(&NetworkAgentInboxAppend {
                     id: session.network_agent_id,
                     expected_sync_token: page.sync_token,
@@ -459,6 +464,18 @@ impl NetworkGateway {
                 })
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+            tracing::debug!(
+                network_agent.id = %session.network_agent_id,
+                since = ?since,
+                next = ?batch.next_batch(),
+                changes = change_count,
+                outcome = ?outcome,
+                timeout_ms = request.timeout_millis,
+                elapsed_ms,
+                rooms = batch.rooms().len(),
+                timeline_events = batch.rooms().iter().map(|room| room.timeline().len()).sum::<usize>(),
+                "网络 Agent 长轮询同步了一段"
+            );
         }
     }
 

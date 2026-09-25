@@ -71,11 +71,20 @@ impl MatrixSdkSecurityGateway {
             .cross_signing_status()
             .await
             .is_some_and(|status| status.is_complete());
-        let signed = crypto
+        let own = crypto
             .get_device(user, device)
             .await
-            .map_err(|_| MatrixSecurityFailure::Unavailable)?
-            .is_some_and(|device| device.is_cross_signed_by_owner());
+            .map_err(|_| MatrixSecurityFailure::Unavailable)?;
+        let signed = own
+            .as_ref()
+            .is_some_and(matrix_sdk::encryption::identities::Device::is_cross_signed_by_owner);
+        tracing::debug!(
+            published,
+            private_keys_complete = keys,
+            own_device_known = own.is_some(),
+            signed,
+            "本机加密身份状态"
+        );
         Ok(MatrixSecurityResult::Identity {
             user_id: user.to_string(),
             device_id: device.to_string(),
