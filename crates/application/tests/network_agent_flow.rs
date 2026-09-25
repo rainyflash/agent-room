@@ -1199,15 +1199,32 @@ async fn 三十天没活动的自动停用_有活动就不算闲置_停用后等
 }
 
 #[tokio::test]
-async fn 加密存储口令第一次要用时生成并封存_之后不变_解不开时不覆盖() {
+async fn 加密存储口令与正文根密钥第一次要用时生成并封存_之后不变_解不开时不覆盖() {
     let harness = Harness::enabled();
     let created = harness.create("Cipher", None).await.unwrap();
     let id = created.network_agent_id;
 
     let first = harness.service.encryption_secrets(id).await.unwrap();
     assert_eq!(first.recovery_credential, None);
+    assert_ne!(first.content_root_key, first.store_passphrase, "各是各的");
     let again = harness.service.encryption_secrets(id).await.unwrap();
     assert_eq!(again.store_passphrase, first.store_passphrase);
+    assert_eq!(again.content_root_key, first.content_root_key);
+    let root_key = harness.store.with(id, |agent| {
+        agent
+            .secrets
+            .iter()
+            .find(|(kind, _)| *kind == NetworkAgentSecretKind::MessageContentRootKey)
+            .map(|(_, sealed)| sealed.clone())
+            .unwrap()
+    });
+    assert_eq!(
+        sealed_text(&root_key),
+        format!(
+            "sealed:{id}:message_content_root_key:{}",
+            first.content_root_key.expose()
+        )
+    );
     let stored = harness.store.with(id, |agent| {
         agent
             .secrets

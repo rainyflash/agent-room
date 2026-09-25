@@ -23,10 +23,10 @@ use agent_room_application::{
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
-        MatrixRoomId, MatrixSyncBatch, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
-        NetworkAgentInboxChange, NetworkAgentInboxPage, NetworkAgentInboxStore,
-        NetworkAgentMatrixGateway, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-        PortFuture,
+        MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, MatrixSyncBatch, MatrixUserId,
+        NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxChange,
+        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
+        NetworkAgentSubmissionStore, NetworkAgentSyncRequest, PortFuture,
     },
 };
 use agent_room_bridge_core::{
@@ -34,10 +34,13 @@ use agent_room_bridge_core::{
     agent_verification::{
         AgentInstanceMessageAuthenticator, AgentInstanceMessageAuthenticatorDependencies,
     },
+    matrix_security::MatrixSecurityFailure,
     messages::{
-        MessageBody, MessagePublicationDependencies, MessagePublicationFailure,
-        MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
-        MessageStoreFailureKind, MessageSyncDependencies, MessageSyncService, SendMessageRequest,
+        MessageBody, MessageEventPublisher, MessagePublicationDependencies,
+        MessagePublicationFailure, MessagePublicationFailureKind, MessagePublicationOutcome,
+        MessagePublicationService, MessageStoreFailureKind, MessageSyncDependencies,
+        MessageSyncService, ProtectMessageBodyFailureKind, ProtectMessageBodyRequest,
+        SendMessageRequest,
     },
     status::{AgentStatusIntent, HostAgentState},
 };
@@ -55,7 +58,7 @@ use tokio::{sync::Notify, time::Instant};
 use uuid::{Uuid, Version};
 
 pub(crate) use cleanup::NetworkAgentCleanupOutcome;
-pub(crate) use encrypted::{EncryptedClients, EncryptedSessions};
+pub(crate) use encrypted::{EncryptedClients, EncryptedSessions, EncryptedSpeaker};
 
 mod cleanup;
 mod encrypted;
@@ -236,14 +239,16 @@ impl NetworkGateway {
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
-        // 加密房间里的发言要由加密客户端加密后发出（3d）。在那之前，进过加密房间的 Agent
-        // 不发言，免得明文进了加密房间。
-        if self.is_encrypted(&session) {
-            return Err(NetworkGatewayFailure::Unavailable);
-        }
         let room = session_room(&session, draft.room_id.as_deref())?;
         let submission_id = submission_id(draft.submission_id.as_deref())?;
-        let request = chat_request(&session, submission_id, room.clone(), draft)?;
+        // 进过加密房间的由它的加密客户端发出：加密房间里正文先加密，事件由客户端加密。
+        let speaker = if self.is_encrypted(&session) {
+            Some(self.encrypted_speaker(&session, &room).await?)
+        } else {
+            None
+        };
+        let body = chat_body(submission_id, &room, speaker.as_ref(), &draft.text)?;
+        let request = chat_request(&session, submission_id, room.clone(), draft, body)?;
         self.agents
             .take_message_quota(session.network_agent_id)
             .await
@@ -263,13 +268,19 @@ impl NetworkGateway {
             .find(|joined| joined.matrix_room_id.as_str() == room.as_str())
             .map(|joined| joined.catalog_id)
             .ok_or(NetworkGatewayFailure::RoomNotJoined)?;
-        let publication = MessagePublicationService::new(MessagePublicationDependencies {
-            identity,
-            signer: Arc::new(signer),
-            publisher: Arc::new(speaking::SessionPublisher {
+        let publisher: Arc<dyn MessageEventPublisher> = match speaker {
+            Some((speaker, _)) => Arc::new(speaking::ClientPublisher {
+                matrix: speaker.matrix,
+            }),
+            None => Arc::new(speaking::SessionPublisher {
                 matrix: self.matrix.clone(),
                 access_token: session.matrix_access_token.clone(),
             }),
+        };
+        let publication = MessagePublicationService::new(MessagePublicationDependencies {
+            identity,
+            signer: Arc::new(signer),
+            publisher,
             content: Arc::new(speaking::InProcessContent {
                 content: self.content.clone(),
                 principal_id: session.principal_id,
@@ -503,11 +514,19 @@ impl NetworkGateway {
             NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
                 self.enter_private(token, room).await
             }
-            NetworkAgentAdmission::Admitted(target) => self
-                .agents
-                .enter(token, target)
-                .await
-                .map_err(NetworkGatewayFailure::Agent),
+            NetworkAgentAdmission::Admitted(target) => {
+                let room = self
+                    .agents
+                    .enter(token, target)
+                    .await
+                    .map_err(NetworkGatewayFailure::Agent)?;
+                if let Ok(session) = self.agents.session(token).await
+                    && self.is_encrypted(&session)
+                {
+                    self.refresh_encrypted(&session).await;
+                }
+                Ok(room)
+            }
         }
     }
 
@@ -523,20 +542,83 @@ impl NetworkGateway {
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
-        self.switch_to_encrypted(session).await?;
-        self.agents
+        self.switch_to_encrypted(&session).await?;
+        let room = self
+            .agents
             .enter(token, NetworkAgentTarget::Private(room))
             .await
-            .map_err(NetworkGatewayFailure::Agent)
+            .map_err(NetworkGatewayFailure::Agent)?;
+        self.refresh_encrypted(&session).await;
+        Ok(room)
+    }
+
+    /// 进了房间之后让加密客户端完整同步一次，马上认识这个房间，进来就能发言。没同步成不要紧：
+    /// 发言时发现它还不认识这个房间会再同步。
+    async fn refresh_encrypted(&self, session: &NetworkAgentSession) {
+        if let Some(encrypted) = &self.encrypted
+            && let Err(failure) = encrypted.refresh(session).await
+        {
+            tracing::warn!(
+                network_agent.id = %session.network_agent_id,
+                failure = ?failure,
+                "进房间后加密客户端没同步成，发言时再同步"
+            );
+        }
+    }
+
+    /// 以加密客户端发言之前：确认还在这个房间里，看它加不加密。加密房间先确认自己的身份就绪、
+    /// 刷新成员身份；客户端还不认识这个房间（刚进来还没同步到）时完整同步一次再试。
+    async fn encrypted_speaker(
+        &self,
+        session: &NetworkAgentSession,
+        room: &MatrixRoomId,
+    ) -> Result<(EncryptedSpeaker, MatrixRoomEncryption), NetworkGatewayFailure> {
+        let Some(encrypted) = &self.encrypted else {
+            return Err(NetworkGatewayFailure::Unavailable);
+        };
+        let speaker = encrypted.speaker(session).await?;
+        let user = MatrixUserId::new(session.agent_matrix_user_id.clone())
+            .map_err(|_| NetworkGatewayFailure::Internal)?;
+        let authority = speaker
+            .authority
+            .inspect_room_authority(room, &user)
+            .await
+            .map_err(|failure| {
+                if failure.kind() == MatrixFailureKind::Forbidden {
+                    NetworkGatewayFailure::RoomNotJoined
+                } else {
+                    NetworkGatewayFailure::Unavailable
+                }
+            })?;
+        if !authority.is_joined() {
+            return Err(NetworkGatewayFailure::RoomNotJoined);
+        }
+        let encryption = authority.encryption();
+        if encryption == MatrixRoomEncryption::EndToEnd {
+            let ready = match speaker.security.ensure_room_ready(room).await {
+                Err(MatrixSecurityFailure::NotJoined) => {
+                    encrypted.refresh(session).await?;
+                    speaker.security.ensure_room_ready(room).await
+                }
+                ready => ready,
+            };
+            ready.map_err(|failure| match failure {
+                MatrixSecurityFailure::NotJoined => NetworkGatewayFailure::RoomNotJoined,
+                MatrixSecurityFailure::IdentityChanged => NetworkGatewayFailure::Forbidden,
+                _ => NetworkGatewayFailure::Unavailable,
+            })?;
+        }
+        Ok((speaker, encryption))
     }
 
     /// 切到加密客户端。先在内存里记下，并让正在进行的长轮询立刻返回：之后的同步都走加密客户端，
-    /// 轻量客户端不会再把发给这台设备的房间密钥跳过去。再记入库，让加密客户端从收件箱的位置
-    /// 同步一次（上传设备密钥与一次性密钥），并建好加密身份与密钥备份。
+    /// 轻量客户端不会再把发给这台设备的房间密钥跳过去。再记入库，让加密客户端完整同步一次
+    /// （认识所有已加入的房间，上传设备密钥与一次性密钥），并建好加密身份与密钥备份。
     async fn switch_to_encrypted(
         &self,
-        mut session: NetworkAgentSession,
+        session: &NetworkAgentSession,
     ) -> Result<(), NetworkGatewayFailure> {
+        let mut session = session.clone();
         let id = session.network_agent_id;
         let Some(encrypted) = &self.encrypted else {
             tracing::error!(
@@ -558,13 +640,7 @@ impl NetworkGateway {
                     .map_err(NetworkGatewayFailure::Agent)?,
             );
         }
-        let since = self
-            .inbox
-            .pending(id, 1)
-            .await
-            .map_err(|_| NetworkGatewayFailure::Unavailable)?
-            .sync_token;
-        encrypted.prepare(&session, since).await
+        encrypted.prepare(&session).await
     }
 
     /// 进过加密房间：库里记过，或这个进程刚把它切过去（会话是切之前取的）。
@@ -736,11 +812,48 @@ fn submission_id(value: Option<&str>) -> Result<MessageSubmissionId, NetworkGate
 }
 
 /// 与 MCP 的聊天发言同一种形状：正文就是聊天文字，标题与摘要从正文截取。
+/// 正文：公开房间里交给内容服务按服务端加密存；加密房间里先用正文密钥加密，密钥随事件由客户端加密。
+fn chat_body(
+    submission_id: MessageSubmissionId,
+    room_id: &MatrixRoomId,
+    speaker: Option<&(EncryptedSpeaker, MatrixRoomEncryption)>,
+    text: &str,
+) -> Result<MessageBody, NetworkGatewayFailure> {
+    let media_type = ContentMediaType::new(CHAT_MEDIA_TYPE.to_owned())
+        .map_err(|_| NetworkGatewayFailure::Internal)?;
+    let Some((speaker, room_encryption)) = speaker else {
+        return MessageBody::new(
+            text.as_bytes().to_vec(),
+            media_type,
+            ContentEncryptionMode::ServerSide,
+            None,
+        )
+        .map_err(|_| NetworkGatewayFailure::InvalidMessage("text"));
+    };
+    speaker
+        .protection
+        .protect(&ProtectMessageBodyRequest {
+            submission_id,
+            room_id,
+            room_encryption: *room_encryption,
+            media_type: &media_type,
+            plaintext: text.as_bytes(),
+            expires_at: None,
+        })
+        .map_err(|failure| match failure.kind() {
+            ProtectMessageBodyFailureKind::InvalidBody => {
+                NetworkGatewayFailure::InvalidMessage("text")
+            }
+            ProtectMessageBodyFailureKind::Cryptography => NetworkGatewayFailure::Internal,
+        })
+}
+
 fn chat_request(
     session: &NetworkAgentSession,
     submission_id: MessageSubmissionId,
     room_id: MatrixRoomId,
     draft: NetworkAgentMessageDraft,
+    body: MessageBody,
 ) -> Result<SendMessageRequest, NetworkGatewayFailure> {
     let summary: String = draft
         .text
@@ -767,13 +880,6 @@ fn chat_request(
         MessageRiskFlags::new(Vec::new()).map_err(|_| NetworkGatewayFailure::Internal)?,
     )
     .with_conversation(conversation);
-    let body = MessageBody::new(
-        draft.text.into_bytes(),
-        media_type,
-        ContentEncryptionMode::ServerSide,
-        None,
-    )
-    .map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))?;
     let relation = draft
         .reply_to
         .as_deref()

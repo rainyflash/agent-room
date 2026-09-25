@@ -177,6 +177,9 @@ pub struct NetworkAgentSession {
 pub struct NetworkAgentEncryptionSecrets {
     /// matrix-sdk 加密存储的口令：第一次要用时生成并封存，之后不变。
     pub store_passphrase: SecretValue,
+    /// 加密房间里发言正文的根密钥（与本机 Bridge 一样，每条正文的密钥由它派生）：
+    /// 第一次要用时生成并封存，之后不变。
+    pub content_root_key: SecretValue,
     /// 服务器端密钥备份的恢复凭据；还没开启备份时为空。
     pub recovery_credential: Option<SecretValue>,
 }
@@ -323,7 +326,7 @@ pub trait NetworkAgentUseCases: Send + Sync {
     /// 记下第一次进加密房间的时刻（已经记过的不改），返回记下的那一刻。
     fn mark_encrypted(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<UtcMillis>>;
 
-    /// 进加密房间要用的秘密：存储口令缺了就生成并封存；恢复凭据有就带上。
+    /// 进加密房间要用的秘密：存储口令与正文根密钥缺了就生成并封存；恢复凭据有就带上。
     /// 秘密在库里却解不开时报依赖不可用，绝不重新生成去覆盖：那会让已有的加密存储再也打不开。
     fn encryption_secrets(
         &self,
@@ -831,19 +834,12 @@ impl NetworkAgentService {
         &self,
         id: NetworkAgentId,
     ) -> NetworkAgentResult<NetworkAgentEncryptionSecrets> {
-        let store_passphrase = match self
-            .read_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase)
-            .await?
-        {
-            OpenedSecret::Secret(secret) => secret,
-            OpenedSecret::Missing => {
-                let secret = self.secrets.generate().map_err(|_| dependency())?;
-                self.put_text_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase, &secret)
-                    .await?;
-                secret
-            }
-            OpenedSecret::Unsealable => return Err(dependency()),
-        };
+        let store_passphrase = self
+            .generated_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase)
+            .await?;
+        let content_root_key = self
+            .generated_secret(id, NetworkAgentSecretKind::MessageContentRootKey)
+            .await?;
         let recovery_credential = match self
             .read_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey)
             .await?
@@ -854,8 +850,27 @@ impl NetworkAgentService {
         };
         Ok(NetworkAgentEncryptionSecrets {
             store_passphrase,
+            content_root_key,
             recovery_credential,
         })
+    }
+
+    /// 读一个第一次要用时才生成的秘密：缺了就生成并封存；在库里却解不开时报依赖不可用，
+    /// 绝不重新生成去覆盖。
+    async fn generated_secret(
+        &self,
+        id: NetworkAgentId,
+        kind: NetworkAgentSecretKind,
+    ) -> NetworkAgentResult<SecretValue> {
+        match self.read_secret(id, kind).await? {
+            OpenedSecret::Secret(secret) => Ok(secret),
+            OpenedSecret::Missing => {
+                let secret = self.secrets.generate().map_err(|_| dependency())?;
+                self.put_text_secret(id, kind, &secret).await?;
+                Ok(secret)
+            }
+            OpenedSecret::Unsealable => Err(dependency()),
+        }
     }
 
     async fn put_text_secret(

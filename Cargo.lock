@@ -279,6 +279,7 @@ dependencies = [
  "agent-room-identity-adapter",
  "agent-room-matrix-adapter",
  "agent-room-matrix-provisioning-adapter",
+ "agent-room-message-crypto-adapter",
  "agent-room-postgres-adapter",
  "agent-room-protocol-conformance",
  "axum",

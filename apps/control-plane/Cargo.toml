@@ -16,6 +16,7 @@ agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
 agent-room-matrix-adapter.workspace = true
 agent-room-matrix-provisioning-adapter.workspace = true
+agent-room-message-crypto-adapter.workspace = true
 agent-room-postgres-adapter.workspace = true
 agent-room-protocol-conformance.workspace = true
 axum.workspace = true
