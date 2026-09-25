@@ -24,20 +24,18 @@ pub(super) struct ConnectivityProbe {
 impl ConnectivityProbe {
     /// 探 `<homeserver>/_matrix/client/versions`：不需要登录，服务器正常时返回 200。
     pub(super) fn new(homeserver: &str) -> Option<Self> {
-        Self::with_interval(homeserver, PROBE_INTERVAL)
+        Self::with_timing(homeserver, PROBE_INTERVAL, PROBE_TIMEOUT)
     }
 
-    fn with_interval(homeserver: &str, interval: Duration) -> Option<Self> {
+    /// 测试用短间隔时也给探测留足超时：机器忙时一次慢探测不该被当成断网。
+    fn with_timing(homeserver: &str, interval: Duration, timeout: Duration) -> Option<Self> {
         let mut base = Url::parse(homeserver).ok()?;
         if !base.path().ends_with('/') {
             let path = format!("{}/", base.path());
             base.set_path(&path);
         }
         let url = base.join("_matrix/client/versions").ok()?;
-        let client = reqwest::Client::builder()
-            .timeout(PROBE_TIMEOUT.min(interval.max(Duration::from_millis(100))))
-            .build()
-            .ok()?;
+        let client = reqwest::Client::builder().timeout(timeout).build().ok()?;
         Some(Self {
             client,
             url,
@@ -111,7 +109,7 @@ mod tests {
     use axum::{Router, extract::State, http::StatusCode, routing::get};
     use tokio::{sync::watch, time::Instant};
 
-    use super::ConnectivityProbe;
+    use super::{ConnectivityProbe, PROBE_TIMEOUT};
 
     /// 模拟一个时好时坏的 Matrix 服务器：`up` 为假时返回 503。
     async fn homeserver(up: Arc<AtomicBool>) -> String {
@@ -140,9 +138,10 @@ mod tests {
     #[tokio::test]
     async fn 断网时网络一恢复就提前结束退避() {
         let up = Arc::new(AtomicBool::new(false));
-        let probe = ConnectivityProbe::with_interval(
+        let probe = ConnectivityProbe::with_timing(
             &homeserver(up.clone()).await,
             Duration::from_millis(50),
+            PROBE_TIMEOUT,
         )
         .expect("地址有效");
         let (_keep, mut shutdown) = watch::channel(false);
@@ -170,9 +169,12 @@ mod tests {
     #[tokio::test]
     async fn 服务器本来就能连上时照常等满退避() {
         let up = Arc::new(AtomicBool::new(true));
-        let probe =
-            ConnectivityProbe::with_interval(&homeserver(up).await, Duration::from_millis(50))
-                .expect("地址有效");
+        let probe = ConnectivityProbe::with_timing(
+            &homeserver(up).await,
+            Duration::from_millis(50),
+            PROBE_TIMEOUT,
+        )
+        .expect("地址有效");
         let (_keep, mut shutdown) = watch::channel(false);
         let started = Instant::now();
         let stopped = probe
@@ -185,9 +187,12 @@ mod tests {
     #[tokio::test]
     async fn 等待中收到关机立即返回() {
         let up = Arc::new(AtomicBool::new(false));
-        let probe =
-            ConnectivityProbe::with_interval(&homeserver(up).await, Duration::from_millis(50))
-                .expect("地址有效");
+        let probe = ConnectivityProbe::with_timing(
+            &homeserver(up).await,
+            Duration::from_millis(50),
+            PROBE_TIMEOUT,
+        )
+        .expect("地址有效");
         let (stop, mut shutdown) = watch::channel(false);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
