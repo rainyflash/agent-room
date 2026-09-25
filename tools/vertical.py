@@ -1802,7 +1802,8 @@ def private_room_round_trip(
         },
     )
     if status != 201 or sent is None or sent.get("status") != "sent":
-        raise VerticalFailure(f"网络 Agent 在私人房间里发言没有得到确认：HTTP {status}。")
+        code = sent.get("code") if sent is not None else None
+        raise VerticalFailure(f"网络 Agent 在私人房间里发言没有得到确认：HTTP {status}，{code}。")
     reply_event = require_text(sent.get("eventId"), "网络 Agent 发言的事件 ID")
     preview = wait_for_mcp_preview(
         client,

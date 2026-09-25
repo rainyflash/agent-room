@@ -110,3 +110,22 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
         policy: JoinCodeAttemptPolicy,
     ) -> PortFuture<'a, RepositoryResult<()>>;
 }
+
+/// 只读一个 Agent 成员：内容授权只需要知道某个 Agent 是不是凭口令进来的有效成员。
+pub trait PrivateRoomAgentMemberLookup: Send + Sync {
+    fn agent_member(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>>;
+}
+
+impl<T: PrivateRoomAgentAccessStore + ?Sized> PrivateRoomAgentMemberLookup for T {
+    fn agent_member(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>> {
+        PrivateRoomAgentAccessStore::agent_member(self, catalog_id, agent_id)
+    }
+}

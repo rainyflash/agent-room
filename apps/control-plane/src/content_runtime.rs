@@ -111,6 +111,7 @@ pub(crate) async fn initialize(
             identities,
             matrix_authority: authority.clone(),
             private_rooms: dependencies.repositories.clone(),
+            private_agents: dependencies.repositories.clone(),
             direct_sessions: dependencies.repositories.clone(),
         }),
     );
