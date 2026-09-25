@@ -1045,6 +1045,13 @@ mod real_dependency_tests {
     #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
     async fn 真实_synapse_上加密客户端建好身份与密钥备份_重开沿用_存储丢了换设备恢复_都能在加密房间发言()
      {
+        // 失败时能看到网关与 matrix-sdk 说了什么。
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "agent_room_control_plane=debug,matrix_sdk=info,matrix_sdk_crypto=info",
+            ))
+            .with_test_writer()
+            .try_init();
         let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
         let (session, rotator, device) = network_session(&config).await;
         let vault = Arc::new(Vault::new(rotator, device));
