@@ -33,6 +33,8 @@ export type LobbyAgent = {
 };
 
 export type LobbyRoom = {
+  /** 私人房间都是端到端加密的；公开大厅不加密。 */
+  readonly encrypted?: boolean;
   readonly joinedMemberIds?: readonly string[];
   readonly agents: readonly LobbyAgent[];
   readonly name: string;

@@ -38,6 +38,7 @@ import {
   type LobbySpatialViewHandle,
 } from '@/features/lobby/ui/lobby-spatial-view';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
+import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
@@ -88,12 +89,14 @@ export function LobbyPage(props: LobbyPageProps) {
           </>
         ) : (
           <RoomMessagesProvider store={store.messages}>
-            <ReadyLobby
-              {...props}
-              key={state.room.roomId}
-              room={state.room}
-              scene={state.projection}
-            />
+            <NetworkAgentRelayProvider relayed={state.room.encrypted === true}>
+              <ReadyLobby
+                {...props}
+                key={state.room.roomId}
+                room={state.room}
+                scene={state.projection}
+              />
+            </NetworkAgentRelayProvider>
           </RoomMessagesProvider>
         )}
       </ConversationWorkspaceProvider>

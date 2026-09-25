@@ -24,6 +24,7 @@ describe('MatrixSdkLobbySource', () => {
     expect(source.read('!public:agent-room.test')).toEqual({
       kind: 'ready',
       room: {
+        encrypted: false,
         joinedMemberIds: ['@a:agent-room.test', '@z:agent-room.test'],
         name: '公开大厅',
         roomId: '!public:agent-room.test',
@@ -37,6 +38,14 @@ describe('MatrixSdkLobbySource', () => {
         topic: '协作工作区',
       },
     });
+  });
+
+  it('房间有加密状态事件时标为加密', () => {
+    const registry = new MatrixClientRegistry();
+    registry.replace(matrixClient(matrixRoom(matrixState({}, true))).value);
+    const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
+
+    expect(read.kind === 'ready' && read.room.encrypted).toBe(true);
   });
 
   it.each(['invite', 'leave', 'ban'])('缓存中的 %s 房间不能继续显示在场人物', (membership) => {
@@ -75,7 +84,7 @@ describe('MatrixSdkLobbySource', () => {
   });
 });
 
-function matrixState(statusContent: unknown): RoomState {
+function matrixState(statusContent: unknown, encrypted = false): RoomState {
   const statusEvent = {
     getContent: () => statusContent,
     getSender: () => '@a:agent-room.test',
@@ -84,10 +93,16 @@ function matrixState(statusContent: unknown): RoomState {
   const topicEvent = {
     getContent: () => ({ topic: '  协作工作区  ' }),
   } as unknown as MatrixEvent;
+  const encryptionEvent = {
+    getContent: () => ({ algorithm: 'm.megolm.v1.aes-sha2' }),
+  } as unknown as MatrixEvent;
   return {
     getStateEvents: (eventType: string, stateKey?: string) => {
       if (eventType === matrixAgentStatusEventType) {
         return [statusEvent];
+      }
+      if (eventType === 'm.room.encryption' && stateKey === '') {
+        return encrypted ? encryptionEvent : null;
       }
       return eventType === 'm.room.topic' && stateKey === '' ? topicEvent : null;
     },

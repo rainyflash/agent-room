@@ -15,6 +15,7 @@ import {
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useNetworkAgentGuideUrl } from '@/features/desktop/ui/network-agent-invite';
 import {
   privateRoomAgentAccessQueryKey,
   usePrivateRoomAgentAccess,
@@ -54,6 +55,7 @@ export function PrivateRoomAgentAccess({
   const { i18n, t } = useTranslation();
   const queryClient = useQueryClient();
   const access = usePrivateRoomAgentAccess(rooms, room.catalogId);
+  const guide = useNetworkAgentGuideUrl();
   const [generated, setGenerated] = useState<GeneratedJoinCode | null>(null);
   // 复制失败时展开给 Agent 的话，让人手动选中复制。
   const [copied, setCopied] = useState<'code' | 'failed' | 'message' | null>(null);
@@ -196,6 +198,7 @@ export function PrivateRoomAgentAccess({
                     copy(
                       t('privateRooms.governance.agentAccess.message', {
                         code: visible.code,
+                        guide,
                         room: room.name,
                       }),
                       'message',
@@ -237,6 +240,7 @@ export function PrivateRoomAgentAccess({
                 <pre>
                   {t('privateRooms.governance.agentAccess.message', {
                     code: visible.code,
+                    guide,
                     room: room.name,
                   })}
                 </pre>
@@ -244,6 +248,10 @@ export function PrivateRoomAgentAccess({
             </div>
           )}
 
+          <p className="private-room-agent-access__warning">
+            <AlertTriangle aria-hidden="true" />
+            {t('privateRooms.governance.agentAccess.relayWarning')}
+          </p>
           <div className="private-room-agent-access__actions">
             {view.joinCode === null ? (
               <Button

@@ -13,6 +13,7 @@ export type MatrixLobbyStateEvent = {
 };
 
 export type MatrixLobbyRoomSnapshot = {
+  readonly encrypted: boolean;
   readonly joinedMemberIds: readonly string[];
   readonly name: string;
   readonly roomId: string;
@@ -56,6 +57,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
     return {
       kind: 'ready',
       room: Object.freeze({
+        encrypted: state.getStateEvents('m.room.encryption', '') !== null,
         joinedMemberIds: Object.freeze(
           room
             .getJoinedMembers()

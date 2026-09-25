@@ -5,6 +5,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import type { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
 import type {
   PrivateRoom,
@@ -94,21 +96,49 @@ function gateway(initial: PrivateRoomAgentAccess = { agents: [], joinCode: null 
   return { agentAccess, disableJoinCode, generateJoinCode, removeCodeAgent, rename, value };
 }
 
-function renderGovernance(principalId: string, rooms: PrivateRoomGateway) {
+/** `networkAgents` 是服务器认定的网络 Agent。 */
+function renderGovernance(
+  principalId: string,
+  rooms: PrivateRoomGateway,
+  networkAgents: readonly string[] = [],
+) {
+  const labels = new NetworkAgentLabelStore(
+    {
+      lookup: (ids) => Promise.resolve(ok(new Set(ids.filter((id) => networkAgents.includes(id))))),
+    },
+    {
+      schedule: (task) => {
+        task();
+      },
+    },
+  );
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
-        <PrivateRoomGovernance
-          coordinator={{} as PrivateRoomCoordinator}
-          onExitRoom={() => undefined}
-          principalId={principalId}
-          recentlyAuthenticated={false}
-          room={room}
-          rooms={rooms}
-        />
+        <NetworkAgentLabelsProvider store={labels}>
+          <PrivateRoomGovernance
+            coordinator={{} as PrivateRoomCoordinator}
+            onExitRoom={() => undefined}
+            principalId={principalId}
+            recentlyAuthenticated={false}
+            room={room}
+            rooms={rooms}
+          />
+        </NetworkAgentLabelsProvider>
       </QueryClientProvider>
     </I18nextProvider>,
   );
+}
+
+function codeAgent(agentId: string, ownerDisplayName: string | null) {
+  return {
+    agentId,
+    displayName: 'Scout',
+    joinedAtUnixMs: CREATED,
+    ownerDisplayName,
+    status: 'joined' as const,
+    statusChangedAtUnixMs: CREATED,
+  };
 }
 
 beforeAll(async () => {
@@ -162,6 +192,7 @@ describe('PrivateRoomGovernance', () => {
     expect(message).toContain('agent-room join --code K7P3-Q9XW-2DMA');
     expect(message).toContain('"Architecture room"');
     expect(message).toContain('agent_room_join');
+    expect(message).toContain('/agents.md');
     // 口令开着时只能换或停用，不再显示生成按钮。
     expect(screen.getByRole('button', { name: 'Replace code' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Create code' })).toBeNull();
@@ -226,6 +257,30 @@ describe('PrivateRoomGovernance', () => {
       expect(rooms.removeCodeAgent).toHaveBeenCalledWith(room.catalogId, AGENT);
     });
     expect(await screen.findByText('No agent has joined with the code yet.')).toBeVisible();
+  });
+
+  it('口令一节提示网络 Agent 由服务器代收发', async () => {
+    renderGovernance(OWNER, gateway().value);
+    expect(
+      await screen.findByText(/The server sends and receives for them, so once one is here/u),
+    ).toBeVisible();
+  });
+
+  it('有网络 Agent 凭口令进来时，加密说明写明服务器代它收发', async () => {
+    const rooms = gateway({ agents: [codeAgent(AGENT, null)], joinCode: null });
+    renderGovernance(OWNER, rooms.value, [AGENT]);
+    expect(
+      await screen.findByText(
+        'End-to-end encrypted. This room has network agents; the server sends and receives for them.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('凭口令进来的只有本机 Agent 时，加密说明不提服务器代收发', async () => {
+    const rooms = gateway({ agents: [codeAgent(AGENT, 'Mina')], joinCode: null });
+    renderGovernance(OWNER, rooms.value);
+    expect(await screen.findByText('Agent of Mina', { exact: false })).toBeVisible();
+    expect(screen.getByText('End-to-end encrypted')).toBeVisible();
   });
 
   it('不能管理房间的成员看不到口令，也不去查', () => {

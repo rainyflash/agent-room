@@ -91,6 +91,10 @@ const en = {
   'privateRooms.governance.visibility': 'Visibility',
   'privateRooms.governance.inviteOnly': 'Invite only',
   'privateRooms.governance.retention': 'Retention',
+  'privateRooms.governance.encryption': 'Encryption',
+  'privateRooms.governance.encrypted': 'End-to-end encrypted',
+  'privateRooms.governance.encryptedRelayed':
+    'End-to-end encrypted. This room has network agents; the server sends and receives for them.',
   'privateRooms.governance.retentionDefault': 'Server default',
   'privateRooms.governance.invite.title': 'Invite someone',
   'privateRooms.governance.invite.detail':
@@ -127,12 +131,14 @@ const en = {
     'Copy failed. Open the message below and copy it by hand.',
   'privateRooms.governance.agentAccess.preview': 'Show the message',
   'privateRooms.governance.agentAccess.message':
-    'Join the private room "{{room}}" in Agent Room with the code {{code}}. From a terminal: agent-room join --code {{code}} --name "<a short name for yourself>". With MCP: call agent_room_join with code {{code}}.',
+    'Join the private room "{{room}}" in Agent Room with the code {{code}}. From a terminal: agent-room join --code {{code}} --name "<a short name for yourself>". With MCP: call agent_room_join with code {{code}}. Without Agent Room installed: read {{guide}} and send the code when you join.',
   'privateRooms.governance.agentAccess.generate': 'Create code',
   'privateRooms.governance.agentAccess.rotate': 'Replace code',
   'privateRooms.governance.agentAccess.disable': 'Turn off code',
   'privateRooms.governance.agentAccess.rotateDetail':
     'Replacing or turning off the code stops the old one at once. Agents already here stay.',
+  'privateRooms.governance.agentAccess.relayWarning':
+    'Network agents that get the code can come in too. The server sends and receives for them, so once one is here, the server can read what is said in this room from then on.',
   'privateRooms.governance.agentAccess.agents': 'Agents that joined with the code',
   'privateRooms.governance.agentAccess.noAgents': 'No agent has joined with the code yet.',
   'privateRooms.governance.agentAccess.joinedAt': 'Joined {{time}}',
@@ -240,6 +246,9 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.visibility': '可见性',
   'privateRooms.governance.inviteOnly': '仅限受邀',
   'privateRooms.governance.retention': '保留期',
+  'privateRooms.governance.encryption': '加密',
+  'privateRooms.governance.encrypted': '端到端加密',
+  'privateRooms.governance.encryptedRelayed': '端到端加密。本房间有网络 Agent，服务器代它收发。',
   'privateRooms.governance.retentionDefault': '服务器默认',
   'privateRooms.governance.invite.title': '邀请其他人',
   'privateRooms.governance.invite.detail': '填对方的账户 ID 即可，不需要 Matrix 用户 ID。',
@@ -272,12 +281,14 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.agentAccess.copyFailed': '复制失败，请展开下面这段话手动选中复制。',
   'privateRooms.governance.agentAccess.preview': '查看给 Agent 的话',
   'privateRooms.governance.agentAccess.message':
-    '用 Agent Room 进私人房间「{{room}}」，口令 {{code}}。命令行：agent-room join --code {{code}} --name "<给自己起个简短的名字>"；MCP：调用 agent_room_join，code 填 {{code}}。',
+    '用 Agent Room 进私人房间「{{room}}」，口令 {{code}}。命令行：agent-room join --code {{code}} --name "<给自己起个简短的名字>"；MCP：调用 agent_room_join，code 填 {{code}}；没装 Agent Room：读 {{guide}}，进房间时带上口令。',
   'privateRooms.governance.agentAccess.generate': '生成口令',
   'privateRooms.governance.agentAccess.rotate': '换一个口令',
   'privateRooms.governance.agentAccess.disable': '停用口令',
   'privateRooms.governance.agentAccess.rotateDetail':
     '换口令或停用后，旧口令立刻失效；已经进来的 Agent 不受影响。',
+  'privateRooms.governance.agentAccess.relayWarning':
+    '拿到口令的网络 Agent 也能进来。服务器代它收发，所以它进来之后，服务器能读到这个房间之后的消息。',
   'privateRooms.governance.agentAccess.agents': '凭口令进来的 Agent',
   'privateRooms.governance.agentAccess.noAgents': '还没有 Agent 凭口令进来。',
   'privateRooms.governance.agentAccess.joinedAt': '{{time}} 进来',
