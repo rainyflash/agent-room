@@ -73,6 +73,8 @@ VERTICAL_ROOT: Final = ROOT / ".local" / "vertical"
 BOOTSTRAP_RESULT: Final = VERTICAL_ROOT / "bootstrap.json"
 CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
+PRIVATE_ROOM_RESULT: Final = VERTICAL_ROOT / "private-room.json"
+NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
 SECURITY_LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-27" / "services"
@@ -526,6 +528,7 @@ class IsolatedBridgeState(AbstractContextManager["IsolatedBridgeState"]):
             clear_vertical_secure_storage()
         reset_bridge_data_roots()
         prepare_private_bridge_data_roots()
+        shutil.rmtree(NETWORK_AGENT_STORE_ROOT, ignore_errors=True)
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
@@ -962,13 +965,15 @@ def start_control_plane(
     environment: Mapping[str, str],
     redactor: LogRedactor,
     log_root: Path = LOG_ROOT,
+    *,
+    name: str = "control-plane",
 ) -> ManagedProcess:
     control_plane = processes.start(
         ManagedProcess(
-            name="control-plane",
+            name=name,
             command=[str(runtime_binary("agent-room-control-plane"))],
             environment=vertical_control_plane_environment(environment),
-            log_path=log_root / "control-plane.log",
+            log_path=log_root / f"{name}.log",
             redactor=redactor,
         )
     )
@@ -984,11 +989,14 @@ def vertical_control_plane_environment(
     environment: Mapping[str, str],
 ) -> dict[str, str]:
     """仅为隔离纵向环境开放宿主监听，使 Docker Caddy 可访问控制平面。"""
-    return control_plane_runtime_environment(
+    runtime = control_plane_runtime_environment(
         environment,
         enable_telemetry=True,
         network_scope=ControlPlaneNetworkScope.DOCKER_GATEWAY,
     )
+    # 网络 Agent 的加密存储放在纵向验收自己的目录里，每轮清空，验收还要删它测重建。
+    runtime["AGENT_ROOM_NETWORK_AGENT_STORE_DIR"] = str(NETWORK_AGENT_STORE_ROOT)
+    return runtime
 
 
 def web_preview_command() -> list[str]:
@@ -1496,13 +1504,14 @@ def network_agent_request(
     token: str | None = None,
     body: Mapping[str, object] | None = None,
     timeout_seconds: float = 60,
+    source: str = "198.51.100.24",
 ) -> tuple[int, dict[str, object] | None]:
     """像只会发 HTTP 的 Agent 一样调用网络 Agent 接口；返回状态码与 JSON。"""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     request = Request(f"{NETWORK_AGENT_API}{path}", data=data, method=method)
     request.add_header("Accept", "application/json")
     # 控制面只信最后一跳写的来源地址；这里模拟 Caddy 写入的公网地址。
-    request.add_header("X-Forwarded-For", "198.51.100.24")
+    request.add_header("X-Forwarded-For", source)
     if data is not None:
         request.add_header("Content-Type", "application/json")
     if token is not None:
@@ -1713,6 +1722,187 @@ def verify_network_agent_mcp(*, room_id: str) -> dict[str, str]:
     ) != "network_agent.unauthorized":
         raise VerticalFailure("离开后远程 MCP 的令牌仍然可用。")
     return {"token": token, "agentId": agent_id, "eventId": event_id}
+
+
+def create_private_room_with_code(*, environment: Mapping[str, str]) -> dict[str, str]:
+    """用真实人类浏览器会话建端到端加密的私人房间，并生成 Agent 口令。"""
+    catalog_id = new_uuid_v7()
+    PRIVATE_ROOM_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    PRIVATE_ROOM_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_PRIVATE_ROOM_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_PRIVATE_ROOM_RESULT": str(PRIVATE_ROOM_RESULT),
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "private-room-agent-code.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    try:
+        result = read_string_object(PRIVATE_ROOM_RESULT)
+    finally:
+        # 口令是秘密，读完就删。
+        PRIVATE_ROOM_RESULT.unlink(missing_ok=True)
+    if result.get("catalogId") != catalog_id:
+        raise VerticalFailure("浏览器建了别的私人房间。")
+    if not require_text(result.get("matrixRoomId"), "私人房间的 Matrix 房间").startswith("!"):
+        raise VerticalFailure("私人房间的 Matrix 房间标识无效。")
+    require_text(result.get("code"), "Agent 口令")
+    return result
+
+
+def network_agent_store_path(agent_id: str) -> Path:
+    """网络 Agent 的加密存储目录；目录按网络 Agent 自己的 ID 命名，不是 Agent ID。"""
+    require_uuid_v7(agent_id, "网络 Agent 的 Agent ID")
+    network_agent_id = compose_psql(
+        f"SELECT id::text FROM agent_room.network_agent WHERE agent_id = '{agent_id}';"
+    )
+    require_uuid_v7(network_agent_id, "网络 Agent 的 ID")
+    return NETWORK_AGENT_STORE_ROOT / network_agent_id
+
+
+def private_room_round_trip(
+    client: McpAgentSession, *, token: str, agent_id: str, room_id: str
+) -> str:
+    """本机 Agent 在私人房间里发一条，网络 Agent 解密收到并回复，本机 Agent 验签后看到回复。"""
+    # 房间密钥只分给身份已就绪的设备；网络 Agent 刚进来或刚重建时可能还没轮到，没收到就再发一条。
+    received: dict[str, object] | None = None
+    for _ in range(4):
+        message = send_mcp_vertical_message(client, room_id)
+        try:
+            received = wait_for_network_agent_message(token, message["eventId"], timeout_seconds=60)
+            break
+        except VerticalFailure:
+            continue
+    if received is None:
+        raise VerticalFailure("网络 Agent 在私人房间里始终没能解密本机 Agent 的消息。")
+    actor = require_object(received.get("actor"), "消息作者")
+    if actor.get("kind") != "agent":
+        raise VerticalFailure("网络 Agent 在私人房间里收到的消息作者不对。")
+    reply_text = f"Private network agent reply to {message['submissionId'][-8:]}."
+    status, sent = network_agent_request(
+        "POST",
+        "/me/messages",
+        token=token,
+        body={
+            "roomId": room_id,
+            "text": reply_text,
+            "replyTo": require_text(received.get("messageId"), "消息 ID"),
+        },
+    )
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        raise VerticalFailure(f"网络 Agent 在私人房间里发言没有得到确认：HTTP {status}。")
+    reply_event = require_text(sent.get("eventId"), "网络 Agent 发言的事件 ID")
+    preview = wait_for_mcp_preview(
+        client,
+        room_id=room_id,
+        submission={"eventId": reply_event, "title": reply_text},
+        timeout_seconds=90,
+    )
+    reply_actor = require_object(preview.get("actor"), "网络 Agent 发言的作者")
+    agent = require_object(reply_actor.get("agent"), "网络 Agent 发言的 Agent")
+    if agent.get("agentId") != agent_id or reply_actor.get("provenance") != "autonomous_agent":
+        raise VerticalFailure("本机 Agent 在私人房间里看到的网络 Agent 发言身份不对。")
+    status, _ = network_agent_request(
+        "POST", "/me/ack", token=token, body={"eventId": message["eventId"]}
+    )
+    if status != 200:
+        raise VerticalFailure("网络 Agent 确认私人房间的消息失败。")
+    return reply_event
+
+
+def verify_private_room_network_agent(
+    *,
+    sender_bridge: AuthorizedBridgeRuntime,
+    processes: ProcessStack,
+    control_plane: ManagedProcess,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """网络 Agent 凭口令进私人房间，与本机 Agent 加密收发；控制面重启后、存储删掉重建后都照常。"""
+    room = create_private_room_with_code(environment=environment)
+    code, room_id = room["code"], room["matrixRoomId"]
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        joined = transport.call_tool(
+            "agent_room_join", {"code": code, "displayName": "Vertical Private Scout"}
+        )
+        joined_room = require_object(joined.get("room"), "本机 Agent 进的私人房间")
+        if joined_room.get("catalogId") != room["catalogId"]:
+            raise VerticalFailure("本机 Agent 凭口令进了别的房间。")
+        client = transport.bind_session(require_text(joined.get("sessionId"), "私人房间会话"))
+        identity = wait_for_session_identity(client, timeout_seconds=180)
+        if identity["matrixRoomId"] != room_id:
+            raise VerticalFailure("本机 Agent 的会话不在口令对应的私人房间里。")
+
+        status, created = network_agent_request(
+            "POST",
+            "",
+            body={"name": "Vertical Private Net Scout", "code": code},
+            source="198.51.100.26",
+            timeout_seconds=180,
+        )
+        if status != 201 or created is None:
+            raise VerticalFailure(f"网络 Agent 凭口令创建失败：HTTP {status}。")
+        token = require_text(created.get("token"), "网络 Agent 令牌")
+        agent_id = require_text(created.get("agentId"), "网络 Agent 的 Agent ID")
+        if require_object(created.get("room"), "网络 Agent 进的房间").get("matrixRoomId") != room_id:
+            raise VerticalFailure("网络 Agent 凭口令进了别的房间。")
+        drain_network_agent_messages(token)
+        first = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+
+        # 控制面重启：加密存储还在，网络 Agent 照常解密新消息。
+        control_plane.stop()
+        control_plane = start_control_plane(
+            processes, environment, redactor, name="control-plane-restarted"
+        )
+        restarted = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+
+        # 存储丢失：控制面停着时删掉它（开着的客户端有缓存），重启后网关自动重建。
+        store = network_agent_store_path(agent_id)
+        if not store.is_dir():
+            raise VerticalFailure("找不到网络 Agent 的加密存储目录。")
+        control_plane.stop()
+        shutil.rmtree(store)
+        control_plane = start_control_plane(
+            processes, environment, redactor, name="control-plane-rebuilt"
+        )
+        rebuilt = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+
+    status, _ = network_agent_request("DELETE", "/me", token=token)
+    if status != 204:
+        raise VerticalFailure(f"私人房间里的网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "token": token,
+        "code": code,
+        "agentId": agent_id,
+        "firstReplyEventId": first,
+        "restartedReplyEventId": restarted,
+        "rebuiltReplyEventId": rebuilt,
+    }
+
+
+def drain_network_agent_messages(token: str) -> None:
+    """第一次取消息只建立同步位置并带回最近的上下文，全部确认掉。"""
+    status, first = network_agent_request("GET", "/me/messages?wait=0&limit=50", token=token)
+    if status != 200 or first is None:
+        raise VerticalFailure(f"网络 Agent 第一次取消息失败：HTTP {status}。")
+    context = first.get("messages")
+    if isinstance(context, list) and context:
+        last = require_object(context[-1], "网络 Agent 收到的消息")
+        network_agent_request(
+            "POST", "/me/ack", token=token, body={"eventId": require_text(last.get("eventId"), "事件 ID")}
+        )
 
 
 def verify_mcp_workflow(
