@@ -1279,7 +1279,7 @@ def start_authorized_bridge(
     # 验收出错时要看本机 Bridge 把房间密钥分给了哪些设备。
     bridge_environment["AGENT_ROOM_BRIDGE_LOG_FILTER"] = (
         "agent_room_bridge=info,matrix_sdk_crypto=info,"
-        "matrix_sdk_crypto::session_manager=debug,matrix_sdk_crypto::olm=debug"
+        "matrix_sdk_crypto::session_manager=debug,matrix_sdk_crypto::identities=debug"
     )
     if vault:
         if os.name != "posix":
@@ -1915,6 +1915,7 @@ def summarize_control_plane_warnings(log_path: Path, *, head: int = 60) -> None:
         return
     counts: dict[str, int] = {}
     order: list[str] = []
+    samples: list[str] = []
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             record = json.loads(line)
@@ -1930,7 +1931,17 @@ def summarize_control_plane_warnings(log_path: Path, *, head: int = 60) -> None:
         message = fields.pop("message", "")
         # 调试行里的同步位置每次都不同，按消息与计数字段归并。
         if level == "DEBUG" and "since" in fields:
-            fields = {key: fields[key] for key in ("changes", "outcome") if key in fields}
+            if len(samples) < 8:
+                samples.append(json.dumps(fields, ensure_ascii=False))
+            elapsed = int(fields.get("elapsed_ms", 0) or 0)
+            bucket = "<100ms" if elapsed < 100 else "<1s" if elapsed < 1000 else ">=1s"
+            fields = {
+                "changes": fields.get("changes"),
+                "timeout_ms": fields.get("timeout_ms"),
+                "rooms": fields.get("rooms"),
+                "timeline_events": fields.get("timeline_events"),
+                "elapsed": bucket,
+            }
         key = f"{level} {record.get('target')}: {message} {json.dumps(fields, ensure_ascii=False)}"
         if key not in counts:
             order.append(key)
@@ -1939,7 +1950,9 @@ def summarize_control_plane_warnings(log_path: Path, *, head: int = 60) -> None:
     print(f"==== {log_path.name} 的告警与网关调试（按首次出现排序，去重计数） ====")
     for key in order[:head]:
         print(f"{counts[key]:>6}  {key}")
-    print(f"==== 共 {len(order)} 种 ====")
+    print(f"==== 共 {len(order)} 种；长轮询前几段原样： ====")
+    for sample in samples:
+        print(f"        {sample}")
 
 
 def print_bridge_key_sharing(
@@ -1950,12 +1963,20 @@ def print_bridge_key_sharing(
     if not log_path.is_file():
         print(f"找不到 Bridge 日志 {log_path}。")
         return
-    pattern = re.compile(r"WARN|ERROR|room_key|share|withheld|device|Olm|olm", re.IGNORECASE)
-    lines = [
-        line
-        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if pattern.search(line)
-    ]
+    # 每次同步都会打的两种行太多，先滤掉，但数一数“缺 Olm 会话”那行有没有出现过非空的。
+    noise = re.compile(r"no backup key was found|missing_session_devices_by_user=\{\} timed_out")
+    pattern = re.compile(
+        r"WARN|ERROR|room_key|share|withheld|device|Olm|olm|keys_query|identity", re.IGNORECASE
+    )
+    lines = []
+    nonempty_missing = 0
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "missing_session_devices_by_user=" in line and "missing_session_devices_by_user={}" not in line:
+            nonempty_missing += 1
+        if noise.search(line) or not pattern.search(line):
+            continue
+        lines.append(line)
+    print(f"缺 Olm 会话的设备非空的次数：{nonempty_missing}")
     print(f"==== {runtime.display_name} 的 Bridge 日志（密钥分享与告警，最后 {tail} 行） ====")
     for line in lines[-tail:]:
         print(redactor.redact(line)[:400])
