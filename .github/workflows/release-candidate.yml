@@ -122,7 +122,7 @@ jobs:
           - runner: windows-latest
             target: windows-x86_64
             rust_target: x86_64-pc-windows-msvc
-            cache_key: windows-runtime
+            cache_key: windows-release
             python: python
             updater_payload: '*-setup.exe'
             bridge: target/release/agent-room-bridge.exe
@@ -132,7 +132,7 @@ jobs:
           - runner: macos-latest
             target: darwin-aarch64
             rust_target: aarch64-apple-darwin
-            cache_key: macos-desktop
+            cache_key: macos-release
             python: python3
             updater_payload: '*.app.tar.gz'
             bridge: target/release/agent-room-bridge
@@ -172,6 +172,8 @@ jobs:
           node-version-file: .node-version
       - name: 安装 Rust
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      # 发布用自己的缓存键，不与 CI 的 windows-runtime、macos.yml 的 macos-desktop 共用。
+      # 共用时 CI 先存下 debug 检查产物，发布作业完全命中后不再保存，release 编译结果就一直存不进去。
       - name: 恢复 Release 编译缓存
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:

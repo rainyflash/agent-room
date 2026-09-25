@@ -8,6 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 MACOS_WORKFLOW = ROOT / ".github" / "workflows" / "macos.yml"
+RELEASE_CANDIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "release-candidate.yml"
 JOB_HEADING = re.compile(r"^  [a-z0-9-]+:$")
 
 
@@ -114,6 +115,17 @@ class CiCostPolicyTests(unittest.TestCase):
         self.assertNotIn("  bridge-platforms:", workflow)
         self.assertNotIn("  desktop-platforms:", workflow)
         self.assertIn("shared-key: windows-runtime", workflow)
+
+    def test_release_builds_keep_their_own_compile_cache(self) -> None:
+        release = RELEASE_CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+        keys = set(re.findall(r"cache_key: (\S+)", release))
+
+        # 与 CI 的 cargo check 共用键时，发布作业完全命中 debug 产物就不再保存，
+        # release 编译结果永远存不进缓存。
+        self.assertEqual(keys, {"windows-release", "macos-release"})
+        for other in (CI_WORKFLOW, MACOS_WORKFLOW):
+            shared = set(re.findall(r"shared-key: (\S+)", other.read_text(encoding="utf-8")))
+            self.assertFalse(keys & shared, other.name)
 
     def test_macos_stays_manual_on_a_standard_runner(self) -> None:
         workflow = MACOS_WORKFLOW.read_text(encoding="utf-8")
