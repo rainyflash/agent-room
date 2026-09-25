@@ -1048,7 +1048,7 @@ mod real_dependency_tests {
         // 失败时能看到网关与 matrix-sdk 说了什么。
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(
-                "agent_room_control_plane=debug,matrix_sdk=info,matrix_sdk_crypto=info",
+                "agent_room_control_plane=debug,agent_room_matrix_adapter=debug,matrix_sdk=info,matrix_sdk_crypto=info",
             ))
             .with_test_writer()
             .try_init();
