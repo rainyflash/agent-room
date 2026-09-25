@@ -259,6 +259,7 @@ function noop(): void {
 
 function snapshot(statusEvents: readonly MatrixLobbyStateEvent[]): MatrixLobbyRoomSnapshot {
   return {
+    encrypted: false,
     joinedMemberIds: [MATRIX_USER_ID],
     name: '公开大厅',
     roomId: '!public:agent-room.test',

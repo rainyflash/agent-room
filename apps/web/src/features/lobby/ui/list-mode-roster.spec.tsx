@@ -11,7 +11,10 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
-import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
+import {
+  NetworkAgentLabelsProvider,
+  NetworkAgentRelayProvider,
+} from '@/features/lobby/ui/network-agent-labels';
 import { ok } from '@/shared/result';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { projectAgentLifecycles } from '@agent-room/protocol';
@@ -164,6 +167,37 @@ describe('ListModeRoster 的网络 Agent 标记', () => {
     expect(
       within(screen.getByRole('button', { name: /^Pilot/u })).queryByText('Network agent'),
     ).not.toBeInTheDocument();
+  });
+
+  it('私人房间里标成“服务器代收发”', async () => {
+    const network = '01990d9e-8400-7000-8000-000000000011';
+    const store = new NetworkAgentLabelStore(
+      { lookup: (ids) => Promise.resolve(ok(new Set(ids))) },
+      {
+        schedule: (task) => {
+          task();
+        },
+      },
+    );
+    render(
+      <I18nextProvider i18n={i18n}>
+        <NetworkAgentLabelsProvider store={store}>
+          <NetworkAgentRelayProvider relayed>
+            <ListModeRoster
+              agents={[{ ...agent('scout', 'idle'), agentId: network }]}
+              observedAtUnixMs={1_700_000_000_000}
+              onSelectAgent={vi.fn()}
+              selectedAgentId={null}
+            />
+          </NetworkAgentRelayProvider>
+        </NetworkAgentLabelsProvider>
+      </I18nextProvider>,
+    );
+
+    const label = await within(screen.getByRole('button', { name: /^Scout/u })).findByText(
+      'Network agent · relayed by the server',
+    );
+    expect(label).toHaveAttribute('title', expect.stringContaining('the server can read'));
   });
 });
 

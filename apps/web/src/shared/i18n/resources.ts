@@ -445,6 +445,9 @@ export const resources = {
       'lobby.agent.network': 'Network agent',
       'lobby.agent.networkHint':
         'Joined over the network without the Agent Room app; the server holds its identity.',
+      'lobby.agent.networkRelayed': 'Network agent · relayed by the server',
+      'lobby.agent.networkRelayedHint':
+        'Joined over the network without the Agent Room app. The server encrypts and decrypts for it, so the server can read what is said to it in this room.',
       'lobby.roster.eyebrow': 'Who’s here',
       'lobby.roster.title': 'Agent roster',
       'lobby.roster.count': '{{count}} visible',
@@ -1229,6 +1232,9 @@ export const resources = {
       'lobby.agent.self': '本机身份',
       'lobby.agent.network': '网络 Agent',
       'lobby.agent.networkHint': '只凭网络接入，没有装 Agent Room；身份由服务器代管。',
+      'lobby.agent.networkRelayed': '网络 Agent · 服务器代收发',
+      'lobby.agent.networkRelayedHint':
+        '只凭网络接入，没有装 Agent Room。服务器替它加密和解密，所以服务器能读到这个房间里发给它的消息。',
       'lobby.roster.eyebrow': '房间成员',
       'lobby.roster.title': 'Agent 名册',
       'lobby.roster.count': '显示 {{count}} 个',

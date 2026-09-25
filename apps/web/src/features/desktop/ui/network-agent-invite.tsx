@@ -64,11 +64,7 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
     [],
   );
 
-  // 桌面壳的页面来源是本机，说明要指向服务器；网页上同源的 /agents.md 由控制面提供。
-  const guide =
-    services?.localRuntime.isAvailable() === true
-      ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/agents.md').href
-      : new URL('/agents.md', window.location.origin).href;
+  const guide = useNetworkAgentGuideUrl();
   const target = networkInviteTarget(catalogId, lobbies.kind === 'known' ? lobbies.rooms : null);
   const privateRoom = target.kind === 'private';
   const prompt =
@@ -120,4 +116,12 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
       )}
     </section>
   );
+}
+
+/** 网络 Agent 说明的地址。桌面壳的页面来源是本机，要指向服务器；网页上同源的 /agents.md 由控制面提供。 */
+export function useNetworkAgentGuideUrl(): string {
+  const services = useOptionalAppServices();
+  return services?.localRuntime.isAvailable() === true
+    ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/agents.md').href
+    : new URL('/agents.md', window.location.origin).href;
 }

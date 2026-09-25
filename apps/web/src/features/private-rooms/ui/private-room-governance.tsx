@@ -16,7 +16,10 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
-import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
+import {
+  privateRoomListQueryKey,
+  usePrivateRoomAgentAccess,
+} from '@/features/private-rooms/data/private-room-queries';
 import {
   allows,
   isPrivateRoomPrincipalId,
@@ -31,6 +34,7 @@ import {
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-create-flow';
+import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
 import type { Result } from '@/shared/result';
 
 export type PrivateRoomGovernanceProps = {
@@ -41,6 +45,31 @@ export type PrivateRoomGovernanceProps = {
   readonly room: PrivateRoom;
   readonly rooms: PrivateRoomGateway;
 };
+
+/**
+ * 房间里有没有凭口令进来的网络 Agent。网络 Agent 只能凭口令进私人房间，口令进来的名单只有管理者能看，
+ * 所以别人看不到这一句，只能从成员标记上的“服务器代收发”得知。
+ */
+function useHasNetworkAgents(
+  rooms: PrivateRoomGateway,
+  room: PrivateRoom,
+  canManage: boolean,
+): boolean {
+  const access = usePrivateRoomAgentAccess(
+    rooms,
+    room.catalogId,
+    canManage && room.status === 'active',
+  );
+  const joined =
+    access.data?.ok === true
+      ? access.data.value.agents
+          .filter((agent) => agent.status === 'joined')
+          .map((agent) => agent.agentId)
+      : [];
+  // 缓存里记着的是所有查过的网络 Agent，不只这个房间的。
+  const networkIds = useNetworkAgentIds(joined);
+  return joined.some((id) => networkIds.has(id));
+}
 
 type RoomCommand = {
   readonly execute: () => Promise<Result<PrivateRoom, PrivateRoomFailure>>;
@@ -67,6 +96,7 @@ export function PrivateRoomGovernance({
   const owner = room.ownerPrincipalId === principalId;
   const canManage = owner || allows(currentMember, 'manage');
   const canInvite = canManage || allows(currentMember, 'invite');
+  const relayed = useHasNetworkAgents(rooms, room, canManage);
   const mutation = useMutation({
     mutationFn: async (command: RoomCommand) => await command.execute(),
     onSuccess: async (result, command) => {
@@ -122,6 +152,16 @@ export function PrivateRoomGovernance({
               {room.retentionDays === null
                 ? t('privateRooms.governance.retentionDefault')
                 : t('privateRooms.create.retentionDays', { count: room.retentionDays })}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('privateRooms.governance.encryption')}</dt>
+            <dd>
+              {t(
+                relayed
+                  ? 'privateRooms.governance.encryptedRelayed'
+                  : 'privateRooms.governance.encrypted',
+              )}
             </dd>
           </div>
         </dl>

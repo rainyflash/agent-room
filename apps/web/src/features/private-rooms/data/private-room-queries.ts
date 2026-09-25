@@ -22,8 +22,13 @@ export const privateRoomAgentAccessQueryKey = (catalogId: string) =>
   [...privateRoomListQueryKey, 'agent-access', catalogId] as const;
 
 /** 口令状态与凭口令进来的 Agent；只有能管理房间的人查得到。 */
-export function usePrivateRoomAgentAccess(gateway: PrivateRoomGateway, catalogId: string) {
+export function usePrivateRoomAgentAccess(
+  gateway: PrivateRoomGateway,
+  catalogId: string,
+  enabled = true,
+) {
   return useQuery({
+    enabled,
     queryKey: privateRoomAgentAccessQueryKey(catalogId),
     queryFn: async () => await gateway.agentAccess(catalogId),
     networkMode: 'always',

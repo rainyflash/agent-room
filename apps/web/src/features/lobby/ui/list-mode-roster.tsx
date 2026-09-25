@@ -19,7 +19,7 @@ import {
 import { AgentPortrait } from './room-illustration';
 import { agentLifecycle, agentRosterGroup, agentRosterGroups } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
-import { useNetworkAgentIds } from './network-agent-labels';
+import { useNetworkAgentIds, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import {
@@ -102,6 +102,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
     const currentPage = Math.min(page, pageCount - 1);
     const visibleAgents = filteredAgents.slice(currentPage * 100, (currentPage + 1) * 100);
     const networkAgents = useNetworkAgentIds(visibleAgents.map((agent) => agent.agentId));
+    const networkLabel = useNetworkAgentLabel();
 
     useImperativeHandle(forwardedRef, () => ({
       focusSelected: () => {
@@ -276,7 +277,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                       ) : null}
                       {agent.agentId === selfAgentId ? <em>{t('lobby.agent.self')}</em> : null}
                       {networkAgents.has(agent.agentId) ? (
-                        <em title={t('lobby.agent.networkHint')}>{t('lobby.agent.network')}</em>
+                        <em title={networkLabel.hint}>{networkLabel.label}</em>
                       ) : null}
                     </strong>
                     <AgentStateLabel agent={agent} now={observedAtUnixMs} />

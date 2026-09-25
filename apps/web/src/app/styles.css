@@ -2381,6 +2381,24 @@
   line-height: 1.45;
 }
 
+.private-room-agent-access__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  color: var(--ar-ink-72);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.private-room-agent-access__warning > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 0.1rem;
+  color: var(--color-alert);
+}
+
 .private-room-agent-access__actions {
   display: flex;
   flex-wrap: wrap;
