@@ -996,6 +996,11 @@ def vertical_control_plane_environment(
     )
     # 网络 Agent 的加密存储放在纵向验收自己的目录里，每轮清空，验收还要删它测重建。
     runtime["AGENT_ROOM_NETWORK_AGENT_STORE_DIR"] = str(NETWORK_AGENT_STORE_ROOT)
+    # 网络 Agent 网关与加密身份多记一些，出错时由 summarize_control_plane_warnings 汇总。
+    runtime["AGENT_ROOM_LOG_FILTER"] = (
+        "agent_room_control_plane=info,agent_room_control_plane::network_gateway=debug,"
+        "agent_room_matrix_adapter=debug,matrix_sdk_crypto=info,sqlx=warn"
+    )
     return runtime
 
 
@@ -1878,7 +1883,11 @@ def verify_private_room_network_agent(
         control_plane = start_control_plane(
             processes, environment, redactor, name="control-plane-rebuilt"
         )
-        rebuilt = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+        try:
+            rebuilt = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+        except VerticalFailure:
+            summarize_control_plane_warnings(LOG_ROOT / "control-plane-rebuilt.log")
+            raise
 
     status, _ = network_agent_request("DELETE", "/me", token=token)
     if status != 204:
@@ -1891,6 +1900,40 @@ def verify_private_room_network_agent(
         "restartedReplyEventId": restarted,
         "rebuiltReplyEventId": rebuilt,
     }
+
+
+def summarize_control_plane_warnings(log_path: Path, *, head: int = 60) -> None:
+    """重建那一轮失败时，把控制面的告警和网关调试行按出现顺序去重后打印，免得被刷屏的同一条挤掉。"""
+    if not log_path.is_file():
+        print(f"找不到 {log_path}，没有可汇总的控制面日志。")
+        return
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        level = record.get("level")
+        fields = record.get("fields")
+        if level not in {"WARN", "ERROR", "DEBUG"} or not isinstance(fields, dict):
+            continue
+        fields = {key: value for key, value in fields.items() if key != "network_agent.id"}
+        message = fields.pop("message", "")
+        # 调试行里的同步位置每次都不同，按消息与计数字段归并。
+        if level == "DEBUG" and "since" in fields:
+            fields = {key: fields[key] for key in ("changes", "outcome") if key in fields}
+        key = f"{level} {record.get('target')}: {message} {json.dumps(fields, ensure_ascii=False)}"
+        if key not in counts:
+            order.append(key)
+            counts[key] = 0
+        counts[key] += 1
+    print(f"==== {log_path.name} 的告警与网关调试（按首次出现排序，去重计数） ====")
+    for key in order[:head]:
+        print(f"{counts[key]:>6}  {key}")
+    print(f"==== 共 {len(order)} 种 ====")
 
 
 def drain_network_agent_messages(token: str) -> None:
