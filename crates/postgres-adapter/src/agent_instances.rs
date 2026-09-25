@@ -176,6 +176,31 @@ impl AgentInstanceManagementRepository for PostgresRepositories {
                 .transpose()
         })
     }
+
+    fn replace_matrix_device<'a>(
+        &'a self,
+        instance_id: AgentInstanceId,
+        current: &'a AgentMatrixDeviceId,
+        next: &'a AgentMatrixDeviceId,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "agent_instance.matrix_device.replace";
+            let replaced = sqlx::query(
+                r"UPDATE agent_room.agent_instance
+                     SET matrix_device_id = $3
+                   WHERE id = $1
+                     AND matrix_device_id = $2
+                     AND revoked_at IS NULL",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(current.as_str())
+            .bind(next.as_str())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(replaced.rows_affected() == 1)
+        })
+    }
 }
 
 impl AgentInstanceRevocationTransaction for PostgresRepositories {

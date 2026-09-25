@@ -803,6 +803,11 @@ impl AgentInstance {
         &self.matrix_device_id
     }
 
+    /// 换一台 Matrix 设备：旧设备连同它的加密存储丢了，实例本身不变。
+    pub fn replace_matrix_device(&mut self, matrix_device_id: AgentMatrixDeviceId) {
+        self.matrix_device_id = matrix_device_id;
+    }
+
     pub const fn status(&self) -> AgentInstanceStatus {
         self.status
     }

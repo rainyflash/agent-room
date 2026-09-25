@@ -1022,6 +1022,13 @@ mod tests {
             Box::pin(async { Ok(rotated_instance()) })
         }
 
+        fn replace_instance_matrix_device(
+            &self,
+            _request: RotateAgentInstanceMatrixSession,
+        ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
+            unreachable!("Agent 路由不换实例的 Matrix 设备")
+        }
+
         fn change_membership(
             &self,
             request: ChangeAgentMembership,

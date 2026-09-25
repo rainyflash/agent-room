@@ -16,9 +16,9 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentMatrixDevice, NetworkAgentPendingExit, NetworkAgentResult,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -295,6 +295,12 @@ impl NetworkAgentUseCases for FakeAgents {
         _id: NetworkAgentId,
         _credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("网关测试里的加密客户端是替身")
+    }
+    fn replace_matrix_device(
+        &self,
+        _id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
         unreachable!("网关测试里的加密客户端是替身")
     }
 }

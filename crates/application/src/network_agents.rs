@@ -25,7 +25,10 @@ use serde_json::Map;
 
 use crate::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
-    agents::{AgentManagementUseCases, CreateHostAgentForDevice, RegisterAgentInstance},
+    agents::{
+        AgentManagementUseCases, CreateHostAgentForDevice, RegisterAgentInstance,
+        RotateAgentInstanceMatrixSession,
+    },
     devices::AuthenticatedDevice,
     persistence::RepositoryError,
     ports::{
@@ -166,7 +169,8 @@ pub struct NetworkAgentSession {
     /// 实例签名种子（编码后）：替 Agent 签发言与状态。
     pub instance_signing_seed: SecretValue,
     pub rooms: Vec<NetworkAgentRoomRecord>,
-    /// 实例的 Matrix 设备（`AR_<实例>`）；加密房间里的密钥发给这台设备。
+    /// 实例的 Matrix 设备（`AR_<实例>`，存储丢了重建后换成新的设备 ID）；加密房间里的密钥发给
+    /// 这台设备。
     pub matrix_device_id: String,
     /// 第一次进加密房间的时刻；有值时它所有房间都改由 matrix-sdk 客户端收发。
     pub encrypted_since: Option<UtcMillis>,
@@ -339,6 +343,22 @@ pub trait NetworkAgentUseCases: Send + Sync {
         id: NetworkAgentId,
         credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 加密存储丢了或与 Matrix 设备对不上时：实例换一台新的 Matrix 设备（新的设备 ID），在
+    /// Matrix 上删掉旧设备（连同它上传过的密钥），封存新的访问令牌，交回新设备与令牌。
+    /// 不沿用旧设备 ID：Synapse 删设备时留着别人给它的交叉签名，同一 ID 的新设备签不上。
+    /// 只对生效中的网络 Agent。
+    fn replace_matrix_device(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>>;
+}
+
+/// 换好的 Matrix 设备与它的访问令牌。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentMatrixDevice {
+    pub device_id: String,
+    pub access_token: SecretValue,
 }
 
 pub struct NetworkAgentDependencies {
@@ -825,7 +845,9 @@ impl NetworkAgentService {
             matrix_access_token,
             instance_signing_seed,
             rooms,
-            matrix_device_id: crate::agents::instance_matrix_device_id(agent_instance_id),
+            matrix_device_id: record
+                .matrix_device_id
+                .unwrap_or_else(|| crate::agents::instance_matrix_device_id(agent_instance_id)),
             encrypted_since: record.encrypted_since,
         }
     }
@@ -852,6 +874,40 @@ impl NetworkAgentService {
             store_passphrase,
             content_root_key,
             recovery_credential,
+        })
+    }
+
+    async fn replace_matrix_device_internal(
+        &self,
+        id: NetworkAgentId,
+    ) -> NetworkAgentResult<NetworkAgentMatrixDevice> {
+        let record = self
+            .store
+            .find(id)
+            .await
+            .map_err(repository)?
+            .filter(|record| record.status == NetworkAgentStatus::Active)
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))?;
+        let instance_id = record.agent_instance_id.ok_or_else(internal)?;
+        let rotated = self
+            .agents
+            .replace_instance_matrix_device(RotateAgentInstanceMatrixSession {
+                actor: self.actor_of(&record, self.clock.now())?,
+                instance_id,
+            })
+            .await
+            .map_err(|_| dependency())?;
+        let access_token = rotated.matrix_session.access_token().clone();
+        self.put_text_secret(id, NetworkAgentSecretKind::MatrixAccessToken, &access_token)
+            .await?;
+        Ok(NetworkAgentMatrixDevice {
+            device_id: rotated
+                .matrix_session
+                .metadata()
+                .device_id()
+                .as_str()
+                .to_owned(),
+            access_token,
         })
     }
 
@@ -1283,6 +1339,13 @@ impl NetworkAgentUseCases for NetworkAgentService {
         credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.put_text_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey, credential))
+    }
+
+    fn replace_matrix_device(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
+        Box::pin(self.replace_matrix_device_internal(id))
     }
 }
 

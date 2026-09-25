@@ -24,9 +24,10 @@ use crate::{
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
         AgentRetirementOutcome, AgentRetirementTransaction, Clock, IdentifierFactory,
         MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
-        MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
-        MatrixDeviceId, MatrixFailureKind, MatrixSession, MatrixUserId, OutboxMessage, PortFuture,
-        RegisteredAgent, SecretFactory, StoredAgentInstanceRegistration,
+        MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+        MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, MatrixSession,
+        MatrixUserId, OutboxMessage, PortFuture, RegisteredAgent, SecretFactory,
+        StoredAgentInstanceRegistration,
     },
 };
 
@@ -193,6 +194,13 @@ pub trait AgentManagementUseCases: Send + Sync {
     ) -> PortFuture<'_, AgentManagementResult<RegisteredAgentInstance>>;
 
     fn rotate_instance_matrix_session(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>>;
+
+    /// 实例换一台新的 Matrix 设备（新的设备 ID），撤销旧设备。加密存储丢了时用：同一设备 ID
+    /// 重新签发，Synapse 会留着旧设备的交叉签名，新设备怎么也签不上。
+    fn replace_instance_matrix_device(
         &self,
         request: RotateAgentInstanceMatrixSession,
     ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>>;
@@ -540,17 +548,7 @@ impl AgentManagementService {
         request: RotateAgentInstanceMatrixSession,
     ) -> AgentManagementResult<RotatedAgentInstanceMatrixSession> {
         let operation = "agent_instance.matrix_session.rotate";
-        ensure_active_device(&request.actor, self.clock.now(), operation)?;
-        let instance = self
-            .managed_instances
-            .find_active_for_device(
-                request.actor.account.principal.id(),
-                request.actor.device_id,
-                request.instance_id,
-            )
-            .await
-            .map_err(|error| map_repository_failure(operation, &error))?
-            .ok_or_else(|| failure(operation, AgentManagementFailureKind::NotFound))?;
+        let instance = self.active_instance(&request, operation).await?;
         let matrix_user_id = MatrixUserId::new(instance.agent_matrix_user_id.clone())
             .map_err(|_| internal_failure(operation))?;
         let matrix_device_id =
@@ -576,6 +574,74 @@ impl AgentManagementService {
             instance,
             matrix_session,
         })
+    }
+
+    async fn replace_instance_matrix_device_internal(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> AgentManagementResult<RotatedAgentInstanceMatrixSession> {
+        let operation = "agent_instance.matrix_device.replace";
+        let mut instance = self.active_instance(&request, operation).await?;
+        let matrix_user_id = MatrixUserId::new(instance.agent_matrix_user_id.clone())
+            .map_err(|_| internal_failure(operation))?;
+        let current = instance.instance.matrix_device_id().clone();
+        let next = AgentMatrixDeviceId::new(replacement_matrix_device_id(request.instance_id))
+            .map_err(|error| map_domain_failure(operation, &error))?;
+        // 先记下新设备：签发之后才失败时，下一次从新设备接着换，不会在 Synapse 上留下无主的设备。
+        if !self
+            .managed_instances
+            .replace_matrix_device(request.instance_id, &current, &next)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?
+        {
+            return Err(failure(operation, AgentManagementFailureKind::Conflict));
+        }
+        let previous = MatrixAgentDeviceSessionTarget::new(
+            matrix_user_id.clone(),
+            MatrixDeviceId::new(current.as_str().to_owned())
+                .map_err(|_| internal_failure(operation))?,
+        );
+        let next_device = MatrixDeviceId::new(next.as_str().to_owned())
+            .map_err(|_| internal_failure(operation))?;
+        let session_request = MatrixAgentDeviceSessionRequest::new(
+            matrix_user_id.clone(),
+            next_device.clone(),
+            format!("Agent Room · {}", instance.adapter_type),
+        )
+        .map_err(|_| internal_failure(operation))?;
+        let matrix_session = self
+            .matrix_sessions
+            .replace_device_session(&previous, &session_request)
+            .await
+            .map_err(|error| map_matrix_failure(operation, error.kind()))?;
+        if matrix_session.metadata().user_id() != &matrix_user_id
+            || matrix_session.metadata().device_id() != &next_device
+        {
+            return Err(internal_failure(operation));
+        }
+        instance.instance.replace_matrix_device(next);
+        Ok(RotatedAgentInstanceMatrixSession {
+            instance,
+            matrix_session,
+        })
+    }
+
+    /// 这台设备名下、还在用的实例。
+    async fn active_instance(
+        &self,
+        request: &RotateAgentInstanceMatrixSession,
+        operation: &'static str,
+    ) -> AgentManagementResult<AgentInstanceManagementRecord> {
+        ensure_active_device(&request.actor, self.clock.now(), operation)?;
+        self.managed_instances
+            .find_active_for_device(
+                request.actor.account.principal.id(),
+                request.actor.device_id,
+                request.instance_id,
+            )
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?
+            .ok_or_else(|| failure(operation, AgentManagementFailureKind::NotFound))
     }
 
     async fn change_membership_internal(
@@ -651,6 +717,13 @@ impl AgentManagementUseCases for AgentManagementService {
         Box::pin(self.rotate_instance_matrix_session_internal(request))
     }
 
+    fn replace_instance_matrix_device(
+        &self,
+        request: RotateAgentInstanceMatrixSession,
+    ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
+        Box::pin(self.replace_instance_matrix_device_internal(request))
+    }
+
     fn change_membership(
         &self,
         request: ChangeAgentMembership,
@@ -663,9 +736,18 @@ impl AgentManagementUseCases for AgentManagementService {
     }
 }
 
-/// 实例的 Matrix 设备：注册实例时按这个规则取名，网络 Agent 恢复加密客户端时也按它找回。
+/// 实例的 Matrix 设备：注册实例时按这个规则取名。换过设备的实例以库里记的为准。
 pub(crate) fn instance_matrix_device_id(instance_id: AgentInstanceId) -> String {
     format!("AR_{}", instance_id.as_uuid().simple())
+}
+
+/// 实例换设备时的新设备：原来的名字后面接一段按时间生成的后缀，每次都不同。
+fn replacement_matrix_device_id(instance_id: AgentInstanceId) -> String {
+    format!(
+        "{}_{}",
+        instance_matrix_device_id(instance_id),
+        uuid::Uuid::now_v7().simple()
+    )
 }
 
 fn validate_agent_profile(

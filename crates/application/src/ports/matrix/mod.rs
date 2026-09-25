@@ -58,6 +58,15 @@ pub trait MatrixAgentDeviceSessionRotator: Send + Sync {
         &'a self,
         request: &'a MatrixAgentDeviceSessionRequest,
     ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
+
+    /// 换一台设备：幂等撤销 `previous`（连同它上传过的密钥），再为同一用户的新设备 `next`
+    /// 签发会话。Synapse 删设备时不删别人给这台设备的交叉签名，同一设备 ID 重新签发后新签名
+    /// 会被当成已有而跳过，所以丢了加密存储时要换设备 ID。
+    fn replace_device_session<'a>(
+        &'a self,
+        previous: &'a MatrixAgentDeviceSessionTarget,
+        next: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
 }
 
 /// 由受限后台工作流擦除一个本地 Matrix 人类账户。

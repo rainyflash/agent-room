@@ -156,6 +156,15 @@ impl AgentInstanceManagementRepository for FakeInstances {
             .cloned();
         Box::pin(async move { Ok(record) })
     }
+
+    fn replace_matrix_device<'a>(
+        &'a self,
+        _instance_id: AgentInstanceId,
+        _current: &'a AgentMatrixDeviceId,
+        _next: &'a AgentMatrixDeviceId,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("实例管理测试不换 Matrix 设备") })
+    }
 }
 
 struct FakeRevocations {

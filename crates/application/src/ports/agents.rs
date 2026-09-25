@@ -1,7 +1,7 @@
 use agent_room_domain::{
     agents::{
-        AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey, AgentMemberships,
-        AgentRole, AgentVisibility,
+        AdapterBinding, Agent, AgentInstance, AgentInstancePublicSigningKey, AgentMatrixDeviceId,
+        AgentMemberships, AgentRole, AgentVisibility,
     },
     devices::{DevicePlatform, DeviceTrustState},
     ids::{
@@ -233,6 +233,15 @@ pub trait AgentInstanceManagementRepository: Send + Sync {
         device_id: DeviceId,
         instance_id: AgentInstanceId,
     ) -> PortFuture<'_, RepositoryResult<Option<AgentInstanceManagementRecord>>>;
+
+    /// 把没撤销的实例从 `current` 这台 Matrix 设备换到 `next`；实例已不在这台设备上（被别的
+    /// 请求换过或撤销了）时返回 `false`。
+    fn replace_matrix_device<'a>(
+        &'a self,
+        instance_id: AgentInstanceId,
+        current: &'a AgentMatrixDeviceId,
+        next: &'a AgentMatrixDeviceId,
+    ) -> PortFuture<'a, RepositoryResult<bool>>;
 }
 
 pub trait AgentInstanceRevocationTransaction: Send + Sync {

@@ -136,6 +136,8 @@ pub struct NetworkAgentRecord {
     pub device_id: DeviceId,
     pub agent_id: Option<AgentId>,
     pub agent_instance_id: Option<AgentInstanceId>,
+    /// 实例现在的 Matrix 设备；加密存储丢了重建时会换成新的设备 ID。
+    pub matrix_device_id: Option<String>,
     pub display_name: String,
     pub status: NetworkAgentStatus,
     pub created_at: UtcMillis,
@@ -177,6 +179,11 @@ pub trait NetworkAgentStore: Send + Sync {
         &'a self,
         digest: &'a SecretDigest,
     ) -> PortFuture<'a, RepositoryResult<Option<NetworkAgentRecord>>>;
+
+    fn find(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>>;
 
     fn find_secret(
         &self,
