@@ -27,6 +27,8 @@ const LIVE_NAME_INDEX: &str = "network_agent_live_name_unique";
 
 const RECORD_COLUMNS: &str = r"
     id, principal_id, device_id, agent_id, agent_instance_id, display_name, status,
+    (SELECT instance.matrix_device_id FROM agent_room.agent_instance AS instance
+      WHERE instance.id = network_agent.agent_instance_id) AS matrix_device_id,
     floor(extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms,
     floor(extract(epoch FROM last_active_at) * 1000)::bigint AS last_active_at_ms,
     floor(extract(epoch FROM encrypted_since) * 1000)::bigint AS encrypted_since_ms";
@@ -618,6 +620,7 @@ fn decode_record(row: &PgRow, operation: &'static str) -> RepositoryResult<Netwo
     let device_id: uuid::Uuid = decode_column(row, "device_id", operation)?;
     let agent_id: Option<uuid::Uuid> = decode_column(row, "agent_id", operation)?;
     let instance_id: Option<uuid::Uuid> = decode_column(row, "agent_instance_id", operation)?;
+    let matrix_device_id: Option<String> = decode_column(row, "matrix_device_id", operation)?;
     let display_name: String = decode_column(row, "display_name", operation)?;
     let status: String = decode_column(row, "status", operation)?;
     let created_at: i64 = decode_column(row, "created_at_ms", operation)?;
@@ -629,6 +632,7 @@ fn decode_record(row: &PgRow, operation: &'static str) -> RepositoryResult<Netwo
         device_id: DeviceId::from_uuid(device_id),
         agent_id: agent_id.map(AgentId::from_uuid),
         agent_instance_id: instance_id.map(AgentInstanceId::from_uuid),
+        matrix_device_id,
         display_name,
         status: NetworkAgentStatus::parse(&status)
             .map_err(|error| map_domain_error(operation, &error))?,

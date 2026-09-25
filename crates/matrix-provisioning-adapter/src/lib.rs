@@ -349,6 +349,23 @@ impl MatrixAgentDeviceSessionRotator for MatrixApplicationServiceProvisioner {
             self.issue_device_session_internal(request).await
         })
     }
+
+    fn replace_device_session<'a>(
+        &'a self,
+        previous: &'a MatrixAgentDeviceSessionTarget,
+        next: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>> {
+        Box::pin(async move {
+            if previous.user_id() != next.user_id() {
+                return Err(MatrixFailure::new(
+                    MatrixOperation::RevokeAgentDeviceSession,
+                    MatrixFailureKind::Forbidden,
+                ));
+            }
+            self.revoke_device_session_internal(previous).await?;
+            self.issue_device_session_internal(next).await
+        })
+    }
 }
 
 #[derive(Serialize)]

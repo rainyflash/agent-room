@@ -7,9 +7,9 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentLobby, NetworkAgentMatrixDevice, NetworkAgentPendingExit, NetworkAgentResult,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
 };
@@ -206,10 +206,10 @@ impl NetworkAgentUseCases for FakeAgents {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         unreachable!("路由不打开加密客户端")
     }
-    fn rotate_matrix_session(
+    fn replace_matrix_device(
         &self,
         _id: NetworkAgentId,
-    ) -> PortFuture<'_, NetworkAgentResult<SecretValue>> {
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
         unreachable!("路由不打开加密客户端")
     }
 }

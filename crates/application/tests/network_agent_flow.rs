@@ -130,6 +130,7 @@ impl NetworkAgentStore for MemoryStore {
                     device_id: provisioning.device.id(),
                     agent_id: None,
                     agent_instance_id: None,
+                    matrix_device_id: None,
                     display_name: provisioning.display_name.clone(),
                     status: NetworkAgentStatus::Provisioning,
                     created_at: provisioning.created_at,
@@ -525,8 +526,15 @@ impl AgentManagementUseCases for FakeAgents {
         })
     }
 
-    /// 加密存储重建时换设备会话：同一台设备，新的访问令牌。
     fn rotate_instance_matrix_session(
+        &self,
+        _request: RotateAgentInstanceMatrixSession,
+    ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
+        unreachable!("网络 Agent 重建加密存储时换设备，不沿用旧设备")
+    }
+
+    /// 加密存储重建时换一台设备：新的设备 ID，新的访问令牌。
+    fn replace_instance_matrix_device(
         &self,
         request: RotateAgentInstanceMatrixSession,
     ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
@@ -578,7 +586,7 @@ impl AgentManagementUseCases for FakeAgents {
                 matrix_session: MatrixSession::new(
                     MatrixSessionMetadata::new(
                         MatrixUserId::new(agent.matrix_user_id).unwrap(),
-                        MatrixDeviceId::new("AR_NETWORK").unwrap(),
+                        MatrixDeviceId::new(format!("AR_NETWORK_{rotations}")).unwrap(),
                     ),
                     SecretValue::new(format!("{MATRIX_TOKEN}-rotated-{rotations}")).unwrap(),
                     None,
@@ -2003,14 +2011,16 @@ async fn 记下第一次进加密房间的时刻_之后不改_会话随之带上
 }
 
 #[tokio::test]
-async fn 加密存储重建时同一台设备换会话_封存新的访问令牌_停用的不换() {
+async fn 加密存储重建时换一台设备_封存新的访问令牌_停用的不换() {
     let harness = Harness::enabled();
     let created = harness.create("Scout", None).await.unwrap();
     let id = created.network_agent_id;
     let record = harness.store.only();
 
-    let token = harness.service.rotate_matrix_session(id).await.unwrap();
+    let device = harness.service.replace_matrix_device(id).await.unwrap();
+    let token = device.access_token;
 
+    assert_eq!(device.device_id, "AR_NETWORK_1", "交回新设备");
     assert_eq!(token.expose(), format!("{MATRIX_TOKEN}-rotated-1"));
     let rotations = harness.agents.rotations.lock().unwrap().clone();
     assert_eq!(rotations.len(), 1);
@@ -2037,7 +2047,7 @@ async fn 加密存储重建时同一台设备换会话_封存新的访问令牌_
     assert_eq!(
         harness
             .service
-            .rotate_matrix_session(id)
+            .replace_matrix_device(id)
             .await
             .unwrap_err()
             .kind(),

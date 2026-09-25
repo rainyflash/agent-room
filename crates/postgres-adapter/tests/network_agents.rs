@@ -6,17 +6,19 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId, NetworkAgentAckOutcome,
-        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentInboxAppend,
-        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
-        NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        AgentInstanceManagementRepository, MatrixEventId, MatrixRoomId, MatrixSyncToken,
+        MatrixTransactionId, NetworkAgentAckOutcome, NetworkAgentActivation,
+        NetworkAgentBeginOutcome, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentInboxChange, NetworkAgentInboxMessage, NetworkAgentInboxStore,
+        NetworkAgentLookup, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
         NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         PrincipalRegistration, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
+    agents::AgentMatrixDeviceId,
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
     identity::Principal,
     ids::{
@@ -192,7 +194,11 @@ async fn 生效绑定_agent_与实例_重试同一组也算成功_换一组不�
     assert_eq!(record.status, NetworkAgentStatus::Active);
     assert_eq!(record.agent_id, Some(agent));
     assert_eq!(record.agent_instance_id, Some(instance));
+    let original = format!("AR_{}", instance.as_uuid().simple());
+    assert_eq!(record.matrix_device_id.as_deref(), Some(original.as_str()));
     assert_eq!(record.last_active_at, time(100));
+
+    replaces_matrix_device(&repositories, provisioning.id, instance, &original).await;
     assert_eq!(
         repositories
             .find_secret(provisioning.id, NetworkAgentSecretKind::MatrixAccessToken)
@@ -846,6 +852,37 @@ fn texts(previews: &[Value]) -> Vec<String> {
                 .to_owned()
         })
         .collect()
+}
+
+/// 加密存储丢了重建时换一台设备：只从记着的那台换走，之后的记录带新设备。
+async fn replaces_matrix_device(
+    repositories: &PostgresRepositories,
+    id: NetworkAgentId,
+    instance: AgentInstanceId,
+    original: &str,
+) {
+    let current = AgentMatrixDeviceId::new(original.to_owned()).unwrap();
+    let next = AgentMatrixDeviceId::new(format!("{original}_2")).unwrap();
+    assert!(
+        repositories
+            .replace_matrix_device(instance, &current, &next)
+            .await
+            .expect("换设备")
+    );
+    assert!(
+        !repositories
+            .replace_matrix_device(instance, &current, &next)
+            .await
+            .expect("已经换走的不再换"),
+    );
+    assert_eq!(
+        repositories
+            .find(id)
+            .await
+            .expect("按 ID 找")
+            .and_then(|record| record.matrix_device_id),
+        Some(next.as_str().to_owned())
+    );
 }
 
 fn provisioning(name: &str, at: UtcMillis) -> NetworkAgentProvisioning {

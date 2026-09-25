@@ -15,9 +15,9 @@
 //! 发言也由这个客户端发出（3d）：加密房间里正文先用正文密钥加密，事件由客户端用房间密钥加密。
 //! 客户端只能在认识的房间里发言，所以准备好时、进了房间之后都完整同步一次。
 //!
-//! 存储丢了或与 Matrix 设备对不上（3e）：隔离旧存储，同一台设备重新签发会话（Synapse 上旧设备
+//! 存储丢了或与 Matrix 设备对不上（3e）：隔离旧存储，实例换一台新的 Matrix 设备（Synapse 上旧设备
 //! 连同它的密钥一起删掉），打开新存储，再凭封存的恢复凭据恢复加密身份、从服务器端备份取回
-//! 房间密钥。与本机 Bridge 的冲突恢复是同一条路。
+//! 房间密钥。不沿用旧设备 ID：Synapse 删设备时留着给它的交叉签名，同一 ID 的新设备签不上。
 
 use std::{
     collections::HashMap,
@@ -123,7 +123,7 @@ pub(crate) struct EncryptedClients {
     rebuilt: StdMutex<HashMap<NetworkAgentId, Instant>>,
 }
 
-/// 打开失败：设备与存储对不上（包括存储丢了）要换设备会话重建，其余的如实报。
+/// 打开失败：设备与存储对不上（包括存储丢了）要换设备重建，其余的如实报。
 enum OpenFailure {
     Conflict,
     Failed(NetworkGatewayFailure),
@@ -296,9 +296,9 @@ impl EncryptedClients {
         }
     }
 
-    /// 存储丢了或与 Matrix 设备对不上：隔离旧存储（原文件留在恢复目录，不删），在 Matrix 上删掉
-    /// 这台设备、同一台设备重新签发会话，再打开新存储并完整同步一次。加密身份随后凭封存的恢复
-    /// 凭据恢复，房间密钥从服务器端备份取回；其他成员仍认得这个身份。
+    /// 存储丢了或与 Matrix 设备对不上：隔离旧存储（原文件留在恢复目录，不删），实例换一台新的
+    /// Matrix 设备（旧设备在 Matrix 上删掉），再打开新存储并完整同步一次。加密身份随后凭封存的
+    /// 恢复凭据恢复，房间密钥从服务器端备份取回；其他成员仍认得这个身份。
     async fn rebuild(
         &self,
         session: &NetworkAgentSession,
@@ -320,25 +320,27 @@ impl EncryptedClients {
         }
         tracing::warn!(
             network_agent.id = %id,
-            "网络 Agent 的加密存储丢了或与 Matrix 设备对不上，换设备会话重建"
+            "网络 Agent 的加密存储丢了或与 Matrix 设备对不上，换一台设备重建"
         );
         let (factory, store_dir, _) = self.factory(id).await?;
         factory
             .quarantine_device_session_store()
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
         std::fs::create_dir_all(&store_dir).map_err(|_| NetworkGatewayFailure::Unavailable)?;
-        let rotated = NetworkAgentSession {
-            matrix_access_token: self
-                .agents
-                .rotate_matrix_session(id)
-                .await
-                .map_err(NetworkGatewayFailure::Agent)?,
+        let device = self
+            .agents
+            .replace_matrix_device(id)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        let replaced = NetworkAgentSession {
+            matrix_access_token: device.access_token,
+            matrix_device_id: device.device_id,
             ..session.clone()
         };
-        let client = match self.open(&rotated).await {
+        let client = match self.open(&replaced).await {
             Ok(client) => Arc::new(client),
             Err(OpenFailure::Conflict) => {
-                tracing::error!(network_agent.id = %id, "换了设备会话还是对不上");
+                tracing::error!(network_agent.id = %id, "换了设备还是对不上");
                 return Err(NetworkGatewayFailure::Unavailable);
             }
             Err(OpenFailure::Failed(failure)) => return Err(failure),
@@ -390,7 +392,7 @@ impl EncryptedClients {
         let id = session.network_agent_id;
         let (factory, store_dir, secrets) = self.factory(id).await.map_err(OpenFailure::Failed)?;
         // 恢复凭据在（身份与备份建好过），存储目录却没了：存储丢了。同一台设备配新存储会与
-        // Matrix 上留着的密钥冲突，按对不上处理，换设备会话重建。
+        // Matrix 上留着的密钥冲突，按对不上处理，换一台设备重建。
         if secrets.recovery_credential.is_some() && !store_dir.exists() {
             return Err(OpenFailure::Conflict);
         }
@@ -518,7 +520,7 @@ impl OpenClient {
                 self.conflicted.store(true, Ordering::Release);
                 tracing::warn!(
                     network_agent.id = %self.id,
-                    "网络 Agent 的 Matrix 设备与加密存储对不上，下次取用时换设备会话重建"
+                    "网络 Agent 的 Matrix 设备与加密存储对不上，下次取用时换一台设备重建"
                 );
             } else {
                 tracing::warn!(
@@ -735,16 +737,17 @@ mod real_dependency_tests {
         network_agents::{
             CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
             NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-            NetworkAgentLobby, NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom,
-            NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-            NetworkAgentView,
+            NetworkAgentLobby, NetworkAgentMatrixDevice, NetworkAgentPendingExit,
+            NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession,
+            NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
         },
         ports::{
             MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
-            MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
-            MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventType, MatrixRoomEncryption,
-            MatrixRoomPreset, MatrixRoomVisibility, MatrixTransactionId, MatrixUserId,
-            NetworkAgentSyncRequest, PortFuture, SecretFactory, SecretValue,
+            MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+            MatrixAgentUserRegistration, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
+            MatrixEventType, MatrixRoomEncryption, MatrixRoomPreset, MatrixRoomVisibility,
+            MatrixTransactionId, MatrixUserId, NetworkAgentSyncRequest, PortFuture, SecretFactory,
+            SecretValue,
         },
     };
     use agent_room_bridge_core::messages::ProtectMessageBodyRequest;
@@ -761,14 +764,13 @@ mod real_dependency_tests {
     use crate::config::ControlPlaneConfig;
 
     /// 只管加密秘密的网络 Agent 用例：存储口令与正文根密钥第一次要用时生成，恢复凭据照存；
-    /// 换设备会话直接找 Application Service。
+    /// 换设备直接找 Application Service，换过的设备按先后记下。
     struct Vault {
         passphrase: Mutex<Option<SecretValue>>,
         root_key: Mutex<Option<SecretValue>>,
         recovery: Mutex<Option<SecretValue>>,
         rotator: Arc<dyn MatrixAgentDeviceSessionRotator>,
-        device: MatrixAgentDeviceSessionRequest,
-        rotations: Mutex<u32>,
+        devices: Mutex<Vec<MatrixAgentDeviceSessionRequest>>,
     }
 
     impl Vault {
@@ -781,8 +783,7 @@ mod real_dependency_tests {
                 root_key: Mutex::new(None),
                 recovery: Mutex::new(None),
                 rotator,
-                device,
-                rotations: Mutex::new(0),
+                devices: Mutex::new(vec![device]),
             }
         }
 
@@ -902,26 +903,41 @@ mod real_dependency_tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn rotate_matrix_session(
+        fn replace_matrix_device(
             &self,
             _id: NetworkAgentId,
-        ) -> PortFuture<'_, NetworkAgentResult<SecretValue>> {
+        ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
             Box::pin(async move {
+                let current = self.devices.lock().unwrap().last().cloned().unwrap();
+                let previous = MatrixAgentDeviceSessionTarget::new(
+                    current.user_id().clone(),
+                    current.device_id().clone(),
+                );
+                let next = MatrixAgentDeviceSessionRequest::new(
+                    current.user_id().clone(),
+                    MatrixDeviceId::new(format!("{}_{}", current.device_id().as_str(), 1)).unwrap(),
+                    "网络 Agent 加密客户端验收".to_owned(),
+                )
+                .unwrap();
                 let session = self
                     .rotator
-                    .rotate_device_session(&self.device)
+                    .replace_device_session(&previous, &next)
                     .await
                     .map_err(|_| {
                         NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable)
                     })?;
-                *self.rotations.lock().unwrap() += 1;
-                Ok(session.access_token().clone())
+                let device_id = next.device_id().as_str().to_owned();
+                self.devices.lock().unwrap().push(next);
+                Ok(NetworkAgentMatrixDevice {
+                    device_id,
+                    access_token: session.access_token().clone(),
+                })
             })
         }
     }
 
     /// 与网络 Agent 一样：一个新的 Agent Matrix 用户，一台 AR_<实例> 设备。还交回签发设备会话的
-    /// Application Service 与请求，换设备会话时用。
+    /// Application Service 与请求，换设备时用。
     async fn network_session(
         config: &ControlPlaneConfig,
     ) -> (
@@ -1027,7 +1043,7 @@ mod real_dependency_tests {
 
     #[tokio::test]
     #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
-    async fn 真实_synapse_上加密客户端建好身份与密钥备份_重开沿用_存储丢了换设备会话恢复_都能在加密房间发言()
+    async fn 真实_synapse_上加密客户端建好身份与密钥备份_重开沿用_存储丢了换设备恢复_都能在加密房间发言()
      {
         let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
         let (session, rotator, device) = network_session(&config).await;
@@ -1074,7 +1090,7 @@ mod real_dependency_tests {
             .join("matrix-store");
         std::fs::rename(&lost, store.path().join("lost-matrix-store")).expect("模拟存储丢失");
         clients.prepare(&session).await.expect("重建后就绪");
-        assert_eq!(*vault.rotations.lock().unwrap(), 1, "换了一次设备会话");
+        assert_eq!(vault.devices.lock().unwrap().len(), 2, "换了一次设备");
         assert_eq!(vault.recovery(), Some(credential));
         send_in_new_encrypted_room(&clients, &session).await;
         clients.forget(session.network_agent_id).await;

@@ -17,10 +17,11 @@ use agent_room_application::{
         AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
         AgentRetirementOutcome, AgentRetirementTransaction, Clock, IdentifierFactory,
         MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
-        MatrixAgentIdentityProvisioner, MatrixAgentUserRegistration, MatrixFailure,
-        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixSession, MatrixSessionMetadata,
-        MatrixUserId, OutboxMessage, PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest,
-        SecretFactory, SecretGenerationFailure, SecretValue, StoredAgentInstanceRegistration,
+        MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner,
+        MatrixAgentUserRegistration, MatrixFailure, MatrixFailureKind, MatrixOperation,
+        MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, OutboxMessage,
+        PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretValue, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -327,12 +328,34 @@ impl AgentInstanceManagementRepository for FakeInstances {
         let record = self.active_instance.lock().expect("活跃实例锁可用").clone();
         Box::pin(async move { Ok(record) })
     }
+
+    fn replace_matrix_device<'a>(
+        &'a self,
+        instance_id: AgentInstanceId,
+        current: &'a AgentMatrixDeviceId,
+        next: &'a AgentMatrixDeviceId,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        let mut active = self.active_instance.lock().expect("活跃实例锁可用");
+        let replaced = match active.as_mut() {
+            Some(record)
+                if record.instance.id() == instance_id
+                    && record.instance.matrix_device_id() == current =>
+            {
+                record.instance.replace_matrix_device(next.clone());
+                true
+            }
+            _ => false,
+        };
+        Box::pin(async move { Ok(replaced) })
+    }
 }
 
 struct FakeMatrixIdentities {
     server_name: String,
     issued_sessions: Mutex<usize>,
     corrupt_session_identity: bool,
+    /// 换设备时撤销的旧设备与签发的新设备。
+    replaced: Mutex<Vec<(String, String)>>,
 }
 
 impl MatrixAgentIdentityProvisioner for FakeMatrixIdentities {
@@ -396,6 +419,24 @@ impl MatrixAgentDeviceSessionRotator for FakeMatrixIdentities {
             ))
         })
     }
+
+    fn replace_device_session<'a>(
+        &'a self,
+        previous: &'a MatrixAgentDeviceSessionTarget,
+        next: &'a MatrixAgentDeviceSessionRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>> {
+        Box::pin(async move {
+            self.replaced.lock().expect("测试锁不得中毒").push((
+                previous.device_id().as_str().to_owned(),
+                next.device_id().as_str().to_owned(),
+            ));
+            Ok(MatrixSession::new(
+                MatrixSessionMetadata::new(next.user_id().clone(), next.device_id().clone()),
+                SecretValue::new("replaced-agent-device-session-token").expect("测试 Token 有效"),
+                None,
+            ))
+        })
+    }
 }
 
 #[tokio::test]
@@ -410,6 +451,7 @@ async fn 创建_agent_先预留稳定标识再对账_matrix_身份() {
         server_name: "matrix.test".to_owned(),
         issued_sessions: Mutex::new(0),
         corrupt_session_identity: false,
+        replaced: Mutex::new(Vec::new()),
     });
     let service = service(
         creation.clone(),
@@ -464,6 +506,7 @@ async fn 首次引导按_principal_幂等创建默认_agent() {
             server_name: "matrix.test".to_owned(),
             issued_sessions: Mutex::new(0),
             corrupt_session_identity: false,
+            replaced: Mutex::new(Vec::new()),
         }),
     );
 
@@ -499,6 +542,7 @@ async fn 设备身份首次引导复用同一_principal_确定性_agent() {
             server_name: "matrix.test".to_owned(),
             issued_sessions: Mutex::new(0),
             corrupt_session_identity: false,
+            replaced: Mutex::new(Vec::new()),
         }),
     );
 
@@ -531,6 +575,7 @@ async fn 已有_agent_时首次引导直接复用且不创建重复记录() {
             server_name: "matrix.test".to_owned(),
             issued_sessions: Mutex::new(0),
             corrupt_session_identity: false,
+            replaced: Mutex::new(Vec::new()),
         }),
     );
 
@@ -858,6 +903,7 @@ fn host_agent_service(creation: Arc<FakeCreationWorkflow>) -> AgentManagementSer
             server_name: "matrix.test".to_owned(),
             issued_sessions: Mutex::new(0),
             corrupt_session_identity: false,
+            replaced: Mutex::new(Vec::new()),
         }),
     )
 }
@@ -884,6 +930,7 @@ async fn viewer_在写事务和_matrix_签发前即被拒绝() {
         server_name: "matrix.test".to_owned(),
         issued_sessions: Mutex::new(0),
         corrupt_session_identity: false,
+        replaced: Mutex::new(Vec::new()),
     });
     let service = service(
         unused_creation(agent_id),
@@ -921,6 +968,7 @@ async fn 会话恢复按现有实例直接轮换而不重放注册请求() {
         server_name: "matrix.test".to_owned(),
         issued_sessions: Mutex::new(0),
         corrupt_session_identity: false,
+        replaced: Mutex::new(Vec::new()),
     });
     let service = service(
         unused_creation(agent_id),
@@ -944,6 +992,70 @@ async fn 会话恢复按现有实例直接轮换而不重放注册请求() {
 }
 
 #[tokio::test]
+async fn 换设备时先记下新设备_撤销旧设备再签发_新设备_id_与旧的不同() {
+    let agent_id = AgentId::from_uuid(Uuid::now_v7());
+    let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
+    let actor = authenticated_device(owner_id);
+    let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
+    let instances = Arc::new(FakeInstances::default());
+    let original = managed_instance(agent_id, actor.device_id, instance_id);
+    let original_device = original.instance.matrix_device_id().as_str().to_owned();
+    *instances.active_instance.lock().expect("活跃实例锁可用") = Some(original);
+    let matrix = Arc::new(FakeMatrixIdentities {
+        server_name: "matrix.test".to_owned(),
+        issued_sessions: Mutex::new(0),
+        corrupt_session_identity: false,
+        replaced: Mutex::new(Vec::new()),
+    });
+    let service = service(
+        unused_creation(agent_id),
+        Some(registered_agent(agent_id)),
+        None,
+        instances.clone(),
+        matrix.clone(),
+    );
+
+    let replaced = service
+        .replace_instance_matrix_device(RotateAgentInstanceMatrixSession {
+            actor: actor.clone(),
+            instance_id,
+        })
+        .await
+        .expect("同一设备持有的活跃实例可换 Matrix 设备");
+
+    let next_device = replaced
+        .instance
+        .instance
+        .matrix_device_id()
+        .as_str()
+        .to_owned();
+    assert_ne!(next_device, original_device, "新设备 ID 与旧的不同");
+    assert!(
+        next_device.starts_with(&format!("AR_{}_", instance_id.as_uuid().simple())),
+        "新设备仍按实例取名，后面接一段后缀"
+    );
+    assert_eq!(
+        replaced.matrix_session.metadata().device_id().as_str(),
+        next_device
+    );
+    assert_eq!(
+        *matrix.replaced.lock().expect("测试锁不得中毒"),
+        vec![(original_device, next_device.clone())],
+        "撤销旧设备、签发新设备"
+    );
+    assert_eq!(
+        instances
+            .active_instance
+            .lock()
+            .expect("活跃实例锁可用")
+            .as_ref()
+            .map(|record| record.instance.matrix_device_id().as_str().to_owned()),
+        Some(next_device),
+        "实例记下了新设备"
+    );
+}
+
+#[tokio::test]
 async fn matrix_返回错主体时拒绝把凭据交给_bridge() {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let owner_id = PrincipalId::from_uuid(Uuid::now_v7());
@@ -952,6 +1064,7 @@ async fn matrix_返回错主体时拒绝把凭据交给_bridge() {
         server_name: "matrix.test".to_owned(),
         issued_sessions: Mutex::new(0),
         corrupt_session_identity: true,
+        replaced: Mutex::new(Vec::new()),
     });
     let service = service(
         unused_creation(agent_id),
@@ -1014,6 +1127,7 @@ fn test_matrix() -> Arc<FakeMatrixIdentities> {
         server_name: "matrix.test".to_owned(),
         issued_sessions: Mutex::new(0),
         corrupt_session_identity: false,
+        replaced: Mutex::new(Vec::new()),
     })
 }
 
