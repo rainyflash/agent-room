@@ -1276,6 +1276,11 @@ def start_authorized_bridge(
         public_lobby_catalog_id=catalog_id,
         secure_storage_service=secure_storage_service,
     )
+    # 验收出错时要看本机 Bridge 把房间密钥分给了哪些设备。
+    bridge_environment["AGENT_ROOM_BRIDGE_LOG_FILTER"] = (
+        "agent_room_bridge=info,matrix_sdk_crypto=info,"
+        "matrix_sdk_crypto::session_manager=debug,matrix_sdk_crypto::olm=debug"
+    )
     if vault:
         if os.name != "posix":
             raise VerticalFailure("Vault 服务器验收需要 Linux runner。")
@@ -1887,6 +1892,7 @@ def verify_private_room_network_agent(
             rebuilt = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
         except VerticalFailure:
             summarize_control_plane_warnings(LOG_ROOT / "control-plane-rebuilt.log")
+            print_bridge_key_sharing(sender_bridge, redactor)
             raise
 
     status, _ = network_agent_request("DELETE", "/me", token=token)
@@ -1934,6 +1940,26 @@ def summarize_control_plane_warnings(log_path: Path, *, head: int = 60) -> None:
     for key in order[:head]:
         print(f"{counts[key]:>6}  {key}")
     print(f"==== 共 {len(order)} 种 ====")
+
+
+def print_bridge_key_sharing(
+    runtime: AuthorizedBridgeRuntime, redactor: LogRedactor, *, tail: int = 120
+) -> None:
+    """打印本机 Bridge 日志文件里与密钥分享、设备与告警有关的最后几行。"""
+    log_path = Path(runtime.environment.get("AGENT_ROOM_BRIDGE_DATA_DIR", "")) / "logs" / "bridge.log"
+    if not log_path.is_file():
+        print(f"找不到 Bridge 日志 {log_path}。")
+        return
+    pattern = re.compile(r"WARN|ERROR|room_key|share|withheld|device|Olm|olm", re.IGNORECASE)
+    lines = [
+        line
+        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if pattern.search(line)
+    ]
+    print(f"==== {runtime.display_name} 的 Bridge 日志（密钥分享与告警，最后 {tail} 行） ====")
+    for line in lines[-tail:]:
+        print(redactor.redact(line)[:400])
+    print("==== Bridge 日志结束 ====")
 
 
 def drain_network_agent_messages(token: str) -> None:

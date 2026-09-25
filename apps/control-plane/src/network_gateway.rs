@@ -442,10 +442,12 @@ impl NetworkGateway {
                     SYNC_TIMELINE_LIMIT
                 },
             };
+            let started = Instant::now();
             let batch = tokio::select! {
                 result = self.sync(&session, &request) => result?,
                 () = poll.superseded() => return Ok(messages(page)),
             };
+            let elapsed_ms = started.elapsed().as_millis();
             let changes = self.changes(&session, &batch).await?;
             let change_count = changes.len();
             let since = page.sync_token.clone();
@@ -468,6 +470,10 @@ impl NetworkGateway {
                 next = ?batch.next_batch(),
                 changes = change_count,
                 outcome = ?outcome,
+                timeout_ms = request.timeout_millis,
+                elapsed_ms,
+                rooms = batch.rooms().len(),
+                timeline_events = batch.rooms().iter().map(|room| room.timeline().len()).sum::<usize>(),
                 "网络 Agent 长轮询同步了一段"
             );
         }
