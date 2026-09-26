@@ -308,12 +308,12 @@ impl ReqwestControlPlaneAgentRuntimeGateway {
         decode_agent_runtime_response(response, intent.agent_id()).await
     }
 
-    async fn rotate_matrix_session_internal(
+    async fn replace_matrix_device_internal(
         &self,
         current: &RegisteredAgentRuntime,
     ) -> ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime> {
         let request_target = format!(
-            "/agent-instances/{}/matrix-session",
+            "/agent-instances/{}/matrix-device",
             current.identity().agent_instance_id()
         );
         let authorized = self
@@ -419,11 +419,11 @@ impl ControlPlaneAgentRuntimeGateway for ReqwestControlPlaneAgentRuntimeGateway 
         Box::pin(self.register_internal(intent))
     }
 
-    fn rotate_matrix_session<'a>(
+    fn replace_matrix_device<'a>(
         &'a self,
         current: &'a RegisteredAgentRuntime,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
-        Box::pin(self.rotate_matrix_session_internal(current))
+        Box::pin(self.replace_matrix_device_internal(current))
     }
 }
 
@@ -1440,9 +1440,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn matrix_会话恢复调用独立轮换端点且签名空正文() {
+    async fn matrix_会话恢复调用换设备端点且签名空正文() {
         let app = Router::new().route(
-            "/agent-instances/{instance_id}/matrix-session",
+            "/agent-instances/{instance_id}/matrix-device",
             post(
                 |Path(instance_id): Path<String>, headers: HeaderMap, request: Request| async move {
                     let valid = instance_id == INSTANCE_ID
@@ -1464,9 +1464,9 @@ mod tests {
         let gateway = agent_runtime_gateway(spawn_server(app).await, authorizer.clone());
 
         let runtime = gateway
-            .rotate_matrix_session(&agent_runtime())
+            .replace_matrix_device(&agent_runtime())
             .await
-            .expect("规范 Matrix 会话轮换响应可解析");
+            .expect("规范 Matrix 换设备响应可解析");
 
         assert_eq!(runtime.identity().agent_instance_id(), instance_id());
         assert_eq!(
@@ -1477,7 +1477,7 @@ mod tests {
                 .as_slice(),
             [(
                 "POST".to_owned(),
-                format!("/agent-instances/{INSTANCE_ID}/matrix-session"),
+                format!("/agent-instances/{INSTANCE_ID}/matrix-device"),
                 String::new(),
             )]
         );

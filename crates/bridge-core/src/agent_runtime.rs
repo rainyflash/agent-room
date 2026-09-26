@@ -187,7 +187,8 @@ pub trait ControlPlaneAgentRuntimeGateway: Send + Sync {
         intent: &'a AgentRuntimeRegistrationIntent,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>>;
 
-    fn rotate_matrix_session<'a>(
+    /// 给这个实例换一台新 Matrix 设备，返回新设备的会话。
+    fn replace_matrix_device<'a>(
         &'a self,
         current: &'a RegisteredAgentRuntime,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>>;
@@ -318,10 +319,11 @@ impl AgentRuntimeSessionService {
         Ok(runtime)
     }
 
-    /// 重放已持久化的登记意图，并原子替换同一实例的 Matrix 设备会话。
+    /// 重放已持久化的登记意图，给同一实例换一台新 Matrix 设备，并原子替换本地凭据。
     ///
-    /// 该操作只允许轮换访问凭据；Agent、实例、适配器绑定、Matrix 用户和设备标识
-    /// 任一发生变化都会拒绝写入，避免恢复流程静默劫持身份。
+    /// 换新设备而不是同一设备重新签发：Synapse 删设备时不删旧的交叉签名，同一设备 ID
+    /// 的新设备会签不上。只允许设备和访问凭据变化；Agent、实例、适配器绑定或 Matrix
+    /// 用户任一发生变化都会拒绝写入，避免恢复流程静默劫持身份。
     ///
     /// # Errors
     ///
@@ -349,7 +351,7 @@ impl AgentRuntimeSessionService {
 
         let recovered = self
             .control_plane
-            .rotate_matrix_session(&current)
+            .replace_matrix_device(&current)
             .await
             .map_err(|error| {
                 map_control_plane_failure("bridge.agent_runtime.recover_matrix_session", error)
@@ -427,7 +429,6 @@ fn validate_recovered_identity(
         || current.identity().agent_instance_id() != recovered.identity().agent_instance_id()
         || current.adapter_binding_id() != recovered.adapter_binding_id()
         || current_session.user_id() != recovered_session.user_id()
-        || current_session.device_id() != recovered_session.device_id()
     {
         return Err(failure(
             "bridge.agent_runtime.validate_recovery",

@@ -120,7 +120,7 @@ impl ControlPlaneAgentRuntimeGateway for 队列控制面 {
         Box::pin(async move { response })
     }
 
-    fn rotate_matrix_session<'a>(
+    fn replace_matrix_device<'a>(
         &'a self,
         current: &'a RegisteredAgentRuntime,
     ) -> PortFuture<'a, ControlPlaneAgentRuntimeResult<RegisteredAgentRuntime>> {
@@ -247,10 +247,15 @@ async fn 控制面返回其他_agent_身份时不写入就绪凭据() {
 }
 
 #[tokio::test]
-async fn 加密身份恢复只替换同一实例的_matrix_凭据() {
+async fn 加密身份恢复给同一实例换一台新设备并替换_matrix_凭据() {
     let credentials = Arc::new(内存运行凭据库::default());
     let initial = runtime_with("matrix-access-token", INSTANCE_ID);
-    let recovered = runtime_with("rotated-matrix-access-token", INSTANCE_ID);
+    let recovered = runtime_on_device(
+        agent_id(),
+        "rotated-matrix-access-token",
+        INSTANCE_ID,
+        "AR_TEST_NEXT",
+    );
     let gateway = Arc::new(队列控制面::new([
         Ok(initial.clone()),
         Ok(recovered.clone()),
@@ -262,10 +267,13 @@ async fn 加密身份恢复只替换同一实例的_matrix_凭据() {
     let result = service
         .recover_matrix_session(&config)
         .await
-        .expect("同一身份的会话可以轮换");
+        .expect("同一身份可以换到新设备");
 
     assert_eq!(result, recovered);
-    assert_ne!(result.matrix_session(), initial.matrix_session());
+    assert_ne!(
+        result.matrix_session().metadata().device_id(),
+        initial.matrix_session().metadata().device_id()
+    );
     assert_eq!(gateway.requests.lock().expect("请求记录锁可用").len(), 1);
     let rotations = gateway.rotations.lock().expect("轮换记录锁可用");
     assert_eq!(rotations.as_slice(), [initial]);
@@ -336,6 +344,15 @@ fn runtime_with_agent(
     access_token: &str,
     instance_id: &str,
 ) -> RegisteredAgentRuntime {
+    runtime_on_device(agent_id, access_token, instance_id, "AR_TEST")
+}
+
+fn runtime_on_device(
+    agent_id: AgentId,
+    access_token: &str,
+    instance_id: &str,
+    device_id: &str,
+) -> RegisteredAgentRuntime {
     let user_id =
         MatrixUserId::new(format!("@agent_{agent_id}:example.org")).expect("用户标识有效");
     let identity = BridgeAgentIdentity::new(
@@ -351,7 +368,7 @@ fn runtime_with_agent(
         MatrixSession::new(
             MatrixSessionMetadata::new(
                 user_id,
-                MatrixDeviceId::new("AR_TEST").expect("Matrix 设备标识有效"),
+                MatrixDeviceId::new(device_id).expect("Matrix 设备标识有效"),
             ),
             SecretValue::new(access_token).expect("访问令牌有效"),
             Some(SecretValue::new("matrix-refresh-token").expect("刷新令牌有效")),

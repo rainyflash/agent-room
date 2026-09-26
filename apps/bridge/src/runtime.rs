@@ -974,14 +974,14 @@ async fn recover_matrix_identity(runtime: &AgentSessionRuntime) -> Result<(), Ag
             MatrixFailureKind::InvalidResponse,
         )));
     }
-    tracing::warn!("检测到 Matrix 设备加密身份冲突，已隔离本地 Store，开始轮换设备会话");
+    tracing::warn!("检测到 Matrix 设备加密身份冲突，已隔离本地 Store，开始换一台新设备");
     runtime
         .service
         .recover_matrix_session(&runtime.config)
         .await
         .map_err(AgentOnlineFailure::AgentRuntime)?;
     runtime.matrix_identity_recovery.complete();
-    tracing::info!("Matrix 设备会话轮换完成，准备重新建立加密同步");
+    tracing::info!("已换到新的 Matrix 设备，准备重新建立加密同步");
     Ok(())
 }
 

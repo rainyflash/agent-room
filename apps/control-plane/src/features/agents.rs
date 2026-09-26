@@ -112,6 +112,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
             post(rotate_instance_matrix_session),
         )
         .route(
+            "/agent-instances/{instance_id}/matrix-device",
+            post(replace_instance_matrix_device),
+        )
+        .route(
             "/agent-instances/{instance_id}/verification",
             get(resolve_instance_verification),
         )
@@ -594,44 +598,91 @@ async fn rotate_instance_matrix_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let request_target = format!("/agent-instances/{instance_id}/matrix-session");
-    let Ok(instance_id) = parse_uuid_v7(&instance_id).map(AgentInstanceId::from_uuid) else {
-        return no_store(invalid_resource_id(correlation_id).into_response());
+    let request = match instance_matrix_request(
+        &state,
+        correlation_id,
+        &instance_id,
+        "matrix-session",
+        &headers,
+        &body,
+    )
+    .await
+    {
+        Ok(request) => request,
+        Err(response) => return response,
     };
-    let Ok(body_text) = std::str::from_utf8(&body) else {
-        return no_store(
+    match state.agents.rotate_instance_matrix_session(request).await {
+        Ok(session) => no_store(Json(AgentInstanceResponse::from(session)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+/// 给实例换一台新 Matrix 设备：Bridge 本地加密存储与设备对不上时走这里。
+/// 同一个设备 ID 重新签发后，Synapse 残留的旧交叉签名会让新设备签不上。
+async fn replace_instance_matrix_device(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(instance_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request = match instance_matrix_request(
+        &state,
+        correlation_id,
+        &instance_id,
+        "matrix-device",
+        &headers,
+        &body,
+    )
+    .await
+    {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    match state.agents.replace_instance_matrix_device(request).await {
+        Ok(session) => no_store(Json(AgentInstanceResponse::from(session)).into_response()),
+        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
+    }
+}
+
+/// 验明设备签名、空正文，得到对这个实例的 Matrix 会话请求。
+async fn instance_matrix_request(
+    state: &AgentHttpState,
+    correlation_id: CorrelationId,
+    instance_id: &str,
+    resource: &str,
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Result<RotateAgentInstanceMatrixSession, Response> {
+    let request_target = format!("/agent-instances/{instance_id}/{resource}");
+    let Ok(instance_id) = parse_uuid_v7(instance_id).map(AgentInstanceId::from_uuid) else {
+        return Err(no_store(
+            invalid_resource_id(correlation_id).into_response(),
+        ));
+    };
+    let Ok(body_text) = std::str::from_utf8(body) else {
+        return Err(no_store(
             ApiError::invalid_request("agent.invalid_matrix_session_body", correlation_id)
                 .into_response(),
-        );
+        ));
     };
-    let actor = match authenticate_signed_device_request(
+    let actor = authenticate_signed_device_request(
         state.devices.as_ref(),
         state.secrets.as_ref(),
-        &headers,
+        headers,
         "POST",
         &request_target,
         body_text,
         correlation_id,
     )
-    .await
-    {
-        Ok(actor) => actor,
-        Err(response) => return response,
-    };
+    .await?;
     if !body.is_empty() {
-        return no_store(
+        return Err(no_store(
             ApiError::invalid_request("agent.invalid_matrix_session_body", correlation_id)
                 .into_response(),
-        );
+        ));
     }
-    match state
-        .agents
-        .rotate_instance_matrix_session(RotateAgentInstanceMatrixSession { actor, instance_id })
-        .await
-    {
-        Ok(session) => no_store(Json(AgentInstanceResponse::from(session)).into_response()),
-        Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
-    }
+    Ok(RotateAgentInstanceMatrixSession { actor, instance_id })
 }
 
 async fn resolve_instance_verification(
@@ -957,6 +1008,7 @@ mod tests {
         device_default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
         rotation: Mutex<Option<RotateAgentInstanceMatrixSession>>,
+        replacement: Mutex<Option<RotateAgentInstanceMatrixSession>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
         deletions: Mutex<Vec<DeleteAgent>>,
     }
@@ -1024,9 +1076,10 @@ mod tests {
 
         fn replace_instance_matrix_device(
             &self,
-            _request: RotateAgentInstanceMatrixSession,
+            request: RotateAgentInstanceMatrixSession,
         ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
-            unreachable!("Agent 路由不换实例的 Matrix 设备")
+            *self.replacement.lock().expect("Matrix 换设备记录锁可用") = Some(request);
+            Box::pin(async { Ok(rotated_instance()) })
         }
 
         fn change_membership(
@@ -1767,6 +1820,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 换_matrix_设备走独立端点_签名空正文_不走同设备轮换() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let target = format!("/agent-instances/{INSTANCE_UUID}/matrix-device");
+        devices.expect_request("POST", target.clone(), String::new());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+
+        let response = app
+            .oneshot(signed_empty_request(&target))
+            .await
+            .expect("Matrix 换设备路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentInstanceId"], INSTANCE_UUID);
+        assert_eq!(payload["accessToken"], "rotated-agent-device-access-token");
+        let replacement = agents
+            .replacement
+            .lock()
+            .expect("Matrix 换设备记录锁可用")
+            .clone()
+            .expect("换设备用例已调用");
+        assert_eq!(replacement.instance_id.to_string(), INSTANCE_UUID);
+        assert_eq!(replacement.actor.device_id, device_id());
+        assert!(
+            agents
+                .rotation
+                .lock()
+                .expect("Matrix 会话轮换记录锁可用")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn 缺失设备证明时不会触碰认证或_agent_用例() {
         let agents = Arc::new(FakeAgents::default());
         let devices = Arc::new(FakeDevices::default());
@@ -2027,6 +2118,22 @@ mod tests {
                 );
         }
         request.body(Body::empty()).expect("实例验签材料请求有效")
+    }
+
+    fn signed_empty_request(target: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(target)
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .header("x-agent-room-device-id", DEVICE_UUID)
+            .header("x-agent-room-proof-issued-at", "1700000000000")
+            .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+            .header(
+                "x-agent-room-proof-signature",
+                URL_SAFE_NO_PAD.encode([9_u8; 64]),
+            )
+            .body(Body::empty())
+            .expect("设备签名的空正文请求有效")
     }
 
     fn matrix_session_rotation_request(include_proof: bool) -> Request<Body> {
