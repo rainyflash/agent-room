@@ -480,10 +480,21 @@ impl NetworkAgentStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "network_agent.mark_rooms_left";
+            // 同一条语句里把它在私人房间的 Agent 成员记为已移出，房主不必再手动移出。
             sqlx::query(
-                r"UPDATE agent_room.network_agent
-                     SET rooms_left_at = greatest(disabled_at, to_timestamp($2::double precision / 1000.0))
-                   WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NULL",
+                r"WITH left_rooms AS (
+                      UPDATE agent_room.network_agent
+                         SET rooms_left_at = greatest(disabled_at, to_timestamp($2::double precision / 1000.0))
+                       WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NULL
+                   RETURNING agent_id, rooms_left_at
+                  )
+                  UPDATE agent_room.private_room_agent_member member
+                     SET membership_status = 'removed',
+                         permission_bits = 0,
+                         status_changed_at = greatest(member.status_changed_at, left_rooms.rooms_left_at)
+                    FROM left_rooms
+                   WHERE member.agent_id = left_rooms.agent_id
+                     AND member.membership_status = 'joined'",
             )
             .bind(id.as_uuid())
             .bind(at.value())

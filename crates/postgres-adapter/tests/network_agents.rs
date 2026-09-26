@@ -14,7 +14,8 @@ use agent_room_application::{
         NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
         NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        PrincipalRegistration, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        PrincipalRegistration, PrivateRoomAgentAccessStore, PrivateRoomSnapshot, PrivateRoomStore,
+        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -23,9 +24,16 @@ use agent_room_domain::{
     identity::Principal,
     ids::{
         AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
+        RoomInstanceId,
     },
+    join_codes::PrivateRoomAgentMemberStatus,
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
-    rooms::MatrixRoomReference,
+    private_rooms::{PrivateRoom, PrivateRoomPermissions},
+    rooms::{
+        MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
+        RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
+        RoomInstanceState,
+    },
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
@@ -765,6 +773,122 @@ async fn 闲置与卡在创建中的被停用_有实例的等着离开房间_记
         .expect("找得到");
     assert_eq!(fresh_record.status, NetworkAgentStatus::Provisioning);
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 记下离开房间时_它在私人房间的_agent_成员一并记为已移出() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Leaver"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (agent, instance) =
+        seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
+    repositories
+        .activate(&NetworkAgentActivation {
+            id: provisioning.id,
+            agent_id: agent,
+            agent_instance_id: instance,
+            matrix_access_token: sealed(4),
+            activated_at: time(0),
+        })
+        .await
+        .expect("生效");
+    let joined_room = seed_private_room(&repositories, owner).await;
+    let removed_room = seed_private_room(&repositories, owner).await;
+    for room in [joined_room, removed_room] {
+        repositories
+            .admit_agent(room, agent, PrivateRoomPermissions::AGENT_MEMBER, time(5))
+            .await
+            .expect("凭口令进房间");
+    }
+    // 早先被房主移出的保持原来的移出时间。
+    repositories
+        .remove_agent(removed_room, agent, time(8))
+        .await
+        .expect("房主移出");
+
+    repositories
+        .disable(provisioning.id, time(10))
+        .await
+        .expect("停用");
+    let member = |room| {
+        let repositories = &repositories;
+        async move {
+            repositories
+                .agent_member(room, agent)
+                .await
+                .expect("读取成员")
+                .expect("有成员记录")
+        }
+    };
+    assert_eq!(
+        member(joined_room).await.status,
+        PrivateRoomAgentMemberStatus::Joined,
+        "停用了但还没离开房间时不动成员"
+    );
+    repositories
+        .mark_rooms_left(provisioning.id, time(20))
+        .await
+        .expect("记下已离开");
+    let left = member(joined_room).await;
+    assert_eq!(left.status, PrivateRoomAgentMemberStatus::Removed);
+    assert_eq!(left.permissions, PrivateRoomPermissions::NONE);
+    assert_eq!(left.status_changed_at, time(20));
+    let earlier = member(removed_room).await;
+    assert_eq!(earlier.status, PrivateRoomAgentMemberStatus::Removed);
+    assert_eq!(earlier.status_changed_at, time(8));
+    database.close().await;
+}
+
+async fn seed_private_room(
+    repositories: &PostgresRepositories,
+    owner: PrincipalId,
+) -> RoomCatalogId {
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let catalog = RoomCatalog::new(
+        catalog_id,
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: "网络 Agent 私人房间".to_owned(),
+            description: String::new(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(owner),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: Some(30),
+            status: RoomCatalogStatus::Active,
+        },
+    )
+    .expect("私人目录有效");
+    let instance_id = RoomInstanceId::from_uuid(Uuid::now_v7());
+    let instance = RoomInstance::restore(
+        instance_id,
+        RoomInstanceFields {
+            catalog_id,
+            matrix_room_id: MatrixRoomReference::new(format!(
+                "!leave{}:matrix.test",
+                instance_id.as_uuid().simple()
+            ))
+            .expect("Matrix 房间标识有效"),
+            region: None,
+            capacity: RoomCapacity::new(8, 16).expect("私人房间容量有效"),
+            projected_member_count: 1,
+            allocated_slots: 0,
+            activity_score_millis: 0,
+            state: RoomInstanceState::Active,
+        },
+    )
+    .expect("私人实例有效");
+    let snapshot =
+        PrivateRoomSnapshot::new(catalog, instance, PrivateRoom::create(catalog_id, owner))
+            .expect("私人房间快照有效");
+    PrivateRoomStore::create(repositories, &snapshot, time(0))
+        .await
+        .expect("创建房间");
+    catalog_id
 }
 
 async fn encrypted_since(
