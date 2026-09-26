@@ -402,7 +402,13 @@ jobs:
         with:
           node-version-file: .node-version
       - name: 安装 Rust 工具链
-        run: rustup toolchain install 1.97.1 --profile minimal
+        # 缓存键会算进所有已装的工具链；Runner 自带的 stable 一升级，插桩缓存就整个失效（冷跑多约 12 分钟）。
+        # 这里只留仓库固定的版本。
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustup toolchain uninstall stable
+          rustup toolchain list
       - name: 恢复覆盖率插桩编译缓存
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
         with:

@@ -70,11 +70,15 @@ def matrix_command(action: str) -> list[str]:
         "test": ["cargo", "test"],
         "coverage": ["cargo", "llvm-cov", "--all-features"],
     }[action]
+    # 覆盖率与前一步的全工作区覆盖率用同一套特性（--workspace），共用依赖不必重新编译；
+    # 测试目标名在工作区里是唯一的。
+    selection = (
+        ["--workspace"] if action == "coverage" else ["-p", "agent-room-matrix-adapter"]
+    )
     report_arguments = ["--no-report"] if action == "coverage" else []
     return [
         *runner,
-        "-p",
-        "agent-room-matrix-adapter",
+        *selection,
         "--test",
         "real_synapse",
         *report_arguments,
