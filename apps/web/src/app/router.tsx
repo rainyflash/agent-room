@@ -1,20 +1,18 @@
-import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
-import { lazy, Suspense, useCallback } from 'react';
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+} from '@tanstack/react-router';
+import { type ComponentProps, type ComponentType, lazy, Suspense, useCallback } from 'react';
 
 import { RootLayout } from '@/app/root-layout';
-import { ApplicationAboutPage } from '@/features/updates/ui/application-about-page';
-import { InboxPage } from '@/features/inbox/ui/inbox-page';
 import { RouteUnavailable } from '@/app/route-unavailable';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
-import { SecurityPage } from '@/features/security/ui/security-page';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
-import { GuidePage } from '@/features/guide/ui/guide-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
-import { OnboardingPage } from '@/features/onboarding/ui/onboarding-page';
-import { RoomDirectoryPage } from '@/features/room-directory/ui/room-directory-page';
 import { useSession } from '@/features/session/ui/session-provider';
-import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
@@ -27,6 +25,41 @@ import {
   normalizeWorkspaceSearch,
   routeIdentifierSchema,
 } from '@/shared/routing/route-state';
+
+// 首页与连接页随入口一起加载；其余页面打开时再下载，入口包小一些，冷启动更快。
+// 直接挂在路由上的页面由路由先加载好再渲染；放在边界组件里的页面自己带 Suspense。
+function lazyPage<Props extends object>(
+  load: () => Promise<ComponentType<Props>>,
+): ComponentType<Props> {
+  const Page = lazy(async () => ({ default: await load() }));
+  return function LazyPage(props: Props) {
+    return (
+      <Suspense fallback={null}>
+        <Page {...(props as ComponentProps<typeof Page>)} />
+      </Suspense>
+    );
+  };
+}
+
+const ApplicationAboutPage = lazyRouteComponent(
+  () => import('@/features/updates/ui/application-about-page'),
+  'ApplicationAboutPage',
+);
+const InboxPage = lazyPage(async () => (await import('@/features/inbox/ui/inbox-page')).InboxPage);
+const SecurityPage = lazyPage(
+  async () => (await import('@/features/security/ui/security-page')).SecurityPage,
+);
+const GuidePage = lazyRouteComponent(() => import('@/features/guide/ui/guide-page'), 'GuidePage');
+const OnboardingPage = lazyRouteComponent(
+  () => import('@/features/onboarding/ui/onboarding-page'),
+  'OnboardingPage',
+);
+const RoomDirectoryPage = lazyPage(
+  async () => (await import('@/features/room-directory/ui/room-directory-page')).RoomDirectoryPage,
+);
+const AccountWorkspacePage = lazyPage(
+  async () => (await import('@/features/workspace/ui/account-workspace-page')).AccountWorkspacePage,
+);
 
 const LobbyPage = lazy(async () => {
   const module = await import('@/features/lobby/ui/lobby-page');

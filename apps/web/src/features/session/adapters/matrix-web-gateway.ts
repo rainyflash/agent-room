@@ -230,6 +230,9 @@ export class MatrixWebGateway implements MatrixGateway {
         : this.#consumeReturnPath();
 
     const sdk = await import('matrix-js-sdk');
+    // 加密模块（含 WASM 胶水代码）先下载起来，和后面的本地存储、whoami 同时进行，
+    // 不再等它们做完才开始；没登录的访客走不到这里，不会多下载。
+    prefetchMatrixCrypto();
     const store =
       this.#indexedDB === undefined
         ? new sdk.MemoryStore({
@@ -555,6 +558,15 @@ class MatrixPersistenceError extends Error {
   constructor(readonly failure: SessionFailure) {
     super(failure.code);
   }
+}
+
+function prefetchMatrixCrypto(): void {
+  // 只是预热模块缓存：失败了等到真正初始化加密时再按原来的方式报错。
+  void import('matrix-js-sdk/lib/rust-crypto/index.js').catch(ignorePrefetchFailure);
+}
+
+function ignorePrefetchFailure(error: unknown): void {
+  void error;
 }
 
 type MatrixCryptoClient = Pick<MatrixClient, 'getCrypto' | 'initRustCrypto'>;

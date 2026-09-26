@@ -463,6 +463,22 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn(f"{self.config.public.api_domain} {{", caddyfile)
         self.assertIn("reverse_proxy control-plane:8090", caddyfile)
 
+    def test_hashed_web_assets_are_cached_long_term_and_pages_fall_back_to_index(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+
+        assets = caddyfile.index("handle /assets/* {")
+        fallback = caddyfile.index("try_files {path} /index.html")
+        self.assertLess(assets, fallback)
+        self.assertIn(
+            'header Cache-Control "public, max-age=31536000, immutable"',
+            caddyfile[assets:fallback],
+        )
+        # 页面入口 index.html 不带长期缓存，发版后浏览器能拿到新的资源清单。
+        self.assertEqual(caddyfile.count("immutable"), 1)
+
     def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value["networkAgents"] = {"enabled": True}
