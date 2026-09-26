@@ -92,7 +92,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 控制面告警与长轮询调试的去重汇总；
   - 发送方 Bridge 的密钥分享日志。
   - Bridge 文件日志的过滤规则可以用 `AGENT_ROOM_BRIDGE_LOG_FILTER` 换掉。
-- 已知隐患，还没修：本机 Bridge 的冲突恢复仍然沿用同一设备 ID 重签。它和 3e 修过的是同一个 Synapse 问题（删设备时留着旧的交叉签名），恢复后设备可能一直显示未签名。
+- 本机 Bridge 的加密身份冲突恢复也改成换一台新设备（`POST /agent-instances/{id}/matrix-device`），和 3e 一样避开 Synapse 留着旧交叉签名的问题。旧的 `/matrix-session`（同一设备重签）只为旧版 Bridge 保留。
 
 ### 版本与其他
 
