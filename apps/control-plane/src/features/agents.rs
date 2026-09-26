@@ -112,6 +112,10 @@ pub(crate) fn router(state: AgentHttpState) -> Router {
             post(rotate_instance_matrix_session),
         )
         .route(
+            "/agent-instances/{instance_id}/matrix-device",
+            post(replace_instance_matrix_device),
+        )
+        .route(
             "/agent-instances/{instance_id}/verification",
             get(resolve_instance_verification),
         )
@@ -594,11 +598,65 @@ async fn rotate_instance_matrix_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let request_target = format!("/agent-instances/{instance_id}/matrix-session");
-    let Ok(instance_id) = parse_uuid_v7(&instance_id).map(AgentInstanceId::from_uuid) else {
+    instance_matrix_session(
+        &state,
+        correlation_id,
+        &instance_id,
+        &headers,
+        &body,
+        MatrixSessionChange::Rotate,
+    )
+    .await
+}
+
+/// 本机加密存储与设备对不上时，换一台新的 Matrix 设备（新设备 ID）。同一设备 ID 重新签发时，
+/// Synapse 留着旧设备的交叉签名，新设备怎么也签不上，恢复后会一直显示未签名。
+async fn replace_instance_matrix_device(
+    State(state): State<AgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(instance_id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    instance_matrix_session(
+        &state,
+        correlation_id,
+        &instance_id,
+        &headers,
+        &body,
+        MatrixSessionChange::ReplaceDevice,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum MatrixSessionChange {
+    Rotate,
+    ReplaceDevice,
+}
+
+impl MatrixSessionChange {
+    const fn path_suffix(self) -> &'static str {
+        match self {
+            Self::Rotate => "matrix-session",
+            Self::ReplaceDevice => "matrix-device",
+        }
+    }
+}
+
+async fn instance_matrix_session(
+    state: &AgentHttpState,
+    correlation_id: CorrelationId,
+    instance_id: &str,
+    headers: &HeaderMap,
+    body: &Bytes,
+    change: MatrixSessionChange,
+) -> Response {
+    let request_target = format!("/agent-instances/{instance_id}/{}", change.path_suffix());
+    let Ok(instance_id) = parse_uuid_v7(instance_id).map(AgentInstanceId::from_uuid) else {
         return no_store(invalid_resource_id(correlation_id).into_response());
     };
-    let Ok(body_text) = std::str::from_utf8(&body) else {
+    let Ok(body_text) = std::str::from_utf8(body) else {
         return no_store(
             ApiError::invalid_request("agent.invalid_matrix_session_body", correlation_id)
                 .into_response(),
@@ -607,7 +665,7 @@ async fn rotate_instance_matrix_session(
     let actor = match authenticate_signed_device_request(
         state.devices.as_ref(),
         state.secrets.as_ref(),
-        &headers,
+        headers,
         "POST",
         &request_target,
         body_text,
@@ -624,11 +682,14 @@ async fn rotate_instance_matrix_session(
                 .into_response(),
         );
     }
-    match state
-        .agents
-        .rotate_instance_matrix_session(RotateAgentInstanceMatrixSession { actor, instance_id })
-        .await
-    {
+    let request = RotateAgentInstanceMatrixSession { actor, instance_id };
+    let result = match change {
+        MatrixSessionChange::Rotate => state.agents.rotate_instance_matrix_session(request).await,
+        MatrixSessionChange::ReplaceDevice => {
+            state.agents.replace_instance_matrix_device(request).await
+        }
+    };
+    match result {
         Ok(session) => no_store(Json(AgentInstanceResponse::from(session)).into_response()),
         Err(failure) => no_store(ApiError::agent(failure, correlation_id).into_response()),
     }
@@ -957,6 +1018,7 @@ mod tests {
         device_default_agent_ensures: AtomicUsize,
         registration: Mutex<Option<RegisterAgentInstance>>,
         rotation: Mutex<Option<RotateAgentInstanceMatrixSession>>,
+        replacement: Mutex<Option<RotateAgentInstanceMatrixSession>>,
         membership_changes: Mutex<Vec<ChangeAgentMembership>>,
         deletions: Mutex<Vec<DeleteAgent>>,
     }
@@ -1024,9 +1086,10 @@ mod tests {
 
         fn replace_instance_matrix_device(
             &self,
-            _request: RotateAgentInstanceMatrixSession,
+            request: RotateAgentInstanceMatrixSession,
         ) -> PortFuture<'_, AgentManagementResult<RotatedAgentInstanceMatrixSession>> {
-            unreachable!("Agent 路由不换实例的 Matrix 设备")
+            *self.replacement.lock().expect("Matrix 设备更换记录锁可用") = Some(request);
+            Box::pin(async { Ok(rotated_instance()) })
         }
 
         fn change_membership(
@@ -1767,6 +1830,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 更换_matrix_设备走独立端点_只调用换设备用例() {
+        let agents = Arc::new(FakeAgents::default());
+        let devices = Arc::new(FakeDevices::default());
+        let target = format!("/agent-instances/{INSTANCE_UUID}/matrix-device");
+        devices.expect_request("POST", target.clone(), String::new());
+        let app = test_router(
+            agents.clone(),
+            Arc::new(FakeAuthentication::default()),
+            devices.clone(),
+        );
+
+        let response = app
+            .oneshot(matrix_session_request(&target, true))
+            .await
+            .expect("Matrix 设备更换路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["agentInstanceId"], INSTANCE_UUID);
+        assert_eq!(devices.authentications.load(Ordering::SeqCst), 1);
+        let replacement = agents
+            .replacement
+            .lock()
+            .expect("Matrix 设备更换记录锁可用")
+            .clone()
+            .expect("Matrix 设备更换用例已调用");
+        assert_eq!(replacement.instance_id.to_string(), INSTANCE_UUID);
+        assert_eq!(replacement.actor.device_id, device_id());
+        assert!(
+            agents
+                .rotation
+                .lock()
+                .expect("Matrix 会话轮换记录锁可用")
+                .is_none(),
+            "换设备不走同一设备重签"
+        );
+    }
+
+    #[tokio::test]
     async fn 缺失设备证明时不会触碰认证或_agent_用例() {
         let agents = Arc::new(FakeAgents::default());
         let devices = Arc::new(FakeDevices::default());
@@ -2030,9 +2132,16 @@ mod tests {
     }
 
     fn matrix_session_rotation_request(include_proof: bool) -> Request<Body> {
+        matrix_session_request(
+            &format!("/agent-instances/{INSTANCE_UUID}/matrix-session"),
+            include_proof,
+        )
+    }
+
+    fn matrix_session_request(target: &str, include_proof: bool) -> Request<Body> {
         let mut request = Request::builder()
             .method("POST")
-            .uri(format!("/agent-instances/{INSTANCE_UUID}/matrix-session"))
+            .uri(target)
             .header(header::AUTHORIZATION, "Bearer device-access-token");
         if include_proof {
             request = request
