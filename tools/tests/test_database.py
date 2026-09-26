@@ -28,6 +28,9 @@ class PostgreSqlCoverageCommandTests(unittest.TestCase):
         self.assertNotIn("capacity", coverage_command)
         self.assertEqual(correctness_command.count("--test"), 2)
         self.assertEqual(coverage_command.count("--test"), 2)
+        # 与全工作区覆盖率同一套特性，避免共用依赖重新插桩编译。
+        self.assertIn("--workspace", coverage_command)
+        self.assertNotIn("-p", coverage_command)
 
     def test_missing_capacity_target_fails_loudly(self) -> None:
         with TemporaryDirectory() as directory:

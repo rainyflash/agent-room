@@ -150,14 +150,17 @@ def postgres_correctness_test_command(
 def postgres_coverage_test_command(
     tests_directory: Path = POSTGRES_TESTS_DIRECTORY,
 ) -> list[str]:
-    """构造可审计的覆盖率命令，避免性能预算在插桩二进制上执行。"""
+    """构造可审计的覆盖率命令，避免性能预算在插桩二进制上执行。
+
+    用 `--workspace` 而不是 `-p`：与前一步的全工作区覆盖率同一套特性，
+    共用依赖不必再插桩编译一遍。测试目标名在工作区里是唯一的。
+    """
 
     command = [
         "cargo",
         "llvm-cov",
+        "--workspace",
         "--all-features",
-        "-p",
-        "agent-room-postgres-adapter",
         "--no-report",
     ]
     for target in postgres_correctness_test_targets(tests_directory):
