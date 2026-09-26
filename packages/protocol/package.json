@@ -3,6 +3,7 @@
   "version": "0.1.0-alpha.51",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
     "./status-lease": {

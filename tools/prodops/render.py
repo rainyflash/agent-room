@@ -626,6 +626,11 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t\t}}
 \t\treverse_proxy control-plane:8090
 \t}}
+\thandle /assets/* {{
+\t\troot * /srv/web
+\t\theader Cache-Control "public, max-age=31536000, immutable"
+\t\tfile_server
+\t}}
 \thandle {{
 \t\troot * /srv/web
 \t\ttry_files {{path}} /index.html
