@@ -742,6 +742,8 @@ fn handoff_connection_from_client(
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixSdkHandoffConnection> {
     let handoff = Arc::new(MatrixSdkHandoffGateway::attach(client.clone()));
+    // 本机 Bridge 和网络 Agent 网关都从这里打开客户端，应别人设备的请求重发房间密钥也就一起有了。
+    crate::room_keys::attach(&client);
     let security = crate::security::MatrixSdkSecurityGateway::new(client.clone());
     let (session, sdk_gateway) =
         sdk_connection_parts(client, MatrixOperation::RestoreSession, sync_timeline_limit)?;
