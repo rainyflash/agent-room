@@ -5,6 +5,7 @@ import type {
   MatrixEventEvent,
   SyncState,
 } from 'matrix-js-sdk';
+import type { CryptoEvent } from 'matrix-js-sdk/lib/crypto-api/index.js';
 
 /**
  * matrix-js-sdk 字符串枚举的取值。
@@ -32,3 +33,8 @@ export const CLIENT_EVENT_RECEIVED_TO_DEVICE_MESSAGE =
   enumValue<ClientEvent.ReceivedToDeviceMessage>('receivedToDeviceMessage');
 
 export const MATRIX_EVENT_DECRYPTED = enumValue<MatrixEventEvent.Decrypted>('Event.decrypted');
+
+export const CRYPTO_EVENT_DEVICES_UPDATED =
+  enumValue<CryptoEvent.DevicesUpdated>('crypto.devicesUpdated');
+export const CRYPTO_EVENT_USER_TRUST_STATUS_CHANGED =
+  enumValue<CryptoEvent.UserTrustStatusChanged>('userTrustStatusChanged');

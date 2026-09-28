@@ -491,7 +491,10 @@ const undecryptableReasonOrder: readonly UndecryptableReason[] = [
   'other',
 ];
 
-/** SDK 的 DecryptionFailureCode 按用户能做什么归类；没见过的原因码都算“其他”。 */
+/**
+ * SDK 的 DecryptionFailureCode 按用户能做什么归类；没见过的原因码都算“其他”。
+ * 不是因为设备没验证的拒绝分发，多半是发送方和这台设备建不起 Olm 通道（m.no_olm），对用户来说就是没收到密钥。
+ */
 function undecryptableReason(code: string): UndecryptableReason {
   switch (code) {
     case 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID':
@@ -499,8 +502,8 @@ function undecryptableReason(code: string): UndecryptableReason {
     case 'HISTORICAL_MESSAGE_NO_KEY_BACKUP':
     case 'HISTORICAL_MESSAGE_BACKUP_UNCONFIGURED':
     case 'HISTORICAL_MESSAGE_WORKING_BACKUP':
-      return 'missing_key';
     case 'MEGOLM_KEY_WITHHELD':
+      return 'missing_key';
     case 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE':
       return 'withheld';
     case 'SENDER_IDENTITY_PREVIOUSLY_VERIFIED':

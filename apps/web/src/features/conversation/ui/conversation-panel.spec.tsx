@@ -10,7 +10,11 @@ import type {
   MessagePublicationResult,
   MessagePublisher,
 } from '@/features/messages/domain/publication';
-import type { RoomMessageSignal, UndecryptableSummary } from '@/features/messages/domain/message';
+import type {
+  RoomMessageSignal,
+  UndecryptableRecovery,
+  UndecryptableSummary,
+} from '@/features/messages/domain/message';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
@@ -29,7 +33,8 @@ function harness(
   messages: readonly RoomMessageSignal[] = [],
   labels: NetworkAgentLabelStore | null = null,
   undecryptable?: UndecryptableSummary,
-  recovering = false,
+  recovery: UndecryptableRecovery = 'idle',
+  onOpenSecurity?: () => void,
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -76,7 +81,8 @@ function harness(
       state="ready"
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}
-      {...(undecryptable === undefined ? {} : { recovering, undecryptable })}
+      {...(undecryptable === undefined ? {} : { recovery, undecryptable })}
+      {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
     />
   );
   render(
@@ -121,11 +127,49 @@ describe('解不开的加密消息', () => {
   });
 
   it('已经请 Agent 重发时说明收到后会自动解开，没在等时不说', () => {
-    harness(false, [], null, { count: 3, reasons: ['missing_key'], senders: [agentId] }, true);
+    harness(
+      false,
+      [],
+      null,
+      { count: 3, reasons: ['missing_key'], senders: [agentId] },
+      'requested',
+      vi.fn(),
+    );
     expect(screen.getByText(/asked to send their keys again/u)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Verify this device' })).not.toBeInTheDocument();
     cleanup();
     harness(false, [], null, { count: 3, reasons: ['missing_key'], senders: [agentId] });
     expect(screen.queryByText(/asked to send their keys again/u)).not.toBeInTheDocument();
+  });
+
+  it('要先验证这台设备才能找回时说明原因，按钮直达“安全”页', async () => {
+    const openSecurity = vi.fn();
+    harness(
+      false,
+      [],
+      null,
+      { count: 12, reasons: ['withheld'], senders: [agentId] },
+      'needs_verification',
+      openSecurity,
+    );
+
+    expect(screen.getByText(/only send keys to verified devices/u)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Verify this device' }));
+    expect(openSecurity).toHaveBeenCalledOnce();
+    expect(screen.queryByText(/asked to send their keys again/u)).not.toBeInTheDocument();
+  });
+
+  it('没有打开“安全”页的入口时只说要先验证，不放按钮', () => {
+    harness(
+      false,
+      [],
+      null,
+      { count: 12, reasons: ['withheld'], senders: [agentId] },
+      'needs_verification',
+    );
+
+    expect(screen.getByText(/only send keys to verified devices/u)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Verify this device' })).not.toBeInTheDocument();
   });
 
   it('一条也照样提示，发送者都点得出名时不说“其余”', () => {

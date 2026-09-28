@@ -68,6 +68,9 @@ export const conversationResources = {
     'conversation.undecryptable.reason.other': 'Decryption failed.',
     'conversation.undecryptable.recovering':
       'The agents have been asked to send their keys again. The messages open by themselves once the keys arrive.',
+    'conversation.undecryptable.verifyFirst':
+      'Agents only send keys to verified devices. Verify this device, and they will be asked to send them again.',
+    'conversation.undecryptable.verify': 'Verify this device',
   },
   'zh-CN': {
     'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
@@ -134,5 +137,8 @@ export const conversationResources = {
     'conversation.undecryptable.reason.other': '解密出错。',
     'conversation.undecryptable.recovering':
       '已经请相关的 Agent 重发密钥，收到后这些消息会自动解开。',
+    'conversation.undecryptable.verifyFirst':
+      'Agent 只把密钥发给验证过的设备。验证这台设备后，会自动请它们重发。',
+    'conversation.undecryptable.verify': '验证这台设备',
   },
 } as const;

@@ -257,6 +257,9 @@
   margin: 0;
   color: var(--ar-muted);
 }
+.conversation-undecryptable__action {
+  margin-top: 8px;
+}
 .conversation-undecryptable .conversation-undecryptable__title {
   color: var(--color-ink);
   font-weight: 600;

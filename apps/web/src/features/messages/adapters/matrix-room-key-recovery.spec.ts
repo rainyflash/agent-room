@@ -212,12 +212,28 @@ describe('请 Agent 重发房间密钥', () => {
     expect(recovery.pending('!other:agent-room.test')).toBe(0);
   });
 
-  it('不是缺密钥、不是 Agent、自己发的、一小时内请求过的都不再请求', async () => {
+  it('发送方因为设备没验证而拒绝分发的也请求：验证以后 Agent 会重新判断', async () => {
+    const { client } = harness();
+    client.emit(
+      'Event.decrypted',
+      undecryptable(SESSION_A, { reason: 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE' }),
+    );
+    client.emit('Event.decrypted', undecryptable(SESSION_B, { reason: 'MEGOLM_KEY_WITHHELD' }));
+
+    await vi.waitFor(() => {
+      expect(client.queueToDevice).toHaveBeenCalledOnce();
+    });
+    expect(client.crypto.encryptToDeviceMessages.mock.calls[0]?.[2]).toMatchObject({
+      sessionIds: [SESSION_A, SESSION_B],
+    });
+  });
+
+  it('发送设备不可信、不是 Agent、自己发的、一小时内请求过的都不再请求', async () => {
     const { client } = await requestedTwoSessions();
     client.emit('Event.decrypted', undecryptable(SESSION_A));
     client.emit(
       'Event.decrypted',
-      undecryptable(`C${'c'.repeat(42)}`, { reason: 'MEGOLM_KEY_WITHHELD' }),
+      undecryptable(`C${'c'.repeat(42)}`, { reason: 'UNSIGNED_SENDER_DEVICE' }),
     );
     client.emit('Event.decrypted', undecryptable(`D${'d'.repeat(42)}`, { sender: STRANGER }));
     client.emit('Event.decrypted', undecryptable(`E${'e'.repeat(42)}`, { sender: ME }));
@@ -226,13 +242,63 @@ describe('请 Agent 重发房间密钥', () => {
     expect(client.crypto.encryptToDeviceMessages).toHaveBeenCalledOnce();
   });
 
-  it('这台设备还没由主人签名时不请求（Agent 反正不会回答）', async () => {
-    const { client } = harness();
+  it('这台设备还没由主人签名时先扣着（Agent 反正不会回答），签名以后一起发', async () => {
+    const { client, recovery } = harness();
+    const changed = vi.fn();
+    recovery.subscribe(changed);
     client.crypto.ownSigned = false;
     client.emit('Event.decrypted', undecryptable(SESSION_A));
-    await new Promise((settle) => setTimeout(settle, 20));
+    client.emit(
+      'Event.decrypted',
+      undecryptable(SESSION_B, { reason: 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE' }),
+    );
 
+    await vi.waitFor(() => {
+      expect(recovery.awaitingVerification(ROOM)).toBe(2);
+    });
+    expect(changed).toHaveBeenCalled();
+    expect(recovery.pending(ROOM)).toBe(0);
+    // 别人的设备列表变了、或者自己还没签好，都不发。
+    client.emit('crypto.devicesUpdated', [STRANGER], false);
+    client.emit('crypto.devicesUpdated', [ME], false);
+    await new Promise((settle) => setTimeout(settle, 20));
     expect(client.crypto.encryptToDeviceMessages).not.toHaveBeenCalled();
+    expect(recovery.awaitingVerification(ROOM)).toBe(2);
+
+    // 在“安全”页恢复了这台设备：签名随设备列表更新到本地。
+    client.crypto.ownSigned = true;
+    client.emit('crypto.devicesUpdated', [ME], false);
+
+    await vi.waitFor(() => {
+      expect(client.queueToDevice).toHaveBeenCalledOnce();
+    });
+    expect(client.crypto.encryptToDeviceMessages.mock.calls[0]?.[2]).toMatchObject({
+      sessionIds: [SESSION_A, SESSION_B],
+    });
+    expect(recovery.awaitingVerification(ROOM)).toBe(0);
+    expect(recovery.pending(ROOM)).toBe(2);
+  });
+
+  it('自己的信任状态变了也会发出扣着的请求，只发一次', async () => {
+    const { client, recovery } = harness();
+    client.crypto.ownSigned = false;
+    client.emit('Event.decrypted', undecryptable(SESSION_A));
+    await vi.waitFor(() => {
+      expect(recovery.awaitingVerification(ROOM)).toBe(1);
+    });
+
+    client.crypto.ownSigned = true;
+    client.emit('userTrustStatusChanged', AGENT, {});
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(client.crypto.encryptToDeviceMessages).not.toHaveBeenCalled();
+    client.emit('userTrustStatusChanged', ME, {});
+    client.emit('crypto.devicesUpdated', [ME], false);
+
+    await vi.waitFor(() => {
+      expect(client.queueToDevice).toHaveBeenCalledOnce();
+    });
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(client.crypto.encryptToDeviceMessages).toHaveBeenCalledOnce();
   });
 
   it('核对来源后按导出格式导入，等待中的会话随之清零', async () => {
@@ -316,5 +382,7 @@ describe('请 Agent 重发房间密钥', () => {
     expect(recovery.pending(ROOM)).toBe(0);
     expect(client.listeners('Event.decrypted')).toBe(0);
     expect(client.listeners('receivedToDeviceMessage')).toBe(0);
+    expect(client.listeners('crypto.devicesUpdated')).toBe(0);
+    expect(client.listeners('userTrustStatusChanged')).toBe(0);
   });
 });
