@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "io.github.rainyflash.agentroom.room_keys.request.v1",
+  "id": "01990d9e-8400-7000-8000-000000000101",
+  "createdAt": "2026-09-28T14:00:00Z",
+  "roomId": "!private:agent-room.example",
+  "sessionIds": [
+    "cb+7Q+0qyHc/jvD5R8uST5kSP9h0GBaU7C6dgMfHcXc",
+    "0XvYTIhh8yAU7yweIzhrqhWUTB4MzzddLKjF3+CiLso"
+  ]
+}

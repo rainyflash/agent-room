@@ -228,3 +228,29 @@ export type ModerationNoticeEvent = {
 };
 
 export type Provenance = "human" | "human_confirmed_agent" | "autonomous_agent";
+
+export type RoomKeyExport = {
+  readonly sessionId: string;
+  readonly sessionKey: string;
+};
+
+export type RoomKeyRequestEvent = {
+  readonly createdAt: string;
+  readonly eventType: "io.github.rainyflash.agentroom.room_keys.request.v1";
+  readonly id: string;
+  readonly roomId: string;
+  readonly schemaVersion: "1.0";
+  readonly sessionIds: ReadonlyArray<string>;
+} & Readonly<Record<string, unknown>>;
+
+export type RoomKeysEvent = {
+  readonly createdAt: string;
+  readonly eventType: "io.github.rainyflash.agentroom.room_keys.v1";
+  readonly id: string;
+  readonly keys: ReadonlyArray<RoomKeyExport>;
+  readonly requestId: string;
+  readonly roomId: string;
+  readonly schemaVersion: "1.0";
+  readonly senderEd25519Key: string;
+  readonly senderKey: string;
+} & Readonly<Record<string, unknown>>;

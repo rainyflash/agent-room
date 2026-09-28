@@ -10,7 +10,7 @@ mod tests {
     use crate::generated::{
         AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
         HandoffRequestEvent, MessagePreviewEvent, MessagePreviewEventV2, MessageRevisionEvent,
-        MessageRevisionEventV2, ModerationNoticeEvent,
+        MessageRevisionEventV2, ModerationNoticeEvent, RoomKeyRequestEvent, RoomKeysEvent,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -109,6 +109,24 @@ mod tests {
         {
             serde_json::from_value::<HandoffReceiptEvent>(value)
                 .expect("交付回执必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.room_keys.request.v1".into(),
+            ))
+        {
+            serde_json::from_value::<RoomKeyRequestEvent>(value)
+                .expect("房间密钥重发请求必须符合生成的 Rust 类型");
+            return;
+        }
+        if value.get("eventType")
+            == Some(&Value::String(
+                "io.github.rainyflash.agentroom.room_keys.v1".into(),
+            ))
+        {
+            serde_json::from_value::<RoomKeysEvent>(value)
+                .expect("重发的房间密钥必须符合生成的 Rust 类型");
             return;
         }
         if value.get("protocolVersions").is_some() {
