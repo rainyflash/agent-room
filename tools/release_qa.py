@@ -60,7 +60,7 @@ import secrets
 import subprocess
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 import urllib.parse
 
 try:
@@ -290,6 +290,7 @@ class Acceptance:
         """After a fresh run its authorized profile becomes the long-lived acceptance device."""
         if self.device_record_path is None or self.device_mode() != "fresh":
             return
+        previous = load(self.device_record_path) if self.device_record_path.exists() else None
         joined = self.joined()
         first = load(self.work / "usability-evidence-first-device.json")
         record = {"schemaVersion": 1, "dataDir": str(self.data.resolve()), "service": self.service,
@@ -299,6 +300,8 @@ class Acceptance:
                                          "capturedAtUnixSeconds": first["observedAtUnixSeconds"]}}
         self.device_record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + NEWLINE, encoding="utf-8")
         print(f"本次授权的设备已记为长期验收设备：{self.device_record_path}")
+        if previous is not None and previous.get("service") != self.service:
+            retire_device_credentials(previous)
 
     def ensure_host_session(self) -> None:
         """The receiver resumes the recorded host task, so a Claude Code session must exist before any wake."""
@@ -954,6 +957,96 @@ def liveness_script(pid: int, executable: str) -> str:
     return (f"$p = Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue; "
             "if ($p -and $p.Path -and [IO.Path]::GetFullPath($p.Path) -eq "
             f"[IO.Path]::GetFullPath({ps_literal(executable)})) {{ 'yes' }}; exit 0")
+
+
+# Only the release acceptance's own device namespaces may be retired; never the owner's desktop Bridge.
+QA_DEVICE_SERVICE = re.compile(r"agent-room\.alpha\d+\.acceptance\.fresh-device")
+CREDENTIAL_ACCOUNT = re.compile(r"[a-z0-9-]+")
+
+
+def host_storage_service(parent: str, agent_id: str) -> str:
+    """The credential namespace a Bridge gives each persona it hosts (`host_storage_service` in the Bridge)."""
+    digest = hashlib.sha256(f"{parent}\0{agent_id}".encode("utf-8")).digest()
+    return "dev.agent-room.host." + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=") + ".v1"
+
+
+def retired_device_targets(record: dict[str, Any], targets: Iterable[str]) -> list[str]:
+    """Credential targets (`<account>.<service>`) that only a retired long-lived acceptance device used:
+    its own namespace and those of the personas it hosted."""
+    service = str(record.get("service", ""))
+    if not QA_DEVICE_SERVICE.fullmatch(service):
+        raise ReleaseFailure("上一台长期验收设备的凭据命名空间不是验收专用的，不清理。")
+    services = {service}
+    host_agents = Path(str(record.get("dataDir", ""))) / "host-agents"
+    if host_agents.is_dir():
+        services |= {host_storage_service(service, entry.name) for entry in host_agents.iterdir() if entry.is_dir()}
+    selected = []
+    for target in targets:
+        account, _, rest = target.partition(".")
+        if CREDENTIAL_ACCOUNT.fullmatch(account) and rest in services:
+            selected.append(target)
+    return selected
+
+
+def retire_device_credentials(record: dict[str, Any]) -> None:
+    """A fresh run replaced the long-lived acceptance device: delete the old device's credentials, which
+    nothing uses any more. Each fresh device left about eight in Windows Credential Manager, which can fill up
+    (`CredWrite` error 8) and then refuses every new credential. Failures only warn: the release is unaffected."""
+    if sys.platform != "win32":
+        return
+    try:
+        targets = retired_device_targets(record, windows_generic_credentials())
+        failed = [target for target in targets if not delete_windows_credential(target)]
+    except (OSError, ReleaseFailure) as error:
+        print(f"没能清理上一台长期验收设备的凭据：{error}")
+        return
+    print(f"上一台长期验收设备（{record['service']}）的凭据已清理：{len(targets) - len(failed)} 条"
+          + (f"，{len(failed)} 条没删掉" if failed else "") + "。")
+
+
+def _credential_api():  # pragma: no cover - Windows only
+    import ctypes
+    from ctypes import wintypes
+
+    class Credential(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("Type", wintypes.DWORD), ("TargetName", wintypes.LPWSTR),
+                    ("Comment", wintypes.LPWSTR), ("LastWritten", wintypes.FILETIME),
+                    ("CredentialBlobSize", wintypes.DWORD), ("CredentialBlob", ctypes.c_void_p),
+                    ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD),
+                    ("Attributes", ctypes.c_void_p), ("TargetAlias", wintypes.LPWSTR),
+                    ("UserName", wintypes.LPWSTR)]
+
+    api = ctypes.WinDLL("advapi32", use_last_error=True)
+    api.CredEnumerateW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                   ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(Credential)))]
+    api.CredEnumerateW.restype = wintypes.BOOL
+    api.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    api.CredDeleteW.restype = wintypes.BOOL
+    api.CredFree.argtypes = [ctypes.c_void_p]
+    return ctypes, wintypes, api, Credential
+
+
+def windows_generic_credentials() -> list[str]:  # pragma: no cover - Windows only
+    """Target names of the current user's generic credentials. Flags must be 0: with
+    CRED_ENUMERATE_ALL_CREDENTIALS the names gain a `LegacyGeneric:target=` prefix and deletion misses them."""
+    ctypes, wintypes, api, credential = _credential_api()
+    count = wintypes.DWORD()
+    items = ctypes.POINTER(ctypes.POINTER(credential))()
+    if not api.CredEnumerateW(None, 0, ctypes.byref(count), ctypes.byref(items)):
+        if ctypes.get_last_error() == 1168:  # ERROR_NOT_FOUND: no credentials at all
+            return []
+        raise OSError(ctypes.get_last_error(), "CredEnumerateW failed")
+    try:
+        return [items[index].contents.TargetName for index in range(count.value)
+                if items[index].contents.Type == 1 and items[index].contents.TargetName]
+    finally:
+        api.CredFree(items)
+
+
+def delete_windows_credential(target: str) -> bool:  # pragma: no cover - Windows only
+    # One at a time: Credential Manager can silently drop overlapping writes and deletes.
+    _, _, api, _ = _credential_api()
+    return bool(api.CredDeleteW(target, 1, 0))
 
 
 def relaunch_script(executable: str, cdp_port: int | None) -> str:
