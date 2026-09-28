@@ -1,0 +1,51 @@
+name: Windows 安装器钩子
+
+# hooks.nsh 原本只在签名候选里随真实安装器一起编译。改到钩子或这项检查时，在 PR 上用与 Tauri 相同的
+# NSIS 编译一个精简安装器，并在一次性 Runner 上实跑运行中覆盖安装与卸载。
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-installer-hooks.yml'
+      - 'apps/desktop/src-tauri/windows/**'
+      - 'tools/nsis/**'
+      - 'tools/windows_installer_acceptance.py'
+      - 'tools/windows_installer_hooks.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-installer-hooks.yml'
+      - 'apps/desktop/src-tauri/windows/**'
+      - 'tools/nsis/**'
+      - 'tools/windows_installer_acceptance.py'
+      - 'tools/windows_installer_hooks.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-hooks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: '1'
+
+jobs:
+  hooks:
+    name: 编译钩子，实跑运行中覆盖安装与卸载
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 恢复 NSIS 工具链缓存
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # 版本 6.1.0
+        with:
+          # 检查工具仍会逐个核对固定的哈希，缓存里的文件对不上就重新下载。
+          path: .local/windows-installer-hooks
+          key: windows-installer-hooks-${{ hashFiles('tools/windows_installer_hooks.py') }}
+          restore-keys: windows-installer-hooks-
+      - name: 编译钩子并实跑运行中覆盖安装与卸载
+        run: python tools/windows_installer_hooks.py
