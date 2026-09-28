@@ -101,6 +101,12 @@ export type UndecryptableSummary = {
   readonly senders: readonly string[];
 };
 
+/**
+ * 找回解不开的消息走到了哪一步：已经请 Agent 重发、还在等；
+ * 或者这台设备还没由主人签名，Agent 不会回答，要先验证这台设备。
+ */
+export type UndecryptableRecovery = 'idle' | 'requested' | 'needs_verification';
+
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];

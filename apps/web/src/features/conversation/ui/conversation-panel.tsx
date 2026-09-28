@@ -1,4 +1,5 @@
-import { ArrowDown, LockKeyhole, Radio, Search, UsersRound } from 'lucide-react';
+import { Button } from '@agent-room/ui-system';
+import { ArrowDown, LockKeyhole, Radio, Search, ShieldCheck, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   useCallback,
@@ -12,6 +13,7 @@ import {
 } from 'react';
 import type {
   MessageRoomProjection,
+  UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
 import type { Result } from '@/shared/result';
@@ -48,6 +50,8 @@ export type ConversationPanelProps = {
   >;
   readonly focusMessageId?: string | null;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
+  /** 打开“安全”页验证这台设备；不给就不显示按钮，只说要先验证。 */
+  readonly onOpenSecurity?: () => void;
   readonly messages: readonly RoomMessageSignal[];
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
@@ -57,8 +61,8 @@ export type ConversationPanelProps = {
   readonly submissionIds?: MessageSubmissionIdFactory;
   /** 这台设备解不开的加密消息；有的话替代“还没有消息”，或者放在记录最前面。 */
   readonly undecryptable?: UndecryptableSummary;
-  /** 已经请 Agent 重发这些消息的密钥、还在等。 */
-  readonly recovering?: boolean;
+  /** 找回这些消息走到了哪一步。 */
+  readonly recovery?: UndecryptableRecovery;
   readonly variant?: 'room' | 'direct';
 };
 
@@ -68,6 +72,7 @@ export function ConversationPanel({
   onLoadOlder,
   focusMessageId = null,
   onLatestDisplayed,
+  onOpenSecurity,
   messages,
   participants = emptyParticipants,
   publisher,
@@ -76,7 +81,7 @@ export function ConversationPanel({
   state,
   submissionIds,
   undecryptable,
-  recovering = false,
+  recovery = 'idle',
   variant = 'room',
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
@@ -373,7 +378,12 @@ export function ConversationPanel({
             <HistoryBoundary history={history} state={historyState} onLoad={loadOlder} />
           ) : null}
           {state === 'ready' && undecryptable !== undefined ? (
-            <UndecryptableNotice summary={undecryptable} names={names} recovering={recovering} />
+            <UndecryptableNotice
+              summary={undecryptable}
+              names={names}
+              recovery={recovery}
+              onOpenSecurity={onOpenSecurity}
+            />
           ) : null}
           {state === 'loading' ? (
             <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
@@ -492,11 +502,13 @@ const maxNamedUndecryptableSenders = 3;
 function UndecryptableNotice({
   summary,
   names,
-  recovering,
+  recovery,
+  onOpenSecurity,
 }: {
   readonly summary: UndecryptableSummary;
   readonly names: ReadonlyMap<string, string>;
-  readonly recovering: boolean;
+  readonly recovery: UndecryptableRecovery;
+  readonly onOpenSecurity: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
   const named = summary.senders
@@ -525,7 +537,20 @@ function UndecryptableNotice({
         {summary.reasons.map((reason) => (
           <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
         ))}
-        {recovering ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
+        {recovery === 'requested' ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
+        {recovery === 'needs_verification' ? (
+          <p>{t('conversation.undecryptable.verifyFirst')}</p>
+        ) : null}
+        {recovery === 'needs_verification' && onOpenSecurity !== undefined ? (
+          <Button
+            className="conversation-undecryptable__action"
+            icon={<ShieldCheck aria-hidden="true" />}
+            onClick={onOpenSecurity}
+            size="compact"
+          >
+            {t('conversation.undecryptable.verify')}
+          </Button>
+        ) : null}
       </div>
     </div>
   );

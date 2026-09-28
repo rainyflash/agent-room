@@ -9,7 +9,7 @@ import { useRoomMessages } from './room-messages-context';
 import type { MessageGateway, ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
-import { useRoomKeyRecoveryPending } from '@/features/messages/ui/room-key-recovery-context';
+import { useRoomKeyRecovery } from '@/features/messages/ui/room-key-recovery-context';
 import { projectMessageSignals } from '@/features/signals/adapters/message-signal-projector';
 import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
@@ -21,6 +21,8 @@ export type MessageLayerProps = {
   readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
+  /** 打开“安全”页：解不开的消息要先验证这台设备才能找回时，提示里给个按钮。 */
+  readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly roomId: string;
   readonly roomName: string;
@@ -36,6 +38,7 @@ export function MessageLayer({
   participants,
   catalogId,
   onLatestDisplayed,
+  onOpenSecurity,
   onSelectedMessageChange,
   roomId,
   roomName,
@@ -59,7 +62,7 @@ export function MessageLayer({
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const latestMessage = projectedMessages[0];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
-  const recovering = useRoomKeyRecoveryPending(roomId) > 0;
+  const recovery = useRoomKeyRecovery(roomId);
   const projectedSignals = useMemo(
     () =>
       projectMessageSignals(
@@ -101,8 +104,9 @@ export function MessageLayer({
               state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
             }
             {...(state.kind === 'ready' && state.room.undecryptable !== undefined
-              ? { recovering, undecryptable: state.room.undecryptable }
+              ? { recovery, undecryptable: state.room.undecryptable }
               : {})}
+            {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
           />
         </div>
         <section className="message-workspace__resources" hidden={view !== 'resources'}>

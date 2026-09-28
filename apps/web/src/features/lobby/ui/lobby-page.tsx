@@ -486,6 +486,7 @@ function ReadyLobby({
               focusedConversationMessageId={focusedConversationMessageId}
               participants={room.agents}
               catalogId={catalogId}
+              onOpenSecurity={onOpenSecurity}
               onSelectedMessageChange={onSelectedMessageChange}
               roomId={room.roomId}
               roomName={room.name}
@@ -497,6 +498,7 @@ function ReadyLobby({
             activeCatalogId={selectedDirectSessionId}
             controller={directSessions}
             onActiveSessionChange={onSelectedDirectSessionChange}
+            onOpenSecurity={onOpenSecurity}
             onSelectedMessageChange={onSelectedMessageChange}
             selectedMessageId={selectedMessageId}
             view={panelView}

@@ -1,8 +1,10 @@
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
 
 import type { RoomKeyRecoveryStatus } from '@/features/messages/adapters/matrix-room-key-recovery';
+import type { UndecryptableRecovery } from '@/features/messages/domain/message';
 
 const noRecovery: RoomKeyRecoveryStatus = {
+  awaitingVerification: () => 0,
   pending: () => 0,
   subscribe: () => () => undefined,
 };
@@ -22,11 +24,16 @@ export function RoomKeyRecoveryProvider({
   );
 }
 
-/** 这个房间里还在等 Agent 重发的会话数。 */
-export function useRoomKeyRecoveryPending(roomId: string): number {
+/** 这个房间里解不开的消息找回到了哪一步。 */
+export function useRoomKeyRecovery(roomId: string): UndecryptableRecovery {
   const recovery = useContext(RoomKeyRecoveryContext);
   return useSyncExternalStore(
     (listener) => recovery.subscribe(listener),
-    () => recovery.pending(roomId),
+    () => recoveryState(recovery, roomId),
   );
+}
+
+function recoveryState(recovery: RoomKeyRecoveryStatus, roomId: string): UndecryptableRecovery {
+  if (recovery.pending(roomId) > 0) return 'requested';
+  return recovery.awaitingVerification(roomId) > 0 ? 'needs_verification' : 'idle';
 }

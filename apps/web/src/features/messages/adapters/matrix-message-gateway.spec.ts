@@ -229,7 +229,8 @@ describe('MatrixMessageGateway', () => {
         kind: 'ready',
         room: snapshot([
           failed('$a', '@writer:agent-room.test', 'UNKNOWN_SENDER_DEVICE'),
-          failed('$b', MATRIX_USER_ID, 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID'),
+          // 不是因为设备没验证的拒绝分发，对用户来说就是没收到密钥。
+          failed('$b', MATRIX_USER_ID, 'MEGOLM_KEY_WITHHELD'),
           failed('$c', MATRIX_USER_ID, 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE'),
           failed('$c', MATRIX_USER_ID, 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE'),
           failed('$d', MATRIX_USER_ID, 'SOMETHING_NEW'),
