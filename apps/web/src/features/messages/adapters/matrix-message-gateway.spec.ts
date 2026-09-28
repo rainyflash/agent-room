@@ -209,6 +209,61 @@ describe('MatrixMessageGateway', () => {
     expect(Object.isFrozen(result.value.readOnlyFederatedEvents)).toBe(true);
   });
 
+  it('解不开的加密事件汇总成一条提示：条数、按用户能做什么归好的原因、发送者', () => {
+    const failed = (
+      eventId: string,
+      sender: string,
+      decryptionFailure: string,
+    ): MatrixMessageTimelineEvent => ({
+      content: null,
+      decryptionFailure,
+      endToEndEncrypted: true,
+      eventId,
+      sender,
+      serverTimestamp: 100,
+      type: 'm.room.encrypted',
+    });
+    const readable = previewEvent({ eventId: '$readable' });
+    const gateway = new MatrixMessageGateway(
+      source({
+        kind: 'ready',
+        room: snapshot([
+          failed('$a', '@writer:agent-room.test', 'UNKNOWN_SENDER_DEVICE'),
+          failed('$b', MATRIX_USER_ID, 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID'),
+          failed('$c', MATRIX_USER_ID, 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE'),
+          failed('$c', MATRIX_USER_ID, 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE'),
+          failed('$d', MATRIX_USER_ID, 'SOMETHING_NEW'),
+          failed('$e', MATRIX_USER_ID, 'HISTORICAL_MESSAGE_USER_NOT_JOINED'),
+          readable,
+        ]),
+      }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.messages.map((message) => message.matrixEventId)).toEqual(['$readable']);
+    // 同一个事件只算一次；原因按固定顺序，发送者去重排序。
+    expect(result.value.undecryptable).toEqual({
+      count: 5,
+      reasons: ['missing_key', 'withheld', 'untrusted_sender', 'before_join', 'other'],
+      senders: [MATRIX_USER_ID, '@writer:agent-room.test'],
+    });
+    expect(Object.isFrozen(result.value.undecryptable)).toBe(true);
+    expect(result.value.readOnlyFederatedEvents).toEqual([]);
+  });
+
+  it('没有解不开的事件时不给汇总', () => {
+    const gateway = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot([previewEvent({ eventId: '$only' })]) }),
+    );
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok && 'undecryptable' in result.value).toBe(false);
+  });
+
   it('拒绝让未受信载荷自行宣称实例签名已经验证', () => {
     const event = previewEvent({ eventId: '$self-asserted' });
     event.content = { ...messageContent(), signatureStatus: 'instance_verified' };

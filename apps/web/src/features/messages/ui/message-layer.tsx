@@ -98,6 +98,9 @@ export function MessageLayer({
             state={
               state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
             }
+            {...(state.kind === 'ready' && state.room.undecryptable !== undefined
+              ? { undecryptable: state.room.undecryptable }
+              : {})}
           />
         </div>
         <section className="message-workspace__resources" hidden={view !== 'resources'}>

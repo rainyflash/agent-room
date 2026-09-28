@@ -162,6 +162,61 @@ describe('MatrixSdkMessageSource', () => {
     ]);
   });
 
+  it('解不开的加密事件带着原因码交出去，不交 SDK 编的正文；原因变了或解开了就重建快照', () => {
+    const undecryptable = new FakeEvent('m.room.encrypted', '$utd', 10, {
+      wireType: 'm.room.encrypted',
+    });
+    undecryptable.failDecryption('MEGOLM_UNKNOWN_INBOUND_SESSION_ID');
+    const unknownReason = new FakeEvent('m.room.encrypted', '$unknown', 12, {
+      wireType: 'm.room.encrypted',
+    });
+    unknownReason.failDecryption(null);
+    const decrypting = new FakeEvent('m.room.encrypted', '$decrypting', 15, {
+      wireType: 'm.room.encrypted',
+    });
+    decrypting.decryption = deferred<undefined>().promise;
+    const preview = new FakeEvent(matrixMessagePreviewEventType, '$preview', 20).asEvent();
+    const room = new FakeRoom([
+      undecryptable.asEvent(),
+      unknownReason.asEvent(),
+      decrypting.asEvent(),
+      preview,
+    ]);
+    const { source } = harness(room);
+    const failed = (eventId: string, serverTimestamp: number, decryptionFailure: string) => ({
+      content: null,
+      decryptionFailure,
+      endToEndEncrypted: true,
+      eventId,
+      sender: '@agent:agent-room.test',
+      serverTimestamp,
+      type: 'm.room.encrypted',
+    });
+
+    // 还在解密的事件先不算：一会儿就知道是消息还是解不开。
+    const first = snapshot(source.read(ROOM_ID));
+    expect(first.timelineEvents).toEqual([
+      failed('$utd', 10, 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID'),
+      failed('$unknown', 12, 'UNKNOWN_ERROR'),
+      timelineEvent(matrixMessagePreviewEventType, '$preview', 20),
+    ]);
+    expect(snapshot(source.read(ROOM_ID))).toBe(first);
+
+    undecryptable.failDecryption('MEGOLM_KEY_WITHHELD');
+    const withheld = snapshot(source.read(ROOM_ID));
+    expect(withheld).not.toBe(first);
+    expect(withheld.timelineEvents[0]).toEqual(failed('$utd', 10, 'MEGOLM_KEY_WITHHELD'));
+
+    undecryptable.decryptAs(matrixMessagePreviewEventType);
+    const decrypted = snapshot(source.read(ROOM_ID));
+    expect(decrypted.timelineEvents[0]).toMatchObject({
+      eventId: '$utd',
+      endToEndEncrypted: true,
+      type: matrixMessagePreviewEventType,
+    });
+    expect(decrypted.timelineEvents[0]).not.toHaveProperty('decryptionFailure');
+  });
+
   it('SDK 模块加载前先读实时时间线，加载好后只通知读过的房间', async () => {
     const room = new FakeRoom([new FakeEvent(matrixMessagePreviewEventType, '$a', 1).asEvent()]);
     const loading = deferred<MatrixFilterClass>();
@@ -489,6 +544,7 @@ function deferred<T>() {
 class FakeEvent {
   decryption: Promise<undefined> | null = null;
   eventId: string;
+  failure: { readonly reason: string | null } | null = null;
   redacted = false;
   type: string;
   readonly #content: { readonly eventType: string };
@@ -511,6 +567,22 @@ class FakeEvent {
   decryptAs(type: string): void {
     this.type = type;
     this.decryption = null;
+    this.failure = null;
+  }
+
+  /** 和 SDK 一样：解不开时类型变成 m.room.message，原因记在事件上。 */
+  failDecryption(reason: string | null): void {
+    this.type = 'm.room.message';
+    this.decryption = null;
+    this.failure = { reason };
+  }
+
+  get decryptionFailureReason(): string | null {
+    return this.failure?.reason ?? null;
+  }
+
+  isDecryptionFailure(): boolean {
+    return this.failure !== null;
   }
 
   asEvent(): MatrixEvent {

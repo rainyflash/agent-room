@@ -42,6 +42,8 @@ const maxNeighbouringTimelines = 1_000;
 
 export type MatrixMessageTimelineEvent = {
   readonly content: unknown;
+  /** 这台设备解不开时 SDK 给的原因码（DecryptionFailureCode）；解开了或没加密时不给。 */
+  readonly decryptionFailure?: string;
   readonly endToEndEncrypted: boolean;
   readonly eventId: string | undefined;
   readonly sender: string | undefined;
@@ -78,6 +80,7 @@ type HistoryEventSignature = {
   readonly encrypted: boolean;
   readonly event: MatrixEvent;
   readonly eventId: string | undefined;
+  readonly failure: string | null;
   readonly redacted: boolean;
   readonly replacement: MatrixEvent | null;
   readonly serverTimestamp: number;
@@ -312,7 +315,14 @@ function buildSnapshot(
   const timelineEvents: MatrixMessageTimelineEvent[] = [];
   forEachHistoryEvent(live, (event) => {
     history.push(signature(event));
-    if (isProjectedTimelineEvent(event)) timelineEvents.push(toTimelineEvent(event));
+    if (isProjectedTimelineEvent(event)) {
+      timelineEvents.push(toTimelineEvent(event));
+      return;
+    }
+    // 解不开的事件不知道原本是什么，交给网关汇总成一条提示，不能不声不响地丢掉：
+    // 否则房间里全是解不开的消息时，界面只说“还没有消息”。
+    const failure = decryptionFailure(event);
+    if (failure !== null) timelineEvents.push(toUndecryptableEvent(event, failure));
   });
   const moderationEvents = [...(moderation?.values() ?? [])];
   for (const event of moderationEvents) timelineEvents.push(toTimelineEvent(event));
@@ -335,6 +345,7 @@ function signature(event: MatrixEvent): HistoryEventSignature {
     encrypted: event.isEncrypted(),
     event,
     eventId: event.getId(),
+    failure: decryptionFailure(event),
     redacted: event.isRedacted(),
     replacement: event.replacingEvent(),
     serverTimestamp: event.getTs(),
@@ -343,8 +354,8 @@ function signature(event: MatrixEvent): HistoryEventSignature {
 }
 
 /**
- * 逐个比对，不分配数组：解密完成、解密失败后重试成功、撤回、本地回显换成服务器事件、
- * 编辑替换，都会让其中一项变化。
+ * 逐个比对，不分配数组：解密完成、解密失败后重试成功、失败原因变了（比如后来收到拒绝分发的通知）、
+ * 撤回、本地回显换成服务器事件、编辑替换，都会让其中一项变化。
  */
 function sameHistory(history: readonly HistoryEventSignature[], live: EventTimeline): boolean {
   let index = 0;
@@ -356,6 +367,7 @@ function sameHistory(history: readonly HistoryEventSignature[], live: EventTimel
       expected.eventId === event.getId() &&
       expected.type === event.getType() &&
       expected.encrypted === event.isEncrypted() &&
+      expected.failure === decryptionFailure(event) &&
       expected.redacted === event.isRedacted() &&
       expected.serverTimestamp === event.getTs() &&
       expected.replacement === event.replacingEvent()
@@ -399,7 +411,7 @@ async function settleDecryption(client: MatrixClient, live: EventTimeline): Prom
     )
       pending.push(client.decryptEventIfNeeded(event));
   });
-  // 解密失败记在事件自己身上（投影时会跳过），这里只等每个尝试结束。
+  // 解密失败记在事件自己身上（投影时汇总成一条提示），这里只等每个尝试结束。
   await Promise.allSettled(pending);
 }
 
@@ -469,4 +481,22 @@ function toTimelineEvent(event: MatrixEvent): MatrixMessageTimelineEvent {
     serverTimestamp: event.getTs(),
     type: event.getType(),
   });
+}
+
+/** 解密失败的事件只留下谁、什么时候、为什么；SDK 替它编的正文不往外交。 */
+function toUndecryptableEvent(event: MatrixEvent, failure: string): MatrixMessageTimelineEvent {
+  return Object.freeze({
+    content: null,
+    decryptionFailure: failure,
+    endToEndEncrypted: true,
+    eventId: event.getId(),
+    sender: event.getSender(),
+    serverTimestamp: event.getTs(),
+    type: event.getWireType(),
+  });
+}
+
+function decryptionFailure(event: MatrixEvent): string | null {
+  if (!event.isDecryptionFailure()) return null;
+  return event.decryptionFailureReason ?? 'UNKNOWN_ERROR';
 }
