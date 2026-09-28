@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from tools.windows_installer_acceptance import (
+    IMAGE_RELEASE_DELAY_SECONDS,
+    ExecutableImageHold,
+    RunningRuntime,
     WindowsInstallerAcceptanceFailure,
     acceptance_environment,
     ensure_clean_install_registration,
     installed_desktop_version,
+    mark_runtime_as_previous_build,
+    runtime_digests,
+    upgrade_while_image_is_released_late,
     verify_cli_version,
+    verify_install_aborts_while_image_is_held,
+    verify_runtime_digests,
     locate_installed_layout,
     pe_subsystem,
     verify_desktop_is_windowless,
@@ -23,6 +34,12 @@ from tools.windows_installer_acceptance import (
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_HOOKS = ROOT / "apps" / "desktop" / "src-tauri" / "windows" / "hooks.nsh"
 DESKTOP_MAIN = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "main.rs"
+RUNTIME_IMAGES = ("agent-room-desktop.exe", "agent-room-bridge.exe", "agent-room-mcp.exe", "agent-room.exe")
+
+
+def write_layout(root: Path) -> None:
+    for filename in (*RUNTIME_IMAGES, "uninstall.exe"):
+        root.joinpath(filename).write_bytes(f"binary {filename}".encode())
 
 
 def portable_executable(subsystem: int, *, magic: int = 0x20B) -> bytes:
@@ -62,6 +79,43 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
         self.assertIn('$SYSDIR\\taskkill.exe" /IM agent-room.exe', source)
         self.assertIn("Push $0", source)
         self.assertGreaterEqual(source.count("Pop $0"), 5)
+
+    def test_installer_hooks_wait_until_runtime_is_gone_and_files_are_writable(self) -> None:
+        source = INSTALLER_HOOKS.read_text(encoding="utf-8")
+
+        # 固定睡一会儿就写文件，桌面端退出得慢时会被 NSIS 静默跳过，留下新旧混装。
+        self.assertNotIn("Sleep 750", source)
+        for image in RUNTIME_IMAGES:
+            self.assertIn(f'!insertmacro AGENT_ROOM_KILL_IF_RUNNING "{image}"', source)
+            self.assertIn(f'!insertmacro AGENT_ROOM_MARK_IF_LOCKED "{image}"', source)
+        self.assertIn("nsis_tauri_utils::FindProcessCurrentUser", source)
+        self.assertIn("nsis_tauri_utils::KillProcessCurrentUser", source)
+        # 与 File 同样的写权限和共享方式，只开已有文件；只把共享冲突和锁冲突当作仍被占用。
+        self.assertIn("kernel32::CreateFileW(w r3, i 0x40000000, i 1, p 0, i 3,", source)
+        self.assertIn("${If} $3 = 32", source)
+        self.assertIn("${OrIf} $3 = 33", source)
+        self.assertIn("!define AGENT_ROOM_STOP_TIMEOUT_MS 20000", source)
+        self.assertIn("kernel32::GetTickCount", source)
+
+    def test_installer_hooks_fail_loudly_instead_of_skipping_files(self) -> None:
+        source = INSTALLER_HOOKS.read_text(encoding="utf-8")
+
+        # 必须写在所有宏之前：模板 !include 本文件后，这一行才对模板里的 File 生效。
+        self.assertLess(source.index("AllowSkipFiles off"), source.index("!macro"))
+        self.assertIn("MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION", source)
+        self.assertIn("/SD IDCANCEL IDRETRY", source)
+        abort = source[source.index("!macro AGENT_ROOM_ABORT_STILL_RUNNING"):]
+        abort = abort[: abort.index("!macroend")]
+        self.assertIn("${If} ${Silent}", abort)
+        self.assertIn('Abort "${AGENT_ROOM_STILL_RUNNING_STOPPED}"', abort)
+        # 中止前把保存的寄存器还回去，和正常路径一样四进四出。
+        self.assertEqual(
+            [line.strip() for line in abort.splitlines() if line.strip().startswith("Pop ")],
+            ["Pop $3", "Pop $2", "Pop $1", "Pop $0"],
+        )
+        prompt = source[source.index("!define AGENT_ROOM_STILL_RUNNING_PROMPT"):].splitlines()[0]
+        self.assertIn("Agent Room is still running", prompt)
+        self.assertIn("Agent Room 仍在运行", prompt)
 
     def test_acceptance_environment_isolates_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -185,6 +239,99 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
             root.joinpath("residual.exe").write_bytes(b"binary")
             with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "residual.exe"):
                 wait_for_install_files_removed(root, timeout_seconds=1)
+
+    def test_previous_build_marker_changes_every_runtime_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_layout(root)
+            layout = locate_installed_layout(root)
+            payload = runtime_digests(layout)
+            installed = {name: root.joinpath(name).read_bytes() for name in RUNTIME_IMAGES}
+
+            previous = mark_runtime_as_previous_build(layout)
+
+            self.assertEqual(set(previous), set(RUNTIME_IMAGES))
+            self.assertTrue(all(previous[name] != payload[name] for name in RUNTIME_IMAGES))
+            verify_runtime_digests(layout, previous, "标记后")
+
+            # 复现混装：安装器换掉了三个 sidecar，却跳过了还被占着的桌面端。
+            for name in RUNTIME_IMAGES[1:]:
+                root.joinpath(name).write_bytes(installed[name])
+            with self.assertRaises(WindowsInstallerAcceptanceFailure) as failure:
+                verify_runtime_digests(layout, payload, "运行中原地升级后")
+            self.assertIn("agent-room-desktop.exe", str(failure.exception))
+            self.assertNotIn("agent-room-bridge.exe", str(failure.exception))
+
+    @unittest.skipUnless(os.name == "nt", "映像占用只在 Windows 上有意义")
+    def test_image_hold_blocks_writes_until_released(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "held.exe"
+            shutil.copyfile(sys.executable, executable)
+
+            with ExecutableImageHold(executable) as hold:
+                with self.assertRaises(PermissionError):
+                    executable.open("r+b")
+                hold.release()
+                with executable.open("r+b"):
+                    pass
+
+    def test_install_must_abort_while_desktop_image_is_held(self) -> None:
+        layout = MagicMock()
+        install = ("setup.exe", "/S")
+        unchanged = {"agent-room-desktop.exe": "previous"}
+        for code, after, message in (
+            (0, unchanged, "退出码 0"),
+            (2, {"agent-room-desktop.exe": "replaced"}, "agent-room-desktop.exe"),
+        ):
+            with self.subTest(code=code), patch(
+                "tools.windows_installer_acceptance.ExecutableImageHold"
+            ), patch(
+                "tools.windows_installer_acceptance.run_captured",
+                return_value=subprocess.CompletedProcess(install, code, "", ""),
+            ), patch("tools.windows_installer_acceptance.runtime_digests", return_value=after):
+                with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, message):
+                    verify_install_aborts_while_image_is_held(install, layout, unchanged)
+
+        with patch("tools.windows_installer_acceptance.ExecutableImageHold") as hold, patch(
+            "tools.windows_installer_acceptance.run_captured",
+            return_value=subprocess.CompletedProcess(install, 2, "Agent Room is still running", ""),
+        ) as run, patch("tools.windows_installer_acceptance.runtime_digests", return_value=unchanged):
+            verify_install_aborts_while_image_is_held(install, layout, unchanged)
+
+        hold.assert_called_once_with(layout.desktop)
+        run.assert_called_once_with(install, timeout_seconds=300)
+
+    def test_running_upgrade_releases_the_image_only_after_the_desktop_is_gone(self) -> None:
+        steps = MagicMock()
+        runtime = RunningRuntime(desktop=MagicMock(), mcp=MagicMock(), bridge_pid=42)
+        layout = MagicMock()
+        install = ("setup.exe", "/S")
+        upgrade = MagicMock()
+        upgrade.poll.return_value = 0
+        steps.start.return_value = upgrade
+        steps.hold.return_value.__enter__.return_value = steps.held
+        with patch("tools.windows_installer_acceptance.ExecutableImageHold", steps.hold), patch(
+            "tools.windows_installer_acceptance.start_captured", steps.start
+        ), patch("tools.windows_installer_acceptance.wait_for_process_exit", steps.wait_exit), patch(
+            "tools.windows_installer_acceptance.time.sleep", steps.sleep
+        ), patch("tools.windows_installer_acceptance.finish_checked", steps.finish), patch(
+            "tools.windows_installer_acceptance.wait_for_runtime_exit", steps.wait_runtime
+        ):
+            upgrade_while_image_is_released_late(install, layout, runtime)
+
+        self.assertEqual(
+            [entry for entry in steps.mock_calls if not entry[0].startswith(("hold().", "start()."))],
+            [
+                call.hold(layout.desktop),
+                call.start(install),
+                call.wait_exit(runtime.desktop, "桌面端"),
+                call.sleep(IMAGE_RELEASE_DELAY_SECONDS),
+                call.held.release(),
+                call.finish(upgrade, "运行中原地升级", timeout_seconds=300),
+                call.wait_runtime(runtime, ""),
+            ],
+        )
+        upgrade.kill.assert_not_called()
 
 
 if __name__ == "__main__":
