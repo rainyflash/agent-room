@@ -1,13 +1,18 @@
-use std::{num::NonZeroU16, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    num::NonZeroU16,
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 
 use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixClientFactory,
     MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixPowerLevel,
-    MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
-    MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
-    MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent,
-    MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
+    MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAccess, MatrixRoomAliasLocalpart,
+    MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
+    MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
 };
 use agent_room_bridge_core::handoffs::{
     EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
@@ -379,6 +384,8 @@ struct MatrixSdkGateway {
     client: Client,
     metadata: MatrixSessionMetadata,
     sync_timeline_limit: NonZeroU16,
+    /// 见过已加密的房间。Matrix 不允许关掉加密，所以记住以后不必再问。
+    encrypted_rooms: Mutex<HashSet<matrix_sdk::ruma::OwnedRoomId>>,
 }
 
 impl MatrixGateway for MatrixSdkGateway {
@@ -713,6 +720,82 @@ impl MatrixRoomAuthorityGateway for MatrixSdkGateway {
             }))
         })
     }
+
+    /// 等消息的 Agent 每秒都会读一次消息，每次都会走到这里。完整的权威查询要四个请求；这里
+    /// 只查成员资格，加密状态见过一次“已加密”就记住（关不掉），所以加密房间每次只要一个请求。
+    fn inspect_room_access<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomAccess>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::InspectRoomAuthority;
+            let room_id = parse_room_id(room_id, operation)?;
+            let user_id = parse_user_id(user_id, operation)?;
+            let inspector_user_id = parse_user_id(self.metadata.user_id(), operation)?;
+            if !is_joined(&self.client, &room_id, &inspector_user_id, operation).await? {
+                return Err(MatrixFailure::new(operation, MatrixFailureKind::Forbidden));
+            }
+            if inspector_user_id != user_id
+                && !is_joined(&self.client, &room_id, &user_id, operation).await?
+            {
+                return Ok(MatrixRoomAccess::NotJoined);
+            }
+            Ok(MatrixRoomAccess::Joined(
+                self.room_encryption(room_id, operation).await?,
+            ))
+        })
+    }
+}
+
+impl MatrixSdkGateway {
+    async fn room_encryption(
+        &self,
+        room_id: matrix_sdk::ruma::OwnedRoomId,
+        operation: MatrixOperation,
+    ) -> MatrixResult<MatrixRoomEncryption> {
+        let known = self
+            .encrypted_rooms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&room_id);
+        if known {
+            return Ok(MatrixRoomEncryption::EndToEnd);
+        }
+        let encryption = get_state_content::<RoomEncryptionEventContent>(
+            &self.client,
+            room_id.clone(),
+            StateEventType::RoomEncryption,
+            String::new(),
+            operation,
+        )
+        .await?;
+        if encryption.is_none() {
+            return Ok(MatrixRoomEncryption::Unencrypted);
+        }
+        self.encrypted_rooms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(room_id);
+        Ok(MatrixRoomEncryption::EndToEnd)
+    }
+}
+
+async fn is_joined(
+    client: &Client,
+    room_id: &matrix_sdk::ruma::OwnedRoomId,
+    user_id: &OwnedUserId,
+    operation: MatrixOperation,
+) -> MatrixResult<bool> {
+    Ok(get_state_content::<RoomMemberEventContent>(
+        client,
+        room_id.clone(),
+        StateEventType::RoomMember,
+        user_id.to_string(),
+        operation,
+    )
+    .await?
+    .is_some_and(|content| content.membership == MembershipState::Join))
 }
 
 impl MatrixSdkGateway {
@@ -769,6 +852,7 @@ fn sdk_connection_parts(
         client,
         metadata,
         sync_timeline_limit,
+        encrypted_rooms: Mutex::default(),
     });
     Ok((session, sdk_gateway))
 }

@@ -6,7 +6,7 @@ use agent_room_application::ports::{
     MatrixAgentUserRegistration, MatrixClientFactory, MatrixConnection, MatrixCreateRoom,
     MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind,
     MatrixGateway, MatrixLogin, MatrixReceipt, MatrixReceiptKind, MatrixRecoveryAction,
-    MatrixRetryPolicy, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+    MatrixRetryPolicy, MatrixRoomAccess, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixRoomVisibility, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest,
     MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
@@ -1294,6 +1294,14 @@ async fn verify_receipt_and_leave(scenario: &RoomScenario, message_flow: Message
         .expect("成员权威状态可读取");
     assert!(agent_authority.is_joined());
     assert!(!agent_authority.power_level().is_at_least(50));
+    // 读消息用的轻量查询与完整查询结论一致。
+    let agent_access = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_access(&scenario.room_id, agent_user_id)
+        .await
+        .expect("成员的读写资格可读取");
+    assert_eq!(agent_access, MatrixRoomAccess::from(agent_authority));
 
     scenario
         .agent
@@ -1319,6 +1327,13 @@ async fn verify_receipt_and_leave(scenario: &RoomScenario, message_flow: Message
         .await
         .expect("离房后的权威状态可读取");
     assert!(!departed_authority.is_joined());
+    let departed_access = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_access(&scenario.room_id, agent_user_id)
+        .await
+        .expect("离房后的读写资格可读取");
+    assert_eq!(departed_access, MatrixRoomAccess::NotJoined);
     leave_with_retry(scenario.developer.gateway(), &scenario.room_id).await;
     let stale_snapshot = scenario
         .developer
@@ -1327,6 +1342,13 @@ async fn verify_receipt_and_leave(scenario: &RoomScenario, message_flow: Message
         .await
         .expect_err("校验者离房后不得把离房快照当作当前状态");
     assert_eq!(stale_snapshot.kind(), MatrixFailureKind::Forbidden);
+    let stale_access = scenario
+        .developer
+        .room_authority_gateway()
+        .inspect_room_access(&scenario.room_id, agent_user_id)
+        .await
+        .expect_err("校验者离房后轻量查询同样拒绝");
+    assert_eq!(stale_access.kind(), MatrixFailureKind::Forbidden);
 }
 
 fn factory(

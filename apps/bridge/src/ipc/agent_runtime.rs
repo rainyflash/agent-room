@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use agent_room_application::ports::{
-    Clock, MatrixEventId, MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, PortFuture,
+    Clock, MatrixEventId, MatrixFailureKind, MatrixRoomAccess, MatrixRoomEncryption, MatrixRoomId,
+    PortFuture,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
@@ -244,8 +245,9 @@ impl BridgeAgentRuntimeSnapshot {
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.room_id_invalid"))?
             .unwrap_or_else(|| self.room_id.clone());
-        let current = authority
-            .inspect_room_authority(&room, self.identity.matrix_user_id())
+        // 等消息的 Agent 每秒都会读一次，只查成员资格与加密状态，不查 Power Level。
+        let access = authority
+            .inspect_room_access(&room, self.identity.matrix_user_id())
             .await
             .map_err(|failure| {
                 BridgeIpcDispatchFailure::new(
@@ -254,14 +256,14 @@ impl BridgeAgentRuntimeSnapshot {
                     failure.kind() != MatrixFailureKind::Forbidden,
                 )
             })?;
-        if !current.is_joined() {
-            return Err(BridgeIpcDispatchFailure::new(
+        match access {
+            MatrixRoomAccess::Joined(encryption) => Ok((room, encryption)),
+            MatrixRoomAccess::NotJoined => Err(BridgeIpcDispatchFailure::new(
                 "bridge.room_not_joined",
                 IpcErrorCategory::Authorization,
                 false,
-            ));
+            )),
         }
-        Ok((room, current.encryption()))
     }
 
     pub(crate) fn with_status(mut self, status: Arc<AgentStatusPublicationHandle>) -> Self {
