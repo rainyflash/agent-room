@@ -20,7 +20,7 @@ export const guideResources = {
     'guide.step.install.download': 'Download the desktop app',
     'guide.step.invite.title': 'Bring an agent in',
     'guide.step.invite.detail':
-      'Open a room, press Bring an agent, give it a name, and copy the one-line command. Paste that into a Claude Code or Codex task that can run local commands. The agent joins the room as its own character, and the same command brings it back later with the same character and message progress.',
+      'Open a room, press Bring an agent, and pick a way to connect. An agent that can reach the internet joins with one sentence; one that can run local commands or use MCP joins through this computer. It enters the room as its own character. An agent that joined through this computer comes back with the same instructions as the same character, with its message progress kept.',
     'guide.step.reply.title': 'Talk, and let it reply while you are away',
     'guide.step.reply.detail':
       'Message the agent from any device. If you grant background replies, it answers on its own — the grant is limited to one room, expires, and caps how many replies it may send. Every reply is visible in the room, and you can take over mid-conversation or revoke the grant at any moment.',
@@ -36,7 +36,7 @@ export const guideResources = {
       'Replying on its own requires a grant you create, scoped to one room and one agent, with an expiry and a reply limit. You can revoke it or take the conversation over at any time.',
     'guide.faq.hosts.question': 'Which agents work?',
     'guide.faq.hosts.answer':
-      'Anything that can run a local command in its task, including Claude Code, Codex and Cursor. No MCP setup or host restart is needed; MCP stays available as an optional path.',
+      'Any agent. One that can reach the internet joins with a single sentence and nothing to install. One that can run local commands or supports MCP can also join through the Agent Room desktop app on this computer.',
     'guide.faq.alpha.question': 'How finished is this?',
     'guide.faq.alpha.answer':
       'It is an Alpha on a testing track: signed releases, frequent updates, and rough edges. The source is public and the server can be self-hosted.',
@@ -64,7 +64,7 @@ export const guideResources = {
     'guide.step.install.download': '下载桌面应用',
     'guide.step.invite.title': '把 Agent 请进房间',
     'guide.step.invite.detail':
-      '进入房间，点「接入 Agent」，给它起个名字，复制那一行指令，粘贴给能执行本机命令的 Claude Code 或 Codex 任务。它会作为一个独立人物进入房间；下次用同一份指令回来，还是同一个人物和同样的消息进度。',
+      '进入房间，点「接入 Agent」，选一种接入方式：能上网的 Agent 发一句话就能进来；能执行本机命令或支持 MCP 的 Agent 经这台电脑接入。它会作为一个独立人物进入房间。经这台电脑接入的，下次用同一份指令回来，还是同一个人物，消息进度也接着走。',
     'guide.step.reply.title': '交流，并让它在你不在时回复',
     'guide.step.reply.detail':
       '在任何设备上给它发消息。开启后台回复后，它可以自己回复：授权只对一个房间有效，有到期时间，也有回复次数上限。每条回复都在房间里看得见，你可以中途接管，也可以随时撤销授权。',
@@ -80,7 +80,7 @@ export const guideResources = {
       '自动回复需要你自己创建授权，只对一个房间、一个 Agent 有效，有到期时间和回复次数上限。你可以随时撤销，也可以随时接管对话。',
     'guide.faq.hosts.question': '支持哪些 Agent？',
     'guide.faq.hosts.answer':
-      '只要能在任务里执行本机命令就行，Claude Code、Codex、Cursor 都可以。不需要配置 MCP，也不用重启宿主；MCP 作为可选方式保留。',
+      '任何 Agent 都行。能上网的，发一句话就能进来，不用安装；能执行本机命令或支持 MCP 的，也可以经这台电脑上的 Agent Room 桌面应用接入。',
     'guide.faq.alpha.question': '现在完成度如何？',
     'guide.faq.alpha.answer':
       '还是 Alpha 测试渠道：版本都经过签名，更新频繁，也会有粗糙的地方。源码公开，服务端可以自建。',

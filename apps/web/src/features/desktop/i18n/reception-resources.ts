@@ -2,7 +2,7 @@ export const receptionResources = {
   en: {
     'reception.agentDescription': 'Background replies for this agent in this room.',
     'reception.agentUnavailable':
-      'This agent has no background task registered here. Register its Codex or Claude Code task using the request above. For an agent on another computer, manage it there.',
+      'This agent has no background task registered here. Send it the registration request above. For an agent on another computer, manage it there.',
     'reception.starting': 'Starting reception…',
     'reception.reconnecting': 'Reconnecting; replies are paused',
     'reception.enable': 'Enable background replies',
@@ -11,11 +11,11 @@ export const receptionResources = {
     'reception.manual': 'Use an existing authorization or custom executable',
     'reception.title': 'Reception tasks',
     'reception.description':
-      'Keep a bound Codex or Claude Code task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
+      'Keep a registered agent task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
     'reception.empty':
-      'No reception tasks yet. Ask your Codex or Claude Code task to register for reception, then choose a room grant below.',
+      'No reception tasks yet. Ask an agent task to register for reception, then choose a room grant below.',
     'reception.prompt':
-      'Register this exact task for Agent Room background replies. If connected by CLI, use the same installed executable and --profile value to run register --host codex (or claude-code), with the actual --workspace. Codex may use CODEX_THREAD_ID; otherwise supply the exact --task-id. If connected by MCP, use agent_room_register_reception with this task’s sessionId, accurate hostType and workspace; Codex may use the host’s task metadata. Never guess a task ID or select the latest task. Registration alone must not enable replies.',
+      'Register this exact task for Agent Room background replies. If connected by CLI, use the same installed executable and --profile value to run register with the actual --workspace; register --help lists the supported tools and how the task is recognized. If connected by MCP, use agent_room_register_reception with this task’s sessionId, accurate hostType and workspace. Never guess a task ID or select the latest task. Registration alone must not enable replies.',
     'reception.copy': 'Copy registration request',
     'reception.copied': 'Copied',
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
@@ -70,7 +70,7 @@ export const receptionResources = {
   'zh-CN': {
     'reception.agentDescription': '管理这个 Agent 在本房间的后台回复。',
     'reception.agentUnavailable':
-      '这个 Agent 尚未在本机登记后台任务。可将上面的登记请求交给它的 Codex 或 Claude Code 任务；在其他电脑运行的 Agent，需要到那台电脑上管理。',
+      '这个 Agent 尚未在本机登记后台任务。可以把上面的登记请求发给它；在其他电脑运行的 Agent，需要到那台电脑上管理。',
     'reception.starting': '正在启动接待…',
     'reception.reconnecting': '正在恢复连接，回复暂时中断',
     'reception.enable': '开启后台回复',
@@ -79,11 +79,10 @@ export const receptionResources = {
     'reception.manual': '使用已有授权或指定程序',
     'reception.title': '接待任务',
     'reception.description':
-      '让绑定的 Codex 或 Claude Code 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
-    'reception.empty':
-      '还没有接待任务。先让 Codex 或 Claude Code 任务登记接待，再在这里选择房间授权。',
+      '让登记过的 Agent 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
+    'reception.empty': '还没有接待任务。先让 Agent 任务登记接待，再在这里选择房间授权。',
     'reception.prompt':
-      '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile，执行 register --host codex（或 claude-code），带上真实 --workspace。Codex 可使用 CODEX_THREAD_ID，否则提供准确的 --task-id。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录；Codex 可由工具读取宿主任务元数据。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
+      '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile 执行 register，带上真实 --workspace；支持哪些工具、怎么识别任务，看 register --help。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
     'reception.copy': '复制登记请求',
     'reception.copied': '已复制',
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',

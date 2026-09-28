@@ -192,10 +192,14 @@ async function readyToCopy() {
     expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
   });
 }
-function selectMcp() {
-  fireEvent.click(screen.getByText('Other connection options'));
-  fireEvent.click(screen.getByRole('radio', { name: 'MCP compatibility' }));
+function chooseMethod(name: 'Network' | 'MCP' | 'Command line') {
+  fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${name}`, 'u') }));
 }
+/** 接入方式存在本机；本机接入的用例从命令行或 MCP 开始。 */
+function rememberMethod(method: 'network' | 'mcp' | 'cli') {
+  window.localStorage.setItem('agent-room.invite-method', method);
+}
+const appNames = /Codex|Claude Code|Cursor|CODEX_/u;
 function profileIn(prompt: string): string {
   const key = /--profile ([0-9a-f-]+)/u.exec(prompt)?.[1];
   if (key === undefined) throw new Error('Invitation has no task profile');
@@ -254,6 +258,7 @@ describe('AgentInviteDialog', () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ available: false }).value);
+    chooseMethod('Command line');
     expect(screen.getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
       'https://download.test/agent-room.exe',
@@ -287,23 +292,81 @@ describe('AgentInviteDialog', () => {
     expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible();
   });
 
-  it('桌面端把只凭网络接入收在其他方式里', async () => {
-    renderDialog(gateway().value);
-    await readyToCopy();
-    expect(screen.queryByRole('button', { name: 'Copy for any agent' })).toBeNull();
-    fireEvent.click(screen.getByText('Or: just use the internet'));
-    expect(screen.getByRole('button', { name: 'Copy for any agent' })).toBeVisible();
-  });
-
-  it('默认 CLI 无需 MCP 配置；新任务独立，旧人物可明确恢复', async () => {
+  it('三种接入方式平级，默认网络接入，记住上次的选择，全程不出现具体 Agent 应用的名字', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const runtime = gateway({ installed: ['codex', 'claude-code', 'cursor'] });
+    const skillStatus = vi.fn(runtime.value.skillStatus?.bind(runtime.value));
+    const first = renderDialog({ ...runtime.value, skillStatus });
+    expect(screen.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('radio', { name: /^MCP/u })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('button', { name: 'Copy for any agent' })).toBeVisible();
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(appNames);
+
+    chooseMethod('Command line');
+    await readyToCopy();
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(appNames);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledOnce();
+    });
+    expect(copied(writeText, 0)).not.toMatch(appNames);
+    expect(copied(writeText, 0)).toContain('register --help');
+    chooseMethod('MCP');
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(appNames);
+    // 不再为某个应用检查或安装技能。
+    expect(skillStatus).not.toHaveBeenCalled();
+    expect(runtime.installSkill).not.toHaveBeenCalled();
+    first.unmount();
+
+    renderDialog(runtime.value);
+    expect(screen.getByRole('radio', { name: /^MCP/u })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('方向键在三种接入方式间切换，焦点跟着走', () => {
+    renderDialog(gateway().value);
+    const network = screen.getByRole('radio', { name: /^Network/u });
+    network.focus();
+    fireEvent.keyDown(network, { key: 'ArrowRight' });
+    const mcp = screen.getByRole('radio', { name: /^MCP/u });
+    expect(mcp).toHaveAttribute('aria-checked', 'true');
+    expect(mcp).toHaveFocus();
+    fireEvent.keyDown(mcp, { key: 'ArrowLeft' });
+    fireEvent.keyDown(screen.getByRole('radio', { name: /^Network/u }), { key: 'ArrowLeft' });
+    expect(screen.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('网络接入不在这台电脑上挂出邀请；换成本机方式才挂，换回来就撤回', async () => {
+    const runtime = gateway({ offers: true });
+    renderDialog(runtime.value);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runtime.offerInvitation).not.toHaveBeenCalled();
+    chooseMethod('Command line');
+    await waitFor(() => {
+      expect(runtime.offerInvitation).toHaveBeenCalled();
+    });
+    const offered = runtime.offerInvitation.mock.calls[0]?.[0];
+    chooseMethod('Network');
+    await waitFor(() => {
+      expect(runtime.withdrawInvitation).toHaveBeenCalledWith(offered?.sessionKey);
+    });
+  });
+
+  it('命令行无需 MCP 配置；新任务独立，旧人物可明确恢复', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
     const runtime = gateway({ configured: false });
     const planHost = vi.fn(runtime.value.planHost?.bind(runtime.value));
     const value = { ...runtime.value, planHost };
     const first = renderDialog(value);
     await readyToCopy();
-    expect(screen.queryByRole('button', { name: 'Set up Codex in one click' })).toBeNull();
     // 名字默认留给 Agent 自己起：邀请里不带名字，说明里请它用 --name 起一个。
     const name = screen.getByLabelText('Agent name');
     expect(name).toHaveValue('');
@@ -345,52 +408,10 @@ describe('AgentInviteDialog', () => {
     expect(copied(writeText, 2)).toBe(prompt);
   });
 
-  it('装上 Claude Code 的技能后，接入说明缩成几行；技能过期时提示更新', async () => {
-    const writeText = clipboardMock();
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway({ installed: ['claude-code'], skill: 'outdated' });
-    renderDialog(runtime.value);
-    await readyToCopy();
-    // 技能过期：说明仍是完整版，按钮写「更新」。
-    const update = await screen.findByRole('button', { name: 'Update the skill for Claude Code' });
-    fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
-    await screen.findByText('Copied. Paste it to your agent.');
-    const long = copied(writeText, 0);
-    expect(long).toContain('ack --event');
-    expect(long).not.toContain('agent-room skill');
-
-    fireEvent.click(update);
-    await screen.findByText(/The agent-room skill is installed for Claude Code/u);
-    expect(runtime.installSkill).toHaveBeenCalledWith('claude-code');
-    // 装好后提示下次直接说房间名，不必复制。
-    expect(
-      screen.getByText(/Next time, skip the copying and just tell Claude Code/u),
-    ).toBeVisible();
-    expect(screen.getByText('Join “Builders Exchange” in Agent Room')).toBeVisible();
-    // 技能就绪后上一次复制作废，按钮回到「复制」；等它回来再点，覆盖率运行下时序更慢。
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy connection instructions' }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledTimes(2);
-    });
-    const short = copied(writeText, 1);
-    expect(short).toContain('Follow the agent-room skill');
-    expect(short).toContain('join --invite');
-    expect(short).toContain('I authorize conversational replies');
-    expect(short).toContain('guide');
-    expect(short).not.toContain('ack --event');
-    expect(short.length).toBeLessThan(long.length / 2);
-    // 同一身份：两次复制的是同一个 profile。
-    expect(profileIn(short)).toBe(profileIn(long));
-  });
-
   it('面板开着就挂出这个人物：一句“接入 Agent Room”即可，记下 Agent 自己起的名字，关闭时撤回', async () => {
     let sessions: HostSessionDiagnostics[] = [];
-    const runtime = gateway({
-      installed: ['claude-code'],
-      skill: 'current',
-      offers: true,
-      sessions: () => ok(sessions),
-    });
+    rememberMethod('cli');
+    const runtime = gateway({ offers: true, sessions: () => ok(sessions) });
     const view = renderDialog(runtime.value);
     await readyToCopy();
     await waitFor(() => {
@@ -402,9 +423,8 @@ describe('AgentInviteDialog', () => {
     expect(offered?.displayName).toBeUndefined();
     // 这个房间没有目录信息，就不带房间，由 Bridge 走默认大厅。
     expect(offered?.room).toBeUndefined();
-    expect(await screen.findByText('Join Agent Room')).toBeVisible();
     expect(
-      screen.getByText(/tell an agent that already has the skill or MCP set up/u),
+      await screen.findByText(/tell an agent that already has Agent Room’s MCP set up/u),
     ).toBeVisible();
 
     // Agent 说了“接入”，用自己起的名字接上了这个人物。
@@ -440,7 +460,8 @@ describe('AgentInviteDialog', () => {
   it('名字可以留空交给 Agent；复制后锁定身份，切换协议不会创建另一个人物', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    renderDialog(gateway({ installed: ['codex', 'cursor'] }).value);
+    rememberMethod('cli');
+    renderDialog(gateway().value);
     await readyToCopy();
     const name = screen.getByLabelText('Agent name');
     // 只有空格等于没填：由 Agent 自己起名，仍可复制。
@@ -457,11 +478,8 @@ describe('AgentInviteDialog', () => {
     });
     const key = profileIn(copied(writeText, 0));
     expect(name).toBeDisabled();
-    selectMcp();
-    await screen.findByText(/Codex is set up\./u);
-    // Cursor 只在窗口开着时回复，选项上就写明了。
-    fireEvent.click(screen.getByRole('radio', { name: /^Cursor/u }));
-    await screen.findByText(/Cursor is set up\./u);
+    chooseMethod('MCP');
+    await readyToCopy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy connection instructions' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(2);
@@ -483,6 +501,7 @@ describe('AgentInviteDialog', () => {
   });
 
   it('只有携带本次 sessionKey 的会话才算进入房间，然后可以完成', async () => {
+    rememberMethod('cli');
     vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.resolve() } });
     let sessions: HostSessionDiagnostics[] = [];
     const view = renderDialog(gateway({ sessions: () => ok(sessions) }).value);
@@ -525,6 +544,7 @@ describe('AgentInviteDialog', () => {
   }, 15_000);
 
   it('接入失败时显示错误码并告知不要换身份重试；诊断不可用时不伪造等待', async () => {
+    rememberMethod('cli');
     const failed: HostSessionDiagnostics = {
       displayName: 'Ada’s Codex',
       session: {
@@ -570,31 +590,27 @@ describe('AgentInviteDialog', () => {
     ).toBeNull();
   });
 
-  it('一键配置已安装的宿主，未安装的宿主给出说明，其他工具提供可复制的 JSON', async () => {
+  it('MCP 方式只给通用配置：任何支持 MCP 的工具照着添加，不按应用区分，也不去改哪个应用的设置', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway({ configured: false });
-    renderDialog(runtime.value);
-    selectMcp();
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up Codex in one click' }));
-    await waitFor(() => {
-      expect(runtime.applyHost).toHaveBeenCalledWith('codex', '0'.repeat(64));
-    });
-    expect(await screen.findByText(/Codex is set up\./u)).toBeVisible();
-
-    fireEvent.click(screen.getByRole('radio', { name: /Claude Code/u }));
-    expect(screen.getByText(/Claude Code was not detected on this computer/u)).toBeVisible();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Other MCP tool' }));
-    expect(screen.getByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
+    rememberMethod('mcp');
+    const runtime = gateway({ configured: false, installed: ['codex', 'claude-code', 'cursor'] });
+    const planHost = vi.fn(runtime.value.planHost?.bind(runtime.value));
+    renderDialog({ ...runtime.value, planHost });
+    expect(await screen.findByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"agent_room"'));
     });
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('agent-room-mcp.exe'));
+    await readyToCopy();
+    expect(screen.getAllByRole('radio')).toHaveLength(3);
+    expect(planHost).not.toHaveBeenCalled();
+    expect(runtime.applyHost).not.toHaveBeenCalled();
   });
 
   it('本机连接未就绪时明确提示，而不是让用户白等', async () => {
+    rememberMethod('cli');
     const runtime = gateway().value;
     const starting: BridgeRuntime = {
       ...readyBridge,
@@ -615,6 +631,7 @@ describe('AgentInviteDialog', () => {
   });
 
   it('已授权且没有默认 Agent 时可以直接接入，不要求再次授权', async () => {
+    rememberMethod('cli');
     const runtime = gateway().value;
     renderDialog({
       ...runtime,
@@ -637,24 +654,8 @@ describe('AgentInviteDialog', () => {
     expect(screen.getByText(/Ready\. Copy the instructions above/u)).toBeVisible();
   });
 
-  it('旧 Codex 配置错误解释原因并阻止伪造等待，切换宿主不携带旧错误', async () => {
-    const runtime = gateway().value;
-    renderDialog({
-      ...runtime,
-      planHost: () => Promise.resolve(err({ code: 'codex.config_incompatible', retryable: true })),
-    });
-    await readyToCopy();
-    selectMcp();
-    expect(await screen.findByText(/cannot read your current settings/u)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
-    expect(
-      screen.queryByText('Waiting for the agent to run its connection instructions…'),
-    ).toBeNull();
-    fireEvent.click(screen.getByRole('radio', { name: 'Other MCP tool' }));
-    expect(screen.queryByText(/cannot read your current settings/u)).toBeNull();
-  });
-
   it('重连可以在弹窗内重试，恢复后直接继续无需重新登录', async () => {
+    rememberMethod('cli');
     const runtime = gateway().value;
     const retryBridge = vi.fn(() => runtime.retryBridge());
     renderDialog({
