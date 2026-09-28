@@ -11,10 +11,11 @@ pub use models::{
     MatrixAcceptedEvent, MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionTarget,
     MatrixAgentUserRegistration, MatrixBackfillPage, MatrixBackfillRequest, MatrixConnection,
     MatrixCreateRoom, MatrixEvent, MatrixLogin, MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind,
-    MatrixRoomAuthority, MatrixRoomEncryption, MatrixRoomKind, MatrixRoomPowerProfile,
-    MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
-    MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
-    MatrixSyncRequest, MatrixTimelineEncryption, MatrixTimelineEvent,
+    MatrixRoomAccess, MatrixRoomAuthority, MatrixRoomEncryption, MatrixRoomKind,
+    MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
+    MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
+    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEncryption,
+    MatrixTimelineEvent,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
@@ -94,13 +95,30 @@ pub trait MatrixClientFactory: Send + Sync {
 
 /// 从 Homeserver 当前房间状态读取成员资格和 Power Level。
 ///
-/// 实现不得用本地同步缓存或控制平面投影替代权威状态查询。
+/// 实现不得用本地同步缓存或控制平面投影替代权威状态查询。唯一例外是“房间已加密”：
+/// Matrix 不允许关掉加密，见过一次就可以记住。
 pub trait MatrixRoomAuthorityGateway: Send + Sync {
     fn inspect_room_authority<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>>;
+
+    /// 只查成员资格与加密状态，给读消息、发消息之前的检查用。
+    ///
+    /// 等消息的 Agent 每秒都会问一次，所以实现可以只发必需的请求；默认实现走完整的
+    /// [`Self::inspect_room_authority`]，结果相同。
+    fn inspect_room_access<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixRoomAccess>> {
+        Box::pin(async move {
+            self.inspect_room_authority(room_id, user_id)
+                .await
+                .map(MatrixRoomAccess::from)
+        })
+    }
 }
 
 /// 已认证 Matrix 会话的协议无关能力端口。

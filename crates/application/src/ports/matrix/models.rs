@@ -362,6 +362,25 @@ impl MatrixRoomAuthority {
     }
 }
 
+/// 读消息、发消息之前只需要的两件事：此刻在不在房间里，房间加不加密。
+///
+/// 和 [`MatrixRoomAuthority`] 一样来自 Homeserver 的权威状态，只是不查 Power Level。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixRoomAccess {
+    NotJoined,
+    Joined(MatrixRoomEncryption),
+}
+
+impl From<MatrixRoomAuthority> for MatrixRoomAccess {
+    fn from(authority: MatrixRoomAuthority) -> Self {
+        if authority.is_joined() {
+            Self::Joined(authority.encryption())
+        } else {
+            Self::NotJoined
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixRoomVisibility {
     Private,
@@ -1078,10 +1097,26 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MatrixCreateRoom, MatrixEvent, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync,
+        MatrixCreateRoom, MatrixEvent, MatrixPowerLevel, MatrixRoomAccess, MatrixRoomAuthority,
+        MatrixRoomEncryption, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomSync,
         MatrixRoomSyncKind, MatrixRoomVisibility, MatrixStateEvent, MatrixSyncBatch,
         MatrixSyncRequest, MatrixTimelineEvent,
     };
+
+    #[test]
+    fn 读写资格只取成员资格与加密状态() {
+        let joined = MatrixRoomAuthority::joined(MatrixPowerLevel::Finite(0))
+            .with_encryption(MatrixRoomEncryption::EndToEnd);
+
+        assert_eq!(
+            MatrixRoomAccess::from(joined),
+            MatrixRoomAccess::Joined(MatrixRoomEncryption::EndToEnd)
+        );
+        assert_eq!(
+            MatrixRoomAccess::from(MatrixRoomAuthority::not_joined()),
+            MatrixRoomAccess::NotJoined
+        );
+    }
 
     #[test]
     fn 建房策略显式去重成员可写状态事件() {
