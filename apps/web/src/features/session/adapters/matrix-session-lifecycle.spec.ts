@@ -3,7 +3,7 @@
 import type { ICreateClientOpts } from 'matrix-js-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MatrixWebGateway } from './matrix-web-gateway';
+import { CRYPTO_STORE_CLEAR_WAIT_MS, MatrixWebGateway } from './matrix-web-gateway';
 import type { MatrixSessionVault, StoredMatrixSession } from '../domain/matrix-session-vault';
 import { err, ok } from '@/shared/result';
 
@@ -57,6 +57,8 @@ vi.mock('matrix-js-sdk/lib/crypto-api/index.js', () => ({
     readonly kind = 'signed-only';
   },
 }));
+
+const CLEANUP_KEY = 'agent-room.matrix-crypto-cleanup.v1';
 
 const session: StoredMatrixSession = {
   accessToken: 'test-access',
@@ -401,6 +403,40 @@ describe('Matrix 网关持久会话生命周期', () => {
     expect(sdk.clearStores).toHaveBeenLastCalledWith({
       cryptoDatabasePrefix: initialized.cryptoDatabasePrefix,
     });
+  });
+
+  it('本机加密库删除被挡住时退出不再一直等，删除完成前记着留到下次启动', async () => {
+    const matrix = gateway(storage());
+    await matrix.restore(session.userId);
+    const initialized = sdk.initializeCrypto.mock.calls[0]?.[0];
+    if (initialized === undefined) throw new Error('测试必须先初始化当前设备的加密库');
+    let finishClearing: () => void = () => undefined;
+    sdk.clearStores.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishClearing = resolve;
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const logout = matrix.logout();
+      await vi.advanceTimersByTimeAsync(CRYPTO_STORE_CLEAR_WAIT_MS);
+      await expect(logout).resolves.toEqual(ok(undefined));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(JSON.parse(localStorage.getItem(CLEANUP_KEY) ?? '[]')).toEqual([
+      initialized.cryptoDatabasePrefix,
+    ]);
+
+    // 加密模块放手后删除自己完成，就不用再记着；退出也不会再清理一遍。
+    finishClearing();
+    await vi.waitFor(() => {
+      expect(localStorage.getItem(CLEANUP_KEY)).toBeNull();
+    });
+    await expect(matrix.logout()).resolves.toEqual(ok(undefined));
+    expect(sdk.clearStores).toHaveBeenCalledOnce();
+    expect(sdk.logout).toHaveBeenCalledOnce();
   });
 
   it('重试收到已撤销的 401 时继续清理本地存储', async () => {

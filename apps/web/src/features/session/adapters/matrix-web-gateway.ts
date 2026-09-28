@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { failure } from '@/features/session/adapters/control-plane-client';
 import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
 import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
+import { MatrixCryptoStoreCleanup } from './matrix-crypto-store-cleanup';
 import { ensureFirstEncryptionIdentity } from './matrix-encryption-identity';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
 import {
@@ -28,6 +29,11 @@ import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-stora
 import { err, ok, type Result } from '@/shared/result';
 
 const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
+/**
+ * 退出时删除本机加密库最多等这么久。Rust 加密模块偶尔要等垃圾回收才关掉数据库连接，
+ * 删除会一直被挡住；过了这个时间就先完成退出，删除请求留给浏览器自己完成（见 {@link MatrixCryptoStoreCleanup}）。
+ */
+export const CRYPTO_STORE_CLEAR_WAIT_MS = 5_000;
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
 const MAX_LOGIN_TOKEN_LENGTH = 4_096;
 
@@ -81,6 +87,7 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #sessionStorage: Storage;
   readonly #sessions: MatrixSessionRepository;
   readonly #clientLogs = new WeakMap<MatrixClient, MatrixLifecycleLogger>();
+  readonly #cryptoCleanup: MatrixCryptoStoreCleanup;
   #restoreAttempt = 0;
   readonly #syncTimeoutMs: number;
   readonly #url: () => URL;
@@ -126,6 +133,8 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#sessions = new MatrixSessionRepository(sessionVault);
     this.#syncTimeoutMs = syncTimeoutMs;
     this.#url = url;
+    this.#cryptoCleanup = new MatrixCryptoStoreCleanup(localStorage, indexedDB);
+    this.#cryptoCleanup.retry();
   }
 
   async beginAuthentication(
@@ -439,6 +448,7 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#syncTimeoutMs,
       this.#onClientActivity,
       () => this.#sessions.failure,
+      this.#cryptoCleanup,
       this.#clientLogs.get(client),
     );
   }
@@ -611,6 +621,7 @@ class BrowserMatrixConnection implements MatrixConnection {
   readonly #syncState: typeof SyncState;
   readonly #syncTimeoutMs: number;
   readonly #persistenceFailure: () => SessionFailure | null;
+  readonly #cryptoCleanup: MatrixCryptoStoreCleanup;
   #observingActivity = true;
   #started = false;
   #identityEnsured = false;
@@ -625,6 +636,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     syncTimeoutMs: number,
     onClientActivity: (client: MatrixClient) => void,
     persistenceFailure: () => SessionFailure | null,
+    cryptoCleanup: MatrixCryptoStoreCleanup,
     private readonly lifecycleLog: MatrixLifecycleLogger | undefined,
   ) {
     this.#client = client;
@@ -634,6 +646,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     this.#online = online;
     this.#syncTimeoutMs = syncTimeoutMs;
     this.#persistenceFailure = persistenceFailure;
+    this.#cryptoCleanup = cryptoCleanup;
     this.deviceId = client.getDeviceId() ?? 'unknown-device';
     this.userId = client.getUserId() ?? 'unknown-user';
     this.#client.on(this.#syncEvent, this.#handleClientActivity);
@@ -729,17 +742,26 @@ class BrowserMatrixConnection implements MatrixConnection {
 
     this.#stopObservingActivity();
     this.#client.stopClient();
-    try {
-      if (!this.#storesCleared) {
-        await this.#client.clearStores({
-          cryptoDatabasePrefix: matrixCryptoDatabasePrefix(this.userId, this.deviceId),
-        });
-        this.#storesCleared = true;
+    if (!this.#storesCleared) {
+      const prefix = matrixCryptoDatabasePrefix(this.userId, this.deviceId);
+      const clearing = this.#client.clearStores({ cryptoDatabasePrefix: prefix });
+      const outcome = await settleWithin(clearing, CRYPTO_STORE_CLEAR_WAIT_MS);
+      if (outcome === 'failed') {
+        return remoteResult.ok
+          ? err(failure('browser', 'browser.matrix_cache_clear_failed', false, true))
+          : remoteResult;
       }
-    } catch {
-      return remoteResult.ok
-        ? err(failure('browser', 'browser.matrix_cache_clear_failed', false, true))
-        : remoteResult;
+      this.#storesCleared = true;
+      if (outcome === 'pending') {
+        // 加密库仍被停下的 Rust 加密模块占着：删除会在它放手后自己完成；页面要是先关了，下次启动再删。
+        this.#cryptoCleanup.defer(prefix);
+        void clearing.then(
+          () => {
+            this.#cryptoCleanup.done(prefix);
+          },
+          () => undefined,
+        );
+      }
     }
     return remoteResult;
   }
@@ -785,6 +807,30 @@ function isSafeReturnPath(path: string): boolean {
 
 function isValidLoginToken(token: string): boolean {
   return token.length > 0 && token.length <= MAX_LOGIN_TOKEN_LENGTH && !/\p{Cc}/u.test(token);
+}
+
+/** 等 `work` 最多 `ms` 毫秒：完成、失败，或者还没结果（仍在进行，不会被取消）。 */
+async function settleWithin(
+  work: Promise<unknown>,
+  ms: number,
+): Promise<'done' | 'failed' | 'pending'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const pending = new Promise<'pending'>((resolve) => {
+    timer = setTimeout(() => {
+      resolve('pending');
+    }, ms);
+  });
+  try {
+    return await Promise.race([
+      work.then(
+        () => 'done' as const,
+        () => 'failed' as const,
+      ),
+      pending,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function matrixCryptoDatabasePrefix(userId: string, deviceId: string): string {
