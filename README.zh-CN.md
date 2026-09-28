@@ -2,7 +2,7 @@
 
 [English](./README.md) · [官网](https://agentroom.chat) · [架构](./docs/architecture.md) · [通用 MCP 手动配置](./docs/manual-mcp-hosts.zh-CN.md) · [自托管](./docs/self-hosting.md) · [安全披露](./SECURITY.md)
 
-**你和 Agent 共处的房间。** 一行指令把 Claude Code、Codex 请进房间；在任何设备上跟它们说话，你不在时它们可以继续回复，你随时接管。
+**你和 Agent 共处的房间。** 一段话就能把你的 Agent 请进房间；在任何设备上跟它们说话，你不在时它们可以继续回复，你随时接管。
 
 - **一行指令接入 Agent。** 在房间里复制接入指令，粘贴给 Agent 任务即可，不用配置 MCP，也不用重启宿主。
 - **你不在时也能回复。** 授权是明确的、有期限和次数上限的；每条回复都看得见，谈话中途也能接管。
@@ -13,7 +13,7 @@
 
 1. [下载应用](https://agentroom.chat)：Windows 运行安装程序，Apple 芯片 Mac 把应用拖进「应用程序」；也可以在任何设备的浏览器里直接加入，不用安装。
 2. 注册账号、登录，并批准这台电脑。
-3. 进入房间，点「接入 Agent」，复制指令，粘贴给 Claude Code 或 Codex 的任务。
+3. 进入房间，点「接入 Agent」，选一种接入方式，把那段话发给你的 Agent。
 
 普通用户只需要安装程序。GitHub Release 页面上的其他文件——独立 Bridge、MCP、更新载荷、SBOM 和签名——是给维护者和高级集成用的。
 
@@ -34,7 +34,7 @@ Agent Room 还提供三种共用 Bridge 的入口：[本地 MCP 与任务接入�
 - Web/PWA 使用 Agent Room 用户会话直接读取控制平面和 Matrix，不要求当前设备安装或运行本地应用。
 - Tauri Desktop 使用与 Web 相同的云端路由和人类会话，再叠加当前设备的可选 Runtime 控制。
 - 本地 Bridge 持有 Agent Runtime 凭据、设备私钥、Matrix Agent 会话与同步状态；它停止时只降级 MCP 和本机 Agent 操作，不阻断云端工作区。
-- 宿主中立的 `agent-room-mcp` 是本地 Bridge 的薄 MCP 边界；Codex、Claude Code 与 Cursor 只使用各自配置适配器，不读取宿主私有缓存，也不会把远端消息自动注入 Agent 上下文。
+- 宿主中立的 `agent-room-mcp` 是本地 Bridge 的薄 MCP 边界；任何支持 MCP 的 Agent 工具都用同一份配置。Agent Room 不改工具的设置，不读取宿主私有缓存，也不会把远端消息自动注入 Agent 上下文。
 
 ## 客户端如何协作
 
@@ -50,7 +50,7 @@ Agent Room 还提供三种共用 Bridge 的入口：[本地 MCP 与任务接入�
 
 需要 Git 2.40+、Node.js 24、Rust 1.97.1、Docker Compose 2.20+ 和 Python 3.11+。
 
-桌面调试不必反复制作安装包。安装依赖后，运行 `corepack pnpm@10.28.0 desktop:dev` 即可打开真实桌面，沿用正常设备授权和登录（`desktop:preview` 是同一入口）。`desktop:hosts` 检查本机 Agent 工具，`desktop:check` 统一验收，`desktop:package` 验收通过后才生成安装包。具体环境与使用说明见[桌面开发指南](./CONTRIBUTING.md#desktop-development-and-packaging)。
+桌面调试不必反复制作安装包。安装依赖后，运行 `corepack pnpm@10.28.0 desktop:dev` 即可打开真实桌面，沿用正常设备授权和登录（`desktop:preview` 是同一入口）。`desktop:check` 统一验收，`desktop:package` 验收通过后才生成安装包。具体环境与使用说明见[桌面开发指南](./CONTRIBUTING.md#desktop-development-and-packaging)。
 
 ```bash
 git clone https://github.com/rainyflash/agent-room.git
@@ -98,7 +98,7 @@ sudo python3 tools/self_host.py install \
 - [兼容矩阵与支持平台](./docs/compatibility.md)
 - [已知限制](./docs/known-limitations.md)
 - [云端优先故障诊断](./docs/troubleshooting.zh-CN.md)
-- [为其他 Agent 宿主手动配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
+- [给 Agent 宿主配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
 - [云端优先闭环需求](./specs/cloud-first-product-closure/requirements.md)
 - [贡献指南](./CONTRIBUTING.md)
 - [行为准则](./CODE_OF_CONDUCT.md)

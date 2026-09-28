@@ -229,20 +229,9 @@
   font-weight: 600;
   cursor: pointer;
 }
-.onboarding__hosts > details > p[role='status'] {
-  margin: 0.25rem 0 0;
-  color: var(--ar-success);
-  font-size: 13px;
-}
-.onboarding__hosts > details > .onboarding__host-list,
+.onboarding__hosts > details > .mcp-configuration,
 .onboarding__hosts > details > .onboarding__empty {
   padding: 0.5rem 0 0;
-}
-.onboarding__host-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  padding: 1.25rem 1.5rem;
 }
 .onboarding__empty {
   padding: 1.25rem 1.5rem;

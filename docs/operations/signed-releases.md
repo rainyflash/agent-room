@@ -151,7 +151,7 @@ target/release/agent-room-release-tool sign \
 
 任一步失败都不会推进客户端本地可信序号。桌面端先写入 pending 安装记录，只有目标版本真正启动后才提交序号；下载中断、进程终止或安装失败仍可重试。客户端拒绝过期清单、篡改包、重复序号、跨渠道清单和未指明来源版本的降级。
 
-## 7. MCP、宿主适配器与 Bridge 兼容
+## 7. MCP 与 Bridge 兼容
 
 IPC 握手必须完整匹配协议版本。Bridge 或 MCP 返回 `bridge.ipc.version_incompatible` 时：
 
@@ -159,7 +159,7 @@ IPC 握手必须完整匹配协议版本。Bridge 或 MCP 返回 `bridge.ipc.ver
 - Desktop Supervisor 进入停止/升级态；
 - MCP 不注册残缺工具，不允许部分能力继续工作。
 
-Codex、Claude Code 与 Cursor 适配器只配置通用 MCP 路径，不参与 IPC 协商。恢复方式是重新安装同一 Release 的 Windows 安装器；独立二进制只用于核验和高级集成，不允许复制不同版本拼装 Runtime。
+各 Agent 工具只按通用 MCP 配置指向安装包里的 `agent-room-mcp`，不参与 IPC 协商。恢复方式是重新安装同一 Release 的 Windows 安装器；独立二进制只用于核验和高级集成，不允许复制不同版本拼装 Runtime。
 
 ## 8. 故障与撤回
 

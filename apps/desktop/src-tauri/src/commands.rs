@@ -1,7 +1,4 @@
-use agent_room_host_adapters::{
-    ApplyReceipt, ConfigurationPlan, HostConfigurator, HostDetection, HostFailure, HostKind,
-    ManualHostConfiguration, SkillCliCommand, SkillStatus,
-};
+use agent_room_host_adapters::{HostConfigurator, ManualHostConfiguration};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -51,6 +48,7 @@ pub(crate) struct DesktopRuntimeSnapshot {
     cli_configuration: Option<CliConfiguration>,
 }
 
+/// 桌面端旁边装好的 CLI，以及它连上本机 Bridge 需要的数据目录和连接命名空间。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CliConfiguration {
@@ -58,16 +56,8 @@ pub(crate) struct CliConfiguration {
     args: Vec<String>,
 }
 
-fn cli_configuration() -> Result<Option<CliConfiguration>, DesktopCommandFailure> {
-    Ok(installed_cli()?.map(|cli| CliConfiguration {
-        command: cli.executable.to_string_lossy().into_owned(),
-        args: cli.args,
-    }))
-}
-
-/// 桌面端旁边装好的 CLI，以及它连上本机 Bridge 需要的数据目录和连接命名空间。
-/// 接入面板的复制指令和装进技能的本机命令都用它，两处前缀始终一致。开发构建没有 CLI 时为空。
-pub(crate) fn installed_cli() -> Result<Option<SkillCliCommand>, DesktopCommandFailure> {
+/// 接入面板复制的命令行指令用它做前缀。开发构建没有 CLI 时为空。
+fn installed_cli() -> Result<Option<CliConfiguration>, DesktopCommandFailure> {
     let executable = std::env::current_exe()
         .map_err(|_| DesktopCommandFailure::new("desktop.cli.path_unavailable", false))?;
     let directory = executable
@@ -81,15 +71,15 @@ pub(crate) fn installed_cli() -> Result<Option<SkillCliCommand>, DesktopCommandF
     if !cli.is_file() {
         return Ok(None);
     }
-    if cli.to_str().is_none() {
+    let Some(command) = cli.to_str() else {
         return Err(DesktopCommandFailure::new(
             "desktop.cli.path_unavailable",
             false,
         ));
-    }
+    };
     let config = DesktopBridgeConfig::from_environment()?;
-    Ok(Some(SkillCliCommand {
-        executable: cli,
+    Ok(Some(CliConfiguration {
+        command: command.to_owned(),
         args: vec![
             "--data-root".into(),
             config
@@ -127,12 +117,6 @@ impl From<SupervisorFailure> for DesktopCommandFailure {
 
 impl From<ReleaseUpdateFailure> for DesktopCommandFailure {
     fn from(failure: ReleaseUpdateFailure) -> Self {
-        Self::new(failure.code(), failure.retryable())
-    }
-}
-
-impl From<HostFailure> for DesktopCommandFailure {
-    fn from(failure: HostFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
     }
 }
@@ -413,80 +397,6 @@ pub(crate) fn desktop_configure_agent_runtime(
 }
 
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn desktop_detect_agent_hosts(runtime: State<'_, DesktopRuntime>) -> Vec<HostDetection> {
-    runtime.hosts.detect_all()
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_plan_agent_host(
-    runtime: State<'_, DesktopRuntime>,
-    host: HostKind,
-) -> Result<ConfigurationPlan, DesktopCommandFailure> {
-    let hosts = runtime.hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || hosts.plan(host))
-        .await
-        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
-        .map_err(Into::into)
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_apply_agent_host(
-    runtime: State<'_, DesktopRuntime>,
-    host: HostKind,
-    expected_original_digest: String,
-) -> Result<ApplyReceipt, DesktopCommandFailure> {
-    let hosts = runtime.hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || hosts.apply(host, &expected_original_digest))
-        .await
-        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
-        .map_err(Into::into)
-}
-
-/// 本版技能文件在宿主里的安装状态；装上后接入说明只剩一行命令。
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_skill_status(
-    runtime: State<'_, DesktopRuntime>,
-    host: HostKind,
-) -> Result<SkillStatus, DesktopCommandFailure> {
-    let hosts = runtime.hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || hosts.skill_status(host))
-        .await
-        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
-        .map_err(Into::into)
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_install_skill(
-    runtime: State<'_, DesktopRuntime>,
-    host: HostKind,
-) -> Result<SkillStatus, DesktopCommandFailure> {
-    let hosts = runtime.hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || hosts.install_skill(host))
-        .await
-        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
-        .map_err(Into::into)
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_remove_agent_host(
-    runtime: State<'_, DesktopRuntime>,
-    host: HostKind,
-    expected_original_digest: String,
-) -> Result<ApplyReceipt, DesktopCommandFailure> {
-    let hosts = runtime.hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || hosts.remove(host, &expected_original_digest))
-        .await
-        .map_err(|_| DesktopCommandFailure::new("desktop.hosts.command_failed", true))?
-        .map_err(Into::into)
-}
-
-#[tauri::command]
 // Tauri 命令宏按值提取 AppHandle 与 State；改成借用会破坏命令参数解析。
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_runtime_snapshot(
@@ -507,7 +417,7 @@ pub(crate) fn desktop_runtime_snapshot(
         updates_configured: runtime.updates.configured(),
         agent_target: runtime.targets.current()?,
         manual_host_configuration: runtime.hosts.manual_configuration(),
-        cli_configuration: cli_configuration()?,
+        cli_configuration: installed_cli()?,
     })
 }
 

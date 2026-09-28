@@ -34,9 +34,9 @@ import {
 } from '../domain/cli-invitation';
 import { localConnectionReady } from '../domain/desktop-connection';
 import type { HostSessionDiagnostics, InvitationOffer } from '../domain/desktop-runtime';
-import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
+import { McpConfiguration } from './mcp-configuration';
 import { NetworkAgentInvite } from './network-agent-invite';
 import './agent-invite-dialog.css';
 import { useOptionalAppServices } from '@/app/app-services';
@@ -539,18 +539,10 @@ function ConnectionInvite({
               ) : (
                 <>
                   <p>{t('agentInvite.mcp.description')}</p>
-                  {controller.available ? (
-                    <McpConfiguration
-                      configuration={
-                        controller.snapshot === null
-                          ? null
-                          : serializeManualHostConfiguration(
-                              controller.snapshot.manualHostConfiguration,
-                            )
-                      }
-                    />
-                  ) : (
+                  {!controller.available ? (
                     <p>{t('agentInvite.mcp.web')}</p>
+                  ) : controller.snapshot === null ? null : (
+                    <McpConfiguration configuration={controller.snapshot.manualHostConfiguration} />
                   )}
                 </>
               )}
@@ -706,35 +698,6 @@ function MethodPicker({
           <small>{labels[method].hint}</small>
         </button>
       ))}
-    </div>
-  );
-}
-
-/** 通用的 MCP 配置：任何支持 MCP 的 Agent 工具都按这段 JSON 添加本机的 Agent Room 服务。 */
-function McpConfiguration({ configuration }: { readonly configuration: string | null }) {
-  const { t } = useTranslation();
-  const [copyState, setCopyState] = useState<CopyState>('idle');
-  if (configuration === null) return null;
-  const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(configuration);
-      setCopyState('copied');
-    } catch {
-      setCopyState('failed');
-    }
-  };
-  return (
-    <div className="agent-invite__setup">
-      <p>{t('agentInvite.host.otherHint')}</p>
-      <pre>{configuration}</pre>
-      <Button
-        icon={copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        onClick={() => void copy()}
-        size="compact"
-        tone={copyState === 'failed' ? 'alert' : 'ghost'}
-      >
-        {t(copyState === 'copied' ? 'agentInvite.host.copiedJson' : 'agentInvite.host.copyJson')}
-      </Button>
     </div>
   );
 }

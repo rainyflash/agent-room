@@ -9,7 +9,6 @@ import {
   FolderOpen,
   KeyRound,
   MonitorCog,
-  PlugZap,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -29,10 +28,9 @@ import {
   authorizationFailureMessage,
   desktopPhaseLabel,
   haltReasonMessage,
-  hostFailureMessage,
 } from '@/features/desktop/domain/desktop-connection';
 import { LocalConnectionNotice } from './local-connection-notice';
-import { ManualHostConfiguration } from '@/features/desktop/ui/manual-host-configuration';
+import { McpConfiguration } from './mcp-configuration';
 import { HostSessionOnboarding } from '@/features/desktop/ui/host-session-onboarding';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
@@ -223,10 +221,7 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                     {t(
                       controller.failure.code === 'desktop.update.draft_unsaved'
                         ? 'conversation.draftUnavailable'
-                        : /^(host|codex|claude|cursor)\./u.test(controller.failure.code)
-                          ? hostFailureMessage(controller.failure.code)
-                          : 'desktop.failure.description',
-                      { host: controller.configuredHost ?? 'Agent' },
+                        : 'desktop.failure.description',
                     )}
                   </p>
                   <code>{controller.failure.code}</code>
@@ -301,26 +296,9 @@ export function DesktopRuntimeSurface({ placement = 'viewport' }: DesktopRuntime
                   <details className="ar-disclosure desktop-runtime__mcp">
                     <summary>{t('agentInvite.mode.mcp')}</summary>
                     <div className="ar-disclosure__body">
-                      {controller.hosts
-                        .filter((host) => host.installed)
-                        .map((host) => (
-                          <Button
-                            disabled={controller.busy !== null || !host.configurable}
-                            icon={<PlugZap aria-hidden="true" />}
-                            key={host.host}
-                            onClick={() => void controller.configureHost(host.host)}
-                            size="compact"
-                            tone="ghost"
-                          >
-                            {t(`desktop.hosts.${host.host}`)}
-                          </Button>
-                        ))}
-                      <ManualHostConfiguration
+                      <McpConfiguration
                         configuration={controller.snapshot.manualHostConfiguration}
                       />
-                      {controller.configuredHost === null ? null : (
-                        <p role="status">{t('desktop.hosts.configured')}</p>
-                      )}
                     </div>
                   </details>
                 </div>

@@ -100,7 +100,7 @@ test('连接检查失败提供诊断而非伪造空清单', async ({ page }) => 
 
 test('已授权空设备直接接入；重连恢复无需重新登录', async ({ page }) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/onboarding.html?bridge=reconnecting&configured=1');
+  await page.goto('/e2e/fixtures/onboarding.html?bridge=reconnecting');
   await page.getByRole('button', { name: /Local agents/u }).click();
   await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
   const dialog = page.getByRole('dialog');
@@ -114,15 +114,31 @@ test('已授权空设备直接接入；重连恢复无需重新登录', async ({
   expect(failures).toEqual([]);
 });
 
-test('MCP 只给通用配置：某个应用的一键配置坏了也挡不住接入', async ({ page }) => {
+test('MCP 只给同一份通用配置：首次使用页、本机 Agent 和接入面板都不出现具体应用', async ({
+  page,
+}) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/onboarding.html?bridge=authorized&setup=failed');
+  await page.goto('/e2e/fixtures/onboarding.html?bridge=authorized');
+  const mcpHint = /Add this JSON to the tool’s MCP configuration/u;
+  const appNames = /Codex|Claude Code|Cursor/u;
+  const onboarding = page.getByRole('main');
+  await onboarding.getByText('MCP compatibility').click();
+  await expect(onboarding.getByText(mcpHint)).toBeVisible();
+  await expect(onboarding.getByText(/agent-room-mcp\.exe/u)).toBeVisible();
+  await expect(onboarding).not.toContainText(appNames);
+
   await page.getByRole('button', { name: /Local agents/u }).click();
-  await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  const panel = page.getByRole('complementary');
+  await panel.getByText('MCP compatibility').click();
+  await expect(panel.getByText(mcpHint)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
+  await expect(panel).not.toContainText(appNames);
+
+  await panel.getByRole('button', { name: 'Bring an agent' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: /^MCP/u }).click();
-  await expect(dialog.getByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
-  await expect(dialog.getByText(/cannot read your current settings/u)).toHaveCount(0);
+  await expect(dialog.getByText(mcpHint)).toBeVisible();
+  await expect(dialog).not.toContainText(appNames);
   await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
   await dialog.getByRole('radio', { name: /^Command line/u }).click();
   await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();

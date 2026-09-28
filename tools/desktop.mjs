@@ -67,20 +67,9 @@ export function desktopPlan(mode) {
       return [...nativeChecks, ...webChecks];
     case 'package':
       return [...nativeChecks, ...webChecks, pnpm('build:desktop')];
-    case 'hosts':
-      return [
-        pnpm('--filter', '@agent-room/desktop', 'prepare:sidecar:debug'),
-        ['cargo', 'build', '--locked', '-p', 'agent-room-desktop'],
-        [
-          process.platform === 'win32'
-            ? './target/debug/agent-room-desktop.exe'
-            : './target/debug/agent-room-desktop',
-          '--check-hosts',
-        ],
-      ];
     default:
       throw new Error(
-        'Use: node tools/desktop.mjs dev|preview|check|package|hosts|native-check [--plan]',
+        'Use: node tools/desktop.mjs dev|preview|check|package|native-check [--plan]',
       );
   }
 }

@@ -24,7 +24,7 @@ pub(crate) struct Invitation {
 
 impl Invitation {
     /// `chosen` 是 Agent 自己起的名字（`--name`）：邀请里有人定了名字就用邀请的，
-    /// 两边都没有才用宿主与工作区生成。
+    /// 两边都没有才用 `Agent` 加工作目录名生成。
     pub(crate) fn decode(encoded: &str, chosen: Option<&str>) -> Result<Self> {
         if encoded.len() > 4096 {
             return Err(Failure::validation("cli.invitation_invalid"));
@@ -365,17 +365,9 @@ pub(crate) fn host_task_id() -> Result<Option<String>> {
     }
 }
 
-/// 默认显示名：宿主加工作目录名，例如 `Claude Code · agent-room`，让房间里一眼看出是谁。
+/// Agent 没给自己起名时的默认显示名：`Agent` 加工作目录名，例如 `Agent · agent-room`。
+/// 不按宿主应用区分名字。
 pub(crate) fn default_display_name() -> String {
-    let host = if std::env::var_os("CODEX_THREAD_ID").is_some() {
-        "Codex"
-    } else if std::env::var_os("CLAUDE_CODE_SESSION_ID").is_some()
-        || std::env::var_os("CLAUDECODE").is_some()
-    {
-        "Claude Code"
-    } else {
-        "Agent"
-    };
     let workspace = std::env::current_dir()
         .ok()
         .and_then(|path| {
@@ -391,8 +383,8 @@ pub(crate) fn default_display_name() -> String {
         .map(|name| name.trim().to_owned())
         .filter(|name| !name.is_empty());
     match workspace {
-        Some(workspace) => format!("{host} · {workspace}"),
-        None => host.to_owned(),
+        Some(workspace) => format!("Agent · {workspace}"),
+        None => "Agent".to_owned(),
     }
 }
 
@@ -465,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn 不带名字的邀请由_agent_自己起名_没起就用宿主与工作区() {
+    fn 不带名字的邀请由_agent_自己起名_没起就用_agent_加工作区() {
         let mut value = serde_json::to_value(invitation()).unwrap();
         value.as_object_mut().unwrap().remove("displayName");
         let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap());
@@ -479,6 +471,9 @@ mod tests {
             Invitation::decode(&encoded, None).unwrap().display_name,
             default_display_name()
         );
+        // 默认名不按宿主应用区分：设没设 CODEX_THREAD_ID、CLAUDE_CODE_SESSION_ID 都一样。
+        let name = default_display_name();
+        assert!(name == "Agent" || name.starts_with("Agent · "), "{name}");
         // 自己起的名字同样要是 1 到 128 个可见字符。
         assert!(Invitation::decode(&encoded, Some(" 前后空格 ")).is_err());
         assert!(Invitation::decode(&encoded, Some(&"名".repeat(129))).is_err());

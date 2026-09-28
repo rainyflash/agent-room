@@ -95,8 +95,8 @@
         <#else>
             <span class="ar-scene__plant ar-scene__wide"></span>
             <span class="ar-scene__rug ar-scene__wide"></span>
-            <div class="ar-scene__spot ar-scene__spot--a"><@bot kind="square" label="Codex"/></div>
-            <div class="ar-scene__spot ar-scene__spot--b"><@bot kind="round" label="Claude Code"/></div>
+            <div class="ar-scene__spot ar-scene__spot--a"><@bot kind="square" label=msg("arSceneCodingAgent")/></div>
+            <div class="ar-scene__spot ar-scene__spot--b"><@bot kind="round" label=msg("arSceneResearchAgent")/></div>
             <div class="ar-scene__spot ar-scene__spot--c ar-scene__wide"><@bot kind="capsule" label=msg("arSceneYourAgent")/></div>
         </#if>
         <p class="ar-bubble">${bubble}</p>

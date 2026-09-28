@@ -4,14 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
-import { err, ok, type Result } from '@/shared/result';
+import { err, type Result } from '@/shared/result';
 import {
   defaultReleaseChannel,
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
-  type AgentHostDetection,
-  type AgentHostKind,
-  type AgentHostSkillStatus,
   type InvitationOffer,
   type PendingInvitation,
   type DesktopAgentTarget,
@@ -32,21 +29,11 @@ type DesktopOperation =
   | 'authorization'
   | 'autostart'
   | 'agent-runtime'
-  | 'host-configure'
   | 'reauthorize'
   | 'refresh'
   | 'retry'
   | 'update-check'
   | 'update-install';
-
-export type SkillSetupState =
-  | { readonly phase: 'checking' | 'installing' }
-  | { readonly phase: 'ready'; readonly status: AgentHostSkillStatus }
-  | { readonly phase: 'failed'; readonly error: DesktopRuntimeFailure };
-
-export type HostSetupState =
-  | { readonly phase: 'checking' | 'required' | 'configured' }
-  | { readonly phase: 'failed'; readonly error: DesktopRuntimeFailure };
 
 export type DesktopRuntimeController = {
   readonly available: boolean;
@@ -58,13 +45,6 @@ export type DesktopRuntimeController = {
   readonly updateBusy?: 'checking' | 'installing' | null;
   readonly updateProgress?: ReleaseUpdateProgress | null;
   readonly updateFailure?: DesktopRuntimeFailure | null;
-  readonly hosts: readonly AgentHostDetection[];
-  readonly configuredHost: AgentHostKind | null;
-  readonly hostSetup: Readonly<Partial<Record<AgentHostKind, HostSetupState>>>;
-  readonly checkHost: (host: AgentHostKind) => Promise<void>;
-  readonly skillSetup: Readonly<Partial<Record<AgentHostKind, SkillSetupState>>>;
-  readonly checkSkill: (host: AgentHostKind) => Promise<void>;
-  readonly installSkill: (host: AgentHostKind) => Promise<void>;
   readonly readHostSessions: () => Promise<
     Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
   >;
@@ -82,7 +62,6 @@ export type DesktopRuntimeController = {
   readonly reauthorizeBridge: () => Promise<void>;
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
-  readonly configureHost: (host: AgentHostKind) => Promise<void>;
   readonly bootstrapDefaultAgent: (preferredLanguage: string | null) => Promise<void>;
   readonly configureAgentRuntime: (target: DesktopAgentTarget) => Promise<void>;
 };
@@ -116,68 +95,6 @@ export function useDesktopRuntime(
   const [updateFailure, setUpdateFailure] = useState<DesktopRuntimeFailure | null>(null);
   const [updateProgress, setUpdateProgress] = useState<ReleaseUpdateProgress | null>(null);
   const updateInFlight = useRef(false);
-  const [hosts, setHosts] = useState<readonly AgentHostDetection[]>([]);
-  const [configuredHost, setConfiguredHost] = useState<AgentHostKind | null>(null);
-  const [hostSetup, setHostSetup] = useState<Partial<Record<AgentHostKind, HostSetupState>>>({});
-  const hostChecks = useRef<Partial<Record<AgentHostKind, number>>>({});
-  const configuringHosts = useRef(new Set<AgentHostKind>());
-  const checkHost = useCallback(
-    async (host: AgentHostKind): Promise<void> => {
-      if (configuringHosts.current.has(host)) return;
-      const generation = (hostChecks.current[host] ?? 0) + 1;
-      hostChecks.current[host] = generation;
-      setHostSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
-      const plan =
-        (await gateway.planHost?.(host)) ??
-        err({ code: 'desktop.hosts.configuration_unavailable', retryable: false });
-      if (hostChecks.current[host] !== generation) return;
-      setHostSetup((previous) => ({
-        ...previous,
-        [host]: plan.ok
-          ? { phase: plan.value.action === 'unchanged' ? 'configured' : 'required' }
-          : { phase: 'failed', error: plan.error },
-      }));
-    },
-    [gateway],
-  );
-  const [skillSetup, setSkillSetup] = useState<Partial<Record<AgentHostKind, SkillSetupState>>>({});
-  const skillChecks = useRef<Partial<Record<AgentHostKind, number>>>({});
-  const checkSkill = useCallback(
-    async (host: AgentHostKind): Promise<void> => {
-      const generation = (skillChecks.current[host] ?? 0) + 1;
-      skillChecks.current[host] = generation;
-      setSkillSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
-      const status =
-        (await gateway.skillStatus?.(host)) ??
-        err({ code: 'desktop.hosts.skill_unavailable', retryable: false });
-      if (skillChecks.current[host] !== generation) return;
-      setSkillSetup((previous) => ({
-        ...previous,
-        [host]: status.ok
-          ? { phase: 'ready', status: status.value }
-          : { phase: 'failed', error: status.error },
-      }));
-    },
-    [gateway],
-  );
-  const installSkill = useCallback(
-    async (host: AgentHostKind): Promise<void> => {
-      const generation = (skillChecks.current[host] ?? 0) + 1;
-      skillChecks.current[host] = generation;
-      setSkillSetup((previous) => ({ ...previous, [host]: { phase: 'installing' } }));
-      const status =
-        (await gateway.installSkill?.(host)) ??
-        err({ code: 'desktop.hosts.skill_unavailable', retryable: false });
-      if (skillChecks.current[host] !== generation) return;
-      setSkillSetup((previous) => ({
-        ...previous,
-        [host]: status.ok
-          ? { phase: 'ready', status: status.value }
-          : { phase: 'failed', error: status.error },
-      }));
-    },
-    [gateway],
-  );
   const readHostSessions = useCallback(
     () =>
       gateway.readHostSessions?.() ??
@@ -305,14 +222,6 @@ export function useDesktopRuntime(
             if (!disposed && check.ok) setUpdate(check.value);
           })
           .catch(() => undefined);
-      }
-      if (gateway.detectHosts !== undefined) {
-        void gateway.detectHosts().then((hostsResult) => {
-          if (!disposed) {
-            if (hostsResult.ok) setHosts(hostsResult.value);
-            else setFailure(hostsResult.error);
-          }
-        });
       }
       if (result.value.deepLink !== null) {
         applyDeepLink(result.value.deepLink);
@@ -455,50 +364,6 @@ export function useDesktopRuntime(
     }
   }, [gateway, update]);
 
-  const configureHost = useCallback(
-    async (host: AgentHostKind): Promise<void> => {
-      if (configuringHosts.current.has(host)) return;
-      if (gateway.planHost === undefined || gateway.applyHost === undefined) {
-        setFailure({ code: 'desktop.hosts.configuration_unavailable', retryable: false });
-        return;
-      }
-      configuringHosts.current.add(host);
-      hostChecks.current[host] = (hostChecks.current[host] ?? 0) + 1;
-      setBusy('host-configure');
-      setConfiguredHost(null);
-      setHostSetup((previous) => ({ ...previous, [host]: { phase: 'checking' } }));
-      const plan = await gateway.planHost(host);
-      if (!plan.ok) {
-        setFailure(plan.error);
-        setHostSetup((previous) => ({
-          ...previous,
-          [host]: { phase: 'failed', error: plan.error },
-        }));
-        setBusy(null);
-        configuringHosts.current.delete(host);
-        return;
-      }
-      const result =
-        plan.value.action === 'unchanged'
-          ? ok(undefined)
-          : await gateway.applyHost(host, plan.value.originalDigest);
-      setFailure(result.ok ? null : result.error);
-      setHostSetup((previous) => ({
-        ...previous,
-        [host]: result.ok ? { phase: 'configured' } : { phase: 'failed', error: result.error },
-      }));
-      if (result.ok) setConfiguredHost(host);
-      if (result.ok && gateway.detectHosts !== undefined) {
-        const detected = await gateway.detectHosts();
-        if (detected.ok) setHosts(detected.value);
-        else setFailure(detected.error);
-      }
-      setBusy(null);
-      configuringHosts.current.delete(host);
-    },
-    [gateway],
-  );
-
   const configureAgentRuntime = useCallback(
     async (target: DesktopAgentTarget): Promise<void> => {
       setBusy('agent-runtime');
@@ -543,13 +408,6 @@ export function useDesktopRuntime(
     updateBusy,
     updateProgress,
     updateFailure,
-    hosts,
-    configuredHost,
-    hostSetup,
-    checkHost,
-    skillSetup,
-    checkSkill,
-    installSkill,
     readHostSessions,
     offerInvitation,
     withdrawInvitation,
@@ -567,6 +425,5 @@ export function useDesktopRuntime(
     reauthorizeBridge,
     installUpdate,
     setAutostart,
-    configureHost,
   };
 }

@@ -564,7 +564,7 @@ describe('桌面运行时界面', () => {
     });
   });
 
-  it('为未识别宿主展示真实安装路径并复制通用 STDIO 配置', async () => {
+  it('MCP 兼容接入只给一份通用配置：展示真实安装路径并可复制，不按应用区分', async () => {
     const ready: BridgeRuntime = {
       authorization: null,
       session: null,
@@ -591,13 +591,17 @@ describe('桌面运行时界面', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
     fireEvent.click(screen.getByText('MCP compatibility'));
-    fireEvent.click(screen.getByRole('button', { name: 'Other MCP hosts' }));
-    expect(screen.getByText('C:\\Agent Room\\agent-room-mcp.exe')).toBeInTheDocument();
+    expect(screen.getByText(/Add this JSON to the tool’s MCP configuration/u)).toBeInTheDocument();
+    expect(screen.getByText(/agent-room-mcp\.exe/u)).toBeInTheDocument();
+    expect(screen.getByRole('complementary')).not.toHaveTextContent(/Codex|Claude Code|Cursor/u);
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"agent_room"'));
       expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible();
     });
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('C:\\\\Agent Room\\\\agent-room-mcp.exe'),
+    );
   });
 });

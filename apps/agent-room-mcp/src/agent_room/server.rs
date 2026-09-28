@@ -66,7 +66,6 @@ impl AgentRoomMcpServer {
         &self,
         input: JoinInput,
         task_id: Option<&str>,
-        codex: bool,
     ) -> Result<JoinPlan, CallToolResult> {
         let name = input
             .room
@@ -95,7 +94,7 @@ impl AgentRoomMcpServer {
                     code: None,
                 });
             }
-            if let Some(identity) = self.pending_invitation(chosen, codex).await {
+            if let Some(identity) = self.pending_invitation(chosen).await {
                 self.joins.adopt(task_id, identity.clone());
                 return Ok(JoinPlan {
                     identity,
@@ -124,9 +123,9 @@ impl AgentRoomMcpServer {
             catalog_id: room.catalog_id.clone(),
             room_id: room.matrix_room_id.clone(),
         });
-        let (identity, origin) = self.joins.resolve(task_id, target, input.display_name, || {
-            default_display_name(codex)
-        });
+        let (identity, origin) =
+            self.joins
+                .resolve(task_id, target, input.display_name, default_display_name);
         Ok(JoinPlan {
             identity,
             origin,
@@ -167,12 +166,12 @@ impl AgentRoomMcpServer {
 
     /// 桌面端接入面板正在等的人物。旧 Bridge 不认识这个方法或暂时读不到时当作没有，
     /// 真正的连接错误会在随后开会话时如实报出。面板没定名字时用 Agent 自己起的名字。
-    async fn pending_invitation(&self, chosen: Option<&str>, codex: bool) -> Option<JoinIdentity> {
+    async fn pending_invitation(&self, chosen: Option<&str>) -> Option<JoinIdentity> {
         match self.backend.invoke(IpcMethod::ReadInvitation).await {
             Ok(IpcResponse::Invitation {
                 invitation: Some(pending),
             }) => Some(JoinIdentity::from(pending.invitation.open_request(|| {
-                chosen.map_or_else(|| default_display_name(codex), str::to_owned)
+                chosen.map_or_else(default_display_name, str::to_owned)
             }))),
             _ => None,
         }
@@ -326,10 +325,7 @@ impl AgentRoomMcpServer {
     ) -> CallToolResult {
         let metadata_thread = context.meta.get("threadId");
         let task_id = host_task_id(metadata_thread);
-        let plan = match self
-            .plan_join(input, task_id.as_deref(), metadata_thread.is_some())
-            .await
-        {
+        let plan = match self.plan_join(input, task_id.as_deref()).await {
             Ok(plan) => plan,
             Err(result) => return result,
         };

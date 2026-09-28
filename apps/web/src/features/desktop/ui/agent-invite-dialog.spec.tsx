@@ -1,21 +1,12 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  renderHook,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readInviteHistory } from '../domain/cli-invitation';
 import { AgentInviteDialog } from './agent-invite-dialog';
 import { DesktopRuntimeProvider } from './desktop-runtime-provider';
-import { useDesktopRuntime } from './use-desktop-runtime';
 import type {
   BridgeRuntime,
   DesktopRuntimeGateway,
@@ -67,33 +58,11 @@ function gateway(
   options: {
     readonly available?: boolean;
     readonly sessions?: () => SessionsResult;
-    readonly installed?: readonly ('codex' | 'claude-code' | 'cursor')[];
-    readonly configured?: boolean;
-    readonly skill?: 'missing' | 'outdated' | 'current' | 'unsupported';
     /** The Bridge accepts the dialog's character as a pending invitation. */
     readonly offers?: boolean;
   } = {},
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
-  let configured = options.configured ?? true;
-  const applyHost = vi.fn(() => {
-    configured = true;
-    return Promise.resolve(ok(undefined));
-  });
-  let skill = options.skill ?? 'unsupported';
-  const skillStatus = (host: 'codex' | 'claude-code' | 'cursor') =>
-    ok({
-      host,
-      state: host === 'claude-code' ? skill : ('unsupported' as const),
-      target: host === 'claude-code' ? 'C:/Users/ada/.claude/skills/agent-room/SKILL.md' : null,
-      bundledDigest: '2'.repeat(64),
-      installedDigest:
-        skill === 'current' ? '2'.repeat(64) : skill === 'outdated' ? '3'.repeat(64) : null,
-    });
-  const installSkill = vi.fn((host: 'codex' | 'claude-code' | 'cursor') => {
-    skill = 'current';
-    return Promise.resolve(skillStatus(host));
-  });
   const offerInvitation = vi.fn((invitation: InvitationOffer) =>
     Promise.resolve(ok({ invitation, expiresInMs: 600_000 })),
   );
@@ -134,36 +103,10 @@ function gateway(
         }),
       ),
     subscribe: () => Promise.resolve(ok(() => undefined)),
-    detectHosts: () =>
-      Promise.resolve(
-        ok(
-          (['codex', 'claude-code', 'cursor'] as const).map((host) => ({
-            host,
-            installed: (options.installed ?? ['codex']).includes(host),
-            configurable: (options.installed ?? ['codex']).includes(host),
-            mechanism: 'config-file',
-            diagnosticCode: 'test.detected',
-          })),
-        ),
-      ),
     readHostSessions: () => Promise.resolve(options.sessions?.() ?? ok([])),
-    planHost: (host) =>
-      Promise.resolve(
-        ok({
-          host,
-          action: configured ? 'unchanged' : 'create',
-          target: 'config',
-          originalDigest: '0'.repeat(64),
-          desiredDigest: '1'.repeat(64),
-          summaryCode: 'test.plan',
-        }),
-      ),
-    applyHost,
-    skillStatus: (host) => Promise.resolve(skillStatus(host)),
-    installSkill,
     ...(options.offers === true ? { offerInvitation, withdrawInvitation } : {}),
   };
-  return { value, applyHost, installSkill, offerInvitation, withdrawInvitation };
+  return { value, offerInvitation, withdrawInvitation };
 }
 
 function renderDialog(
@@ -229,31 +172,6 @@ afterEach(() => {
 });
 
 describe('AgentInviteDialog', () => {
-  it('迟到的配置检查不能覆盖已经成功的一键配置', async () => {
-    const runtime = gateway({ configured: false }).value;
-    const fallbackPlan = runtime.planHost?.bind(runtime);
-    if (fallbackPlan === undefined) throw new Error('Fixture requires planHost');
-    const delayed =
-      Promise.withResolvers<Awaited<ReturnType<NonNullable<DesktopRuntimeGateway['planHost']>>>>();
-    const planHost = vi
-      .fn<NonNullable<DesktopRuntimeGateway['planHost']>>()
-      .mockImplementationOnce(() => delayed.promise)
-      .mockImplementation(fallbackPlan);
-    const runtimeWithDelayedCheck = { ...runtime, planHost };
-    const { result } = renderHook(() => useDesktopRuntime(runtimeWithDelayedCheck));
-    let checking: Promise<void>;
-    act(() => {
-      checking = result.current.checkHost('codex');
-    });
-    await act(() => result.current.configureHost('codex'));
-    expect(result.current.hostSetup.codex?.phase).toBe('configured');
-    await act(async () => {
-      delayed.resolve(err({ code: 'codex.list_failed', retryable: true }));
-      await checking;
-    });
-    expect(result.current.hostSetup.codex?.phase).toBe('configured');
-  });
-
   it('浏览器提供 CLI 邀请与下载，不伪造本机进程状态', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
@@ -295,9 +213,8 @@ describe('AgentInviteDialog', () => {
   it('三种接入方式平级，默认网络接入，记住上次的选择，全程不出现具体 Agent 应用的名字', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway({ installed: ['codex', 'claude-code', 'cursor'] });
-    const skillStatus = vi.fn(runtime.value.skillStatus?.bind(runtime.value));
-    const first = renderDialog({ ...runtime.value, skillStatus });
+    const runtime = gateway();
+    const first = renderDialog(runtime.value);
     expect(screen.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -317,9 +234,6 @@ describe('AgentInviteDialog', () => {
     expect(copied(writeText, 0)).toContain('register --help');
     chooseMethod('MCP');
     expect(screen.getByRole('dialog')).not.toHaveTextContent(appNames);
-    // 不再为某个应用检查或安装技能。
-    expect(skillStatus).not.toHaveBeenCalled();
-    expect(runtime.installSkill).not.toHaveBeenCalled();
     first.unmount();
 
     renderDialog(runtime.value);
@@ -362,9 +276,7 @@ describe('AgentInviteDialog', () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     rememberMethod('cli');
-    const runtime = gateway({ configured: false });
-    const planHost = vi.fn(runtime.value.planHost?.bind(runtime.value));
-    const value = { ...runtime.value, planHost };
+    const { value } = gateway();
     const first = renderDialog(value);
     await readyToCopy();
     // 名字默认留给 Agent 自己起：邀请里不带名字，说明里请它用 --name 起一个。
@@ -388,8 +300,6 @@ describe('AgentInviteDialog', () => {
     expect(prompt).not.toContain('read --wait 25');
     expect(prompt).toContain('untrusted input');
     expect(prompt).toContain('do not claim to still be listening');
-    expect(planHost).not.toHaveBeenCalled();
-    expect(runtime.applyHost).not.toHaveBeenCalled();
     first.unmount();
 
     renderDialog(value);
@@ -590,23 +500,21 @@ describe('AgentInviteDialog', () => {
     ).toBeNull();
   });
 
-  it('MCP 方式只给通用配置：任何支持 MCP 的工具照着添加，不按应用区分，也不去改哪个应用的设置', async () => {
+  it('MCP 方式只给通用配置：任何支持 MCP 的工具照着添加，不按应用区分', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     rememberMethod('mcp');
-    const runtime = gateway({ configured: false, installed: ['codex', 'claude-code', 'cursor'] });
-    const planHost = vi.fn(runtime.value.planHost?.bind(runtime.value));
-    renderDialog({ ...runtime.value, planHost });
+    renderDialog(gateway().value);
     expect(await screen.findByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"agent_room"'));
     });
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('agent-room-mcp.exe'));
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible();
     await readyToCopy();
     expect(screen.getAllByRole('radio')).toHaveLength(3);
-    expect(planHost).not.toHaveBeenCalled();
-    expect(runtime.applyHost).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).not.toHaveTextContent(appNames);
   });
 
   it('本机连接未就绪时明确提示，而不是让用户白等', async () => {

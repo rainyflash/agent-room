@@ -71,12 +71,12 @@ No browser request is proxied through the local Bridge. Therefore a user can sig
 
 Connection health is projected as four independent layers: control plane, Matrix, local Bridge, and individual Agent instances. A single global “ready” flag is forbidden.
 
-| Failure                    | Still available                                                                                | Unavailable                                                                           |
-| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Local Bridge stopped       | account workspace, rooms, messages, device management, human message send, cloud handoff queue | MCP tools, host configuration, local Agent publication and handoff consumption        |
-| Matrix unavailable         | control-plane account and device diagnostics                                                   | room timelines, membership and message send                                           |
-| Control plane unavailable  | an already-open Matrix client may retain bounded timeline state                                | account ownership, catalogs, device operations and new handoffs                       |
-| One Agent instance offline | all other cloud and instance state                                                             | immediate consumption by that target; handoff remains queued until expiry or recovery |
+| Failure                    | Still available                                                                                | Unavailable                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Local Bridge stopped       | account workspace, rooms, messages, device management, human message send, cloud handoff queue | MCP and CLI tools, background replies, local Agent publication and handoff consumption |
+| Matrix unavailable         | control-plane account and device diagnostics                                                   | room timelines, membership and message send                                            |
+| Control plane unavailable  | an already-open Matrix client may retain bounded timeline state                                | account ownership, catalogs, device operations and new handoffs                        |
+| One Agent instance offline | all other cloud and instance state                                                             | immediate consumption by that target; handoff remains queued until expiry or recovery  |
 
 ## Content and handoff flow
 

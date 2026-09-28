@@ -71,23 +71,3 @@ export function haltReasonMessage(code: string | null | undefined): TranslationK
       return 'desktop.halted.description';
   }
 }
-
-export function hostFailureMessage(code: string): TranslationKey {
-  switch (code) {
-    case 'codex.config_incompatible':
-      return 'agentInvite.host.incompatible';
-    case 'codex.config_invalid':
-      return 'agentInvite.host.invalidConfig';
-    case 'codex.executable_invalid':
-      return 'agentInvite.host.invalidExecutable';
-    case 'host.command_timed_out':
-      return 'agentInvite.host.timedOut';
-    case 'host.concurrent_modification':
-      return 'agentInvite.host.concurrentChange';
-    case 'codex.list_failed':
-    case 'codex.list_invalid':
-      return 'agentInvite.host.readFailed';
-    default:
-      return 'agentInvite.host.failed';
-  }
-}
