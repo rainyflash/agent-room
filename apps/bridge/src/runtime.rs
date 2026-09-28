@@ -1824,8 +1824,19 @@ async fn maintain_device_session(
             return;
         }
 
-        status.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, false);
-        match session_service.active_session().await {
+        // 按计划提前刷新时旧令牌还有效，这台设备照常可用；手上没有可用会话、或者刷新失败了才算在重连。
+        // 否则令牌每换一次（十几分钟），桌面端都会看到一两秒的“正在重连”。
+        let still_valid = session
+            .as_ref()
+            .is_some_and(|active| active.access_token_expires_at > clock.now());
+        if !still_valid {
+            status.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, false);
+        }
+        let refreshed = session_service.active_session().await;
+        if refreshed.is_err() {
+            status.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, false);
+        }
+        match refreshed {
             Ok(active) => {
                 backoff.record_connected();
                 status.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, true);
@@ -3302,6 +3313,7 @@ mod first_authorization_tests {
         },
     };
 
+    use agent_room_application::ports::Clock as _;
     use agent_room_application::{
         devices::{AuthenticatedDevice, DeviceCredentials},
         ports::{
@@ -3316,12 +3328,18 @@ mod first_authorization_tests {
             BridgeAuthorizationService,
         },
         ports::{
-            BridgeCredentialResult, ControlPlaneDeviceGateway, ControlPlaneDeviceResult,
-            DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
-            RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
+            BridgeCredentialResult, BridgeCredentialState, ControlPlaneDeviceGateway,
+            ControlPlaneDeviceResult, DeviceCredentialVault, DeviceSigningIdentity,
+            DeviceSigningIdentityStore, RefreshBridgeDevice, RegisterBridgeDevice,
+            StoredBridgeDeviceCredentials,
         },
         reconnect::ReconnectPolicy,
+        session::{
+            ActiveBridgeSession, BridgeSessionDependencies, BridgeSessionPolicy,
+            BridgeSessionService,
+        },
     };
+    use agent_room_bridge_ipc::IpcBridgeState;
     use agent_room_domain::{
         devices::{DevicePlatform, DevicePublicSigningKey},
         identity::Principal,
@@ -3330,10 +3348,12 @@ mod first_authorization_tests {
     };
     use agent_room_identity_adapter::SecureSecretFactory;
     use serde_json::json;
+    use tokio::sync::{Notify, oneshot, watch};
 
     use super::{
-        BridgeRuntimeError, BridgeSupervisorEvent, ConfiguredDeviceAuthorization,
-        authorize_first_device,
+        BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader as _, BridgeSupervisorEvent,
+        ConfiguredDeviceAuthorization, DeviceConnectionStatus, DeviceSessionRuntime, SystemClock,
+        SystemDeviceRefreshAttempts, authorize_first_device, maintain_device_session,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -3432,6 +3452,111 @@ mod first_authorization_tests {
         ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
             Box::pin(async { Ok(设备凭据()) })
         }
+    }
+
+    /// 刷新停在控制面，直到测试放行；用来看刷新途中桌面端读到的状态。
+    #[derive(Default)]
+    struct 卡住的刷新 {
+        started: Notify,
+        release: Notify,
+    }
+
+    impl ControlPlaneDeviceGateway for 卡住的刷新 {
+        fn register(
+            &self,
+            _request: RegisterBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async { Ok(设备凭据()) })
+        }
+
+        fn refresh(
+            &self,
+            _request: RefreshBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async move {
+                self.started.notify_one();
+                self.release.notified().await;
+                let mut renewed = 设备凭据();
+                renewed.device.access_token_expires_at = 从现在起(3_600_000);
+                renewed.refresh_token_expires_at = 从现在起(86_400_000);
+                Ok(renewed)
+            })
+        }
+    }
+
+    fn 从现在起(millis: i64) -> UtcMillis {
+        UtcMillis::new(SystemClock.now().value() + millis).expect("测试时间有效")
+    }
+
+    #[tokio::test]
+    async fn 旧令牌还有效时按计划刷新_设备一直是就绪() {
+        let control_plane = Arc::new(卡住的刷新::default());
+        let credentials = Arc::new(内存凭据库::default());
+        let expires_soon = 从现在起(60_000);
+        credentials
+            .replace(&StoredBridgeDeviceCredentials {
+                state: BridgeCredentialState::Ready,
+                device_id: DeviceId::from_uuid(uuid::Uuid::from_u128(2)),
+                access_token: SecretValue::new("bridge-access-token").expect("测试 Token 有效"),
+                access_token_expires_at: expires_soon,
+                refresh_token: SecretValue::new("bridge-refresh-token").expect("测试 Token 有效"),
+                refresh_token_expires_at: 从现在起(86_400_000),
+            })
+            .expect("写入测试凭据");
+        // 离过期还有一分钟、提前两分钟刷新：一进循环就刷新，旧令牌这时仍然有效。
+        let lead = DurationMillis::new(120_000).expect("时长有效");
+        let service = Arc::new(BridgeSessionService::new(
+            BridgeSessionDependencies {
+                signing_identities: Arc::new(测试签名存储),
+                control_plane: control_plane.clone(),
+                credentials: credentials.clone(),
+                secrets: Arc::new(SecureSecretFactory),
+                clock: Arc::new(SystemClock),
+                refresh_attempts: Arc::new(SystemDeviceRefreshAttempts),
+            },
+            BridgeSessionPolicy::new(lead),
+        ));
+        let status = Arc::new(BridgeRuntimeStatus::new(1_000, false));
+        status.set_component_ready(BridgeRuntimeStatus::DEVICE_COMPONENT, true);
+        status.finish_starting();
+        let device = DeviceConnectionStatus(status.clone());
+        let (lost, _lost_receiver) = oneshot::channel();
+        let (stop, shutdown) = watch::channel(false);
+        let task = tokio::spawn(maintain_device_session(
+            DeviceSessionRuntime {
+                service,
+                initial_session: Some(ActiveBridgeSession {
+                    device_id: DeviceId::from_uuid(uuid::Uuid::from_u128(2)),
+                    access_token: SecretValue::new("bridge-access-token").expect("测试 Token 有效"),
+                    access_token_expires_at: expires_soon,
+                }),
+                clock: Arc::new(SystemClock),
+                refresh_lead_time: lead,
+                reconnect_policy: 毫秒级退避(),
+            },
+            status.clone(),
+            lost,
+            shutdown,
+        ));
+
+        control_plane.started.notified().await;
+        assert_eq!(device.read_status().state, IpcBridgeState::Ready);
+        control_plane.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while credentials
+                .load()
+                .expect("读取测试凭据")
+                .is_none_or(|stored| stored.access_token_expires_at == expires_soon)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("刷新完成并换上新令牌");
+        assert_eq!(device.read_status().state, IpcBridgeState::Ready);
+
+        stop.send(true).expect("停止维护任务");
+        task.await.expect("维护任务正常结束");
     }
 
     #[derive(Default)]
