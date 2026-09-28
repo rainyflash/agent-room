@@ -180,6 +180,46 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertNotIn("setInputFiles", without)
         self.assertIn("attachmentSent: false", without)
 
+    def test_persona_namespace_matches_the_bridge(self):
+        # The same vector is pinned by the Bridge test 人物存储命名空间与发布验收工具算法一致.
+        self.assertEqual(
+            release_qa.host_storage_service("agent-room.alpha52.acceptance.fresh-device",
+                                            "01a0e602-f68e-7ee2-86ab-71276e653172"),
+            "dev.agent-room.host.MrRUZtsV2yGnp2fG9FiLVNpZRQkzj6AkIQSOlJ491ts.v1")
+
+    def test_retiring_a_device_selects_only_its_own_and_its_personas_credentials(self):
+        old = "agent-room.alpha52.acceptance.fresh-device"
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            (data / "host-agents" / "01a0e602-f68e-7ee2-86ab-71276e653172").mkdir(parents=True)
+            persona = release_qa.host_storage_service(old, "01a0e602-f68e-7ee2-86ab-71276e653172")
+            desktop_persona = release_qa.host_storage_service("dev.agent-room.bridge", "01a0e602-f68e-7ee2-86ab-71276e653172")
+            targets = [
+                f"device-session-v1.{old}", f"bridge-ipc-shared-secret-v1.{persona}",
+                "device-session-v1.dev.agent-room.bridge", f"device-session-v1.{desktop_persona}",
+                "device-session-v1.agent-room.alpha53.acceptance.fresh-device",
+                f"Some Other App.{old}", f"device-session-v1.{old}.extra",
+            ]
+            record = {"service": old, "dataDir": str(data)}
+            self.assertEqual(release_qa.retired_device_targets(record, targets),
+                             [f"device-session-v1.{old}", f"bridge-ipc-shared-secret-v1.{persona}"])
+            with self.assertRaises(release.ReleaseFailure):
+                release_qa.retired_device_targets({"service": "dev.agent-room.bridge", "dataDir": str(data)}, targets)
+
+    def test_retiring_deletes_one_by_one_and_only_warns_on_failure(self):
+        old = "agent-room.alpha52.acceptance.fresh-device"
+        targets = [f"device-session-v1.{old}", f"matrix-store-passphrase-v1.{old}", "device-session-v1.dev.agent-room.bridge"]
+        deleted: list[str] = []
+        with mock.patch.object(release_qa.sys, "platform", "win32"), \
+                mock.patch.object(release_qa, "windows_generic_credentials", return_value=targets), \
+                mock.patch.object(release_qa, "delete_windows_credential",
+                                  side_effect=lambda target: deleted.append(target) or True):
+            release_qa.retire_device_credentials({"service": old, "dataDir": "missing"})
+        self.assertEqual(deleted, targets[:2])
+        with mock.patch.object(release_qa.sys, "platform", "win32"), \
+                mock.patch.object(release_qa, "windows_generic_credentials", side_effect=OSError(5, "denied")):
+            release_qa.retire_device_credentials({"service": old, "dataDir": "missing"})
+
     @unittest.skipIf(shutil.which("node") is None, "node is required to run the page function")
     def test_reply_check_only_counts_this_runs_two_newest_replies(self):
         # Earlier releases' QA Agent has the same name, and the room fills in their replies on open.

@@ -329,6 +329,20 @@ mod tests {
         );
     }
 
+    /// `tools/release_qa.py` 清理退役验收设备的凭据时按同一规则算人物的命名空间，两边用同一组值核对。
+    #[test]
+    fn 人物存储命名空间与发布验收工具算法一致() {
+        let agent = AgentId::from_uuid(
+            uuid::Uuid::parse_str("01a0e602-f68e-7ee2-86ab-71276e653172").unwrap(),
+        );
+        assert_eq!(
+            host_storage_service("agent-room.alpha52.acceptance.fresh-device", agent)
+                .unwrap()
+                .as_str(),
+            "dev.agent-room.host.MrRUZtsV2yGnp2fG9FiLVNpZRQkzj6AkIQSOlJ491ts.v1"
+        );
+    }
+
     #[test]
     fn 人物存储命名空间稳定且隔离安装与身份() {
         let first = AgentId::from_uuid(uuid::Uuid::now_v7());
