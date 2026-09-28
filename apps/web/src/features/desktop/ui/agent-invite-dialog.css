@@ -110,6 +110,13 @@
   font-size: 13px;
   line-height: 1.65;
 }
+/* 私人房间：生成口令的按钮、给 Agent 的话和说明，排法与公开大厅那一套相同。 */
+.agent-invite__private-code {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  width: 100%;
+}
 .agent-invite__network-prompt {
   width: 100%;
   margin: 0;
