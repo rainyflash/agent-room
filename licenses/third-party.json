@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "f9ace68479b07f0e9e9a5411b6c1e0864a03de032e3eb359bf51e7d32c8def31",
-    "pnpm-lock.yaml": "5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff"
+    "pnpm-lock.yaml": "4f1ec9ff06dcd9f7c3a720882c7377c40cafaa3c37b288e242bde3602522a3cb"
   },
   "dependencies": [
     {
@@ -7281,9 +7281,9 @@
     {
       "ecosystem": "npm",
       "name": "@matrix-org/matrix-sdk-crypto-wasm",
-      "version": "18.5.0",
+      "version": "18.9.0",
       "license": "Apache-2.0",
-      "source": "https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.5.0"
+      "source": "https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.9.0"
     },
     {
       "ecosystem": "npm",
@@ -8138,6 +8138,13 @@
       "version": "2.1.0",
       "license": "MIT",
       "source": "https://www.npmjs.com/package/content-type/v/2.1.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "content-type",
+      "version": "3.1.1",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/content-type/v/3.1.1"
     },
     {
       "ecosystem": "npm",
@@ -9584,16 +9591,16 @@
     {
       "ecosystem": "npm",
       "name": "matrix-js-sdk",
-      "version": "42.2.0",
+      "version": "42.4.0",
       "license": "Apache-2.0",
-      "source": "https://www.npmjs.com/package/matrix-js-sdk/v/42.2.0"
+      "source": "https://www.npmjs.com/package/matrix-js-sdk/v/42.4.0"
     },
     {
       "ecosystem": "npm",
       "name": "matrix-widget-api",
-      "version": "1.18.0",
+      "version": "1.19.0",
       "license": "Apache-2.0",
-      "source": "https://www.npmjs.com/package/matrix-widget-api/v/1.18.0"
+      "source": "https://www.npmjs.com/package/matrix-widget-api/v/1.19.0"
     },
     {
       "ecosystem": "npm",

@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 890
-- npm packages: 713
-- Total locked package versions: 1603
+- npm packages: 714
+- Total locked package versions: 1604
 - `Cargo.lock` SHA-256: `f9ace68479b07f0e9e9a5411b6c1e0864a03de032e3eb359bf51e7d32c8def31`
-- `pnpm-lock.yaml` SHA-256: `5d7e0117865135efa568564e4bd640e3838f39aab7ed36e0734352de5a1492ff`
+- `pnpm-lock.yaml` SHA-256: `4f1ec9ff06dcd9f7c3a720882c7377c40cafaa3c37b288e242bde3602522a3cb`
 
 ## License expressions
 
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 765 |
+| `MIT` | 766 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 380 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -1113,7 +1113,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@jridgewell/source-map](https://www.npmjs.com/package/@jridgewell/source-map/v/0.3.11) | 0.3.11 | `MIT` |
 | npm | [@jridgewell/sourcemap-codec](https://www.npmjs.com/package/@jridgewell/sourcemap-codec/v/1.5.5) | 1.5.5 | `MIT` |
 | npm | [@jridgewell/trace-mapping](https://www.npmjs.com/package/@jridgewell/trace-mapping/v/0.3.31) | 0.3.31 | `MIT` |
-| npm | [@matrix-org/matrix-sdk-crypto-wasm](https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.5.0) | 18.5.0 | `Apache-2.0` |
+| npm | [@matrix-org/matrix-sdk-crypto-wasm](https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.9.0) | 18.9.0 | `Apache-2.0` |
 | npm | [@npmcli/fs](https://www.npmjs.com/package/@npmcli/fs/v/5.0.0) | 5.0.0 | `ISC` |
 | npm | [@npmcli/git](https://www.npmjs.com/package/@npmcli/git/v/7.0.2) | 7.0.2 | `ISC` |
 | npm | [@npmcli/map-workspaces](https://www.npmjs.com/package/@npmcli/map-workspaces/v/5.0.3) | 5.0.3 | `ISC` |
@@ -1236,6 +1236,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [compression](https://www.npmjs.com/package/compression/v/1.8.1) | 1.8.1 | `MIT` |
 | npm | [connect](https://www.npmjs.com/package/connect/v/3.7.0) | 3.7.0 | `MIT` |
 | npm | [content-type](https://www.npmjs.com/package/content-type/v/2.1.0) | 2.1.0 | `MIT` |
+| npm | [content-type](https://www.npmjs.com/package/content-type/v/3.1.1) | 3.1.1 | `MIT` |
 | npm | [convert-source-map](https://www.npmjs.com/package/convert-source-map/v/2.0.0) | 2.0.0 | `MIT` |
 | npm | [cookie-es](https://www.npmjs.com/package/cookie-es/v/3.1.1) | 3.1.1 | `MIT` |
 | npm | [core-js-compat](https://www.npmjs.com/package/core-js-compat/v/3.50.0) | 3.50.0 | `MIT` |
@@ -1442,8 +1443,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [make-dir](https://www.npmjs.com/package/make-dir/v/4.0.0) | 4.0.0 | `MIT` |
 | npm | [math-intrinsics](https://www.npmjs.com/package/math-intrinsics/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [matrix-events-sdk](https://www.npmjs.com/package/matrix-events-sdk/v/0.0.1) | 0.0.1 | `Apache-2.0` |
-| npm | [matrix-js-sdk](https://www.npmjs.com/package/matrix-js-sdk/v/42.2.0) | 42.2.0 | `Apache-2.0` |
-| npm | [matrix-widget-api](https://www.npmjs.com/package/matrix-widget-api/v/1.18.0) | 1.18.0 | `Apache-2.0` |
+| npm | [matrix-js-sdk](https://www.npmjs.com/package/matrix-js-sdk/v/42.4.0) | 42.4.0 | `Apache-2.0` |
+| npm | [matrix-widget-api](https://www.npmjs.com/package/matrix-widget-api/v/1.19.0) | 1.19.0 | `Apache-2.0` |
 | npm | [mdn-data](https://www.npmjs.com/package/mdn-data/v/2.27.1) | 2.27.1 | `CC0-1.0` |
 | npm | [media-typer](https://www.npmjs.com/package/media-typer/v/1.1.1) | 1.1.1 | `MIT` |
 | npm | [mime-db](https://www.npmjs.com/package/mime-db/v/1.54.0) | 1.54.0 | `MIT` |
