@@ -12,6 +12,8 @@ pub use system::SystemCredentialStore;
 pub enum SecretStoreFailure {
     Configuration,
     Unavailable,
+    /// 系统凭据库已满，写不进新凭据。Windows 凭据管理器写满后，谁来写都会失败。
+    Full,
     Corrupt,
 }
 
@@ -58,6 +60,32 @@ impl LocalSecretStore {
                 directory, key_file,
             )?)),
         })
+    }
+
+    /// Opens an encrypted store with a key the caller already holds, for example one kept in the
+    /// system credential store. Each agent's own secrets live in such a store, so that a machine
+    /// with many agents does not fill up the system store.
+    ///
+    /// # Errors
+    /// Returns a failure for an unsafe location or unavailable storage.
+    pub fn encrypted_with_key(
+        service: impl Into<String>,
+        directory: &Path,
+        key: &[u8; 32],
+    ) -> Result<Self, SecretStoreFailure> {
+        Ok(Self {
+            service: service.into(),
+            backend: Ok(Backend::Encrypted(EncryptedStore::with_key(
+                directory, key,
+            )?)),
+        })
+    }
+
+    /// Whether values go to the operating system's credential store. This is the default when no
+    /// headless vault is configured.
+    #[must_use]
+    pub const fn uses_system_store(&self) -> bool {
+        matches!(self.backend, Ok(Backend::System(_)))
     }
 
     /// # Errors

@@ -66,6 +66,10 @@ impl BridgeRuntimePaths {
         create_private_directory(&self.handoff_root)
     }
 
+    pub(crate) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
     pub(crate) fn instance_lock_path(&self) -> &Path {
         &self.instance_lock
     }

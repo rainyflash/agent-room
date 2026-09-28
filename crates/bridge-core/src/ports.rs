@@ -16,6 +16,8 @@ use agent_room_domain::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeCredentialFailureKind {
     Unavailable,
+    /// 系统凭据库已满，写不进新凭据。不会自己好转，要清理后重试。
+    StorageFull,
     Corrupt,
 }
 

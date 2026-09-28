@@ -55,6 +55,8 @@ pub(crate) struct BridgeConfig {
     pub(crate) exit_with_supervisor: bool,
     pub(crate) data_root: PathBuf,
     pub(crate) secure_storage_service: SecureStorageService,
+    /// 独立人物的秘密存放处；根 Bridge 为空，照旧用系统凭据库或无桌面加密库。
+    pub(crate) agent_secret_vault: Option<crate::secure_storage::AgentSecretVault>,
 }
 
 impl BridgeConfig {
@@ -133,6 +135,7 @@ impl BridgeConfig {
             )?,
             data_root: read_data_root(source)?,
             secure_storage_service: read_secure_storage_service(source)?,
+            agent_secret_vault: None,
         })
     }
 }

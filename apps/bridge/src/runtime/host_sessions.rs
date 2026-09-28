@@ -19,6 +19,7 @@ use super::{
 use crate::{
     host_sessions::{HostSessionFactory, PreparedHostSession, registration_failure},
     ipc::BridgeIpcDispatchFailure,
+    secure_storage::{AgentSecretVault, AgentVaultKey},
 };
 use agent_room_domain::ids::AgentId;
 use std::sync::Arc;
@@ -30,6 +31,8 @@ pub(super) struct HostAgentRuntimeFactory {
     device_session: Arc<BridgeSessionService>,
     registration: Arc<dyn HostAgentRegistrationGateway>,
     onboarding: Arc<dyn ControlPlaneOnboardingGateway>,
+    /// 为空时人物照旧用系统凭据库或无桌面加密库。
+    agent_vault_key: Option<AgentVaultKey>,
 }
 
 impl HostAgentRuntimeFactory {
@@ -37,6 +40,7 @@ impl HostAgentRuntimeFactory {
         config: BridgeConfig,
         paths: BridgeRuntimePaths,
         device_session: Arc<BridgeSessionService>,
+        agent_vault_key: Option<AgentVaultKey>,
     ) -> Result<Self, BridgeRuntimeError> {
         let registration = ReqwestControlPlaneOnboardingGateway::new(
             &ControlPlaneHttpConfig {
@@ -53,6 +57,7 @@ impl HostAgentRuntimeFactory {
             device_session,
             registration: registration.clone(),
             onboarding: registration,
+            agent_vault_key,
         })
     }
 
@@ -97,12 +102,8 @@ impl HostAgentRuntimeFactory {
             .await
             .map_err(|failure| registration_failure(failure.kind()))?;
         let (paths, store_lock) = self.prepare_agent_storage(agent.agent_id)?;
-        // 只为子运行时选择独立存储命名空间；设备认证继续共享传入的服务，根 IPC 身份不变。
-        let mut config = self.config.clone();
-        config.secure_storage_service =
-            host_storage_service(self.config.secure_storage_service.as_str(), agent.agent_id)
-                .map_err(BridgeIpcDispatchFailure::from)?;
-        let secrets = OsBridgeRuntimeSecretVault::system(config.secure_storage_service.as_str())
+        let config = self.agent_config(agent.agent_id, &paths)?;
+        let secrets = OsBridgeRuntimeSecretVault::for_config(&config)
             .load_or_create()
             .map_err(BridgeRuntimeError::runtime_secrets)
             .map_err(BridgeIpcDispatchFailure::from)?;
@@ -176,6 +177,24 @@ impl HostAgentRuntimeFactory {
                 state.clear();
             }),
         })
+    }
+
+    /// 只为子运行时选择独立存储命名空间；设备认证继续共享传入的服务，根 IPC 身份不变。
+    fn agent_config(
+        &self,
+        agent_id: AgentId,
+        paths: &BridgeRuntimePaths,
+    ) -> Result<BridgeConfig, BridgeIpcDispatchFailure> {
+        let mut config = self.config.clone();
+        config.secure_storage_service =
+            host_storage_service(self.config.secure_storage_service.as_str(), agent_id)
+                .map_err(BridgeIpcDispatchFailure::from)?;
+        // 每个人物都在系统凭据库里存几条的话，人物一多就把凭据库写满，之后谁也进不来。
+        config.agent_secret_vault = self
+            .agent_vault_key
+            .clone()
+            .map(|key| AgentSecretVault::new(paths.data_root().join("secrets"), key));
+        Ok(config)
     }
 
     fn prepare_agent_storage(

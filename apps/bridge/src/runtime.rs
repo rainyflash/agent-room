@@ -109,8 +109,9 @@ use crate::{
         BridgeRuntimePaths,
     },
     secure_storage::{
-        BridgeRuntimeSecrets, OsAgentInstanceSigningIdentityStore, OsAgentRuntimeCredentialVault,
-        OsBridgeRuntimeSecretVault, OsDeviceCredentialVault, OsDeviceSigningIdentityStore,
+        AgentVaultKey, BridgeRuntimeSecrets, OsAgentInstanceSigningIdentityStore,
+        OsAgentRuntimeCredentialVault, OsBridgeRuntimeSecretVault, OsDeviceCredentialVault,
+        OsDeviceSigningIdentityStore,
     },
 };
 use agent_room_bridge::control_plane::{
@@ -148,6 +149,19 @@ const STATUS_ALLOWED_CLOCK_SKEW_MILLIS: u64 = 15_000;
 const TARGETED_HANDOFF_STORED_DELAY: Duration = Duration::from_millis(250);
 const TARGETED_HANDOFF_IDLE_DELAY: Duration = Duration::from_secs(5);
 const TARGETED_HANDOFF_FAILURE_DELAY: Duration = Duration::from_secs(15);
+
+/// 独立人物的秘密放在各自数据目录下的加密文件里，钥匙从根 Bridge 的秘密派生，不另占系统凭据库。
+/// 配置了无桌面加密库时，人物的秘密本来就在那个库里，照旧。
+fn agent_vault_key(
+    config: &BridgeConfig,
+    runtime_secrets: &BridgeRuntimeSecrets,
+) -> Option<AgentVaultKey> {
+    agent_room_bridge_local_adapter::LocalSecretStore::from_environment(
+        config.secure_storage_service.as_str(),
+    )
+    .uses_system_store()
+    .then(|| runtime_secrets.agent_vault_key().clone())
+}
 
 pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     let config = BridgeConfig::from_environment()
@@ -219,6 +233,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
             config.clone(),
             paths.clone(),
             device_session.service.clone(),
+            agent_vault_key(&config, &runtime_secrets),
         )?,
     )));
     let request_handler = Arc::new(SessionAwareIpcHandler {
@@ -745,16 +760,13 @@ async fn compose_agent_session_runtime(
         ReqwestControlPlaneAgentRuntimeGateway::new(&http, device_session.clone())
             .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
     );
-    let signing_identities: Arc<dyn DeviceSigningIdentityStore> = Arc::new(
-        OsAgentInstanceSigningIdentityStore::system(config.secure_storage_service.as_str()),
-    );
+    let signing_identities: Arc<dyn DeviceSigningIdentityStore> =
+        Arc::new(OsAgentInstanceSigningIdentityStore::for_config(config));
     let service = Arc::new(AgentRuntimeSessionService::new(
         AgentRuntimeSessionDependencies {
             signing_identities: signing_identities.clone(),
             control_plane,
-            credentials: Arc::new(OsAgentRuntimeCredentialVault::system(
-                config.secure_storage_service.as_str(),
-            )),
+            credentials: Arc::new(OsAgentRuntimeCredentialVault::for_config(config)),
             identifiers: Arc::new(SystemAgentRuntimeIdentifiers),
         },
     ));
@@ -2583,12 +2595,20 @@ impl BridgeRuntimeError {
         )
     }
 
+    fn storage_full() -> Self {
+        Self::new(
+            "bridge.secure_storage_full",
+            "系统凭据库已满，Bridge 存不下新的秘密；清理不用的凭据后重试",
+        )
+    }
+
     fn runtime_secrets(failure: BridgeCredentialFailure) -> Self {
         match failure.kind() {
             BridgeCredentialFailureKind::Unavailable => Self::new(
                 "bridge.runtime_secrets_unavailable",
                 "Bridge 运行时秘密无法从操作系统安全存储读取",
             ),
+            BridgeCredentialFailureKind::StorageFull => Self::storage_full(),
             BridgeCredentialFailureKind::Corrupt => Self::new(
                 "bridge.runtime_secrets_corrupt",
                 "Bridge 运行时秘密已损坏，拒绝静默替换",
@@ -2869,6 +2889,7 @@ impl BridgeRuntimeError {
                     "bridge.agent_signing_identity_unavailable",
                     "Agent 实例签名密钥暂时不可用",
                 ),
+                BridgeCredentialFailureKind::StorageFull => Self::storage_full(),
                 BridgeCredentialFailureKind::Corrupt => Self::new(
                     "bridge.agent_signing_identity_corrupt",
                     "Agent 实例签名密钥已损坏，拒绝静默替换",

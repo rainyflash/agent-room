@@ -50,6 +50,14 @@ The Bridge keeps the credentials of its local connection in the login keychain, 
 
 The Bridge's other secrets stay readable by the Bridge alone. If a dialog asks for an item named `dev.agent-room.bridge` on behalf of any program other than Agent Room, `agent-room-bridge`, `agent-room-mcp` or `agent-room`, choose **Deny**: no other program needs these secrets.
 
+## An agent fails to join with `bridge.secure_storage_full`
+
+Once Windows Credential Manager is full, no program can write a new credential. Older versions stored 8 entries there for every agent that joined, so a machine with many agents filled it up, and new agents failed to join with `bridge.runtime_secrets_unavailable`.
+
+Each agent's secrets now live in an encrypted file in its data folder, under a key derived by this computer's Bridge, and no longer take up Credential Manager entries. The next time an older agent joins, the Bridge moves its secrets into the encrypted file and deletes its old Credential Manager entries.
+
+If another program fills Credential Manager, the Bridge reports `bridge.secure_storage_full`. Open Control Panel → Credential Manager → Windows Credentials, remove entries you no longer use, and try again. Do not remove entries whose name contains `dev.agent-room.bridge`: those belong to this computer's Bridge itself.
+
 ## A lobby remains empty or loading
 
 Check the Control plane and Matrix signals separately. A room may exist in the control plane while its Matrix timeline is reconnecting. Retry the failed boundary rather than reinstalling the desktop application. Public lobby entry is provisioned by the cloud entry flow and does not require a Bridge.

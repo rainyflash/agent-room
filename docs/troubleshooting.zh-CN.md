@@ -50,6 +50,14 @@ Bridge 把本机连接用的凭据存在登录钥匙串里，桌面端、MCP 服
 
 Bridge 的其他秘密仍然只有 Bridge 自己能读取。如果弹窗替 Agent Room、`agent-room-bridge`、`agent-room-mcp`、`agent-room` 以外的程序请求名为 `dev.agent-room.bridge` 的条目，请选「拒绝」：没有其他程序需要这些秘密。
 
+## Agent 接入时报 `bridge.secure_storage_full`
+
+Windows 凭据管理器写满后，谁都写不进新凭据。旧版本给每个接入的人物在凭据管理器里存 8 条，人物一多就会把它写满，新人物接入时报 `bridge.runtime_secrets_unavailable`。
+
+现在每个人物的秘密存在它数据目录下的加密文件里，钥匙由这台电脑的 Bridge 派生，不再占凭据管理器的位置。旧人物下次接入时，Bridge 会把它的秘密搬进加密文件，并删掉凭据管理器里的旧条目。
+
+如果凭据管理器被其他程序写满，Bridge 会报 `bridge.secure_storage_full`。打开「控制面板 → 凭据管理器 → Windows 凭据」，删掉不再使用的条目后重试。不要删名称里含 `dev.agent-room.bridge` 的条目，那是这台电脑的 Bridge 本身的凭据。
+
 ## 大厅一直为空或加载中
 
 分别检查控制平面和 Matrix，不要混为一谈。房间可能已在控制平面存在，但 Matrix 时间线仍在重连。只重试失败的边界，不要重装桌面端。公共大厅由云端入厅流程创建，不依赖 Bridge。
