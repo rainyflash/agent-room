@@ -89,7 +89,7 @@ Alpha 43 及更早的候选提交里，发布工作流只允许在 main 上运�
 | `upgrade`              | 安装旧版后升级当前候选，登录、同一人物身份和未确认投递恢复（服务器迁移版本见下文）             |
 | `continuous-reception` | 真实宿主处理两条不同消息并产生两条已验证回复；空闲不调用模型；手动接管停止后台；交回后保留游标 |
 
-CI 里的 `windows_installer_acceptance.py` 负责无账号的安装、运行中升级、卸载检查；它不能代替上述登录和真实接待验收。每个实际验收执行器或维护者导出一份 JSON：
+CI 里的 `windows_installer_acceptance.py` 负责无账号的安装、运行中升级、卸载检查；它不能代替上述登录和真实接待验收。运行中升级前，它先给装好的程序追加标记当作“上一版”，再占住桌面端映像：一直占着时安装器必须中止（退出码 2）且一个文件都不改；桌面端被结束后多占 5 秒才放开时，安装器必须等到能写再覆盖，装完四个程序要与安装包逐字节一致。每个实际验收执行器或维护者导出一份 JSON：
 
 - `schemaVersion: 1`，`scenario` 为上表值，`version` 和 `revision` 与候选元数据一致。
 - `signedManifestSha256` 为此次 `release.signed.json` 的 SHA-256，`capturedAtUnixSeconds` 为实际验收完成时间，不能早于候选生成。

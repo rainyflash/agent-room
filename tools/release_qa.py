@@ -736,9 +736,12 @@ class Acceptance:
         previous = desktop_version()
         if previous != load(self.work / "upgrade-baseline.json")["version"]:
             raise ReleaseFailure("已安装的旧版本与升级前记录不一致。")
-        completed = subprocess.run([str(installer), "/S", "/NS"], timeout=300, creationflags=NO_WINDOW, check=False)
+        completed = subprocess.run([str(installer), "/S", "/NS"], capture_output=True, timeout=300,
+                                   creationflags=NO_WINDOW, check=False)
         if completed.returncode != 0:
-            raise ReleaseFailure(f"安装器退出码 {completed.returncode}。")
+            # 静默安装中止时，原因（比如 Agent Room 没能及时退出）按系统代码页写在标准输出里。
+            reason = (completed.stdout + completed.stderr).decode("mbcs", errors="replace").strip()
+            raise ReleaseFailure(f"安装器退出码 {completed.returncode}。{reason}")
         cli_version = subprocess.check_output([str(install_dir / "agent-room.exe"), "--version"],
                                               encoding="utf-8", timeout=15).strip()
         if desktop_version() != self.version or cli_version != f"agent-room {self.version}":

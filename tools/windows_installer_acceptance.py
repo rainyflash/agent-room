@@ -33,6 +33,15 @@ SEMVER_PATTERN: Final = re.compile(
 BRIDGE_STABILITY_SECONDS: Final = 2.0
 PROCESS_STABILITY_SECONDS: Final = 1.0
 PROCESS_EXIT_TIMEOUT_SECONDS: Final = 30
+# 追加在已安装程序末尾，把它们变成“上一版”：PE 加载器不读文件尾部的附加数据，程序照常运行，
+# 但字节和安装包里的不同。候选只有一个安装包、新旧版本号相同，只比版本号查不出文件有没有真的换掉。
+PREVIOUS_BUILD_MARKER: Final = b"\0agent-room installer acceptance: previous build\0"
+# NSIS 在安装段里中止时，静默安装的退出码。
+INSTALLER_ABORTED_EXIT_CODE: Final = 2
+# 旧钩子结束进程后只固定等 0.5 + 0.75 秒，模板再等 0.5 秒就写文件；映像多占 5 秒足以让那种写法漏掉
+# 桌面端，又远短于钩子等待进程退出的 20 秒上限。
+IMAGE_RELEASE_DELAY_SECONDS: Final = 5.0
+LOAD_LIBRARY_AS_IMAGE_RESOURCE: Final = 0x20
 INSTALLER_REGISTRATION_KEYS: Final = (
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Agent Room",
     r"HKCU\Software\agent-room\Agent Room",
@@ -103,8 +112,8 @@ def locate_installed_layout(root: Path) -> InstalledLayout:
     return InstalledLayout(executable_parent, desktop, bridge, mcp, cli, uninstallers[0])
 
 
-def run_checked(command: Sequence[str], label: str, *, timeout_seconds: int) -> None:
-    completed = subprocess.run(
+def run_captured(command: Sequence[str], *, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         command,
         check=False,
         capture_output=True,
@@ -113,11 +122,39 @@ def run_checked(command: Sequence[str], label: str, *, timeout_seconds: int) -> 
         errors="replace",
         timeout=timeout_seconds,
     )
+
+
+def ensure_succeeded(completed: subprocess.CompletedProcess[str], label: str) -> None:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise WindowsInstallerAcceptanceFailure(
             f"{label}失败（退出码 {completed.returncode}）：{detail}"
         )
+
+
+def run_checked(command: Sequence[str], label: str, *, timeout_seconds: int) -> None:
+    ensure_succeeded(run_captured(command, timeout_seconds=timeout_seconds), label)
+
+
+def start_captured(command: Sequence[str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def finish_checked(process: subprocess.Popen[str], label: str, *, timeout_seconds: int) -> None:
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        process.kill()
+        process.communicate()
+        raise WindowsInstallerAcceptanceFailure(f"{label}超时。") from error
+    ensure_succeeded(subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr), label)
 
 
 def windows_registry_key_exists(key: str) -> bool:
@@ -193,6 +230,90 @@ def verify_cli_version(cli: Path, expected_version: str) -> None:
                                text=True, encoding="utf-8", timeout=30)
     if completed.returncode != 0 or completed.stdout.strip() != f"agent-room {expected_version}":
         raise WindowsInstallerAcceptanceFailure("已安装 CLI 无法启动或版本与桌面不一致。")
+
+
+def verify_installed_versions(layout: InstalledLayout, expected_version: str, stage: str) -> None:
+    verify_desktop_is_windowless(layout.desktop)
+    verify_cli_version(layout.cli, expected_version)
+    actual_version = installed_desktop_version(layout.desktop)
+    if actual_version != expected_version:
+        raise WindowsInstallerAcceptanceFailure(
+            f"{stage}桌面端版本 {actual_version}，预期 {expected_version}。"
+        )
+
+
+def runtime_files(layout: InstalledLayout) -> tuple[Path, ...]:
+    return (layout.desktop, layout.bridge, layout.mcp, layout.cli)
+
+
+def runtime_digests(layout: InstalledLayout) -> dict[str, str]:
+    return {path.name: sha256_file(path) for path in runtime_files(layout)}
+
+
+def mark_runtime_as_previous_build(layout: InstalledLayout) -> dict[str, str]:
+    """给四个已安装程序追加标记，当作上一版；返回标记后的摘要。"""
+    installed = runtime_digests(layout)
+    for path in runtime_files(layout):
+        with path.open("ab") as target:
+            target.write(PREVIOUS_BUILD_MARKER)
+    marked = runtime_digests(layout)
+    if any(marked[name] == digest for name, digest in installed.items()):
+        raise WindowsInstallerAcceptanceFailure("无法把已安装程序标记为上一版。")
+    return marked
+
+
+def verify_runtime_digests(layout: InstalledLayout, expected: dict[str, str], stage: str) -> None:
+    actual = runtime_digests(layout)
+    mismatched = sorted(name for name, digest in expected.items() if actual.get(name) != digest)
+    if mismatched:
+        raise WindowsInstallerAcceptanceFailure(
+            f"{stage}这些程序与预期内容不一致：{', '.join(mismatched)}。"
+        )
+
+
+class ExecutableImageHold:
+    """在验收进程里把程序按映像映射一份，模拟“进程还没退干净，映像仍被占着”。
+
+    和运行中的程序一样，占用期间谁也写不进这个文件；安装器结束不了验收进程，只有 release() 才放开。
+    """
+
+    def __init__(self, path: Path) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        load_library = kernel32.LoadLibraryExW
+        load_library.argtypes = (wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD)
+        load_library.restype = wintypes.HMODULE
+        self._free_library = kernel32.FreeLibrary
+        self._free_library.argtypes = (wintypes.HMODULE,)
+        self._free_library.restype = wintypes.BOOL
+        self._module = load_library(str(path), None, LOAD_LIBRARY_AS_IMAGE_RESOURCE)
+        if not self._module:
+            raise WindowsInstallerAcceptanceFailure(
+                f"无法占用 {path.name} 的映像（错误 {ctypes.get_last_error()}）。"
+            )
+        try:
+            with path.open("r+b"):
+                pass
+        except PermissionError:
+            return
+        except BaseException:
+            self.release()
+            raise
+        self.release()
+        raise WindowsInstallerAcceptanceFailure(f"占用 {path.name} 的映像后仍能写入，模拟不了运行中的程序。")
+
+    def release(self) -> None:
+        if self._module:
+            self._free_library(self._module)
+            self._module = None
+
+    def __enter__(self) -> ExecutableImageHold:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.release()
 
 
 def process_ids(image_name: str) -> frozenset[int]:
@@ -314,6 +435,60 @@ def terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
         process.stdin.close()
 
 
+@dataclass(frozen=True, slots=True)
+class RunningRuntime:
+    """从安装目录启动的桌面端（无界面验收模式）、它拉起的受管 Bridge 和宿主会启动的 MCP。"""
+
+    desktop: subprocess.Popen[bytes]
+    mcp: subprocess.Popen[bytes]
+    bridge_pid: int
+
+
+def launch_runtime(
+    layout: InstalledLayout,
+    environment: dict[str, str],
+    launch_timeout_seconds: int,
+    stage: str,
+) -> RunningRuntime:
+    previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
+    desktop = subprocess.Popen(
+        (str(layout.desktop), "--installer-acceptance"),
+        cwd=layout.root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=environment,
+    )
+    mcp: subprocess.Popen[bytes] | None = None
+    try:
+        bridge_pid = wait_for_bridge(previous_bridge_ids, desktop, launch_timeout_seconds)
+        mcp = subprocess.Popen(
+            (str(layout.mcp),),
+            cwd=layout.root,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=environment,
+        )
+        wait_for_process_stability(mcp, f"{stage} MCP".lstrip())
+    except BaseException:
+        if mcp is not None:
+            terminate_process_tree(mcp)
+        terminate_process_tree(desktop)
+        raise
+    return RunningRuntime(desktop, mcp, bridge_pid)
+
+
+def wait_for_runtime_exit(runtime: RunningRuntime, stage: str) -> None:
+    wait_for_process_exit(runtime.desktop, f"{stage}桌面端")
+    wait_for_process_exit(runtime.mcp, f"{stage} MCP".lstrip())
+    wait_for_image_exit(BRIDGE_EXECUTABLE, runtime.bridge_pid, f"{stage}受管 Bridge")
+
+
+def terminate_runtime(runtime: RunningRuntime) -> None:
+    terminate_process_tree(runtime.mcp)
+    terminate_process_tree(runtime.desktop)
+
+
 def wait_for_install_files_removed(root: Path, *, timeout_seconds: int = 30) -> None:
     deadline = time.monotonic() + timeout_seconds
     remaining: tuple[Path, ...] = ()
@@ -336,7 +511,7 @@ def write_new_report(path: Path, document: dict[str, object]) -> None:
         raise WindowsInstallerAcceptanceFailure(f"拒绝覆盖已有验收报告：{path}") from error
 
 
-def accept(installer: Path, expected_version: str, report: Path, launch_timeout_seconds: int) -> None:
+def validated_installer(installer: Path, expected_version: str, launch_timeout_seconds: int) -> Path:
     if os.name != "nt":
         raise WindowsInstallerAcceptanceFailure("Windows 安装器验收只能在 Windows 上运行。")
     if not SEMVER_PATTERN.fullmatch(expected_version):
@@ -346,119 +521,88 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
         raise WindowsInstallerAcceptanceFailure("installer 必须是存在的 EXE 文件。")
     if launch_timeout_seconds < 5 or launch_timeout_seconds > 120:
         raise WindowsInstallerAcceptanceFailure("launch-timeout-seconds 必须在 5 到 120 之间。")
+    return installer
+
+
+def verify_install_aborts_while_image_is_held(
+    install: Sequence[str],
+    layout: InstalledLayout,
+    unchanged: dict[str, str],
+) -> None:
+    """桌面端映像一直被占着：安装器必须中止，不许跳过写不进的文件、留下新旧混装。"""
+    with ExecutableImageHold(layout.desktop):
+        completed = run_captured(install, timeout_seconds=300)
+    if completed.returncode != INSTALLER_ABORTED_EXIT_CODE:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise WindowsInstallerAcceptanceFailure(
+            f"桌面端映像一直被占用时安装器退出码 {completed.returncode}，"
+            f"应中止并返回 {INSTALLER_ABORTED_EXIT_CODE}：{detail or '无输出'}"
+        )
+    verify_runtime_digests(layout, unchanged, "安装器中止后")
+
+
+def upgrade_while_image_is_released_late(
+    install: Sequence[str],
+    layout: InstalledLayout,
+    runtime: RunningRuntime,
+) -> None:
+    """运行中升级：桌面端被结束后映像又多占几秒才放开，安装器要一直等到能写再覆盖。"""
+    with ExecutableImageHold(layout.desktop) as hold:
+        upgrade = start_captured(install)
+        try:
+            wait_for_process_exit(runtime.desktop, "桌面端")
+            time.sleep(IMAGE_RELEASE_DELAY_SECONDS)
+            hold.release()
+            finish_checked(upgrade, "运行中原地升级", timeout_seconds=300)
+        finally:
+            if upgrade.poll() is None:
+                upgrade.kill()
+                upgrade.communicate()
+    wait_for_runtime_exit(runtime, "")
+
+
+def accept(installer: Path, expected_version: str, report: Path, launch_timeout_seconds: int) -> None:
+    installer = validated_installer(installer, expected_version, launch_timeout_seconds)
     ensure_clean_install_registration()
 
     with tempfile.TemporaryDirectory(prefix="agent-room-installer-acceptance-") as temporary:
         install_root = Path(temporary) / "installed"
+        install = (str(installer), "/S", "/NS", f"/D={install_root}")
         layout: InstalledLayout | None = None
-        desktop: subprocess.Popen[bytes] | None = None
-        mcp: subprocess.Popen[bytes] | None = None
-        bridge_pid: int | None = None
-        upgraded_bridge_pid: int | None = None
+        runtime: RunningRuntime | None = None
         environment = acceptance_environment(Path(temporary))
         try:
-            run_checked(
-                (str(installer), "/S", "/NS", f"/D={install_root}"),
-                "静默安装",
-                timeout_seconds=300,
-            )
+            run_checked(install, "静默安装", timeout_seconds=300)
             layout = locate_installed_layout(install_root)
-            verify_desktop_is_windowless(layout.desktop)
-            verify_cli_version(layout.cli, expected_version)
-            actual_version = installed_desktop_version(layout.desktop)
-            if actual_version != expected_version:
-                raise WindowsInstallerAcceptanceFailure(
-                    f"已安装桌面端版本 {actual_version}，预期 {expected_version}。"
-                )
-            previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
-            desktop = subprocess.Popen(
-                (str(layout.desktop), "--installer-acceptance"),
-                cwd=layout.root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=environment,
-            )
-            bridge_pid = wait_for_bridge(previous_bridge_ids, desktop, launch_timeout_seconds)
-            mcp = subprocess.Popen(
-                (str(layout.mcp),),
-                cwd=layout.root,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=environment,
-            )
-            wait_for_process_stability(mcp, "MCP")
+            verify_installed_versions(layout, expected_version, "已安装")
+            payload = runtime_digests(layout)
+            previous_build = mark_runtime_as_previous_build(layout)
 
-            run_checked(
-                (str(installer), "/S", "/NS", f"/D={install_root}"),
-                "运行中原地升级",
-                timeout_seconds=300,
-            )
-            wait_for_process_exit(desktop, "桌面端")
-            wait_for_process_exit(mcp, "MCP")
-            wait_for_image_exit(BRIDGE_EXECUTABLE, bridge_pid, "受管 Bridge")
-            terminate_process_tree(desktop)
-            terminate_process_tree(mcp)
-            desktop = None
-            mcp = None
+            runtime = launch_runtime(layout, environment, launch_timeout_seconds, "")
+            verify_install_aborts_while_image_is_held(install, layout, previous_build)
+            terminate_runtime(runtime)
+
+            runtime = launch_runtime(layout, environment, launch_timeout_seconds, "")
+            upgrade_while_image_is_released_late(install, layout, runtime)
+            terminate_runtime(runtime)
+            runtime = None
 
             layout = locate_installed_layout(install_root)
-            verify_desktop_is_windowless(layout.desktop)
-            verify_cli_version(layout.cli, expected_version)
-            upgraded_version = installed_desktop_version(layout.desktop)
-            if upgraded_version != expected_version:
-                raise WindowsInstallerAcceptanceFailure(
-                    f"原地升级后桌面端版本 {upgraded_version}，预期 {expected_version}。"
-                )
+            verify_runtime_digests(layout, payload, "运行中原地升级后")
+            verify_installed_versions(layout, expected_version, "原地升级后")
 
-            previous_bridge_ids = process_ids(BRIDGE_EXECUTABLE)
-            desktop = subprocess.Popen(
-                (str(layout.desktop), "--installer-acceptance"),
-                cwd=layout.root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=environment,
-            )
-            upgraded_bridge_pid = wait_for_bridge(
-                previous_bridge_ids,
-                desktop,
-                launch_timeout_seconds,
-            )
-            mcp = subprocess.Popen(
-                (str(layout.mcp),),
-                cwd=layout.root,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=environment,
-            )
-            wait_for_process_stability(mcp, "升级后的 MCP")
-
+            runtime = launch_runtime(layout, environment, launch_timeout_seconds, "升级后的")
             run_checked((str(layout.uninstaller), "/S"), "运行中静默卸载", timeout_seconds=300)
-            wait_for_process_exit(desktop, "卸载时的桌面端")
-            wait_for_process_exit(mcp, "卸载时的 MCP")
-            wait_for_image_exit(
-                BRIDGE_EXECUTABLE,
-                upgraded_bridge_pid,
-                "卸载时的受管 Bridge",
-            )
-            terminate_process_tree(desktop)
-            terminate_process_tree(mcp)
-            desktop = None
-            mcp = None
+            wait_for_runtime_exit(runtime, "卸载时的")
+            terminate_runtime(runtime)
+            runtime = None
         finally:
-            if mcp is not None:
-                terminate_process_tree(mcp)
-            if desktop is not None:
-                terminate_process_tree(desktop)
+            if runtime is not None:
+                terminate_runtime(runtime)
             if layout is not None and layout.uninstaller.is_file():
                 run_checked((str(layout.uninstaller), "/S"), "静默卸载", timeout_seconds=300)
 
         wait_for_install_files_removed(install_root)
-        if bridge_pid is None:
-            raise WindowsInstallerAcceptanceFailure("没有记录到受管 Bridge 进程。")
-        if upgraded_bridge_pid is None:
-            raise WindowsInstallerAcceptanceFailure("没有记录到升级后的受管 Bridge 进程。")
 
         write_new_report(
             report,
@@ -482,10 +626,14 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                     "desktopLaunch": True,
                     "managedBridgeLaunch": True,
                     "mcpLaunch": True,
+                    "lockedImageInstallAborted": True,
+                    "lockedImageInstallLeftFilesUnchanged": True,
                     "runningUpgrade": True,
                     "upgradeStoppedDesktop": True,
                     "upgradeStoppedBridge": True,
                     "upgradeStoppedMcp": True,
+                    "upgradeWaitedForImageRelease": True,
+                    "upgradeReplacedRuntimeFiles": True,
                     "postUpgradeDesktopLaunch": True,
                     "postUpgradeBridgeLaunch": True,
                     "postUpgradeMcpLaunch": True,

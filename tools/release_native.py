@@ -12,8 +12,10 @@ from tools import release
 
 INSTALLER_CHECKS = frozenset({
     "silentInstall", "desktopPresent", "desktopWindowless", "bridgePresent", "mcpPresent", "desktopVersion",
-    "desktopLaunch", "managedBridgeLaunch", "mcpLaunch", "runningUpgrade",
+    "desktopLaunch", "managedBridgeLaunch", "mcpLaunch",
+    "lockedImageInstallAborted", "lockedImageInstallLeftFilesUnchanged", "runningUpgrade",
     "upgradeStoppedDesktop", "upgradeStoppedBridge", "upgradeStoppedMcp",
+    "upgradeWaitedForImageRelease", "upgradeReplacedRuntimeFiles",
     "postUpgradeDesktopLaunch", "postUpgradeBridgeLaunch", "postUpgradeMcpLaunch",
     "silentUninstall", "uninstallStoppedRuntime", "installFilesRemoved",
 })
