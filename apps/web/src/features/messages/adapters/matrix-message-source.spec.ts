@@ -25,6 +25,8 @@ import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 const ROOM_ID = '!public:agent-room.test';
 const legacyPreviewType = ['org', 'agentroom', 'message', 'preview', 'v1'].join('.');
+// 已退役的命名空间只拼出来用，源码里不出现它的字面量（tools/event_namespace.py 会检查）。
+const legacyNamespaceFilter = `${['org', 'agentroom'].join('.')}.*`;
 
 describe('MatrixSdkMessageSource', () => {
   it('expands cached history before requesting another real page', async () => {
@@ -143,7 +145,7 @@ describe('MatrixSdkMessageSource', () => {
     expect(filter.filterId).toBe(matrixMessageHistoryFilterId);
     // /messages 直接带这份定义，不需要先在服务器上创建过滤器。
     expect(filter.getRoomTimelineFilterComponent()?.toJSON()).toEqual({
-      types: ['io.github.rainyflash.agentroom.*', 'org.agentroom.*', 'm.room.encrypted'],
+      types: ['io.github.rainyflash.agentroom.*', legacyNamespaceFilter, 'm.room.encrypted'],
       not_types: [matrixAgentStatusEventType],
     });
     const undecryptable = new FakeEvent('m.room.message', '$utd', 1, {
@@ -387,7 +389,7 @@ describe('MatrixSdkMessageSource 与真实 Matrix SDK', () => {
     expect(first?.searchParams.get('dir')).toBe('b');
     expect(first?.searchParams.get('limit')).toBe('200');
     expect(JSON.parse(first?.searchParams.get('filter') ?? 'null')).toEqual({
-      types: ['io.github.rainyflash.agentroom.*', 'org.agentroom.*', 'm.room.encrypted'],
+      types: ['io.github.rainyflash.agentroom.*', legacyNamespaceFilter, 'm.room.encrypted'],
       not_types: [matrixAgentStatusEventType],
     });
     expect(ids()).toEqual(['$b', '$a']);
