@@ -14,6 +14,21 @@ agent-room --data-root <Bridge 数据目录> --connection <凭据命名空间>  
 
 `attachmentReadable` 为假或返回 `receiver.host_turn_failed`，说明宿主沙箱没有授予附件目录，带附件的消息会整轮失败；这正是 Alpha 36 拖到实机验收才发现的缺陷。
 
+## 安装器钩子的 PR 检查
+
+安装器钩子（`apps/desktop/src-tauri/windows/hooks.nsh`）以前只在签名候选里随真实安装器一起编译和验收，写错了要等到发版才知道。现在改到它时，PR 上的“Windows 安装器钩子”工作流（`tools/windows_installer_hooks.py`）会：
+
+- 用与 Tauri 2.11.1 相同的 NSIS 3.11 和 nsis_tauri_utils 插件（地址和哈希都固定），按模板的顺序编译一个只装四个占位程序的精简安装器，有任何编译警告都算失败；
+- 在一次性 Runner 上让占位程序从安装目录跑起来，占住桌面端映像，跑运行中覆盖安装和卸载：映像晚 3 秒放开时退出码 0，四个程序全部换新或删掉；一直占着时退出码 2，一个文件都不动。
+
+整轮一分钟左右。它只查钩子，不能代替候选上的真实安装验收。本机跑要加 `--isolated`，把程序名换成 `arqa-*`，不碰已装的 Agent Room：
+
+```bash
+python tools/windows_installer_hooks.py --isolated
+```
+
+升级 `@tauri-apps/cli` 时，单元测试会提醒同步更新工具里固定的模板提交和哈希。
+
 ## 发布入口
 
 `tools/release_flow.py` 组织已有 CI、候选签名、兼容部署、人工/真实宿主验收和公开发行。首次填写参数，此后只需要同一个状态文件。它不自行修改版本、合并代码或延长签名有效期。版本准备、保护分支合并、独立信任公钥和环境审批仍按 [签名发布 Runbook](operations/signed-releases.md) 执行。
