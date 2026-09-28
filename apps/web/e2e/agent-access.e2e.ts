@@ -15,8 +15,16 @@ for (const width of [1440, 390]) {
     await expect(page.getByText(/No agent task has opened/u)).toBeVisible();
     await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
     const dialog = page.getByRole('dialog', { name: 'Bring an agent into the room' });
+    // 三种通用方式平级，默认网络接入；对话框里不出现任何具体 Agent 应用的名字。
+    await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(dialog.getByRole('button', { name: 'Copy for any agent' })).toBeVisible();
+    await expect(dialog).not.toContainText(/Codex|Claude Code|Cursor/u);
+    await dialog.getByRole('radio', { name: /^Command line/u }).click();
     await expect(dialog.getByText(/no MCP setup is needed/u)).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Configure Codex/u })).toHaveCount(0);
+    await expect(dialog).not.toContainText(/Codex|Claude Code|Cursor/u);
     await expect(
       dialog.getByText('Ready. Copy the instructions above and send them to your agent.'),
     ).toBeVisible();
@@ -35,6 +43,7 @@ for (const width of [1440, 390]) {
     const profileId = /--profile ([0-9a-f-]{36})/u.exec(clipboard)?.[1];
     expect(profileId).toBeDefined();
     expect(clipboard).toContain('untrusted input');
+    expect(clipboard).not.toMatch(/Codex|Claude Code|Cursor|CODEX_/u);
     await page.screenshot({ path: testInfo.outputPath(`agent-invite-${String(width)}.png`) });
     await expectNoHorizontalOverflow(page);
     await dialog.getByRole('button', { name: 'Close' }).click();
@@ -46,6 +55,11 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('Scout', { exact: true })).toBeVisible();
     await expect(page.getByText('Messages fetched · No confirmed send yet')).toBeVisible();
     await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+    // 上次选的命令行还在。
+    await expect(dialog.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     await expect(dialog.getByText('“Scout” is in the room')).toHaveCount(0);
     await dialog.getByLabel('Saved characters').selectOption(profileId ?? '');
     await expect(dialog.getByText('“Scout” is in the room')).toBeVisible();
@@ -75,6 +89,10 @@ test('连接检查失败提供诊断而非伪造空清单', async ({ page }) => 
   await expect(page.getByText('fixture.external_action_unavailable')).toBeVisible();
   await expect(page.getByText(/No agent task has opened/u)).toHaveCount(0);
   await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('radio', { name: /^Command line/u })
+    .click();
   await expect(
     page.getByRole('dialog').getByText(/Cannot check task connections right now/u),
   ).toBeVisible();
@@ -86,6 +104,7 @@ test('已授权空设备直接接入；重连恢复无需重新登录', async ({
   await page.getByRole('button', { name: /Local agents/u }).click();
   await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('radio', { name: /^Command line/u }).click();
   await expect(dialog.getByText(/Reconnecting automatically/u)).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
   await dialog.getByRole('button', { name: 'Retry connection' }).click();
@@ -95,23 +114,18 @@ test('已授权空设备直接接入；重连恢复无需重新登录', async ({
   expect(failures).toEqual([]);
 });
 
-test('MCP 配置失败不会阻止默认 CLI 接入，兼容方式保留诊断', async ({ page }) => {
+test('MCP 只给通用配置：某个应用的一键配置坏了也挡不住接入', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto('/e2e/fixtures/onboarding.html?bridge=authorized&setup=failed');
   await page.getByRole('button', { name: /Local agents/u }).click();
   await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+  await dialog.getByRole('radio', { name: /^MCP/u }).click();
+  await expect(dialog.getByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
   await expect(dialog.getByText(/cannot read your current settings/u)).toHaveCount(0);
-  await dialog.getByText('Other connection options', { exact: true }).click();
-  await dialog.getByRole('radio', { name: 'MCP compatibility', exact: true }).click();
-  await expect(dialog.getByText(/cannot read your current settings/u)).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeDisabled();
-  await expect(
-    dialog.getByText('Waiting for the agent to run its connection instructions…'),
-  ).toHaveCount(0);
-  await expect(dialog.getByText(/Finish connecting this computer above/u)).toBeVisible();
-  await dialog.getByRole('radio', { name: 'CLI (default)', exact: true }).click();
   await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+  await dialog.getByRole('radio', { name: /^Command line/u }).click();
+  await expect(dialog.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+  await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });

@@ -7,23 +7,22 @@ import {
   CircleCheckBig,
   Copy,
   Download,
-  PlugZap,
+  Globe,
+  Plug,
   RefreshCw,
+  SquareTerminal,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import {
-  agentInviteHosts,
-  defaultInviteHost,
   normalizeInviteDisplayName,
   normalizeOptionalInviteName,
   projectInviteStatus,
-  type AgentInviteHost,
   type AgentInviteIdentity,
   type AgentInviteStatus,
 } from '../domain/agent-invite';
@@ -33,12 +32,8 @@ import {
   readInviteHistory,
   saveInviteHistory,
 } from '../domain/cli-invitation';
-import { hostFailureMessage, localConnectionReady } from '../domain/desktop-connection';
-import type {
-  AgentHostKind,
-  HostSessionDiagnostics,
-  InvitationOffer,
-} from '../domain/desktop-runtime';
+import { localConnectionReady } from '../domain/desktop-connection';
+import type { HostSessionDiagnostics, InvitationOffer } from '../domain/desktop-runtime';
 import { serializeManualHostConfiguration } from '../domain/manual-host-configuration';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalConnectionNotice } from './local-connection-notice';
@@ -73,12 +68,6 @@ type InviteBodyProps = {
   readonly onClose: () => void;
   readonly onStartConversation?: (() => void) | undefined;
   readonly onConnected?: ((invitation: ConnectedInvitation) => void) | undefined;
-};
-
-const hostLabels: Readonly<Record<Exclude<AgentInviteHost, 'other'>, string>> = {
-  codex: 'Codex',
-  'claude-code': 'Claude Code',
-  cursor: 'Cursor',
 };
 
 const SESSION_POLL_MS = 3_000;
@@ -186,6 +175,28 @@ function InviteBody({
   );
 }
 
+const inviteMethods = ['network', 'mcp', 'cli'] as const;
+type InviteMethod = (typeof inviteMethods)[number];
+const inviteMethodKey = 'agent-room.invite-method';
+
+/** 上次选的接入方式存在本机；读不到（隐私模式等）就从最通用的网络接入开始。 */
+function readInviteMethod(storage: Storage | null): InviteMethod {
+  try {
+    const saved = storage?.getItem(inviteMethodKey);
+    return inviteMethods.find((method) => method === saved) ?? 'network';
+  } catch {
+    return 'network';
+  }
+}
+
+function saveInviteMethod(storage: Storage | null, method: InviteMethod): void {
+  try {
+    storage?.setItem(inviteMethodKey, method);
+  } catch {
+    // 只在本次有效。
+  }
+}
+
 function ConnectionInvite({
   room: currentRoom,
   owner,
@@ -205,10 +216,8 @@ function ConnectionInvite({
       return null;
     }
   });
-  const [mode, setMode] = useState<'cli' | 'mcp'>('cli');
-  const [chosenHost, setChosenHost] = useState<AgentInviteHost | null>(null);
-  const host = chosenHost ?? defaultInviteHost(controller.hosts);
-  const hostLabel = host === 'other' ? t('agentInvite.host.other') : hostLabels[host];
+  const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage));
+  const local = method !== 'network';
   // 名字默认留给接上的 Agent 自己起；面板里的人填了名字才用这个名字。
   const makeIdentity = (): AgentInviteIdentity => ({
     sessionKey: uuid.next(),
@@ -234,46 +243,14 @@ function ConnectionInvite({
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const [slow, setSlow] = useState(false);
-  // 桌面端的网络接入收起时不渲染，也就不去查公开大厅目录。
-  const [networkOpen, setNetworkOpen] = useState(false);
   const phase = controller.snapshot?.bridge.lifecycle.phase ?? 'discovering';
   const localReady = localConnectionReady(phase);
   const cliConfiguration = controller.snapshot?.cliConfiguration ?? null;
-  const detection = host === 'other' ? null : controller.hosts.find((entry) => entry.host === host);
-  const { checkHost, readHostSessions } = controller;
-  const setup = host === 'other' ? null : controller.hostSetup[host];
-  // Claude Code is the only host with a skill folder today; check it whenever it is installed so the
-  // invitation can shrink to one line as soon as the skill is current.
-  const skillHost: AgentHostKind | null = controller.hosts.some(
-    (entry) => entry.host === 'claude-code' && entry.installed,
-  )
-    ? 'claude-code'
-    : null;
-  const skillHostLabel = hostLabels['claude-code'];
-  const { checkSkill } = controller;
-  useEffect(() => {
-    if (skillHost !== null) void checkSkill(skillHost);
-  }, [skillHost, checkSkill]);
-  const skillSetup = skillHost === null ? undefined : controller.skillSetup[skillHost];
-  const skillCurrent = skillSetup?.phase === 'ready' && skillSetup.status.state === 'current';
+  const { readHostSessions } = controller;
   const nameReady = validName && normalizeOptionalInviteName(identity.displayName) !== null;
   const canCopy =
     nameReady &&
-    (!controller.available ||
-      (localReady &&
-        (mode === 'cli'
-          ? cliConfiguration !== null
-          : host === 'other' || setup?.phase === 'configured')));
-
-  useEffect(() => {
-    if (
-      mode === 'mcp' &&
-      host !== 'other' &&
-      detection?.installed === true &&
-      detection.configurable
-    )
-      void checkHost(host);
-  }, [mode, host, detection?.installed, detection?.configurable, checkHost]);
+    (!controller.available || (localReady && (method !== 'cli' || cliConfiguration !== null)));
 
   useEffect(() => {
     if (copiedAt === null) return undefined;
@@ -289,7 +266,7 @@ function ConnectionInvite({
   const [sessions, setSessions] = useState<readonly HostSessionDiagnostics[] | null>(null);
   const [diagnosticsFailure, setDiagnosticsFailure] = useState<string | null>(null);
   useEffect(() => {
-    if (!controller.available || !localReady) return undefined;
+    if (!controller.available || !localReady || !local) return undefined;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -306,15 +283,16 @@ function ConnectionInvite({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [controller.available, localReady, readHostSessions]);
+  }, [controller.available, localReady, local, readHostSessions]);
   const status: AgentInviteStatus =
     sessions === null || !localReady
       ? { kind: 'waiting' }
       : projectInviteStatus(sessions, identity.sessionKey, room?.roomId);
   const invitedAgentId = sessions?.find((entry) => entry.sessionKey === identity.sessionKey)
     ?.session.agentId;
-  // 面板开着就把这个人物挂在 Bridge 上：已配好的 Agent 只要听到“接入 Agent Room”就能接上，
-  // 不必复制。复制的说明用的是同一个人物，两条路不会多出人物；Agent 接上后不再续期，关闭时撤回。
+  // 本机接入时，面板开着就把这个人物挂在 Bridge 上：已配好 MCP 的 Agent 只要听到“接入 Agent Room”
+  // 就能接上，不必复制。复制的说明用的是同一个人物，两条路不会多出人物；Agent 接上后不再续期，关闭时撤回。
+  // 网络接入不经过这台电脑，不挂。
   const { offerInvitation, withdrawInvitation } = controller;
   const [offeredAt, setOfferedAt] = useState<number | null>(null);
   const offerName =
@@ -325,7 +303,8 @@ function ConnectionInvite({
   const offerRoomId = room?.roomId;
   const awaitingAgent = status.kind === 'waiting';
   useEffect(() => {
-    if (!controller.available || !localReady || !nameReady || !awaitingAgent) return undefined;
+    if (!controller.available || !localReady || !local || !nameReady || !awaitingAgent)
+      return undefined;
     const invitation: InvitationOffer = {
       sessionKey: identity.sessionKey,
       ...(offerName === undefined ? {} : { displayName: offerName }),
@@ -352,11 +331,13 @@ function ConnectionInvite({
     return () => {
       disposed = true;
       clearTimeout(timer);
+      setOfferedAt(null);
       void withdrawInvitation(invitation.sessionKey);
     };
   }, [
     controller.available,
     localReady,
+    local,
     nameReady,
     offerName,
     identity.sessionKey,
@@ -406,8 +387,8 @@ function ConnectionInvite({
     encodeCliInvitation(identity, room?.roomId ?? null, room?.catalogId);
   const agentNames = identity.displayName === '';
   const prompt =
-    mode === 'cli'
-      ? t(skillCurrent ? 'agentInvite.cli.promptWithSkill' : 'agentInvite.cli.prompt', {
+    method === 'cli'
+      ? t('agentInvite.cli.prompt', {
           command: agentNames ? joinCommand + '\n' + t('agentInvite.cli.nameChoice') : joinCommand,
           scope,
           room: roomLine,
@@ -427,15 +408,12 @@ function ConnectionInvite({
     setCopyState('idle');
     setCopiedAt(null);
   };
-  // The instructions change shape once the skill is current, so an earlier copy is stale.
-  const skillCurrentRef = useRef(skillCurrent);
-  useEffect(() => {
-    if (skillCurrentRef.current === skillCurrent) return;
-    skillCurrentRef.current = skillCurrent;
-    copyGeneration.current += 1;
-    setCopyState('idle');
-    setCopiedAt(null);
-  }, [skillCurrent]);
+  const chooseMethod = (next: InviteMethod) => {
+    if (next === method) return;
+    setMethod(next);
+    saveInviteMethod(storage, next);
+    resetCopy();
+  };
   const newIdentity = () => {
     setIdentity(makeIdentity());
     setRestored(false);
@@ -460,165 +438,110 @@ function ConnectionInvite({
   };
   return (
     <div className="agent-invite__body">
-      {controller.available ? null : <NetworkAgentInvite room={currentRoom} />}
-      {controller.available ? (
-        <LocalConnectionNotice />
+      <MethodPicker value={method} onChange={chooseMethod} />
+      {method === 'network' ? (
+        <NetworkAgentInvite room={currentRoom} />
       ) : (
-        <section className="agent-invite__web">
-          <h3>{t('agentInvite.web.title')}</h3>
-          <p>{t('agentInvite.web.description')}</p>
-          {room?.catalogId ? (
-            <a
-              className="ar-button ar-button--primary ar-button--default"
-              href={'agent-room://lobby/' + room.catalogId + '/instance/' + room.roomId}
-            >
-              {t('agentInvite.web.openDesktop')}
-            </a>
-          ) : null}
-          {downloadUrl === null ? (
-            <p>{t('agentInvite.web.downloadPending')}</p>
+        <>
+          {controller.available ? (
+            <LocalConnectionNotice />
           ) : (
-            <a className="ar-button ar-button--quiet ar-button--default" href={downloadUrl}>
-              <Download aria-hidden="true" /> {t('agentInvite.web.download')}
-            </a>
-          )}
-        </section>
-      )}
-      <ol className="agent-invite__steps">
-        <li>
-          <h3>{t('agentInvite.identity.title')}</h3>
-          <p>{t('agentInvite.identity.description')}</p>
-          {history.identities.length === 0 ? null : (
-            <label className="agent-invite__restore">
-              {t('agentInvite.identity.restore')}
-              <select
-                value={restored ? identity.sessionKey : ''}
-                onChange={(event) => {
-                  const previous = history.identities.find(
-                    (entry) => entry.sessionKey === event.target.value,
-                  );
-                  if (previous === undefined) newIdentity();
-                  else {
-                    setIdentity(previous);
-                    setRestored(true);
-                    setValidName(true);
-                    resetCopy();
-                  }
-                }}
-              >
-                <option value="">{t('agentInvite.identity.new')}</option>
-                {history.identities.map((entry) => (
-                  <option key={entry.sessionKey} value={entry.sessionKey}>
-                    {entry.displayName === ''
-                      ? t('agentInvite.identity.unnamed')
-                      : entry.displayName}{' '}
-                    · {entry.sessionKey.slice(-6)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <NameField
-            key={identity.sessionKey}
-            initial={identity.displayName}
-            arrived={arrivedName}
-            disabled={restored || copiedAt !== null || !awaitingAgent}
-            onValidityChange={setValidName}
-            onCommit={(displayName) => {
-              copyGeneration.current += 1;
-              setIdentity((current) => ({ ...current, displayName }));
-            }}
-          />
-          {restored && room?.roomId !== currentRoom?.roomId ? (
-            <p role="status">
-              {t('agentInvite.identity.restoredRoom', {
-                room: room?.roomName ?? t('agentInvite.prompt.roomDefault'),
-              })}
-            </p>
-          ) : null}
-          <button className="agent-invite__link" type="button" onClick={newIdentity}>
-            {t('agentInvite.identity.add')}
-          </button>
-          {history.unavailable || storageFailed ? (
-            <p role="status" className="agent-invite__error">
-              {t('agentInvite.identity.storageFailed')}
-            </p>
-          ) : null}
-        </li>
-        <li>
-          <h3>{t('agentInvite.step.copy')}</h3>
-          <p>{t('agentInvite.cli.description')}</p>
-          {controller.available && cliConfiguration === null && mode === 'cli' ? (
-            <p role="status">{t('agentInvite.cli.missing')}</p>
-          ) : null}
-          {mode === 'cli' && skillHost !== null ? (
-            <SkillSetup
-              host={skillHost}
-              hostLabel={skillHostLabel}
-              offered={offeredAt !== null}
-              roomName={room?.roomName}
-            />
-          ) : null}
-          <details className="agent-invite__advanced">
-            <summary>{t('agentInvite.advanced')}</summary>
-            <div
-              className="agent-invite__modes"
-              role="radiogroup"
-              aria-label={t('agentInvite.mode')}
-            >
-              {(['cli', 'mcp'] as const).map((value) => (
-                <button
-                  key={value}
-                  role="radio"
-                  type="button"
-                  aria-checked={mode === value}
-                  onClick={() => {
-                    setMode(value);
-                    resetCopy();
-                  }}
+            <section className="agent-invite__web">
+              <h3>{t('agentInvite.web.title')}</h3>
+              <p>{t('agentInvite.web.description')}</p>
+              {room?.catalogId ? (
+                <a
+                  className="ar-button ar-button--primary ar-button--default"
+                  href={'agent-room://lobby/' + room.catalogId + '/instance/' + room.roomId}
                 >
-                  {t(value === 'cli' ? 'agentInvite.mode.cli' : 'agentInvite.mode.mcp')}
-                </button>
-              ))}
-            </div>
-            {mode === 'mcp' ? (
-              <>
-                <p>{t('agentInvite.mcp.description')}</p>
-                {controller.available ? (
-                  <>
-                    <div
-                      className="agent-invite__hosts"
-                      role="radiogroup"
-                      aria-label={t('agentInvite.step.host')}
-                    >
-                      {agentInviteHosts.map((candidate) => (
-                        <button
-                          className="agent-invite__host"
-                          key={candidate}
-                          aria-checked={candidate === host}
-                          role="radio"
-                          type="button"
-                          onClick={() => {
-                            setChosenHost(candidate);
-                            resetCopy();
-                          }}
-                        >
-                          <strong>
-                            {candidate === 'other'
-                              ? t('agentInvite.host.other')
-                              : hostLabels[candidate]}
-                          </strong>
-                          {candidate === 'cursor' ? (
-                            <small>{t('agentInvite.host.foregroundOnly')}</small>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                    <HostSetup
-                      detection={detection}
-                      host={host}
-                      hostLabel={hostLabel}
-                      manualConfiguration={
+                  {t('agentInvite.web.openDesktop')}
+                </a>
+              ) : null}
+              {downloadUrl === null ? (
+                <p>{t('agentInvite.web.downloadPending')}</p>
+              ) : (
+                <a className="ar-button ar-button--quiet ar-button--default" href={downloadUrl}>
+                  <Download aria-hidden="true" /> {t('agentInvite.web.download')}
+                </a>
+              )}
+            </section>
+          )}
+          <ol className="agent-invite__steps">
+            <li>
+              <h3>{t('agentInvite.identity.title')}</h3>
+              <p>{t('agentInvite.identity.description')}</p>
+              {history.identities.length === 0 ? null : (
+                <label className="agent-invite__restore">
+                  {t('agentInvite.identity.restore')}
+                  <select
+                    value={restored ? identity.sessionKey : ''}
+                    onChange={(event) => {
+                      const previous = history.identities.find(
+                        (entry) => entry.sessionKey === event.target.value,
+                      );
+                      if (previous === undefined) newIdentity();
+                      else {
+                        setIdentity(previous);
+                        setRestored(true);
+                        setValidName(true);
+                        resetCopy();
+                      }
+                    }}
+                  >
+                    <option value="">{t('agentInvite.identity.new')}</option>
+                    {history.identities.map((entry) => (
+                      <option key={entry.sessionKey} value={entry.sessionKey}>
+                        {entry.displayName === ''
+                          ? t('agentInvite.identity.unnamed')
+                          : entry.displayName}{' '}
+                        · {entry.sessionKey.slice(-6)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <NameField
+                key={identity.sessionKey}
+                initial={identity.displayName}
+                arrived={arrivedName}
+                disabled={restored || copiedAt !== null || !awaitingAgent}
+                onValidityChange={setValidName}
+                onCommit={(displayName) => {
+                  copyGeneration.current += 1;
+                  setIdentity((current) => ({ ...current, displayName }));
+                }}
+              />
+              {restored && room?.roomId !== currentRoom?.roomId ? (
+                <p role="status">
+                  {t('agentInvite.identity.restoredRoom', {
+                    room: room?.roomName ?? t('agentInvite.prompt.roomDefault'),
+                  })}
+                </p>
+              ) : null}
+              <button className="agent-invite__link" type="button" onClick={newIdentity}>
+                {t('agentInvite.identity.add')}
+              </button>
+              {history.unavailable || storageFailed ? (
+                <p role="status" className="agent-invite__error">
+                  {t('agentInvite.identity.storageFailed')}
+                </p>
+              ) : null}
+            </li>
+            <li>
+              <h3>{t('agentInvite.step.copy')}</h3>
+              {method === 'cli' ? (
+                <>
+                  <p>{t('agentInvite.cli.description')}</p>
+                  {controller.available && cliConfiguration === null ? (
+                    <p role="status">{t('agentInvite.cli.missing')}</p>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <p>{t('agentInvite.mcp.description')}</p>
+                  {controller.available ? (
+                    <McpConfiguration
+                      configuration={
                         controller.snapshot === null
                           ? null
                           : serializeManualHostConfiguration(
@@ -626,21 +549,86 @@ function ConnectionInvite({
                             )
                       }
                     />
-                    {host === 'claude-code' && skillHost !== null ? (
-                      <SkillSetup
-                        host={skillHost}
-                        hostLabel={skillHostLabel}
-                        offered={offeredAt !== null}
-                        roomName={room?.roomName}
-                      />
-                    ) : null}
-                  </>
-                ) : (
-                  <p>{t('agentInvite.mcp.web')}</p>
-                )}
-              </>
-            ) : null}
-            <p>{t('agentInvite.remote.description')}</p>
+                  ) : (
+                    <p>{t('agentInvite.mcp.web')}</p>
+                  )}
+                </>
+              )}
+              <Button
+                className="agent-invite__copy"
+                disabled={!canCopy}
+                icon={
+                  copyState === 'copied' ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    <Copy aria-hidden="true" />
+                  )
+                }
+                onClick={() => void copyPrompt()}
+                size="large"
+                tone={copyState === 'failed' ? 'alert' : 'primary'}
+              >
+                {copyState === 'copied' ? t('agentInvite.copied') : t('agentInvite.copy')}
+              </Button>
+              {copyState === 'failed' ? (
+                <p className="agent-invite__error" role="status">
+                  <AlertTriangle aria-hidden="true" />
+                  {t('agentInvite.copyFailed')}
+                </p>
+              ) : null}
+              <details className="agent-invite__preview" open={copyState === 'failed'}>
+                <summary>
+                  <ChevronDown aria-hidden="true" />
+                  {t('agentInvite.preview')}
+                </summary>
+                <pre>{prompt}</pre>
+              </details>
+              <p className="agent-invite__note">{t('agentInvite.identityNote')}</p>
+            </li>
+            <li>
+              <h3>{t('agentInvite.step.wait')}</h3>
+              {controller.available ? (
+                <ArrivalStatus
+                  preparation={
+                    canCopy
+                      ? copiedAt !== null
+                        ? null
+                        : offeredAt !== null
+                          ? 'say'
+                          : 'instructions'
+                      : 'setup'
+                  }
+                  diagnosticsFailure={diagnosticsFailure}
+                  onDone={onStartConversation ?? onClose}
+                  slow={slow && status.kind === 'waiting'}
+                  status={status}
+                />
+              ) : (
+                <p role="status">{t('agentInvite.web.observe')}</p>
+              )}
+              {/* Once the agent is in the room, the paste instruction is stale; the first-reply step takes over. */}
+              {copiedAt === null || status.kind === 'ready' ? null : (
+                <p className="agent-invite__note">{t('agentInvite.progress.copied')}</p>
+              )}
+              {status.kind === 'ready' &&
+              services !== null &&
+              room !== null &&
+              owner !== null &&
+              invitedAgentId != null &&
+              startedAt !== null ? (
+                <InviteReplyProgress
+                  gateway={services.messages}
+                  agentId={invitedAgentId}
+                  roomId={room.roomId}
+                  principalId={owner.principalId}
+                  startedAt={startedAt}
+                />
+              ) : null}
+              <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
+            </li>
+          </ol>
+          <p className="agent-invite__note">
+            {t('agentInvite.remote.description')}{' '}
             <a
               href="https://github.com/rainyflash/agent-room/blob/main/infra/agent-runtime/README.md"
               target="_blank"
@@ -648,257 +636,105 @@ function ConnectionInvite({
             >
               {t('agentInvite.remote.docs')}
             </a>
-          </details>
-          <Button
-            className="agent-invite__copy"
-            disabled={!canCopy}
-            icon={
-              copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
-            }
-            onClick={() => void copyPrompt()}
-            size="large"
-            tone={copyState === 'failed' ? 'alert' : 'primary'}
-          >
-            {copyState === 'copied' ? t('agentInvite.copied') : t('agentInvite.copy')}
-          </Button>
-          {copyState === 'failed' ? (
-            <p className="agent-invite__error" role="status">
-              <AlertTriangle aria-hidden="true" />
-              {t('agentInvite.copyFailed')}
-            </p>
-          ) : null}
-          <details className="agent-invite__preview" open={copyState === 'failed'}>
-            <summary>
-              <ChevronDown aria-hidden="true" />
-              {t('agentInvite.preview')}
-            </summary>
-            <pre>{prompt}</pre>
-          </details>
-          <p className="agent-invite__note">{t('agentInvite.identityNote')}</p>
-        </li>
-        <li>
-          <h3>{t('agentInvite.step.wait')}</h3>
-          {controller.available ? (
-            <ArrivalStatus
-              preparation={
-                canCopy
-                  ? copiedAt !== null
-                    ? null
-                    : offeredAt !== null
-                      ? 'say'
-                      : 'instructions'
-                  : 'setup'
-              }
-              diagnosticsFailure={diagnosticsFailure}
-              onDone={onStartConversation ?? onClose}
-              slow={slow && status.kind === 'waiting'}
-              status={status}
-            />
-          ) : (
-            <p role="status">{t('agentInvite.web.observe')}</p>
-          )}
-          {/* Once the agent is in the room, the paste instruction is stale; the first-reply step takes over. */}
-          {copiedAt === null || status.kind === 'ready' ? null : (
-            <p className="agent-invite__note">{t('agentInvite.progress.copied')}</p>
-          )}
-          {status.kind === 'ready' &&
-          services !== null &&
-          room !== null &&
-          owner !== null &&
-          invitedAgentId != null &&
-          startedAt !== null ? (
-            <InviteReplyProgress
-              gateway={services.messages}
-              agentId={invitedAgentId}
-              roomId={room.roomId}
-              principalId={owner.principalId}
-              startedAt={startedAt}
-            />
-          ) : null}
-          <p className="agent-invite__note">{t('agentInvite.receptionHint')}</p>
-        </li>
-      </ol>
-      {controller.available ? (
-        <details className="agent-invite__network-other" open={networkOpen}>
-          <summary
-            onClick={(event) => {
-              event.preventDefault();
-              setNetworkOpen((open) => !open);
-            }}
-          >
-            <ChevronDown aria-hidden="true" />
-            {t('agentInvite.network.otherWay')}
-          </summary>
-          {networkOpen ? <NetworkAgentInvite room={currentRoom} /> : null}
-        </details>
-      ) : null}
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
-function HostSetup({
-  detection,
-  host,
-  hostLabel,
-  manualConfiguration,
+/**
+ * 三种通用的接入方式并列：只要能上网就行的网络接入、任何支持 MCP 的工具、能运行命令的 Agent。
+ * 不按具体的 Agent 应用分支。方向键在三者之间切换，与原生单选组一致。
+ */
+function MethodPicker({
+  value,
+  onChange,
 }: {
-  readonly detection:
-    | { readonly host: AgentHostKind; readonly installed: boolean; readonly configurable: boolean }
-    | null
-    | undefined;
-  readonly host: AgentInviteHost;
-  readonly hostLabel: string;
-  readonly manualConfiguration: string | null;
+  readonly value: InviteMethod;
+  readonly onChange: (method: InviteMethod) => void;
 }) {
   const { t } = useTranslation();
-  const controller = useDesktopRuntimeController();
-  const [jsonCopy, setJsonCopy] = useState<CopyState>('idle');
-  const copyJson = async (): Promise<void> => {
-    if (manualConfiguration === null) return;
+  const buttons = useRef<Partial<Record<InviteMethod, HTMLButtonElement | null>>>({});
+  const labels: Record<InviteMethod, { readonly title: string; readonly hint: string }> = {
+    network: {
+      title: t('agentInvite.method.network'),
+      hint: t('agentInvite.method.networkHint'),
+    },
+    mcp: { title: t('agentInvite.method.mcp'), hint: t('agentInvite.method.mcpHint') },
+    cli: { title: t('agentInvite.method.cli'), hint: t('agentInvite.method.cliHint') },
+  };
+  const icons: Record<InviteMethod, ReactNode> = {
+    network: <Globe aria-hidden="true" />,
+    mcp: <Plug aria-hidden="true" />,
+    cli: <SquareTerminal aria-hidden="true" />,
+  };
+  return (
+    <div className="agent-invite__methods" role="radiogroup" aria-label={t('agentInvite.mode')}>
+      {inviteMethods.map((method, index) => (
+        <button
+          className="agent-invite__method"
+          key={method}
+          ref={(element) => {
+            buttons.current[method] = element;
+          }}
+          role="radio"
+          type="button"
+          aria-checked={value === method}
+          tabIndex={value === method ? 0 : -1}
+          onClick={() => {
+            onChange(method);
+          }}
+          onKeyDown={(event) => {
+            const step =
+              event.key === 'ArrowRight' || event.key === 'ArrowDown'
+                ? 1
+                : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+                  ? -1
+                  : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            const next =
+              inviteMethods[(index + step + inviteMethods.length) % inviteMethods.length];
+            if (next === undefined) return;
+            onChange(next);
+            buttons.current[next]?.focus();
+          }}
+        >
+          {icons[method]}
+          <strong>{labels[method].title}</strong>
+          <small>{labels[method].hint}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 通用的 MCP 配置：任何支持 MCP 的 Agent 工具都按这段 JSON 添加本机的 Agent Room 服务。 */
+function McpConfiguration({ configuration }: { readonly configuration: string | null }) {
+  const { t } = useTranslation();
+  const [copyState, setCopyState] = useState<CopyState>('idle');
+  if (configuration === null) return null;
+  const copy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(manualConfiguration);
-      setJsonCopy('copied');
+      await navigator.clipboard.writeText(configuration);
+      setCopyState('copied');
     } catch {
-      setJsonCopy('failed');
+      setCopyState('failed');
     }
   };
-
-  if (host === 'other' || (detection?.installed === true && !detection.configurable)) {
-    return (
-      <div className="agent-invite__setup">
-        <p>
-          {host === 'other'
-            ? t('agentInvite.host.otherHint')
-            : t('agentInvite.host.notConfigurable', { host: hostLabel })}
-        </p>
-        {manualConfiguration === null ? null : (
-          <>
-            <pre>{manualConfiguration}</pre>
-            <Button
-              icon={
-                jsonCopy === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
-              }
-              onClick={() => void copyJson()}
-              size="compact"
-              tone={jsonCopy === 'failed' ? 'alert' : 'ghost'}
-            >
-              {t(
-                jsonCopy === 'copied' ? 'agentInvite.host.copiedJson' : 'agentInvite.host.copyJson',
-              )}
-            </Button>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  if (detection?.installed !== true) {
-    return (
-      <div className="agent-invite__setup">
-        <p>{t('agentInvite.host.missingHint', { host: hostLabel })}</p>
-      </div>
-    );
-  }
-
-  const setup = controller.hostSetup[host];
-  const configuring = setup?.phase === 'checking';
-  const configured = setup?.phase === 'configured';
   return (
     <div className="agent-invite__setup">
-      {configured ? (
-        <p className="agent-invite__success" role="status">
-          <CircleCheckBig aria-hidden="true" />
-          {t('agentInvite.host.configured', { host: hostLabel })}
-        </p>
-      ) : (
-        <Button
-          disabled={controller.busy !== null || configuring}
-          icon={configuring ? <RefreshCw aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
-          onClick={() => void controller.configureHost(host)}
-          size="compact"
-          tone="network"
-        >
-          {t(configuring ? 'agentInvite.host.configuring' : 'agentInvite.host.configure', {
-            host: hostLabel,
-          })}
-        </Button>
-      )}
-      {setup?.phase !== 'failed' ? null : (
-        <p className="agent-invite__error" role="alert">
-          {t(hostFailureMessage(setup.error.code), { host: hostLabel })}
-          <small>{t('agentInvite.errorCode', { code: setup.error.code })}</small>
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Installs this build's agent-room skill into the host; with it loaded, the invitation is one line. */
-function SkillSetup({
-  host,
-  hostLabel,
-  offered = false,
-  roomName,
-}: {
-  readonly host: AgentHostKind;
-  readonly hostLabel: string;
-  /** 这个人物正挂在 Bridge 上等 Agent 来接：一句“接入 Agent Room”就够了。 */
-  readonly offered?: boolean;
-  /** 当前房间；没有挂出邀请时提示直接说房间名，不必再复制。 */
-  readonly roomName?: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const controller = useDesktopRuntimeController();
-  const setup = controller.skillSetup[host];
-  const status = setup?.phase === 'ready' ? setup.status : null;
-  if (status?.state === 'unsupported') return null;
-  const busy = setup?.phase === 'checking' || setup?.phase === 'installing';
-  return (
-    <div className="agent-invite__setup agent-invite__skill">
-      {status?.state === 'current' ? (
-        <>
-          <p className="agent-invite__success" role="status">
-            <CircleCheckBig aria-hidden="true" />
-            {t('agentInvite.skill.current', { host: hostLabel })}
-          </p>
-          <p className="agent-invite__say">
-            {t('agentInvite.skill.sayHint', { host: hostLabel })}{' '}
-            <q>
-              {offered
-                ? t('agentInvite.skill.sayJoin')
-                : roomName === undefined
-                  ? t('agentInvite.skill.sayLobby')
-                  : t('agentInvite.skill.sayRoom', { room: roomName })}
-            </q>
-          </p>
-        </>
-      ) : (
-        <>
-          <p>{t('agentInvite.skill.description', { host: hostLabel })}</p>
-          <Button
-            disabled={controller.busy !== null || busy}
-            icon={busy ? <RefreshCw aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
-            onClick={() => void controller.installSkill(host)}
-            size="compact"
-            tone="network"
-          >
-            {t(
-              setup?.phase === 'installing'
-                ? 'agentInvite.skill.installing'
-                : status?.state === 'outdated'
-                  ? 'agentInvite.skill.update'
-                  : 'agentInvite.skill.install',
-              { host: hostLabel },
-            )}
-          </Button>
-        </>
-      )}
-      {setup?.phase !== 'failed' ? null : (
-        <p className="agent-invite__error" role="alert">
-          {t('agentInvite.skill.failed', { host: hostLabel })}
-          <small>{t('agentInvite.errorCode', { code: setup.error.code })}</small>
-        </p>
-      )}
+      <p>{t('agentInvite.host.otherHint')}</p>
+      <pre>{configuration}</pre>
+      <Button
+        icon={copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        onClick={() => void copy()}
+        size="compact"
+        tone={copyState === 'failed' ? 'alert' : 'ghost'}
+      >
+        {t(copyState === 'copied' ? 'agentInvite.host.copiedJson' : 'agentInvite.host.copyJson')}
+      </Button>
     </div>
   );
 }

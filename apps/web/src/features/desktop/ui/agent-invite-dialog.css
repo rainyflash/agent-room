@@ -124,18 +124,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.agent-invite__network-other {
-  margin-top: 16px;
-}
-.agent-invite__network-other summary {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  margin-bottom: 10px;
-  color: var(--ar-muted);
-  cursor: pointer;
-  font-size: 13px;
-}
 .agent-invite__steps > li > p {
   margin: 0;
   color: var(--ar-muted);
@@ -156,40 +144,6 @@
   border-radius: 22px;
   color: var(--color-ink);
   background: var(--color-paper);
-}
-.agent-invite__advanced {
-  padding: 12px 16px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 18px;
-  background: var(--ar-surface-muted);
-  font-size: 13px;
-  line-height: 1.65;
-}
-.agent-invite__advanced summary {
-  cursor: pointer;
-  color: var(--ar-muted);
-}
-.agent-invite__advanced p {
-  margin: 12px 0;
-}
-.agent-invite__modes {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-.agent-invite__modes button {
-  min-height: 36px;
-  padding: 6px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
-  background: var(--ar-surface);
-  color: var(--color-ink);
-  font-weight: 600;
-}
-.agent-invite__modes button[aria-checked='true'] {
-  color: var(--ar-surface);
-  background: var(--color-ink);
 }
 .agent-invite__notice {
   display: flex;
@@ -282,49 +236,6 @@
   font-weight: 650;
   letter-spacing: 0;
 }
-.agent-invite__hosts {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-.agent-invite__host {
-  display: grid;
-  gap: 2px;
-  min-height: 52px;
-  padding: 8px 10px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 16px;
-  color: inherit;
-  background: var(--ar-surface);
-  text-align: left;
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease;
-}
-.agent-invite__host:hover {
-  border-color: var(--ar-outline);
-  background: var(--ar-surface-muted);
-}
-.agent-invite__host[aria-checked='true'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-warning-soft);
-  box-shadow: var(--ar-press-small);
-}
-.agent-invite__host strong {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.agent-invite__host small {
-  color: var(--ar-muted);
-  font-size: 11px;
-}
-.agent-invite__host small[data-installed='true'] {
-  color: var(--ar-success);
-}
 .agent-invite__setup {
   display: grid;
   gap: 8px;
@@ -362,10 +273,6 @@
 }
 .agent-invite__success {
   color: var(--ar-success) !important;
-}
-.agent-invite__say q {
-  color: var(--color-ink);
-  font-weight: 600;
 }
 .agent-invite__error {
   color: var(--color-alert) !important;
@@ -511,13 +418,68 @@
   }
 }
 @media (max-width: 560px) {
-  .agent-invite__hosts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .agent-invite__steps > li {
     padding-left: 40px;
   }
   .agent-invite__status {
     flex-wrap: wrap;
+  }
+}
+
+/* 三种接入方式并列：网络接入、MCP、命令行，不按具体 Agent 应用区分。 */
+.agent-invite__methods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.agent-invite__method {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-content: start;
+  gap: 2px 8px;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 16px;
+  color: inherit;
+  background: var(--ar-surface);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+.agent-invite__method:hover {
+  border-color: var(--ar-outline);
+  background: var(--ar-surface-muted);
+}
+.agent-invite__method[aria-checked='true'] {
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
+  box-shadow: var(--ar-press-small);
+}
+.agent-invite__method > svg {
+  grid-row: span 2;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+.agent-invite__method strong {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.agent-invite__method small {
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+@media (max-width: 560px) {
+  .agent-invite__methods {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-invite__method {
+    min-height: 0;
   }
 }

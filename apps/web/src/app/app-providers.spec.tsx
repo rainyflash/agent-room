@@ -177,6 +177,8 @@ describe('应用组合根', () => {
       expect(screen.getByRole('heading', { name: 'Reception tasks' })).toBeVisible();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
+    // 接入方式默认是网络接入；本机接入要先选命令行。
+    fireEvent.click(await screen.findByRole('radio', { name: /^Command line/u }));
     // 名字默认留给接上的 Agent 自己起。
     const name = await screen.findByRole('textbox', { name: 'Agent name' });
     expect(name).toHaveValue('');
