@@ -1,6 +1,15 @@
 import { ArrowDown, Radio, Search, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { MessageRoomProjection } from '@/features/messages/domain/message';
 import type { Result } from '@/shared/result';
 import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
@@ -23,6 +32,10 @@ import { conversationDeliveries } from '../domain/message-delivery';
 import './conversation-panel.css';
 
 const emptyParticipants: readonly ConversationParticipant[] = [];
+// 进房间时本地通常只有同步带来的最近一小段记录。内容撑不满这么多屏、或者上次读到的位置还没加载，
+// 就自动往前补；每次打开最多补这么多次，剩下的交给“加载更早的消息”。
+const historyFillScreens = 1.5;
+const maxAutomaticHistoryLoads = 3;
 
 export type ConversationPanelProps = {
   readonly active?: boolean;
@@ -80,6 +93,10 @@ export function ConversationPanel({
   // 长消息默认收起；这里只记用户点过的，跳转定位到的那条和查找结果默认展开。
   const [expansions, setExpansions] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [historyState, setHistoryState] = useState<'ready' | 'loading' | 'failed'>('ready');
+  const historyLoading = useRef(false);
+  const automaticLoads = useRef(0);
+  // 在底部时自动补历史，补进来后要留在底部。中途往上翻了的话，这里记着他离底部的距离。
+  const bottomDistance = useRef<number | null>(null);
   const timelineElement = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const position = useConversationPosition({
@@ -190,21 +207,69 @@ export function ConversationPanel({
     () => new Intl.DateTimeFormat(language, { month: 'long', day: 'numeric' }),
     [language],
   );
+  const requestOlder = (automatic: boolean): void => {
+    const element = timelineElement.current;
+    if (onLoadOlder === undefined || historyLoading.current) return;
+    historyLoading.current = true;
+    if (automatic && following.current && element !== null)
+      bottomDistance.current = element.scrollHeight - element.scrollTop;
+    else position.preserve();
+    setHistoryState('loading');
+    const settle = (loaded: boolean): void => {
+      historyLoading.current = false;
+      bottomDistance.current = null;
+      if (!loaded) position.release();
+      setHistoryState(loaded ? 'ready' : 'failed');
+    };
+    void onLoadOlder().then(
+      (result) => {
+        settle(result.ok);
+      },
+      () => {
+        settle(false);
+      },
+    );
+  };
   const loadOlder =
     onLoadOlder === undefined
       ? undefined
       : (): void => {
-          position.preserve();
-          setHistoryState('loading');
-          void onLoadOlder().then(
-            (result) => {
-              setHistoryState(result.ok ? 'ready' : 'failed');
-            },
-            () => {
-              setHistoryState('failed');
-            },
-          );
+          requestOlder(false);
         };
+  // 正在往前补的时候先不说“找不到阅读位置”，补完还找不到再说。
+  const positionMissing = position.missing && historyState !== 'loading';
+  // 在绘制前决定：阅读位置还没加载时，先显示“正在加载”，而不是闪一下“找不到阅读位置”。
+  useLayoutEffect(() => {
+    const element = timelineElement.current;
+    if (
+      !active ||
+      state !== 'ready' ||
+      filtered ||
+      onLoadOlder === undefined ||
+      history?.canLoadMore !== true ||
+      historyState !== 'ready' ||
+      historyLoading.current ||
+      automaticLoads.current >= maxAutomaticHistoryLoads ||
+      element === null ||
+      element.clientHeight === 0
+    )
+      return;
+    if (!position.missing && element.scrollHeight >= element.clientHeight * historyFillScreens)
+      return;
+    automaticLoads.current += 1;
+    // requestOlder 每次渲染都新建；它用到的状态都列在依赖里，其余是 ref。
+    requestOlder(true);
+  }, [active, state, filtered, onLoadOlder, history, historyState, position.missing, timeline]);
+  // 前面补进更早的消息后，要在绘制前把跟随最新消息的人留在底部：WebKit 没有 CSS 滚动锚定，
+  // 别的浏览器在内容刚变得能滚动、还停在顶端时也不锚定。自动补的过程中往上翻了的人，
+  // 保持他离底部的距离，眼前的内容不跳。
+  useLayoutEffect(() => {
+    const element = timelineElement.current;
+    if (!active || element === null || focusMessageId !== null) return;
+    if (following.current) element.scrollTop = element.scrollHeight;
+    else if (bottomDistance.current !== null)
+      element.scrollTop = element.scrollHeight - bottomDistance.current;
+  }, [active, focusMessageId, timeline]);
   return (
     <section className="conversation-panel" aria-label={t('conversation.title')}>
       <h2 className="sr-only">{t('conversation.title')}</h2>
@@ -255,9 +320,9 @@ export function ConversationPanel({
           count={visibleTimeline.length}
         />
       )}
-      {position.missing || filtered ? (
+      {positionMissing || filtered ? (
         <div className="conversation-history-tools">
-          {position.missing ? <p role="status">{t('history.positionMissing')}</p> : null}
+          {positionMissing ? <p role="status">{t('history.positionMissing')}</p> : null}
           <button
             type="button"
             onClick={() => {
@@ -281,6 +346,8 @@ export function ConversationPanel({
             const element = event.currentTarget;
             following.current =
               element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+            if (bottomDistance.current !== null)
+              bottomDistance.current = element.scrollHeight - element.scrollTop;
             if (following.current) setUnseen(false);
             markLatestDisplayed();
             position.record();

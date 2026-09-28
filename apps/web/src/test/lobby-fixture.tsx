@@ -153,6 +153,13 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
 const conversationListeners = new Set<() => void>();
 let publishedConversations: RoomMessageSignal[] = [];
 const historyFixture = new URLSearchParams(window.location.search).has('history');
+// ?historyPage=1：每页只有 1 条（默认 20 条），用来验收进房间后自动补历史。
+const historyPage = Math.max(
+  1,
+  Number.parseInt(new URLSearchParams(window.location.search).get('historyPage') ?? '20', 10) || 20,
+);
+// ?historyFail=1：加载更早的消息总是失败。
+const historyFailure = new URLSearchParams(window.location.search).has('historyFail');
 // ?long=1：每第十条是 30 行的长消息，用来验收长消息折叠。
 const longFixture = new URLSearchParams(window.location.search).has('long');
 function fixtureHistoryText(index: number): string {
@@ -208,7 +215,7 @@ const fixtureHistory = historyFixture
       };
     })
   : [];
-let historyWindow = 20;
+let historyWindow = historyPage;
 const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
@@ -228,7 +235,9 @@ const messages: MessageGateway = {
         : {}),
     }),
   loadOlder: () => {
-    historyWindow += 20;
+    if (historyFailure)
+      return Promise.resolve(err({ code: 'history.load_failed', retryable: true }));
+    historyWindow += historyPage;
     for (const listener of conversationListeners) listener();
     return Promise.resolve(ok(undefined));
   },

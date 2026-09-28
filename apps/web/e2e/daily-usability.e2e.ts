@@ -134,6 +134,99 @@ for (const width of [1440, 390]) {
 }
 
 for (const width of [1440, 390]) {
+  test(`本地记录很短时进房间自动往前补，读者停在最新消息 ${String(width)}px`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 1000 });
+    // 每页只有 1 条，一条撑不满屏幕：进房间后自动往前补，直到内容超过一屏半，
+    // 或者补满三次（1 + 3 = 4 条）。
+    await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&historyPage=1');
+    const history = page.locator('.conversation-panel__timeline').first();
+    const messages = history.locator('[data-conversation-message-id]');
+    const settled = async () => {
+      const count = await messages.count();
+      const filled = await history.evaluate(
+        (element) => element.scrollHeight >= element.clientHeight * 1.5,
+      );
+      return count === 4 || (count > 1 && filled);
+    };
+    await expect.poll(settled).toBe(true);
+    const loaded = await messages.count();
+    // 停下以后不再自动加载。
+    await page.waitForTimeout(500);
+    await expect(messages).toHaveCount(loaded);
+    await expect(
+      history.getByRole('button', { name: 'Load earlier messages', exact: true }),
+    ).toBeEnabled();
+    // 补进来的是更早的消息，读者一直停在底部。
+    await expect(messages.filter({ hasText: 'Review milestone 80:' })).toBeInViewport();
+    expect(
+      await history.evaluate(
+        (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+      ),
+    ).toBeLessThan(48);
+    await history.getByRole('button', { name: 'Load earlier messages', exact: true }).click();
+    await expect(messages).toHaveCount(loaded + 1);
+    expect(failures).toEqual([]);
+  });
+}
+
+test('上次读到的位置还没加载时自动往前补，回到原处', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1');
+  const history = page.locator('.conversation-panel__timeline').first();
+  const messages = history.locator('[data-conversation-message-id]');
+  await expect(messages).toHaveCount(20);
+  await history.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await history.getByRole('button', { name: 'Load earlier messages', exact: true }).click();
+  await expect(messages).toHaveCount(40);
+  const target = messages.filter({ hasText: 'Review milestone 45:' });
+  await target.evaluate((element) => {
+    element.scrollIntoView({ block: 'start' });
+  });
+  const reading = await target.evaluate((element) => element.getBoundingClientRect().top);
+  // 阅读位置在滚动停下 300ms 后保存。
+  await page.waitForTimeout(500);
+  await page.reload();
+  // 刷新后测试页只有最近 20 条（第 61–80 条），第 45 条要往前补一页才出现。
+  await expect(messages).toHaveCount(40);
+  await expect
+    .poll(async () =>
+      Math.abs((await target.evaluate((element) => element.getBoundingClientRect().top)) - reading),
+    )
+    .toBeLessThanOrEqual(1);
+  await expect(
+    page.getByText('Your reading position or linked message is not among the loaded'),
+  ).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test('加载更早消息失败后接着往下翻，不会被拉回点加载时的位置', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&historyFail=1');
+  const history = page.locator('.conversation-panel__timeline').first();
+  await expect(history.locator('[data-conversation-message-id]')).toHaveCount(20);
+  await history.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await history.getByRole('button', { name: 'Load earlier messages', exact: true }).click();
+  await expect(history.getByRole('alert')).toContainText('Earlier messages could not be loaded');
+  const reading = await history.evaluate((element) => {
+    element.scrollTop = Math.round(element.scrollHeight / 2);
+    return element.scrollTop;
+  });
+  // 阅读位置在滚动停下 300ms 后保存；保存会让阅读位置重新对齐一次。
+  await page.waitForTimeout(800);
+  expect(
+    Math.abs((await history.evaluate((element) => element.scrollTop)) - reading),
+  ).toBeLessThanOrEqual(1);
+  expect(failures).toEqual([]);
+});
+
+for (const width of [1440, 390]) {
   test(`长消息默认收起，可以展开和收起 ${String(width)}px`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });

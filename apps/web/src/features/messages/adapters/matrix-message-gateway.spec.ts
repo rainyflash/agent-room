@@ -327,6 +327,27 @@ describe('MatrixMessageGateway', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it('同一个源快照只投影一次，快照换了才重新投影', () => {
+    let room = snapshot([previewEvent({ eventId: '$first' })]);
+    const now = vi.fn(() => NOW);
+    const gateway = new MatrixMessageGateway(
+      { read: () => ({ kind: 'ready', room }), subscribe: () => noop },
+      now,
+    );
+
+    const first = gateway.read(ROOM_ID);
+    const repeated = gateway.read(ROOM_ID);
+    room = snapshot([previewEvent({ eventId: '$second' })]);
+    const changed = gateway.read(ROOM_ID);
+
+    expect(first.ok && repeated.ok && changed.ok).toBe(true);
+    if (!first.ok || !repeated.ok || !changed.ok) return;
+    expect(repeated.value).toBe(first.value);
+    expect(changed.value).not.toBe(first.value);
+    expect(changed.value.messages[0]?.matrixEventId).toBe('$second');
+    expect(now).toHaveBeenCalledTimes(2);
+  });
+
   it('按当前治理状态隐藏消息且撤销通知不会销毁原始预览', () => {
     const base = previewEvent({ eventId: '$base', messageId: MESSAGE_ID });
     const hidden = moderationNotice('$base', true, 200);

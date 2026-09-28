@@ -27,6 +27,8 @@ export function useConversationPosition({
   const initialScope = useRef<string | null>(null);
   const lastFocus = useRef<string | null>(null);
   const pendingAnchor = useRef<ReadingPosition | null>(null);
+  // pendingAnchor 是不是 preserve() 为加载更早消息临时记下的（而不是保存的阅读位置或跳转目标）。
+  const preserved = useRef(false);
   const [missing, setMissing] = useState(false);
   const ready = personal?.snapshot.status !== 'loading';
   useLayoutEffect(() => {
@@ -35,14 +37,17 @@ export function useConversationPosition({
     if (initialScope.current !== scope) {
       initialScope.current = scope;
       lastFocus.current = focusMessageId;
+      preserved.current = false;
       pendingAnchor.current =
         focusMessageId !== null
           ? { messageId: focusMessageId, offset: 0, following: false }
           : (saved ?? null);
     } else if (focusMessageId !== lastFocus.current) {
       lastFocus.current = focusMessageId;
-      if (focusMessageId !== null)
+      if (focusMessageId !== null) {
+        preserved.current = false;
         pendingAnchor.current = { messageId: focusMessageId, offset: 0, following: false };
+      }
     }
     const anchor = pendingAnchor.current;
     const container = element.current;
@@ -50,6 +55,7 @@ export function useConversationPosition({
     if (anchor.following) {
       following.current = true;
       pendingAnchor.current = null;
+      preserved.current = false;
       setMissing(false);
       return;
     }
@@ -59,6 +65,7 @@ export function useConversationPosition({
       container.scrollTop +=
         target.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.offset;
       pendingAnchor.current = null;
+      preserved.current = false;
       setMissing(false);
     } else setMissing(true);
   }, [accountId, active, element, focusMessageId, following, ready, roomId, saved, timeline]);
@@ -116,12 +123,24 @@ export function useConversationPosition({
     record,
     preserve: () => {
       const container = element.current;
-      if (container && !pendingAnchor.current)
+      if (container && !pendingAnchor.current) {
         pendingAnchor.current = visibleAnchor(container, false);
+        preserved.current = pendingAnchor.current !== null;
+      }
       following.current = false;
+    },
+    /**
+     * 加载失败、没有新内容可对齐时，放掉 preserve() 记下的锚点。留着的话，之后保存阅读位置
+     * 引起重算时，会把已经翻走的人拉回点加载时的位置。保存的阅读位置和跳转目标不受影响。
+     */
+    release: () => {
+      if (!preserved.current) return;
+      preserved.current = false;
+      pendingAnchor.current = null;
     },
     latest: () => {
       pendingAnchor.current = null;
+      preserved.current = false;
       following.current = true;
       setMissing(false);
     },

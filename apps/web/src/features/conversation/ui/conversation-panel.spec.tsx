@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,7 +14,7 @@ import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
-import { err, ok } from '@/shared/result';
+import { err, ok, type Result } from '@/shared/result';
 
 const roomId = '!chat:agent-room.test';
 const submissionId = '01990d9e-8400-7000-8000-000000000003';
@@ -360,6 +360,141 @@ describe('人与 Agent 直接聊天', () => {
           ?.getAttribute('data-conversation-message-id'),
       ),
     ).toEqual(['root', 'reply']);
+  });
+
+  describe('进房间自动补历史', () => {
+    type LoadResult = Result<void, { readonly code: string; readonly retryable: boolean }>;
+    const conversation = (index: number): RoomMessageSignal => ({
+      actor: {
+        agentId: submissionId,
+        instanceId: submissionId,
+        displayName: 'Ada',
+        kind: 'agent',
+        matrixUserId: agentId,
+        provenance: 'human_confirmed_agent',
+      },
+      messageId: `message-${String(index)}`,
+      matrixEventId: `$message-${String(index)}`,
+      roomId,
+      lifecycle: 'active',
+      edited: false,
+      endToEndEncrypted: false,
+      serverTimestamp: 1_000 + index,
+      signatureStatus: 'instance_verified',
+      content: null,
+      preview: {
+        title: 'Chat',
+        summary: 'Chat',
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text: `Message ${String(index)}`, mentions: [] },
+      },
+    });
+
+    // jsdom 不排版：把时间线的可见高度和内容高度设成给定值。
+    function layout(contentHeight: number): () => void {
+      const sized = (element: Element, value: number) =>
+        element.classList.contains('conversation-panel__timeline') ? value : 0;
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return sized(this, 500);
+        },
+      });
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return sized(this, contentHeight);
+        },
+      });
+      return () => {
+        Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
+        Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+      };
+    }
+
+    function renderHistory(onLoadOlder: () => Promise<LoadResult>) {
+      const publisher: MessagePublisher = {
+        publish: vi.fn(),
+        reconcile: vi.fn(),
+        resolveIdentity: () =>
+          Promise.resolve(err({ code: 'publication.identity_unavailable', retryable: true })),
+      };
+      render(
+        <I18nextProvider i18n={i18n}>
+          <ConversationPanel
+            history={{ canLoadMore: true, limited: false }}
+            onLoadOlder={onLoadOlder}
+            messages={[conversation(1), conversation(2)]}
+            publisher={publisher}
+            roomId={roomId}
+            state="ready"
+          />
+        </I18nextProvider>,
+      );
+    }
+
+    it('撑不满一屏半时一次补一页，前一次没完不发下一次，每次打开最多三次', async () => {
+      // 可见高度 500，内容 740，差一点到一屏半。
+      const restore = layout(740);
+      try {
+        const pending: ((result: LoadResult) => void)[] = [];
+        const onLoadOlder = vi.fn(
+          () =>
+            new Promise<LoadResult>((resolve) => {
+              pending.push(resolve);
+            }),
+        );
+        renderHistory(onLoadOlder);
+        expect(onLoadOlder).toHaveBeenCalledOnce();
+        expect(screen.getByRole('button', { name: 'Loading earlier messages…' })).toBeDisabled();
+        for (const calls of [2, 3]) {
+          await act(async () => {
+            pending.shift()?.(ok(undefined));
+            await Promise.resolve();
+          });
+          expect(onLoadOlder).toHaveBeenCalledTimes(calls);
+        }
+        await act(async () => {
+          pending.shift()?.(ok(undefined));
+          await Promise.resolve();
+        });
+        expect(onLoadOlder).toHaveBeenCalledTimes(3);
+        expect(screen.getByRole('button', { name: 'Load earlier messages' })).toBeEnabled();
+      } finally {
+        restore();
+      }
+    });
+
+    it('内容已经填满一屏半时不自动加载', () => {
+      const restore = layout(750);
+      try {
+        const onLoadOlder = vi.fn(() => Promise.resolve<LoadResult>(ok(undefined)));
+        renderHistory(onLoadOlder);
+        expect(onLoadOlder).not.toHaveBeenCalled();
+      } finally {
+        restore();
+      }
+    });
+
+    it('自动加载失败后不再自动重试，留给用户手动加载', async () => {
+      const restore = layout(400);
+      try {
+        const onLoadOlder = vi.fn(() =>
+          Promise.resolve<LoadResult>(err({ code: 'history.load_failed', retryable: true })),
+        );
+        renderHistory(onLoadOlder);
+        expect(
+          await screen.findByText(
+            'Earlier messages could not be loaded. Your current conversation is still available.',
+          ),
+        ).toBeInTheDocument();
+        expect(onLoadOlder).toHaveBeenCalledOnce();
+      } finally {
+        restore();
+      }
+    });
   });
 
   it('回复保留关联且远端 HTML 只显示为文字', async () => {
