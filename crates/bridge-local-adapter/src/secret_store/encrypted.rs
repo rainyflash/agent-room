@@ -30,16 +30,18 @@ struct Envelope {
 
 impl EncryptedStore {
     pub(super) fn new(directory: &Path, key_file: &Path) -> Result<Self, SecretStoreFailure> {
-        for path in [directory, key_file] {
-            if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
-                return Err(SecretStoreFailure::Configuration);
-            }
-        }
+        require_safe_path(key_file)?;
         let key = Zeroizing::new(read_private_file(key_file, 32)?);
-        let bytes: [u8; 32] = key
-            .as_slice()
-            .try_into()
-            .map_err(|_| SecretStoreFailure::Configuration)?;
+        let bytes: Zeroizing<[u8; 32]> = Zeroizing::new(
+            key.as_slice()
+                .try_into()
+                .map_err(|_| SecretStoreFailure::Configuration)?,
+        );
+        Self::with_key(directory, &bytes)
+    }
+
+    pub(super) fn with_key(directory: &Path, key: &[u8; 32]) -> Result<Self, SecretStoreFailure> {
+        require_safe_path(directory)?;
         if !directory.exists() {
             let mut builder = fs::DirBuilder::new();
             builder.recursive(true);
@@ -58,7 +60,7 @@ impl EncryptedStore {
         }
         Ok(Self {
             directory: directory.to_owned(),
-            key: Zeroizing::new(bytes),
+            key: Zeroizing::new(*key),
         })
     }
 
@@ -171,6 +173,13 @@ impl EncryptedStore {
             .map_err(|_| SecretStoreFailure::Unavailable)?;
         Ok(())
     }
+}
+
+fn require_safe_path(path: &Path) -> Result<(), SecretStoreFailure> {
+    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+        return Err(SecretStoreFailure::Configuration);
+    }
+    Ok(())
 }
 
 fn context(service: &str, account: &str) -> Vec<u8> {

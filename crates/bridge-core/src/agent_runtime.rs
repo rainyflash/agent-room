@@ -482,7 +482,7 @@ fn map_credential_failure(
     failure: BridgeCredentialFailure,
 ) -> AgentRuntimeSessionFailure {
     let kind = match failure.kind() {
-        BridgeCredentialFailureKind::Unavailable => {
+        BridgeCredentialFailureKind::Unavailable | BridgeCredentialFailureKind::StorageFull => {
             AgentRuntimeSessionFailureKind::SecureStorageUnavailable
         }
         BridgeCredentialFailureKind::Corrupt => {

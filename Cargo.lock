@@ -147,6 +147,7 @@ dependencies = [
  "uuid",
  "widestring",
  "win-security-identifier",
+ "zeroize",
 ]
 
 [[package]]

@@ -38,7 +38,7 @@ impl SystemCredentialStore {
     /// 凭据库拒绝写入时返回错误。
     pub fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
         self.with_entry(account, |entry| entry.set_password(value))
-            .map_err(|_| SecretStoreFailure::Unavailable)
+            .map_err(|error| write_failure(&error))
     }
 
     /// 写入同一安装里的桌面、MCP 和命令行也要读取的凭据。
@@ -84,6 +84,54 @@ impl SystemCredentialStore {
     ) -> keyring::Result<TValue> {
         let _exclusive = exclusive::acquire();
         operation(&Entry::new(&self.service, account)?)
+    }
+}
+
+/// 写入失败的原因。Windows 凭据管理器写满后 `CredWriteW` 返回 `ERROR_NOT_ENOUGH_MEMORY`（8），
+/// keyring 把它包成 `PlatformFailure`，只能从显示文字认出来。
+fn write_failure(error: &KeyringError) -> SecretStoreFailure {
+    match error {
+        KeyringError::PlatformFailure(inner) if store_full(&inner.to_string()) => {
+            SecretStoreFailure::Full
+        }
+        _ => SecretStoreFailure::Unavailable,
+    }
+}
+
+fn store_full(platform_message: &str) -> bool {
+    cfg!(windows) && platform_message == "Windows error code 8"
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::{KeyringError, SecretStoreFailure, write_failure};
+
+    #[derive(Debug)]
+    struct Platform(&'static str);
+
+    impl std::fmt::Display for Platform {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Platform {}
+
+    #[test]
+    fn 只有凭据库写满才报已满() {
+        let full = KeyringError::PlatformFailure(Box::new(Platform("Windows error code 8")));
+        let other = KeyringError::PlatformFailure(Box::new(Platform("Windows error code 5")));
+        let expected = if cfg!(windows) {
+            SecretStoreFailure::Full
+        } else {
+            SecretStoreFailure::Unavailable
+        };
+        assert_eq!(write_failure(&full), expected);
+        assert_eq!(write_failure(&other), SecretStoreFailure::Unavailable);
+        assert_eq!(
+            write_failure(&KeyringError::NoEntry),
+            SecretStoreFailure::Unavailable
+        );
     }
 }
 

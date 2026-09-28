@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use agent_room_application::ports::{
     DeviceSignature, MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId,
@@ -38,6 +38,10 @@ use agent_room_identity_adapter::{DeviceSigningKeyError, Ed25519DeviceSigningKey
 use agent_room_message_crypto_adapter::MessageContentRootKey;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
+
+use crate::config::BridgeConfig;
 use uuid::Uuid;
 
 const DEVICE_SIGNING_SEED: &str = "device-signing-seed";
@@ -69,6 +73,123 @@ impl ConfiguredSecretBackend {
     }
 }
 
+/// 按运行时选择秘密存放处：根 Bridge 用系统凭据库（或无桌面加密库），独立人物用自己的加密文件夹。
+fn backend_for(config: &BridgeConfig) -> Arc<dyn SecretStoreBackend> {
+    let service = config.secure_storage_service.as_str();
+    match &config.agent_secret_vault {
+        None => Arc::new(ConfiguredSecretBackend::new(service)),
+        Some(vault) => Arc::new(AgentVaultBackend::new(service, vault)),
+    }
+}
+
+/// 独立人物加密文件的钥匙。整台电脑一把，由根 Bridge 的内容根密钥派生，不另占系统凭据库的位置。
+#[derive(Clone)]
+pub(crate) struct AgentVaultKey(Arc<Zeroizing<[u8; RUNTIME_SECRET_BYTES]>>);
+
+impl AgentVaultKey {
+    fn derive(content_root_key: &[u8; RUNTIME_SECRET_BYTES]) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(b"agent-room/agent-secret-vault/v1\0");
+        digest.update(content_root_key);
+        Self(Arc::new(Zeroizing::new(digest.finalize().into())))
+    }
+}
+
+/// 一个独立人物的秘密放在哪里：它数据目录下的加密文件夹，用 [`AgentVaultKey`] 加密。
+#[derive(Clone)]
+pub(crate) struct AgentSecretVault {
+    directory: PathBuf,
+    key: AgentVaultKey,
+}
+
+impl AgentSecretVault {
+    pub(crate) const fn new(directory: PathBuf, key: AgentVaultKey) -> Self {
+        Self { directory, key }
+    }
+}
+
+/// 独立人物的秘密后端。
+///
+/// 以前每个人物在系统凭据库里存 8 条，人物一多，Windows 凭据管理器就被写满（`CredWriteW` 返回 8），
+/// 之后连新人物都进不来。现在只写加密文件；读到加密文件里还没有、系统凭据库里却有的旧值时，
+/// 先搬进加密文件、读回核对，再删掉系统凭据库里的旧条目，腾出位置。
+struct AgentVaultBackend {
+    vault: Result<LocalSecretStore, SecretStoreFailure>,
+    legacy: Arc<dyn SecretStoreBackend>,
+}
+
+impl AgentVaultBackend {
+    fn new(service: &str, vault: &AgentSecretVault) -> Self {
+        Self::with_legacy(
+            service,
+            vault,
+            Arc::new(ConfiguredSecretBackend::new(service)),
+        )
+    }
+
+    fn with_legacy(
+        service: &str,
+        vault: &AgentSecretVault,
+        legacy: Arc<dyn SecretStoreBackend>,
+    ) -> Self {
+        Self {
+            vault: LocalSecretStore::encrypted_with_key(service, &vault.directory, &vault.key.0),
+            legacy,
+        }
+    }
+
+    fn vault(&self) -> BridgeCredentialResult<&LocalSecretStore> {
+        self.vault
+            .as_ref()
+            .map_err(|failure| map_secret_failure(*failure))
+    }
+
+    fn migrate(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
+        let vault = self.vault()?;
+        vault.write(account, value).map_err(map_secret_failure)?;
+        if vault.read(account).map_err(map_secret_failure)?.as_deref() != Some(value) {
+            return Err(unavailable());
+        }
+        if self.legacy.delete(account).is_err() {
+            // 旧条目删不掉也不影响使用：以后只读加密文件里的值。
+            tracing::warn!(
+                account,
+                "独立人物的旧凭据已搬进加密文件，但没能从系统凭据库删除"
+            );
+        }
+        Ok(())
+    }
+}
+
+impl SecretStoreBackend for AgentVaultBackend {
+    fn read(&self, account: &str) -> BridgeCredentialResult<Option<String>> {
+        if let Some(value) = self.vault()?.read(account).map_err(map_secret_failure)? {
+            return Ok(Some(value));
+        }
+        let Some(value) = self.legacy.read(account)? else {
+            return Ok(None);
+        };
+        self.migrate(account, &value)?;
+        Ok(Some(value))
+    }
+
+    fn write(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
+        self.vault()?
+            .write(account, value)
+            .map_err(map_secret_failure)
+    }
+
+    /// 人物的秘密只有这个 Bridge 自己读，不必像根 Bridge 的 IPC 凭据那样对其他程序放行。
+    fn write_shared(&self, account: &str, value: &str) -> BridgeCredentialResult<()> {
+        self.write(account, value)
+    }
+
+    fn delete(&self, account: &str) -> BridgeCredentialResult<()> {
+        self.vault()?.delete(account).map_err(map_secret_failure)?;
+        self.legacy.delete(account)
+    }
+}
+
 impl SecretStoreBackend for ConfiguredSecretBackend {
     fn read(&self, account: &str) -> BridgeCredentialResult<Option<String>> {
         self.store.read(account).map_err(map_secret_failure)
@@ -92,6 +213,9 @@ impl SecretStoreBackend for ConfiguredSecretBackend {
 const fn map_secret_failure(failure: SecretStoreFailure) -> BridgeCredentialFailure {
     match failure {
         SecretStoreFailure::Corrupt => corrupt(),
+        SecretStoreFailure::Full => {
+            BridgeCredentialFailure::new(BridgeCredentialFailureKind::StorageFull)
+        }
         SecretStoreFailure::Configuration | SecretStoreFailure::Unavailable => unavailable(),
     }
 }
@@ -103,9 +227,15 @@ pub(crate) struct BridgeRuntimeSecrets {
     handoff_storage_key: HandoffStorageKey,
     message_projection_storage_key: MessageProjectionStorageKey,
     message_content_root_key: MessageContentRootKey,
+    agent_vault_key: AgentVaultKey,
 }
 
 impl BridgeRuntimeSecrets {
+    /// 独立人物加密文件的钥匙；只有根 Bridge 的这一份会被用到。
+    pub(crate) const fn agent_vault_key(&self) -> &AgentVaultKey {
+        &self.agent_vault_key
+    }
+
     pub(crate) const fn installation_id(&self) -> &IpcInstallationId {
         &self.installation_id
     }
@@ -145,6 +275,12 @@ impl OsBridgeRuntimeSecretVault {
         }
     }
 
+    pub(crate) fn for_config(config: &BridgeConfig) -> Self {
+        Self {
+            backend: backend_for(config),
+        }
+    }
+
     #[cfg(test)]
     fn new(backend: Arc<dyn SecretStoreBackend>) -> Self {
         Self { backend }
@@ -164,8 +300,9 @@ impl OsBridgeRuntimeSecretVault {
         let handoff_storage_key = self.load_or_create_value(HANDOFF_STORAGE_KEY, random_secret)?;
         let message_projection_storage_key =
             self.load_or_create_value(MESSAGE_PROJECTION_STORAGE_KEY, random_secret)?;
-        let message_content_root_key =
-            self.load_or_create_value(MESSAGE_CONTENT_ROOT_KEY, random_secret)?;
+        let message_content_root_key = Zeroizing::new(decode_runtime_secret(
+            &self.load_or_create_value(MESSAGE_CONTENT_ROOT_KEY, random_secret)?,
+        )?);
 
         Ok(BridgeRuntimeSecrets {
             installation_id: IpcInstallationId::new(installation_id).map_err(|_| corrupt())?,
@@ -178,9 +315,8 @@ impl OsBridgeRuntimeSecretVault {
             message_projection_storage_key: MessageProjectionStorageKey::from_bytes(
                 decode_runtime_secret(&message_projection_storage_key)?,
             ),
-            message_content_root_key: MessageContentRootKey::from_bytes(decode_runtime_secret(
-                &message_content_root_key,
-            )?),
+            agent_vault_key: AgentVaultKey::derive(&message_content_root_key),
+            message_content_root_key: MessageContentRootKey::from_bytes(*message_content_root_key),
         })
     }
 
@@ -259,9 +395,9 @@ pub(crate) struct OsAgentInstanceSigningIdentityStore {
 }
 
 impl OsAgentInstanceSigningIdentityStore {
-    pub(crate) fn system(service: impl Into<String>) -> Self {
+    pub(crate) fn for_config(config: &BridgeConfig) -> Self {
         Self {
-            backend: Arc::new(ConfiguredSecretBackend::new(service)),
+            backend: backend_for(config),
         }
     }
 
@@ -352,9 +488,9 @@ pub(crate) struct OsAgentRuntimeCredentialVault {
 }
 
 impl OsAgentRuntimeCredentialVault {
-    pub(crate) fn system(service: impl Into<String>) -> Self {
+    pub(crate) fn for_config(config: &BridgeConfig) -> Self {
         Self {
-            backend: Arc::new(ConfiguredSecretBackend::new(service)),
+            backend: backend_for(config),
         }
     }
 
@@ -1083,5 +1219,116 @@ mod tests {
         AgentId::from_uuid(
             Uuid::parse_str("0198b601-77a1-7bb8-83eb-a8fe68c97e44").expect("测试 UUID 有效"),
         )
+    }
+
+    fn agent_vault(directory: &std::path::Path) -> super::AgentSecretVault {
+        super::AgentSecretVault::new(
+            directory.join("secrets"),
+            super::AgentVaultKey::derive(&[7_u8; 32]),
+        )
+    }
+
+    fn agent_backend(
+        directory: &std::path::Path,
+        legacy: Arc<内存安全存储>,
+    ) -> Arc<super::AgentVaultBackend> {
+        Arc::new(super::AgentVaultBackend::with_legacy(
+            "dev.agent-room.host.test.v1",
+            &agent_vault(directory),
+            legacy,
+        ))
+    }
+
+    #[test]
+    fn 独立人物的秘密只写加密文件_不占系统凭据库() {
+        let directory = tempfile::tempdir().expect("可创建临时目录");
+        let legacy = Arc::new(内存安全存储::default());
+        let first =
+            OsBridgeRuntimeSecretVault::new(agent_backend(directory.path(), legacy.clone()))
+                .load_or_create()
+                .expect("人物秘密可生成");
+        assert!(legacy.0.lock().expect("存储锁未中毒").is_empty());
+
+        let again = OsBridgeRuntimeSecretVault::new(agent_backend(
+            directory.path(),
+            Arc::new(内存安全存储::default()),
+        ))
+        .load_or_create()
+        .expect("人物秘密可从加密文件读回");
+        assert_eq!(first.installation_id(), again.installation_id());
+        assert_eq!(
+            first.matrix_store_passphrase().expose(),
+            again.matrix_store_passphrase().expose()
+        );
+    }
+
+    #[test]
+    fn 系统凭据库里的旧秘密搬进加密文件后删除旧条目() {
+        let directory = tempfile::tempdir().expect("可创建临时目录");
+        let legacy = Arc::new(内存安全存储::default());
+        // 真实情况：凭据库写满时只写进去前五条，内容根密钥缺失。
+        let seeded = OsBridgeRuntimeSecretVault::new(legacy.clone())
+            .load_or_create()
+            .expect("旧版秘密可生成");
+        legacy
+            .0
+            .lock()
+            .expect("存储锁未中毒")
+            .remove(MESSAGE_CONTENT_ROOT_KEY);
+        let passphrase = legacy.0.lock().expect("存储锁未中毒")[MATRIX_STORE_PASSPHRASE].clone();
+
+        let migrated =
+            OsBridgeRuntimeSecretVault::new(agent_backend(directory.path(), legacy.clone()))
+                .load_or_create()
+                .expect("旧秘密可迁移");
+        assert_eq!(migrated.installation_id(), seeded.installation_id());
+        assert_eq!(migrated.matrix_store_passphrase().expose(), passphrase);
+        assert!(
+            legacy.0.lock().expect("存储锁未中毒").is_empty(),
+            "搬走的旧条目要从系统凭据库删掉"
+        );
+
+        let reopened = OsBridgeRuntimeSecretVault::new(agent_backend(
+            directory.path(),
+            Arc::new(内存安全存储::default()),
+        ))
+        .load_or_create()
+        .expect("迁移后只靠加密文件即可恢复");
+        assert_eq!(reopened.installation_id(), seeded.installation_id());
+        assert_eq!(reopened.matrix_store_passphrase().expose(), passphrase);
+    }
+
+    #[test]
+    fn 加密文件里的值优先于系统凭据库里残留的旧值() {
+        let directory = tempfile::tempdir().expect("可创建临时目录");
+        let backend = agent_backend(directory.path(), Arc::new(内存安全存储::default()));
+        backend
+            .write(HANDOFF_STORAGE_KEY, "current")
+            .expect("可写入加密文件");
+        let stale = Arc::new(内存安全存储::default());
+        stale
+            .write(HANDOFF_STORAGE_KEY, "stale")
+            .expect("可写入旧值");
+        let reopened = agent_backend(directory.path(), stale.clone());
+        assert_eq!(
+            reopened
+                .read(HANDOFF_STORAGE_KEY)
+                .expect("可读取")
+                .as_deref(),
+            Some("current")
+        );
+        reopened.delete(HANDOFF_STORAGE_KEY).expect("可删除");
+        assert_eq!(reopened.read(HANDOFF_STORAGE_KEY).expect("可读取"), None);
+        assert!(stale.0.lock().expect("存储锁未中毒").is_empty());
+    }
+
+    #[test]
+    fn 人物加密文件的钥匙由内容根密钥派生_不等于原密钥() {
+        let first = super::AgentVaultKey::derive(&[1_u8; 32]);
+        let same = super::AgentVaultKey::derive(&[1_u8; 32]);
+        let other = super::AgentVaultKey::derive(&[2_u8; 32]);
+        assert_eq!(**first.0, **same.0);
+        assert_ne!(**first.0, **other.0);
+        assert_ne!(**first.0, [1_u8; 32]);
     }
 }

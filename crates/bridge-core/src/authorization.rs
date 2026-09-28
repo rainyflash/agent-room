@@ -197,7 +197,7 @@ const fn map_credential_failure(
     error: BridgeCredentialFailure,
 ) -> BridgeAuthorizationFailure {
     let kind = match error.kind() {
-        BridgeCredentialFailureKind::Unavailable => {
+        BridgeCredentialFailureKind::Unavailable | BridgeCredentialFailureKind::StorageFull => {
             BridgeAuthorizationFailureKind::SecureStorageUnavailable
         }
         BridgeCredentialFailureKind::Corrupt => {

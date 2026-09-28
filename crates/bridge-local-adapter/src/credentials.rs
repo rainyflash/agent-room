@@ -44,7 +44,9 @@ impl CredentialBackend for ConfiguredCredentialBackend {
     fn read(&self, account: &str) -> Result<Option<String>, IpcCredentialFailure> {
         self.store.read(account).map_err(|failure| match failure {
             SecretStoreFailure::Corrupt => corrupt(),
-            SecretStoreFailure::Configuration | SecretStoreFailure::Unavailable => unavailable(),
+            SecretStoreFailure::Configuration
+            | SecretStoreFailure::Unavailable
+            | SecretStoreFailure::Full => unavailable(),
         })
     }
 }
