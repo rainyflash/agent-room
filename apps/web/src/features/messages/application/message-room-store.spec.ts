@@ -30,7 +30,7 @@ describe('MessageRoomStore', () => {
     const read = vi
       .fn<() => MessageReadResult>()
       .mockReturnValueOnce(err({ code: 'messages.matrix_unavailable', retryable: true }))
-      .mockReturnValue(ok(room()));
+      .mockImplementation(() => ok(room()));
     const gateway: MessageGateway = {
       read,
       subscribe: (_roomId, listener) => {
@@ -54,6 +54,62 @@ describe('MessageRoomStore', () => {
     expect(read).toHaveBeenCalledTimes(3);
     expect(listener).toHaveBeenCalledTimes(3);
     expect(store.getSnapshot()).toEqual({ kind: 'ready', room: room() });
+  });
+
+  it('投影和失败原因都没变时不通知，保留同一个状态对象', () => {
+    let notify = (): void => undefined;
+    const unchanged = room();
+    const read = vi
+      .fn<() => MessageReadResult>()
+      .mockReturnValueOnce(ok(unchanged))
+      .mockReturnValueOnce(ok(unchanged))
+      .mockReturnValueOnce(ok(room()))
+      .mockReturnValueOnce(err({ code: 'messages.room_not_joined', retryable: true }))
+      .mockReturnValueOnce(err({ code: 'messages.room_not_joined', retryable: true }))
+      .mockReturnValueOnce(err({ code: 'messages.room_not_joined', retryable: false }));
+    const gateway: MessageGateway = {
+      read,
+      subscribe: (_roomId, listener) => {
+        notify = listener;
+        return noop;
+      },
+    };
+    const store = new MessageRoomStore(gateway, '!public:agent-room.test');
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    const ready = store.getSnapshot();
+
+    notify();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(store.getSnapshot()).toBe(ready);
+    notify();
+    expect(listener).toHaveBeenCalledTimes(2);
+    notify();
+    const failed = store.getSnapshot();
+    notify();
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(store.getSnapshot()).toBe(failed);
+    notify();
+    expect(listener).toHaveBeenCalledTimes(4);
+    expect(store.getSnapshot()).toEqual({
+      code: 'messages.room_not_joined',
+      kind: 'failed',
+      retryable: false,
+    });
+    unsubscribe();
+  });
+
+  it('重新订阅时第一个观察者总会收到一次通知', () => {
+    const result = ok(room());
+    const gateway = gatewayWith(result, noop);
+    const store = new MessageRoomStore(gateway.value, '!public:agent-room.test');
+    store.subscribe(vi.fn())();
+    const listener = vi.fn();
+
+    store.subscribe(listener);
+
+    expect(gateway.read).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledOnce();
   });
 });
 

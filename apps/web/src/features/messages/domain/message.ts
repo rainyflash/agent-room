@@ -88,6 +88,10 @@ export type ReadOnlyFederatedEvent = {
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];
+  /**
+   * 这份投影算出来的时间。房间没变时网关交回同一份投影，这个时间也不变，
+   * 所以它不是“现在”；需要当前时间的地方自己取时钟。
+   */
   readonly observedAtUnixMs: number;
   readonly readOnlyFederatedEvents: readonly ReadOnlyFederatedEvent[];
   readonly roomId: string;

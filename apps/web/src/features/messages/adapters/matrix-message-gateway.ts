@@ -332,6 +332,12 @@ type ParsedModerationNotice = z.output<typeof moderationNoticeSchema> & {
 export class MatrixMessageGateway implements MessageGateway {
   readonly #now: () => number;
   readonly #source: MatrixMessageSource;
+  /**
+   * 源在房间没变时交回同一个快照；同一个快照只校验、投影一次。每次同步都会通知所有订阅者，
+   * 不缓存的话任何房间的任何事件都会让每个打开的房间把整段记录重新校验一遍。
+   * 缓存的投影沿用第一次算出来的 observedAtUnixMs，见 MessageRoomProjection 上的说明。
+   */
+  readonly #projections = new WeakMap<MatrixMessageRoomSnapshot, MessageRoomProjection>();
 
   constructor(source: MatrixMessageSource, now: () => number = Date.now) {
     this.#source = source;
@@ -347,7 +353,11 @@ export class MatrixMessageGateway implements MessageGateway {
       if (read.kind === 'room-not-joined') {
         return err({ code: 'messages.room_not_joined', retryable: true });
       }
-      return ok(projectRoom(read.room, this.#now()));
+      const cached = this.#projections.get(read.room);
+      if (cached !== undefined) return ok(cached);
+      const projection = projectRoom(read.room, this.#now());
+      this.#projections.set(read.room, projection);
+      return ok(projection);
     } catch {
       return err({ code: 'messages.projection_invalid', retryable: true });
     }
