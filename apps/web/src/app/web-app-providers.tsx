@@ -29,6 +29,8 @@ import { ControlPlaneMessagePublicationContentGateway } from '@/features/message
 import { MatrixSdkHumanMessageGateway } from '@/features/messages/adapters/matrix-human-message-gateway';
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
+import { MatrixRoomKeyRecovery } from '@/features/messages/adapters/matrix-room-key-recovery';
+import { RoomKeyRecoveryProvider } from '@/features/messages/ui/room-key-recovery-context';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
 import { ControlPlaneOnboardingClient } from '@/features/onboarding/adapters/control-plane-onboarding-client';
@@ -80,7 +82,9 @@ export function CloudAppProviders({ config, localRuntime }: CloudAppProvidersPro
           <PersonalWorkspaceProvider store={runtime.personalWorkspace}>
             <InboxProvider store={runtime.inbox}>
               <NetworkAgentLabelsProvider store={runtime.networkAgentLabels}>
-                <RouterProvider router={router} />
+                <RoomKeyRecoveryProvider recovery={runtime.roomKeyRecovery}>
+                  <RouterProvider router={router} />
+                </RoomKeyRecoveryProvider>
               </NetworkAgentLabelsProvider>
             </InboxProvider>
           </PersonalWorkspaceProvider>
@@ -148,6 +152,8 @@ export function createCloudRuntime(
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
   );
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
+  // 缺密钥解不开 Agent 的消息时，自动请它重发（specs/room-key-recovery）。
+  const roomKeyRecovery = new MatrixRoomKeyRecovery(matrixClients);
   const inbox = new InboxStore(
     new ControlPlaneInboxGateway(businessApi),
     new MatrixInboxSource(matrixClients),
@@ -212,6 +218,7 @@ export function createCloudRuntime(
     matrixClients,
     networkAgentLabels,
     queryClient,
+    roomKeyRecovery,
     services,
   };
 }
@@ -223,6 +230,7 @@ export type CloudRuntimeComposition = {
   readonly matrixClients: MatrixClientRegistry;
   readonly networkAgentLabels: NetworkAgentLabelStore;
   readonly queryClient: QueryClient;
+  readonly roomKeyRecovery: MatrixRoomKeyRecovery;
   readonly services: AppServices;
 };
 

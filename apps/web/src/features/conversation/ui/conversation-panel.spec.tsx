@@ -29,6 +29,7 @@ function harness(
   messages: readonly RoomMessageSignal[] = [],
   labels: NetworkAgentLabelStore | null = null,
   undecryptable?: UndecryptableSummary,
+  recovering = false,
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -75,7 +76,7 @@ function harness(
       state="ready"
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}
-      {...(undecryptable === undefined ? {} : { undecryptable })}
+      {...(undecryptable === undefined ? {} : { recovering, undecryptable })}
     />
   );
   render(
@@ -117,6 +118,14 @@ describe('解不开的加密消息', () => {
         "The sender didn't share the keys with this device because it isn't verified yet.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it('已经请 Agent 重发时说明收到后会自动解开，没在等时不说', () => {
+    harness(false, [], null, { count: 3, reasons: ['missing_key'], senders: [agentId] }, true);
+    expect(screen.getByText(/asked to send their keys again/u)).toBeInTheDocument();
+    cleanup();
+    harness(false, [], null, { count: 3, reasons: ['missing_key'], senders: [agentId] });
+    expect(screen.queryByText(/asked to send their keys again/u)).not.toBeInTheDocument();
   });
 
   it('一条也照样提示，发送者都点得出名时不说“其余”', () => {
