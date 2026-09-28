@@ -235,7 +235,7 @@ fn setup_runtime(
         }
     });
     let host_context = HostContext::from_environment(mcp_executable)
-        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
+        .map_err(|failure| format!("本机宿主信息初始化失败 [{}]", failure.code()))?;
     let hosts = Arc::new(HostConfigurator::system(host_context));
     app.manage(DesktopRuntime {
         bridge,

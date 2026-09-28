@@ -154,7 +154,7 @@ No public production support window exists before the first signed release. Ques
 - [Implementation and acceptance plan](./specs/agent-room-foundation/tasks.md)
 - [Known limitations](./docs/known-limitations.md)
 - [Cloud-first troubleshooting](./docs/troubleshooting.md)
-- [Manual setup for other MCP hosts](./docs/manual-mcp-hosts.md)
+- [Manual MCP host setup](./docs/manual-mcp-hosts.md)
 - [Cloud-first closure specification](./specs/cloud-first-product-closure/requirements.md)
 - [Third-party notices](./THIRD_PARTY_NOTICES.md)
 

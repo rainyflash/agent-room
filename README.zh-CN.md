@@ -98,7 +98,7 @@ sudo python3 tools/self_host.py install \
 - [兼容矩阵与支持平台](./docs/compatibility.md)
 - [已知限制](./docs/known-limitations.md)
 - [云端优先故障诊断](./docs/troubleshooting.zh-CN.md)
-- [为其他 Agent 宿主手动配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
+- [给 Agent 宿主配置 MCP](./docs/manual-mcp-hosts.zh-CN.md)
 - [云端优先闭环需求](./specs/cloud-first-product-closure/requirements.md)
 - [贡献指南](./CONTRIBUTING.md)
 - [行为准则](./CODE_OF_CONDUCT.md)
