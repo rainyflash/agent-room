@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use agent_room_application::ports::Clock;
 use agent_room_bridge_core::ipc::{
@@ -403,6 +409,7 @@ impl BridgeIpcServer {
             shared_secret: self.shared_secret,
             server_instance_id: self.server_instance_id,
             request_handler: self.request_handler,
+            failure_log: IpcFailureLog::default(),
         });
         let mut connections = JoinSet::new();
 
@@ -458,6 +465,48 @@ struct BridgeIpcContext {
     shared_secret: IpcSharedSecret,
     server_instance_id: Uuid,
     request_handler: Arc<dyn BridgeIpcRequestHandler>,
+    failure_log: IpcFailureLog,
+}
+
+/// 同一个方法、同一个错误码的失败，这么久里只记一条告警。
+const IPC_FAILURE_LOG_WINDOW: Duration = Duration::from_mins(10);
+
+/// 请求失败的告警去重。
+///
+/// 桌面端每 2 秒探一次 Bridge；默认人物没在跑时，探测里的 `get_self` 每次都失败。原来每次一条告警，
+/// 一天四万多条，日志轮转一次只剩几天，真正的告警也被冲掉。现在同样的失败每个窗口只记一条，
+/// 下一条带上中间省掉的次数；省掉的仍按 debug 级别记。
+#[derive(Default)]
+struct IpcFailureLog {
+    windows: Mutex<HashMap<(&'static str, &'static str), IpcFailureWindow>>,
+}
+
+struct IpcFailureWindow {
+    logged_at: Instant,
+    suppressed: u64,
+}
+
+impl IpcFailureLog {
+    /// 这次失败要不要记告警；要记时给出上次记下以后省掉的次数。
+    fn admit(&self, method: &'static str, code: &'static str, now: Instant) -> Option<u64> {
+        let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(window) = windows.get_mut(&(method, code)) else {
+            windows.insert(
+                (method, code),
+                IpcFailureWindow {
+                    logged_at: now,
+                    suppressed: 0,
+                },
+            );
+            return Some(0);
+        };
+        if now.saturating_duration_since(window.logged_at) < IPC_FAILURE_LOG_WINDOW {
+            window.suppressed += 1;
+            return None;
+        }
+        window.logged_at = now;
+        Some(std::mem::take(&mut window.suppressed))
+    }
 }
 
 async fn handle_connection<S>(mut stream: S, context: &BridgeIpcContext) -> BridgeIpcResult<()>
@@ -649,15 +698,40 @@ where
                     failure.retryable,
                 )
                 .await?;
-                tracing::warn!(
-                    event = "bridge_ipc_request",
-                    method = method_name,
-                    result = "error",
-                    code = failure.code,
-                    "本地 IPC 请求失败"
+                log_request_failure(
+                    &context.failure_log,
+                    method_name,
+                    failure.code,
+                    Instant::now(),
                 );
             }
         }
+    }
+}
+
+fn log_request_failure(
+    log: &IpcFailureLog,
+    method: &'static str,
+    code: &'static str,
+    now: Instant,
+) {
+    if let Some(suppressed) = log.admit(method, code, now) {
+        tracing::warn!(
+            event = "bridge_ipc_request",
+            method,
+            result = "error",
+            code,
+            suppressed,
+            "本地 IPC 请求失败"
+        );
+    } else {
+        tracing::debug!(
+            event = "bridge_ipc_request",
+            method,
+            result = "error",
+            code,
+            "本地 IPC 请求失败（同样的失败最近已记过告警）"
+        );
     }
 }
 
@@ -910,7 +984,10 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
 
     use agent_room_application::ports::{
         Clock, DeviceSignature, MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixResult,
@@ -1000,7 +1077,7 @@ mod tests {
     use super::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
         BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
-        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler,
+        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, IpcFailureLog,
         agent_runtime::{
             AgentHandoffDeliveryRuntime, AgentHandoffRuntime, AgentTargetedHandoffRuntime,
         },
@@ -1722,7 +1799,7 @@ mod tests {
                 .note_inbox_wait(&room_id, 固定时钟.now(), true)
                 .await
                 .expect("等待中的轮询");
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
         assert_eq!(event_count(), 1, "开始等待发一次，之后每秒的轮询都不重发");
         tokio::time::sleep(WAIT_IDLE_TIMEOUT).await;
@@ -2431,6 +2508,7 @@ mod tests {
             shared_secret: secret.clone(),
             server_instance_id: Uuid::from_u128(99),
             request_handler: Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
+            failure_log: IpcFailureLog::default(),
         };
         let (mut client, server) = duplex(8 * 1_024);
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
@@ -2755,6 +2833,37 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn 同样的请求失败十分钟内只记一条告警_再记时带上省掉的次数() {
+        let log = IpcFailureLog::default();
+        let start = Instant::now();
+        let unavailable = "bridge.agent_runtime_unavailable";
+
+        assert_eq!(log.admit("get_self", unavailable, start), Some(0));
+        // 桌面端每 2 秒探一次：十分钟里另外 299 次都不记告警。
+        for probe in 1..300 {
+            let now = start + Duration::from_secs(probe * 2);
+            assert_eq!(log.admit("get_self", unavailable, now), None);
+        }
+        // 别的方法、别的错误码各记各的。
+        assert_eq!(log.admit("wait_inbox", unavailable, start), Some(0));
+        assert_eq!(
+            log.admit("get_self", "bridge.room_authority_unavailable", start),
+            Some(0)
+        );
+
+        let next_window = start + Duration::from_mins(10);
+        assert_eq!(log.admit("get_self", unavailable, next_window), Some(299));
+        assert_eq!(
+            log.admit(
+                "get_self",
+                unavailable,
+                next_window + Duration::from_secs(2)
+            ),
+            None
+        );
+    }
+
     #[tokio::test]
     async fn 错误挑战证明在任何请求分派前拒绝() {
         let installation_id = IpcInstallationId::new("install_2").expect("安装标识有效");
@@ -2763,6 +2872,7 @@ mod tests {
             shared_secret: IpcSharedSecret::new([7; 32]),
             server_instance_id: Uuid::from_u128(99),
             request_handler: Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
+            failure_log: IpcFailureLog::default(),
         };
         let (mut client, server) = duplex(8 * 1_024);
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
