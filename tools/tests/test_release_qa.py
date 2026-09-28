@@ -180,6 +180,48 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertNotIn("setInputFiles", without)
         self.assertIn("attachmentSent: false", without)
 
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page function")
+    def test_reply_check_only_counts_this_runs_two_newest_replies(self):
+        # Earlier releases' QA Agent has the same name, and the room fills in their replies on open.
+        source = release_qa.verify_replies_js("发布验收 Claude Code", "ALPHA53-ABC")
+        harness = r"""
+const check = (0, eval)('(' + require('fs').readFileSync(0, 'utf8').trim() + ')');
+const texts = JSON.parse(process.argv[1]);
+function locator(items) {
+  return {
+    locator: () => locator(items),
+    filter: ({hasText}) => locator(items.filter((text) => text.includes(hasText))),
+    count: async () => items.length,
+    nth: (index) => locator(items.slice(index, index + 1)),
+    innerText: async () => {
+      if (items.length !== 1) throw new Error('strict mode violation: ' + items.length);
+      return items[0];
+    },
+    waitFor: async () => {
+      if (items.length !== 1) throw new Error('strict mode violation: ' + items.length);
+    },
+  };
+}
+check({getByRole: () => locator(texts)}).then(
+  (result) => { process.stdout.write(JSON.stringify(result)); },
+  (error) => { process.stdout.write('ERROR ' + error.message); process.exitCode = 4; });
+"""
+
+        def run(texts):
+            return subprocess.run(["node", "-e", harness, json.dumps(texts, ensure_ascii=False)], input=source,
+                                  capture_output=True, text=True, encoding="utf-8")
+
+        name = "发布验收 Claude Code"
+        passed = run([f"{name} 第一条消息已收到", f"{name} ALPHA52-OLD", f"{name} 第一条消息已收到",
+                      f"{name} 附件里写着 ALPHA53-ABC"])
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertEqual(json.loads(passed.stdout)["visibleAgentReplies"], 2)
+        for texts in ([f"{name} 别的回复", f"{name} ALPHA53-ABC"],
+                      [f"{name} ALPHA53-ABC", f"{name} 第一条消息已收到"],
+                      [f"{name} ALPHA53-ABC"]):
+            with self.subTest(texts=texts):
+                self.assertEqual(run(texts).returncode, 4)
+
     @unittest.skipIf(shutil.which("node") is None, "node is required to parse the page functions")
     def test_every_page_function_is_valid_javascript(self):
         identity = {"agent": {"agentId": "a", "matrixUserId": "@a:example"}, "instanceId": "i", "roomCatalogId": "c"}
