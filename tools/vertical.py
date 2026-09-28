@@ -2569,7 +2569,7 @@ def send_mcp_vertical_reply(
     submission_id = new_uuid_v7()
     title = f"Task 24 handoff reply {handoff_id[-8:]}"
     body = (
-        "Real Codex plugin reply after one-time handoff consumption. "
+        "Real MCP agent reply after one-time handoff consumption. "
         f"Handoff: `{handoff_id}`."
     )
     response = client.call_tool(

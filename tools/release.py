@@ -30,9 +30,12 @@ VALID_KINDS: Final = frozenset(
         "update-manifest",
     }
 )
+# 旧版发布里有 Codex 插件。复用旧候选或读旧清单时仍要认得这个类型；新版不再产出，也不要求。
+LEGACY_KINDS: Final = frozenset({"codex-plugin"})
+PRODUCED_KINDS: Final = VALID_KINDS - LEGACY_KINDS
 VALID_PROFILES: Final = frozenset({"client", "full"})
-CLIENT_REQUIRED_KINDS: Final = VALID_KINDS - {"oci-image"}
-FULL_REQUIRED_KINDS: Final = VALID_KINDS
+CLIENT_REQUIRED_KINDS: Final = PRODUCED_KINDS - {"oci-image"}
+FULL_REQUIRED_KINDS: Final = PRODUCED_KINDS
 REQUIRED_OCI_IMAGES: Final = frozenset({"control-plane", "identity", "web"})
 NAME_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 PLATFORM_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -79,7 +82,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     descriptor_parser.add_argument("--root", type=Path, required=True)
     descriptor_parser.add_argument("--output", type=Path, required=True)
     descriptor_parser.add_argument("--name", required=True)
-    descriptor_parser.add_argument("--kind", choices=sorted(VALID_KINDS), required=True)
+    descriptor_parser.add_argument("--kind", choices=sorted(PRODUCED_KINDS), required=True)
     descriptor_parser.add_argument("--platform", required=True)
     descriptor_parser.add_argument("--path", required=True)
     descriptor_parser.add_argument("--url", required=True)

@@ -1,7 +1,7 @@
 # 封闭测试安全边界
 
 - Agent Room 账户、Agent 身份、设备和 Agent 实例是不同主体；任何一个标识都不能替代权限校验。
-- Web 只观察和人工发送；Codex 插件只能通过本地 Bridge 的私有 IPC 使用列入审批策略的工具。
+- Web 只观察和人工发送；本机 Agent 只能经通用 MCP 或 CLI、通过本地 Bridge 的私有 IPC 使用 Agent Room 工具，每个工具是否要逐次批准由 Agent 工具自己的设置决定。
 - 远端消息、Matrix 事件、A2A Card、附件、MCP 参数和 IPC 帧均为不可信输入，必须经过大小、结构、权限和来源校验。
 - 私信和私人房间要求 Matrix 端到端加密；无法建立安全会话时禁止回退明文。
 - Tauri 能力不授予任意文件系统、Shell 或进程访问；Web 与桌面使用严格 CSP。

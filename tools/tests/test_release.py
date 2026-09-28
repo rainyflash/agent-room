@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from tools.release import (
+    CLIENT_REQUIRED_KINDS,
+    FULL_REQUIRED_KINDS,
     ArtifactSource,
     CandidatePaths,
     ReleaseFailure,
@@ -151,7 +155,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             signature_mode=signature_mode,
         )
 
-    def inventory(self) -> Path:
+    def inventory(self, *, legacy_codex_plugin: bool = False) -> Path:
         artifacts = []
         definitions = (
             ("control-plane", "oci-image", "linux-amd64", "oci"),
@@ -161,9 +165,11 @@ class ReleaseCandidateTests(unittest.TestCase):
             ("desktop", "desktop", "windows-x86_64", "blob"),
             ("installer", "installer", "windows-x86_64", "blob"),
             ("mcp-server", "mcp-server", "windows-x86_64", "blob"),
-            ("codex-plugin", "codex-plugin", "all", "blob"),
             ("tauri-update", "update-manifest", "windows-x86_64", "blob"),
         )
+        if legacy_codex_plugin:
+            # Alpha 52 及更早的候选里还有 Codex 插件归档。
+            definitions += (("codex-plugin", "codex-plugin", "all", "blob"),)
         for name, kind, platform, signature_mode in definitions:
             artifact_path = self.root / "artifacts" / f"{name}.bin"
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,12 +240,38 @@ class ReleaseCandidateTests(unittest.TestCase):
         evidence = json.loads(paths.evidence.read_text(encoding="utf-8"))
         self.assertEqual({item["kind"] for item in manifest["artifacts"]}, {
             "oci-image", "bridge", "desktop", "installer", "mcp-server",
-            "codex-plugin", "update-manifest"
+            "update-manifest"
         })
         self.assertEqual(
             evidence["manifestSha256"],
             hashlib.sha256(paths.manifest.read_bytes()).hexdigest(),
         )
+
+    def test_旧候选里的_codex_插件仍能读_但新版既不要求也不产出(self) -> None:
+        self.assertNotIn("codex-plugin", CLIENT_REQUIRED_KINDS)
+        self.assertNotIn("codex-plugin", FULL_REQUIRED_KINDS)
+        inventory = self.inventory(legacy_codex_plugin=True)
+        paths = CandidatePaths(self.root / "release.json", self.root / "evidence.json")
+
+        prepare(self.root, inventory, paths)
+
+        manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+        self.assertIn("codex-plugin", {item["kind"] for item in manifest["artifacts"]})
+        artifact = json.loads(inventory.read_text(encoding="utf-8"))["artifacts"][-1]
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            parse_args(
+                [
+                    "descriptor", "--root", str(self.root),
+                    "--output", str(self.root / "legacy.artifact.json"),
+                    "--name", artifact["name"], "--kind", "codex-plugin",
+                    "--platform", artifact["platform"], "--path", artifact["path"],
+                    "--url", artifact["url"],
+                    "--sbom-path", artifact["sbomPath"], "--sbom-url", artifact["sbomUrl"],
+                    "--signature-path", artifact["signaturePath"],
+                    "--signature-url", artifact["signatureUrl"],
+                    "--signature-mode", "blob",
+                ]
+            )
 
     def test_client_profile_accepts_runtime_without_server_images(self) -> None:
         inventory = self.client_inventory()
@@ -373,7 +405,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         create_inventory(inventory_args)
 
         assembled = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual(len(assembled["artifacts"]), 9)
+        self.assertEqual(len(assembled["artifacts"]), 8)
         self.assertTrue(all(not Path(item["path"]).is_absolute() for item in assembled["artifacts"]))
 
 

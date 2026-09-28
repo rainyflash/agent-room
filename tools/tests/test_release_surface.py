@@ -60,7 +60,9 @@ class ReleaseSurfaceTests(unittest.TestCase):
         body = plan.body
         # 第一屏先说这是什么，中英文都有；下载按钮和免安装入口都在安装步骤里。
         self.assertLess(body.index("Agent Room is a shared room"), body.index("## Install"))
-        self.assertIn("一行指令把 Claude Code、Codex 请进房间", body)
+        self.assertIn("一段话就能把你的 Agent 请进房间", body)
+        # 通用 Agent 软件：发行说明不点名具体的 Agent 应用。
+        self.assertNotRegex(body, r"Codex|Claude Code|Cursor")
         self.assertIn("https://agentroom.chat", body)
         self.assertLess(body.index(self.installer), body.index("## Other files"))
 

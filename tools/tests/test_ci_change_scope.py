@@ -13,7 +13,7 @@ class CiChangeScopeTests(unittest.TestCase):
                 self.assertTrue(is_documentation(path))
 
     def test_generated_or_nested_markdown_and_code_are_not_docs(self) -> None:
-        for path in ("THIRD_PARTY_NOTICES.md", "plugins/agent-room/skills/agent-room/SKILL.md",
+        for path in ("THIRD_PARTY_NOTICES.md", "infra/agent-runtime/README.md",
                      "apps/agent-room-mcp/README.md", "tools/release_qa.py", ".github/workflows/ci.yml",
                      "Cargo.lock", "apps/web/src/main.tsx"):
             with self.subTest(path=path):

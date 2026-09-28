@@ -143,8 +143,8 @@ jobs:
     steps:
       - name: 检出候选提交
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
-      - name: 在占用原生构建资源前校验 MCP 插件静态契约
-        run: ${{ matrix.python }} tools/plugin.py validate
+      - name: 在占用原生构建资源前校验 MCP 工具静态契约
+        run: ${{ matrix.python }} tools/mcp_release_gate.py validate
       - name: 校验 macOS 签名与公证配置
         if: ${{ matrix.target == 'darwin-aarch64' }}
         env:
@@ -247,12 +247,10 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
       - name: 使用已构建二进制执行 MCP 真实协议门禁
-        env:
-          VERSION: ${{ needs.metadata.outputs.version }}
         shell: pwsh
         run: |
-          ${{ matrix.python }} tools/plugin.py stage --binary "${{ matrix.mcp }}" --platform-tag "${{ matrix.target }}"
-          if ($LASTEXITCODE -ne 0) { throw 'MCP 真实协议与 Codex 插件契约校验失败。' }
+          ${{ matrix.python }} tools/mcp_release_gate.py smoke --binary "${{ matrix.mcp }}"
+          if ($LASTEXITCODE -ne 0) { throw 'MCP 真实协议门禁失败。' }
       - name: 在干净 Windows 候选机验收安装、运行时与卸载
         if: ${{ matrix.target == 'windows-x86_64' }}
         env:
@@ -282,7 +280,6 @@ jobs:
           --bridge "${{ matrix.bridge }}"
           --mcp "${{ matrix.mcp }}"
           --cli "${{ matrix.cli }}"
-          --plugin "artifacts/codex-plugin/agent-room-plugin-v${env:VERSION}-${{ matrix.target }}.zip"
           --output-root candidate
           --metadata "candidate/native-metadata-${{ matrix.target }}.json"
           --release-base-url "$env:RELEASE_BASE_URL"

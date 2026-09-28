@@ -129,7 +129,7 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
     def test客户端候选先做廉价静态契约再做真实协议门禁(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
 
-        contract_gate = candidate.index("在占用原生构建资源前校验 MCP 插件静态契约")
+        contract_gate = candidate.index("在占用原生构建资源前校验 MCP 工具静态契约")
         fixed_dependencies = candidate.index("安装固定依赖")
         desktop_build = candidate.index("构建带强制签名更新的桌面端")
         runtime_gate = candidate.index("使用已构建二进制执行 MCP 真实协议门禁")
@@ -137,9 +137,19 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
         self.assertLess(contract_gate, fixed_dependencies)
         self.assertLess(contract_gate, desktop_build)
         self.assertLess(desktop_build, runtime_gate)
-        self.assertIn("${{ matrix.python }} tools/plugin.py validate", candidate)
+        self.assertIn("${{ matrix.python }} tools/mcp_release_gate.py validate", candidate)
         self.assertNotRegex(candidate, r"cargo build[^\n]*agent-room-mcp")
-        self.assertEqual(candidate.count("${{ matrix.python }} tools/plugin.py stage"), 1)
+        # 真实协议门禁跑的是桌面构建产出的那个发行二进制，不另外编译一份。
+        self.assertEqual(
+            candidate.count(
+                '${{ matrix.python }} tools/mcp_release_gate.py smoke --binary "${{ matrix.mcp }}"'
+            ),
+            1,
+        )
+        # Codex 插件发行包已去掉：候选不再调用插件工具，也不收集插件归档。
+        self.assertNotIn("tools/plugin.py", candidate)
+        self.assertNotIn("--plugin", candidate)
+        self.assertNotIn("codex-plugin", candidate)
         self.assertNotIn("cache-to: type=gha,mode=max", candidate)
         self.assertIn("cache-to: type=gha,mode=min", candidate)
 

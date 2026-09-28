@@ -61,7 +61,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     collect_parser.add_argument("--bridge", type=Path, required=True)
     collect_parser.add_argument("--mcp", type=Path, required=True)
     collect_parser.add_argument("--cli", type=Path, required=True)
-    collect_parser.add_argument("--plugin", type=Path, required=True)
     collect_parser.add_argument("--output-root", type=Path, required=True)
     collect_parser.add_argument("--metadata", type=Path, required=True)
     collect_parser.add_argument("--release-base-url", required=True)
@@ -86,7 +85,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "desktop",
             "installer",
             "mcp-server",
-            "codex-plugin",
             "update-manifest",
         ),
         required=True,
@@ -209,7 +207,6 @@ def collect_native(args: argparse.Namespace) -> None:
     bridge = require_file(args.bridge, "Bridge")
     mcp = require_file(args.mcp, "通用 MCP Server")
     cli = require_file(args.cli, "Agent CLI")
-    plugin = require_file(args.plugin, "Codex 插件")
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -224,13 +221,11 @@ def collect_native(args: argparse.Namespace) -> None:
     bridge_name = f"agent-room-bridge-v{args.version}-{updater_target}{executable_suffix}"
     mcp_name = f"agent-room-mcp-v{args.version}-{updater_target}{executable_suffix}"
     cli_name = f"agent-room-cli-v{args.version}-{updater_target}{executable_suffix}"
-    plugin_name = f"agent-room-codex-plugin-v{args.version}-{updater_target}.zip"
     desktop_path = output_root / desktop_name
     desktop_signature_path = output_root / f"{desktop_name}.sig"
     installer_path = output_root / installer_name
     bridge_path = output_root / bridge_name
     mcp_path = output_root / mcp_name
-    plugin_path = output_root / plugin_name
     cli_path = output_root / cli_name
     copy_new(updater_payload, desktop_path)
     copy_new(tauri_signature, desktop_signature_path)
@@ -238,7 +233,6 @@ def collect_native(args: argparse.Namespace) -> None:
     copy_new(bridge, bridge_path)
     copy_new(mcp, mcp_path)
     copy_new(cli, cli_path)
-    copy_new(plugin, plugin_path)
 
     metadata = {
         "schemaVersion": 1,
@@ -282,13 +276,6 @@ def collect_native(args: argparse.Namespace) -> None:
                 "platform": updater_target,
                 "path": cli_path.relative_to(output_root).as_posix(),
                 "url": release_url(args.release_base_url, cli_name),
-            },
-            {
-                "name": "codex-plugin",
-                "kind": "codex-plugin",
-                "platform": updater_target,
-                "path": plugin_path.relative_to(output_root).as_posix(),
-                "url": release_url(args.release_base_url, plugin_name),
             },
         ],
     }

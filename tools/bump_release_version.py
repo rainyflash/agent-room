@@ -24,7 +24,6 @@ JSON_VERSION_FILES: Final = (
     Path("packages/protocol/package.json"),
     Path("packages/protocol-types/package.json"),
     Path("packages/ui-system/package.json"),
-    Path("plugins/agent-room/.codex-plugin/plugin.json"),
     Path("apps/desktop/src-tauri/tauri.conf.json"),
 )
 TEXT_VERSION_FILES: Final = (

@@ -335,6 +335,28 @@ mod tests {
     }
 
     #[test]
+    fn 旧版清单里的_codex_插件产物照样能验证() {
+        let mut legacy = manifest();
+        let mut plugin = legacy.artifacts[0].clone();
+        plugin.name = "codex-plugin".to_owned();
+        plugin.kind = ArtifactKind::CodexPlugin;
+        plugin.platform = "all".to_owned();
+        plugin.url = "https://releases.example/agent-room-codex-plugin-1.5.0.zip".to_owned();
+        legacy.artifacts.push(plugin);
+        let payload = serde_json::to_string(&legacy).expect("测试清单必须可序列化");
+        assert!(payload.contains(r#""kind":"codex-plugin""#));
+
+        verify_release(
+            &sign(&legacy),
+            &trusted_key(),
+            ReleaseChannel::Stable,
+            &trust_state(),
+            NOW,
+        )
+        .expect("带旧插件产物的清单必须仍能验证");
+    }
+
+    #[test]
     fn rejects_tampered_payload() {
         let mut envelope = sign(&manifest());
         let mut payload = URL_SAFE_NO_PAD

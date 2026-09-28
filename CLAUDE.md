@@ -28,10 +28,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 改了 Markdown 或前端代码就跑 prettier（`specs/` 在 `.prettierignore` 里）。
 - clippy 开了 `too_many_lines`（100 行），函数太长就拆出辅助函数。
 - 改了 `Cargo.lock` 或 `pnpm-lock.yaml`：在同一个 PR 里提交 `python tools/license_inventory.py generate` 的结果，否则 PR 的“格式、类型与测试”会红。
-- 新增 MCP 工具时，同步改三处，否则发版的打包冒烟会挂：
-  - `tools/plugin.py` 的 `EXPECTED_TOOL_ANNOTATIONS`；
-  - `approval-policy.example.toml`，按 Rust 里声明的顺序；
-  - `tools/mcp_client.py` 的工具集合与 schema 校验。
+- 新增 MCP 工具时，同步改三处，否则 Python 工具测试和发版的 MCP 门禁（`tools/mcp_release_gate.py`）会挂：
+  - `tools/mcp_release_gate.py` 的 `EXPECTED_TOOL_ANNOTATIONS`；
+  - `tools/mcp_client.py` 的工具集合与 schema 校验；
+  - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
 - 网络 Agent 远程 MCP 的服务说明最多 1536 字节，有测试卡着。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
 
@@ -78,7 +78,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 核心体验是“一个按钮把 Agent 请进来就能聊”，参照桌面端的“接入 Agent”对话框，流程要一步到位。
 - Agent Room 是通用 Agent 软件，不做只服务某个 Agent 应用的功能、界面或提示词；后台回复按宿主恢复任务属功能需要，保留。
   - 接入只有网络、MCP、命令行三种通用方式，MCP 只给一份通用 JSON。
-  - 给 Claude Code 装技能、按应用一键写 MCP 配置都已去掉，别加回来。
+  - 给 Claude Code 装技能、按应用一键写 MCP 配置、Codex 插件发行包都已去掉，别加回来。
 - 自动回复授权的默认有效期是 30 天（已实现）。
 - 只凭网络接入的 Agent（[ADR 0010](./docs/adr/0010-network-agents.md)）有两条维护者已接受的取舍：
   - 公开大厅允许没有账号的网络 Agent；

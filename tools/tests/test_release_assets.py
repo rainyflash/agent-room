@@ -17,7 +17,7 @@ class ReleaseAssetTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def create_native_source(self, platform: str) -> tuple[Path, Path, Path, Path]:
+    def create_native_source(self, platform: str) -> tuple[Path, Path, Path]:
         bundle = self.root / platform / "bundle"
         bundle.mkdir(parents=True)
         installer = bundle / "Agent Room_0.1.0_x64-setup.exe"
@@ -30,12 +30,10 @@ class ReleaseAssetTests(unittest.TestCase):
         mcp = self.root / platform / "agent-room-mcp.exe"
         mcp.write_bytes(b"mcp")
         (mcp.parent / "agent-room.exe").write_bytes(b"cli")
-        plugin = self.root / platform / "plugin.zip"
-        plugin.write_bytes(b"plugin")
-        return bundle, bridge, mcp, plugin
+        return bundle, bridge, mcp
 
     def test_collect_native_uses_exact_updater_archive_and_stable_names(self) -> None:
-        bundle, bridge, mcp, plugin = self.create_native_source("windows")
+        bundle, bridge, mcp = self.create_native_source("windows")
         output = self.root / "candidate" / "windows"
         metadata = output / "native-metadata.json"
         args = parse_args(
@@ -49,8 +47,6 @@ class ReleaseAssetTests(unittest.TestCase):
                 str(mcp),
                 "--cli",
                 str(mcp.parent / "agent-room.exe"),
-                "--plugin",
-                str(plugin),
                 "--output-root",
                 str(output),
                 "--metadata",
@@ -68,9 +64,11 @@ class ReleaseAssetTests(unittest.TestCase):
 
         document = json.loads(metadata.read_text(encoding="utf-8"))
         self.assertEqual(document["updaterTarget"], "windows-x86_64")
+        # Codex 插件发行包已去掉，原生候选不再产出 codex-plugin。
         self.assertEqual({item["kind"] for item in document["artifacts"]}, {
-            "installer", "desktop", "bridge", "mcp-server", "codex-plugin"
+            "installer", "desktop", "bridge", "mcp-server"
         })
+        self.assertFalse(any("plugin" in path.name for path in output.iterdir()))
         self.assertTrue(all((output / item["path"]).is_file() for item in document["artifacts"]))
         by_name = {item["name"]: item for item in document["artifacts"]}
         self.assertEqual((output / by_name["agent-cli"]["path"]).read_bytes(), b"cli")
@@ -83,7 +81,7 @@ class ReleaseAssetTests(unittest.TestCase):
         self.assertTrue((output / document["tauriSignaturePath"]).is_file())
 
     def test_collect_native_rejects_ambiguous_archives(self) -> None:
-        bundle, bridge, mcp, plugin = self.create_native_source("ambiguous")
+        bundle, bridge, mcp = self.create_native_source("ambiguous")
         duplicate = bundle / "second-setup.exe"
         duplicate.write_bytes(b"duplicate")
         Path(f"{duplicate}.sig").write_text("signature", encoding="utf-8")
@@ -98,8 +96,6 @@ class ReleaseAssetTests(unittest.TestCase):
                 str(mcp),
                 "--cli",
                 str(mcp.parent / "agent-room.exe"),
-                "--plugin",
-                str(plugin),
                 "--output-root",
                 str(self.root / "candidate"),
                 "--metadata",

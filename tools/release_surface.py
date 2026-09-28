@@ -248,16 +248,16 @@ def release_notes(repository: str, tag: str, version: str, *, macos_published: b
    - [**macOS · Apple silicon / Mac 磁盘映像（Apple 芯片）**]({macos_url}) — notarized by Apple; drag Agent Room into Applications. 已经苹果公证，拖进「应用程序」。"""
         browsers = """No Windows or Mac machine? Join from a browser at https://agentroom.chat with nothing to install.
 没有 Windows 或 Mac 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
-    return f"""**Agent Room is a shared room where you and your coding agents meet.** Invite Claude Code or Codex with one command; they can keep replying while you are away, and you can take over at any time.
+    return f"""**Agent Room is a shared room where you and your agents meet.** Bring any agent in with one message; they can keep replying while you are away, and you can take over at any time.
 
-**Agent Room 是你和 Agent 共处的房间。** 一行指令把 Claude Code、Codex 请进房间；你不在时它们可以继续回复，你随时接管。
+**Agent Room 是你和 Agent 共处的房间。** 一段话就能把你的 Agent 请进房间；你不在时它们可以继续回复，你随时接管。
 
 ## Install / 安装
 
 1. Download the app for your system and install it. 下载你系统对应的安装包并安装。
 {downloads}
 2. Create an account, sign in, and approve this computer. 注册、登录，并批准这台电脑。
-3. Open a room, press **Bring an agent**, and paste the command into a Claude Code or Codex task. 进入房间，点「接入 Agent」，把指令粘贴给 Claude Code 或 Codex 的任务。
+3. Open a room, press **Bring an agent**, pick how your agent connects, and send it the message. 进入房间，点「接入 Agent」，选一种接入方式，把那段话发给你的 Agent。
 
 {browsers}
 
@@ -266,9 +266,9 @@ def release_notes(repository: str, tag: str, version: str, *, macos_published: b
 
 ## Other files / 其他文件
 
-The download above for your system is the only file normal users need. The rest are automatic-update payloads, host integration packages, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels say when a file must not be run manually.
+The download above for your system is the only file normal users need. The rest are automatic-update payloads, the standalone CLI, Bridge and MCP, SBOMs, signatures, and release evidence for maintainers and advanced integrators. Their labels say when a file must not be run manually.
 
-上面对应你系统的下载是普通用户唯一需要的文件。其余是自动更新载荷、宿主集成包、SBOM、签名和发布证据，供维护者与高级集成使用；标签会注明哪些文件不能手动运行。
+上面对应你系统的下载是普通用户唯一需要的文件。其余是自动更新载荷、独立的 CLI、Bridge 和 MCP、SBOM、签名和发布证据，供维护者与高级集成使用；标签会注明哪些文件不能手动运行。
 
 **Full changelog / 完整变更：** https://github.com/{repository}/commits/{tag}
 """
@@ -293,8 +293,6 @@ def asset_label(name: str, downloads: Mapping[str, str]) -> str:
         return "INTERNAL / 内部组件：MCP（不要单独运行）"
     if name.startswith("agent-room-desktop-"):
         return "INTERNAL / 内部组件：自动更新载荷（不要手动运行）"
-    if name.startswith("agent-room-codex-plugin-"):
-        return "ADVANCED / 高级集成：Codex 适配包（安装器会自动配置）"
     if name.startswith("agent-room-update-"):
         return "INTERNAL / 内部组件：自动更新清单（无需下载）"
     if name.endswith(".oci-manifest.json"):

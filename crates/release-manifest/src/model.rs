@@ -15,6 +15,8 @@ pub enum ArtifactKind {
     Desktop,
     Installer,
     McpServer,
+    /// Alpha 52 及更早的发布带 Codex 插件包。只为能读旧清单而保留；新版不再产出。
+    /// 这个枚举是封闭的，去掉它旧版清单就解析不了。
     CodexPlugin,
     UpdateManifest,
 }

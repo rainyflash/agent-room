@@ -11,7 +11,7 @@
 
 发布候选显式选择以下 profile：
 
-- `client`：默认路径，只构建 Windows 桌面端、Bridge、通用 MCP、宿主适配器、更新清单及其签名证据；
+- `client`：默认路径，只构建 Windows 桌面端、Bridge、通用 MCP、更新清单及其签名证据（2026-09-28 以前还带 Codex 插件包）；
 - `full`：在 `client` 产物之外，构建 `control-plane`、`identity`、`web` 的 amd64/arm64 OCI Index 及其签名证据。
 
 两个 profile 共用同一 testing 根清单、Tauri 更新签名和最终密码学验证。客户端候选在公开前仍必须提供 `compatible-server` 晋级证据，因此拆分构建不等于绕过协议兼容门禁。

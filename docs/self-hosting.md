@@ -147,7 +147,7 @@ sudo python3 tools/self_host.py upgrade \
   --state-dir /var/lib/agent-room
 ```
 
-The release order is database expansion, compatible server, clients, observation, then legacy-path contraction. Do not skip phases or mix arbitrary Bridge, generic MCP, host adapter, desktop, and server versions.
+The release order is database expansion, compatible server, clients, observation, then legacy-path contraction. Do not skip phases or mix arbitrary Bridge, generic MCP, desktop, and server versions.
 
 To stop containers without deleting state:
 
