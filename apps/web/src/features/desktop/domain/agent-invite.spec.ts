@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  defaultInviteHost,
   inviteIdentityStorageKey,
   isCanonicalUuidV7,
   normalizeInviteDisplayName,
@@ -113,25 +112,6 @@ describe('邀请身份', () => {
     expect(() => {
       writeInviteIdentity(broken, 'k', { sessionKey: key, displayName: 'x', ownerId: null });
     }).not.toThrow();
-  });
-});
-
-describe('defaultInviteHost', () => {
-  it('优先选择已安装的宿主，否则回退到通用配置', () => {
-    const detection = (host: 'codex' | 'claude-code' | 'cursor', installed: boolean) => ({
-      host,
-      installed,
-      configurable: installed,
-      mechanism: 'config-file',
-      diagnosticCode: 'host.detected',
-    });
-    expect(defaultInviteHost([])).toBe('other');
-    expect(defaultInviteHost([detection('codex', false), detection('cursor', true)])).toBe(
-      'cursor',
-    );
-    expect(defaultInviteHost([detection('claude-code', true), detection('codex', true)])).toBe(
-      'codex',
-    );
   });
 });
 

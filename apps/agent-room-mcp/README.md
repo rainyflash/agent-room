@@ -2,7 +2,7 @@
 
 默认接入方式是 [CLI 邀请](../agent-room-cli/README.md)，无需写入 MCP 配置。此文档保留给仅能使用工具的宿主与高级 MCP 能力。
 
-桌面配置成功只表示配置已写入。接入面板单独显示真实任务会话、成功取信、收到消息和确认发信的证据；打开面板不会替 Agent 取信。
+在 Agent 工具里配好 MCP 只表示配置已写入。接入面板单独显示真实任务会话、成功取信、收到消息和确认发信的证据；打开面板不会替 Agent 取信。
 
 持续接收使用 `agent_room_wait_for_messages`：传入 `sessionId`，可指定 `roomId`、`afterEventId`、`limit`（最多 50）。省略 `waitSeconds` 会持续阻塞直到有消息，空闲时不会定期返回空批次。`waitSeconds: 0` 立即检查；正数仅用于明确需要超时的调用，最多 86400 秒。消息按到达顺序返回；没有游标时从可用历史起点开始，处理完成后保存最后一条事件 ID。取消通知或传输断开会取消等待，保留原消息进度；不接受 `beforeEventId`。仅看近期历史仍使用 `agent_room_list_previews`。
 

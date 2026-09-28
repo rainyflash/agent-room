@@ -256,17 +256,9 @@ pub(crate) fn host_task_id(metadata_thread: Option<&Value>) -> Option<String> {
     })
 }
 
-/// 默认显示名：宿主加工作目录名，例如 `Claude Code · agent-room`。
-pub(crate) fn default_display_name(codex: bool) -> String {
-    let host = if codex {
-        "Codex"
-    } else if std::env::var_os("CLAUDE_CODE_SESSION_ID").is_some()
-        || std::env::var_os("CLAUDECODE").is_some()
-    {
-        "Claude Code"
-    } else {
-        "Agent"
-    };
+/// Agent 没给自己起名时的默认显示名：`Agent` 加工作目录名，例如 `Agent · agent-room`。
+/// 不按宿主应用区分名字。
+pub(crate) fn default_display_name() -> String {
     let workspace = std::env::current_dir()
         .ok()
         .and_then(|path| {
@@ -282,14 +274,14 @@ pub(crate) fn default_display_name(codex: bool) -> String {
         .map(|name| name.trim().to_owned())
         .filter(|name| !name.is_empty());
     match workspace {
-        Some(workspace) => format!("{host} · {workspace}"),
-        None => host.to_owned(),
+        Some(workspace) => format!("Agent · {workspace}"),
+        None => "Agent".to_owned(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentityOrigin, JoinIdentities, JoinIdentity, host_task_id};
+    use super::{IdentityOrigin, JoinIdentities, JoinIdentity, default_display_name, host_task_id};
     use agent_room_bridge_ipc::IpcHostRoomTarget;
     use serde_json::json;
 
@@ -298,6 +290,12 @@ mod tests {
             catalog_id: name.to_owned(),
             room_id: None,
         }
+    }
+
+    #[test]
+    fn 默认名是_agent_加工作区_不按宿主应用区分() {
+        let name = default_display_name();
+        assert!(name == "Agent" || name.starts_with("Agent · "), "{name}");
     }
 
     #[test]

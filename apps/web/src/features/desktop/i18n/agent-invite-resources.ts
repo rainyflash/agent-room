@@ -92,20 +92,6 @@ export const agentInviteResources = {
       'Add this JSON to the tool’s MCP configuration, then restart the tool.',
     'agentInvite.host.copyJson': 'Copy JSON',
     'agentInvite.host.copiedJson': 'Copied',
-    'agentInvite.host.failed':
-      'Could not set up {{host}}. Check that the tool opens normally, then retry.',
-    'agentInvite.host.incompatible':
-      'The installed Codex commands cannot read your current settings. Update Codex and retry; signing in again will not fix this.',
-    'agentInvite.host.invalidConfig':
-      'Codex could not read its settings. Open Codex to check the configuration error, then retry.',
-    'agentInvite.host.invalidExecutable':
-      'The configured Codex command could not be found. Check the CODEX_CLI_PATH setting or remove it to use automatic detection.',
-    'agentInvite.host.timedOut':
-      'The tool did not respond in time. Close any stuck configuration command and retry.',
-    'agentInvite.host.concurrentChange':
-      'The tool’s settings changed during setup. Retry to use the latest settings.',
-    'agentInvite.host.readFailed':
-      'Could not read the Codex tool settings. Check that Codex opens normally, then retry.',
     'agentInvite.errorCode': 'Diagnostic code: {{code}}',
     'agentInvite.name': 'Agent name',
     'agentInvite.name.hint':
@@ -226,15 +212,6 @@ export const agentInviteResources = {
     'agentInvite.host.otherHint': '把这段 JSON 添加到工具的 MCP 配置里，然后重启工具。',
     'agentInvite.host.copyJson': '复制 JSON',
     'agentInvite.host.copiedJson': '已复制',
-    'agentInvite.host.failed': '{{host}} 配置失败，请确认工具能正常打开后重试。',
-    'agentInvite.host.incompatible':
-      '已安装的 Codex 命令读不懂当前设置，请更新 Codex 后重试。重新登录无法解决这个问题。',
-    'agentInvite.host.invalidConfig': 'Codex 无法读取设置，请打开 Codex 检查配置错误后重试。',
-    'agentInvite.host.invalidExecutable':
-      '找不到指定的 Codex 命令，请检查 CODEX_CLI_PATH 设置，或移除它以使用自动检测。',
-    'agentInvite.host.timedOut': '工具长时间没有响应，请关闭卡住的配置命令后重试。',
-    'agentInvite.host.concurrentChange': '配置过程中工具设置发生了变化，请重试以使用最新设置。',
-    'agentInvite.host.readFailed': '无法读取 Codex 的工具设置，请确认 Codex 能正常打开后重试。',
     'agentInvite.errorCode': '诊断码：{{code}}',
     'agentInvite.name': 'Agent 的名字',
     'agentInvite.name.hint': '可以不填：留空就由 Agent 自己起名；这里填了就按这个名字进房间。',

@@ -34,18 +34,17 @@ use receiver_runtime::{
 };
 mod webview_migration;
 
-use agent_room_host_adapters::{HostConfigurator, HostContext, HostKind, SkillState};
+use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
     DesktopRuntime, desktop_agent_recovery, desktop_agent_recovery_sessions,
-    desktop_apply_agent_host, desktop_begin_human_authentication,
-    desktop_begin_matrix_authentication, desktop_bootstrap_default_agent, desktop_check_update,
-    desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
-    desktop_detect_agent_hosts, desktop_host_session_diagnostics, desktop_install_skill,
-    desktop_install_update, desktop_load_matrix_session, desktop_lobby_snapshot,
-    desktop_offer_invitation, desktop_open_authorization, desktop_plan_agent_host,
-    desktop_reauthorize_bridge, desktop_remove_agent_host, desktop_restore_human_session,
-    desktop_retry_bridge, desktop_runtime_snapshot, desktop_save_matrix_session,
-    desktop_set_autostart, desktop_skill_status, desktop_withdraw_invitation,
+    desktop_begin_human_authentication, desktop_begin_matrix_authentication,
+    desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
+    desktop_clear_matrix_session, desktop_configure_agent_runtime,
+    desktop_host_session_diagnostics, desktop_install_update, desktop_load_matrix_session,
+    desktop_lobby_snapshot, desktop_offer_invitation, desktop_open_authorization,
+    desktop_reauthorize_bridge, desktop_restore_human_session, desktop_retry_bridge,
+    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
+    desktop_withdraw_invitation,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -55,7 +54,6 @@ use matrix_session::MatrixSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
-mod host_check;
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 use tauri::{Manager as _, RunEvent, tray::TrayIconBuilder};
 use tauri_plugin_autostart::MacosLauncher;
@@ -82,7 +80,6 @@ pub fn run_entrypoint() -> ExitCode {
         installer_acceptance::DesktopLaunchMode::InstallerVersion => {
             installer_acceptance::print_version()
         }
-        installer_acceptance::DesktopLaunchMode::HostCheck => host_check::run(),
     }
 }
 
@@ -141,12 +138,6 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_notify,
             desktop_check_update,
             desktop_install_update,
-            desktop_detect_agent_hosts,
-            desktop_plan_agent_host,
-            desktop_apply_agent_host,
-            desktop_remove_agent_host,
-            desktop_skill_status,
-            desktop_install_skill,
             desktop_bootstrap_default_agent,
             desktop_configure_agent_runtime,
             desktop_lobby_snapshot,
@@ -244,12 +235,8 @@ fn setup_runtime(
         }
     });
     let host_context = HostContext::from_environment(mcp_executable)
-        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?
-        .with_skill_source(bundled_skill_source(app))
-        .with_skill_cli(commands::installed_cli().ok().flatten());
+        .map_err(|failure| format!("宿主配置器初始化失败 [{}]", failure.code()))?;
     let hosts = Arc::new(HostConfigurator::system(host_context));
-    let skill_hosts = hosts.clone();
-    tauri::async_runtime::spawn_blocking(move || refresh_installed_skill(&skill_hosts));
     app.manage(DesktopRuntime {
         bridge,
         receivers,
@@ -310,43 +297,6 @@ fn match_window_to_system_theme(app: &tauri::App) {
         && matches!(window.theme(), Ok(tauri::Theme::Dark))
     {
         let _ = window.set_background_color(Some(tauri::window::Color(19, 18, 23, 255)));
-    }
-}
-
-/// 用户装过的技能跟着桌面端保持最新：新版带来新技能、或本机命令前缀变了时直接覆盖。
-/// 没装过的不替用户装。
-fn refresh_installed_skill(hosts: &HostConfigurator) {
-    match hosts.skill_status(HostKind::ClaudeCode) {
-        Ok(status) if status.state == SkillState::Outdated => {
-            match hosts.install_skill(HostKind::ClaudeCode) {
-                Ok(_) => tracing::info!("已把 Claude Code 的 agent-room 技能更新到本版"),
-                Err(failure) => {
-                    tracing::warn!(error_code = failure.code(), "更新 Claude Code 技能失败");
-                }
-            }
-        }
-        Ok(_) => {}
-        Err(failure) => {
-            tracing::warn!(error_code = failure.code(), "读取 Claude Code 技能状态失败");
-        }
-    }
-}
-
-/// 随包携带的技能文件（`skills/agent-room/SKILL.md`）。找不到时技能安装报为不支持，
-/// 不影响其他功能。
-fn bundled_skill_source(app: &tauri::App) -> Option<PathBuf> {
-    let path = app
-        .path()
-        .resolve(
-            "skills/agent-room/SKILL.md",
-            tauri::path::BaseDirectory::Resource,
-        )
-        .ok()?;
-    if path.is_file() {
-        Some(path)
-    } else {
-        tracing::warn!(path = %path.display(), "安装包里没有技能文件，技能安装不可用");
-        None
     }
 }
 

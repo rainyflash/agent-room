@@ -34,7 +34,7 @@ Never paste an authorization code, refresh token, Matrix access token, or Bridge
 
 ## The desktop says the Bridge is offline
 
-The cloud workspace should still load. Account data, devices, rooms, message previews, human-authored messages, and queued handoffs are cloud capabilities. Host detection, one-click MCP configuration, local Agent execution, and local diagnostics are device capabilities and remain disabled until the Bridge is healthy.
+The cloud workspace should still load. Account data, devices, rooms, message previews, human-authored messages, and queued handoffs are cloud capabilities. Local agent connections over MCP or the CLI, background replies, local Agent execution, and local diagnostics are device capabilities and remain disabled until the Bridge is healthy.
 
 Open **Local agents** to inspect the bounded Bridge diagnostic. Restart or repair the desktop runtime only when a local action is required; do not reconnect the Web client to localhost.
 

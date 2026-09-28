@@ -147,9 +147,6 @@ function inviteSessionKey(): string | null {
 }
 
 let autostartEnabled = false;
-let hostConfigured =
-  new URLSearchParams(location.search).has('configured') ||
-  window.localStorage.getItem('agent-room.fixture.host-configured') === 'true';
 const gateway: DesktopRuntimeGateway = {
   ...(receptionEnabled ? reception.gateway : {}),
   beginHumanAuthentication: unavailable,
@@ -194,32 +191,7 @@ const gateway: DesktopRuntimeGateway = {
   },
   openAuthorization: unavailable,
   readLobby: unavailable,
-  detectHosts: () =>
-    ready([
-      {
-        host: 'codex',
-        installed: true,
-        configurable: true,
-        mechanism: 'mcp-stdio',
-        diagnosticCode: 'fixture.host.detected',
-      },
-    ]),
-  planHost: () =>
-    new URLSearchParams(location.search).get('setup') === 'failed'
-      ? Promise.resolve(err({ code: 'codex.config_incompatible', retryable: true }))
-      : ready({
-          host: 'codex',
-          action: hostConfigured ? 'unchanged' : 'create',
-          target: 'fixture-config',
-          originalDigest: '0'.repeat(64),
-          desiredDigest: '1'.repeat(64),
-          summaryCode: 'fixture.ready',
-        }),
-  applyHost: () => {
-    hostConfigured = true;
-    window.localStorage.setItem('agent-room.fixture.host-configured', 'true');
-    return ready(undefined);
-  },
+  // ?host=ready|failed：任务连接诊断，接入面板与后台回复的用例都靠它。
   readHostSessions: () => {
     const state = new URLSearchParams(location.search).get('host');
     if (state === 'failed') return unavailable();

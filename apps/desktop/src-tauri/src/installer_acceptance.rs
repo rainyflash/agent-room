@@ -14,14 +14,10 @@ pub(crate) enum DesktopLaunchMode {
     Interactive,
     InstallerAcceptance,
     InstallerVersion,
-    HostCheck,
 }
 
 pub(crate) fn launch_mode(arguments: impl IntoIterator<Item = OsString>) -> DesktopLaunchMode {
     for argument in arguments {
-        if argument == "--check-hosts" {
-            return DesktopLaunchMode::HostCheck;
-        }
         if argument == INSTALLER_ACCEPTANCE_ARGUMENT {
             return DesktopLaunchMode::InstallerAcceptance;
         }
@@ -154,18 +150,6 @@ mod tests {
         );
         assert_eq!(
             launch_mode([OsString::from("--installer-version=true")]),
-            DesktopLaunchMode::Interactive
-        );
-    }
-
-    #[test]
-    fn host_check_is_an_explicit_headless_entrypoint() {
-        assert_eq!(
-            launch_mode([OsString::from("--check-hosts")]),
-            DesktopLaunchMode::HostCheck
-        );
-        assert_eq!(
-            launch_mode([OsString::from("--check-hosts=true")]),
             DesktopLaunchMode::Interactive
         );
     }

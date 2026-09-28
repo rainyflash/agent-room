@@ -257,20 +257,6 @@ export const releaseUpdateCheckSchema = z
   .strict();
 export type ReleaseUpdateCheck = z.infer<typeof releaseUpdateCheckSchema>;
 
-export const agentHostKindSchema = z.enum(['codex', 'claude-code', 'cursor']);
-export type AgentHostKind = z.infer<typeof agentHostKindSchema>;
-
-export const agentHostDetectionSchema = z
-  .object({
-    host: agentHostKindSchema,
-    installed: z.boolean(),
-    configurable: z.boolean(),
-    mechanism: z.string().min(1).max(64),
-    diagnosticCode: diagnosticCodeSchema,
-  })
-  .strict();
-export type AgentHostDetection = z.infer<typeof agentHostDetectionSchema>;
-
 export const hostSessionDiagnosticsSchema = z
   .object({
     displayName: z.string().min(1).max(128),
@@ -312,18 +298,6 @@ export const hostSessionDiagnosticsSchema = z
   .strict();
 export type HostSessionDiagnostics = z.infer<typeof hostSessionDiagnosticsSchema>;
 
-export const agentHostPlanSchema = z
-  .object({
-    host: agentHostKindSchema,
-    action: z.enum(['create', 'replace', 'unchanged', 'unavailable']),
-    target: z.string().min(1).max(256),
-    originalDigest: z.string().length(64),
-    desiredDigest: z.string().length(64),
-    summaryCode: diagnosticCodeSchema,
-  })
-  .strict();
-export type AgentHostPlan = z.infer<typeof agentHostPlanSchema>;
-
 /** A character the invite dialog parks on the Bridge so an agent that just says "join" takes it. */
 export const pendingInvitationSchema = z
   .object({
@@ -343,25 +317,6 @@ export const pendingInvitationSchema = z
   .strict();
 export type PendingInvitation = z.infer<typeof pendingInvitationSchema>;
 export type InvitationOffer = PendingInvitation['invitation'];
-
-export const agentHostSkillStatusSchema = z
-  .object({
-    host: agentHostKindSchema,
-    state: z.enum(['unsupported', 'missing', 'outdated', 'current']),
-    target: z.string().min(1).max(1024).nullable(),
-    bundledDigest: z.string().length(64).nullable(),
-    installedDigest: z.string().length(64).nullable(),
-  })
-  .strict();
-export type AgentHostSkillStatus = z.infer<typeof agentHostSkillStatusSchema>;
-
-export const agentHostApplyReceiptSchema = z
-  .object({
-    host: agentHostKindSchema,
-    changed: z.boolean(),
-    resultingDigest: z.string().length(64),
-  })
-  .strict();
 
 export type DesktopRuntimeFailure = {
   readonly code: string;
@@ -456,12 +411,7 @@ export type DesktopRuntimeGateway = {
     target: DesktopAgentTarget,
   ): Promise<Result<DesktopAgentTarget, DesktopRuntimeFailure>>;
   readLobby(): Promise<Result<DesktopLobbySnapshot, DesktopRuntimeFailure>>;
-  detectHosts?(): Promise<Result<readonly AgentHostDetection[], DesktopRuntimeFailure>>;
   readHostSessions?(): Promise<Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>>;
-  planHost?(host: AgentHostKind): Promise<Result<AgentHostPlan, DesktopRuntimeFailure>>;
-  /** Whether this build's agent-room skill is installed in the host's skill folder. */
-  skillStatus?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
-  installSkill?(host: AgentHostKind): Promise<Result<AgentHostSkillStatus, DesktopRuntimeFailure>>;
   /**
    * Park the invite dialog's character on the Bridge; an agent that just says "join" takes it.
    * Resolves to null when that character already has a session, so it is not offered twice.
@@ -470,10 +420,6 @@ export type DesktopRuntimeGateway = {
     invitation: InvitationOffer,
   ): Promise<Result<PendingInvitation | null, DesktopRuntimeFailure>>;
   withdrawInvitation?(sessionKey: string): Promise<Result<void, DesktopRuntimeFailure>>;
-  applyHost?(
-    host: AgentHostKind,
-    expectedOriginalDigest: string,
-  ): Promise<Result<void, DesktopRuntimeFailure>>;
   subscribe(
     handlers: DesktopRuntimeEventHandlers,
   ): Promise<Result<() => void, DesktopRuntimeFailure>>;

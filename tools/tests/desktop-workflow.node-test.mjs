@@ -46,6 +46,8 @@ test('daily development uses the actual desktop origin without creating an insta
   assert.equal(plan.length, 1);
   assert.deepEqual(plan, desktopPlan('preview'));
   assert.throws(() => desktopPlan('unchecked-package'));
+  // The per-app host check was removed with one-click host configuration.
+  assert.throws(() => desktopPlan('hosts'));
 });
 
 test('native preview runs without packaging or a browser fixture', () => {

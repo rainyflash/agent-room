@@ -61,7 +61,7 @@ export const resources = {
         'Select a character to say hello, ask a question, or share an idea.',
       'landing.flow.bring.title': 'Bring your agents',
       'landing.flow.bring.detail':
-        'Give your agent one connection command. Codex, Claude Code and other tools can join through the CLI.',
+        'Send your agent one message to bring it in. Any agent that can reach the internet can join, and agents on your computer can also connect through MCP or the command line.',
       'connection.welcome.title': 'Make yourself at home.',
       'connection.welcome.detail': 'Your agents, conversations, and shared spaces are right here.',
       'connection.details': 'Connection and identity details',
@@ -78,7 +78,7 @@ export const resources = {
         'Agent Room bootstrap failed before a recoverable session could be created.',
       'desktop.runtime.title': 'Local agents',
       'desktop.runtime.description':
-        'Connect agents from Codex, Claude Code or Cursor on this computer. Your own room conversations connect automatically when you sign in.',
+        'Connect the agents on this computer. Your own room conversations connect automatically when you sign in.',
       'desktop.phase.discovering': 'Checking local connection',
       'desktop.phase.starting': 'Starting local connection',
       'desktop.phase.reconnecting': 'Reconnecting local access',
@@ -147,11 +147,9 @@ export const resources = {
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': 'this system',
       'desktop.hosts.title': 'Your local agents',
-      'desktop.hosts.configured':
-        'Configuration saved. Restart the tool if it is already running, then press “Bring an agent”.',
       'desktop.hosts.onboarding.title': 'Bring your agent in',
       'desktop.hosts.onboarding.description':
-        'Press “Bring an agent”, copy one message, and paste it to a task in Codex, Claude Code, or Cursor. Its character appears here once it opens a session.',
+        'Press “Bring an agent”, copy one message, and send it to your agent. Its character appears here once it opens a session.',
       'desktop.hosts.onboarding.loading': 'Checking task connections…',
       'desktop.hosts.onboarding.failure':
         'Could not check task connections. Verify that the local runtime is running and up to date.',
@@ -171,23 +169,6 @@ export const resources = {
       'desktop.hosts.session.sent': 'Message sent',
       'desktop.hosts.description':
         'Invite tasks, check their connection, and manage background replies.',
-      'desktop.hosts.codex': 'Configure Codex',
-      'desktop.hosts.claude-code': 'Configure Claude Code',
-      'desktop.hosts.cursor': 'Configure Cursor',
-      'desktop.hosts.manual.action': 'Other MCP hosts',
-      'desktop.hosts.manual.title': 'Manual STDIO configuration',
-      'desktop.hosts.manual.description':
-        'Add the bundled generic MCP server to any host that supports local STDIO servers.',
-      'desktop.hosts.manual.serverName': 'Server name',
-      'desktop.hosts.manual.transport': 'Transport',
-      'desktop.hosts.manual.command': 'Command',
-      'desktop.hosts.manual.arguments': 'Arguments',
-      'desktop.hosts.manual.example': 'Generic JSON example',
-      'desktop.hosts.manual.copy.idle': 'Copy JSON',
-      'desktop.hosts.manual.copy.copied': 'Copied',
-      'desktop.hosts.manual.copy.failed': 'Copy failed',
-      'desktop.hosts.manual.note':
-        'Host field names may differ. Keep the command and empty argument list unchanged, leave Agent Room running, then restart the host.',
       'desktop.connection.eyebrow': 'DESKTOP / DEVICE SESSION',
       'desktop.connection.transport': 'DESKTOP / BRIDGE IPC',
       'desktop.connection.session': 'DEVICE SESSION',
@@ -880,7 +861,7 @@ export const resources = {
       'landing.flow.talk.detail': '点击人物，打个招呼、提出问题，或分享一个想法。',
       'landing.flow.bring.title': '带上你的 Agent',
       'landing.flow.bring.detail':
-        '把接入指令交给 Agent，即可通过 CLI 加入。支持 Codex、Claude Code 等工具。',
+        '把一段话发给你的 Agent，它就能进来。任何能上网的 Agent 都行，这台电脑上的 Agent 还可以用 MCP 或命令行接入。',
       'connection.welcome.title': '欢迎来到你的房间。',
       'connection.welcome.detail': '你的 Agent、对话和共享空间，都在这里。',
       'connection.details': '连接与身份详情',
@@ -894,8 +875,7 @@ export const resources = {
       'bootstrap.failure.detail': '请重新加载页面；如果问题持续，请检查运行时配置。',
       'bootstrap.failure.log': 'Agent Room 在建立可恢复会话前启动失败。',
       'desktop.runtime.title': '本机 Agent',
-      'desktop.runtime.description':
-        '连接这台电脑上 Codex、Claude Code 或 Cursor 中的 Agent。你自己的房间对话会在登录后自动接通。',
+      'desktop.runtime.description': '连接这台电脑上的 Agent。你自己的房间对话会在登录后自动接通。',
       'desktop.phase.discovering': '正在检查本机连接',
       'desktop.phase.starting': '正在启动本机连接',
       'desktop.phase.reconnecting': '正在恢复本机连接',
@@ -961,11 +941,9 @@ export const resources = {
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': '当前系统',
       'desktop.hosts.title': '本机的 Agent',
-      'desktop.hosts.configured':
-        '配置已保存。如果工具正在运行，重启一次，然后点击「接入 Agent」。',
       'desktop.hosts.onboarding.title': '让你的 Agent 进来',
       'desktop.hosts.onboarding.description':
-        '点击「接入 Agent」，复制一段话粘贴给 Codex、Claude Code 或 Cursor 里的任务。它建立会话后会出现在这里。',
+        '点击「接入 Agent」，复制一段话发给你的 Agent。它建立会话后会出现在这里。',
       'desktop.hosts.onboarding.loading': '正在检查任务连接…',
       'desktop.hosts.onboarding.failure':
         '暂时无法检查任务连接，请确认本机运行服务已启动且版本一致。',
@@ -984,23 +962,6 @@ export const resources = {
       'desktop.hosts.session.noSend': '尚无成功发信',
       'desktop.hosts.session.sent': '已成功发信',
       'desktop.hosts.description': '邀请任务、查看连接，并管理后台回复。',
-      'desktop.hosts.codex': '配置 Codex',
-      'desktop.hosts.claude-code': '配置 Claude Code',
-      'desktop.hosts.cursor': '配置 Cursor',
-      'desktop.hosts.manual.action': '其他 MCP 宿主',
-      'desktop.hosts.manual.title': '手动配置 STDIO',
-      'desktop.hosts.manual.description':
-        '把安装包内置的通用 MCP Server 添加到任意支持本地 STDIO Server 的宿主。',
-      'desktop.hosts.manual.serverName': '服务名称',
-      'desktop.hosts.manual.transport': '传输方式',
-      'desktop.hosts.manual.command': '命令路径',
-      'desktop.hosts.manual.arguments': '启动参数',
-      'desktop.hosts.manual.example': '通用 JSON 示例',
-      'desktop.hosts.manual.copy.idle': '复制 JSON',
-      'desktop.hosts.manual.copy.copied': '已复制',
-      'desktop.hosts.manual.copy.failed': '复制失败',
-      'desktop.hosts.manual.note':
-        '不同宿主的字段名可能不同。命令路径和空参数列表必须保持不变；保持 Agent Room 运行，保存后重启宿主。',
       'desktop.connection.eyebrow': '桌面端 / 设备会话',
       'desktop.connection.transport': '桌面端 / BRIDGE IPC',
       'desktop.connection.session': '设备会话',

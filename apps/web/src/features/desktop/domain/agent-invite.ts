@@ -1,6 +1,9 @@
-import type { AgentHostDetection, HostSessionDiagnostics } from './desktop-runtime';
+import type { HostSessionDiagnostics } from './desktop-runtime';
 
-/** 邀请面板可选择的宿主；`other` 表示任意支持 MCP stdio 的工具。 */
+/**
+ * 旧版邀请面板按工具分别保存一个身份，这是那些存储键的后缀。现在只用来把旧身份列进
+ * 邀请历史供明确恢复，面板本身不再按工具区分。
+ */
 export type AgentInviteHost = 'codex' | 'claude-code' | 'cursor' | 'other';
 
 export const agentInviteHosts: readonly AgentInviteHost[] = [
@@ -68,7 +71,7 @@ function codePointCount(value: string): number {
   return Array.from(value, () => 1).length;
 }
 
-/** 身份按设备和宿主保存：同一台电脑上无论从哪个页面接入，同一个工具都是同一个人物。 */
+/** 旧版按工具保存的身份所在的存储键；只读，用于把旧身份列进邀请历史。 */
 export function inviteIdentityStorageKey(host: AgentInviteHost): string {
   return `${STORAGE_PREFIX}.${host}`;
 }
@@ -116,16 +119,6 @@ export function writeInviteIdentity(
   } catch {
     // 存储不可用时身份只在本次会话内有效；界面已提示重新连接需复用同一指令。
   }
-}
-
-/** 默认选中已安装的宿主；都没有时选择通用配置。 */
-export function defaultInviteHost(hosts: readonly AgentHostDetection[]): AgentInviteHost {
-  for (const host of agentInviteHosts) {
-    if (host !== 'other' && hosts.some((entry) => entry.host === host && entry.installed)) {
-      return host;
-    }
-  }
-  return 'other';
 }
 
 /** 只认当前邀请的 sessionKey；其他任务的会话不算这次邀请成功。 */

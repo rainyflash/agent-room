@@ -17,6 +17,7 @@ import {
 import { motion, useReducedMotion } from 'motion/react';
 import { useState, type ReactNode } from 'react';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
+import { McpConfiguration } from '@/features/desktop/ui/mcp-configuration';
 import { useTranslation } from 'react-i18next';
 
 import { AppNavigation } from '@/shared/ui/app-navigation';
@@ -37,12 +38,6 @@ import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { useSession } from '@/features/session/ui/session-provider';
 
 import './onboarding-page.css';
-
-const hostNames = {
-  codex: 'Codex',
-  'claude-code': 'Claude Code',
-  cursor: 'Cursor',
-} as const;
 
 export function OnboardingPage() {
   const { snapshot } = useSession();
@@ -102,7 +97,7 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
     bootstrapFailed: bootstrap.data?.ok === false || bootstrap.isError,
     bootstrapReady: resolved !== null,
   });
-  const installedHosts = runtime.hosts.filter((host) => host.installed);
+  const mcpConfiguration = runtime.snapshot?.manualHostConfiguration ?? null;
   const progress = {
     account: true,
     agent: resolved !== null,
@@ -279,25 +274,10 @@ export function OnboardingWorkspace({ principal }: { readonly principal: WebSess
           ) : null}
           <details>
             <summary>{t('agentInvite.mode.mcp')}</summary>
-            {runtime.configuredHost === null ? null : (
-              <p role="status">{t('desktop.hosts.configured')}</p>
-            )}
-            {runtime.available && installedHosts.length > 0 ? (
-              <div className="onboarding__host-list">
-                {installedHosts.map((host) => (
-                  <Button
-                    disabled={runtime.busy !== null || !host.configurable}
-                    icon={<PlugZap aria-hidden="true" />}
-                    key={host.host}
-                    onClick={() => void runtime.configureHost(host.host)}
-                    tone="ghost"
-                  >
-                    {t('onboarding.hosts.configure', { host: hostNames[host.host] })}
-                  </Button>
-                ))}
-              </div>
-            ) : (
-              <p className="onboarding__empty">{t('onboarding.hosts.none')}</p>
+            {!runtime.available ? (
+              <p className="onboarding__empty">{t('agentInvite.mcp.web')}</p>
+            ) : mcpConfiguration === null ? null : (
+              <McpConfiguration configuration={mcpConfiguration} />
             )}
           </details>
         </section>

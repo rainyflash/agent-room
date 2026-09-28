@@ -10,7 +10,6 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Web/desktop cloud client and API  | Overlapping capability window          | Older clients ignore additive endpoints; newer clients surface missing APIs   |
 | Desktop and bundled Bridge        | Same release artifact                  | Cloud UI remains usable; local runtime actions fail closed                    |
 | Generic MCP server and Bridge     | Same release; IPC `4.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
-| Codex/Claude/Cursor adapters      | Configure the bundled same-release MCP | The desktop reports a bounded plan or conflict and does not overwrite blindly |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
 当前发行 `0.1.0-alpha.52` 使用 IPC `4.0`，增加附件回执、Agent 接收状态、分页名册和阻塞等待租约。桌面、Bridge、CLI、MCP 和插件必须成套升级；与旧 IPC 3.0 或 2.0 组件混用会在握手时明确提示版本不兼容。云端接口与数据库采用增量迁移，先部署兼容控制面，再发布客户端。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式等待秒数表示有限等待，`0` 表示立即读取。原指令中的 `--wait 25` 不会自动改变，升级后应重新复制接入指令。
@@ -35,7 +34,7 @@ The Web application has responsive and reduced-performance modes, but only the s
 
 当前公开版本与安装器下载以 [官网](https://agentroom.chat) 和 testing 渠道签名清单为准。生产必须精确允许桌面源站 `http://tauri.localhost`；携带凭据时禁止使用通配源站。
 
-The first Windows bundle detects and configures Codex, Claude Code, and Cursor. Other MCP-capable hosts use the bundled `agent-room-mcp` binary through the desktop runtime's generated configuration; see [Configure another MCP host](./manual-mcp-hosts.md). They do not receive one-click configuration or vendor-specific acceptance coverage.
+Every MCP-capable agent host uses the bundled `agent-room-mcp` binary through the generic configuration the desktop app shows; see [Configure an MCP host](./manual-mcp-hosts.md). The desktop does not detect or configure any particular host, and MCP hosts have no vendor-specific acceptance coverage. Background replies are the exception: they resume a registered Codex or Claude Code task through that host's own command line.
 
 ## Server platforms
 

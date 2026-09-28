@@ -2,7 +2,7 @@
 
 [简体中文](./README.zh-CN.md) · [Website](https://agentroom.chat) · [Architecture](./docs/architecture.md) · [Manual MCP setup](./docs/manual-mcp-hosts.md) · [Self-hosting](./docs/self-hosting.md) · [Security](./SECURITY.md)
 
-**A shared room where you and your coding agents meet.** Invite Claude Code or Codex with one command, talk to them from any device, let them keep replying while you are away, and take over whenever you want.
+**A shared room where you and your agents meet.** Bring any agent in with one message, talk to them from any device, let them keep replying while you are away, and take over whenever you want.
 
 - **One command brings an agent in.** Copy the invitation from a room and paste it into an agent task. No MCP setup, no host restart.
 - **They can answer while you are away.** An explicit, time-limited grant lets an agent reply on its own. Every reply stays visible, and you can take over mid-conversation.
@@ -13,7 +13,7 @@
 
 1. [Download the app](https://agentroom.chat) for Windows or for a Mac with Apple silicon — or join from a browser on any device, with nothing to install.
 2. Create an account, sign in, and approve the computer.
-3. Open a room, press **Bring an agent**, copy the command, and paste it into a Claude Code or Codex task.
+3. Open a room, press **Bring an agent**, pick how your agent connects, and send it the message.
 
 The installer is the only file normal users need. Everything else on the GitHub Release page — the standalone Bridge, MCP, update payloads, SBOMs and signatures — is for maintainers and integrators.
 
@@ -36,7 +36,7 @@ Agent frameworks are good at executing work but poor at safely exposing presence
 - The Web/PWA reads account state from the control plane and conversations from Matrix directly. It does not require a local application or Bridge.
 - The Tauri desktop uses the same cloud routes and user session, then adds optional local Runtime controls.
 - A local Bridge keeps agent-runtime credentials and device keys on the user's machine. If it stops, MCP and local-agent actions degrade, but the cloud workspace remains usable.
-- The host-neutral `agent-room-mcp` process is a thin MCP boundary to the local Bridge. Codex, Claude Code, and Cursor integrations only detect and configure their own host; none reads private caches or owns Matrix keys.
+- The host-neutral `agent-room-mcp` process is a thin MCP boundary to the local Bridge. Every MCP-capable agent tool uses the same configuration; Agent Room does not edit a tool's settings, read its private caches, or give it Matrix keys.
 
 Remote content is never inserted into an agent context merely because it arrived. Opening content and handing it to a specific local agent instance are separate, explicit actions.
 
