@@ -11,7 +11,7 @@ use opentelemetry::{
     propagation::{Extractor, Injector},
 };
 use tracing::{Instrument, Span};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing_opentelemetry::{OpenTelemetrySpanExt, SetParentError};
 use uuid::Uuid;
 
 pub(crate) const CORRELATION_ID_HEADER: &str = "x-correlation-id";
@@ -49,9 +49,7 @@ pub(crate) async fn attach(mut request: Request, next: Next) -> Response {
         url.path = %path,
         correlation.id = %correlation_id.as_uuid()
     );
-    if span.set_parent(parent_context).is_err() {
-        tracing::warn!(code = "telemetry.invalid_parent", "无法关联上游追踪上下文");
-    }
+    link_upstream(&span, parent_context);
 
     request.extensions_mut().insert(correlation_id);
     let header_value = HeaderValue::from_str(&correlation_id.as_uuid().to_string()).ok();
@@ -80,6 +78,20 @@ pub(crate) async fn attach(mut request: Request, next: Next) -> Response {
         response.headers_mut().insert(CORRELATION_ID_HEADER, value);
     }
     response
+}
+
+/// 把这次请求挂到上游的追踪上。
+///
+/// 没配追踪导出（`AGENT_ROOM_OTLP_TRACES_ENDPOINT`）时根本没有 OpenTelemetry 层，span 被日志过滤掉时
+/// 也无从挂接。这两种都是正常配置：以前每个请求都为此记一条告警，生产上每小时上千条，也不是上游的错。
+/// 只有 span 已经开始这种代码问题才告警。
+fn link_upstream(span: &Span, parent: opentelemetry::Context) {
+    match span.set_parent(parent) {
+        Ok(()) | Err(SetParentError::LayerNotFound | SetParentError::SpanDisabled) => {}
+        Err(error @ SetParentError::AlreadyStarted) => {
+            tracing::warn!(code = "telemetry.invalid_parent", %error, "无法关联上游追踪上下文");
+        }
+    }
 }
 
 pub(crate) fn outbound_headers(correlation_id: &str) -> HeaderMap {
@@ -128,10 +140,63 @@ impl Injector for HeaderInjector<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use axum::http::{HeaderMap, HeaderValue};
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing_subscriber::layer::SubscriberExt as _;
     use uuid::{Uuid, Version};
 
-    use super::{CORRELATION_ID_HEADER, CorrelationId};
+    use super::{CORRELATION_ID_HEADER, CorrelationId, link_upstream};
+
+    struct 告警计数(Arc<AtomicUsize>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for 告警计数 {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[test]
+    fn 没配追踪导出时挂不上上游也不告警() {
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let subscriber = tracing_subscriber::registry().with(告警计数(warnings.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("http.request");
+            link_upstream(&span, opentelemetry::Context::new());
+        });
+        assert_eq!(warnings.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn 配了追踪导出时正常挂接_只有代码问题才告警() {
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber = tracing_subscriber::registry()
+            .with(告警计数(warnings.clone()))
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        tracing::subscriber::with_default(subscriber, || {
+            let fresh = tracing::info_span!("http.request");
+            link_upstream(&fresh, opentelemetry::Context::new());
+            assert_eq!(warnings.load(Ordering::SeqCst), 0);
+
+            // span 已经开始后再挂上游是代码写错了，要告警。
+            let started = tracing::info_span!("http.request");
+            let _entered = started.enter();
+            link_upstream(&started, opentelemetry::Context::new());
+            assert_eq!(warnings.load(Ordering::SeqCst), 1);
+        });
+    }
 
     #[test]
     fn 接受有效上游关联标识() {
