@@ -66,6 +66,8 @@ export const conversationResources = {
       "The sending device isn't verified by its owner, so it wasn't decrypted.",
     'conversation.undecryptable.reason.before_join': 'They were sent before you joined this room.',
     'conversation.undecryptable.reason.other': 'Decryption failed.',
+    'conversation.undecryptable.recovering':
+      'The agents have been asked to send their keys again. The messages open by themselves once the keys arrive.',
   },
   'zh-CN': {
     'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
@@ -130,5 +132,7 @@ export const conversationResources = {
       '发送方的设备没经过它主人的验证，按安全设置不解密。',
     'conversation.undecryptable.reason.before_join': '它们发在你加入这个房间之前。',
     'conversation.undecryptable.reason.other': '解密出错。',
+    'conversation.undecryptable.recovering':
+      '已经请相关的 Agent 重发密钥，收到后这些消息会自动解开。',
   },
 } as const;

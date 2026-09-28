@@ -1,4 +1,10 @@
-import type { ClientEvent, Direction, EventStatus, SyncState } from 'matrix-js-sdk';
+import type {
+  ClientEvent,
+  Direction,
+  EventStatus,
+  MatrixEventEvent,
+  SyncState,
+} from 'matrix-js-sdk';
 
 /**
  * matrix-js-sdk 字符串枚举的取值。
@@ -22,3 +28,7 @@ export const SYNC_STATE_RECONNECTING = enumValue<SyncState>('RECONNECTING');
 
 export const CLIENT_EVENT_ACCOUNT_DATA = enumValue<ClientEvent>('accountData');
 export const CLIENT_EVENT_SYNC = enumValue<ClientEvent>('sync');
+export const CLIENT_EVENT_RECEIVED_TO_DEVICE_MESSAGE =
+  enumValue<ClientEvent.ReceivedToDeviceMessage>('receivedToDeviceMessage');
+
+export const MATRIX_EVENT_DECRYPTED = enumValue<MatrixEventEvent.Decrypted>('Event.decrypted');

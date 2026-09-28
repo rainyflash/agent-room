@@ -57,6 +57,8 @@ export type ConversationPanelProps = {
   readonly submissionIds?: MessageSubmissionIdFactory;
   /** 这台设备解不开的加密消息；有的话替代“还没有消息”，或者放在记录最前面。 */
   readonly undecryptable?: UndecryptableSummary;
+  /** 已经请 Agent 重发这些消息的密钥、还在等。 */
+  readonly recovering?: boolean;
   readonly variant?: 'room' | 'direct';
 };
 
@@ -74,6 +76,7 @@ export function ConversationPanel({
   state,
   submissionIds,
   undecryptable,
+  recovering = false,
   variant = 'room',
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
@@ -370,7 +373,7 @@ export function ConversationPanel({
             <HistoryBoundary history={history} state={historyState} onLoad={loadOlder} />
           ) : null}
           {state === 'ready' && undecryptable !== undefined ? (
-            <UndecryptableNotice summary={undecryptable} names={names} />
+            <UndecryptableNotice summary={undecryptable} names={names} recovering={recovering} />
           ) : null}
           {state === 'loading' ? (
             <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
@@ -489,9 +492,11 @@ const maxNamedUndecryptableSenders = 3;
 function UndecryptableNotice({
   summary,
   names,
+  recovering,
 }: {
   readonly summary: UndecryptableSummary;
   readonly names: ReadonlyMap<string, string>;
+  readonly recovering: boolean;
 }) {
   const { t } = useTranslation();
   const named = summary.senders
@@ -520,6 +525,7 @@ function UndecryptableNotice({
         {summary.reasons.map((reason) => (
           <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
         ))}
+        {recovering ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
       </div>
     </div>
   );

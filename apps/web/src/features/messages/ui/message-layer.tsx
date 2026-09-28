@@ -9,6 +9,7 @@ import { useRoomMessages } from './room-messages-context';
 import type { MessageGateway, ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
 import { MessageComposer } from '@/features/messages/ui/message-composer';
+import { useRoomKeyRecoveryPending } from '@/features/messages/ui/room-key-recovery-context';
 import { projectMessageSignals } from '@/features/signals/adapters/message-signal-projector';
 import type { SignalAction } from '@/features/signals/domain/signal';
 import { SignalDock } from '@/features/signals/ui/signal-dock';
@@ -58,6 +59,7 @@ export function MessageLayer({
   const projectedMessages = state.kind === 'ready' ? state.room.messages : [];
   const latestMessage = projectedMessages[0];
   const readOnlyFederatedEvents = state.kind === 'ready' ? state.room.readOnlyFederatedEvents : [];
+  const recovering = useRoomKeyRecoveryPending(roomId) > 0;
   const projectedSignals = useMemo(
     () =>
       projectMessageSignals(
@@ -99,7 +101,7 @@ export function MessageLayer({
               state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
             }
             {...(state.kind === 'ready' && state.room.undecryptable !== undefined
-              ? { undecryptable: state.room.undecryptable }
+              ? { recovering, undecryptable: state.room.undecryptable }
               : {})}
           />
         </div>
