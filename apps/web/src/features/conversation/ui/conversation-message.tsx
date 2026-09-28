@@ -1,5 +1,5 @@
-import { Check, Copy, Reply } from 'lucide-react';
-import { useState } from 'react';
+import { Check, ChevronDown, ChevronUp, Copy, Reply } from 'lucide-react';
+import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
@@ -8,6 +8,31 @@ import { initials } from '@/shared/ui/display-name';
 import type { AgentDelivery } from '../domain/message-delivery';
 import { ChatMarkdown } from './chat-markdown';
 import { MessageAttachment } from './message-attachment';
+
+// 收起时露出的高度约 11 行正文；比它高出不多的消息照常全文显示，免得“展开”只多出一两行。
+const foldedHeight = 280;
+const foldAbove = 400;
+
+function useTallContent(element: RefObject<HTMLElement | null>): boolean {
+  const [tall, setTall] = useState(false);
+  useLayoutEffect(() => {
+    const node = element.current;
+    if (node === null) return;
+    const measure = (): void => {
+      setTall(node.scrollHeight > foldAbove);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    // 面板宽度变化、图片加载完都会改变高度。收起时外框高度固定，内容再长也仍是长消息。
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    for (const child of node.children) observer.observe(child);
+    return () => {
+      observer.disconnect();
+    };
+  }, [element]);
+  return tall;
+}
 
 export function ConversationMessage({
   message,
@@ -18,6 +43,8 @@ export function ConversationMessage({
   onReply,
   time,
   delivery = [],
+  expanded = false,
+  onExpandedChange,
 }: {
   readonly message: RoomMessageSignal;
   readonly parent: RoomMessageSignal | undefined;
@@ -27,10 +54,16 @@ export function ConversationMessage({
   readonly onReply: (message: RoomMessageSignal) => void;
   readonly time: Intl.DateTimeFormat;
   readonly delivery?: readonly AgentDelivery[];
+  readonly expanded?: boolean;
+  readonly onExpandedChange?: (expanded: boolean) => void;
 }) {
   const { t } = useTranslation();
   const chat = message.preview?.conversation;
   const [copied, setCopied] = useState(false);
+  const fold = useRef<HTMLDivElement>(null);
+  const foldId = useId();
+  const tall = useTallContent(fold);
+  const folded = tall && !expanded && onExpandedChange !== undefined;
   const network = useIsNetworkAgent(message.actor.kind === 'agent' ? message.actor.agentId : null);
   const networkLabel = useNetworkAgentLabel();
   return (
@@ -62,31 +95,67 @@ export function ConversationMessage({
           </time>
         </header>
         <div className="conversation-message__text">
-          {message.relation === undefined ? null : (
-            <blockquote>
-              {parent?.lifecycle === 'active'
-                ? `${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`
-                : t('conversation.referenced')}
-            </blockquote>
-          )}
-          {chat?.mentions.length ? (
-            <div className="conversation-message__mentions">
-              {chat.mentions.map((id) => (
-                <span key={id} title={id}>
-                  @{names.get(id) ?? id}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {chat?.attachmentName !== undefined && chat.text === chat.attachmentName ? null : (
-            <ChatMarkdown source={chat?.text ?? ''} />
-          )}
-          {chat?.attachmentName !== undefined && message.content !== null ? (
-            <MessageAttachment
-              content={message.content}
-              roomId={message.roomId}
-              name={chat.attachmentName}
-            />
+          <div
+            className="conversation-message__fold"
+            id={foldId}
+            ref={fold}
+            data-folded={folded}
+            style={folded ? { maxHeight: `${String(foldedHeight)}px` } : undefined}
+          >
+            {message.relation === undefined ? null : (
+              <blockquote>
+                {parent?.lifecycle === 'active'
+                  ? `${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`
+                  : t('conversation.referenced')}
+              </blockquote>
+            )}
+            {chat?.mentions.length ? (
+              <div className="conversation-message__mentions">
+                {chat.mentions.map((id) => (
+                  <span key={id} title={id}>
+                    @{names.get(id) ?? id}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {chat?.attachmentName !== undefined && chat.text === chat.attachmentName ? null : (
+              <ChatMarkdown source={chat?.text ?? ''} />
+            )}
+            {chat?.attachmentName !== undefined && message.content !== null ? (
+              <MessageAttachment
+                content={message.content}
+                roomId={message.roomId}
+                name={chat.attachmentName}
+              />
+            ) : null}
+          </div>
+          {tall && onExpandedChange !== undefined ? (
+            <button
+              type="button"
+              className="conversation-message__fold-toggle"
+              aria-expanded={!folded}
+              aria-controls={foldId}
+              onClick={(event) => {
+                onExpandedChange(folded);
+                // 收起很长的消息后，开头若已翻出视野就把它对齐到顶部，免得读到一半的人找不到位置。
+                // 手机上收起后的消息可能仍比时间线高，nearest 在这种情况下不会滚动。
+                if (!folded) {
+                  const article = event.currentTarget.closest('article');
+                  const timeline = article?.closest('[role="log"]');
+                  requestAnimationFrame(() => {
+                    if (
+                      article &&
+                      timeline &&
+                      article.getBoundingClientRect().top < timeline.getBoundingClientRect().top
+                    )
+                      article.scrollIntoView({ block: 'start' });
+                  });
+                }
+              }}
+            >
+              {folded ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+              {t(folded ? 'conversation.expandMessage' : 'conversation.collapseMessage')}
+            </button>
           ) : null}
         </div>
         {own ? (

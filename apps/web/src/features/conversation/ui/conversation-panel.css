@@ -25,12 +25,13 @@
   color: var(--ar-muted);
 }
 .conversation-search {
-  max-height: 35%;
+  max-height: 45%;
   overflow-y: auto;
+  padding-bottom: 10px;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
-.conversation-search summary {
-  cursor: pointer;
-  padding: 4px 0;
+.conversation-search__topic {
+  color: var(--color-ink);
   font-weight: 600;
 }
 .conversation-search__fields {
@@ -57,7 +58,8 @@
   min-height: 40px;
 }
 .conversation-search button,
-.conversation-history-tools button {
+.conversation-history-tools button,
+.conversation-history-boundary button {
   border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: var(--ar-pill);
   padding: 4px 14px;
@@ -68,11 +70,13 @@
   box-shadow: var(--ar-press-small);
 }
 .conversation-search button:not(:disabled):hover,
-.conversation-history-tools button:not(:disabled):hover {
+.conversation-history-tools button:not(:disabled):hover,
+.conversation-history-boundary button:not(:disabled):hover {
   background: var(--ar-surface-muted);
 }
 .conversation-search button:not(:disabled):active,
-.conversation-history-tools button:not(:disabled):active {
+.conversation-history-tools button:not(:disabled):active,
+.conversation-history-boundary button:not(:disabled):active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 var(--ar-outline);
 }
@@ -85,6 +89,22 @@
 .conversation-history-tools p,
 .conversation-search p {
   margin: 4px 0;
+}
+/* 时间线顶端：往上翻到头时才看得到“加载更早的消息”，与常见聊天软件一致。 */
+.conversation-history-boundary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 12px;
+  padding: 12px 0 18px;
+  color: var(--ar-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.conversation-history-boundary p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .conversation-topic-link {
   display: block;
@@ -112,27 +132,62 @@
   outline: 3px solid var(--ar-accent);
   outline-offset: 2px;
 }
-.conversation-panel__context {
+/* 顶部一行：发给谁、查找、关于 Agent 回复。原来分占三行，挤掉了消息区的高度。 */
+.conversation-panel__bar {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
-  padding: 18px 30px;
+  padding: 10px 26px 10px 30px;
   color: var(--ar-muted);
   font-size: 12px;
 }
-.conversation-panel__context > svg {
-  width: 14px;
-  height: 14px;
+.conversation-panel__context {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
 }
-.conversation-panel__room {
-  margin-left: auto;
-  max-width: 42%;
+.conversation-panel__context > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.conversation-panel__context > svg {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+.conversation-panel__bar-button,
+.conversation-panel__availability > summary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ar-pill);
   color: var(--ar-muted);
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.conversation-panel__bar-button:hover,
+.conversation-panel__bar-button[aria-expanded='true'],
+.conversation-panel__availability > summary:hover,
+.conversation-panel__availability[open] > summary {
+  border-color: var(--ar-line);
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+.conversation-panel__bar-button > svg {
+  width: 13px;
+  height: 13px;
 }
 .conversation-panel__history {
   position: relative;
@@ -424,9 +479,10 @@
 .conversation-panel__composer > textarea {
   display: block;
   width: 100%;
-  min-height: 66px;
-  max-height: 150px;
-  resize: vertical;
+  min-height: 44px;
+  max-height: 200px;
+  overflow-y: auto;
+  resize: none;
   margin: 0;
   padding: 5px 4px 10px;
   border: 0;
@@ -571,15 +627,6 @@
 .conversation-panel__composer > div[role] > p {
   margin: 0 0 8px;
 }
-.conversation-panel__footer {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-height: 46px;
-  padding: 10px 29px max(14px, env(safe-area-inset-bottom));
-}
 .conversation-panel__availability {
   position: relative;
   min-width: 0;
@@ -587,9 +634,6 @@
   font-size: 12px;
 }
 .conversation-panel__availability > summary {
-  display: flex;
-  align-items: center;
-  gap: 5px;
   list-style: none;
   cursor: pointer;
 }
@@ -603,8 +647,8 @@
 .conversation-panel__availability > div {
   position: absolute;
   z-index: 4;
-  bottom: 24px;
-  left: -8px;
+  top: calc(100% + 6px);
+  right: 0;
   width: min(320px, calc(100vw - 48px));
   padding: 13px 16px;
   border: var(--ar-outline-thin) solid var(--ar-outline);
@@ -620,24 +664,18 @@
 .conversation-panel__availability p + p {
   margin-top: 8px;
 }
-.conversation-panel__keyboard {
-  color: var(--ar-muted);
-  font-size: 12px;
-}
-@media (max-width: 1199px), (pointer: coarse) {
-  .conversation-panel__keyboard {
-    display: none;
-  }
-}
 @media (hover: none) {
   .conversation-message .conversation-message__actions {
     opacity: 1;
   }
+  /* 触屏上复制、回复按钮一直显示，给它们在标题行右侧留出位置，免得盖住时间。 */
+  .conversation-message header {
+    padding-right: 58px;
+  }
 }
 @media (max-width: 767px) {
-  .conversation-panel__context {
-    padding: 15px 20px;
-    font-size: 12px;
+  .conversation-panel__bar {
+    padding: 8px 14px 8px 20px;
   }
   .conversation-panel__timeline {
     padding: 0 18px 12px;
@@ -658,7 +696,6 @@
     border-radius: 11px;
   }
   .conversation-panel__composer > textarea {
-    min-height: 64px;
     font-size: 16px;
   }
   .conversation-panel__tools select {
@@ -667,10 +704,6 @@
   }
   .conversation-panel__tools .ar-button {
     min-height: 36px;
-  }
-  .conversation-panel__footer {
-    min-height: 39px;
-    padding: 10px 18px max(12px, env(safe-area-inset-bottom));
   }
   .conversation-message {
     gap: 9px;
@@ -707,8 +740,7 @@
     font-size: 22px;
   }
   .conversation-panel__composer > textarea {
-    min-height: 44px;
-    height: 44px;
+    max-height: 120px;
   }
 }
 .conversation-message__delivery {
@@ -722,4 +754,30 @@
 }
 .conversation-message__delivery [data-stage='needs_review'] {
   color: var(--color-alert);
+}
+/* 长消息先收起，底部渐隐，点“展开全文”再看全部。收起的高度在 conversation-message.tsx 里。 */
+.conversation-message__fold[data-folded='true'] {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+}
+.conversation-message__fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 11px 3px 8px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  font-size: 12px;
+  font-weight: 600;
+}
+.conversation-message__fold-toggle:hover {
+  background: var(--ar-surface-muted);
+}
+.conversation-message__fold-toggle > svg {
+  width: 14px;
+  height: 14px;
 }

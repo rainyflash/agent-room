@@ -71,7 +71,6 @@ function harness(
       messages={messages}
       publisher={publisher}
       roomId={roomId}
-      roomName="Lobby"
       state="ready"
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}

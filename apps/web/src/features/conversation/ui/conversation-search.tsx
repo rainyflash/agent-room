@@ -9,11 +9,15 @@ import {
 } from '../domain/conversation-search';
 
 export function ConversationSearch({
+  id,
+  hidden,
   messages,
   filter,
   onChange,
   count,
 }: {
+  readonly id: string;
+  readonly hidden: boolean;
   readonly messages: readonly RoomMessageSignal[];
   readonly filter: ConversationFilter;
   readonly onChange: (filter: ConversationFilter) => void;
@@ -32,11 +36,16 @@ export function ConversationSearch({
     [messages],
   );
   return (
-    <details className="conversation-search" open={filter.topic !== null || undefined}>
-      <summary>
-        {t('history.search')}
-        {filter.topic === null ? '' : ` · ${t('history.topic')}`}
-      </summary>
+    <div
+      className="conversation-search"
+      id={id}
+      hidden={hidden}
+      role="search"
+      aria-label={t('history.search')}
+    >
+      {filter.topic === null ? null : (
+        <p className="conversation-search__topic">{t('history.topic')}</p>
+      )}
       <div className="conversation-search__fields">
         <label>
           {t('history.keyword')}
@@ -97,7 +106,8 @@ export function ConversationSearch({
       <p role="status">
         {validSearchDates(filter) ? t('history.results', { count }) : t('history.invalidDates')}
       </p>
+      <p>{t('history.scope', { count: messages.length })}</p>
       {filter.topic !== null ? <p>{t('history.topicScope')}</p> : null}
-    </details>
+    </div>
   );
 }

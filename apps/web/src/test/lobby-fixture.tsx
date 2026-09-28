@@ -153,6 +153,20 @@ const lobbyEntry = new PublicLobbyEntryCoordinator(
 const conversationListeners = new Set<() => void>();
 let publishedConversations: RoomMessageSignal[] = [];
 const historyFixture = new URLSearchParams(window.location.search).has('history');
+// ?long=1：每第十条是 30 行的长消息，用来验收长消息折叠。
+const longFixture = new URLSearchParams(window.location.search).has('long');
+function fixtureHistoryText(index: number): string {
+  const text = `Review milestone ${String(index + 1)}: implementation and verification details.`;
+  if (!longFixture || index % 10 !== 9) return text;
+  return [
+    text,
+    ...Array.from(
+      { length: 30 },
+      (_, line) =>
+        `Step ${String(line + 1)}: checked the collection points and the route around the market entrance.`,
+    ),
+  ].join('\n');
+}
 const fixtureHistory = historyFixture
   ? Array.from({ length: 80 }, (_, index): RoomMessageSignal => {
       const agent = room.agents[index % room.agents.length];
@@ -179,7 +193,7 @@ const fixtureHistory = historyFixture
           sensitivity: 'normal',
           riskFlags: [],
           conversation: {
-            text: `Review milestone ${String(index + 1)}: implementation and verification details.`,
+            text: fixtureHistoryText(index),
             mentions: index % 6 === 0 ? [fixtureIdentity.matrixUserId] : [],
           },
         },

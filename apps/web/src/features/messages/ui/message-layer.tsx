@@ -93,7 +93,6 @@ export function MessageLayer({
             writesAllowed={writesAllowed}
             publisher={messagePublisher}
             roomId={roomId}
-            roomName={roomName}
             messages={projectedMessages}
             {...(participants === undefined ? {} : { participants })}
             state={

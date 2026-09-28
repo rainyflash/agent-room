@@ -1,7 +1,7 @@
 import { Button } from '@agent-room/ui-system';
 import { AtSign, Reply, Send, X } from 'lucide-react';
-import { useState, type RefObject } from 'react';
-import { AttachmentPicker, selectAttachment } from './attachment-picker';
+import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
+import { AttachmentButton, AttachmentPreview, selectAttachment } from './attachment-picker';
 import type { AttachmentFailure } from '../domain/conversation-attachment';
 import './conversation-attachments.css';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +16,33 @@ export type ConversationComposerController = ReturnType<typeof useConversationCo
 // Soft keyboards have no Shift key, so on touch screens Enter makes a new line and the button sends.
 function enterSends(): boolean {
   return typeof window.matchMedia !== 'function' || !window.matchMedia('(pointer: coarse)').matches;
+}
+
+// 输入框从一行起，随内容长高到 CSS 的 max-height 为止；面板变宽变窄时按新宽度重算。
+function fitToContent(element: HTMLTextAreaElement | null): void {
+  if (element === null) return;
+  element.style.height = 'auto';
+  element.style.height = `${String(element.scrollHeight)}px`;
+}
+
+function useAutoGrow(input: RefObject<HTMLTextAreaElement | null>, text: string): void {
+  useLayoutEffect(() => {
+    fitToContent(input.current);
+  }, [input, text]);
+  useEffect(() => {
+    const element = input.current;
+    if (element === null || typeof ResizeObserver === 'undefined') return;
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      fitToContent(element);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [input]);
 }
 
 export function ConversationComposer({
@@ -43,6 +70,8 @@ export function ConversationComposer({
   const submitting = publication.matches('publishing') || publication.matches('reconciling');
   const failed = publication.matches('failed');
   const unavailable = publication.matches('identityUnavailable');
+  const keyboardHint = enterSends() ? `chat-${roomId}-keyboard` : undefined;
+  useAutoGrow(input, composer.text);
   return (
     <form
       className="conversation-panel__composer"
@@ -94,6 +123,7 @@ export function ConversationComposer({
           ))}
         </div>
       )}
+      <AttachmentPreview composer={composer} disabled={!canEdit} />
       <label className="sr-only" htmlFor={`chat-${roomId}`}>
         {t('conversation.input')}
       </label>
@@ -106,7 +136,8 @@ export function ConversationComposer({
         }}
         id={`chat-${roomId}`}
         ref={input}
-        rows={3}
+        rows={1}
+        aria-describedby={keyboardHint}
         maxLength={maximumChatCharacters}
         placeholder={t('conversation.placeholder')}
         value={composer.text}
@@ -126,12 +157,17 @@ export function ConversationComposer({
           }
         }}
       />
-      <AttachmentPicker composer={composer} disabled={!canEdit} onFailure={setFileFailure} />
+      {keyboardHint === undefined ? null : (
+        <span id={keyboardHint} className="sr-only">
+          {t('conversation.keyboard')}
+        </span>
+      )}
       {fileFailure !== null ? <p role="alert">{t(`attachments.${fileFailure}`)}</p> : null}
       {composer.attachmentFailure !== null ? (
         <p role="alert">{t(`attachments.${composer.attachmentFailure}`)}</p>
       ) : null}
       <div className="conversation-panel__tools">
+        <AttachmentButton composer={composer} disabled={!canEdit} onFailure={setFileFailure} />
         <label>
           <AtSign aria-hidden="true" />
           <span className="sr-only">{t('conversation.mention')}</span>
