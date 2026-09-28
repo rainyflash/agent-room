@@ -1088,15 +1088,26 @@ def reception_js(api: str, action: str, target: dict[str, Any]) -> str:
 
 
 def verify_replies_js(agent_name: str, canary: str) -> str:
+    # The long-lived acceptance device gives every release's QA Agent the same name, and the room view
+    # fills in earlier history on open (Alpha 53), so older releases' replies are visible too. Only this
+    # run's two count: the newest two replies are the first-message reply, then the canary reply.
     return fill("""async page => {
   const replies = page.getByRole('log', {name: @@LOG@@})
     .locator('article[data-actor-kind="agent"]').filter({hasText: @@AGENT_NAME@@});
-  await replies.filter({hasText: '第一条消息已收到'}).waitFor({state: 'visible', timeout: 30000});
   await replies.filter({hasText: @@CANARY@@}).waitFor({state: 'visible', timeout: 30000});
-  const visibleAgentReplies = await replies.count();
-  if (visibleAgentReplies !== 2) throw new Error('Expected exactly two visible replies from the QA Agent');
+  const total = await replies.count();
+  if (total < 2) throw new Error('Expected two visible replies from the QA Agent');
+  const first = replies.nth(total - 2);
+  const second = replies.nth(total - 1);
+  await first.waitFor({state: 'visible', timeout: 30000});
+  if (!(await first.innerText()).includes('第一条消息已收到')) {
+    throw new Error('The reply before the canary reply is not the first-message reply');
+  }
+  if (!(await second.innerText()).includes(@@CANARY@@)) {
+    throw new Error('The newest reply from the QA Agent is not the canary reply');
+  }
   return {firstReplyTextConfirmed: true, attachmentCanaryConfirmed: true,
-    visibleAgentReplies, observedAtUnixSeconds: Math.floor(Date.now()/1000)};
+    visibleAgentReplies: 2, observedAtUnixSeconds: Math.floor(Date.now()/1000)};
 }""", {"LOG": js_name("log"), "AGENT_NAME": json.dumps(agent_name), "CANARY": json.dumps(canary)})
 
 
