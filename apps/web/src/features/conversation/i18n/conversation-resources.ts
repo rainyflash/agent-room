@@ -50,6 +50,8 @@ export const conversationResources = {
     'conversation.emptyTitle': 'No messages yet.',
     'conversation.latest': 'New messages',
     'conversation.keyboard': 'Enter to send · Shift + Enter for a new line',
+    'conversation.expandMessage': 'Show the whole message',
+    'conversation.collapseMessage': 'Collapse the message',
   },
   'zh-CN': {
     'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
@@ -99,5 +101,7 @@ export const conversationResources = {
     'conversation.emptyTitle': '还没有消息',
     'conversation.latest': '有新消息',
     'conversation.keyboard': 'Enter 发送 · Shift + Enter 换行',
+    'conversation.expandMessage': '展开全文',
+    'conversation.collapseMessage': '收起',
   },
 } as const;

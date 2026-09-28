@@ -1,5 +1,5 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
-import { Bot, Files, MessageCircle, UsersRound, X } from 'lucide-react';
+import { Bot, Files, Maximize2, MessageCircle, Minimize2, UsersRound, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -47,6 +47,26 @@ import { MessageLayer } from '@/features/messages/ui/message-layer';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
 import './lobby-game.css';
+
+// 对话面板放大与否只影响这台设备的布局，存在本机；读写失败（隐私模式等）就只在本次有效。
+const panelSizeKey = 'agent-room.room-panel-size';
+type PanelSize = 'regular' | 'wide';
+
+function readPanelSize(): PanelSize {
+  try {
+    return window.localStorage.getItem(panelSizeKey) === 'wide' ? 'wide' : 'regular';
+  } catch {
+    return 'regular';
+  }
+}
+
+function writePanelSize(size: PanelSize): void {
+  try {
+    window.localStorage.setItem(panelSizeKey, size);
+  } catch {
+    // 只在本次有效。
+  }
+}
 
 export type LobbyPageProps = {
   readonly catalogId: string;
@@ -130,6 +150,7 @@ function ReadyLobby({
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
+  const [panelSize, setPanelSize] = useState<PanelSize>(readPanelSize);
   const owner =
     principal === null
       ? null
@@ -394,22 +415,42 @@ function ReadyLobby({
       ) : null}
       <section
         className="room-panel"
+        data-size={panelSize}
         hidden={activeView === 'space'}
         aria-label={t('roomGame.panel')}
       >
         <header className="room-panel__header">
           <WorkspaceViewTabs value={panelView} onChange={onViewChange} allowSpace={false} />
-          <button
-            type="button"
-            className="ar-icon-button"
-            aria-label={t('roomGame.closePanel')}
-            onClick={() => {
-              onViewChange('space');
-              spatial.current?.focus();
-            }}
-          >
-            <X aria-hidden="true" />
-          </button>
+          <div className="room-panel__header-actions">
+            <button
+              type="button"
+              className="ar-icon-button room-panel__widen"
+              aria-label={t(panelSize === 'wide' ? 'roomGame.narrowPanel' : 'roomGame.widenPanel')}
+              title={t(panelSize === 'wide' ? 'roomGame.narrowPanel' : 'roomGame.widenPanel')}
+              onClick={() => {
+                const next = panelSize === 'wide' ? 'regular' : 'wide';
+                setPanelSize(next);
+                writePanelSize(next);
+              }}
+            >
+              {panelSize === 'wide' ? (
+                <Minimize2 aria-hidden="true" />
+              ) : (
+                <Maximize2 aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="ar-icon-button"
+              aria-label={t('roomGame.closePanel')}
+              onClick={() => {
+                onViewChange('space');
+                spatial.current?.focus();
+              }}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
         </header>
         {publicConversationVisible && invitation !== null && principal !== null ? (
           <div className="room-first-reply">

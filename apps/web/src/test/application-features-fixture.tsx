@@ -327,7 +327,6 @@ function FeatureConversation({
     <div style={{ height: 'min(720px, 78dvh)', minHeight: 500 }}>
       <ConversationPanel
         roomId={room.matrixRoomId}
-        roomName={room.name}
         publisher={publisher}
         messages={timeline.filter((message) => message.roomId === room.matrixRoomId)}
         state="ready"

@@ -1,6 +1,6 @@
-import { ArrowDown, Radio, UsersRound } from 'lucide-react';
+import { ArrowDown, Radio, Search, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { MessageRoomProjection } from '@/features/messages/domain/message';
 import type { Result } from '@/shared/result';
 import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
@@ -36,7 +36,6 @@ export type ConversationPanelProps = {
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
   readonly roomId: string;
-  readonly roomName: string;
   readonly writesAllowed?: boolean;
   readonly state: 'ready' | 'loading' | 'failed';
   readonly submissionIds?: MessageSubmissionIdFactory;
@@ -53,7 +52,6 @@ export function ConversationPanel({
   participants = emptyParticipants,
   publisher,
   roomId,
-  roomName,
   writesAllowed = true,
   state,
   submissionIds,
@@ -75,6 +73,12 @@ export function ConversationPanel({
   const filtered = Object.entries(filter).some(
     ([key, value]) => value !== (key === 'topic' ? null : ''),
   );
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchId = useId();
+  // 查看回复话题会直接打开查找区，关掉查找区就清除筛选。
+  const searchVisible = searchOpen || filter.topic !== null;
+  // 长消息默认收起；这里只记用户点过的，跳转定位到的那条和查找结果默认展开。
+  const [expansions, setExpansions] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [historyState, setHistoryState] = useState<'ready' | 'loading' | 'failed'>('ready');
   const timelineElement = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -186,57 +190,74 @@ export function ConversationPanel({
     () => new Intl.DateTimeFormat(language, { month: 'long', day: 'numeric' }),
     [language],
   );
+  const loadOlder =
+    onLoadOlder === undefined
+      ? undefined
+      : (): void => {
+          position.preserve();
+          setHistoryState('loading');
+          void onLoadOlder().then(
+            (result) => {
+              setHistoryState(result.ok ? 'ready' : 'failed');
+            },
+            () => {
+              setHistoryState('failed');
+            },
+          );
+        };
   return (
     <section className="conversation-panel" aria-label={t('conversation.title')}>
       <h2 className="sr-only">{t('conversation.title')}</h2>
-      <div className="conversation-panel__context">
-        <UsersRound aria-hidden="true" />
-        <span>
-          {t(variant === 'direct' ? 'roomWorkspace.privateHint' : 'conversation.everyone')}
+      <div className="conversation-panel__bar">
+        <span className="conversation-panel__context">
+          <UsersRound aria-hidden="true" />
+          <span>
+            {t(variant === 'direct' ? 'roomWorkspace.privateHint' : 'conversation.everyone')}
+          </span>
         </span>
-        <span className="conversation-panel__room">{roomName}</span>
+        {/* 还没有任何消息时，查找只是噪音。 */}
+        {timeline.length === 0 ? null : (
+          <button
+            type="button"
+            className="conversation-panel__bar-button"
+            aria-expanded={searchVisible}
+            aria-controls={searchId}
+            aria-label={t('history.search')}
+            onClick={() => {
+              if (searchVisible) {
+                setSearchOpen(false);
+                setFilter(emptyConversationFilter);
+              } else setSearchOpen(true);
+            }}
+          >
+            <Search aria-hidden="true" />
+            {t('history.searchShort')}
+          </button>
+        )}
+        <details className="conversation-panel__availability">
+          <summary>
+            <Radio aria-hidden="true" />
+            {t('conversation.details')}
+          </summary>
+          <div>
+            <p>{t('conversation.runtime')}</p>
+            <p>{t('conversation.help')}</p>
+          </div>
+        </details>
       </div>
-      {/* 还没有任何消息时，搜索框和「已加载 0 条」只是噪音。 */}
       {timeline.length === 0 ? null : (
         <ConversationSearch
+          id={searchId}
+          hidden={!searchVisible}
           messages={timeline}
           filter={filter}
           onChange={setFilter}
           count={visibleTimeline.length}
         />
       )}
-      <div className="conversation-history-tools">
-        {timeline.length === 0 ? null : (
-          <span>{t('history.scope', { count: timeline.length })}</span>
-        )}
-        {history?.canLoadMore && onLoadOlder ? (
-          <button
-            type="button"
-            disabled={historyState === 'loading'}
-            onClick={() => {
-              position.preserve();
-              setHistoryState('loading');
-              void onLoadOlder().then(
-                (result) => {
-                  setHistoryState(result.ok ? 'ready' : 'failed');
-                },
-                () => {
-                  setHistoryState('failed');
-                },
-              );
-            }}
-          >
-            {t(historyState === 'loading' ? 'history.loading' : 'history.older')}
-          </button>
-        ) : null}
-        {history?.limited ? (
-          <span>{t('history.limit')}</span>
-        ) : history && !history.canLoadMore ? (
-          <span>{t('history.complete')}</span>
-        ) : null}
-        {historyState === 'failed' ? <p role="alert">{t('history.failed')}</p> : null}
-        {position.missing ? <p role="status">{t('history.positionMissing')}</p> : null}
-        {position.missing || filtered ? (
+      {position.missing || filtered ? (
+        <div className="conversation-history-tools">
+          {position.missing ? <p role="status">{t('history.positionMissing')}</p> : null}
           <button
             type="button"
             onClick={() => {
@@ -250,8 +271,8 @@ export function ConversationPanel({
           >
             {t('history.latest')}
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       <div className="conversation-panel__history">
         <div
           className="conversation-panel__timeline"
@@ -272,6 +293,9 @@ export function ConversationPanel({
           aria-relevant="additions text"
           aria-busy={state === 'loading'}
         >
+          {state === 'ready' && timeline.length > 0 ? (
+            <HistoryBoundary history={history} state={historyState} onLoad={loadOlder} />
+          ) : null}
           {state === 'loading' ? (
             <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
           ) : state === 'failed' ? (
@@ -311,6 +335,13 @@ export function ConversationPanel({
                 ) : null}
                 <ConversationMessage
                   delivery={deliveries.get(message.messageId) ?? []}
+                  expanded={
+                    filter.text !== '' ||
+                    (expansions.get(message.messageId) ?? message.messageId === focusMessageId)
+                  }
+                  onExpandedChange={(expanded) => {
+                    setExpansions((current) => new Map(current).set(message.messageId, expanded));
+                  }}
                   message={message}
                   parent={
                     message.relation === undefined
@@ -372,19 +403,34 @@ export function ConversationPanel({
         writesAllowed={writesAllowed}
         input={input}
       />
-      <div className="conversation-panel__footer">
-        <details className="conversation-panel__availability">
-          <summary>
-            <Radio aria-hidden="true" />
-            {t('conversation.details')}
-          </summary>
-          <div>
-            <p>{t('conversation.runtime')}</p>
-            <p>{t('conversation.help')}</p>
-          </div>
-        </details>
-        <span className="conversation-panel__keyboard">{t('conversation.keyboard')}</span>
-      </div>
     </section>
+  );
+}
+
+function HistoryBoundary({
+  history,
+  state,
+  onLoad,
+}: {
+  readonly history: MessageRoomProjection['history'];
+  readonly state: 'ready' | 'loading' | 'failed';
+  readonly onLoad: (() => void) | undefined;
+}) {
+  const { t } = useTranslation();
+  if (history === undefined && state !== 'failed') return null;
+  return (
+    <div className="conversation-history-boundary">
+      {history?.canLoadMore && onLoad ? (
+        <button type="button" disabled={state === 'loading'} onClick={onLoad}>
+          {t(state === 'loading' ? 'history.loading' : 'history.older')}
+        </button>
+      ) : null}
+      {history?.limited ? (
+        <span>{t('history.limit')}</span>
+      ) : history && !history.canLoadMore ? (
+        <span>{t('history.complete')}</span>
+      ) : null}
+      {state === 'failed' ? <p role="alert">{t('history.failed')}</p> : null}
+    </div>
   );
 }

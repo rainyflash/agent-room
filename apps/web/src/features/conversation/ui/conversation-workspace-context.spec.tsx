@@ -58,7 +58,6 @@ function Workspace({ account }: { readonly account: string }) {
             <ConversationPanel
               publisher={publisher}
               roomId="!private:room.test"
-              roomName="Private"
               state="ready"
               messages={[]}
             />

@@ -2,17 +2,22 @@
  * 房间工作区的「游戏大厅」外观：奶油色底、墨色粗描边、按压阴影。
  * 几何约定（改动时要一起改）：
  * - 桌面：顶栏 76px；场景外框 top 84 / bottom 120 / 左右 20；底部操作栏 bottom 20、高约 85；
- *   对话面板与人物详情和场景外框上下对齐。
+ *   对话面板与人物详情和场景外框上下对齐。对话面板宽 --room-panel-width，随窗口在 440–600px 之间，
+ *   “放大对话”后最宽 960px；宽屏打开面板时场景右边让出面板宽度加 20px。
  * - 手机：顶栏卡片 top 12、高 64；场景外框 top 100（人物定位验收依赖它）/ bottom 101；
  *   底部操作栏 bottom 12、高约 81；面板与详情从 bottom 101 起。
  * 场景尺寸由外框决定，Pixi 画布按实际尺寸测量，说话气泡也按实测尺寸摆放。
  */
 
 .lobby-game {
+  --room-panel-width: clamp(440px, 36vw, 600px);
   display: block;
   position: relative;
   isolation: isolate;
   background: var(--ar-canvas);
+}
+.lobby-game:has(.room-panel[data-size='wide']) {
+  --room-panel-width: min(960px, calc(100vw - 360px));
 }
 .lobby-game .room-scene {
   position: absolute;
@@ -268,7 +273,7 @@
   top: 84px;
   right: 20px;
   bottom: 120px;
-  width: 440px;
+  width: var(--room-panel-width);
   max-width: calc(100% - 40px);
   min-height: 0;
   display: flex;
@@ -337,13 +342,15 @@
   font-size: 13px;
   line-height: 1.8;
 }
-.room-panel .conversation-panel__context {
-  padding: 13px 16px;
+.room-panel .conversation-panel__bar {
+  padding: 8px 12px 8px 16px;
   font-size: 13px;
 }
-.room-panel .conversation-panel__room,
-.room-panel .conversation-panel__keyboard {
-  display: none;
+.room-panel__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
 }
 .room-panel .conversation-message {
   padding: 10px 14px;
@@ -383,7 +390,7 @@
   box-shadow: 0 0 0 3px var(--ar-accent-soft);
 }
 .room-panel .conversation-panel__composer textarea {
-  min-height: 76px;
+  min-height: 48px;
   font-size: 15px;
 }
 .room-panel .conversation-panel__tools {
@@ -397,9 +404,6 @@
 .room-panel .conversation-panel__tools select {
   width: 100%;
   max-width: 170px;
-}
-.room-panel .conversation-panel__footer {
-  padding: 10px 14px;
 }
 .room-panel .message-workspace__resources {
   padding: 20px 14px;
@@ -843,7 +847,7 @@
     right: 320px;
   }
   .lobby-game:has(.room-panel:not([hidden])) .room-scene {
-    right: 460px;
+    right: calc(var(--room-panel-width) + 20px);
   }
 }
 @media (min-width: 768px) and (max-width: 1300px) {
@@ -1041,8 +1045,9 @@
     min-height: 48px;
     max-height: 130px;
   }
-  .room-panel .conversation-attachment-picker {
-    padding: 0.25rem 0;
+  /* 手机上面板本来就占满宽度。 */
+  .room-panel__widen {
+    display: none;
   }
   .room-panel .message-workspace .message-composer {
     position: absolute;

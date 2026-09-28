@@ -1,15 +1,16 @@
+/* 选文件的按钮是输入框下方工具行里的一个回形针图标。 */
 .conversation-attachment-picker {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  padding: 0.5rem 0;
+  display: inline-flex;
+  flex: 0 0 auto;
 }
-.conversation-attachment-picker > small {
-  color: var(--ar-muted);
-  font-size: 0.75rem;
+.conversation-attachment-picker .conversation-attachment-picker__add {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
 }
 .conversation-attachment-picker button,
+.conversation-attachment-picker__file button,
 .conversation-attachment button,
 .conversation-attachment a {
   display: inline-flex;
@@ -28,20 +29,22 @@
   text-decoration: none;
 }
 .conversation-attachment-picker button:not(:disabled):active,
+.conversation-attachment-picker__file button:not(:disabled):active,
 .conversation-attachment button:not(:disabled):active,
 .conversation-attachment a:active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 var(--ar-outline);
 }
 .conversation-attachment-picker svg,
+.conversation-attachment-picker__file svg,
 .conversation-attachment svg {
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
 }
 .conversation-attachment-picker__file {
-  flex-basis: 100%;
   display: flex;
+  margin-bottom: 0.5rem;
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem;
@@ -95,6 +98,7 @@
   justify-self: start;
 }
 .conversation-attachment-picker button:disabled,
+.conversation-attachment-picker__file button:disabled,
 .conversation-attachment button:disabled {
   cursor: default;
   opacity: 0.5;

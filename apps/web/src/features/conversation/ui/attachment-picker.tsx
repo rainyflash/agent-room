@@ -34,7 +34,8 @@ export async function selectAttachment(
   }
 }
 
-export function AttachmentPicker({
+// 选文件的按钮放在输入框下方的工具行里；选好的文件显示在输入框上方，见 AttachmentPreview。
+export function AttachmentButton({
   composer,
   disabled,
   onFailure,
@@ -45,22 +46,8 @@ export function AttachmentPicker({
 }) {
   const { t } = useTranslation();
   const input = useRef<HTMLInputElement>(null);
-  const attachment = composer.attachment;
-  const file = attachment.kind === 'ready' ? attachment.file : null;
-  const [preview, setPreview] = useState<string | null>(null);
-  useEffect(() => {
-    if (file === null || !imageAttachment(file.mediaType)) {
-      setPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(new Blob([file.bytes], { type: file.mediaType }));
-    setPreview(url);
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [file]);
   return (
-    <div className="conversation-attachment-picker">
+    <span className="conversation-attachment-picker">
       <input
         ref={input}
         className="sr-only"
@@ -76,36 +63,62 @@ export function AttachmentPicker({
       />
       <button
         type="button"
-        disabled={disabled || attachment.kind === 'loading'}
+        className="conversation-attachment-picker__add"
+        aria-label={t('attachments.add')}
+        title={t('attachments.add')}
+        disabled={disabled || composer.attachment.kind === 'loading'}
         onClick={() => input.current?.click()}
       >
         <Paperclip aria-hidden="true" />
-        {t('attachments.choose')}
       </button>
-      <small>{t('attachments.limit')}</small>
-      {attachment.kind === 'none' ? null : (
-        <div className="conversation-attachment-picker__file">
-          {preview === null ? <Paperclip aria-hidden="true" /> : <img src={preview} alt="" />}
-          <span>
-            <strong>{attachment.reference.name}</strong>
-            <small>
-              {attachment.kind === 'loading'
-                ? t('attachments.saving')
-                : attachment.kind === 'missing'
-                  ? t('attachments.missing')
-                  : attachmentSize(attachment.file.bytes.byteLength)}
-            </small>
-          </span>
-          <button
-            type="button"
-            disabled={disabled}
-            aria-label={t('attachments.remove')}
-            onClick={composer.removeAttachment}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </div>
-      )}
+    </span>
+  );
+}
+
+export function AttachmentPreview({
+  composer,
+  disabled,
+}: {
+  readonly composer: ConversationComposerController;
+  readonly disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const attachment = composer.attachment;
+  const file = attachment.kind === 'ready' ? attachment.file : null;
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (file === null || !imageAttachment(file.mediaType)) {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([file.bytes], { type: file.mediaType }));
+    setPreview(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [file]);
+  if (attachment.kind === 'none') return null;
+  return (
+    <div className="conversation-attachment-picker__file">
+      {preview === null ? <Paperclip aria-hidden="true" /> : <img src={preview} alt="" />}
+      <span>
+        <strong>{attachment.reference.name}</strong>
+        <small>
+          {attachment.kind === 'loading'
+            ? t('attachments.saving')
+            : attachment.kind === 'missing'
+              ? t('attachments.missing')
+              : attachmentSize(attachment.file.bytes.byteLength)}
+        </small>
+      </span>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={t('attachments.remove')}
+        onClick={composer.removeAttachment}
+      >
+        <X aria-hidden="true" />
+      </button>
     </div>
   );
 }

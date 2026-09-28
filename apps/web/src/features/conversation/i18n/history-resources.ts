@@ -1,6 +1,7 @@
 export const historyResources = {
   en: {
     'history.search': 'Search this conversation',
+    'history.searchShort': 'Search',
     'history.keyword': 'Keyword',
     'history.person': 'Person',
     'history.anyone': 'Anyone',
@@ -27,6 +28,7 @@ export const historyResources = {
   },
   'zh-CN': {
     'history.search': '查找聊天记录',
+    'history.searchShort': '查找',
     'history.keyword': '关键词',
     'history.person': '人物',
     'history.anyone': '所有人',
