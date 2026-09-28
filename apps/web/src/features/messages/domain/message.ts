@@ -85,6 +85,22 @@ export type ReadOnlyFederatedEvent = {
   readonly serverTimestamp: number;
 };
 
+/**
+ * 解不开的原因，按用户能做什么来分：
+ * 没收到密钥、发送方不肯给（这台设备还没验证）、发送方设备不可信、消息早于加入、其他。
+ */
+export type UndecryptableReason =
+  'missing_key' | 'withheld' | 'untrusted_sender' | 'before_join' | 'other';
+
+/** 这台设备解不开的加密事件。解开以后就从这里消失。 */
+export type UndecryptableSummary = {
+  readonly count: number;
+  /** 按上面类型的先后排好、不重复。 */
+  readonly reasons: readonly UndecryptableReason[];
+  /** 发这些事件的 Matrix 用户，不重复。 */
+  readonly senders: readonly string[];
+};
+
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];
@@ -95,6 +111,8 @@ export type MessageRoomProjection = {
   readonly observedAtUnixMs: number;
   readonly readOnlyFederatedEvents: readonly ReadOnlyFederatedEvent[];
   readonly roomId: string;
+  /** 没有解不开的事件时不给。 */
+  readonly undecryptable?: UndecryptableSummary;
 };
 
 export type MessageFailureCode =

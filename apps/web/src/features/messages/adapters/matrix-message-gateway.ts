@@ -26,6 +26,8 @@ import {
   type ReadOnlyFederatedEvent,
   type MessageSignatureStatus,
   type RoomMessageSignal,
+  type UndecryptableReason,
+  type UndecryptableSummary,
 } from '@/features/messages/domain/message';
 import { err, ok } from '@/shared/result';
 
@@ -382,6 +384,7 @@ function projectRoom(
   const pendingRevisions = new Map<string, ParsedRevision[]>();
   const moderationNotices = new Map<string, ParsedModerationNotice>();
   const readOnlyFederatedEvents: ReadOnlyFederatedEvent[] = [];
+  const undecryptable = new UndecryptableTally();
   const seenMatrixEventIds = new Set<string>();
 
   for (const timelineEvent of room.timelineEvents) {
@@ -390,6 +393,10 @@ function projectRoom(
       continue;
     }
     seenMatrixEventIds.add(eventId);
+    if (timelineEvent.decryptionFailure !== undefined) {
+      undecryptable.add(timelineEvent.sender, timelineEvent.decryptionFailure);
+      continue;
+    }
     if (
       timelineEvent.type === matrixMessagePreviewEventType ||
       timelineEvent.type === matrixMessagePreviewEventTypeV2
@@ -457,6 +464,7 @@ function projectRoom(
     .toSorted(compareMessages)
     .slice(0, windowSize)
     .map(freezeMessage);
+  const undecryptableSummary = undecryptable.summary();
   return Object.freeze({
     ...(room.windowSize === undefined
       ? {}
@@ -471,7 +479,63 @@ function projectRoom(
         .slice(0, MAX_PROJECTED_READ_ONLY_EVENTS),
     ),
     roomId: room.roomId,
+    ...(undecryptableSummary === undefined ? {} : { undecryptable: undecryptableSummary }),
   });
+}
+
+const undecryptableReasonOrder: readonly UndecryptableReason[] = [
+  'missing_key',
+  'withheld',
+  'untrusted_sender',
+  'before_join',
+  'other',
+];
+
+/** SDK 的 DecryptionFailureCode 按用户能做什么归类；没见过的原因码都算“其他”。 */
+function undecryptableReason(code: string): UndecryptableReason {
+  switch (code) {
+    case 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID':
+    case 'OLM_UNKNOWN_MESSAGE_INDEX':
+    case 'HISTORICAL_MESSAGE_NO_KEY_BACKUP':
+    case 'HISTORICAL_MESSAGE_BACKUP_UNCONFIGURED':
+    case 'HISTORICAL_MESSAGE_WORKING_BACKUP':
+      return 'missing_key';
+    case 'MEGOLM_KEY_WITHHELD':
+    case 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE':
+      return 'withheld';
+    case 'SENDER_IDENTITY_PREVIOUSLY_VERIFIED':
+    case 'UNSIGNED_SENDER_DEVICE':
+    case 'UNKNOWN_SENDER_DEVICE':
+      return 'untrusted_sender';
+    case 'HISTORICAL_MESSAGE_USER_NOT_JOINED':
+      return 'before_join';
+    default:
+      return 'other';
+  }
+}
+
+/** 解不开的事件只汇总成一条提示：几百条一模一样的“解不开”占满聊天记录，比没有提示还难看。 */
+class UndecryptableTally {
+  #count = 0;
+  readonly #reasons = new Set<UndecryptableReason>();
+  readonly #senders = new Set<string>();
+
+  add(sender: string | undefined, code: string): void {
+    this.#count += 1;
+    this.#reasons.add(undecryptableReason(code));
+    if (sender !== undefined) this.#senders.add(sender);
+  }
+
+  summary(): UndecryptableSummary | undefined {
+    if (this.#count === 0) return undefined;
+    return Object.freeze({
+      count: this.#count,
+      reasons: Object.freeze(
+        undecryptableReasonOrder.filter((reason) => this.#reasons.has(reason)),
+      ),
+      senders: Object.freeze([...this.#senders].toSorted()),
+    });
+  }
 }
 
 function projectReadOnlyFederatedEvent(

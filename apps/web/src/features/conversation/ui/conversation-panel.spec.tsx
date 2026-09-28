@@ -10,7 +10,7 @@ import type {
   MessagePublicationResult,
   MessagePublisher,
 } from '@/features/messages/domain/publication';
-import type { RoomMessageSignal } from '@/features/messages/domain/message';
+import type { RoomMessageSignal, UndecryptableSummary } from '@/features/messages/domain/message';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
@@ -28,6 +28,7 @@ function harness(
   unknown = false,
   messages: readonly RoomMessageSignal[] = [],
   labels: NetworkAgentLabelStore | null = null,
+  undecryptable?: UndecryptableSummary,
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -74,6 +75,7 @@ function harness(
       state="ready"
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}
+      {...(undecryptable === undefined ? {} : { undecryptable })}
     />
   );
   render(
@@ -87,6 +89,46 @@ function harness(
   );
   return { publish, reconcile };
 }
+
+describe('解不开的加密消息', () => {
+  it('房间里只有解不开的消息时说清楚有多少条、来自谁、为什么，不说“还没有消息”', () => {
+    harness(false, [], null, {
+      count: 329,
+      reasons: ['missing_key', 'withheld'],
+      senders: [
+        agentId,
+        '@builder:agent-room.test',
+        '@tester:agent-room.test',
+        '@writer:agent-room.test',
+      ],
+    });
+
+    expect(screen.queryByText('No messages yet.')).not.toBeInTheDocument();
+    expect(
+      screen.getByText("329 encrypted messages can't be read on this device"),
+    ).toBeInTheDocument();
+    // 认识的用名字，最多点三个名，其余只说人数。
+    expect(
+      screen.getByText('From Ada, @builder:agent-room.test, @tester:agent-room.test and 1 other.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('This device never received their keys.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The sender didn't share the keys with this device because it isn't verified yet.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('一条也照样提示，发送者都点得出名时不说“其余”', () => {
+    harness(false, [], null, { count: 1, reasons: ['other'], senders: [agentId] });
+
+    expect(
+      screen.getByText("1 encrypted message can't be read on this device"),
+    ).toBeInTheDocument();
+    expect(screen.getByText('From Ada.')).toBeInTheDocument();
+    expect(screen.getByText('Decryption failed.')).toBeInTheDocument();
+  });
+});
 
 describe('人与 Agent 直接聊天', () => {
   it.each([

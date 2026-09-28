@@ -52,6 +52,20 @@ export const conversationResources = {
     'conversation.keyboard': 'Enter to send · Shift + Enter for a new line',
     'conversation.expandMessage': 'Show the whole message',
     'conversation.collapseMessage': 'Collapse the message',
+    'conversation.undecryptable.title': "{{count}} encrypted message can't be read on this device",
+    'conversation.undecryptable.title_other':
+      "{{count}} encrypted messages can't be read on this device",
+    'conversation.undecryptable.senders': 'From {{names}}.',
+    'conversation.undecryptable.sendersMore': 'From {{names}} and {{count}} other.',
+    'conversation.undecryptable.sendersMore_other': 'From {{names}} and {{count}} others.',
+    'conversation.undecryptable.separator': ', ',
+    'conversation.undecryptable.reason.missing_key': 'This device never received their keys.',
+    'conversation.undecryptable.reason.withheld':
+      "The sender didn't share the keys with this device because it isn't verified yet.",
+    'conversation.undecryptable.reason.untrusted_sender':
+      "The sending device isn't verified by its owner, so it wasn't decrypted.",
+    'conversation.undecryptable.reason.before_join': 'They were sent before you joined this room.',
+    'conversation.undecryptable.reason.other': 'Decryption failed.',
   },
   'zh-CN': {
     'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
@@ -103,5 +117,18 @@ export const conversationResources = {
     'conversation.keyboard': 'Enter 发送 · Shift + Enter 换行',
     'conversation.expandMessage': '展开全文',
     'conversation.collapseMessage': '收起',
+    'conversation.undecryptable.title': '有 {{count}} 条加密消息在这台设备上解不开',
+    'conversation.undecryptable.title_other': '有 {{count}} 条加密消息在这台设备上解不开',
+    'conversation.undecryptable.senders': '来自 {{names}}。',
+    'conversation.undecryptable.sendersMore': '来自 {{names}} 和另外 {{count}} 位。',
+    'conversation.undecryptable.sendersMore_other': '来自 {{names}} 和另外 {{count}} 位。',
+    'conversation.undecryptable.separator': '、',
+    'conversation.undecryptable.reason.missing_key': '这台设备没收到它们的密钥。',
+    'conversation.undecryptable.reason.withheld':
+      '发送方没把密钥发给这台设备，因为这台设备还没验证。',
+    'conversation.undecryptable.reason.untrusted_sender':
+      '发送方的设备没经过它主人的验证，按安全设置不解密。',
+    'conversation.undecryptable.reason.before_join': '它们发在你加入这个房间之前。',
+    'conversation.undecryptable.reason.other': '解密出错。',
   },
 } as const;

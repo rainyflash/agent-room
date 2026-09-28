@@ -1,4 +1,4 @@
-import { ArrowDown, Radio, Search, UsersRound } from 'lucide-react';
+import { ArrowDown, LockKeyhole, Radio, Search, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   useCallback,
@@ -10,7 +10,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { MessageRoomProjection } from '@/features/messages/domain/message';
+import type {
+  MessageRoomProjection,
+  UndecryptableSummary,
+} from '@/features/messages/domain/message';
 import type { Result } from '@/shared/result';
 import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
 import { ConversationSearch } from './conversation-search';
@@ -52,6 +55,8 @@ export type ConversationPanelProps = {
   readonly writesAllowed?: boolean;
   readonly state: 'ready' | 'loading' | 'failed';
   readonly submissionIds?: MessageSubmissionIdFactory;
+  /** 这台设备解不开的加密消息；有的话替代“还没有消息”，或者放在记录最前面。 */
+  readonly undecryptable?: UndecryptableSummary;
   readonly variant?: 'room' | 'direct';
 };
 
@@ -68,6 +73,7 @@ export function ConversationPanel({
   writesAllowed = true,
   state,
   submissionIds,
+  undecryptable,
   variant = 'room',
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
@@ -360,8 +366,11 @@ export function ConversationPanel({
           aria-relevant="additions text"
           aria-busy={state === 'loading'}
         >
-          {state === 'ready' && timeline.length > 0 ? (
+          {state === 'ready' && (timeline.length > 0 || undecryptable !== undefined) ? (
             <HistoryBoundary history={history} state={historyState} onLoad={loadOlder} />
+          ) : null}
+          {state === 'ready' && undecryptable !== undefined ? (
+            <UndecryptableNotice summary={undecryptable} names={names} />
           ) : null}
           {state === 'loading' ? (
             <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
@@ -369,7 +378,7 @@ export function ConversationPanel({
             <p className="conversation-panel__boundary" role="alert">
               {t('conversation.unavailable')}
             </p>
-          ) : timeline.length === 0 ? (
+          ) : timeline.length === 0 && undecryptable === undefined ? (
             <motion.div
               className="conversation-panel__empty"
               initial={reduceMotion === true ? false : { opacity: 0, y: 8 }}
@@ -471,6 +480,48 @@ export function ConversationPanel({
         input={input}
       />
     </section>
+  );
+}
+
+/** 最多点名这么多个发送者，再多就只说人数。 */
+const maxNamedUndecryptableSenders = 3;
+
+function UndecryptableNotice({
+  summary,
+  names,
+}: {
+  readonly summary: UndecryptableSummary;
+  readonly names: ReadonlyMap<string, string>;
+}) {
+  const { t } = useTranslation();
+  const named = summary.senders
+    .slice(0, maxNamedUndecryptableSenders)
+    .map((sender) => names.get(sender) ?? sender);
+  const others = summary.senders.length - named.length;
+  return (
+    <div className="conversation-undecryptable" role="status">
+      <LockKeyhole aria-hidden="true" />
+      <div>
+        <p className="conversation-undecryptable__title">
+          {t('conversation.undecryptable.title', { count: summary.count })}
+        </p>
+        {named.length === 0 ? null : (
+          <p>
+            {others > 0
+              ? t('conversation.undecryptable.sendersMore', {
+                  count: others,
+                  names: named.join(t('conversation.undecryptable.separator')),
+                })
+              : t('conversation.undecryptable.senders', {
+                  names: named.join(t('conversation.undecryptable.separator')),
+                })}
+          </p>
+        )}
+        {summary.reasons.map((reason) => (
+          <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
+        ))}
+      </div>
+    </div>
   );
 }
 
