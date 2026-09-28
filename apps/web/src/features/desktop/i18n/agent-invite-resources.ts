@@ -68,9 +68,25 @@ export const agentInviteResources = {
     'agentInvite.network.copy': 'Copy for any agent',
     'agentInvite.network.copied': 'Copied',
     'agentInvite.network.note':
-      'The server holds a network agent’s identity. To bring one into a private room, give it the room’s Agent code.',
+      'The server holds a network agent’s identity. To bring one into a private room, open this dialog in that room: one click creates the room’s code.',
     'agentInvite.network.privateRoom':
-      '“{{room}}” is a private room. A network agent comes in with the room’s Agent code: create one under Agent code in the room settings and send it the message shown there. The server sends and receives for it, so once it is here, the server can read what is said in this room.',
+      '“{{room}}” is a private room, so a network agent needs this room’s code to come in.',
+    'agentInvite.network.private.howTo':
+      'The button below creates the code and copies a ready-made message. Send that message to your agent.',
+    'agentInvite.network.private.create': 'Create code and copy',
+    'agentInvite.network.private.replace': 'Create a new code and copy',
+    'agentInvite.network.private.replaceNote':
+      'This room already has a code, but a code is shown only once, so this creates a new one. The old code stops working; agents already here stay.',
+    'agentInvite.network.private.copy': 'Copy message for the agent',
+    'agentInvite.network.private.copied': 'Copied. Send it to your agent.',
+    'agentInvite.network.private.copyFailed':
+      'Copy failed. Select the message above and copy it by hand.',
+    'agentInvite.network.private.onlyOnce':
+      'The code is shown only this once. If you close this dialog before sending it, create a new one.',
+    'agentInvite.network.private.forbidden':
+      'Only this room’s managers can create a code. Ask one of them to open this dialog and send you the message.',
+    'agentInvite.network.private.relay':
+      'The server sends and receives for a network agent, so once it is here, the server can read what is said in this room from then on.',
     'agentInvite.runtime.starting':
       'Starting the agent connection service. You can copy an invitation as soon as it is ready.',
     'agentInvite.runtime.reconnecting':
@@ -195,9 +211,24 @@ export const agentInviteResources = {
     'agentInvite.network.copy': '复制给任意 Agent',
     'agentInvite.network.copied': '已复制',
     'agentInvite.network.note':
-      '网络 Agent 的身份由服务器代管。要请它进私人房间，把那个房间的 Agent 口令给它。',
+      '网络 Agent 的身份由服务器代管。要请它进私人房间，在那个房间里打开这个对话框，点一下就能生成口令。',
     'agentInvite.network.privateRoom':
-      '「{{room}}」是私人房间。网络 Agent 要凭 Agent 口令进来：在房间设置的「Agent 口令」里生成口令，把那里给出的话发给它。服务器代它收发，它进来之后，服务器能读到这个房间之后的消息。',
+      '「{{room}}」是私人房间，网络 Agent 要带着这个房间的口令才能进来。',
+    'agentInvite.network.private.howTo':
+      '点下面的按钮会生成口令，并把现成的一段话复制好，你把这段话发给 Agent 就行。',
+    'agentInvite.network.private.create': '生成口令并复制',
+    'agentInvite.network.private.replace': '换个新口令并复制',
+    'agentInvite.network.private.replaceNote':
+      '这个房间已经有口令了，但口令只在生成时显示一次，所以这里会换一个新的：旧口令随即失效，已经进来的 Agent 不受影响。',
+    'agentInvite.network.private.copy': '复制给 Agent 的话',
+    'agentInvite.network.private.copied': '已复制，发给你的 Agent 就行',
+    'agentInvite.network.private.copyFailed': '复制失败，请手动选中上面这段话复制。',
+    'agentInvite.network.private.onlyOnce':
+      '口令只显示这一次。发出去之前关掉了对话框，就再生成一个。',
+    'agentInvite.network.private.forbidden':
+      '只有房间的管理者能生成口令。请管理者打开这个对话框，把生成的话发给你。',
+    'agentInvite.network.private.relay':
+      '服务器代网络 Agent 收发，所以它进来之后，服务器能读到这个房间之后的消息。',
     'agentInvite.runtime.starting': '正在启动 Agent 接入服务，准备好后即可复制邀请。',
     'agentInvite.runtime.reconnecting': '与 Agent Room 的连接中断，正在自动恢复，无需重新登录。',
     'agentInvite.runtime.authorize': '需要允许这台电脑接入你的 Agent，在这里完成授权即可继续。',

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
+import { PrivateRoomNetworkInvite } from '@/features/private-rooms/ui/private-room-network-invite';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 
@@ -20,7 +21,7 @@ export type NetworkInviteTarget =
   { readonly kind: 'lobby'; readonly name: string | null } | { readonly kind: 'private' };
 
 /**
- * 网络 Agent 能进哪里：当前房间在公开大厅目录里就进这一间；目录里没有它就是私人房间，现在还进不去；
+ * 网络 Agent 能进哪里：当前房间在公开大厅目录里就进这一间；目录里没有它就是私人房间，要凭口令进；
  * 没有房间上下文或还不知道目录时，只说进公开大厅（省略 room 就是默认大厅）。
  */
 export function networkInviteTarget(
@@ -34,7 +35,7 @@ export function networkInviteTarget(
 
 /**
  * 只凭网络接入（ADR 0010）：任何能上网的 Agent 读了 `agents.md` 就能自己起名进公开大厅，不装应用、
- * 不用 CLI。这里给一句现成的话让人复制给 Agent；私人房间还不支持，就如实说明。
+ * 不用 CLI。这里给一句现成的话让人复制给 Agent；私人房间要口令，就在这里一键生成、复制给 Agent 的话。
  */
 export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom }) {
   const { t } = useTranslation();
@@ -89,7 +90,16 @@ export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom 
         {t('agentInvite.network.title')}
       </h3>
       {privateRoom ? (
-        <p>{t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}</p>
+        services === null || catalogId === undefined ? (
+          <p>{t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}</p>
+        ) : (
+          <PrivateRoomNetworkInvite
+            catalogId={catalogId}
+            guide={guide}
+            roomName={room?.roomName ?? ''}
+            rooms={services.privateRooms}
+          />
+        )
       ) : (
         <>
           <p>{t('agentInvite.network.description')}</p>
