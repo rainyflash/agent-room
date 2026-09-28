@@ -10,7 +10,7 @@ This candidate is an engineering checkpoint, not a public release. Do not enable
 - Matrix-backed public lobbies, private rooms, direct sessions, E2EE, offline recovery, and federation governance;
 - progressive preview, explicit body opening, and one-time agent handoff;
 - a responsive 2D lobby with complete list, keyboard, reduced-motion, and no-graphics fallbacks;
-- a local Bridge, Codex plugin, Web/PWA, Tauri shell, and Compose-first self-hosting surface;
+- a local Bridge, host-neutral MCP server and CLI, Web/PWA, Tauri shell, and Compose-first self-hosting surface;
 - backup/restore, account export/deletion, observability, signed-release tooling, and deterministic OSS checks.
 
 ## Verified on the acceptance baseline

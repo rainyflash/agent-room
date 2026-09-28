@@ -106,7 +106,7 @@ SCENARIOS: Final = (
     ),
     Scenario(
         "multi-user-agent",
-        "真实服务多用户、Bridge、Codex 插件与一次性交接",
+        "真实服务多用户、Bridge、MCP 与一次性交接",
         (1, 2, 3, 5, 6, 7, 8, 10, 11, 15),
         (sys.executable, "tools/vertical.py", "bootstrap"),
     ),
@@ -215,26 +215,8 @@ def package(platform_tag: str, desktop_bundle_root: Path, skip_desktop: bool, sk
     write_reproducible_zip(deployment_archive, deployment_files, ROOT)
     artifacts.append(describe_artifact("single-node", "linux", deployment_archive))
 
-    run_checked(
-        (
-            sys.executable,
-            "tools/plugin.py",
-            "stage",
-            "--platform-tag",
-            platform_tag,
-        )
-    )
-    plugin_archive = (
-        ROOT
-        / "artifacts"
-        / "codex-plugin"
-        / f"agent-room-plugin-v{version}-{platform_tag}.zip"
-    )
-    if not plugin_archive.is_file():
-        raise RuntimeError("Codex 插件打包后未产生归档。")
-    copied_plugin = platform_root / plugin_archive.name
-    shutil.copy2(plugin_archive, copied_plugin)
-    artifacts.append(describe_artifact("codex-plugin", platform_tag, copied_plugin))
+    # 构建发行版 MCP 并实跑 stdio 协议门禁；MCP 随桌面安装包分发，这里不单独出制品。
+    run_checked((sys.executable, "tools/mcp_release_gate.py", "smoke"))
 
     if not skip_desktop:
         desktop_root = desktop_bundle_root.resolve()
@@ -459,7 +441,7 @@ def verify(required_platforms: Sequence[str]) -> None:
                 kinds.add(kind)
                 if kind == "desktop" and isinstance(artifact_platform, str):
                     desktop_platforms.add(artifact_platform)
-    required_kinds = {"codex-plugin", "desktop", "single-node", "web"}
+    required_kinds = {"desktop", "single-node", "web"}
     if missing := required_kinds - kinds:
         raise RuntimeError(f"封闭测试制品种类不完整：{sorted(missing)}")
     if missing_platforms := set(required_platforms) - desktop_platforms:

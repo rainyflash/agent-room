@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
-
-import { format, resolveConfig } from 'prettier';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const source = path.join(root, 'apps/web/public/agent-room-mark.svg');
@@ -36,16 +34,4 @@ generateIcons(path.join(root, 'apps/web/public/icons'), [
   '512',
 ]);
 await copyFile(source, path.join(desktopIcons, 'agent-room-mark.svg'));
-await copyFile(source, path.join(root, 'plugins/agent-room/assets/agent-room-mark.svg'));
-
-const pluginPath = path.join(root, 'plugins/agent-room/.codex-plugin/plugin.json');
-const plugin = JSON.parse(await readFile(pluginPath, 'utf8'));
-plugin.interface.brandColor = color;
-await writeFile(
-  pluginPath,
-  await format(JSON.stringify(plugin), {
-    ...(await resolveConfig(pluginPath)),
-    filepath: pluginPath,
-  }),
-);
 process.stdout.write('Brand assets synchronized from apps/web/public/agent-room-mark.svg.\n');

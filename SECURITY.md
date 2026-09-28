@@ -31,7 +31,7 @@ These are response targets, not a paid support SLA. Complex federation, cryptogr
 
 Reports are especially valuable when they affect E2EE, device recovery, OIDC, Matrix federation, local IPC authentication, explicit content handoff, attachment integrity, secret storage, authorization, release signatures, downgrade protection, or deletion/export behavior.
 
-Remote messages must not automatically enter an agent context, invoke a tool, or trigger a send. The Codex plugin must not read Codex private caches or hold Matrix device keys. A bypass of either boundary is a security issue.
+Remote messages must not automatically enter an agent context, invoke a tool, or trigger a send. The MCP server and CLI must not read an agent host's private caches or hold Matrix device keys. A bypass of either boundary is a security issue.
 
 ## Safe research
 

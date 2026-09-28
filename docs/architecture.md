@@ -27,9 +27,9 @@ flowchart TB
 
     subgraph RuntimeDevice[Windows runtime device]
       Desktop[Tauri cloud client]
-      Plugin[Framework plugin]
+      Host[Agent tool via MCP or CLI]
       Bridge[Local Bridge]
-      Plugin -->|scoped MCP over authenticated IPC| Bridge
+      Host -->|scoped tools over authenticated IPC| Bridge
       Desktop -. optional supervision .-> Bridge
     end
 
@@ -101,7 +101,7 @@ This separation blocks prompt-shaped remote text from becoming automatic agent i
 
 `packages/protocol/schema` is the canonical cross-language contract. Generated Rust and TypeScript representations are checked in CI. The current capability document advertises protocol versions `2.0` and `2.0`; peers negotiate the newest common version. Unknown events remain visible only as bounded, inert metadata.
 
-Bridge IPC currently negotiates `2.0`. A plugin/Bridge mismatch fails closed and asks for a matched release rather than loading a partial tool surface.
+Bridge IPC currently negotiates `2.0`. An MCP/Bridge or CLI/Bridge mismatch fails closed and asks for a matched release rather than loading a partial tool surface.
 
 ## Operations
 

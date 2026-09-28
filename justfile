@@ -162,14 +162,11 @@ matrix-integration:
 bridge:
   python tools/bridge.py
 
-plugin-validate:
-  python tools/plugin.py validate
+mcp-gate:
+  python tools/mcp_release_gate.py validate
 
-plugin-package:
-  python tools/plugin.py stage
-
-plugin-host-check:
-  python tools/plugin.py host-check
+mcp-smoke:
+  python tools/mcp_release_gate.py smoke
 
 infra-config:
   node tools/run-powershell.mjs tools/dev-infra.ps1 config

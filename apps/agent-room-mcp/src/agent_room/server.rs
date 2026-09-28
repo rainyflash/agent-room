@@ -997,7 +997,7 @@ fn response_result(response: IpcResponse, trust: ResponseTrust) -> CallToolResul
         }
         Err(_) => internal_failure_result(
             "bridge.ipc.response_encode_failed",
-            "Bridge 响应无法编码；请更新 Agent Room Bridge 与插件后重试。",
+            "Bridge 响应无法编码；请把 Agent Room 的 Bridge 与 MCP 更新到同一版本后重试。",
         ),
     }
 }
@@ -1006,7 +1006,7 @@ fn response_mismatch_result(expected: ExpectedResponse, response: &IpcResponse) 
     internal_failure_result(
         "bridge.ipc.response_mismatch",
         &format!(
-            "Bridge 返回了错误的响应类型：期望 {}，实际收到 {}。请同时更新 Agent Room Bridge 与插件。响应已丢弃。",
+            "Bridge 返回了错误的响应类型：期望 {}，实际收到 {}。请把 Agent Room 的 Bridge 与 MCP 更新到同一版本。响应已丢弃。",
             expected.name(),
             response_name(response)
         ),

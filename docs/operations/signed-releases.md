@@ -6,7 +6,7 @@
 
 Agent Room Alpha 使用三层彼此独立的证据，任何一层都不能替代另一层：
 
-1. GitHub OIDC + Sigstore 证明二进制、插件、更新 JSON 和 OCI 镜像由受保护的候选工作流生成；
+1. GitHub OIDC + Sigstore 证明二进制、更新 JSON 和 OCI 镜像由受保护的候选工作流生成；
 2. Tauri minisign 密钥为桌面更新归档提供安装器强制验证；
 3. testing 专用 Ed25519 发布密钥签署根发布清单，约束渠道、单调序号、版本、有效期、回滚来源和全部产物摘要。
 
@@ -67,7 +67,7 @@ target/release/agent-room-release-tool keygen \
 
 工作流执行以下动作：
 
-1. 在 GitHub 官方 Windows x64 和 macOS ARM64 runner 上构建 NSIS / DMG 安装器、Tauri 更新归档、Bridge、通用 MCP 和 Codex 配置适配器，并执行各平台原生安装验收；macOS 还必须通过上述签名与公证检查；
+1. 在 GitHub 官方 Windows x64 和 macOS ARM64 runner 上构建 NSIS / DMG 安装器、Tauri 更新归档、Bridge 和通用 MCP，用发行构建的 MCP 实跑 stdio 协议门禁（`tools/mcp_release_gate.py`），并执行各平台原生安装验收；macOS 还必须通过上述签名与公证检查；
 2. 仅当 `profile=full` 时，在 GitHub 官方 amd64 与 arm64 Linux runner 上分别原生构建 `control-plane`、`identity`、`web`，记录每个平台不可变 digest，再合并为 amd64/arm64 OCI Index；禁止在 x64 runner 上用 QEMU 编译 Rust 控制面；
 3. 为每个产物生成 CycloneDX SBOM、摘要和 Sigstore bundle；OCI bundle 签署原始 Index manifest，并要求该文件 SHA-256 与远端不可变 digest 完全一致；
 4. 合并 Tauri 平台更新清单并同样生成 SBOM 与签名；

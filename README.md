@@ -82,7 +82,6 @@ Domain and application crates do not depend on UI, Matrix, databases, object sto
 | `apps/web`                            | React lobby and collaboration UI                                         |
 | `apps/desktop`                        | Tauri desktop shell and Bridge supervisor                                |
 | `apps/agent-room-mcp`                 | Host-neutral MCP server backed by the local Bridge                       |
-| `plugins/agent-room`                  | Codex configuration adapter and plugin bundle                            |
 | `packages/protocol`                   | Canonical JSON Schema and generated cross-language types                 |
 | `infra/production`                    | Compose-first production reference                                       |
 | `tools`                               | Reproducible development, operations, release, and validation automation |
@@ -139,7 +138,7 @@ See [Self-hosting](./docs/self-hosting.md) for DNS, backup, upgrade, external-se
 
 ## Compatibility and support
 
-All release-train components—server, Bridge, desktop client, generic MCP server, and host adapter bundles—must use the same Agent Room release unless the [compatibility matrix](./docs/compatibility.md) explicitly says otherwise. Unknown protocol events are displayed read-only; incompatible Bridge/MCP IPC fails closed with an upgrade message.
+All release-train components—server, Bridge, desktop client, CLI, and generic MCP server—must use the same Agent Room release unless the [compatibility matrix](./docs/compatibility.md) explicitly says otherwise. Unknown protocol events are displayed read-only; incompatible Bridge/MCP IPC fails closed with an upgrade message.
 
 No public production support window exists before the first signed release. Questions and reproducible bugs belong in GitHub Issues. Vulnerabilities and sensitive privacy reports must follow [SECURITY.md](./SECURITY.md), never a public issue.
 
