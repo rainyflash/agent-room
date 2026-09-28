@@ -56,6 +56,7 @@ const statusEventSchema = z
     leaseExpiresAt: z.iso.datetime({ offset: true }),
     lastPolledAt: z.iso.datetime({ offset: true }).optional(),
     listeningUntil: z.iso.datetime({ offset: true }).nullable().optional(),
+    waitingUntil: z.iso.datetime({ offset: true }).nullable().optional(),
     progress: z.number().min(0).max(1).optional(),
     schemaVersion: z.literal('1.0'),
     signature: z
@@ -70,11 +71,10 @@ const statusEventSchema = z
   })
   .superRefine((event, context) => {
     limitProperties(24)(event, context);
+    const createdAt = Date.parse(event.createdAt);
     if (
-      event.listeningUntil !== undefined &&
-      event.listeningUntil !== null &&
-      Date.parse(event.listeningUntil) >
-        Date.parse(event.createdAt) + agentLifecyclePolicy.receptionFreshnessMs
+      exceeds(event.listeningUntil, createdAt + agentLifecyclePolicy.receptionFreshnessMs) ||
+      exceeds(event.waitingUntil, createdAt + agentLifecyclePolicy.waitingLeaseMs)
     ) {
       context.addIssue({ code: 'custom', message: '等待信号过期时间超出上限。' });
     }
@@ -89,6 +89,21 @@ const statusEventSchema = z
   });
 
 type ParsedStatusEvent = z.output<typeof statusEventSchema>;
+
+function exceeds(deadline: string | null | undefined, limit: number): boolean {
+  return deadline !== undefined && deadline !== null && Date.parse(deadline) > limit;
+}
+
+/**
+ * 旧版只发 `listeningUntil`（最多 15 秒）；新版另带 `waitingUntil`（最多 3 分钟），
+ * 跟着续租就能一直亮着，不必每几秒重发。取两者中较晚的一个。
+ */
+function waitDeadline(event: ParsedStatusEvent): number | null {
+  const deadlines = [event.listeningUntil, event.waitingUntil].flatMap((deadline) =>
+    deadline === undefined || deadline === null ? [] : [Date.parse(deadline)],
+  );
+  return deadlines.length === 0 ? null : Math.max(...deadlines);
+}
 
 type AgentCandidate = {
   readonly createdAtUnixMs: number;
@@ -231,15 +246,14 @@ function aggregateAgent(
     const polled = Date.parse(candidate.event.lastPolledAt);
     return polled <= candidate.createdAtUnixMs ? [polled] : [];
   });
-  const waitDeadlines = candidates.flatMap((candidate) =>
-    candidate.status !== 'offline' &&
-    candidate.event.listeningUntil !== undefined &&
-    candidate.event.listeningUntil !== null
-      ? [Date.parse(candidate.event.listeningUntil)]
-      : [],
-  );
+  const waitDeadlines = candidates.flatMap((candidate) => {
+    const deadline = candidate.status === 'offline' ? null : waitDeadline(candidate.event);
+    return deadline === null ? [] : [deadline];
+  });
   const receptionKnown = candidates.some(
-    (candidate) => candidate.status !== 'offline' && candidate.event.listeningUntil !== undefined,
+    (candidate) =>
+      candidate.status !== 'offline' &&
+      (candidate.event.listeningUntil !== undefined || candidate.event.waitingUntil !== undefined),
   );
   return [
     Object.freeze({

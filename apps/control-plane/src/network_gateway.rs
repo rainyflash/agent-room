@@ -45,7 +45,6 @@ use agent_room_bridge_core::{
     status::{AgentStatusIntent, HostAgentState},
 };
 use agent_room_domain::{
-    agent_lifecycle::RECEPTION_FRESHNESS_MS,
     content::{ContentEncryptionMode, ContentMediaType},
     ids::{AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
     messages::{
@@ -77,7 +76,7 @@ const FIRST_SYNC_TIMELINE_LIMIT: u16 = 20;
 const SYNC_TIMELINE_LIMIT: u16 = 50;
 /// 最多留这么多条没确认的；再多就丢掉最早的，并在下次取消息时告诉 Agent 丢了几条。
 pub(crate) const INBOX_CAPACITY: u32 = 200;
-/// 长轮询分段等，每段不超过这么久，好在“等待消息”过期前续上。
+/// 长轮询分段等，每段不超过这么久：到了续租时间，等待中也能续上。
 const SYNC_CHUNK: Duration = Duration::from_secs(10);
 /// 聊天正文的媒体类型，与 MCP 的聊天发言一致。
 const CHAT_MEDIA_TYPE: &str = "text/plain";
@@ -207,7 +206,7 @@ pub(crate) struct NetworkGateway {
     /// 这个进程刚切到加密客户端的：切之前取的会话里还没有 `encrypted_since`。
     switched: Mutex<HashSet<NetworkAgentId>>,
     polls: LongPolls,
-    presence: presence::Presence,
+    presence: Arc<presence::Presence>,
 }
 
 impl NetworkGateway {
@@ -224,7 +223,7 @@ impl NetworkGateway {
             encrypted: dependencies.encrypted,
             switched: Mutex::new(HashSet::new()),
             polls: LongPolls::default(),
-            presence: presence::Presence::default(),
+            presence: Arc::default(),
         }
     }
 
@@ -368,27 +367,6 @@ impl NetworkGateway {
         left
     }
 
-    /// 发“等待消息”：`listeningUntil` 最多为当前时间加 15 秒，也不超过这次还要等的时间。
-    async fn announce_listening(&self, session: &NetworkAgentSession, remaining: Duration) {
-        let now = self.clock.now();
-        let freshness = u64::try_from(RECEPTION_FRESHNESS_MS).unwrap_or(0);
-        let window = u64::try_from(remaining.as_millis())
-            .unwrap_or(u64::MAX)
-            .min(freshness);
-        let Some(until) = agent_room_domain::time::DurationMillis::new(window.max(1))
-            .ok()
-            .and_then(|window| now.checked_add(window).ok())
-        else {
-            return;
-        };
-        let intent = AgentStatusIntent::new(HostAgentState::Available, None)
-            .with_last_polled_at(Some(now))
-            .with_listening_until(Some(until));
-        self.presence
-            .publish(&self.matrix, &self.clock, session, &intent)
-            .await;
-    }
-
     fn submissions_for(&self, session: &NetworkAgentSession) -> speaking::AgentSubmissions {
         speaking::AgentSubmissions {
             store: self.submissions.clone(),
@@ -410,6 +388,8 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         let poll = self.polls.begin(session.network_agent_id);
+        let mut waiting =
+            presence::WaitAnnouncement::new(&self.presence, &self.matrix, &self.clock, &session);
         let deadline = Instant::now() + wait.min(MAX_WAIT);
         let limit = limit.clamp(1, MAX_PAGE);
         loop {
@@ -426,8 +406,7 @@ impl NetworkGateway {
             }
             let chunk = remaining.min(SYNC_CHUNK);
             if !first {
-                // 要等了：告诉房间里的人它在等消息。每一段最多等 10 秒，好在 15 秒内续上。
-                self.announce_listening(&session, remaining).await;
+                waiting.announce().await;
             }
             let request = NetworkAgentSyncRequest {
                 since: page.sync_token.clone(),

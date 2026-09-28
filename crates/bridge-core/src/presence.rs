@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use agent_room_application::ports::{
     Clock, DeviceSignature, MatrixEventId, MatrixRoomId, MatrixRoomStatePosition,
@@ -751,25 +754,23 @@ fn parse_status(
         })
         .transpose()?
         .filter(|polled| *polled <= created_at);
-    let listening_until = wire
-        .extensions
-        .get("listeningUntil")
-        .filter(|value| !value.is_null())
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or(PresenceSyncIssueReason::InvalidEnvelope)
-                .and_then(parse_time)
-        })
-        .transpose()?;
-    if listening_until.is_some_and(|until| {
-        until.value()
-            > created_at
-                .value()
-                .saturating_add(agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS)
-    }) {
-        return Err(PresenceSyncIssueReason::InvalidEnvelope);
-    }
+    // 旧版写的一方只有 `listeningUntil`（最多 15 秒）；新版另带 `waitingUntil`（最多 3 分钟），
+    // 取两者中较晚的作为等待截止。
+    let listening_until = wait_deadline(
+        &wire.extensions,
+        "listeningUntil",
+        created_at,
+        agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS,
+    )?;
+    let waiting_until = wait_deadline(
+        &wire.extensions,
+        "waitingUntil",
+        created_at,
+        agent_room_domain::agent_lifecycle::WAITING_LEASE_MS,
+    )?;
+    let reception_known = wire.extensions.contains_key("listeningUntil")
+        || wire.extensions.contains_key("waitingUntil");
+    let listening_until = listening_until.max(waiting_until);
     let claimed_expiry = parse_time(&wire.lease_expires_at)?;
     let effective_expiry = evaluate_lease(created_at, claimed_expiry, observed_at, policy)?;
     let status = wire_status(&wire.status);
@@ -785,12 +786,35 @@ fn parse_status(
             published_at: created_at,
             last_polled_at,
             listening_until,
-            reception_known: wire.extensions.contains_key("listeningUntil"),
+            reception_known,
         }),
         origin_server_timestamp,
         canonical_event,
         signature,
     })
+}
+
+/// 读一个等待截止字段：缺省或 `null` 表示没在等待；晚于发布时间超过 `limit_ms` 的整条事件作废。
+fn wait_deadline(
+    extensions: &BTreeMap<String, Value>,
+    field: &str,
+    created_at: UtcMillis,
+    limit_ms: i64,
+) -> Result<Option<UtcMillis>, PresenceSyncIssueReason> {
+    let deadline = extensions
+        .get(field)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or(PresenceSyncIssueReason::InvalidEnvelope)
+                .and_then(parse_time)
+        })
+        .transpose()?;
+    if deadline.is_some_and(|until| until.value() > created_at.value().saturating_add(limit_ms)) {
+        return Err(PresenceSyncIssueReason::InvalidEnvelope);
+    }
+    Ok(deadline)
 }
 
 fn parse_roster_policy(event: &MatrixTimelineEvent) -> Option<AgentRosterPolicy> {

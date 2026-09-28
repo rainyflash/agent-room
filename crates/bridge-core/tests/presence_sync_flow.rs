@@ -243,6 +243,41 @@ async fn 等待信号受签名和时限保护并读取房间统一归档规则()
 }
 
 #[tokio::test]
+async fn 新版的等待租约取较晚的截止且超过三分钟整条作废() {
+    let fixture = 测试夹具::new();
+    let mut payload = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    payload["listeningUntil"] = json!("2026-04-24T12:00:15.000Z");
+    payload["waitingUntil"] = json!("2026-04-24T12:03:00.000Z");
+    sign_payload(&fixture.signing_key, &mut payload);
+    let mut excessive = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    excessive["listeningUntil"] = json!("2026-04-24T12:00:15.000Z");
+    excessive["waitingUntil"] = json!("2026-04-24T12:03:00.001Z");
+    sign_payload(&fixture.signing_key, &mut excessive);
+    let outcome = fixture
+        .service()
+        .process(
+            &sync_with_state(vec![
+                membership_event("join"),
+                status_timeline_event("$valid:matrix.test", payload, 2),
+                status_timeline_event("$excessive:matrix.test", excessive, 3),
+            ]),
+            true,
+        )
+        .await
+        .expect("同步成功");
+    assert_eq!(outcome.accepted_statuses(), 1);
+    assert_eq!(outcome.issues().len(), 1);
+    let batches = fixture.projections.batches.lock().unwrap();
+    assert_eq!(
+        batches[0].rooms()[0].presences()[0]
+            .listening_until()
+            .unwrap()
+            .value(),
+        NOW_UNIX_MS + 180_000
+    );
+}
+
+#[tokio::test]
 async fn 篡改签名与超长租约被逐条隔离而不污染投影() {
     let fixture = 测试夹具::new();
     let mut tampered_payload = status_payload("working", NOW_RFC3339, EXPIRY_RFC3339);

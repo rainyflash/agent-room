@@ -336,8 +336,8 @@ async fn 慢于窗口的往返只结束持续监听的一轮而不是整个等�
     assert_eq!(start.elapsed(), SlowBackend::DELAY, "在途请求跑完才收尾");
     assert_eq!(
         listening.names(),
-        ["wait_inbox", "read_inbox"],
-        "窗口结束仍然撤销等待状态"
+        ["wait_inbox"],
+        "持续监听马上开始下一轮，窗口结束不撤销等待状态，免得房间里等待信号一闪一闪"
     );
 }
 

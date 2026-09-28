@@ -1,7 +1,7 @@
 use agent_room_domain::{
     agent_lifecycle::{
         AgentPresenceEvidence, DEFAULT_ARCHIVE_AFTER_DAYS, RECENT_OFFLINE_LIMIT,
-        RECEPTION_FRESHNESS_MS, RECONNECT_GRACE_MS,
+        RECEPTION_FRESHNESS_MS, RECONNECT_GRACE_MS, WAITING_LEASE_MS,
     },
     agent_status::AgentWorkStatus,
 };
@@ -20,6 +20,7 @@ struct Policy {
     recent_offline_limit: usize,
     reconnect_grace_ms: i64,
     reception_freshness_ms: i64,
+    waiting_lease_ms: i64,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +56,7 @@ fn rust_and_web_share_the_same_state_boundaries() {
         fixture.policy.reception_freshness_ms,
         RECEPTION_FRESHNESS_MS
     );
+    assert_eq!(fixture.policy.waiting_lease_ms, WAITING_LEASE_MS);
     for case in fixture.cases {
         let status = match case.status.as_str() {
             "idle" => AgentWorkStatus::Idle,

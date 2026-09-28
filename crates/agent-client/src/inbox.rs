@@ -106,8 +106,10 @@ pub async fn wait_for_messages(
         let next_check = tokio::time::Instant::now() + Duration::from_secs(1);
         tokio::time::sleep_until(deadline.map_or(next_check, |end| end.min(next_check))).await;
         if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) {
-            return if mode == MessageReadMode::Inbox {
-                // Finish the wait explicitly. A killed process is covered by the short wait lease.
+            // Finish an explicit wait with a plain read so the room stops showing it as waiting. A
+            // listener starts its next round at once and must not flap. A killed process never
+            // gets here; the Bridge clears its wait after a short silence.
+            return if mode == MessageReadMode::Inbox && answer_due {
                 backend
                     .invoke(IpcMethod::WithSession {
                         session_id,

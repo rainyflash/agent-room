@@ -261,62 +261,129 @@ async fn 拒绝未来的接待证据() {
     );
 }
 
+fn waiting(polled: i64) -> AgentStatusIntent {
+    AgentStatusIntent::new(HostAgentState::Available, None)
+        .with_last_polled_at(Some(time(polled)))
+        .with_waiting(true)
+}
+
 #[tokio::test]
-async fn 等待开始结束立即发布且普通续租不延长等待信号() {
+async fn 等待开始结束各发一次且等待期间只跟着续租() {
     let fixture = fixture();
     let mut service = fixture.service();
     let room = target(AgentStatusVisibility::Coarse);
-    let waiting = AgentStatusIntent::new(HostAgentState::Available, None)
-        .with_last_polled_at(Some(time(1_000)))
-        .with_listening_until(Some(time(16_000)));
     service
-        .publish_if_due(&room, &waiting, 0)
+        .publish_if_due(&room, &waiting(1_000), 0)
         .await
-        .expect("等待发布");
-    fixture.clock.set(time(2_000));
+        .expect("开始等待");
+    // 等待中的 Agent 每秒轮询一次：以前每 5 秒重发一条，现在一条也不发。
+    for second in 2..=105 {
+        fixture.clock.set(time(second * 1_000));
+        service
+            .publish_if_due(&room, &waiting(second * 1_000), 0)
+            .await
+            .expect("等待中的轮询");
+    }
+    fixture.clock.set(time(106_000));
     service
-        .publish_if_due(
-            &room,
-            &waiting.clone().with_listening_until(Some(time(17_000))),
-            0,
-        )
+        .publish_if_due(&room, &waiting(106_000), 0)
         .await
-        .expect("频繁等待检查受节流保护");
-    fixture.clock.set(time(6_000));
-    service
-        .publish_if_due(
-            &room,
-            &waiting.clone().with_listening_until(Some(time(21_000))),
-            0,
-        )
-        .await
-        .expect("等待信号更新");
-    fixture.clock.set(time(7_000));
-    let resumed = waiting.clone().with_listening_until(None);
+        .expect("续租带上等待");
+    fixture.clock.set(time(107_000));
+    let resumed = AgentStatusIntent::new(HostAgentState::Available, None)
+        .with_last_polled_at(Some(time(107_000)));
     service
         .publish_if_due(&room, &resumed, 0)
         .await
-        .expect("有消息后结束等待");
-    fixture.clock.set(time(120_000));
+        .expect("结束等待");
+    fixture.clock.set(time(300_000));
     service
         .publish_if_due(&room, &resumed, 0)
         .await
         .expect("后台续租");
     let events = fixture.publisher.events.lock().expect("events lock");
     assert_eq!(events.len(), 4);
+    // 旧版读取方只认 15 秒的 `listeningUntil`；新版读 3 分钟的 `waitingUntil`。
     assert_eq!(
         events[0].1.content()["listeningUntil"],
         "1970-01-01T00:00:16.000Z"
     );
     assert_eq!(
-        events[1].1.content()["listeningUntil"],
-        "1970-01-01T00:00:21.000Z"
+        events[0].1.content()["waitingUntil"],
+        "1970-01-01T00:03:01.000Z"
     );
-    assert!(events[2].1.content()["listeningUntil"].is_null());
-    assert!(events[3].1.content()["listeningUntil"].is_null());
+    assert_eq!(
+        events[1].1.content()["waitingUntil"],
+        "1970-01-01T00:04:46.000Z"
+    );
+    for (_, event) in &events[2..] {
+        assert!(event.content()["listeningUntil"].is_null());
+        assert!(event.content().get("waitingUntil").is_none());
+    }
     for (_, event) in events.iter() {
         assert_protocol_event(event.content());
     }
+}
+
+#[tokio::test]
+async fn 续租来得晚时等待信号快到期也会先续一条() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let room = target(AgentStatusVisibility::Coarse);
+    // 抖动取最大：续租要到 136 秒，而等待信号 181 秒到期，剩 1 分钟时就得续上。
+    service
+        .publish_if_due(&room, &waiting(1_000), 30_000)
+        .await
+        .expect("开始等待");
+    fixture.clock.set(time(120_000));
+    let not_yet = service
+        .publish_if_due(&room, &waiting(120_000), 0)
+        .await
+        .expect("还剩一分多钟");
+    assert!(matches!(not_yet, StatusPublicationOutcome::NotDue { .. }));
+    fixture.clock.set(time(121_000));
+    let renewed = service
+        .publish_if_due(&room, &waiting(121_000), 0)
+        .await
+        .expect("剩一分钟时续上");
+    assert_published_reason(&renewed, StatusPublicationReason::Renewal);
+    let events = fixture.publisher.events.lock().expect("events lock");
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[1].1.content()["waitingUntil"],
+        "1970-01-01T00:05:01.000Z"
+    );
+}
+
+#[tokio::test]
+async fn 没在等待时最近读取隔一分钟才单独发一条() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let room = target(AgentStatusVisibility::Coarse);
+    let read_at = |polled: i64| {
+        AgentStatusIntent::new(HostAgentState::Available, None)
+            .with_last_polled_at(Some(time(polled)))
+    };
+    service
+        .publish_if_due(&room, &read_at(1_000), 0)
+        .await
+        .expect("首次发布");
+    fixture.clock.set(time(60_000));
+    service
+        .publish_if_due(&room, &read_at(60_000), 0)
+        .await
+        .expect("不到一分钟");
+    fixture.clock.set(time(61_000));
+    service
+        .publish_if_due(&room, &read_at(61_000), 0)
+        .await
+        .expect("满一分钟");
+    let events = fixture.publisher.events.lock().expect("events lock");
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[1].1.content()["lastPolledAt"],
+        "1970-01-01T00:01:01.000Z"
+    );
 }
 
 #[tokio::test]
