@@ -12,7 +12,9 @@
     { "$ref": "#/$defs/ModerationNoticeEvent" },
     { "$ref": "#/$defs/AgentStatusEvent" },
     { "$ref": "#/$defs/HandoffRequestEvent" },
-    { "$ref": "#/$defs/HandoffReceiptEvent" }
+    { "$ref": "#/$defs/HandoffReceiptEvent" },
+    { "$ref": "#/$defs/RoomKeyRequestEvent" },
+    { "$ref": "#/$defs/RoomKeysEvent" }
   ],
   "$defs": {
     "ErrorCategory": {
@@ -869,6 +871,94 @@
           }
         }
       ],
+      "additionalProperties": true,
+      "maxProperties": 20
+    },
+    "RoomKeyRequestEvent": {
+      "type": "object",
+      "required": ["schemaVersion", "eventType", "id", "createdAt", "roomId", "sessionIds"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.room_keys.request.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "sessionIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}$" }
+        }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "RoomKeyExport": {
+      "type": "object",
+      "required": ["sessionId", "sessionKey"],
+      "properties": {
+        "sessionId": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}$" },
+        "sessionKey": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 1024,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RoomKeysEvent": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventType",
+        "id",
+        "createdAt",
+        "requestId",
+        "roomId",
+        "senderKey",
+        "senderEd25519Key",
+        "keys"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.room_keys.v1" },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "requestId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        },
+        "senderKey": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}$" },
+        "senderEd25519Key": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}$" },
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/RoomKeyExport" }
+        }
+      },
       "additionalProperties": true,
       "maxProperties": 20
     },

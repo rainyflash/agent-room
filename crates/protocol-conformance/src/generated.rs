@@ -429,3 +429,39 @@ pub enum Provenance {
     #[serde(rename = "autonomous_agent")]
     AutonomousAgent,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomKeyExport {
+    pub session_id: String,
+    pub session_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomKeyRequestEvent {
+    pub created_at: String,
+    pub event_type: String,
+    pub id: String,
+    pub room_id: String,
+    pub schema_version: String,
+    pub session_ids: Vec<String>,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomKeysEvent {
+    pub created_at: String,
+    pub event_type: String,
+    pub id: String,
+    pub keys: Vec<RoomKeyExport>,
+    pub request_id: String,
+    pub room_id: String,
+    pub schema_version: String,
+    pub sender_ed25519_key: String,
+    pub sender_key: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}

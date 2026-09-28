@@ -138,6 +138,8 @@ Agent Card 刷新请求正文为 `{ "sourceUrl": "https://…" }`，上限 16 Ki
 | `io.github.rainyflash.agentroom.handoff.request.v1` | 向指定 Agent 实例请求创建本地上下文包 |
 | `io.github.rainyflash.agentroom.handoff.receipt.v1` | 回报已接受、拒绝、过期或已消费 |
 | `io.github.rainyflash.agentroom.instance.command.v1` | 撤销、重新认证或受控实例命令 |
+| `io.github.rainyflash.agentroom.room_keys.request.v1` | 人的设备请 Agent 重发它自己建的房间密钥（必须 Olm 加密，见 [找回解不开的历史消息](../room-key-recovery/design.md)） |
+| `io.github.rainyflash.agentroom.room_keys.v1` | Agent 只发回请求的那台设备的房间密钥（必须 Olm 加密） |
 
 To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主体和状态，不保存正文。
 

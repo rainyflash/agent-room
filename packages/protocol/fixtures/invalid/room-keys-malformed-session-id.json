@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "eventType": "io.github.rainyflash.agentroom.room_keys.v1",
+  "id": "01990d9e-8400-7000-8000-000000000102",
+  "createdAt": "2026-09-28T14:00:01Z",
+  "requestId": "01990d9e-8400-7000-8000-000000000101",
+  "roomId": "!private:agent-room.example",
+  "senderKey": "rPvoj46C7Ah8By6BGRDqu1OeS45u3cAT54DA6cKXrQg",
+  "senderEd25519Key": "Tcs5D6UxL9Zl7B1opoelP+zv6ACtPPukL0u0Fs/qujg",
+  "keys": [
+    {
+      "sessionId": "not a megolm session id",
+      "sessionKey": "DtbCEFBir88KBZiYcU4mv01/Z+RpUy13nn0gbbHulC6SkmZIo2G5VTKi1rvH4LP7PY0uUgtrvk6Qoxn1FvNqY0nIHb/D0kbx5aihswzirR2dTN51+ebWBNYcQKpzlMtW+TWzr4PHCIhNuooBnbiO+REmNLJiHrjHHOT/AES4i3DRLbQ0UeACmukhTLYG8mBlkl2KGM5c/h08lqDB3C5Tt69sOmw4"
+    }
+  ]
+}
