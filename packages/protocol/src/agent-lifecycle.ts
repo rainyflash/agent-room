@@ -2,6 +2,8 @@
 export const agentLifecyclePolicy = Object.freeze({
   reconnectGraceMs: 30_000,
   receptionFreshnessMs: 15_000,
+  /** The latest `waitingUntil` may be after the event's `createdAt`. Outlives a lease renewal. */
+  waitingLeaseMs: 180_000,
   archiveAfterDays: 7,
   recentOfflineLimit: 100,
   pageSize: 100,

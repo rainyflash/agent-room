@@ -45,6 +45,7 @@ use agent_room_bridge_core::{
         MatrixSecurityCommand, MatrixSecurityFailure, MatrixSecurityGateway, MatrixSecurityResult,
     },
     messages::MessageBodyProtectionService,
+    status::WAIT_IDLE_TIMEOUT,
 };
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
@@ -2519,7 +2520,7 @@ async fn 自己发出去还不确定的_同步时按事务_id_对上() {
 // ---------- 在线状态 ----------
 
 #[tokio::test(start_paused = true)]
-async fn 长轮询期间在每个房间发等待消息_十五秒内续上_停用时先发离线() {
+async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后清除_停用时先发离线() {
     let harness = harness_in(&[ROOM, SECOND_ROOM]);
     harness
         .matrix
@@ -2542,7 +2543,7 @@ async fn 长轮询期间在每个房间发等待消息_十五秒内续上_停用
         .unwrap();
     assert_eq!(started.elapsed(), Duration::from_secs(30));
 
-    // 每段最多等 10 秒：三段各发一次，每次两个房间。
+    // 每段最多等 10 秒；等待只在开始时宣布，每个房间一条，后两段不再重发。
     let requests = harness.matrix.requests();
     assert_eq!(
         requests[1..]
@@ -2552,13 +2553,12 @@ async fn 长轮询期间在每个房间发等待消息_十五秒内续上_停用
         [10_000, 10_000, 10_000]
     );
     let states = harness.matrix.states.lock().unwrap().clone();
-    assert_eq!(states.len(), 6);
     assert_eq!(
         states
             .iter()
             .map(|(room, _)| room.as_str())
             .collect::<Vec<_>>(),
-        [ROOM, SECOND_ROOM, ROOM, SECOND_ROOM, ROOM, SECOND_ROOM]
+        [ROOM, SECOND_ROOM]
     );
     let first = &states[0].1;
     assert_eq!(first["status"], "idle");
@@ -2568,8 +2568,26 @@ async fn 长轮询期间在每个房间发等待消息_十五秒内续上_停用
         matrix_user(OWN_AGENT)
     );
     assert_eq!(first["listeningUntil"], "2025-09-23T04:00:15.000Z");
+    assert_eq!(first["waitingUntil"], "2025-09-23T04:03:00.000Z");
     assert!(first["signature"].as_str().is_some());
-    assert_eq!(states[2].1["listeningUntil"], "2025-09-23T04:00:25.000Z");
+
+    // 紧接着又等：上一次的看门狗看到它还在等，不清除。
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .await
+        .unwrap();
+    assert_eq!(harness.matrix.states.lock().unwrap().len(), 2);
+
+    // 之后不再等：十秒后在每个房间清除等待。
+    tokio::time::sleep(WAIT_IDLE_TIMEOUT + Duration::from_secs(1)).await;
+    let states = harness.matrix.states.lock().unwrap().clone();
+    assert_eq!(states.len(), 4);
+    for (_, cleared) in &states[2..] {
+        assert_eq!(cleared["status"], "idle");
+        assert_eq!(cleared["listeningUntil"], Value::Null);
+        assert!(cleared.get("waitingUntil").is_none());
+    }
 
     harness.gateway.leave_and_disable(TOKEN).await.unwrap();
     let states = harness.matrix.states.lock().unwrap().clone();

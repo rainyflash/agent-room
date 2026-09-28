@@ -146,6 +146,53 @@ describe('MatrixLobbyGateway', () => {
     expect(result.value.agents[0]?.lifecycle).toMatchObject({ connection: 'online', reception });
   });
 
+  it.each([
+    [undefined, 'on_resume'],
+    ['2026-08-24T16:03:30.000Z', 'waiting'],
+    ['2026-08-24T16:00:50.000Z', 'on_resume'],
+    [null, 'on_resume'],
+  ] as const)(
+    '新版的 waitingUntil 在 listeningUntil 过期后继续证明在等：%s',
+    (waitingUntil, reception) => {
+      const room = snapshot([
+        statusState({
+          instanceSuffix: '1',
+          status: 'working',
+          createdAt: '2026-08-24T16:00:30.000Z',
+          leaseExpiresAt: '2026-08-24T16:05:30.000Z',
+          lastPolledAt: '2026-08-24T16:00:30.000Z',
+          listeningUntil: '2026-08-24T16:00:45.000Z',
+          ...(waitingUntil === undefined ? {} : { waitingUntil }),
+        }),
+      ]);
+      const later = Date.parse('2026-08-24T16:01:00.000Z');
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => later).read(
+        room.roomId,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.agents[0]?.lifecycle).toMatchObject({ connection: 'online', reception });
+    },
+  );
+
+  it('只带 waitingUntil 也算支持等待证据，超过发布时间 3 分钟的整条作废', () => {
+    const read = (waitingUntil: string) => {
+      const room = snapshot([
+        statusState({ instanceSuffix: '1', status: 'working', waitingUntil }),
+      ]);
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+        room.roomId,
+      );
+      if (!result.ok) throw new Error(result.error.code);
+      return result.value.agents;
+    };
+    expect(read('2026-08-24T16:03:00.000Z')[0]?.lifecycle).toMatchObject({
+      connection: 'online',
+      reception: 'waiting',
+    });
+    expect(read('2026-08-24T16:03:00.001Z')).toHaveLength(0);
+  });
+
   it('共享归档期限生效且同一身份重新接入后恢复', () => {
     const old = statusState({
       instanceSuffix: '1',
@@ -284,6 +331,7 @@ type StatusOptions = {
   readonly leaseExpiresAt?: string;
   readonly lastPolledAt?: string;
   readonly listeningUntil?: string | null;
+  readonly waitingUntil?: string | null;
   readonly status: 'blocked' | 'working' | 'offline';
   readonly summary?: string;
 };
@@ -308,6 +356,7 @@ function statusContent(options: StatusOptions) {
     leaseExpiresAt: options.leaseExpiresAt ?? '2026-08-24T16:00:30.000Z',
     ...(options.lastPolledAt === undefined ? {} : { lastPolledAt: options.lastPolledAt }),
     ...(options.listeningUntil === undefined ? {} : { listeningUntil: options.listeningUntil }),
+    ...(options.waitingUntil === undefined ? {} : { waitingUntil: options.waitingUntil }),
     progress: 0.5,
     schemaVersion: '1.0',
     signature: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',

@@ -1709,6 +1709,54 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn 等待期间不按轮询重发且没再等十秒后清除等待() {
+        use agent_room_bridge_core::status::WAIT_IDLE_TIMEOUT;
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let publisher = Arc::new(记录状态发布器::default());
+        let status =
+            测试状态发布句柄(测试_agent_身份(), room_id.clone(), publisher.clone());
+        let event_count = || publisher.0.lock().expect("状态事件锁可用").len();
+        for _ in 0..8 {
+            status
+                .note_inbox_wait(&room_id, 固定时钟.now(), true)
+                .await
+                .expect("等待中的轮询");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        assert_eq!(event_count(), 1, "开始等待发一次，之后每秒的轮询都不重发");
+        tokio::time::sleep(WAIT_IDLE_TIMEOUT).await;
+        assert_eq!(event_count(), 2, "等待的进程被杀后十秒内清除等待");
+        let events = publisher.0.lock().expect("状态事件锁可用");
+        assert_eq!(
+            events[0].content()["waitingUntil"],
+            "1970-01-01T00:03:01.000Z"
+        );
+        assert!(events[1].content()["listeningUntil"].is_null());
+        assert!(events[1].content().get("waitingUntil").is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 等待带回消息时立刻结束等待且看门狗不再多发() {
+        use agent_room_bridge_core::status::WAIT_IDLE_TIMEOUT;
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let publisher = Arc::new(记录状态发布器::default());
+        let status =
+            测试状态发布句柄(测试_agent_身份(), room_id.clone(), publisher.clone());
+        status
+            .note_inbox_wait(&room_id, 固定时钟.now(), true)
+            .await
+            .expect("开始等待");
+        status
+            .note_inbox_wait(&room_id, 固定时钟.now(), false)
+            .await
+            .expect("带回消息");
+        tokio::time::sleep(WAIT_IDLE_TIMEOUT * 2).await;
+        let events = publisher.0.lock().expect("状态事件锁可用");
+        assert_eq!(events.len(), 2);
+        assert!(events[1].content()["listeningUntil"].is_null());
+    }
+
     #[tokio::test]
     async fn 公共大厅状态发布只暴露粗粒度状态并返回真实租约() {
         let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");

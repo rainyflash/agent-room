@@ -3,7 +3,8 @@
     "archiveAfterDays": 7,
     "recentOfflineLimit": 100,
     "reconnectGraceMs": 30000,
-    "receptionFreshnessMs": 15000
+    "receptionFreshnessMs": 15000,
+    "waitingLeaseMs": 180000
   },
   "cases": [
     {

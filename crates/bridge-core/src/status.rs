@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agent_room_application::ports::{
     Clock, MatrixEventId, MatrixEventType, MatrixFailure, MatrixGateway, MatrixRoomId,
@@ -6,6 +6,7 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     DomainError,
+    agent_lifecycle::{RECEPTION_FRESHNESS_MS, WAITING_LEASE_MS},
     agent_status::{
         AgentStatusDetails, AgentStatusLease, AgentStatusSnapshot, AgentStatusVisibility,
         AgentWorkStatus,
@@ -25,6 +26,12 @@ use crate::ports::{
 };
 
 const STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
+/// 正在等待时，上一条的 `waitingUntil` 剩不到这么久就续发一条。通常续租会先到，这只是保底。
+const WAITING_RENEWAL_MARGIN_MS: i64 = 60_000;
+/// 没在等待时，最近读取时间至少比上一条晚这么久，才值得单独发一条。
+const POLL_REPORT_INTERVAL_MS: i64 = 60_000;
+/// 发状态的一方这么久收不到新的等待，就当等待已被取消（例如进程被杀），主动清除等待信号。
+pub const WAIT_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostAgentState {
@@ -54,7 +61,7 @@ pub struct AgentStatusIntent {
     host_state: HostAgentState,
     details: Option<AgentStatusDetails>,
     last_polled_at: Option<UtcMillis>,
-    listening_until: Option<UtcMillis>,
+    waiting: bool,
 }
 
 impl AgentStatusIntent {
@@ -63,7 +70,7 @@ impl AgentStatusIntent {
             host_state,
             details,
             last_polled_at: None,
-            listening_until: None,
+            waiting: false,
         }
     }
 
@@ -77,13 +84,17 @@ impl AgentStatusIntent {
         self.last_polled_at
     }
 
+    /// Agent 此刻是否阻塞在收件等待里。等待截止由发布服务按发布时间算：`listeningUntil` 加 15 秒
+    /// 给旧版读取方，`waitingUntil` 加 3 分钟给新版读取方。清除要靠调用方：等待结束、或
+    /// [`WAIT_IDLE_TIMEOUT`] 内没再等时改回 `false`。
     #[must_use]
-    pub const fn with_listening_until(mut self, until: Option<UtcMillis>) -> Self {
-        self.listening_until = until;
+    pub const fn with_waiting(mut self, waiting: bool) -> Self {
+        self.waiting = waiting;
         self
     }
-    pub const fn listening_until(&self) -> Option<UtcMillis> {
-        self.listening_until
+
+    pub const fn waiting(&self) -> bool {
+        self.waiting
     }
 
     fn snapshot(
@@ -242,7 +253,25 @@ struct PublishedRoomStatus {
     renew_at: UtcMillis,
     lease_expires_at: UtcMillis,
     last_polled_at: Option<UtcMillis>,
-    listening_until: Option<UtcMillis>,
+    /// 上一条带的 `waitingUntil`；那时没在等待则为空。
+    waiting_until: Option<UtcMillis>,
+}
+
+impl PublishedRoomStatus {
+    /// 同一状态、同一可见性下，这次要不要再发一条。等待期间不再按轮询重发，只跟着续租走。
+    fn renewal_due(&self, intent: &AgentStatusIntent, now: UtcMillis) -> bool {
+        let waiting_changed = self.waiting_until.is_some() != intent.waiting;
+        let waiting_lapsing = intent.waiting
+            && self.waiting_until.is_some_and(|until| {
+                now.value().saturating_add(WAITING_RENEWAL_MARGIN_MS) >= until.value()
+            });
+        let polled_later = !intent.waiting
+            && intent.last_polled_at.is_some_and(|polled| {
+                self.last_polled_at
+                    .is_none_or(|old| polled.value() - old.value() >= POLL_REPORT_INTERVAL_MS)
+            });
+        now >= self.renew_at || waiting_changed || waiting_lapsing || polled_later
+    }
 }
 
 pub struct AgentStatusPublicationService {
@@ -279,7 +308,7 @@ impl AgentStatusPublicationService {
         }
     }
 
-    /// 在首次发布、状态变化、可见性变化或续租到期时写入 Matrix 房间状态。
+    /// 在首次发布、状态变化、可见性变化、开始或结束等待、续租到期时写入 Matrix 房间状态。
     ///
     /// # Errors
     ///
@@ -296,16 +325,6 @@ impl AgentStatusPublicationService {
                 StatusPublicationFailureKind::InvalidIntent,
             ));
         }
-        if intent.listening_until.is_some_and(|until| {
-            until.value()
-                > now
-                    .value()
-                    .saturating_add(agent_room_domain::agent_lifecycle::RECEPTION_FRESHNESS_MS)
-        }) {
-            return Err(StatusPublicationFailure::new(
-                StatusPublicationFailureKind::InvalidIntent,
-            ));
-        }
         let snapshot = intent.snapshot(target.visibility()).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent)
         })?;
@@ -314,19 +333,7 @@ impl AgentStatusPublicationService {
                 StatusPublicationReason::StatusChanged
             } else if previous.snapshot.visibility() != snapshot.visibility() {
                 StatusPublicationReason::VisibilityChanged
-            } else if now >= previous.renew_at
-                || previous.listening_until.is_some() != intent.listening_until.is_some()
-                || intent.listening_until.is_some_and(|until| {
-                    previous
-                        .listening_until
-                        .is_none_or(|old| until.value() - old.value() >= 5_000)
-                })
-                || intent.last_polled_at.is_some_and(|polled| {
-                    previous
-                        .last_polled_at
-                        .is_none_or(|old| polled.value() - old.value() >= 10_000)
-                })
-            {
+            } else if previous.renewal_due(intent, now) {
                 StatusPublicationReason::Renewal
             } else {
                 return Ok(StatusPublicationOutcome::NotDue {
@@ -344,7 +351,8 @@ impl AgentStatusPublicationService {
             self.policy.lifetime,
         )
         .map_err(|_| StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent))?;
-        let event = self.state_event(&lease, intent.last_polled_at, intent.listening_until)?;
+        let waiting = intent.waiting.then(|| waiting_window(now)).transpose()?;
+        let event = self.state_event(&lease, intent.last_polled_at, waiting)?;
         let event_id = self
             .publisher
             .publish(target.room_id(), &event)
@@ -362,7 +370,7 @@ impl AgentStatusPublicationService {
                 renew_at,
                 lease_expires_at: lease.expires_at(),
                 last_polled_at: intent.last_polled_at,
-                listening_until: intent.listening_until,
+                waiting_until: waiting.map(|window| window.waiting_until),
             },
         );
         Ok(StatusPublicationOutcome::Published {
@@ -377,7 +385,7 @@ impl AgentStatusPublicationService {
         &self,
         lease: &AgentStatusLease,
         last_polled_at: Option<UtcMillis>,
-        listening_until: Option<UtcMillis>,
+        waiting: Option<WaitingWindow>,
     ) -> StatusPublicationResult<MatrixStateEvent> {
         let event_id = self.identifiers.event_id();
         let correlation_id = self.identifiers.correlation_id();
@@ -391,7 +399,10 @@ impl AgentStatusPublicationService {
         let mut unsigned =
             UnsignedStatusEvent::new(&self.identity, lease, event_id, correlation_id)?;
         unsigned.last_polled_at = last_polled_at.map(rfc3339).transpose()?;
-        unsigned.listening_until = listening_until.map(rfc3339).transpose()?;
+        if let Some(window) = waiting {
+            unsigned.listening_until = Some(rfc3339(window.listening_until)?);
+            unsigned.waiting_until = Some(rfc3339(window.waiting_until)?);
+        }
         let mut content = serde_json::to_value(unsigned).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization)
         })?;
@@ -447,7 +458,10 @@ impl AgentStatusStatePublisher for MatrixStatusStatePublisher {
 struct UnsignedStatusEvent<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_polled_at: Option<String>,
+    /// 旧版读取方只认它，最多比发布时间晚 15 秒。没在等待时写 `null`，表示支持等待证据。
     listening_until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    waiting_until: Option<String>,
     schema_version: &'static str,
     event_type: &'static str,
     id: Uuid,
@@ -476,6 +490,7 @@ impl<'a> UnsignedStatusEvent<'a> {
         Ok(Self {
             last_polled_at: None,
             listening_until: None,
+            waiting_until: None,
             schema_version: "1.0",
             event_type: STATUS_EVENT_TYPE,
             id: event_id,
@@ -521,6 +536,25 @@ struct StatusAgent<'a> {
     agent_id: Uuid,
     display_name: &'a str,
     matrix_user_id: &'a str,
+}
+
+/// 这一条等待信号的两个截止时间，都从发布时间算起。
+#[derive(Debug, Clone, Copy)]
+struct WaitingWindow {
+    listening_until: UtcMillis,
+    waiting_until: UtcMillis,
+}
+
+fn waiting_window(published_at: UtcMillis) -> StatusPublicationResult<WaitingWindow> {
+    let after = |millis: i64| {
+        UtcMillis::new(published_at.value().saturating_add(millis)).map_err(|_| {
+            StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidConfiguration)
+        })
+    };
+    Ok(WaitingWindow {
+        listening_until: after(RECEPTION_FRESHNESS_MS)?,
+        waiting_until: after(WAITING_LEASE_MS)?,
+    })
 }
 
 fn rfc3339(value: UtcMillis) -> StatusPublicationResult<String> {

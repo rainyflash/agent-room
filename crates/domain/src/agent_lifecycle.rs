@@ -3,6 +3,9 @@ use crate::agent_status::AgentWorkStatus;
 
 pub const RECONNECT_GRACE_MS: i64 = 30_000;
 pub const RECEPTION_FRESHNESS_MS: i64 = 15_000;
+/// `waitingUntil` 最多比事件发布时间晚多少。比连接租约的续租间隔（约 2 分钟）长，
+/// 一直等着的 Agent 跟着续租就能保持“持续等待消息”，不必为它另发状态。
+pub const WAITING_LEASE_MS: i64 = 180_000;
 pub const DEFAULT_ARCHIVE_AFTER_DAYS: u16 = 7;
 pub const RECENT_OFFLINE_LIMIT: usize = 100;
 pub const PRESENCE_PAGE_SIZE: usize = 100;
